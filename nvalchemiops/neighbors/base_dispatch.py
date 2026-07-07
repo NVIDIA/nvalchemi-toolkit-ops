@@ -759,14 +759,16 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
         )
         atom_blocks = wp.int64(max(n_atoms, wp.int32(1)) + wp.int32(63)) // wp.int64(64)
         pair_blocks = wp.int64(total_cells_i32) * wp.int64(n_outer + wp.int32(1))
-        if (not has_cuda) or pair_launch > max_launch_size or pair_blocks < atom_blocks:
+        if (not has_cuda) or pair_blocks < atom_blocks:
             wp.atomic_max(flags, 7, wp.int32(1))
+        pair_launch_effective = wp.min(pair_launch, max_launch_size)
         # Pair-centric: cheaper per pair (0.55 write, 0.5 scan) but pays a
-        # per-block launch term (0.025 * pair_launch) for its many small blocks.
+        # per-block launch term (0.025 * pair_launch_effective) for its many
+        # small blocks (capped when coarsening is required).
         cell_pair_cost = (
             setup
             + wp.float32(0.55) * expected_pairs
-            + wp.float32(0.025) * wp.float32(pair_launch)
+            + wp.float32(0.025) * wp.float32(pair_launch_effective)
             + wp.float32(0.5) * grid_work
         )
         wp.atomic_add(costs, 2, cell_atom_cost)

@@ -42,19 +42,16 @@ import torch
 import warp as wp
 
 from nvalchemiops.neighbors.cell_list import (
-    PAIR_CENTRIC_MAX_LINEAR_LAUNCH,
-    compute_batch_pair_centric_n_outer,
-    get_build_cell_list_kernel,
-    is_pair_centric_launch_safe,
-    is_pair_centric_parallelism_sufficient,
-    pair_centric_launch_size,
-    select_batch_cell_list_strategy,
-)
-from nvalchemiops.neighbors.cell_list import (
     batch_build_cell_list as wp_batch_build_cell_list,
 )
 from nvalchemiops.neighbors.cell_list import (
     batch_query_cell_list as wp_batch_query_cell_list,
+)
+from nvalchemiops.neighbors.cell_list import (
+    compute_batch_pair_centric_n_outer,
+    get_build_cell_list_kernel,
+    is_pair_centric_parallelism_sufficient,
+    select_batch_cell_list_strategy,
 )
 from nvalchemiops.neighbors.neighbor_utils import empty_sentinel, estimate_max_neighbors
 from nvalchemiops.neighbors.neighbor_utils import (
@@ -87,31 +84,6 @@ __all__ = [
     "batch_query_cell_list",
     "batch_cell_list",
 ]
-
-
-def _pair_centric_unsafe_message(
-    total_cells: int,
-    n_outer: int,
-    block_dim: int = 64,
-) -> str:
-    """Return the unsafe pair-centric launch message."""
-    launch_size = pair_centric_launch_size(total_cells, n_outer, block_dim)
-    return (
-        "strategy='pair_centric' would require "
-        f"{launch_size} logical threads "
-        f"({int(total_cells)} cells * {int(n_outer) + 1} offsets * "
-        f"{int(block_dim)} threads), exceeding the safe linear launch limit "
-        f"of {PAIR_CENTRIC_MAX_LINEAR_LAUNCH}."
-    )
-
-
-def _raise_unsafe_pair_centric_launch(
-    total_cells: int,
-    n_outer: int,
-    block_dim: int = 64,
-) -> None:
-    """Raise when an explicit pair-centric request is unsafe."""
-    raise ValueError(_pair_centric_unsafe_message(total_cells, n_outer, block_dim))
 
 
 def _resolve_atom_centric_path(atom_centric_path: str) -> str:
@@ -618,14 +590,7 @@ def _batch_query_cell_list_op(
         total_cells = int(cells_per_system.sum().item())
         R_max = _max_radius_tuple(neighbor_search_radius)
         n_outer = compute_batch_pair_centric_n_outer(R_max, bool(half_fill))
-        if not is_pair_centric_launch_safe(total_cells, n_outer):
-            if strategy == "pair_centric":
-                _raise_unsafe_pair_centric_launch(total_cells, n_outer)
-            use_pair_centric = False
-            total_cells = None
-            n_outer = None
-            R_max = None
-        elif strategy == "auto" and not is_pair_centric_parallelism_sufficient(
+        if strategy == "auto" and not is_pair_centric_parallelism_sufficient(
             int(total_atoms), total_cells, n_outer
         ):
             use_pair_centric = False
@@ -1541,14 +1506,7 @@ def _batch_query_cell_list_optional(
         total_cells = int(cells_per_system.sum().item())
         R_max = _max_radius_tuple(neighbor_search_radius)
         n_outer = compute_batch_pair_centric_n_outer(R_max, bool(half_fill))
-        if not is_pair_centric_launch_safe(total_cells, n_outer):
-            if strategy == "pair_centric":
-                _raise_unsafe_pair_centric_launch(total_cells, n_outer)
-            use_pair_centric = False
-            total_cells = None
-            n_outer = None
-            R_max = None
-        elif strategy == "auto" and not is_pair_centric_parallelism_sufficient(
+        if strategy == "auto" and not is_pair_centric_parallelism_sufficient(
             int(total_atoms), total_cells, n_outer
         ):
             use_pair_centric = False

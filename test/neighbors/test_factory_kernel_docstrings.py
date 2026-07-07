@@ -189,8 +189,28 @@ def _assert_runtime_doc(obj: object, *expected: str) -> None:
                 strategy="pair_centric",
                 batched=True,
                 return_vectors=True,
+                coarsened=True,
             ),
-            ("dtype : f64", "strategy : pair_centric", "batched : True"),
+            (
+                "dtype : f64",
+                "strategy : pair_centric",
+                "batched : True",
+                "coarsened : True",
+            ),
+        ),
+        (
+            get_query_cell_list_kernel(
+                wp.float64,
+                strategy="pair_centric",
+                batched=True,
+                return_vectors=True,
+            ),
+            (
+                "dtype : f64",
+                "strategy : pair_centric",
+                "batched : True",
+                "coarsened : False",
+            ),
         ),
         (
             cluster_tile_kernels.get_batch_query_cluster_tile_coo_kernel(
