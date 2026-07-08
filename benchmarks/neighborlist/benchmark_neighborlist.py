@@ -199,8 +199,14 @@ def _jax_device_memory_limit(jax) -> int:
     """Return JAX's allocator-visible device capacity when available."""
     try:
         stats = jax.devices()[0].memory_stats() or {}
-        return int(stats.get("bytes_limit", 0))
+        bytes_limit = int(stats.get("bytes_limit", 0))
     except (AttributeError, IndexError, TypeError, ValueError):
+        bytes_limit = 0
+    if bytes_limit > 0:
+        return bytes_limit
+    try:
+        return int(torch.cuda.get_device_properties(0).total_memory)
+    except (AssertionError, IndexError, RuntimeError):
         return 0
 
 
@@ -728,11 +734,7 @@ def _benchmark_nl_jax(data, cutoff, method, num_runs, warmup_runs):
     )
     use_eager_pair_centric = jax_method in _NL_PAIR_CENTRIC_METHODS
     use_eager_naive_tile = method in {"naive_tile", "batch_naive_tile"}
-    use_eager_public_api = (
-        use_eager_pair_centric
-        or use_eager_naive_tile
-        or jax_family == "batch_cluster_tile"
-    )
+    use_eager_public_api = use_eager_pair_centric or use_eager_naive_tile
     use_direct_jax_nl = jax_family in {
         "cell_list",
         "batch_cell_list",
