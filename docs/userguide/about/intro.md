@@ -87,7 +87,7 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
-Dispatches to {func}`~nvalchemiops.torch.neighbors.cell_list` — O(N) algorithm
+Dispatches to {func}`~nvalchemiops.torch.neighbors.cell_list` — $O(N)$ algorithm
 using spatial decomposition.
 :::
 
@@ -104,7 +104,7 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
-Dispatches to {func}`~nvalchemiops.torch.neighbors.naive_neighbor_list` — O(N²)
+Dispatches to {func}`~nvalchemiops.torch.neighbors.naive_neighbor_list` — $O(N^2)$
 algorithm with lower overhead.
 :::
 
@@ -122,7 +122,7 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
-Dispatches to {func}`~nvalchemiops.torch.neighbors.batch_cell_list` — O(N)
+Dispatches to {func}`~nvalchemiops.torch.neighbors.batch_cell_list` — $O(N)$
 algorithm for heterogeneous batches.
 :::
 
@@ -141,14 +141,15 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 ```
 
 Dispatches to {func}`~nvalchemiops.torch.neighbors.batch_naive_neighbor_list` —
-O(N²) algorithm for batched small systems.
+$O(N^2)$ algorithm for batched small systems.
 :::
 
 ::::
 
 ```{note}
 When `method` is not specified, `neighbor_list` automatically selects based on
-average system size (≥2000 atoms per system → cell list) and whether `batch_idx` is provided.
+average system size ($\geq 2000$ atoms per system → cell list) and whether
+`batch_idx` is provided.
 ```
 
 For advanced workflows, {func}`~nvalchemiops.torch.neighbors.build_cell_list` and
