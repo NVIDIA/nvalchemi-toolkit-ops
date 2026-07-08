@@ -87,8 +87,9 @@ from benchmarks.config import (
     load_yaml_config,
     merge_common_cli_overrides,
 )
-from benchmarks.constants import DEFAULT_ATOMIC_DENSITY, DEFAULT_NL_SAFETY_FACTOR
+from benchmarks.constants import DEFAULT_NL_SAFETY_FACTOR
 from benchmarks.suite_systems import (
+    compute_atomic_density,
     configs_for_mode,
     configured_nh3_artifacts,
     create_system,
@@ -1142,9 +1143,16 @@ def _torch_neighbor_matrix_to_list_chunked(
 
 def _el_build_nl(positions, cell, pbc, batch_idx, real_cutoff, backend, jax_api):
     """Build the real-space neighbor list in LIST (COO + ptr) format."""
+    atomic_density = compute_atomic_density(
+        {
+            "positions": positions,
+            "cell": cell,
+            "batch_idx": batch_idx,
+        }
+    )
     maxnb = estimate_max_neighbors(
         real_cutoff,
-        atomic_density=DEFAULT_ATOMIC_DENSITY * DEFAULT_NL_SAFETY_FACTOR,
+        atomic_density=atomic_density * DEFAULT_NL_SAFETY_FACTOR,
     )
     if backend == "torch":
         neighbor_matrix, num_neighbors, neighbor_matrix_shifts = batch_cell_list(

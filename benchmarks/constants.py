@@ -28,15 +28,14 @@ from __future__ import annotations
 
 __all__ = [
     "ANGSTROM_TO_BOHR",
-    "DEFAULT_ATOMIC_DENSITY",
     "DEFAULT_NL_SAFETY_FACTOR",
 ]
 
 # Physical constant — exact value, not configurable.
 ANGSTROM_TO_BOHR = 1.8897259886
 
-# Neighbor-list kernel tuning for estimate_max_neighbors(). Used by all
-# runners when constructing neighbor lists. These are safety margins, not
-# user policy: expose via YAML only if benchmark methodology requires it.
-DEFAULT_ATOMIC_DENSITY = 0.2
-DEFAULT_NL_SAFETY_FACTOR = 1.0
+# Neighbor-list capacity margin used after measuring each benchmark system's
+# bulk atomic density. Molecular systems can have a local density above their
+# cell-average density; 2x covers the largest observed NH3 local/bulk ratio
+# while avoiding the much larger over-allocation caused by a fixed density.
+DEFAULT_NL_SAFETY_FACTOR = 2.0

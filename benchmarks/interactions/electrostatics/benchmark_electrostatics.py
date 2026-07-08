@@ -66,6 +66,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 import numpy as np
 import yaml
 
+from benchmarks.constants import DEFAULT_NL_SAFETY_FACTOR
+from benchmarks.suite_systems import compute_atomic_density
+
 if TYPE_CHECKING:
     from benchmarks.utils import BenchmarkTimer
 else:
@@ -593,6 +596,9 @@ def prepare_system_numpy(
             "batch_idx": None,
             "total_atoms": total_atoms,
             "num_atoms_per_system": total_atoms,
+            "atomic_density": float(
+                total_atoms / abs(np.linalg.det(system["cell"].numpy()[0]))
+            ),
         }
     else:
         all_positions = []
@@ -632,6 +638,9 @@ def prepare_system_numpy(
             "batch_idx": batch_idx,
             "total_atoms": total_atoms,
             "num_atoms_per_system": target_atoms_per_system,
+            "atomic_density": float(
+                target_atoms_per_system / abs(np.linalg.det(cells[0]))
+            ),
         }
 
 
@@ -680,6 +689,7 @@ def convert_to_backend(
     result = {
         "total_atoms": np_data["total_atoms"],
         "num_atoms_per_system": np_data["num_atoms_per_system"],
+        "atomic_density": compute_atomic_density(np_data),
     }
 
     match backend:
@@ -863,6 +873,12 @@ def compute_neighbor_list(
     cell = backend_data["cell"]
     pbc = backend_data["pbc"]
     batch_idx = backend_data["batch_idx"]
+    max_neighbors = _neighbor_utils.estimate_max_neighbors(
+        cutoff,
+        atomic_density=(
+            compute_atomic_density(backend_data) * DEFAULT_NL_SAFETY_FACTOR
+        ),
+    )
 
     if batch_idx is None:
         return neighbors_mod.neighbor_list(
@@ -870,6 +886,7 @@ def compute_neighbor_list(
             cutoff,
             cell=cell,
             pbc=pbc,
+            max_neighbors=max_neighbors,
             return_neighbor_list=False,
         )
     else:
@@ -880,6 +897,7 @@ def compute_neighbor_list(
             pbc=pbc,
             batch_idx=batch_idx,
             method="batch_naive",
+            max_neighbors=max_neighbors,
             return_neighbor_list=False,
         )
 
@@ -1280,19 +1298,17 @@ def build_neighbors(
     pbc = system_data.get("pbc")
     batch_idx = system_data.get("batch_idx")
     total_atoms = system_data["total_atoms"]
-
     nl_kwargs: dict = dict(cell=cell, pbc=pbc)
     if batch_idx is not None:
         nl_kwargs["batch_idx"] = batch_idx
         nl_kwargs["method"] = "batch_naive"
 
     if cell is not None:
-        batch_size = system_data.get("batch_size", 1)
-        cell_2d = cell[0] if cell.dim() == 3 else cell
-        volume = torch.abs(torch.det(cell_2d)).item()
-        density = (total_atoms / batch_size) / volume
         max_nbrs = _neighbor_utils.estimate_max_neighbors(
-            cutoff, atomic_density=density * 1.2
+            cutoff,
+            atomic_density=(
+                compute_atomic_density(system_data) * DEFAULT_NL_SAFETY_FACTOR
+            ),
         )
         nl_kwargs["max_neighbors"] = max_nbrs
 

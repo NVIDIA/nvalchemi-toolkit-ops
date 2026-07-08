@@ -75,10 +75,10 @@ from benchmarks.config import (
 )
 from benchmarks.constants import (
     ANGSTROM_TO_BOHR,
-    DEFAULT_ATOMIC_DENSITY,
     DEFAULT_NL_SAFETY_FACTOR,
 )
 from benchmarks.suite_systems import (
+    compute_atomic_density,
     configs_for_mode,
     configured_nh3_artifacts,
     create_system,
@@ -214,7 +214,7 @@ def benchmark_d3(
 
     maxnb = estimate_max_neighbors(
         cutoff,
-        atomic_density=DEFAULT_ATOMIC_DENSITY * DEFAULT_NL_SAFETY_FACTOR,
+        atomic_density=compute_atomic_density(data) * DEFAULT_NL_SAFETY_FACTOR,
     )
 
     # YAML is authoritative for D3 damping parameters.
@@ -300,7 +300,7 @@ def _benchmark_d3_jax(data, cutoff, d3_params, d3_func_params, num_runs, warmup_
 
     maxnb = estimate_max_neighbors(
         cutoff,
-        atomic_density=DEFAULT_ATOMIC_DENSITY * DEFAULT_NL_SAFETY_FACTOR,
+        atomic_density=compute_atomic_density(data) * DEFAULT_NL_SAFETY_FACTOR,
     )
 
     setup_batch_ptr = batch_ptr

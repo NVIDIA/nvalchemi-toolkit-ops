@@ -78,8 +78,9 @@ from benchmarks.config import (
     merge_common_cli_overrides,
     normalize_method_name,
 )
-from benchmarks.constants import DEFAULT_ATOMIC_DENSITY, DEFAULT_NL_SAFETY_FACTOR
+from benchmarks.constants import DEFAULT_NL_SAFETY_FACTOR
 from benchmarks.suite_systems import (
+    compute_atomic_density,
     configs_for_mode,
     configured_nh3_artifacts,
     create_system,
@@ -497,7 +498,7 @@ def benchmark_nl(
 
     maxnb = estimate_max_neighbors(
         cutoff,
-        atomic_density=DEFAULT_ATOMIC_DENSITY * DEFAULT_NL_SAFETY_FACTOR,
+        atomic_density=compute_atomic_density(data) * DEFAULT_NL_SAFETY_FACTOR,
     )
     torch_family = _nl_backend_family(method)
     nl_kwargs: dict[str, Any] = {}
@@ -716,7 +717,7 @@ def _benchmark_nl_jax(data, cutoff, method, num_runs, warmup_runs):
 
     maxnb = estimate_max_neighbors(
         cutoff,
-        atomic_density=DEFAULT_ATOMIC_DENSITY * DEFAULT_NL_SAFETY_FACTOR,
+        atomic_density=compute_atomic_density(data) * DEFAULT_NL_SAFETY_FACTOR,
     )
     jax_memory_limit = _jax_device_memory_limit(jax)
     prefer_serial = _jax_nl_queued_outputs_exceed_device_memory(
@@ -1079,7 +1080,7 @@ def _benchmark_nl_warp(data, cutoff, method, num_runs, warmup_runs):
     wp_mat_dtype = get_wp_mat_dtype(positions.dtype)
     maxnb = estimate_max_neighbors(
         cutoff,
-        atomic_density=DEFAULT_ATOMIC_DENSITY * DEFAULT_NL_SAFETY_FACTOR,
+        atomic_density=compute_atomic_density(data) * DEFAULT_NL_SAFETY_FACTOR,
     )
     warp_family = _nl_backend_family(method)
     allocation_boundary = (

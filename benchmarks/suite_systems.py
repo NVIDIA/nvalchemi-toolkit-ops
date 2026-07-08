@@ -36,6 +36,7 @@ import numpy as np
 import torch
 
 __all__ = [
+    "compute_atomic_density",
     "configs_for_mode",
     "configured_nh3_artifacts",
     "cscl_actual_atoms",
@@ -69,6 +70,89 @@ CSCL_CHARGES = {"Cs": 1.0, "Cl": -1.0}
 
 # CsCl lattice constant in Angstroms (Cs at corner, Cl at body center)
 CSCL_LATTICE_CONSTANT = 4.119
+
+
+def compute_atomic_density(system: dict) -> float:
+    r"""Compute the maximum per-system bulk atomic density.
+
+    The benchmark systems use one cell per system. For a system :math:`s`,
+    the density is
+
+    .. math::
+
+        \rho_s = \frac{N_s}{|\det(H_s)|},
+
+    where :math:`H_s` is the cell matrix. The maximum density is returned for
+    batched inputs so one neighbor-matrix capacity is safe for every system.
+    System builders cache the scalar as ``atomic_density``; the geometric
+    fallback keeps synthetic test inputs and external callers supported.
+
+    Parameters
+    ----------
+    system : dict
+        Benchmark system containing ``cell`` and atom-count metadata or
+        ``positions``.
+
+    Returns
+    -------
+    float
+        Maximum atoms per unit cell volume across the batch.
+
+    Raises
+    ------
+    ValueError
+        If the cell has an invalid shape or non-positive volume, or atom counts
+        cannot be inferred consistently.
+    """
+    cached_density = system.get("atomic_density")
+    if cached_density is not None:
+        density = float(cached_density)
+        if not np.isfinite(density) or density <= 0.0:
+            raise ValueError(f"atomic_density must be positive and finite: {density}")
+        return density
+
+    cell = system["cell"]
+    if hasattr(cell, "detach"):
+        cell = cell.detach().cpu().numpy()
+    else:
+        cell = np.asarray(cell)
+    if cell.ndim == 2:
+        cell = cell[None, ...]
+    if cell.ndim != 3 or cell.shape[1:] != (3, 3):
+        raise ValueError(f"cell must have shape (3, 3) or (B, 3, 3), got {cell.shape}")
+
+    volumes = np.abs(np.linalg.det(cell.astype(np.float64, copy=False)))
+    if np.any(~np.isfinite(volumes)) or np.any(volumes <= 0.0):
+        raise ValueError(f"cell volumes must be positive and finite: {volumes}")
+
+    num_systems = int(cell.shape[0])
+    atoms_per_system = system.get(
+        "atoms_per_system", system.get("num_atoms_per_system")
+    )
+    if atoms_per_system is not None:
+        counts = np.full(num_systems, int(atoms_per_system), dtype=np.int64)
+    elif system.get("batch_idx") is not None:
+        batch_idx = system["batch_idx"]
+        if hasattr(batch_idx, "detach"):
+            batch_idx = batch_idx.detach().cpu().numpy()
+        else:
+            batch_idx = np.asarray(batch_idx)
+        counts = np.bincount(batch_idx.astype(np.int64), minlength=num_systems)
+    else:
+        total_atoms = int(
+            system.get("total_atoms", getattr(system.get("positions"), "shape", [0])[0])
+        )
+        if total_atoms <= 0 or total_atoms % num_systems:
+            raise ValueError(
+                f"cannot divide {total_atoms} atoms across {num_systems} systems"
+            )
+        counts = np.full(num_systems, total_atoms // num_systems, dtype=np.int64)
+
+    if len(counts) != num_systems or np.any(counts <= 0):
+        raise ValueError(
+            f"atom counts must be positive for {num_systems} systems: {counts}"
+        )
+    return float(np.max(counts / volumes))
 
 
 def cscl_actual_atoms(n):
@@ -282,6 +366,7 @@ def _build_nh3_single_numpy(pdb_path):
         "batch_idx": np.zeros(len(numbers), dtype=np.int32),
         "elements": elements,
         "atoms_per_system": len(numbers),
+        "atomic_density": float(len(numbers) / abs(np.linalg.det(cell))),
         "cell_size": float(np.diag(cell)[0]),
     }
 
@@ -302,6 +387,7 @@ def _build_nh3_batch_numpy(pdb_path, batch_size):
         "batch_idx": np.repeat(np.arange(batch_size, dtype=np.int32), n),
         "elements": elements,
         "atoms_per_system": n,
+        "atomic_density": float(n / abs(np.linalg.det(cell))),
         "total_atoms": n * batch_size,
         "batch_size": batch_size,
         "cell_size": float(np.diag(cell)[0]),
@@ -402,6 +488,7 @@ def _build_cscl_single_numpy(num_atoms):
         "pbc": np.array([[True, True, True]], dtype=bool),
         "batch_idx": np.zeros(actual_atoms, dtype=np.int32),
         "atoms_per_system": actual_atoms,
+        "atomic_density": float(actual_atoms / abs(np.linalg.det(cell))),
         "total_atoms": actual_atoms,
         "batch_size": 1,
         "cell_size": cell_size,
@@ -428,6 +515,7 @@ def _build_cscl_batch_numpy(num_atoms_per_system, batch_size):
         "pbc": pbc,
         "batch_idx": batch_idx,
         "atoms_per_system": n,
+        "atomic_density": single["atomic_density"],
         "total_atoms": n * batch_size,
         "batch_size": batch_size,
         "cell_size": single["cell_size"],

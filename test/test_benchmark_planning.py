@@ -61,6 +61,7 @@ from benchmarks.plotting import styles as plot_styles
 from benchmarks.plotting.plot_benchmarks import load_csv
 from benchmarks.suite_orchestration import _report_run, _SuiteResults
 from benchmarks.suite_systems import (
+    compute_atomic_density,
     configs_for_mode,
     configured_nh3_artifacts,
     filter_configs_by_total_atoms,
@@ -81,6 +82,90 @@ from benchmarks.suite_utils import (
 )
 from docs.benchmarks import generate_plots as docs_generate_plots
 from docs.benchmarks import sphinxext as docs_benchmark_sphinxext
+
+
+class TestBenchmarkNeighborCapacity:
+    """Test geometry-derived neighbor-matrix capacity inputs."""
+
+    def test_compute_atomic_density_uses_densest_batched_cell(self):
+        """Capacity density is the maximum per-system atoms/cell-volume."""
+        system = {
+            "positions": np.zeros((6, 3), dtype=np.float32),
+            "cell": np.stack(
+                [
+                    np.eye(3, dtype=np.float32) * 2.0,
+                    np.eye(3, dtype=np.float32),
+                ]
+            ),
+            "batch_idx": np.array([0, 0, 0, 0, 1, 1], dtype=np.int32),
+        }
+
+        assert compute_atomic_density(system) == pytest.approx(2.0)
+
+    def test_reportable_runners_compute_density_from_system_geometry(self):
+        """Reportable NL, D3, and EL runners do not use a fixed density."""
+        functions = (
+            benchmark_neighborlist.benchmark_nl,
+            benchmark_neighborlist._benchmark_nl_jax,
+            benchmark_neighborlist._benchmark_nl_warp,
+            benchmark_dftd3.benchmark_d3,
+            benchmark_dftd3._benchmark_d3_jax,
+            benchmark_electrostatics._el_build_nl,
+        )
+
+        for function in functions:
+            source = inspect.getsource(function)
+            assert "compute_atomic_density" in source
+            assert "DEFAULT_ATOMIC_DENSITY" not in source
+
+    def test_el_neighbor_capacity_uses_computed_density(self, monkeypatch):
+        """EL forwards measured density plus the shared safety margin."""
+        observed = {}
+
+        def fake_estimate_max_neighbors(_cutoff, *, atomic_density):
+            observed["atomic_density"] = atomic_density
+            return 2
+
+        def fake_batch_cell_list(**kwargs):
+            total_atoms = kwargs["positions"].shape[0]
+            max_neighbors = kwargs["max_neighbors"]
+            return (
+                torch.full(
+                    (total_atoms, max_neighbors),
+                    total_atoms,
+                    dtype=torch.int32,
+                ),
+                torch.zeros(total_atoms, dtype=torch.int32),
+                torch.zeros(
+                    (total_atoms, max_neighbors, 3),
+                    dtype=torch.int32,
+                ),
+            )
+
+        monkeypatch.setattr(
+            benchmark_electrostatics,
+            "estimate_max_neighbors",
+            fake_estimate_max_neighbors,
+        )
+        monkeypatch.setattr(
+            benchmark_electrostatics,
+            "batch_cell_list",
+            fake_batch_cell_list,
+        )
+        positions = torch.zeros((4, 3), dtype=torch.float32)
+        cell = (torch.eye(3, dtype=torch.float32) * 2.0).unsqueeze(0)
+
+        benchmark_electrostatics._el_build_nl(
+            positions,
+            cell,
+            torch.ones((1, 3), dtype=torch.bool),
+            torch.zeros(4, dtype=torch.int32),
+            real_cutoff=6.0,
+            backend="torch",
+            jax_api=None,
+        )
+
+        assert observed["atomic_density"] == pytest.approx(1.0)
 
 
 class TestBenchmarkMethodSelection:
