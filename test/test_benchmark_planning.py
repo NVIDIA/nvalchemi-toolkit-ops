@@ -307,10 +307,13 @@ class TestBenchmarkMethodSelection:
         )
 
     def test_warp_nl_timing_declares_warp_backend(self):
-        """Direct Warp API timings use the shared CUDA-event path explicitly."""
+        """Direct Warp timings bind launches to the CUDA-event stream."""
         source = inspect.getsource(benchmark_neighborlist._benchmark_nl_warp)
 
         assert 'backend="warp"' in source
+        assert "torch.cuda.current_stream(device)" in source
+        assert "wp.stream_from_torch(torch_stream)" in source
+        assert "with wp.ScopedStream(wp_stream):" in source
 
     def test_warp_nl_reports_preallocated_buffer_boundary(self):
         """Warp rows identify caller-owned output and cell-workspace buffers."""

@@ -1347,15 +1347,18 @@ def _benchmark_nl_warp(data, cutoff, method, num_runs, warmup_runs):
     else:
         raise ValueError(f"Unsupported NL method for warp backend: {method}")
 
-    _, mem_info = measure_memory_torch(run_nl)
-    n_neighbors = int(num_neighbors.max().item()) if total_atoms else 0
-    time_sec = cuda_timed_runs(
-        run_nl,
-        num_runs,
-        warmup_runs=warmup_runs,
-        backend="warp",
-    )
-    sync_gpu()
+    torch_stream = torch.cuda.current_stream(device)
+    wp_stream = wp.stream_from_torch(torch_stream)
+    with wp.ScopedStream(wp_stream):
+        _, mem_info = measure_memory_torch(run_nl)
+        n_neighbors = int(num_neighbors.max().item()) if total_atoms else 0
+        time_sec = cuda_timed_runs(
+            run_nl,
+            num_runs,
+            warmup_runs=warmup_runs,
+            backend="warp",
+        )
+        sync_gpu()
     return {
         "time_seconds": time_sec,
         "mem_info": mem_info,
