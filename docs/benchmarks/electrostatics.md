@@ -17,7 +17,9 @@ evaluate energy, then derive forces (``-dE/dR``) and charge gradients
 (``dE/dq``) through framework autodiff. The reportable default times this full
 workload once; real/reciprocal component profiling is opt-in. Missing plotted
 points are retained as ``success=False`` CSV rows, typically with
-``error_type=OutOfMemoryError`` or ``SkippedAfterOOM``.
+``error_type=OutOfMemoryError`` or ``SkippedAfterOOM``. Strict-accuracy PME
+rows that exceed XLA autotuning or cuFFT planning capacity use
+``error_type=JaxRuntimeError``.
 ```
 
 ## How to Read These Charts

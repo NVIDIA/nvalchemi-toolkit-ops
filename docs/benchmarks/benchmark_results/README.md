@@ -10,22 +10,21 @@ under this directory were produced on an **NVIDIA H100 80 GB HBM3
 electrostatics) across two chemical systems (CsCl, NH₃) and three
 scaling modes.
 
-The current snapshot was collected on 3 July 2026 under run ID
-`75522394-a5f1-4f9c-9f28-3b3d535dbff4` and source fingerprint
-`08776c4583b04b9205674f13a7ec78b08ce940faf1fb56b9c2d9f4ba4237c1f8`.
-Its 18 reportable CSVs contain all 3,504 planned rows: 3,368 successful
-measurements, 124 explicit `OutOfMemoryError` rows, and 12
-`UnsupportedConfiguration` rows.
+The current snapshot was collected on 8 July 2026 under run ID
+`b890cd6794884c1f9e9b143e104fa6da` and source fingerprint
+`695f537dbf4dc6b6e33911363250f629af2629f489a38c583a27c5370373b770`.
+Its 18 reportable CSVs contain all 3,504 planned rows: 3,404 successful
+measurements and 100 explicit capacity-limit rows. The failures comprise 88
+`OutOfMemoryError` rows, 9 strict-PME `JaxRuntimeError` rows, and 3
+`SkippedAfterOOM` rows for JAX Ewald.
 
-Every CSV embeds the same fingerprint in ``software_context``. The recorded Git
-head, `90af513a66537cbab8d836ea0c064d137a7b4a05`, identifies the 0.4
-release-candidate base; the fingerprint identifies the complete measured source
-tree, including the benchmark suite and approved JAX Ewald memory fix applied
-above that base. After collection, the branch corrects benchmark-only help and
-system-description wording, makes the suite writer use LF line endings,
-normalizes the checked-in CSV line endings, and updates documentation and
-generated figures. Those edits do not change parsed values, a timed kernel or
-callable, the benchmark grid, or any CSV value. A future kernel, public API,
+Every CSV embeds the same fingerprint in ``software_context``. The measured
+source tree was clean at Git head
+`66b2aa334a9f2d6b138bf0d1ee87da0e09055593`; later documentation-data edits do
+not alter a timed kernel, callable, grid, or CSV value. The software context was
+Python 3.13.9, Torch 2.12.0+cu126, JAX/JAXlib 0.9.0.1, Warp 1.13.0, CUDA 12.6,
+and ALCHEMI Toolkit-Ops 0.4.0. Collection used NVIDIA H100 80 GB HBM3 GPUs
+(compute capability 9.0) with driver 535.216.03. A future kernel, public API,
 timing-boundary, or grid change requires a complete replacement run.
 
 See the per-module doc pages for how to read the plots and how to
@@ -79,7 +78,7 @@ Emitted by `benchmarks.suite_utils.build_result`:
 | `compile_policy` | str | Compile/warmup policy; shipped rows use `warmup_excluded` |
 | `success` | bool | `False` rows are filtered by the plotter |
 | `error` | str | Concise failure or skip message for `success=False` rows |
-| `error_type` | str | Stable failure class, such as `OutOfMemoryError`, `UnsupportedConfiguration`, `SkippedByPolicy`, or `SkippedAfterOOM` |
+| `error_type` | str | Stable failure class, such as `OutOfMemoryError`, `JaxRuntimeError`, `UnsupportedConfiguration`, `SkippedByPolicy`, or `SkippedAfterOOM` |
 | `failure_stage` | str | Optional; populated by failure paths that can identify the setup or timing stage that raised the error |
 | `cutoff` | float | Added by NL and D3 |
 | `configured_max_neighbors` | int | Added by NL; neighbor-matrix capacity selected before the measured call |
@@ -165,26 +164,25 @@ The docs CSVs are reportable benchmark outputs: they use the full configured
 grid, 3 warmups, and 10 timed runs unless an explicit command-line filter is
 shown. Reduced smoke runs should write to a separate output directory.
 
-The shipped H100 CSVs were collected as scheduler shards with the same full
-grids and timing protocol. Only tasks whose rows remain in the published CSVs
-are counted below; discarded diagnostic and replacement attempts are excluded.
+The shipped H100 CSVs were collected sequentially through the regular Slurm
+``batch`` queue, with one H100 active at a time. The final rows come from these
+source-identical jobs:
 
-| Module | Accepted H100 task time | Contributing hosts |
-|---|---:|---|
-| Neighbor list | 57 min 18 s | `s4124-0096`, `s4124-0105`, `s4124-0106`, `s4124-0129` |
-| DFT-D3 | 17 min 59 s | `s4124-0096`, `s4124-0105`, `s4124-0106`, `s4124-0129` |
-| Electrostatics | 1 h 47 min 57 s | `ipp2-0709`, `ipp2-0711`, `s4124-0096`, `s4124-0105`, `s4124-0106`, `s4124-0129` |
-| **Total** | **3 h 3 min 14 s** | |
+| Job | Accepted scope | Host | Logged wall time |
+|---|---|---|---:|
+| `13573992` | Complete Torch/JAX suite, except three Torch NL shards replaced below | `pool0-01777` | 2 h 40 min 35 s |
+| `13574007` | Warp NL, except the two batch-scaling shards replaced below | `pool0-01777` | 5 min 10 s |
+| `13582160` | Fixed-affinity replacements for three Torch NL and two Warp NL shards; final validation | `pool0-01787` | 3 min 42 s |
 
-These task times add the elapsed time of every accepted one-GPU shard. They are
-not collection wall time. The parallel collection ran from 12:33:24 to 13:17:25
-PDT, or **44 min 1 s**. The main array used up to four H100s. Two JAX
-electrostatics processes exceeded the same 128 GB host-memory allocation on
-their first nodes; identical retries completed on other qualified H100 nodes
-without raising the allocation or limiting the atom grid. One retry briefly
-overlapped the four-slot array, so peak concurrency was five H100s. The two
-discarded attempts consumed another 10 min 10 s of GPU task time and are not
-included in the accepted-time table.
+The contributing jobs used 2 h 49 min 27 s of logged one-GPU time. Collection
+ran from 06:39:28 to 09:58:00 PDT, a 3 h 18 min 32 s wall span including audit
+and queue gaps, with peak concurrency of one H100. An intermediate whole-shard
+rerun (`13581772`, 1 min 59 s) was fully superseded after the cross-run scaling
+audit found that timing noise had moved to another point; it is not represented
+in the published rows. The accepted replacement shards used one fixed logical
+CPU to remove host scheduling noise. Final validation reported 3,504 planned
+and emitted rows, and independent smoothness, endpoint, and prior-run
+reproducibility checks found no remaining timing outliers.
 
 CSV rows record steady-state per-benchmark timings. Scheduler time also includes
 compilation, warmup, input loading, process startup, and cleanup.
