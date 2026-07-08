@@ -1,72 +1,202 @@
-# Neighbor List Benchmark Results
+---
+orphan: true
+---
 
-This directory contains pre-computed benchmark results for different neighbor list algorithms
-on various GPU hardware.
+# Benchmark Results
 
-## File Naming Convention
+Pre-computed CSVs consumed by the Sphinx docs build. The shipped numbers
+under this directory were produced on an **NVIDIA H100 80 GB HBM3
+(Hopper)** and cover three modules (neighbor list, DFT-D3 dispersion,
+electrostatics) across two chemical systems (CsCl, NH₃) and three
+scaling modes.
 
-Results are stored in CSV files with the following naming pattern:
+The current snapshot was collected on 8 July 2026 under run ID
+`b890cd6794884c1f9e9b143e104fa6da` and source fingerprint
+`695f537dbf4dc6b6e33911363250f629af2629f489a38c583a27c5370373b770`.
+Its 18 reportable CSVs contain all 3,504 planned rows: 3,404 successful
+measurements and 100 explicit capacity-limit rows. The failures comprise 88
+`OutOfMemoryError` rows, 9 strict-PME `JaxRuntimeError` rows, and 3
+`SkippedAfterOOM` rows for JAX Ewald.
 
-```bash
-neighbor_list_benchmark_<method>_<gpu_sku>.csv
+Every CSV embeds the same fingerprint in ``software_context``. The measured
+source tree was clean at Git head
+`66b2aa334a9f2d6b138bf0d1ee87da0e09055593`; later documentation-data edits do
+not alter a timed kernel, callable, grid, or CSV value. The software context was
+Python 3.13.9, Torch 2.12.0+cu126, JAX/JAXlib 0.9.0.1, Warp 1.13.0, CUDA 12.6,
+and ALCHEMI Toolkit-Ops 0.4.0. Collection used NVIDIA H100 80 GB HBM3 GPUs
+(compute capability 9.0) with driver 535.216.03. A future kernel, public API,
+timing-boundary, or grid change requires a complete replacement run.
+
+See the per-module doc pages for how to read the plots and how to
+reproduce:
+
+- `../neighborlist.md`
+- `../dftd3.md`
+- `../electrostatics.md`
+
+## File naming
+
+Names follow the scheme emitted by
+`benchmarks.suite_utils.make_csv_name(module, system, mode)`:
+
+```text
+{module}-{system}-{mode-slug}.csv
 ```
 
-Where:
+Where `module` ∈ `{nl, d3, el}`, `system` ∈ `{cscl, nh3}`, and
+`mode-slug` ∈ `{system-size-scaling, constant-workload-scaling,
+batch-scaling}`. Example: `nl-cscl-system-size-scaling.csv`.
 
-- `<method>`: The neighbor list algorithm (`naive`, `cell_list`, `batch_naive`, `batch_cell_list`)
-- `<gpu_sku>`: GPU identifier (e.g., `rtx_a3000_laptop_gpu`, `a100_sxm4_80gb`)
+The current reportable NL/D3/EL suite uses only root-level `nl-*.csv`,
+`d3-*.csv`, and `el-*.csv` files. Separate dynamics and segment-operation CSVs
+may also remain at the root for their own docs pages. Outputs from the optional
+extended electrostatics runner use `electrostatics_benchmark_*.csv` names and a
+different schema; they are not read by the reportable plot generation path.
 
-## Running Benchmarks
+## CSV schema
 
-To generate new benchmark results:
+Emitted by `benchmarks.suite_utils.build_result`:
+
+| Column | Type | Description |
+|---|---|---|
+| `system` | str | `cscl` or `nh3` |
+| `scaling_mode` | str | `system_size`, `constant_workload`, or `batch_scaling` |
+| `method` | str | NL strategy (`naive_scalar`, `naive_tile`, `cell_list_atom_centric`, `cell_list_pair_centric`, `cluster_tile`, plus batch-prefixed concrete APIs where applicable), `dftd3` (D3), or `pme` / `ewald` (EL) |
+| `backend` | str | `torch`, `jax`, or `warp` where supported |
+| `atoms_per_system` | int | Atoms in one system |
+| `batch_size` | int | Number of systems in the batch |
+| `total_atoms` | int | `atoms_per_system` × `batch_size` |
+| `time_us_per_atom` | float | Mean μs per atom across the batch timing |
+| `throughput_atoms_per_sec` | float | Derived throughput |
+| `mem_delta_mb` | float | Torch CUDA allocator delta from the pre-timing measurement call (MB); NaN for JAX |
+| `mem_peak_gb` | float | Torch CUDA allocator peak (GB); NaN for JAX |
+| `timing_runs` | int | Number of timed calls represented by the row |
+| `warmup_runs` | int | Number of untimed warmup calls before measurement |
+| `timing_method` | str | Timing path used for the row, such as `torch_cuda_events`, `jax_wall_block_until_ready`, or the serial fallback `jax_wall_block_each` |
+| `timing_method_real` | str | Added by EL; `not_measured` unless component profiling is enabled |
+| `timing_method_reciprocal` | str | Added by EL; `not_measured` unless component profiling is enabled |
+| `compile_policy` | str | Compile/warmup policy; shipped rows use `warmup_excluded` |
+| `success` | bool | `False` rows are filtered by the plotter |
+| `error` | str | Concise failure or skip message for `success=False` rows |
+| `error_type` | str | Stable failure class, such as `OutOfMemoryError`, `JaxRuntimeError`, `UnsupportedConfiguration`, `SkippedByPolicy`, or `SkippedAfterOOM` |
+| `failure_stage` | str | Optional; populated by failure paths that can identify the setup or timing stage that raised the error |
+| `cutoff` | float | Added by NL and D3 |
+| `configured_max_neighbors` | int | Added by NL; neighbor-matrix capacity selected before the measured call |
+| `max_neighbors` | int | Added by NL; width of the allocated or returned dense neighbor matrix |
+| `max_total_cells` | int | Added by cell-list NL rows; allocated cell-grid capacity |
+| `cell_list_min_cells` | int | Added by NL backends that expose this cell-grid metadata; minimum per-axis cell count used by the selected strategy |
+| `total_neighbor_pairs` | int | Added by NL; backend-specific pair/storage count (dense paths report allocated slots, while direct Warp rows report populated pairs) |
+| `accuracy` | float | Added by EL |
+| `time_d3_us_per_atom` | float | Added by D3 (excludes NL build time) |
+| `neighbor_setup_method` | str | Added by D3; neighbor-list setup API used before timing (`cell_list` or `batch_cell_list`) |
+| `time_real_us_per_atom` | float | Added by EL; NaN unless component profiling is enabled |
+| `time_reciprocal_us_per_atom` | float | Added by EL; NaN unless component profiling is enabled |
+| `backend_comparable` | bool | Added by NL to mark rows included in backend-comparison plots |
+| `timing_scope` | str | Added by NL to separate scalar backend-comparison rows from coverage-only eager, backend-specific, pair-centric, and cluster-tile rows |
+| `allocation_boundary` | str | Added by NL to identify caller-preallocated, API-managed, or JIT-managed buffers |
+| `derivative_contract` | str | Added by EL; reportable rows use `energy_autograd` |
+| `workload` | str | Added by EL; reportable rows use `energy_forces_charge_gradients` |
+| `compute_forces` | bool | Added by EL; always `True` for the reportable workload |
+| `compute_charge_gradients` | bool | Added by EL; always `True` for the reportable workload |
+| `component_profiled` | bool | Added by EL; `False` for the full-only reportable timing contract |
+| `pme_cache_mode` | str | Added by EL; PME rows use `full_static` when fixed-cell volume, inverse-cell, and spline-modulus metadata are precomputed outside timing |
+| `provenance_version` | str | Version of the benchmark provenance schema |
+| `run_id` | UUID | Shared identity for all shards in one reportable run |
+| `gpu_context` | JSON str | Comparable GPU model, compute capability, memory, and driver context |
+| `software_context` | JSON str | Python/framework versions, Git revision, and benchmark-source fingerprint |
+| `execution_context` | JSON str | Per-shard host and physical GPU UUID; may differ across compatible cluster nodes |
+| `runtime_context` | JSON str | Backend runtime and allocator settings, including requested and actual JAX x64/JIT state; must match within each backend |
+| `input_context` | JSON str | Content fingerprints for external NH3 and DFT-D3 inputs; absolute scratch paths are omitted |
+
+When Torch and JAX runs share an output directory, each backend rerun replaces
+only its own rows and preserves the other backend's rows after validating the
+run, GPU, software, source, input, and per-backend runtime provenance.
+Compatible scheduler shards may use different hosts and physical GPU UUIDs.
+Backends contributing to the same CSV must use matching system filters; an
+asymmetric filter can change the external-input fingerprint and is rejected
+instead of being silently merged.
+Failed, skipped, and OOM cases are
+written directly into the main CSV with `success=False`; the plotter filters
+those rows out. The suite no longer writes separate failure files.
+
+The committed H100 CSVs use provenance schema version 2 and the current EL
+energy-autograd contract. All 18 files share the run ID shown above; start a
+fresh run directory and publish a complete replacement set for future reruns.
+
+## Reproducing
+
+Run from the repository root. Module-specific flags are documented on
+each module's doc page; the flags below are common to all three reportable
+runners. This standardized suite is the benchmark merge gate.
 
 ```bash
-cd benchmarks/neighborlist
-python benchmark_neighborlist.py --config benchmark_config.yaml --output-dir ../../docs/benchmarks/benchmark_results
+python -m benchmarks.neighborlist.benchmark_neighborlist \
+    --config benchmarks/neighborlist/benchmark_config.yaml \
+    --output-dir "$BENCHMARK_SCRATCH/results/manual-nl-run"
 ```
 
-### Command Line Options
-
-- `--config`: Path to YAML configuration file (required)
-- `--output-dir`: Output directory for CSV files (default: `../../docs/benchmarks/benchmark_results`)
-- `--methods`: Specific methods to benchmark (e.g., `--methods naive cell_list`)
-- `--gpu-sku`: Override GPU SKU name for output files
-
-### Examples
-
-Run all benchmarks:
+Swap in `benchmarks.interactions.dispersion.benchmark_dftd3` or
+`benchmarks.interactions.electrostatics.benchmark_electrostatics_suite` for
+the other modules, or invoke all three via the unified suite:
 
 ```bash
-python benchmark_neighborlist.py --config benchmark_config.yaml
+bash benchmarks/run_reportable_suite.sh \
+    --output-dir "$BENCHMARK_SCRATCH/results/reportable-run"
 ```
 
-Run only specific methods:
+The wrapper defaults to ``--backend all``: Torch and JAX run for NL, D3, and
+electrostatics, and the direct Warp pass runs for NL. Use ``--backend both``
+only when you intentionally want the two framework backends without Warp NL
+rows.
 
-```bash
-python benchmark_neighborlist.py --config benchmark_config.yaml --methods naive cell_list
-```
+Use a fresh directory for a new run. Pass `--resume` only to continue the run
+already recorded there, or pass the same `--run-id` to parallel scheduler
+shards; a mismatched run ID is rejected before execution.
 
-Override GPU SKU name:
+Electrostatics has a separate optional surface:
+`benchmark_electrostatics.py` uses `benchmark_config_extended.yaml` for
+point-charge/slab/DSF studies and `benchmark_config_multipole.yaml` for
+multipoles. It depends on additional benchmark packages not declared in the
+project extras and does not write the reportable `el-*.csv` schema. Do not
+substitute it for `benchmark_electrostatics_suite.py` in merge-gate commands.
 
-```bash
-python benchmark_neighborlist.py --config benchmark_config.yaml --gpu-sku custom_gpu_name
-```
+The docs CSVs are reportable benchmark outputs: they use the full configured
+grid, 3 warmups, and 10 timed runs unless an explicit command-line filter is
+shown. Reduced smoke runs should write to a separate output directory.
 
-## CSV Format
+The shipped H100 CSVs were collected sequentially through the regular Slurm
+``batch`` queue, with one H100 active at a time. The final rows come from these
+source-identical jobs:
 
-Each CSV file contains the following columns:
+| Job | Accepted scope | Host | Logged wall time |
+|---|---|---|---:|
+| `13573992` | Complete Torch/JAX suite, except three Torch NL shards replaced below | `pool0-01777` | 2 h 40 min 35 s |
+| `13574007` | Warp NL, except the two batch-scaling shards replaced below | `pool0-01777` | 5 min 10 s |
+| `13582160` | Fixed-affinity replacements for three Torch NL and two Warp NL shards; final validation | `pool0-01787` | 3 min 42 s |
 
-- `method`: Algorithm name
-- `total_atoms`: Total number of atoms in the system
-- `atoms_per_system`: Atoms per system (for batch methods)
-- `total_neighbors`: Total number of neighbor pairs found
-- `batch_size`: Batch size (1 for single-system methods)
-- `median_time_us`: Median execution time in microseconds
-- `success`: Whether the benchmark completed successfully (optional)
-- `error`: Error message if benchmark failed (optional)
-- `error_type`: Error type (e.g., "OOM", "Timeout") if failed (optional)
+The contributing jobs used 2 h 49 min 27 s of logged one-GPU time. Collection
+ran from 06:39:28 to 09:58:00 PDT, a 3 h 18 min 32 s wall span including audit
+and queue gaps, with peak concurrency of one H100. An intermediate whole-shard
+rerun (`13581772`, 1 min 59 s) was fully superseded after the cross-run scaling
+audit found that timing noise had moved to another point; it is not represented
+in the published rows. The accepted replacement shards used one fixed logical
+CPU to remove host scheduling noise. Final validation reported 3,504 planned
+and emitted rows, and independent smoothness, endpoint, and prior-run
+reproducibility checks found no remaining timing outliers.
+
+CSV rows record steady-state per-benchmark timings. Scheduler time also includes
+compilation, warmup, input loading, process startup, and cleanup.
+
+For the JAX backend, pass `--backend jax`. Reportable runners preserve explicit
+JAX/XLA settings, otherwise default the memory fraction to `0.95` while leaving
+XLA's default preallocation policy in effect. The unified suite enables x64
+before import because its electrostatics pass requires float64.
+For D3 on offline clusters, pass `--d3-params-path` to a scratch-local
+`dftd3_parameters.pt` file or pre-populate
+`$XDG_CACHE_HOME/nvalchemiops/dftd3_parameters.pt`.
 
 ## Visualization
 
-The Sphinx documentation automatically discovers and visualizes all CSV files in this directory.
-See the benchmarks section of the documentation for interactive plots and comparisons.
+Sphinx's generate_plots hook reads the standardized NL/D3/EL suite CSVs and
+the separate dynamics CSV schema it knows how to parse, then writes PNGs to
+`../_static/`. The benchmark pages embed those images.

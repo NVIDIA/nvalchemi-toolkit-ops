@@ -706,7 +706,7 @@ def test_jax_cluster_tile_neighbor_list_pair_fn_supported():
     call-time ``jax_callable`` closing over the function; returns per-pair
     ``pair_energies`` / ``pair_forces``.  See ``bindings/jax/test_pair_fn.py``.
     """
-    pytest.importorskip("jax")
+    jax = pytest.importorskip("jax")
     import jax.numpy as jnp
 
     from nvalchemiops.jax.neighbors.cluster_tile import cluster_tile_neighbor_list
@@ -728,6 +728,7 @@ def test_jax_cluster_tile_neighbor_list_pair_fn_supported():
         pair_fn=_ct_getter_sum_pair_fn,
         pair_params=pp,
     )
+    out = jax.block_until_ready(out)
     # nm, nn, shifts, distances, vectors, pe, pf
     assert len(out) == 7
     assert out[5].shape[0] == TILE_GROUP_SIZE
