@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+import functools
+
 import jax
 import warp as wp
 
@@ -34,12 +36,12 @@ from nvalchemiops.neighbors.neighbor_utils import empty_sentinel
 __all__ = []
 
 
-def _current_warp_device():
-    """Return the Warp device selected by the current JAX default."""
+def _current_warp_device_alias() -> str:
+    """Return the Warp alias for the device selected by JAX."""
     jax_device = jax.config.jax_default_device
     if jax_device is None:
         jax_device = jax.local_devices()[0]
-    return wp.device_from_jax(jax_device)
+    return str(wp.device_from_jax(jax_device))
 
 
 def _load_kernel_modules(device, *kernels: wp.Kernel) -> None:
@@ -54,27 +56,51 @@ def _load_kernel_modules(device, *kernels: wp.Kernel) -> None:
         loaded_modules.add(module_id)
 
 
-def _preload_cluster_tile_build_kernel(
-    *, batched: bool, segmented: bool, selective: bool
-) -> None:
-    """Construct and load a cluster-tile build specialization."""
+@functools.cache
+def _preload_cluster_tile_build_module(device_alias: str) -> None:
+    """Register every build variant, then load their shared module once."""
     kernels = [
         _get_build_cluster_tiles_kernel(
-            batched=batched,
+            batched=False,
+            segmented=False,
+            selective=selective,
+        )
+        for selective in (False, True)
+    ]
+    kernels.extend(
+        _get_build_cluster_tiles_kernel(
+            batched=True,
             segmented=segmented,
             selective=selective,
         )
-    ]
-    needs_reset = (batched and segmented) or (not batched and selective)
-    if needs_reset:
-        kernels.append(_get_reset_cluster_tile_counts_kernel(selective=selective))
-    device = _current_warp_device()
+        for segmented, selective in (
+            (False, False),
+            (True, False),
+            (True, True),
+        )
+    )
+    kernels.extend(
+        _get_reset_cluster_tile_counts_kernel(selective=selective)
+        for selective in (False, True)
+    )
+    device = wp.get_device(device_alias)
     empty_sentinel(1, wp.int32, device)
     empty_sentinel(1, wp.bool, device)
     _load_kernel_modules(device, *kernels)
 
 
-def _preload_cluster_tile_query_kernel(
+def _preload_cluster_tile_build_kernel(
+    *, batched: bool, segmented: bool, selective: bool
+) -> None:
+    """Construct and load a cluster-tile build specialization."""
+    if (not batched and segmented) or (batched and selective and not segmented):
+        raise ValueError("invalid cluster-tile build specialization")
+    _preload_cluster_tile_build_module(_current_warp_device_alias())
+
+
+@functools.cache
+def _preload_cluster_tile_query_kernel_cached(
+    device_alias: str,
     *,
     batched: bool,
     tile_segmented: bool,
@@ -84,7 +110,7 @@ def _preload_cluster_tile_query_kernel(
     return_distances: bool,
     pair_fn: wp.Function | None,
 ) -> None:
-    """Construct and load a cluster-tile matrix-query specialization."""
+    """Load one matrix-query specialization once per device."""
     getter = (
         get_batch_query_cluster_tile_kernel
         if batched
@@ -98,12 +124,66 @@ def _preload_cluster_tile_query_kernel(
         return_distances=return_distances,
         pair_fn=pair_fn,
     )
-    device = _current_warp_device()
+    device = wp.get_device(device_alias)
     empty_sentinel(1, wp.int32, device)
     empty_sentinel(2, wp.int32, device)
     empty_sentinel(3, wp.int32, device)
     empty_sentinel(1, wp.bool, device)
     empty_sentinel(2, wp.vec3f, device)
+    empty_sentinel(2, wp.float32, device)
+    _load_kernel_modules(device, kernel)
+
+
+def _preload_cluster_tile_query_kernel(
+    *,
+    batched: bool,
+    tile_segmented: bool,
+    selective: bool,
+    dual_cutoff: bool,
+    return_vectors: bool,
+    return_distances: bool,
+    pair_fn: wp.Function | None,
+) -> None:
+    """Construct and load a cluster-tile matrix-query specialization."""
+    _preload_cluster_tile_query_kernel_cached(
+        _current_warp_device_alias(),
+        batched=batched,
+        tile_segmented=tile_segmented,
+        selective=selective,
+        dual_cutoff=dual_cutoff,
+        return_vectors=return_vectors,
+        return_distances=return_distances,
+        pair_fn=pair_fn,
+    )
+
+
+@functools.cache
+def _preload_cluster_tile_coo_kernel_cached(
+    device_alias: str,
+    *,
+    batched: bool,
+    tile_segmented: bool,
+    coo_segmented: bool,
+    selective: bool,
+) -> None:
+    """Load one COO-query specialization once per device."""
+    if coo_segmented:
+        _preload_cluster_tile_build_module(device_alias)
+    getter = (
+        get_batch_query_cluster_tile_coo_kernel
+        if batched
+        else get_query_cluster_tile_coo_kernel
+    )
+    kernel = getter(
+        tile_segmented=tile_segmented,
+        coo_segmented=coo_segmented,
+        selective=selective,
+    )
+    device = wp.get_device(device_alias)
+    empty_sentinel(1, wp.int32, device)
+    empty_sentinel(1, wp.bool, device)
+    empty_sentinel(1, wp.vec3f, device)
+    empty_sentinel(1, wp.float32, device)
     empty_sentinel(2, wp.float32, device)
     _load_kernel_modules(device, kernel)
 
@@ -116,25 +196,10 @@ def _preload_cluster_tile_coo_kernel(
     selective: bool,
 ) -> None:
     """Construct and load a topology-only cluster-tile COO specialization."""
-    kernels: list[wp.Kernel] = []
-    if coo_segmented:
-        kernels.append(_get_reset_cluster_tile_counts_kernel(selective=selective))
-    getter = (
-        get_batch_query_cluster_tile_coo_kernel
-        if batched
-        else get_query_cluster_tile_coo_kernel
+    _preload_cluster_tile_coo_kernel_cached(
+        _current_warp_device_alias(),
+        batched=batched,
+        tile_segmented=tile_segmented,
+        coo_segmented=coo_segmented,
+        selective=selective,
     )
-    kernels.append(
-        getter(
-            tile_segmented=tile_segmented,
-            coo_segmented=coo_segmented,
-            selective=selective,
-        )
-    )
-    device = _current_warp_device()
-    empty_sentinel(1, wp.int32, device)
-    empty_sentinel(1, wp.bool, device)
-    empty_sentinel(1, wp.vec3f, device)
-    empty_sentinel(1, wp.float32, device)
-    empty_sentinel(2, wp.float32, device)
-    _load_kernel_modules(device, *kernels)
