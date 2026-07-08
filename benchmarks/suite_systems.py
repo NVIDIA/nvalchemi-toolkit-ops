@@ -170,14 +170,21 @@ DEFAULT_NH3_DIR = SCRIPT_DIR / "nh3"
 
 
 def configured_nh3_artifacts(config: dict) -> dict[str, Path]:
-    """Return the canonical NH3 PDB inputs used by an enabled suite config.
+    """Return the canonical NH3 PDB inputs configured for a suite run.
 
-    Fingerprint only the PDBs consumed by the benchmark. Packmol ``.inp`` and
-    log files can contain scratch-specific paths and are generation records,
-    not runtime inputs.
+    Fingerprint only PDB files from the canonical run manifest. Packmol
+    ``.inp`` and log files can contain scratch-specific paths and are generation
+    records, not runtime inputs. Reportable CLI system filters only toggle
+    ``enabled`` while sharding one logical run, so they must not change its
+    canonical input manifest. Standalone configs still omit disabled systems.
     """
     nh3_config = config.get("systems", {}).get("nh3")
-    if not isinstance(nh3_config, dict) or not nh3_config.get("enabled", True):
+    canonical_manifest = config.get("runtime", {}).get(
+        "canonical_input_manifest", False
+    )
+    if not isinstance(nh3_config, dict) or (
+        not nh3_config.get("enabled", True) and not canonical_manifest
+    ):
         return {}
     nh3_dir = resolve_nh3_dir(nh3_config) or DEFAULT_NH3_DIR
     atom_counts = {

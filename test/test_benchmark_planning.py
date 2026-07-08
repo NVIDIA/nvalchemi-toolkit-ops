@@ -3310,6 +3310,39 @@ class TestBenchmarkAtomPlanning:
         }
         assert all(path.suffix == ".pdb" for path in artifacts.values())
 
+    def test_nh3_provenance_survives_cli_system_filter(self, tmp_path):
+        """Backend shards retain the logical run's configured input manifest."""
+        config = {
+            "runtime": {"canonical_input_manifest": True},
+            "systems": {
+                "nh3": {
+                    "enabled": False,
+                    "pdb_dir": str(tmp_path),
+                    "atom_counts": [128],
+                    "constant_atoms_sizes": [256],
+                }
+            }
+        }
+
+        assert configured_nh3_artifacts(config) == {
+            "nh3_pdb_128": tmp_path / "ammonia_pbc_128.pdb",
+            "nh3_pdb_256": tmp_path / "ammonia_pbc_256.pdb",
+        }
+
+    def test_nh3_provenance_omits_disabled_standalone_system(self, tmp_path):
+        """Standalone configs do not claim inputs for disabled systems."""
+        config = {
+            "systems": {
+                "nh3": {
+                    "enabled": False,
+                    "pdb_dir": str(tmp_path),
+                    "atom_counts": [128],
+                }
+            }
+        }
+
+        assert configured_nh3_artifacts(config) == {}
+
     def test_planned_atom_counts_for_cscl_supercell(self):
         """CsCl planning uses the rounded valid supercell atom count."""
         atoms_per_system, batch_size, total_atoms = planned_atom_counts(

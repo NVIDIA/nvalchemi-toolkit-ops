@@ -514,6 +514,7 @@ def load_reportable_config(config_path):
     """Load a suite config with its NH3 input directory redirected to scratch."""
     config = load_yaml_config(config_path)
     if Path(config_path).resolve() in config_paths:
+        config.setdefault("runtime", {})["canonical_input_manifest"] = True
         nh3_config = config.get("systems", {}).get("nh3")
         if isinstance(nh3_config, dict):
             nh3_config["pdb_dir"] = str(nh3_dir)
