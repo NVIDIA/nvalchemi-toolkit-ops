@@ -27,10 +27,12 @@ Two query kernels share this build:
   (full-fill) path accumulates counts via ``wp.atomic_add`` on
   ``num_neighbors``, so the order of neighbors within a given row is
   unspecified.  Best at large N.
-* **pair-centric** - one CUDA block per ``(source_cell, offset)``;
-  offset zero handles same-cell pairs.  Per-emit ``atomic_add`` on
-  ``num_neighbors``.  Best at small/medium N or large cutoff (more
-  cell-level parallelism than atom-level).
+* **pair-centric** - one CUDA block per ``(source_cell, offset)`` on the
+  fast path; when the uncoarsened launch would exceed the Warp one-dimensional
+  limit, the launcher transparently coarsens multiple logical blocks per CUDA
+  block under the same ``strategy="pair_centric"`` name.  Per-emit
+  ``atomic_add`` on ``num_neighbors``.  Best at small/medium N or large cutoff
+  (more cell-level parallelism than atom-level).
 
 Auto-select uses sync-free quantities (``natom``, ``cutoff``).  See
 :func:`select_cell_list_strategy` for the 3-clause rule.  Pin a strategy
@@ -43,16 +45,13 @@ import torch
 import warp as wp
 
 from nvalchemiops.neighbors.cell_list import (
-    PAIR_CENTRIC_MAX_LINEAR_LAUNCH,
-    compute_batch_pair_centric_n_outer,
-    get_build_cell_list_kernel,
-    is_pair_centric_launch_safe,
-    is_pair_centric_parallelism_sufficient,
-    pair_centric_launch_size,
-    select_cell_list_strategy,
+    build_cell_list as wp_build_cell_list,
 )
 from nvalchemiops.neighbors.cell_list import (
-    build_cell_list as wp_build_cell_list,
+    compute_batch_pair_centric_n_outer,
+    get_build_cell_list_kernel,
+    is_pair_centric_parallelism_sufficient,
+    select_cell_list_strategy,
 )
 from nvalchemiops.neighbors.cell_list import (
     query_cell_list as wp_query_cell_list,
@@ -93,31 +92,6 @@ __all__ = [
     "estimate_cell_list_sizes",
     "query_cell_list",
 ]
-
-
-def _pair_centric_unsafe_message(
-    total_cells: int,
-    n_outer: int,
-    block_dim: int = 64,
-) -> str:
-    """Return the unsafe pair-centric launch message."""
-    launch_size = pair_centric_launch_size(total_cells, n_outer, block_dim)
-    return (
-        "strategy='pair_centric' would require "
-        f"{launch_size} logical threads "
-        f"({int(total_cells)} cells * {int(n_outer) + 1} offsets * "
-        f"{int(block_dim)} threads), exceeding the safe linear launch limit "
-        f"of {PAIR_CENTRIC_MAX_LINEAR_LAUNCH}."
-    )
-
-
-def _raise_unsafe_pair_centric_launch(
-    total_cells: int,
-    n_outer: int,
-    block_dim: int = 64,
-) -> None:
-    """Raise when an explicit pair-centric request is unsafe."""
-    raise ValueError(_pair_centric_unsafe_message(total_cells, n_outer, block_dim))
 
 
 def _resolve_atom_centric_path(atom_centric_path: str) -> str:
@@ -167,10 +141,6 @@ def allocate_query_sort_scratch(
     sorted_shifts : torch.Tensor, shape (total_atoms, 3), dtype=int32
         Per-cell-contiguous gathered periodic shifts.  Written by
         ``gather_fused`` each call.
-
-    See Also
-    --------
-    :func:`nvalchemiops.torch.neighbors.cell_list.query_cell_list` : Accepts the returned tensors via ``sorted_positions`` and ``sorted_shifts``.
     """
     sorted_positions = torch.empty(
         (int(total_atoms), 3),
@@ -674,13 +644,7 @@ def _query_cell_list_op(
         Rz = int(neighbor_search_radius[2].item())
         n_outer = compute_batch_pair_centric_n_outer((Rx, Ry, Rz), bool(half_fill))
         total_cells = int(atoms_per_cell_count.shape[0])
-        if not is_pair_centric_launch_safe(total_cells, n_outer):
-            if strategy == "pair_centric":
-                _raise_unsafe_pair_centric_launch(total_cells, n_outer)
-            chosen = "atom_centric"
-            use_pair = False
-            n_outer = None
-        elif strategy == "auto" and not is_pair_centric_parallelism_sufficient(
+        if strategy == "auto" and not is_pair_centric_parallelism_sufficient(
             int(total_atoms), total_cells, n_outer
         ):
             chosen = "atom_centric"
@@ -847,7 +811,9 @@ def query_cell_list(
         Selects which of the two cell-list query kernels to launch.  See
         :func:`select_cell_list_strategy` for the "auto" rule.  Both strategies
         return identical pair sets for either ``half_fill`` value;
-        per-row ordering inside ``neighbor_matrix`` differs.
+        per-row ordering inside ``neighbor_matrix`` differs.  Pair-centric
+        oversized grids are handled by an internal coarsened kernel variant;
+        there is no separate public strategy name for coarsening.
     atom_centric_path : {"auto", "direct", "sorted"}, default "auto"
         Selects the atom-centric implementation path when
         ``strategy="atom_centric"``.  ``"auto"`` resolves to ``"direct"``.
@@ -1599,12 +1565,7 @@ def _query_cell_list_optional(
         Rz = int(neighbor_search_radius[2].item())
         n_outer = compute_batch_pair_centric_n_outer((Rx, Ry, Rz), bool(half_fill))
         total_cells = int(atoms_per_cell_count.shape[0])
-        if not is_pair_centric_launch_safe(total_cells, n_outer):
-            if strategy == "pair_centric":
-                _raise_unsafe_pair_centric_launch(total_cells, n_outer)
-            chosen = "atom_centric"
-            n_outer = None
-        elif strategy == "auto" and not is_pair_centric_parallelism_sufficient(
+        if strategy == "auto" and not is_pair_centric_parallelism_sufficient(
             int(total_atoms), total_cells, n_outer
         ):
             chosen = "atom_centric"

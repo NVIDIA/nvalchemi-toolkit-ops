@@ -15,7 +15,7 @@
 #     python benchmark_electrostatics.py --config benchmark_config_multipole.yaml --l-max 0
 #     python benchmark_electrostatics.py --config benchmark_config_multipole.yaml --l-max 1
 #
-# The backend defaults to torch (multipole has no JAX / torchpme reference).
+# The backend defaults to torch (multipole has no alternate reference backend).
 # System sizes are smaller than the monopole config because the l=2 path
 # (quadrupole spread/gather + Hessian channels) is substantially heavier.
 

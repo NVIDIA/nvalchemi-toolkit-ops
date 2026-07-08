@@ -41,6 +41,11 @@ from nvalchemiops.jax.neighbors._autograd import (
     _NeighborForwardOutput,
     _route_pair_outputs,
 )
+from nvalchemiops.jax.neighbors._cluster_tile_preload import (
+    _preload_cluster_tile_build_kernel,
+    _preload_cluster_tile_coo_kernel,
+    _preload_cluster_tile_query_kernel,
+)
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     coo_pack_pair_geometry,
     get_neighbor_list_from_neighbor_matrix,
@@ -972,6 +977,11 @@ def build_cluster_tile_list(
         tile_col_group = jnp.zeros(max_tiles, dtype=jnp.int32)
 
     if rebuild_flags is None:
+        _preload_cluster_tile_build_kernel(
+            batched=False,
+            segmented=False,
+            selective=False,
+        )
         (
             group_ctr_x,
             group_ctr_y,
@@ -1000,6 +1010,11 @@ def build_cluster_tile_list(
             float(cutoff),
         )
     else:
+        _preload_cluster_tile_build_kernel(
+            batched=False,
+            segmented=False,
+            selective=True,
+        )
         rf = rebuild_flags.flatten()[:1].astype(jnp.bool_)
         (
             group_ctr_x,
@@ -1194,6 +1209,15 @@ def query_cluster_tile(
             "features in this pass and cannot be combined with "
             "return_distances or return_vectors.",
         )
+    _preload_cluster_tile_query_kernel(
+        batched=False,
+        tile_segmented=False,
+        selective=selective,
+        dual_cutoff=dual_cutoff,
+        return_vectors=has_pair_outputs,
+        return_distances=has_pair_outputs,
+        pair_fn=pair_fn,
+    )
     if fill_value is None:
         fill_value = natom
     cell_n = _normalize_cell(cell, jnp.float32)
@@ -1532,6 +1556,12 @@ def query_cluster_tile_coo(
         raise ValueError("Pass both 'pair_offsets' and 'pair_counts', or neither.")
     if rebuild_flags is not None and not segmented:
         raise ValueError("rebuild_flags requires pair_offsets and pair_counts")
+    _preload_cluster_tile_coo_kernel(
+        batched=False,
+        tile_segmented=False,
+        coo_segmented=segmented,
+        selective=segmented,
+    )
 
     cell_n = _normalize_cell(cell, jnp.float32)
     inv_cell_n = jnp.linalg.inv(cell_n[0])[jnp.newaxis, :, :]

@@ -15,25 +15,29 @@
 
 """Public cell-list launchers, strategy helpers, and kernel getters."""
 
-from nvalchemiops.neighbors.cell_list.launchers import (
+from nvalchemiops.neighbors.cell_list.dispatch import (
     PAIR_CENTRIC_MAX_LINEAR_LAUNCH,
-    batch_build_cell_list,
-    batch_query_cell_list,
-    batch_query_cell_list_pair_centric_sorted,
-    build_cell_list,
     compute_batch_pair_centric_n_outer,
+    is_pair_centric_launch_safe,
+    is_pair_centric_parallelism_sufficient,
+    pair_centric_launch_size,
+    select_batch_cell_list_strategy,
+    select_cell_list_strategy,
+)
+from nvalchemiops.neighbors.cell_list.kernels import (
     get_build_cell_list_kernel,
     get_cell_list_cells_per_system_kernel,
     get_cell_list_gather_kernel,
     get_query_cell_list_kernel,
-    is_pair_centric_launch_safe,
-    is_pair_centric_parallelism_sufficient,
-    pair_centric_launch_size,
+)
+from nvalchemiops.neighbors.cell_list.launchers import (
+    batch_build_cell_list,
+    batch_query_cell_list,
+    batch_query_cell_list_pair_centric_sorted,
+    build_cell_list,
     query_cell_list,
     query_cell_list_atom_centric_sorted,
     query_cell_list_pair_centric_sorted,
-    select_batch_cell_list_strategy,
-    select_cell_list_strategy,
 )
 
 __all__ = [

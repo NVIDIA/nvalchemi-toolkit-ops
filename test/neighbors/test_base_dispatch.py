@@ -93,3 +93,22 @@ def test_is_pair_centric_parallelism_sufficient_boundary():
     assert not is_pair_centric_parallelism_sufficient(
         total_atoms=1_000_000, total_cells=1, n_outer=0
     )
+
+
+def test_pair_centric_coarsening_restores_launch_feasibility():
+    """Coarsened launch size fits the limit for canonical overflow shapes."""
+    from nvalchemiops.neighbors.cell_list import (
+        PAIR_CENTRIC_MAX_LINEAR_LAUNCH,
+        compute_batch_pair_centric_n_outer,
+        pair_centric_launch_size,
+    )
+    from nvalchemiops.neighbors.cell_list.dispatch import (
+        _pair_centric_coarsened_launch_size,
+    )
+
+    n_outer = compute_batch_pair_centric_n_outer((23, 25, 23), half_fill=False)
+    assert pair_centric_launch_size(3840, n_outer, 64) > PAIR_CENTRIC_MAX_LINEAR_LAUNCH
+    assert (
+        _pair_centric_coarsened_launch_size(3840, n_outer, 64)
+        <= PAIR_CENTRIC_MAX_LINEAR_LAUNCH
+    )

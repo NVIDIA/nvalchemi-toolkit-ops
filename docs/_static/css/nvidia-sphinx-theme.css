@@ -24,3 +24,16 @@ html{
 .sd-card-text{
     color: var(--pst-color-text-base);
 }
+
+/* Let PyData's off-canvas sidebars use their responsive percentage widths. */
+@media (max-width: 1199.98px) {
+    .bd-sidebar-secondary {
+        min-width: 0;
+    }
+}
+
+@media (max-width: 959.98px) {
+    .bd-sidebar-primary {
+        min-width: 0;
+    }
+}

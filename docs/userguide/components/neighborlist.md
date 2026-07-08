@@ -511,7 +511,11 @@ dual-cutoff variant — use `naive_dual_cutoff` for two-cutoff queries.
 
 The query has two CUDA kernel strategies, `atom_centric` (default) and `pair_centric`,
 chosen with `strategy="auto"` or pinned explicitly; both produce identical pair sets
-(only per-row ordering differs) and are available on PyTorch and JAX. On JAX,
+(only per-row ordering differs) and are available on PyTorch and JAX. On the fast
+path, `pair_centric` schedules one CUDA block per `(source_cell, neighbor offset)`;
+when that uncoarsened launch would exceed the Warp one-dimensional limit, the
+launcher transparently coarsens multiple logical blocks per CUDA block under the
+same strategy name (no new public method or `strategy` value). On JAX,
 `pair_centric` is bound through `jax_callable`, sizes its launch from the host, and
 requires `graph_mode="none"` (it raises under `jax.jit` with a traced radius; use
 `atom_centric` there).

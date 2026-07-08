@@ -14,1436 +14,982 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""DFT-D3 Dispersion Benchmark.
+
+CRITICAL: D3 operates in atomic units (Bohr). All positions, cells, and
+cutoffs are converted from Angstroms to Bohr before calling the D3 API.
+Neighbor-list setup is built outside the timed D3 region.
+
+Usage (run from the repository root):
+    python -m benchmarks.interactions.dispersion.benchmark_dftd3 \
+        --config benchmarks/interactions/dispersion/benchmark_config.yaml
+    python -m benchmarks.interactions.dispersion.benchmark_dftd3 \
+        --config benchmarks/interactions/dispersion/benchmark_config.yaml \
+        --output-dir docs/benchmarks/benchmark_results
+
+    # JAX backend (the runner sets JAX env defaults before importing JAX)
+    XLA_PYTHON_CLIENT_MEM_FRACTION=0.95 \
+        python -m benchmarks.interactions.dispersion.benchmark_dftd3 \
+        --config benchmarks/interactions/dispersion/benchmark_config.yaml --backend jax
+
+Backends
+--------
+``--backend torch`` (default) uses the warp-based torch kernels and CUDA
+events for timing. ``--backend jax`` uses the JAX wrappers in
+``nvalchemiops.jax.interactions.dispersion`` and
+``nvalchemiops.jax.neighbors``. D3 reference parameters are loaded via
+``torch.load`` and converted to ``jax.numpy.asarray`` for the JAX backend.
+
+Environment variables for ``--backend jax``:
+
+- ``XLA_PYTHON_CLIENT_MEM_FRACTION=0.95`` — set by the runner before
+  importing JAX unless the user already configured JAX memory behavior. JAX's
+  normal preallocator avoids the fragmentation seen with on-demand allocation
+  in large benchmark sweeps.
+- ``XLA_PYTHON_CLIENT_PREALLOCATE=false`` — optional user override. If unset,
+  the runner prints a one-line note before JAX import and keeps the default
+  preallocator capped by ``XLA_PYTHON_CLIENT_MEM_FRACTION``.
 """
-DFT-D3 Dispersion Scaling Benchmark
-====================================
 
-CLI tool to benchmark DFT-D3 dispersion corrections and generate CSV files
-for documentation. Results are saved with GPU-specific naming:
-`dftd3_benchmark_<system_type>_<gpu_sku>.csv`
-
-Usage:
-    python benchmark_dftd3.py --config benchmark_config.yaml --output-dir ../../docs/benchmark_results
-
-The config file specifies system configurations and DFT-D3 parameters.
-"""
+from __future__ import annotations
 
 import argparse
-import csv
 import os
-import sys
 from pathlib import Path
 
-import numpy as np
-import yaml
-from pymatgen.core import Lattice, Structure
+import torch
 
-# Add parent directory to path for imports
-sys.path.append(str(Path(__file__).parent.parent))
+__all__ = [
+    "benchmark_d3",
+    "main",
+    "merge_cli_overrides",
+    "parse_args",
+    "run_from_config",
+]
 
-from benchmarks.utils import BackendType, BenchmarkTimer
-
-# Guarded torch imports
-try:
-    import torch
-
-    from nvalchemiops.torch.interactions.dispersion import (
-        D3Parameters as TorchD3Parameters,
-    )
-    from nvalchemiops.torch.interactions.dispersion import (
-        dftd3 as torch_dftd3,
-    )
-    from nvalchemiops.torch.neighbors import neighbor_list as torch_neighbor_list
-
-    TORCH_AVAILABLE = True
-except ImportError:
-    TORCH_AVAILABLE = False
-    torch = None  # type: ignore
-    TorchD3Parameters = None  # type: ignore
-    torch_dftd3 = None  # type: ignore
-    torch_neighbor_list = None  # type: ignore
-
-# JAX globals — populated lazily by _import_jax() so that env vars
-# (XLA allocator mode) can be configured before the first import.
-JAX_AVAILABLE = False
-jax = None  # type: ignore
-jnp = None  # type: ignore
-JaxD3Parameters = None  # type: ignore
-jax_dftd3 = None  # type: ignore
-jax_neighbor_list = None  # type: ignore
-
-
-def _setup_jax_allocator(mode: str) -> None:
-    """Configure XLA memory allocator before JAX is imported.
-
-    Parameters
-    ----------
-    mode : str
-        ``"throughput"`` uses XLA's default preallocator (fast).
-        ``"memory"`` uses the platform allocator (accurate memory accounting).
-    """
-    if mode == "memory":
-        os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-        os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+from benchmarks.config import (
+    add_common_cli_args,
+    enabled_method_names,
+    load_yaml_config,
+    merge_common_cli_overrides,
+)
+from benchmarks.constants import (
+    ANGSTROM_TO_BOHR,
+    DEFAULT_NL_SAFETY_FACTOR,
+)
+from benchmarks.suite_systems import (
+    compute_atomic_density,
+    configs_for_mode,
+    configured_nh3_artifacts,
+    create_system,
+    filter_configs_by_total_atoms,
+    planned_atom_counts,
+    resolve_nh3_dir,
+)
+from benchmarks.suite_utils import (
+    build_failure_result,
+    build_result,
+    build_skipped_result,
+    clean_gpu,
+    clean_jax,
+    configure_input_provenance,
+    create_run_directory,
+    cuda_timed_runs,
+    current_alloc_gb,
+    ensure_jax_available,
+    failure_error_type,
+    format_num,
+    lazy_import_jax,
+    make_csv_name,
+    make_row_meta,
+    measure_memory_jax,
+    measure_memory_torch,
+    save_results,
+)
+from nvalchemiops.neighbors import estimate_max_neighbors
+from nvalchemiops.torch.interactions.dispersion import dftd3
+from nvalchemiops.torch.neighbors import batch_cell_list, cell_list
 
 
-def _import_jax() -> None:
-    """Import JAX and nvalchemiops JAX bindings, setting module globals."""
-    global JAX_AVAILABLE, jax, jnp, JaxD3Parameters, jax_dftd3, jax_neighbor_list
+def _torch_d3_params_to_jax(torch_params, jnp):
+    """Convert a dict of torch tensors to jax arrays (for D3Parameters)."""
+    out = {}
+    for k, v in torch_params.items():
+        out[k] = jnp.asarray(v.detach().cpu().numpy())
+    return out
+
+
+def _torch_d3_params_to_device(torch_params, device: str):
+    """Move torch D3 parameter tensors to the selected backend device."""
+    return {
+        key: value.to(device) if torch.is_tensor(value) else value
+        for key, value in torch_params.items()
+    }
+
+
+def _ensure_d3_parameter_file(params_path: Path) -> None:
+    """Create the configured D3 parameter cache file when it is absent."""
+    if params_path.exists():
+        return
+    print(f"D3 parameters not found at {params_path}; generating from reference data")
     try:
-        import jax as _jax
-        import jax.numpy as _jnp
+        from examples.dispersion.utils import extract_dftd3_parameters
 
-        from nvalchemiops.jax.interactions.dispersion import (
-            D3Parameters as _JaxD3Parameters,
-        )
-        from nvalchemiops.jax.interactions.dispersion import (
-            dftd3 as _jax_dftd3,
-        )
-        from nvalchemiops.jax.neighbors import neighbor_list as _jax_neighbor_list
-
-        jax = _jax
-        jnp = _jnp
-        JaxD3Parameters = _JaxD3Parameters
-        jax_dftd3 = _jax_dftd3
-        jax_neighbor_list = _jax_neighbor_list
-        JAX_AVAILABLE = True
-    except ImportError:
-        pass
+        params = extract_dftd3_parameters()
+        params_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(params, params_path)
+    except Exception as exc:
+        raise FileNotFoundError(
+            f"D3 parameters not found at {params_path}, and automatic "
+            f"generation failed: {exc}"
+        ) from exc
 
 
-# Optional torch-dftd imports (only needed for torch_dftd backend)
-try:
-    import torch_dftd
-    from torch_dftd.functions.dftd3 import edisp
-    from torch_dftd.functions.distance import calc_distances
-
-    TORCH_DFTD_AVAILABLE = True
-except ImportError:
-    TORCH_DFTD_AVAILABLE = False
-    torch_dftd = None  # type: ignore
-    edisp = None  # type: ignore
-    calc_distances = None  # type: ignore
-
-# Constants
-ANGSTROM_TO_BOHR = 1.88973
+def _resolve_d3_params_path(params_path: str | Path) -> Path:
+    """Resolve the D3 parameter cache path with XDG cache override support."""
+    raw_path = str(params_path)
+    cache_prefix = "~/.cache/"
+    if raw_path.startswith(cache_prefix) and (
+        xdg_cache_home := os.environ.get("XDG_CACHE_HOME")
+    ):
+        return Path(xdg_cache_home).expanduser() / raw_path[len(cache_prefix) :]
+    return Path(raw_path).expanduser()
 
 
-def get_gpu_sku(backend: BackendType) -> str:
-    """Get GPU SKU name for filename generation.
-
-    Uses NVML for reliable, backend-agnostic GPU name detection.
-    Falls back to "cpu" if no GPU is available.
-
-    Parameters
-    ----------
-    backend : BackendType
-        Backend in use (used to check GPU availability).
-
-    Returns
-    -------
-    str
-        Cleaned GPU SKU string suitable for filenames (e.g., "h100-80gb-hbm3").
-    """
-    # First check if we even have a GPU based on the backend
-    has_gpu = False
-    match backend:
-        case "torch":
-            has_gpu = torch is not None and torch.cuda.is_available()
-        case "jax":
-            try:
-                has_gpu = jax is not None and any(
-                    d.platform == "gpu" for d in jax.local_devices()
-                )
-            except Exception:
-                has_gpu = False
-        case "warp":
-            has_gpu = False  # Will be implemented later
-
-    if not has_gpu:
-        return "cpu"
-
-    # Use NVML for reliable GPU name detection
-    from benchmarks.utils import _nvml_get_gpu_sku
-
-    return _nvml_get_gpu_sku()
+# =============================================================================
+# Config Loading
+# =============================================================================
 
 
-def load_config(config_path: Path) -> dict:
-    """Load benchmark configuration from YAML file."""
-    with open(config_path) as f:
-        config = yaml.safe_load(f)
+def merge_cli_overrides(config: dict, args: argparse.Namespace) -> dict:
+    """Apply CLI overrides on top of YAML config. Adds D3-specific
+    ``--cutoffs`` on top of the shared flags."""
+    config = merge_common_cli_overrides(config, args)
+    if args.cutoffs is not None:
+        config["parameters"]["cutoffs"] = args.cutoffs
     return config
 
 
-def create_cscl_supercell(size: int) -> Structure:
-    """Create CsCl supercell of given linear size (2*size³ atoms)."""
-    # Create cubic lattice
-    lattice = Lattice.cubic(4.14)  # ~4.14 Å cubic cell
-
-    # Create base unit cell with Cs and Cl atoms
-    species = ["Cs", "Cl"]
-    coords = [[0, 0, 0], [0.5, 0.5, 0.5]]
-    base_unitcell = Structure(lattice, species, coords, coords_are_cartesian=False)
-
-    # Create supercell
-    supercell_matrix = [[size, 0, 0], [0, size, 0], [0, 0, size]]
-    base_unitcell.make_supercell(supercell_matrix)
-
-    return base_unitcell
+# =============================================================================
+# Core Benchmark
+# =============================================================================
 
 
-def _create_d3_parameters_numpy(dtype_str: str = "float32") -> dict:
-    """Create simplified D3 parameters for Cs and Cl as numpy arrays.
-
-    Parameters
-    ----------
-    dtype_str : str, default="float32"
-        Dtype string (e.g., "float32", "float64").
-
-    Returns
-    -------
-    dict
-        Dictionary with keys "rcov", "r4r2", "c6ab", "cn_ref" as numpy arrays.
-    """
-    dtype = getattr(np, dtype_str)
-
-    rcov = np.zeros(56, dtype=dtype)
-    rcov[17] = 1.88  # Cl
-    rcov[55] = 4.91  # Cs
-
-    r4r2 = np.zeros(56, dtype=dtype)
-    r4r2[17] = 8.0  # Cl
-    r4r2[55] = 18.0  # Cs
-
-    c6ab = np.zeros((56, 56, 5, 5), dtype=dtype)
-    c6ab[17, 17, :, :] = 50.0  # Cl-Cl
-    c6ab[17, 55, :, :] = 200.0  # Cl-Cs
-    c6ab[55, 17, :, :] = 200.0  # Cs-Cl
-    c6ab[55, 55, :, :] = 800.0  # Cs-Cs
-
-    cn_ref = np.zeros((56, 56, 5, 5), dtype=dtype)
-    for i in range(5):
-        for j in range(5):
-            cn_ref[:, :, i, j] = i * 0.5
-
-    return {"rcov": rcov, "r4r2": r4r2, "c6ab": c6ab, "cn_ref": cn_ref}
-
-
-def create_d3_parameters(
-    backend: BackendType,
-    device: str = "cuda",
-    dtype_str: str = "float32",
-):
-    """Create simplified D3 parameters for Cs and Cl using the specified backend.
-
-    Core data is built once as numpy arrays, then converted to the target backend.
-    """
-    np_params = _create_d3_parameters_numpy(dtype_str)
-
-    match backend:
-        case "torch":
-            dtype = getattr(torch, dtype_str)
-            device_obj = torch.device(device)
-            return TorchD3Parameters(
-                rcov=torch.tensor(np_params["rcov"], dtype=dtype, device=device_obj),
-                r4r2=torch.tensor(np_params["r4r2"], dtype=dtype, device=device_obj),
-                c6ab=torch.tensor(np_params["c6ab"], dtype=dtype, device=device_obj),
-                cn_ref=torch.tensor(
-                    np_params["cn_ref"], dtype=dtype, device=device_obj
-                ),
-            )
-        case "jax":
-            dtype = getattr(jnp, dtype_str)
-            return JaxD3Parameters(
-                rcov=jnp.array(np_params["rcov"], dtype=dtype),
-                r4r2=jnp.array(np_params["r4r2"], dtype=dtype),
-                c6ab=jnp.array(np_params["c6ab"], dtype=dtype),
-                cn_ref=jnp.array(np_params["cn_ref"], dtype=dtype),
-            )
-        case "warp":
-            raise NotImplementedError("warp backend D3 parameters not yet supported")
-
-
-def prepare_system_numpy(
-    supercell_size: int,
-    batch_size: int = 1,
-) -> dict:
-    """
-    Create supercell(s) and prepare numpy arrays (no framework dependency).
-
-    Parameters
-    ----------
-    supercell_size : int
-        Linear size of the supercell (creates 2*size³ atoms per system).
-    batch_size : int, default=1
-        Number of systems to batch together.
-
-    Returns
-    -------
-    dict
-        Dictionary containing numpy arrays:
-        - positions_bohr: Positions in Bohr (N_total, 3) float64
-        - numbers: Atomic numbers (N_total,) int32
-        - coords_angstrom: Positions in Angstroms (N_total, 3) float64
-        - cell: Cell vectors. Shape (batch_size, 3, 3) if batched, else (3, 3) float64
-        - pbc: PBC flags. Shape (batch_size, 3) if batched, else (3,) bool
-        - batch_idx: Batch indices (N_total,) int32 or None if single system
-        - batch_ptr: Batch pointer (batch_size+1,) int32 or None if single system
-        - total_atoms: Total number of atoms
-    """
-    is_batched = batch_size > 1
-
-    if is_batched:
-        # Create multiple systems
-        all_structures = [
-            create_cscl_supercell(supercell_size) for _ in range(batch_size)
-        ]
-
-        # Concatenate all systems
-        all_positions = []
-        all_numbers = []
-        all_coords = []
-        all_cells = []
-        all_pbc = []
-        ptr = [0]
-
-        for structure in all_structures:
-            all_positions.append(structure.cart_coords * ANGSTROM_TO_BOHR)
-            all_numbers.append(
-                np.array([site.specie.Z for site in structure], dtype=np.int32)
-            )
-            all_coords.append(structure.cart_coords)
-            all_cells.append(structure.lattice.matrix)
-            all_pbc.append(np.array([True, True, True]))
-            ptr.append(ptr[-1] + len(structure))
-
-        positions_bohr = np.concatenate(all_positions, axis=0)
-        numbers = np.concatenate(all_numbers, axis=0)
-        coords_angstrom = np.concatenate(all_coords, axis=0)
-        cell = np.stack(all_cells, axis=0)
-        pbc = np.stack(all_pbc, axis=0)
-        batch_ptr = np.array(ptr, dtype=np.int32)
-
-        # Create batch_idx
-        total_atoms = coords_angstrom.shape[0]
-        batch_idx = np.zeros(total_atoms, dtype=np.int32)
-        for i in range(batch_size):
-            batch_idx[batch_ptr[i] : batch_ptr[i + 1]] = i
-    else:
-        # Single system
-        structure = create_cscl_supercell(supercell_size)
-        total_atoms = len(structure)
-
-        positions_bohr = structure.cart_coords * ANGSTROM_TO_BOHR
-        numbers = np.array([site.specie.Z for site in structure], dtype=np.int32)
-        coords_angstrom = structure.cart_coords.copy()
-        cell = structure.lattice.matrix.copy()
-        pbc = np.array([True, True, True])
-        batch_idx = None
-        batch_ptr = None
-
-    return {
-        "positions_bohr": positions_bohr,
-        "numbers": numbers,
-        "coords_angstrom": coords_angstrom,
-        "cell": cell,
-        "pbc": pbc,
-        "batch_idx": batch_idx,
-        "batch_ptr": batch_ptr,
-        "total_atoms": total_atoms,
-    }
-
-
-def convert_to_backend(
-    np_data: dict,
-    backend: BackendType,
-    device: str = "cuda",
-    dtype_str: str = "float32",
-) -> dict:
-    """
-    Convert numpy arrays to backend-specific arrays.
-
-    Core data structure is defined once as numpy arrays in ``np_data``
-    (from :func:`prepare_system_numpy`), then converted to the target
-    backend's array type.
-
-    Parameters
-    ----------
-    np_data : dict
-        Dictionary from prepare_system_numpy().
-    backend : BackendType
-        Target backend ("torch", "jax", "warp").
-    device : str
-        Device string (used by torch backend).
-    dtype_str : str
-        Dtype string like "float32".
-
-    Returns
-    -------
-    dict
-        Dictionary with backend-specific arrays, same keys as input
-        plus the converted arrays.
-    """
-    # Define conversion specs once: (source_key, target_key)
-    float_keys = [
-        ("positions_bohr", "positions"),
-        ("coords_angstrom", "coord"),
-        ("cell", "cell"),
-    ]
-    int_keys = [
-        ("numbers", "numbers"),
-    ]
-    bool_keys = [
-        ("pbc", "pbc"),
-    ]
-    optional_int_keys = [
-        ("batch_idx", "batch_idx"),
-        ("batch_ptr", "batch_ptr"),
-    ]
-
-    result = {"total_atoms": np_data["total_atoms"]}
-
-    match backend:
-        case "torch":
-            dtype = getattr(torch, dtype_str)
-            for src, dst in float_keys:
-                result[dst] = torch.tensor(np_data[src], dtype=dtype, device=device)
-            for src, dst in int_keys:
-                result[dst] = torch.tensor(
-                    np_data[src], dtype=torch.int32, device=device
-                )
-            for src, dst in bool_keys:
-                result[dst] = torch.tensor(
-                    np_data[src], dtype=torch.bool, device=device
-                )
-            for src, dst in optional_int_keys:
-                result[dst] = (
-                    torch.tensor(np_data[src], dtype=torch.int32, device=device)
-                    if np_data[src] is not None
-                    else None
-                )
-        case "jax":
-            dtype = getattr(jnp, dtype_str)
-            for src, dst in float_keys:
-                arr = jnp.array(np_data[src], dtype=dtype)
-                # JAX dftd3() derives num_systems from cell.shape[0],
-                # so cell must always be (batch, 3, 3) even for single systems.
-                if dst == "cell" and arr.ndim == 2:
-                    arr = arr[jnp.newaxis, :, :]
-                result[dst] = arr
-            for src, dst in int_keys:
-                result[dst] = jnp.array(np_data[src], dtype=jnp.int32)
-            for src, dst in bool_keys:
-                arr = jnp.array(np_data[src], dtype=jnp.bool_)
-                # Keep pbc shape consistent with cell: (batch, 3).
-                if dst == "pbc" and arr.ndim == 1:
-                    arr = arr[jnp.newaxis, :]
-                result[dst] = arr
-            for src, dst in optional_int_keys:
-                result[dst] = (
-                    jnp.array(np_data[src], dtype=jnp.int32)
-                    if np_data[src] is not None
-                    else None
-                )
-        case "warp":
-            raise NotImplementedError("warp backend array conversion not yet supported")
-
-    return result
-
-
-def compute_neighbor_list(
-    backend_data: dict,
-    backend: BackendType,
+def benchmark_d3(
+    data: dict,
     cutoff: float,
-    max_neighbors: int,
-    return_neighbor_list: bool = False,
-) -> tuple:
-    """
-    Compute neighbor list using the appropriate backend.
+    d3_params,
+    d3_func_params: dict,
+    num_runs: int,
+    warmup_runs: int = 3,
+    backend: str = "torch",
+) -> dict:
+    """Benchmark D3 for a single configuration.
+
+    Neighbor-list setup is performed outside the timed and memory-measured
+    D3 closure so the canonical CSV timing measures DFT-D3 only.
 
     Parameters
     ----------
-    backend_data : dict
-        Dictionary from convert_to_backend().
-    backend : BackendType
-        Target backend ("torch", "jax", "warp").
-    cutoff : float
-        Cutoff distance in Angstroms for neighbor list.
-    max_neighbors : int
-        Maximum number of neighbors per atom.
-    return_neighbor_list : bool, default=False
-        If True, return neighbor list in COO format (2, num_pairs) instead of
-        neighbor matrix (N_total, max_neighbors).
-
-    Returns
-    -------
-    tuple
-        (neighbor_data, num_neighbor_data, shifts_or_none)
-        Where neighbor_data format depends on return_neighbor_list flag.
+    backend : str, default='torch'
+        ``'torch'`` or ``'jax'``. For ``'jax'``, ``d3_params`` must be a dict
+        of jax arrays with keys ``rcov``, ``r4r2``, ``c6ab``, ``cn_ref``.
     """
-    is_batched = backend_data["batch_idx"] is not None
-    if is_batched:
-        method = "batch_cell_list"
-    else:
-        method = "cell_list"
+    if backend == "jax":
+        return _benchmark_d3_jax(
+            data, cutoff, d3_params, d3_func_params, num_runs, warmup_runs
+        )
 
-    dispatch_func = None
-    match backend:
-        case "torch":
-            dispatch_func = torch_neighbor_list
-        case "jax":
-            dispatch_func = jax_neighbor_list
-        case "warp":
-            raise NotImplementedError("warp backend neighbor list not yet supported")
-    return dispatch_func(
-        backend_data["coord"],
+    positions = data["positions"]
+    cell = data["cell"]
+    pbc = data["pbc"]
+    batch_idx = data["batch_idx"]
+    numbers = data["atomic_numbers"]
+    batch_size = int(data.get("batch_size", 1))
+
+    # Convert to Bohr
+    pos_bohr = positions * ANGSTROM_TO_BOHR
+    cell_bohr = cell * ANGSTROM_TO_BOHR
+    cutoff_bohr = cutoff * ANGSTROM_TO_BOHR
+
+    maxnb = estimate_max_neighbors(
         cutoff,
-        cell=backend_data["cell"],
-        pbc=backend_data["pbc"],
-        batch_idx=backend_data["batch_idx"],
-        batch_ptr=backend_data["batch_ptr"],
-        method=method,
-        max_neighbors=max_neighbors,
-        return_neighbor_list=return_neighbor_list,
+        atomic_density=compute_atomic_density(data) * DEFAULT_NL_SAFETY_FACTOR,
     )
 
+    # YAML is authoritative for D3 damping parameters.
+    a1 = d3_func_params["a1"]
+    a2 = d3_func_params["a2"]
+    s8 = d3_func_params["s8"]
 
-def prepare_system_and_neighborlist(
-    supercell_size: int,
-    cutoff: float,
-    max_neighbors: int,
-    device: str,
-    dtype: "torch.dtype",
-    batch_size: int = 1,
-    return_neighbor_list: bool = False,
-) -> dict:
-    """
-    Create supercell(s), prepare tensors, and build neighbor list.
-
-    This function preserves backward compatibility by wrapping the new
-    numpy-based data preparation and backend dispatch functions.
-
-    Parameters
-    ----------
-    supercell_size : int
-        Linear size of the supercell (creates 2*size³ atoms per system).
-    cutoff : float
-        Cutoff distance in Angstroms for neighbor list.
-    max_neighbors : int
-        Maximum number of neighbors per atom.
-    device : str
-        Device string ('cuda' or 'cpu').
-    dtype : torch.dtype
-        Data type for floating point tensors.
-    batch_size : int, default=1
-        Number of systems to batch together.
-    return_neighbor_list : bool, default=False
-        If True, return neighbor list in COO format (2, num_pairs) instead of
-        neighbor matrix (N_total, max_neighbors).
-
-    Returns
-    -------
-    dict
-        Dictionary containing:
-        - positions: Tensor of positions in Bohr (N_total, 3)
-        - numbers: Tensor of atomic numbers (N_total,)
-        - coord: Tensor of positions in Angstroms (N_total, 3)
-        - cell: Tensor of cell vectors (batch_size, 3, 3) or (3, 3)
-        - pbc: Tensor of periodic boundary conditions (batch_size, 3) or (3,)
-        - neighbor_data: Neighbor list matrix (N_total, max_neighbors) if return_neighbor_list=False,
-                        or COO format (2, num_pairs) if return_neighbor_list=True
-        - num_neighbor_data: Number of neighbors per atom (N_total,) if return_neighbor_list=False,
-                            or neighbor pointer (N_total+1,) if return_neighbor_list=True
-        - batch_idx: Batch indices (N_total,) or None for single system
-        - batch_ptr: Batch pointer (batch_size+1,) or None for single system
-        - total_atoms: Total number of atoms across all systems
-        - total_neighbors: Total number of neighbor pairs
-    """
-    # Step 1: Prepare numpy data
-    np_data = prepare_system_numpy(supercell_size, batch_size)
-
-    # Step 2: Convert to torch backend (this function is only used by torch runners)
-    dtype_str = str(dtype).split(".")[-1]  # "torch.float32" -> "float32"
-    backend_data = convert_to_backend(np_data, "torch", device, dtype_str)
-
-    # Step 3: Compute neighbor list
-    neighbor_data, num_neighbor_data, unit_shifts = compute_neighbor_list(
-        backend_data, "torch", cutoff, max_neighbors, return_neighbor_list
-    )
-
-    # Calculate total neighbors
-    if return_neighbor_list:
-        # neighbor_data is (2, num_pairs), so num_pairs is the total neighbors
-        total_neighbors = neighbor_data.shape[1]
+    if batch_size == 1:
+        nbmat, _, nbmat_shifts = cell_list(
+            positions=pos_bohr,
+            cell=cell_bohr,
+            pbc=pbc,
+            cutoff=cutoff_bohr,
+            max_neighbors=maxnb,
+        )
+        d3_batch_idx = None
+        neighbor_setup_method = "cell_list"
     else:
-        # num_neighbor_data is (N_total,) with counts per atom
-        total_neighbors = num_neighbor_data.sum().item()
+        nbmat, _, nbmat_shifts = batch_cell_list(
+            positions=pos_bohr,
+            cell=cell_bohr,
+            pbc=pbc,
+            cutoff=cutoff_bohr,
+            batch_idx=batch_idx,
+            max_neighbors=maxnb,
+        )
+        d3_batch_idx = batch_idx
+        neighbor_setup_method = "batch_cell_list"
+
+    def run_d3():
+        dftd3(
+            positions=pos_bohr,
+            cell=cell_bohr,
+            numbers=numbers,
+            batch_idx=d3_batch_idx,
+            neighbor_matrix=nbmat,
+            neighbor_matrix_shifts=nbmat_shifts,
+            d3_params=d3_params,
+            a1=a1,
+            a2=a2,
+            s8=s8,
+        )
+
+    _, mem_info = measure_memory_torch(run_d3)
+    time_d3 = cuda_timed_runs(run_d3, num_runs, warmup_runs=warmup_runs)
 
     return {
-        "positions": backend_data["positions"],
-        "numbers": backend_data["numbers"],
-        "coord": backend_data["coord"],
-        "cell": backend_data["cell"],
-        "pbc": backend_data["pbc"],
-        "neighbor_data": neighbor_data,
-        "num_neighbor_data": num_neighbor_data,
-        "unit_shifts": unit_shifts,
-        "batch_idx": backend_data["batch_idx"],
-        "batch_ptr": backend_data["batch_ptr"],
-        "total_atoms": backend_data["total_atoms"],
-        "total_neighbors": total_neighbors,
+        "time_d3_seconds": time_d3,
+        "mem_info": mem_info,
+        "neighbor_setup_method": neighbor_setup_method,
     }
 
 
-def load_torch_dftd_parameters(
-    device: "torch.device", dtype: "torch.dtype" = None
-) -> dict:
-    """Load DFT-D3 parameters from torch-dftd package.
+def _benchmark_d3_jax(data, cutoff, d3_params, d3_func_params, num_runs, warmup_runs):
+    """JAX backend implementation of :func:`benchmark_d3`.
 
-    Note: dtype defaults to torch.float32 if not provided.
+    Uses wall-clock timing. JAX memory fields are reported as NaN because
+    the XLA allocator pool makes per-call memory attribution misleading.
     """
-    if not TORCH_DFTD_AVAILABLE:
-        raise ImportError(
-            "torch-dftd not installed. Install via: pip install torch-dftd"
-        )
+    jax_api = lazy_import_jax(need_dispersion=True)
+    jax = jax_api["jax"]
+    jnp = jax_api["jnp"]
+    jax_dftd3 = jax_api["dftd3"]
+    jax_nl = jax_api["neighbor_list"]
+    estimate_bcl_sizes = jax_api["estimate_batch_cell_list_sizes"]
 
-    if dtype is None:
-        dtype = torch.float32
+    positions = data["positions"]
+    cell = data["cell"]
+    pbc = data["pbc"]
+    batch_idx = data["batch_idx"]
+    numbers = data["atomic_numbers"]
+    atoms_per_system = int(data["atoms_per_system"])
+    batch_size = int(data.get("batch_size", 1))
 
-    # Load parameters from torch_dftd
-    d3_filepath = str(
-        Path(os.path.abspath(torch_dftd.__file__)).parent
-        / "nn"
-        / "params"
-        / "dftd3_params.npz"
+    # Under jax.jit, NL needs explicit max_total_cells because cell-list
+    # sizing reads traced cell geometry.
+    batch_ptr = jnp.arange(batch_size + 1, dtype=jnp.int32) * atoms_per_system
+
+    # Convert to Bohr
+    pos_bohr = positions * ANGSTROM_TO_BOHR
+    cell_bohr = cell * ANGSTROM_TO_BOHR
+    cutoff_bohr = cutoff * ANGSTROM_TO_BOHR
+
+    maxnb = estimate_max_neighbors(
+        cutoff,
+        atomic_density=compute_atomic_density(data) * DEFAULT_NL_SAFETY_FACTOR,
     )
-    d3_params_np = np.load(d3_filepath)
 
-    c6ab = torch.tensor(d3_params_np["c6ab"], dtype=dtype, device=device)
-    r0ab = torch.tensor(d3_params_np["r0ab"], dtype=dtype, device=device)
-    rcov = torch.tensor(d3_params_np["rcov"], dtype=dtype, device=device)
-    r2r4 = torch.tensor(d3_params_np["r2r4"], dtype=dtype, device=device)
+    setup_batch_ptr = batch_ptr
+    if batch_size == 1:
+        setup_batch_ptr = jnp.asarray([0, atoms_per_system], dtype=jnp.int32)
+    max_total_cells, _, neighbor_search_radius = estimate_bcl_sizes(
+        positions=pos_bohr,
+        batch_ptr=setup_batch_ptr,
+        cell=cell_bohr,
+        cutoff=float(cutoff_bohr),
+        pbc=pbc,
+    )
+    max_total_cells = int(max_total_cells)
 
-    # Convert rcov to Bohr
-    rcov = rcov * ANGSTROM_TO_BOHR
+    # YAML is authoritative for D3 damping parameters.
+    a1 = d3_func_params["a1"]
+    a2 = d3_func_params["a2"]
+    s8 = d3_func_params["s8"]
+
+    if batch_size == 1:
+        cell_neighbor_search_radius = (
+            neighbor_search_radius[0]
+            if getattr(neighbor_search_radius, "ndim", 1) == 2
+            else neighbor_search_radius
+        )
+
+        def build_nl(pos, cell_, pbc_):
+            return jax_nl(
+                positions=pos,
+                cutoff=float(cutoff_bohr),
+                cell=cell_,
+                pbc=pbc_,
+                method="cell_list",
+                return_neighbor_list=False,
+                max_neighbors=int(maxnb),
+                max_total_cells=max_total_cells,
+                neighbor_search_radius=cell_neighbor_search_radius,
+            )
+
+        nbmat, _, nbmat_shifts = jax.jit(build_nl)(pos_bohr, cell_bohr, pbc)
+        d3_batch_idx = None
+        neighbor_setup_method = "cell_list"
+    else:
+
+        def build_nl(pos, cell_, pbc_, batch_idx_, batch_ptr_):
+            return jax_nl(
+                positions=pos,
+                cutoff=float(cutoff_bohr),
+                cell=cell_,
+                pbc=pbc_,
+                batch_idx=batch_idx_,
+                batch_ptr=batch_ptr_,
+                method="batch_cell_list",
+                return_neighbor_list=False,
+                max_neighbors=int(maxnb),
+                max_total_cells=max_total_cells,
+            )
+
+        nbmat, _, nbmat_shifts = jax.jit(build_nl)(
+            pos_bohr, cell_bohr, pbc, batch_idx, batch_ptr
+        )
+        d3_batch_idx = batch_idx
+        neighbor_setup_method = "batch_cell_list"
+    jax.block_until_ready(
+        (pos_bohr, cell_bohr, numbers, nbmat, nbmat_shifts, d3_params)
+    )
+
+    # Reuse the NL buffers and time a compiled, fixed-shape D3 callable so
+    # compilation remains outside the measured region.
+    if d3_batch_idx is None:
+
+        def _run_d3_kernel(pos, numbers_, cell_, nbm, nbm_shifts, d3p):
+            return jax_dftd3(
+                positions=pos,
+                numbers=numbers_,
+                a1=float(a1),
+                a2=float(a2),
+                s8=float(s8),
+                d3_params=d3p,
+                batch_idx=None,
+                num_systems=batch_size,
+                cell=cell_,
+                neighbor_matrix=nbm,
+                neighbor_matrix_shifts=nbm_shifts,
+            )
+
+        _run_d3_kernel_jit = jax.jit(_run_d3_kernel)
+
+        def run_d3():
+            return _run_d3_kernel_jit(
+                pos_bohr, numbers, cell_bohr, nbmat, nbmat_shifts, d3_params
+            )
+
+    else:
+
+        def _run_d3_kernel(pos, numbers_, cell_, batch_idx_, nbm, nbm_shifts, d3p):
+            return jax_dftd3(
+                positions=pos,
+                numbers=numbers_,
+                a1=float(a1),
+                a2=float(a2),
+                s8=float(s8),
+                d3_params=d3p,
+                batch_idx=batch_idx_,
+                num_systems=batch_size,
+                cell=cell_,
+                neighbor_matrix=nbm,
+                neighbor_matrix_shifts=nbm_shifts,
+            )
+
+        _run_d3_kernel_jit = jax.jit(_run_d3_kernel)
+
+        def run_d3():
+            return _run_d3_kernel_jit(
+                pos_bohr,
+                numbers,
+                cell_bohr,
+                d3_batch_idx,
+                nbmat,
+                nbmat_shifts,
+                d3_params,
+            )
+
+    # JAX memory is unavailable in this suite; avoid an extra allocation-heavy
+    # execution that would only produce NaN memory fields.
+    _, mem_info = measure_memory_jax(run_d3, jax)
+    time_d3 = cuda_timed_runs(run_d3, num_runs, warmup_runs=warmup_runs, backend="jax")
 
     return {
-        "c6ab": c6ab,
-        "r0ab": r0ab,
-        "rcov": rcov,
-        "r2r4": r2r4,
+        "time_d3_seconds": time_d3,
+        "mem_info": mem_info,
+        "neighbor_setup_method": neighbor_setup_method,
     }
 
 
-def run_dftd3_nvalchemiops_benchmark(
-    supercell_size: int,
-    cutoff: float,
-    d3_params: "TorchD3Parameters",
-    dftd3_config: dict,
-    max_neighbors: int,
-    timer: BenchmarkTimer,
-    device: str,
-    dtype: "torch.dtype",
-    batch_size: int = 1,
-    return_neighbor_list: bool = False,
-    compute_virial: bool = False,
-) -> dict:
-    """Run DFT-D3 benchmark using nvalchemiops backend (single or batched)."""
+# =============================================================================
+# Config-Driven Runner
+# =============================================================================
+
+
+def _d3_run_one_cutoff(
+    data,
+    cutoff,
+    d3_params,
+    d3_func_params,
+    num_runs,
+    warmup_runs,
+    backend,
+    actual_total,
+    row_meta,
+):
+    """Run :func:`benchmark_d3` for one ``cutoff`` and build a result row.
+
+    Catches OOM and other exceptions and emits ``success=False`` rows.
+    Keeps the inner loop in :func:`run_from_config` free of try/except nesting.
+    """
     try:
-        system_data = prepare_system_and_neighborlist(
-            supercell_size,
+        r = benchmark_d3(
+            data,
             cutoff,
-            max_neighbors,
-            device,
-            dtype,
-            batch_size,
-            return_neighbor_list=return_neighbor_list,
+            d3_params,
+            d3_func_params,
+            num_runs,
+            warmup_runs,
+            backend=backend,
+        )
+        time_d3_us_per_atom = (
+            (r["time_d3_seconds"] * 1e6) / actual_total if actual_total > 0 else 0.0
+        )
+        result = build_result(
+            method="dftd3",
+            time_seconds=r["time_d3_seconds"],
+            mem_info=r["mem_info"],
+            cutoff=cutoff,
+            timing_runs=num_runs,
+            warmup_runs=warmup_runs,
+            time_d3_us_per_atom=time_d3_us_per_atom,
+            neighbor_setup_method=r["neighbor_setup_method"],
+            **row_meta,
+        )
+        mem_suffix = f" | {result['mem_delta_mb']:.1f} MB" if backend == "torch" else ""
+        print(f"    {cutoff}Å: D3={time_d3_us_per_atom:.3f} μs/atom{mem_suffix}")
+        return result
+    except torch.cuda.OutOfMemoryError as e:
+        print(f"    {cutoff}Å: OOM - {e}")
+        clean_gpu()
+        return build_failure_result(
+            method="dftd3",
+            cutoff=cutoff,
+            error=str(e),
+            error_type=failure_error_type(e),
+            timing_runs=num_runs,
+            warmup_runs=warmup_runs,
+            **row_meta,
+        )
+    except Exception as e:
+        error_type = failure_error_type(e)
+        if error_type == "OutOfMemoryError":
+            clean_gpu()
+        print(f"    {cutoff}Å: FAILED - {e}")
+        return build_failure_result(
+            method="dftd3",
+            cutoff=cutoff,
+            error=str(e),
+            error_type=error_type,
+            timing_runs=num_runs,
+            warmup_runs=warmup_runs,
+            **row_meta,
         )
 
-        positions = system_data["positions"]
-        numbers = system_data["numbers"]
-        total_atoms = system_data["total_atoms"]
-        total_neighbors = system_data["total_neighbors"]
-        batch_idx = system_data["batch_idx"]
-        cell = system_data["cell"]
-        cell_bohr = cell * ANGSTROM_TO_BOHR
-        if cell_bohr.ndim == 2:
-            cell_bohr = cell_bohr.unsqueeze(0)
-        neighbor_format = "list" if return_neighbor_list else "matrix"
 
-        # Define the function to benchmark
-        if return_neighbor_list:
-            neighbor_list_data = system_data["neighbor_data"]  # (2, num_pairs)
-            neighbor_ptr = system_data["num_neighbor_data"]  # (N+1,)
-            unit_shifts = system_data["unit_shifts"]
-            if unit_shifts is not None and unit_shifts.ndim != 2:
-                raise ValueError(
-                    "unit_shifts must be [num_pairs, 3] for the neighbor list path; "
-                    "got a 3-D tensor, which indicates return_neighbor_list=False data was used here"
+def dry_run_from_config(config: dict, backend: str | None = None) -> list[dict]:
+    """Print and return the expanded D3 benchmark plan without allocation."""
+    params = config["parameters"]
+    cutoffs = params["cutoffs"]
+    max_total_atoms = params.get("max_total_atoms")
+    methods = enabled_method_names(config) if "methods" in config else ["dftd3"]
+    plan_output = config.get("runtime", {}).get("plan_output", "dry_run")
+    if backend is None:
+        backend = config.get("runtime", {}).get("backend", "torch")
+    if "dftd3" not in methods:
+        if plan_output != "count":
+            print("D3 dry-run plan")
+            selected = ", ".join(methods) if methods else "(none)"
+            print(f"D3 dry-run no enabled methods for selected methods: {selected}")
+        print("D3 dry-run rows: 0")
+        return []
+    rows = []
+    for sys_name, sys_config in config["systems"].items():
+        if not sys_config.get("enabled", True):
+            continue
+        nh3_dir = resolve_nh3_dir(sys_config)
+        for mode_name, mode_config in config["scaling"].items():
+            if not isinstance(mode_config, dict) or not mode_config.get(
+                "enabled", True
+            ):
+                continue
+            configs = configs_for_mode(
+                mode_name,
+                mode_config,
+                sys_name,
+                sys_config,
+                nh3_dir,
+                plan_only=True,
+            )
+            configs, skipped = filter_configs_by_total_atoms(
+                configs, sys_name, max_total_atoms
+            )
+            for cfg, total_atoms in skipped:
+                atoms_per_system, batch_size, _ = planned_atom_counts(sys_name, cfg)
+                rows.extend(
+                    {
+                        "benchmark": "d3",
+                        "backend": backend,
+                        "system": sys_name,
+                        "mode": mode_name,
+                        "atoms_per_system": atoms_per_system,
+                        "batch_size": batch_size,
+                        "total_atoms": total_atoms,
+                        "method": "dftd3",
+                        "cutoff": cutoff,
+                        "reason": f">{max_total_atoms} max_total_atoms",
+                    }
+                    for cutoff in cutoffs
                 )
-            pbc_cell = cell_bohr if unit_shifts is not None else None
+            for cfg in configs:
+                atoms_per_system, batch_size, total_atoms = planned_atom_counts(
+                    sys_name, cfg
+                )
+                rows.extend(
+                    {
+                        "benchmark": "d3",
+                        "backend": backend,
+                        "system": sys_name,
+                        "mode": mode_name,
+                        "atoms_per_system": atoms_per_system,
+                        "batch_size": batch_size,
+                        "total_atoms": total_atoms,
+                        "method": "dftd3",
+                        "cutoff": cutoff,
+                        "reason": "",
+                    }
+                    for cutoff in cutoffs
+                )
+    if plan_output != "count":
+        print("D3 dry-run plan")
+        for row in rows:
+            suffix = f" SKIP {row['reason']}" if row["reason"] else ""
+            print(
+                "  {system}/{mode} backend={backend} method={method} "
+                "N={atoms_per_system} batch={batch_size} total={total_atoms} "
+                "cutoff={cutoff}{suffix}".format(**row, suffix=suffix)
+            )
+    print(f"D3 dry-run rows: {len(rows)}")
+    return rows
 
-            def dftd3_call():
-                return torch_dftd3(
-                    positions=positions,
-                    numbers=numbers,
-                    d3_params=d3_params,
-                    neighbor_list=neighbor_list_data,
-                    neighbor_ptr=neighbor_ptr,
-                    unit_shifts=unit_shifts,
-                    cell=pbc_cell,
-                    a1=dftd3_config["a1"],
-                    a2=dftd3_config["a2"],
-                    s6=dftd3_config["s6"],
-                    s8=dftd3_config["s8"],
-                    k1=dftd3_config["k1"],
-                    k3=dftd3_config["k3"],
-                    batch_idx=batch_idx,
-                    s5_smoothing_on=dftd3_config["s5_smoothing_on"],
-                    s5_smoothing_off=dftd3_config["s5_smoothing_off"],
-                    compute_virial=compute_virial,
-                    device=device,
+
+def _save_planned_failure_rows(
+    config: dict,
+    *,
+    backend: str,
+    cutoffs: list[float],
+    max_total_atoms: int | None,
+    num_runs: int,
+    warmup_runs: int,
+    output_dir: Path,
+    error: str,
+    error_type: str,
+    failure_stage: str,
+) -> list[dict]:
+    """Write failed D3 rows for each planned case before backend setup."""
+    all_results = []
+
+    for sys_name, sys_config in config["systems"].items():
+        if not sys_config.get("enabled", True):
+            continue
+
+        nh3_dir = resolve_nh3_dir(sys_config)
+
+        for mode_name, mode_config in config["scaling"].items():
+            if not isinstance(mode_config, dict) or not mode_config.get(
+                "enabled", True
+            ):
+                continue
+
+            configs = configs_for_mode(
+                mode_name, mode_config, sys_name, sys_config, nh3_dir
+            )
+            configs, skipped = filter_configs_by_total_atoms(
+                configs, sys_name, max_total_atoms
+            )
+            results = []
+
+            for cfg, _skipped_total in skipped:
+                atoms_per_system, batch_size, total_atoms = planned_atom_counts(
+                    sys_name, cfg
                 )
+                row_meta = make_row_meta(
+                    sys_name,
+                    mode_name,
+                    backend,
+                    atoms_per_system,
+                    batch_size,
+                    total_atoms,
+                )
+                reason = f">{max_total_atoms} max_total_atoms"
+                results.extend(
+                    build_skipped_result(
+                        method="dftd3",
+                        cutoff=cutoff,
+                        reason=reason,
+                        timing_runs=num_runs,
+                        warmup_runs=warmup_runs,
+                        **row_meta,
+                    )
+                    for cutoff in cutoffs
+                )
+
+            for cfg in configs:
+                atoms_per_system, batch_size, total_atoms = planned_atom_counts(
+                    sys_name, cfg
+                )
+                row_meta = make_row_meta(
+                    sys_name,
+                    mode_name,
+                    backend,
+                    atoms_per_system,
+                    batch_size,
+                    total_atoms,
+                )
+                results.extend(
+                    build_failure_result(
+                        method="dftd3",
+                        cutoff=cutoff,
+                        error=error,
+                        error_type=error_type,
+                        failure_stage=failure_stage,
+                        timing_runs=num_runs,
+                        warmup_runs=warmup_runs,
+                        **row_meta,
+                    )
+                    for cutoff in cutoffs
+                )
+
+            if results:
+                csv_name = make_csv_name("d3", sys_name, mode_name)
+                save_results(results, output_dir / csv_name, replace_backend=backend)
+                all_results.extend(results)
+
+    return all_results
+
+
+def run_from_config(
+    config: dict,
+    output_dir: Path | str | None = None,
+    backend: str | None = None,
+) -> list[dict]:
+    """Run D3 benchmarks driven by YAML config.
+
+    Parameters
+    ----------
+    backend : str, optional
+        ``'torch'`` or ``'jax'``. If None, pulled from
+        ``config['runtime']['backend']``, defaulting to ``'torch'``.
+    """
+    params = config["parameters"]
+    num_runs = params["timing_runs"]
+    warmup_runs = params["warmup_runs"]
+    cutoffs = params["cutoffs"]
+    max_total_atoms = params.get("max_total_atoms")
+    d3_func_params = config["dftd3_parameters"]
+    methods = enabled_method_names(config) if "methods" in config else ["dftd3"]
+
+    if backend is None:
+        backend = config.get("runtime", {}).get("backend", "torch")
+    if backend == "warp":
+        raise ValueError("D3 benchmark supports torch and jax backends, not warp.")
+    if config.get("runtime", {}).get("dry_run", False):
+        return dry_run_from_config(config, backend=backend)
+    if "dftd3" not in methods:
+        selected = ", ".join(methods) if methods else "(none)"
+        print(f"D3 benchmark no enabled methods for selected methods: {selected}")
+        return []
+
+    if output_dir is None:
+        output_dir = create_run_directory(config["output"]["base_dir"], prefix="d3")
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    d3_params_path = _resolve_d3_params_path(config["params_path"])
+    input_artifacts = configured_nh3_artifacts(config)
+    input_artifacts["d3_parameters"] = d3_params_path
+    configure_input_provenance(
+        input_artifacts,
+        metadata_values={"benchmark": "d3"},
+    )
+    try:
+        _ensure_d3_parameter_file(d3_params_path)
+        configure_input_provenance(
+            input_artifacts,
+            metadata_values={"benchmark": "d3"},
+        )
+        d3_params_torch = torch.load(
+            d3_params_path,
+            map_location="cpu",
+            weights_only=True,
+        )
+        if backend == "jax":
+            jax_api = lazy_import_jax(need_dispersion=True)
+            d3_params = _torch_d3_params_to_jax(d3_params_torch, jax_api["jnp"])
         else:
-            neighbor_matrix = system_data["neighbor_data"]
-            neighbor_matrix_shifts = system_data["unit_shifts"]
-            if neighbor_matrix_shifts is not None and neighbor_matrix_shifts.ndim != 3:
-                raise ValueError(
-                    "unit_shifts must be [num_atoms, max_neighbors, 3] for the matrix path; "
-                    "got a 2-D tensor, which indicates return_neighbor_list=True data was used here"
-                )
-            pbc_cell = cell_bohr if neighbor_matrix_shifts is not None else None
-
-            def dftd3_call():
-                return torch_dftd3(
-                    positions=positions,
-                    numbers=numbers,
-                    d3_params=d3_params,
-                    neighbor_matrix=neighbor_matrix,
-                    neighbor_matrix_shifts=neighbor_matrix_shifts,
-                    fill_value=total_atoms,
-                    cell=pbc_cell,
-                    a1=dftd3_config["a1"],
-                    a2=dftd3_config["a2"],
-                    s6=dftd3_config["s6"],
-                    s8=dftd3_config["s8"],
-                    k1=dftd3_config["k1"],
-                    k3=dftd3_config["k3"],
-                    batch_idx=batch_idx,
-                    s5_smoothing_on=dftd3_config["s5_smoothing_on"],
-                    s5_smoothing_off=dftd3_config["s5_smoothing_off"],
-                    compute_virial=compute_virial,
-                    device=device,
-                )
-
-        # Time the function
-        timing_results = timer.time_function(dftd3_call)
-
-        if not timing_results["success"]:
-            return {
-                "total_atoms": total_atoms,
-                "batch_size": batch_size,
-                "supercell_size": supercell_size,
-                "neighbor_format": neighbor_format,
-                "compute_virial": compute_virial,
-                "total_neighbors": 0,
-                "median_time_ms": float("inf"),
-                "peak_memory_mb": timing_results.get("peak_memory_mb"),
-                "memory_note": "torch:cuda.max_memory_allocated",
-                "success": False,
-                "error": timing_results.get("error", "Unknown error"),
-                "error_type": timing_results.get("error_type", "Unknown"),
-            }
-
-        median_time_ms = timing_results["median"]
-        peak_memory_mb = timing_results.get("peak_memory_mb")
-
-        return {
-            "total_atoms": total_atoms,
-            "batch_size": batch_size,
-            "supercell_size": supercell_size,
-            "neighbor_format": neighbor_format,
-            "compute_virial": compute_virial,
-            "total_neighbors": total_neighbors,
-            "median_time_ms": float(median_time_ms),
-            "peak_memory_mb": peak_memory_mb,
-            "memory_note": "torch:cuda.max_memory_allocated",
-            "success": True,
-        }
-
-    except Exception as e:
-        total_atoms = 2 * supercell_size**3 * batch_size
-        return {
-            "total_atoms": total_atoms,
-            "batch_size": batch_size,
-            "supercell_size": supercell_size,
-            "neighbor_format": "list" if return_neighbor_list else "matrix",
-            "compute_virial": compute_virial,
-            "total_neighbors": 0,
-            "median_time_ms": float("inf"),
-            "peak_memory_mb": None,
-            "memory_note": "torch:cuda.max_memory_allocated",
-            "success": False,
-            "error": str(e),
-            "error_type": type(e).__name__,
-        }
-
-
-def run_dftd3_nvalchemiops_jax_benchmark(
-    supercell_size: int,
-    cutoff: float,
-    d3_params: "JaxD3Parameters",
-    dftd3_config: dict,
-    max_neighbors: int,
-    timer: BenchmarkTimer,
-    dtype_str: str = "float32",
-    batch_size: int = 1,
-) -> dict:
-    """Run DFT-D3 benchmark using nvalchemiops JAX backend (single or batched)."""
-    try:
-        # Prepare system data as numpy, then convert to JAX
-        np_data = prepare_system_numpy(supercell_size, batch_size)
-        backend_data = convert_to_backend(np_data, "jax", dtype_str=dtype_str)
-
-        # Compute neighbor list with JAX backend
-        neighbor_data, num_neighbor_data, _ = compute_neighbor_list(
-            backend_data, "jax", cutoff, max_neighbors, return_neighbor_list=False
+            d3_params = _torch_d3_params_to_device(d3_params_torch, "cuda")
+    except Exception as exc:
+        error_type = failure_error_type(exc)
+        error = str(exc)
+        if isinstance(exc, FileNotFoundError):
+            error += (
+                ". Run: python examples/dispersion/01_dftd3_molecule.py "
+                "to populate the cache manually."
+            )
+        if error_type == "OutOfMemoryError":
+            clean_gpu()
+        print(f"ERROR (D3 parameter setup): {error}")
+        return _save_planned_failure_rows(
+            config,
+            backend=backend,
+            cutoffs=cutoffs,
+            max_total_atoms=max_total_atoms,
+            num_runs=num_runs,
+            warmup_runs=warmup_runs,
+            output_dir=output_dir,
+            error=error,
+            error_type=error_type,
+            failure_stage="parameter_setup",
         )
-
-        positions = backend_data["positions"]
-        numbers = backend_data["numbers"]
-        neighbor_matrix = neighbor_data
-        total_atoms = backend_data["total_atoms"]
-        total_neighbors = int(jnp.sum(num_neighbor_data))
-        batch_idx = backend_data["batch_idx"]
-        cell = backend_data["cell"]
-
-        # Closure-captured scalars stay concrete under JIT (not traced).
-        # This is required for Warp FFI compatibility.
-        a1_val = dftd3_config["a1"]
-        a2_val = dftd3_config["a2"]
-        s6_val = dftd3_config["s6"]
-        s8_val = dftd3_config["s8"]
-        k1_val = dftd3_config["k1"]
-        k3_val = dftd3_config["k3"]
-        s5_on_val = dftd3_config["s5_smoothing_on"]
-        s5_off_val = dftd3_config["s5_smoothing_off"]
-        fill_val = total_atoms
-
-        @jax.jit
-        def jitted_dftd3(
-            positions,
-            numbers,
-            neighbor_matrix,
-            batch_idx,
-            cell,
-            rcov,
-            r4r2,
-            c6ab,
-            cn_ref,
-        ):
-            params = JaxD3Parameters(
-                rcov=rcov,
-                r4r2=r4r2,
-                c6ab=c6ab,
-                cn_ref=cn_ref,
-            )
-            return jax_dftd3(
-                positions=positions,
-                numbers=numbers,
-                d3_params=params,
-                neighbor_matrix=neighbor_matrix,
-                fill_value=fill_val,
-                a1=a1_val,
-                a2=a2_val,
-                s6=s6_val,
-                s8=s8_val,
-                k1=k1_val,
-                k3=k3_val,
-                batch_idx=batch_idx,
-                cell=cell,
-                s5_smoothing_on=s5_on_val,
-                s5_smoothing_off=s5_off_val,
-            )
-
-        def dftd3_call():
-            return jitted_dftd3(
-                positions,
-                numbers,
-                neighbor_matrix,
-                batch_idx,
-                cell,
-                d3_params.rcov,
-                d3_params.r4r2,
-                d3_params.c6ab,
-                d3_params.cn_ref,
-            )
-
-        # Time the function
-        timing_results = timer.time_function(dftd3_call)
-        compile_ms = timing_results.get("compile_ms")
-
-        if not timing_results["success"]:
-            return {
-                "total_atoms": total_atoms,
-                "batch_size": batch_size,
-                "supercell_size": supercell_size,
-                "total_neighbors": 0,
-                "compile_ms": compile_ms,
-                "median_time_ms": float("inf"),
-                "peak_memory_mb": timing_results.get("peak_memory_mb"),
-                "memory_note": "jax:nvml_process_used",
-                "success": False,
-                "error": timing_results.get("error", "Unknown error"),
-                "error_type": timing_results.get("error_type", "Unknown"),
-            }
-
-        median_time_ms = timing_results["median"]
-        peak_memory_mb = timing_results.get("peak_memory_mb")
-
-        return {
-            "total_atoms": total_atoms,
-            "batch_size": batch_size,
-            "supercell_size": supercell_size,
-            "total_neighbors": total_neighbors,
-            "compile_ms": compile_ms,
-            "median_time_ms": float(median_time_ms),
-            "peak_memory_mb": peak_memory_mb,
-            "memory_note": "jax:nvml_process_used",
-            "success": True,
-        }
-
-    except Exception as e:
-        total_atoms = 2 * supercell_size**3 * batch_size
-        return {
-            "total_atoms": total_atoms,
-            "batch_size": batch_size,
-            "supercell_size": supercell_size,
-            "total_neighbors": 0,
-            "compile_ms": None,
-            "median_time_ms": float("inf"),
-            "peak_memory_mb": None,
-            "memory_note": "jax:nvml_process_used",
-            "success": False,
-            "error": str(e),
-            "error_type": type(e).__name__,
-        }
-
-
-def run_dftd3_torch_dftd_benchmark(
-    supercell_size: int,
-    cutoff: float,
-    torch_dftd_params: dict,
-    dftd3_config: dict,
-    max_neighbors: int,
-    timer: BenchmarkTimer,
-    device: str,
-    dtype: "torch.dtype",
-    batch_size: int = 1,
-) -> dict:
-    """Run DFT-D3 benchmark using torch-dftd backend (single or batched)."""
-    if not TORCH_DFTD_AVAILABLE:
-        return {
-            "total_atoms": 2 * supercell_size**3 * batch_size,
-            "batch_size": batch_size,
-            "supercell_size": supercell_size,
-            "total_neighbors": 0,
-            "median_time_ms": float("inf"),
-            "peak_memory_mb": None,
-            "success": False,
-            "error": "torch-dftd not installed",
-            "error_type": "ImportError",
-        }
+    print(f"Loaded D3 parameters from {d3_params_path}")
 
     try:
-        # Prepare system and neighbor list in COO format (torch-dftd uses edge_index)
-        system_data = prepare_system_and_neighborlist(
-            supercell_size,
-            cutoff,
-            max_neighbors,
-            device,
-            dtype,
-            batch_size,
-            return_neighbor_list=True,
-        )
+        gpu_name = torch.cuda.get_device_name(0)
+    except (AssertionError, RuntimeError):
+        gpu_name = "N/A (no CUDA)"
+    print(f"D3 Benchmark Suite | GPU: {gpu_name}")
+    print(f"Backend: {backend}")
+    print(f"Cutoffs: {cutoffs} Å | Timing: {num_runs} runs")
+    print(f"Output: {output_dir}")
 
-        edge_index = system_data[
-            "neighbor_data"
-        ]  # Already in COO format (2, num_pairs)
-        total_atoms = system_data["total_atoms"]
-        total_neighbors = system_data["total_neighbors"]
+    all_results = []
 
-        # Prepare positions with gradients for torch-dftd
-        positions = system_data["positions"].clone().requires_grad_(True)
-        Z = system_data["numbers"].to(torch.int64)
+    for sys_name, sys_config in config["systems"].items():
+        if not sys_config.get("enabled", True):
+            continue
 
-        # Note: torch-dftd does not require explicit batch tensors
-        # It handles batched systems through concatenated positions/numbers
-        # and the edge_index structure
-        batch = None
-        batch_edge = None
+        nh3_dir = resolve_nh3_dir(sys_config)
 
-        # Prepare torch-dftd params dict
-        params = {
-            "s6": dftd3_config["s6"],
-            "s18": dftd3_config["s8"],
-            "rs6": dftd3_config["a1"],
-            "rs18": dftd3_config["a2"],
-            "alp": 14.0,  # Default for BJ damping
-        }
+        for mode_name, mode_config in config["scaling"].items():
+            if not isinstance(mode_config, dict) or not mode_config.get(
+                "enabled", True
+            ):
+                continue
 
-        # Define the function to benchmark
-        def torch_dftd_call():
-            # Reset grad
-            if positions.grad is not None:
-                positions.grad.zero_()
+            print(f"\n{'=' * 70}")
+            print(f"D3: {sys_name.upper()} / {mode_name}")
+            print(f"{'=' * 70}")
 
-            # Calculate distances
-            r = calc_distances(positions, edge_index, cell=None, shift_pos=None)
-
-            # Compute energy
-            energy = edisp(
-                Z=Z,
-                r=r,
-                edge_index=edge_index,
-                c6ab=torch_dftd_params["c6ab"],
-                r0ab=torch_dftd_params["r0ab"],
-                rcov=torch_dftd_params["rcov"],
-                r2r4=torch_dftd_params["r2r4"],
-                params=params,
-                cutoff=None,
-                cnthr=None,
-                batch=batch,
-                batch_edge=batch_edge,
-                shift_pos=None,
-                pos=positions,
-                cell=None,
-                damping="bj",
-                bidirectional=True,
-                abc=False,
-                k1=dftd3_config["k1"],
-                k3=dftd3_config["k3"],
+            configs = configs_for_mode(
+                mode_name, mode_config, sys_name, sys_config, nh3_dir
             )
-
-            # Compute forces
-            forces = -torch.autograd.grad(
-                outputs=energy,
-                inputs=positions,
-                create_graph=False,
-                retain_graph=False,
-            )[0]
-
-            return energy, forces
-
-        # Time the function
-        timing_results = timer.time_function(torch_dftd_call)
-
-        if not timing_results["success"]:
-            return {
-                "total_atoms": total_atoms,
-                "batch_size": batch_size,
-                "supercell_size": supercell_size,
-                "total_neighbors": 0,
-                "median_time_ms": float("inf"),
-                "peak_memory_mb": timing_results.get("peak_memory_mb"),
-                "success": False,
-                "error": timing_results.get("error", "Unknown error"),
-                "error_type": timing_results.get("error_type", "Unknown"),
-            }
-
-        median_time_ms = timing_results["median"]
-        peak_memory_mb = timing_results.get("peak_memory_mb")
-
-        return {
-            "total_atoms": total_atoms,
-            "batch_size": batch_size,
-            "supercell_size": supercell_size,
-            "total_neighbors": total_neighbors,
-            "median_time_ms": float(median_time_ms),
-            "peak_memory_mb": peak_memory_mb,
-            "success": True,
-        }
-
-    except Exception as e:
-        return {
-            "total_atoms": 2 * supercell_size**3 * batch_size,
-            "batch_size": batch_size,
-            "supercell_size": supercell_size,
-            "total_neighbors": 0,
-            "median_time_ms": float("inf"),
-            "peak_memory_mb": None,
-            "success": False,
-            "error": str(e),
-            "error_type": type(e).__name__,
-        }
-
-
-def _resolve_backend_type(cli_backend: str) -> BackendType:
-    """Map CLI backend string to BackendType.
-
-    Parameters
-    ----------
-    cli_backend : str
-        CLI backend choice ("nvalchemiops", "nvalchemiops_jax", "torch_dftd").
-
-    Returns
-    -------
-    BackendType
-        Framework-level backend type ("torch" or "jax").
-    """
-    match cli_backend:
-        case "torch" | "torch_dftd":
-            return "torch"
-        case "jax":
-            return "jax"
-        case _:
-            raise ValueError(f"Unknown backend: {cli_backend}")
-
-
-def _check_backend_available(cli_backend: str) -> None:
-    """Validate that the requested backend is installed.
-
-    Parameters
-    ----------
-    cli_backend : str
-        CLI backend choice.
-
-    Raises
-    ------
-    SystemExit
-        If the required backend is not available.
-    """
-    match cli_backend:
-        case "torch":
-            if not TORCH_AVAILABLE:
+            configs, skipped = filter_configs_by_total_atoms(
+                configs, sys_name, max_total_atoms
+            )
+            results = []
+            for cfg, skipped_total in skipped:
                 print(
-                    "ERROR: nvalchemiops (torch) backend requested but torch is not installed."
+                    f"  SKIP total atoms {format_num(skipped_total)} "
+                    f"(>{format_num(max_total_atoms)})"
                 )
-                sys.exit(1)
-        case "jax":
-            if not JAX_AVAILABLE:
-                print(
-                    "ERROR: nvalchemiops_jax backend requested but JAX is not installed."
+                atoms_per_system, batch_size, total_atoms = planned_atom_counts(
+                    sys_name, cfg
                 )
-                sys.exit(1)
-        case "torch_dftd":
-            if not TORCH_DFTD_AVAILABLE:
-                print("ERROR: torch-dftd backend requested but not installed.")
-                print("Install via: pip install torch-dftd")
-                sys.exit(1)
+                row_meta = make_row_meta(
+                    sys_name,
+                    mode_name,
+                    backend,
+                    atoms_per_system,
+                    batch_size,
+                    total_atoms,
+                )
+                reason = f">{max_total_atoms} max_total_atoms"
+                results.extend(
+                    build_skipped_result(
+                        method="dftd3",
+                        cutoff=cutoff,
+                        reason=reason,
+                        timing_runs=num_runs,
+                        warmup_runs=warmup_runs,
+                        **row_meta,
+                    )
+                    for cutoff in cutoffs
+                )
+            if not configs:
+                if results:
+                    csv_name = make_csv_name("d3", sys_name, mode_name)
+                    save_results(
+                        results, output_dir / csv_name, replace_backend=backend
+                    )
+                    all_results.extend(results)
+                continue
+
+            for cfg in configs:
+                n, bs = cfg["num_atoms"], cfg["batch_size"]
+                planned_n, planned_bs, planned_total = planned_atom_counts(
+                    sys_name, cfg
+                )
+                planned_row_meta = make_row_meta(
+                    sys_name,
+                    mode_name,
+                    backend,
+                    planned_n,
+                    planned_bs,
+                    planned_total,
+                )
+                try:
+                    data = create_system(
+                        sys_name,
+                        num_atoms=n,
+                        pdb_path=cfg.get("pdb_path"),
+                        batch_size=bs,
+                        backend=backend,
+                    )
+                except Exception as e:
+                    error_type = failure_error_type(e)
+                    if error_type == "OutOfMemoryError":
+                        clean_gpu()
+                    print(f"    FAILED (system setup): {e}")
+                    results.extend(
+                        build_failure_result(
+                            method="dftd3",
+                            cutoff=cutoff,
+                            error=str(e),
+                            error_type=error_type,
+                            failure_stage="system_setup",
+                            timing_runs=num_runs,
+                            warmup_runs=warmup_runs,
+                            **planned_row_meta,
+                        )
+                        for cutoff in cutoffs
+                    )
+                    continue
+
+                try:
+                    actual_total = data.get("total_atoms", data["atoms_per_system"])
+                    actual_n = data["atoms_per_system"]
+                    print(
+                        f"\n  {format_num(actual_n)} atoms × {bs} batch = {format_num(actual_total)} total"
+                    )
+                    print(f"    [GPU: {current_alloc_gb(backend):.1f} GB allocated]")
+                    row_meta = make_row_meta(
+                        sys_name,
+                        mode_name,
+                        backend,
+                        actual_n,
+                        data.get("batch_size", 1),
+                        actual_total,
+                    )
+
+                    for cutoff in cutoffs:
+                        if data["cell_size"] < 2 * cutoff:
+                            print(
+                                f"    {cutoff}Å: WARNING cell {data['cell_size']:.1f}Å < 2×cutoff (benchmarking anyway)"
+                            )
+
+                        result = _d3_run_one_cutoff(
+                            data,
+                            cutoff,
+                            d3_params,
+                            d3_func_params,
+                            num_runs,
+                            warmup_runs,
+                            backend,
+                            actual_total,
+                            row_meta,
+                        )
+                        if result is not None:
+                            results.append(result)
+                finally:
+                    # Free GPU tensors so gc.collect() in clean_gpu() can reclaim memory
+                    del data
+                    if backend == "jax":
+                        clean_jax()
+                    clean_gpu()
+
+            if results:
+                csv_name = make_csv_name("d3", sys_name, mode_name)
+                save_results(results, output_dir / csv_name, replace_backend=backend)
+                all_results.extend(results)
+
+    print(f"\nCOMPLETE: {len(all_results)} results in {output_dir}")
+    return all_results
+
+
+# =============================================================================
+# CLI
+# =============================================================================
+
+
+def parse_args():
+    """Parse command-line arguments for DFT-D3 benchmarks."""
+    parser = argparse.ArgumentParser(
+        description="DFT-D3 Benchmark (2 systems × 3 modes)"
+    )
+    parser.add_argument("--config", type=Path, required=True)
+    add_common_cli_args(
+        parser,
+        backends=("torch", "jax"),
+        include_d3_params_path=True,
+    )
+    parser.add_argument(
+        "--cutoffs",
+        "-c",
+        type=float,
+        nargs="+",
+        default=None,
+        help="Override cutoff radii in Angstroms",
+    )
+    return parser.parse_args()
 
 
 def main():
-    """Main entry point for the benchmark script."""
-    parser = argparse.ArgumentParser(
-        description="Benchmark DFT-D3 dispersion corrections and generate CSV files"
+    """Run DFT-D3 dispersion benchmarks."""
+    args = parse_args()
+    config = load_yaml_config(args.config)
+    config = merge_cli_overrides(config, args)
+
+    backend = args.backend or config.get("runtime", {}).get("backend", "torch")
+    plan_only = (
+        getattr(args, "dry_run", False)
+        or getattr(args, "list_plan", False)
+        or getattr(args, "count_plan", False)
     )
-    parser.add_argument(
-        "--config", type=Path, required=True, help="Path to YAML configuration file"
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path("./benchmark_results"),
-        help="Output directory for CSV files",
-    )
-    parser.add_argument(
-        "--backend",
-        type=str,
-        choices=["torch", "jax", "torch_dftd"],
-        default="torch",
-        help="Backend to use for benchmarking (default: torch)",
-    )
-    parser.add_argument(
-        "--gpu-sku",
-        type=str,
-        help="Override GPU SKU name for output files (default: auto-detect)",
-    )
-    parser.add_argument(
-        "--neighbor-format",
-        type=str,
-        choices=["matrix", "list"],
-        default="matrix",
-        help="Neighbor representation format for dftd3 kernel (default: matrix)",
-    )
-    parser.add_argument(
-        "--virial",
-        action="store_true",
-        help="Enable virial computation (requires PBC; passes cell and shifts to dftd3)",
-    )
-    parser.add_argument(
-        "--jax-allocator",
-        type=str,
-        choices=["throughput", "memory"],
-        default="throughput",
-        help=(
-            "JAX XLA memory allocator mode (default: throughput). "
-            "'throughput' uses XLA's preallocator for fast steady-state timing. "
-            "'memory' uses the platform allocator for accurate memory accounting."
-        ),
-    )
+    if backend == "jax" and not plan_only:
+        ensure_jax_available(need_dispersion=True)
 
-    args = parser.parse_args()
-    if args.backend != "torch" and (args.neighbor_format != "matrix" or args.virial):
-        parser.error(
-            "--neighbor-format and --virial are only supported with --backend torch"
-        )
-
-    # Configure JAX allocator and import JAX (env vars must precede import)
-    if args.backend == "jax":
-        _setup_jax_allocator(args.jax_allocator)
-    _import_jax()
-
-    # Validate backend availability
-    _check_backend_available(args.backend)
-
-    # Load config
-    config = load_config(args.config)
-
-    # Resolve backend type
-    backend_type = _resolve_backend_type(args.backend)
-
-    # Get parameters
-    params = config["parameters"]
-    cutoff = float(params["cutoff"])
-    warmup = int(params["warmup_iterations"])
-    timing = int(params["timing_iterations"])
-    dtype_str = params["dtype"]
-
-    dftd3_config = config["dftd3_parameters"]
-
-    # Backend-specific setup
-    device = "cpu"  # Default
-    match backend_type:
-        case "torch":
-            dtype = getattr(torch, dtype_str)
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        case "jax":
-            dtype = None  # JAX uses dtype_str directly
-            try:
-                if any(d.platform == "gpu" for d in jax.local_devices()):
-                    device = "gpu"
-            except Exception:  # noqa: S110
-                pass
-
-    # Get GPU SKU
-    gpu_sku = args.gpu_sku if args.gpu_sku else get_gpu_sku(backend_type)
-
-    # Create output directory
-    output_dir = args.output_dir
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Initialize timer
-    timer = BenchmarkTimer(warmup_runs=warmup, timing_runs=timing, backend=backend_type)
-
-    # Backend-specific parameter setup
-    d3_params = None
-    torch_dftd_params = None
-    match args.backend:
-        case "torch":
-            d3_params = create_d3_parameters("torch", device, dtype_str)
-        case "jax":
-            d3_params = create_d3_parameters("jax", dtype_str=dtype_str)
-        case "torch_dftd":
-            torch_dftd_params = load_torch_dftd_parameters(torch.device(device), dtype)
-
-    # Print configuration
-    print("=" * 70)
-    print("DFT-D3 DISPERSION BENCHMARK")
-    print("=" * 70)
-    print(f"Backend: {args.backend}")
-    print(f"Device: {device}")
-    print(f"GPU SKU: {gpu_sku}")
-    print(f"Cutoff: {cutoff:.2f} Å ({cutoff * ANGSTROM_TO_BOHR:.1f} Bohr)")
-    print(f"Dtype: {dtype}")
-    print(f"Warmup iterations: {warmup}")
-    print(f"Timing iterations: {timing}")
-    if args.backend == "torch":
-        print(f"Neighbor format: {args.neighbor_format}")
-        print(f"Virial: {args.virial}")
-    if args.backend == "jax":
-        print(f"JAX allocator mode: {args.jax_allocator}")
-    print(f"Output directory: {output_dir}")
-    print(
-        f"Memory metric: "
-        f"{'torch.cuda.max_memory_allocated (allocator peak)' if args.backend in ('torch', 'torch_dftd') else 'NVML used_memory (process-wide, not directly comparable to Torch)'}"
-    )
-
-    # Run benchmarks for each system configuration
-    for system_config in config["systems"]:
-        system_name = system_config["name"]
-        system_type = system_config["system_type"]
-        supercell_sizes = system_config["supercell_sizes"]
-        batch_sizes = system_config.get("batch_sizes", [1])
-        max_neighbors = system_config["max_neighbors"]
-
-        # Group results by batch size
-        results_by_batch = {}
-
-        for batch_size in batch_sizes:
-            is_batched = batch_size > 1
-
-            print(f"\n{'=' * 70}")
-            print(f"Benchmarking: {system_name} ({system_type})")
-            if is_batched:
-                print(f"Batch size: {batch_size}")
-            print(f"{'=' * 70}")
-            print(f"Supercell sizes: {supercell_sizes}")
-
-            all_results = []
-
-            for size in supercell_sizes:
-                # Reset peak memory stats before each configuration
-                timer.clear_memory()
-
-                atoms_per_system = 2 * size**3
-                total_atoms = atoms_per_system * batch_size
-
-                if is_batched:
-                    print(
-                        f"\n  {total_atoms:6,d} atoms ({atoms_per_system:,d} x {batch_size})...",
-                        end=" ",
-                        flush=True,
-                    )
-                else:
-                    print(
-                        f"\n  {total_atoms:6,d} atoms (supercell {size}³)...",
-                        end=" ",
-                        flush=True,
-                    )
-
-                # Choose benchmark function based on backend
-                match args.backend:
-                    case "torch":
-                        result = run_dftd3_nvalchemiops_benchmark(
-                            size,
-                            cutoff,
-                            d3_params,
-                            dftd3_config,
-                            max_neighbors,
-                            timer,
-                            device,
-                            dtype,
-                            batch_size,
-                            return_neighbor_list=(args.neighbor_format == "list"),
-                            compute_virial=args.virial,
-                        )
-                    case "jax":
-                        result = run_dftd3_nvalchemiops_jax_benchmark(
-                            size,
-                            cutoff,
-                            d3_params,
-                            dftd3_config,
-                            max_neighbors,
-                            timer,
-                            dtype_str,
-                            batch_size,
-                        )
-                    case "torch_dftd":
-                        result = run_dftd3_torch_dftd_benchmark(
-                            size,
-                            cutoff,
-                            torch_dftd_params,
-                            dftd3_config,
-                            max_neighbors,
-                            timer,
-                            device,
-                            dtype,
-                            batch_size,
-                        )
-
-                # Add backend to result for CSV
-                result["backend"] = args.backend
-                error_type = (
-                    None if "error_type" not in result else result.pop("error_type")
-                )
-                error = None if "error" not in result else result.pop("error")
-                all_results.append(result)
-
-                if result["success"]:
-                    throughput = result["total_atoms"] / result["median_time_ms"] * 1000
-                    mem_str = ""
-                    if result.get("peak_memory_mb") is not None:
-                        mem_str = f" | {result['peak_memory_mb']:.1f} MB"
-                    compile_str = ""
-                    if result.get("compile_ms") is not None:
-                        compile_str = f" | warmup {result['compile_ms']:.0f} ms"
-                    neighbor_str = ""
-                    if result.get("total_neighbors"):
-                        neighbor_str = f" | {result['total_neighbors']:,d} neighbors"
-                    print(
-                        f"{result['median_time_ms']:.3f} ms "
-                        f"({throughput:.1f} atoms/s){mem_str}{compile_str}{neighbor_str}"
-                    )
-                else:
-                    print(f"FAILED ({error_type}): {error}")
-                    if error_type in ["OOM", "Timeout"]:
-                        print("  Skipping larger systems")
-                        break
-
-            # Store results for this batch size
-            if all_results:
-                results_by_batch[batch_size] = all_results
-
-        # Separate batched and non-batched results
-        non_batched_results = []
-        batched_results = []
-
-        for batch_size, results in results_by_batch.items():
-            if batch_size == 1:
-                non_batched_results.extend(results)
-            else:
-                batched_results.extend(results)
-
-        # Save non-batched results
-        if non_batched_results:
-            torch_mode_suffix = ""
-            if args.backend == "torch":
-                virial_mode = "virial" if args.virial else "novirial"
-                torch_mode_suffix = f"_{args.neighbor_format}_{virial_mode}"
-            output_file = (
-                output_dir
-                / f"dftd3_benchmark_{args.backend}{torch_mode_suffix}_{gpu_sku}.csv"
-            )
-            with open(output_file, "w", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=non_batched_results[0].keys())
-                writer.writeheader()
-                writer.writerows(non_batched_results)
-            print(f"\n✓ Non-batched results saved to: {output_file}")
-
-            successful = [r for r in non_batched_results if r.get("success", True)]
-            failed = [r for r in non_batched_results if not r.get("success", True)]
-            print(
-                f"  Total: {len(non_batched_results)} | Successful: {len(successful)} | Failed: {len(failed)}"
-            )
-
-        # Save batched results (all batch sizes in one file)
-        if batched_results:
-            torch_mode_suffix = ""
-            if args.backend == "torch":
-                virial_mode = "virial" if args.virial else "novirial"
-                torch_mode_suffix = f"_{args.neighbor_format}_{virial_mode}"
-            output_file = (
-                output_dir
-                / f"dftd3_benchmark_batch_{args.backend}{torch_mode_suffix}_{gpu_sku}.csv"
-            )
-            with open(output_file, "w", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=batched_results[0].keys())
-                writer.writeheader()
-                writer.writerows(batched_results)
-            print(f"\n✓ Batched results saved to: {output_file}")
-
-            successful = [r for r in batched_results if r.get("success", True)]
-            failed = [r for r in batched_results if not r.get("success", True)]
-            print(
-                f"  Total: {len(batched_results)} | Successful: {len(successful)} | Failed: {len(failed)}"
-            )
-
-    print("\n" + "=" * 70)
-    print("BENCHMARK COMPLETE")
-    print("=" * 70)
+    results = run_from_config(config, output_dir=args.output_dir, backend=backend)
+    if not results:
+        return 1
+    if not any(row.get("success", True) is not False for row in results):
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

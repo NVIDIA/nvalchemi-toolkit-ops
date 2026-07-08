@@ -145,6 +145,10 @@ coverage-html:  ## Generate HTML coverage report
 # DOCUMENTATION
 # ==============================================================================
 
+# The PyData theme requires serial output; benchmark PNGs remain parallel.
+DOCS_JOBS ?= 1
+BENCHMARK_PLOT_JOBS ?= auto
+
 .PHONY: docs-install-examples
 docs-install-examples:  ## Install example dependencies
 	@echo "Installing example dependencies..."
@@ -165,7 +169,7 @@ docs-install-benchmarks:  ## Install benchmark dependencies
 
 .PHONY: docs
 docs: docs-install-examples docs-install-benchmarks  ## Build documentation
-	cd docs && make html
+	cd docs && $(MAKE) html DOCS_JOBS="$(DOCS_JOBS)" BENCHMARK_PLOT_JOBS="$(BENCHMARK_PLOT_JOBS)"
 
 .PHONY: docs-clean
 docs-clean:  ## Clean documentation build

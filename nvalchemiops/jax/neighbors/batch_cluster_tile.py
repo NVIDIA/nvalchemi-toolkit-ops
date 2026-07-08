@@ -33,6 +33,11 @@ import numpy as np
 import warp as wp
 from warp.jax_experimental import GraphMode, jax_callable
 
+from nvalchemiops.jax.neighbors._cluster_tile_preload import (
+    _preload_cluster_tile_build_kernel,
+    _preload_cluster_tile_coo_kernel,
+    _preload_cluster_tile_query_kernel,
+)
 from nvalchemiops.neighbors.cluster_tile import (
     TILE_GROUP_SIZE,
 )
@@ -195,8 +200,8 @@ def estimate_batch_cluster_tile_list_sizes(
 
     Mirrors
     :func:`nvalchemiops.torch.neighbors.batch_cluster_tile.estimate_batch_cluster_tile_list_sizes`.
-    The ``.item()`` syncs are necessary to size buffers; cache the result
-    if calling from a hot loop.
+    Converting ``batch_ptr`` to NumPy synchronizes it to size static buffers;
+    cache the result if calling from a hot loop.
 
     Parameters
     ----------
@@ -219,14 +224,20 @@ def estimate_batch_cluster_tile_list_sizes(
     num_systems : int
         Number of systems (``batch_ptr.shape[0] - 1``).
     """
-    if int(batch_ptr.shape[0]) < 2:
+    try:
+        ptr_values = np.asarray(batch_ptr, dtype=np.int64).reshape(-1)
+    except Exception as exc:
+        raise ValueError(
+            "batch_ptr must be concrete to estimate batch cluster-tile sizes"
+        ) from exc
+    if len(ptr_values) < 2:
         raise ValueError("batch_ptr must have length at least 2")
-    num_systems = int(batch_ptr.shape[0]) - 1
-    natom_per_system = (batch_ptr[1:] - batch_ptr[:-1]).astype(jnp.int32)
+    num_systems = len(ptr_values) - 1
+    natom_per_system = ptr_values[1:] - ptr_values[:-1]
     natom_padded_per_system = (
         (natom_per_system + TILE_GROUP_SIZE - 1) // TILE_GROUP_SIZE
     ) * TILE_GROUP_SIZE
-    n_padded = int(natom_padded_per_system.sum())
+    n_padded = int(np.sum(natom_padded_per_system))
     ngroup = n_padded // TILE_GROUP_SIZE
     ngroup_padded = (
         (ngroup + TILE_GROUP_SIZE - 1) // TILE_GROUP_SIZE
@@ -1072,14 +1083,14 @@ _jax_batch_query_cluster_tile_coo_segmented = jax_callable(
 # =============================================================================
 # User-facing entry points
 # =============================================================================
-def _make_batch_idx(batch_ptr: jax.Array) -> jax.Array:
+def _make_batch_idx(batch_ptr: jax.Array, total_atoms: int) -> jax.Array:
     """Build per-atom system index from a batch_ptr (cumulative atom counts)."""
     num_systems = int(batch_ptr.shape[0]) - 1
     natom_per_system = (batch_ptr[1:] - batch_ptr[:-1]).astype(jnp.int32)
     return jnp.repeat(
         jnp.arange(num_systems, dtype=jnp.int32),
         natom_per_system,
-        total_repeat_length=int(batch_ptr[-1]),
+        total_repeat_length=int(total_atoms),
     )
 
 
@@ -1174,7 +1185,7 @@ def batch_build_cluster_tile_list(
     )
 
     inv_cell_batch = jnp.linalg.inv(cell_batch)
-    batch_idx = _make_batch_idx(batch_ptr)
+    batch_idx = _make_batch_idx(batch_ptr, positions.shape[0])
 
     (
         sorted_atom_index,
@@ -1212,6 +1223,11 @@ def batch_build_cluster_tile_list(
         tile_system = jnp.zeros(max_tiles, dtype=jnp.int32)
 
     if rebuild_flags is None:
+        _preload_cluster_tile_build_kernel(
+            batched=True,
+            segmented=False,
+            selective=False,
+        )
         (
             group_ctr_x,
             group_ctr_y,
@@ -1249,6 +1265,11 @@ def batch_build_cluster_tile_list(
                 "rebuild_flags requires tile_offsets and tile_counts for "
                 "batched cluster_tile builds"
             )
+        _preload_cluster_tile_build_kernel(
+            batched=True,
+            segmented=True,
+            selective=True,
+        )
         rf = rebuild_flags.astype(jnp.bool_)
         (
             group_ctr_x,
@@ -1464,6 +1485,15 @@ def batch_query_cluster_tile(
             )
         if batch_idx is None:
             raise ValueError("batch_idx is required when rebuild_flags is provided")
+    _preload_cluster_tile_query_kernel(
+        batched=True,
+        tile_segmented=selective,
+        selective=selective,
+        dual_cutoff=dual_cutoff,
+        return_vectors=has_pair_outputs,
+        return_distances=has_pair_outputs,
+        pair_fn=pair_fn,
+    )
     if fill_value is None:
         fill_value = natom
     inv_cell_batch = jnp.linalg.inv(cell_batch)
@@ -1819,6 +1849,12 @@ def batch_query_cluster_tile_coo(
         raise ValueError("rebuild_flags requires pair_offsets and pair_counts")
     if rebuild_flags is not None and (tile_offsets is None or tile_counts is None):
         raise ValueError("rebuild_flags requires tile_offsets and tile_counts")
+    _preload_cluster_tile_coo_kernel(
+        batched=True,
+        tile_segmented=segmented,
+        coo_segmented=segmented,
+        selective=segmented,
+    )
 
     inv_cell_batch = jnp.linalg.inv(cell_batch)
     pair_counter = jnp.zeros(1, dtype=jnp.int32)
@@ -2206,7 +2242,7 @@ def batch_cluster_tile_neighbor_list(
     if has_pair_outputs:
         if fill_value is None:
             fill_value = N
-        batch_idx_arr = _make_batch_idx(batch_ptr).astype(jnp.int32)
+        batch_idx_arr = _make_batch_idx(batch_ptr, N).astype(jnp.int32)
 
         def _forward(p: jax.Array, c: jax.Array) -> _NeighborForwardOutput:
             p_det = jax.lax.stop_gradient(p)
@@ -2495,7 +2531,9 @@ def batch_cluster_tile_neighbor_list(
         rebuild_flags=rebuild_flags,
         tile_offsets=tile_offsets,
         tile_counts=tile_counts,
-        batch_idx=_make_batch_idx(batch_ptr).astype(jnp.int32) if selective else None,
+        batch_idx=_make_batch_idx(batch_ptr, N).astype(jnp.int32)
+        if selective
+        else None,
         neighbor_matrix=previous_neighbor_matrix,
         num_neighbors=previous_num_neighbors,
         neighbor_matrix_shifts=previous_neighbor_matrix_shifts,

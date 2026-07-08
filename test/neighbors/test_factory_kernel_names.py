@@ -122,6 +122,16 @@ def _assert_kernel_name(kernel: wp.Kernel, expected: str) -> None:
                 strategy="pair_centric",
                 batched=True,
                 return_vectors=True,
+                coarsened=True,
+            ),
+            "_batch_cell_list_build_neighbor_matrix__pair_centric_coarsened_vectors__f32",
+        ),
+        (
+            get_query_cell_list_kernel(
+                wp.float32,
+                strategy="pair_centric",
+                batched=True,
+                return_vectors=True,
             ),
             "_batch_cell_list_build_neighbor_matrix__pair_centric_vectors__f32",
         ),

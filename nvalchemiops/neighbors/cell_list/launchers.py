@@ -22,8 +22,10 @@ import warp as wp
 
 from nvalchemiops.neighbors.cell_list.dispatch import (
     PAIR_CENTRIC_MAX_LINEAR_LAUNCH,
+    _pair_centric_coarsened_launch_size,
+    _pair_centric_logical_block_count,
+    _pair_centric_work_per_cuda_block,
     compute_batch_pair_centric_n_outer,
-    is_pair_centric_launch_safe,
     is_pair_centric_parallelism_sufficient,
     pair_centric_launch_size,
     select_batch_cell_list_strategy,
@@ -56,7 +58,6 @@ __all__ = [
     "batch_query_cell_list_pair_centric_sorted",
     "build_cell_list",
     "compute_batch_pair_centric_n_outer",
-    "is_pair_centric_launch_safe",
     "is_pair_centric_parallelism_sufficient",
     "pair_centric_launch_size",
     "get_cell_list_cells_per_system_kernel",
@@ -76,29 +77,35 @@ __all__ = [
 _ZERO_RADIUS = wp.vec3i(0, 0, 0)
 
 
-def _pair_centric_unsafe_message(
+def _pair_centric_launch_plan(
     total_cells: int,
     n_outer: int,
     block_dim: int,
-) -> str:
-    """Return a user-facing message for an unsafe pair-centric launch."""
-    launch_size = pair_centric_launch_size(total_cells, n_outer, block_dim)
-    return (
-        "strategy='pair_centric' would require "
-        f"{launch_size} logical threads "
-        f"({int(total_cells)} cells * {int(n_outer) + 1} offsets * "
-        f"{int(block_dim)} threads), exceeding the safe linear launch limit "
-        f"of {PAIR_CENTRIC_MAX_LINEAR_LAUNCH}."
+    *,
+    max_launch_size: int = PAIR_CENTRIC_MAX_LINEAR_LAUNCH,
+) -> tuple[int, int, int, bool]:
+    """Return coarsened pair-centric launch metadata.
+
+    Returns
+    -------
+    tuple[int, int, int, bool]
+        ``(logical_blocks, work_per_cuda_block, launch_dim, coarsened)``.
+    """
+    logical_blocks = _pair_centric_logical_block_count(total_cells, n_outer)
+    work_per_cuda_block = _pair_centric_work_per_cuda_block(
+        total_cells,
+        n_outer,
+        block_dim,
+        max_launch_size=max_launch_size,
     )
-
-
-def _raise_unsafe_pair_centric_launch(
-    total_cells: int,
-    n_outer: int,
-    block_dim: int,
-) -> None:
-    """Raise for raw pair-centric launchers that cannot fall back."""
-    raise ValueError(_pair_centric_unsafe_message(total_cells, n_outer, block_dim))
+    launch_dim = _pair_centric_coarsened_launch_size(
+        total_cells,
+        n_outer,
+        block_dim,
+        max_launch_size=max_launch_size,
+    )
+    coarsened = work_per_cuda_block > 1
+    return logical_blocks, work_per_cuda_block, launch_dim, coarsened
 
 
 def _prepare_target_row_lookup(
@@ -513,6 +520,7 @@ def query_cell_list_pair_centric_sorted(
     pair_forces: wp.array | None = None,
     target_row_lookup: wp.array | None = None,
     selective: bool = True,
+    max_launch_size: int = PAIR_CENTRIC_MAX_LINEAR_LAUNCH,
 ) -> None:
     """Pair-centric query: one block per (source cell, offset).
 
@@ -529,6 +537,10 @@ def query_cell_list_pair_centric_sorted(
     Pair-set output is identical to the atom-centric kernel; per-row
     ordering inside ``neighbor_matrix`` is non-deterministic across
     builds.
+
+    Oversized launches transparently coarsen multiple logical
+    ``(source_cell, offset)`` blocks into each CUDA block while keeping
+    the same strategy name.
 
     Parameters
     ----------
@@ -550,6 +562,8 @@ def query_cell_list_pair_centric_sorted(
         Threads per CUDA block.  Should bracket typical
         atoms-per-cell counts; cells with more atoms see lanes
         stride-loop.
+    max_launch_size : int, default PAIR_CENTRIC_MAX_LINEAR_LAUNCH
+        Internal/test hook for the safe one-dimensional Warp launch limit.
     rebuild_flags : wp.array(dtype=wp.bool), shape (1,)
         Caller-allocated GPU-resident flag.  ``False`` makes every block
         return immediately and outputs are preserved.  ``True`` runs the
@@ -561,8 +575,8 @@ def query_cell_list_pair_centric_sorted(
     -----
     The pair-centric kernel factory supports compact ``target_indices`` rows,
     optional vector/distance buffers, and ``pair_fn`` slot outputs directly.
-    It remains CUDA-only because it maps one logical block to each
-    ``(source_cell, offset)`` pair.
+    It remains CUDA-only because it maps logical blocks to
+    ``(source_cell, offset)`` work items.
     """
 
     if "cpu" in str(device).lower():
@@ -574,8 +588,14 @@ def query_cell_list_pair_centric_sorted(
     total_cells = int(atoms_per_cell_count.shape[0])
     block_dim_int = int(block_dim)
     n_offsets_int = int(n_outer) + 1
-    if not is_pair_centric_launch_safe(total_cells, int(n_outer), block_dim_int):
-        _raise_unsafe_pair_centric_launch(total_cells, int(n_outer), block_dim_int)
+    logical_blocks, work_per_cuda_block, launch_dim, coarsened = (
+        _pair_centric_launch_plan(
+            total_cells,
+            int(n_outer),
+            block_dim_int,
+            max_launch_size=max_launch_size,
+        )
+    )
     partial = target_indices is not None
     target_row_lookup_arg = _prepare_target_row_lookup(
         target_indices,
@@ -611,10 +631,11 @@ def query_cell_list_pair_centric_sorted(
         return_vectors=return_vectors,
         return_distances=return_distances,
         pair_fn=pair_fn,
+        coarsened=coarsened,
     )
     wp.launch(
         kernel,
-        dim=total_cells * n_offsets_int * block_dim_int,
+        dim=launch_dim,
         block_dim=block_dim_int,
         inputs=[
             sorted_positions,
@@ -644,6 +665,8 @@ def query_cell_list_pair_centric_sorted(
             block_dim_int,
             total_cells,
             n_offsets_int,
+            logical_blocks,
+            work_per_cuda_block,
             _ZERO_RADIUS,
             rebuild_flags,
         ],
@@ -686,6 +709,7 @@ def query_cell_list(
     pair_energies: wp.array | None = None,
     pair_forces: wp.array | None = None,
     target_row_lookup: wp.array | None = None,
+    max_launch_size: int = PAIR_CENTRIC_MAX_LINEAR_LAUNCH,
 ) -> None:
     """Core warp launcher for querying spatial cell list to build neighbor matrix.
 
@@ -826,10 +850,6 @@ def query_cell_list(
                 "strategy='pair_centric' requires n_outer.  Compute via "
                 "compute_batch_pair_centric_n_outer((Rx, Ry, Rz), half_fill).",
             )
-        block_dim = 64
-        total_cells = int(atoms_per_cell_count.shape[0])
-        if not is_pair_centric_launch_safe(total_cells, int(n_outer), block_dim):
-            _raise_unsafe_pair_centric_launch(total_cells, int(n_outer), block_dim)
         chosen = "pair_centric"
     else:
         raise ValueError(
@@ -908,6 +928,7 @@ def query_cell_list(
             pair_forces=pair_forces,
             target_row_lookup=target_row_lookup,
             selective=selective,
+            max_launch_size=max_launch_size,
         )
     else:
         query_cell_list_atom_centric_sorted(
@@ -1137,12 +1158,15 @@ def batch_query_cell_list_pair_centric_sorted(
     pair_forces: wp.array | None = None,
     rebuild_flags: wp.array | None = None,
     target_row_lookup: wp.array | None = None,
+    max_launch_size: int = PAIR_CENTRIC_MAX_LINEAR_LAUNCH,
 ) -> None:
     """Core warp launcher for the pair-centric batched cell-list query.
 
-    Launches ``_batch_pair_centric_outer`` over ``total_cells x
-    (n_outer + 1)`` blocks of ``block_dim`` threads.  ``offset_idx == 0``
-    is the self-cell entry (within-cell pairs, with the appropriate filter
+    Launches the pair-centric kernel over ``total_cells x (n_outer + 1)``
+    logical blocks of ``block_dim`` threads, coarsening multiple logical
+    blocks per CUDA block when the uncoarsened launch would exceed the
+    safe one-dimensional Warp launch limit.  ``offset_idx == 0`` is the
+    self-cell entry (within-cell pairs, with the appropriate filter
     for ``half_fill``); ``offset_idx > 0`` are the outer-shell offsets
     decoded on-the-fly from ``R_max``.  Per-system out-of-range offsets
     early-return.
@@ -1231,8 +1255,14 @@ def batch_query_cell_list_pair_centric_sorted(
     num_systems = int(cell.shape[0])
     block_dim_int = int(block_dim)
     n_offsets_int = int(n_outer) + 1
-    if not is_pair_centric_launch_safe(int(total_cells), int(n_outer), block_dim_int):
-        _raise_unsafe_pair_centric_launch(int(total_cells), int(n_outer), block_dim_int)
+    logical_blocks, work_per_cuda_block, launch_dim, coarsened = (
+        _pair_centric_launch_plan(
+            int(total_cells),
+            int(n_outer),
+            block_dim_int,
+            max_launch_size=max_launch_size,
+        )
+    )
     R_max_vec = wp.vec3i(int(R_max[0]), int(R_max[1]), int(R_max[2]))
     partial = target_indices is not None
     rebuild_flags_arg = (
@@ -1295,10 +1325,11 @@ def batch_query_cell_list_pair_centric_sorted(
         return_vectors=return_vectors,
         return_distances=return_distances,
         pair_fn=pair_fn,
+        coarsened=coarsened,
     )
     wp.launch(
         kernel,
-        dim=total_cells * n_offsets_int * block_dim_int,
+        dim=launch_dim,
         block_dim=block_dim_int,
         inputs=[
             sorted_positions,
@@ -1328,6 +1359,8 @@ def batch_query_cell_list_pair_centric_sorted(
             block_dim_int,
             total_cells,
             n_offsets_int,
+            logical_blocks,
+            work_per_cuda_block,
             R_max_vec,
             rebuild_flags_arg,
         ],
@@ -1376,6 +1409,7 @@ def batch_query_cell_list(
     pair_energies: wp.array | None = None,
     pair_forces: wp.array | None = None,
     target_row_lookup: wp.array | None = None,
+    max_launch_size: int = PAIR_CENTRIC_MAX_LINEAR_LAUNCH,
 ) -> None:
     """Core warp launcher for querying batch spatial cell lists to build neighbor matrices.
 
@@ -1503,9 +1537,6 @@ def batch_query_cell_list(
                 f"metadata): {missing}.  See compute_batch_pair_centric_n_outer "
                 f"for n_outer.",
             )
-        block_dim = 64
-        if not is_pair_centric_launch_safe(int(total_cells), int(n_outer), block_dim):
-            _raise_unsafe_pair_centric_launch(int(total_cells), int(n_outer), block_dim)
     elif strategy != "atom_centric":
         raise ValueError(
             f"strategy must be 'atom_centric' | 'pair_centric', got {strategy!r}",
@@ -1575,6 +1606,7 @@ def batch_query_cell_list(
             pair_forces=pair_forces,
             rebuild_flags=rebuild_flags,
             target_row_lookup=target_row_lookup,
+            max_launch_size=max_launch_size,
         )
         return
 

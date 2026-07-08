@@ -63,15 +63,9 @@ Throughput (atom-steps/s) for single-system MD integrators.
 
 ### Batched MD
 
-Performance for batched MD simulations showing how throughput scales with both
-system size and batch size. Batching enables efficient parameter sweeps and
-ensemble simulations.
-
-#### Time Scaling and Throughput
-
-```{note}
-Batched MD benchmark results will be published in a future release.
-```
+The current shipped benchmark artifacts do not include a batched MD CSV. The
+plot generator therefore omits batched MD figures until fresh batched MD timing
+data is added under `docs/benchmarks/benchmark_results/`.
 
 ### Available Integrators
 
@@ -183,51 +177,16 @@ Total throughput (atom-steps/s) for batched optimization.
 
 ## Benchmark Configuration
 
-### System Setup
+The checked-in dynamics CSVs carry the measured atom counts, step counts,
+timestep, and warmup count for each row. The single-system MD snapshot uses
+1,000 steps, a 0.001 fs timestep, and 100 untimed warmup steps. Current runner
+defaults, including the 94.4 K single-system thermostat settings and all size
+grids, live in `benchmarks/dynamics/benchmark_config.yaml`.
 
-| Parameter | Value |
-| --------- | ----- |
-| System Type | FCC argon lattice with periodic boundaries |
-| Lattice Constant | 5.26 Å (argon) |
-| Temperature | 300 K |
-| Potential | Lennard-Jones (ε = 0.0104 eV, σ = 3.40 Å) |
-| Cutoff Distance | 8.5 Å |
-| Neighbor List | Cell list algorithm with skin distance 1.0 Å |
-| Rebuild Interval | Every 10 steps (or displacement-based) |
-
-### MD Parameters
-
-| Parameter | Value |
-| --------- | ----- |
-| Timestep | 1.0 fs (0.001 time units) |
-| Total Steps | 10,000 |
-| Warmup Steps | 100 (excluded from timing) |
-| Langevin Friction | 0.01 fs⁻¹ |
-| NPT Pressure | 1.0 bar |
-| NPT Barostat Mass | 75.0 (time units²) |
-
-### Optimization Parameters
-
-| Parameter | Value |
-| --------- | ----- |
-| Max Steps | 1,000 |
-| Force Tolerance | 0.01 eV/Å |
-| Initial Perturbation | Gaussian (σ = 0.15 Å for batched, 0.1 Å for single) |
-| dt_start | 1.0 fs |
-| dt_max | 10.0 fs |
-| maxstep | 0.2 Å |
-
-### System Sizes
-
-**Single-System Benchmarks:**
-
-- MD: 256, 512, 1024, 2048, 4096 atoms
-- Optimization: 256, 512, 1024, 2048 atoms
-
-**Batched Benchmarks:**
-
-- System sizes: 256, 512, 1024 atoms per system
-- Batch sizes: 1, 2, 4, 8, 16, 32 systems
+Dynamics results use their own historical schema and are not part of the
+reportable NL/D3/electrostatics 18-file snapshot. When reproducing a plotted
+dynamics point, treat the committed CSV row as the record of that measurement
+and the YAML as the configuration for a new run.
 
 ## Running Your Own Benchmarks
 
@@ -278,69 +237,15 @@ python benchmark_fire2.py --config benchmark_config.yaml --output-dir ./benchmar
 
 ### Configuration File
 
-Edit `benchmark_config.yaml` to customize benchmarks:
-
-```yaml
-# MD single-system
-md_single:
-  enabled: true
-  system_sizes: [256, 512, 1024, 2048, 4096]
-  integrators:
-    velocity_verlet:
-      steps: 10000
-      dt: 0.001  # fs
-      warmup_steps: 100
-    langevin:
-      steps: 10000
-      dt: 0.001
-      temperature: 300.0  # K
-      friction: 0.01  # 1/fs
-
-# MD batched
-md_batch:
-  enabled: true
-  system_sizes: [256, 512, 1024]
-  batch_sizes: [1, 2, 4, 8, 16, 32]
-  integrators:
-    velocity_verlet:
-      steps: 10000
-      dt: 0.001
-      warmup_steps: 100
-
-# Optimization single-system
-opt_single:
-  enabled: true
-  system_sizes: [256, 512, 1024, 2048]
-  optimizers:
-    fire:
-      max_steps: 1000
-      force_tolerance: 0.01  # eV/Å
-
-# Optimization batched
-opt_batch:
-  enabled: true
-  system_sizes: [256, 512]
-  batch_sizes: [1, 2, 4, 8, 16]
-  optimizers:
-    fire:
-      max_steps: 1000
-      force_tolerance: 0.01
-
-# Potential parameters
-potential:
-  epsilon: 0.0104  # eV
-  sigma: 3.40  # Å
-  cutoff: 8.5  # Å
-  skin: 1.0  # Å
-  neighbor_rebuild_interval: 10
-```
+Edit `benchmarks/dynamics/benchmark_config.yaml` to select current size grids,
+integrators, optimizers, and timing parameters. Keeping the executable YAML as
+the single configuration source avoids stale copies in the documentation.
 
 ### Output
 
 Results are saved as CSV files in `docs/benchmarks/benchmark_results/`:
 
 - `dynamics_md_single_nvalchemiops_<gpu_sku>.csv`
-- `dynamics_md_batch_nvalchemiops_<gpu_sku>.csv`
 - `dynamics_opt_single_nvalchemiops_<gpu_sku>.csv`
 - `dynamics_opt_batch_nvalchemiops_<gpu_sku>.csv`
 - `fire_compare_<gpu_sku>.csv`
