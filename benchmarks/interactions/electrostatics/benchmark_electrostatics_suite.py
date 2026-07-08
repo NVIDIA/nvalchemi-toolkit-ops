@@ -224,25 +224,6 @@ def _torch_pme_static_metadata(
     )
 
 
-def _torch_pme_k_squared_metadata(
-    cell: torch.Tensor,
-    mesh_dims: tuple[int, int, int],
-) -> tuple[torch.Tensor, str]:
-    """Precompute PME k-squared without retaining unused Cartesian vectors."""
-    cell_3d = cell if cell.dim() == 3 else cell.unsqueeze(0)
-    repeated_cells = cell_3d.shape[0] > 1 and torch.equal(
-        cell_3d, cell_3d[:1].expand_as(cell_3d)
-    )
-    metadata_cell = cell_3d[:1] if repeated_cells else cell_3d
-    k_vectors, k_squared = generate_k_vectors_pme(metadata_cell, mesh_dims)
-    del k_vectors
-    if repeated_cells:
-        k_squared = k_squared.unsqueeze(0).expand(cell_3d.shape[0], -1, -1, -1)
-        k_squared = k_squared.contiguous()
-    cache_mode = "shared_cell_k_squared" if repeated_cells else "full_static"
-    return k_squared, cache_mode
-
-
 def _get_jax_el_kernels(jax_api: dict) -> dict[str, Any]:
     """Return cached JAX energy-and-gradient kernels."""
     jax = jax_api["jax"]
@@ -574,7 +555,7 @@ def benchmark_pme(
 
     positions = inputs.positions.detach().requires_grad_(True)
     charges = inputs.charges.detach().requires_grad_(True)
-    k_squared, pme_cache_mode = _torch_pme_k_squared_metadata(inputs.cell, mesh_dims)
+    k_vectors, k_squared = generate_k_vectors_pme(inputs.cell, mesh_dims)
     static_metadata = _torch_pme_static_metadata(
         inputs.cell,
         mesh_dims,
@@ -602,7 +583,7 @@ def benchmark_pme(
             mesh_dimensions=mesh_dims,
             spline_order=spline_order,
             batch_idx=inputs.batch_idx,
-            k_vectors=None,
+            k_vectors=k_vectors,
             k_squared=k_squared,
             volume=static_metadata.volume,
             cell_inv_t=static_metadata.cell_inv_t,
@@ -620,7 +601,7 @@ def benchmark_pme(
             mesh_dimensions=mesh_dims,
             spline_order=spline_order,
             batch_idx=inputs.batch_idx,
-            k_vectors=None,
+            k_vectors=k_vectors,
             k_squared=k_squared,
             volume=static_metadata.volume,
             cell_inv_t=static_metadata.cell_inv_t,
@@ -668,11 +649,7 @@ def benchmark_pme(
         "timing_method": "torch_cuda_events",
         "timing_method_real": timing_method_real,
         "timing_method_reciprocal": timing_method_reciprocal,
-        "pme_cache_mode": pme_cache_mode,
-        "pme_batch_chunk_size": (
-            int(inputs.cell.shape[0]) if inputs.cell.ndim == 3 else 1
-        ),
-        "pme_batch_chunk_count": 1,
+        "pme_cache_mode": "full_static",
         "component_profiled": profile_components,
     }
 
@@ -825,22 +802,7 @@ def _benchmark_pme_jax(
     compute_bspline_moduli_1d = jax_api["compute_bspline_moduli_1d"]
     kernels = _get_jax_el_kernels(jax_api)
 
-    cell_3d = inputs.cell if inputs.cell.ndim == 3 else jnp.expand_dims(inputs.cell, 0)
-    repeated_cells = cell_3d.shape[0] > 1 and bool(
-        jax.device_get(jnp.all(cell_3d == cell_3d[:1]))
-    )
-    metadata_cell = cell_3d[:1] if repeated_cells else cell_3d
-    unused_k_vectors, k_squared = k_pme(metadata_cell, mesh_dims)
-    jax.block_until_ready(k_squared)
-    del unused_k_vectors
-    if repeated_cells:
-        k_squared = jnp.broadcast_to(
-            k_squared,
-            (cell_3d.shape[0], *k_squared.shape),
-        )
-        jax.block_until_ready(k_squared)
-    k_vectors = None
-    pme_cache_mode = "shared_cell_k_squared" if repeated_cells else "full_static"
+    k_vectors, k_squared = k_pme(inputs.cell, mesh_dims)
     mesh_nx, mesh_ny, mesh_nz = mesh_dims
     dtype = inputs.positions.dtype
     cell_3d = inputs.cell if inputs.cell.ndim == 3 else jnp.expand_dims(inputs.cell, 0)
@@ -929,9 +891,7 @@ def _benchmark_pme_jax(
         "timing_method": timing_method,
         "timing_method_real": timing_method_real,
         "timing_method_reciprocal": timing_method_reciprocal,
-        "pme_cache_mode": pme_cache_mode,
-        "pme_batch_chunk_size": int(cell_3d.shape[0]),
-        "pme_batch_chunk_count": 1,
+        "pme_cache_mode": "full_static",
         "component_profiled": profile_components,
         "mem_info": mem_info,
     }
