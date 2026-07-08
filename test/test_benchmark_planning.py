@@ -3503,6 +3503,15 @@ class TestFailureRows:
 
         assert failure_error_type(error) == "UnsupportedConfiguration"
 
+    def test_xla_launch_limit_is_an_unsupported_configuration(self):
+        """XLA launch-grid limits receive the same stable failure class."""
+        error = RuntimeError(
+            "Kernel 'input_scatter_fusion_2' launch needs more blocks "
+            "(2507788584, 1) than allowed by hardware (2147483647, 65535)."
+        )
+
+        assert failure_error_type(error) == "UnsupportedConfiguration"
+
     def test_save_results_preserves_same_run_rows_when_schema_expands(self, tmp_path):
         """Appending a same-run failure row expands schema without clobbering data."""
         csv_path = tmp_path / "results.csv"

@@ -1469,7 +1469,13 @@ def failure_error_type(exc: BaseException) -> str:
         token in message for token in oom_tokens
     ):
         return "OutOfMemoryError"
-    if isinstance(exc, ValueError) and "safe linear launch limit" in message:
+    linear_launch_limit = (
+        isinstance(exc, ValueError) and "safe linear launch limit" in message
+    )
+    xla_launch_limit = (
+        "launch needs more blocks" in message and "than allowed by hardware" in message
+    )
+    if linear_launch_limit or xla_launch_limit:
         return "UnsupportedConfiguration"
     return exc_type
 
