@@ -1020,12 +1020,13 @@ def _el_estimate_params(
     backend,
     accuracy,
     jax_api,
-    max_real_space_cutoff=9.0,
+    max_pme_real_space_cutoff=9.0,
 ):
-    """Estimate PME + Ewald parameters for one system at the given accuracy.
+    """Estimate independent PME and Ewald parameters for one configuration.
 
-    Dispatches on backend; returns ``(pme_params, ewald_params)`` parameter
-    dataclasses from the underlying library.
+    PME retains the automatic estimate up to ``max_pme_real_space_cutoff`` and
+    is re-estimated at that cutoff when necessary. Direct Ewald always keeps
+    its own automatically balanced real- and reciprocal-space parameters.
     """
     if backend == "torch":
         pme_estimator = estimate_pme_parameters
@@ -1039,13 +1040,13 @@ def _el_estimate_params(
         estimated_cutoff = float(pme_params.real_space_cutoff.max().item())
     else:
         estimated_cutoff = float(pme_params.real_space_cutoff.max())
-    if estimated_cutoff > max_real_space_cutoff:
+    if estimated_cutoff > max_pme_real_space_cutoff:
         pme_params = pme_estimator(
             positions,
             cell,
             batch_idx=batch_idx,
             accuracy=accuracy,
-            real_space_cutoff=max_real_space_cutoff,
+            real_space_cutoff=max_pme_real_space_cutoff,
         )
 
     ewald_params = ewald_estimator(
@@ -1054,34 +1055,30 @@ def _el_estimate_params(
     return pme_params, ewald_params
 
 
-def _el_unpack_params(pme_params, ewald_params, backend, accuracy=None):
-    """Extract alpha / cutoffs / mesh_dims from the parameter dataclasses.
+def _el_unpack_params(pme_params, ewald_params, backend, method):
+    """Extract method-specific parameters from the estimator dataclasses.
 
-    Returns ``(alpha, real_cutoff, mesh_dims, k_cutoff)``. ``alpha`` keeps the
-    per-system tensor/array shape the component kernels consume. For diagnostic
-    printing, use ``float(alpha.mean())``.
+    Returns ``(alpha, real_cutoff, mesh_dims, k_cutoff)``. PME uses its capped
+    automatic ``alpha`` and real-space cutoff; Ewald uses its independent,
+    uncapped automatic ``alpha`` and real-/reciprocal-space cutoffs. ``alpha``
+    keeps the per-system tensor/array shape the component kernels consume.
     """
+    if method not in {"pme", "ewald"}:
+        raise ValueError(f"Unsupported electrostatics method: {method}")
+
     if backend == "torch":
-        alpha = pme_params.alpha.clone()
-        real_cutoff = (
-            pme_params.real_space_cutoff[0].item()
-            if pme_params.real_space_cutoff.dim() > 0
-            else pme_params.real_space_cutoff.item()
-        )
+        selected_params = pme_params if method == "pme" else ewald_params
+        alpha = selected_params.alpha.clone()
+        real_cutoff = float(selected_params.real_space_cutoff.max().item())
         mesh_dims = tuple(pme_params.mesh_dimensions)
-        alpha_max = float(alpha.max().item())
         k_cutoff = ewald_params.reciprocal_space_cutoff.max().item()
     else:
-        alpha = pme_params.alpha
-        real_cutoff = float(pme_params.real_space_cutoff[0])
+        selected_params = pme_params if method == "pme" else ewald_params
+        alpha = selected_params.alpha
+        real_cutoff = float(selected_params.real_space_cutoff.max())
         md = pme_params.mesh_dimensions
         mesh_dims = (int(md[0]), int(md[1]), int(md[2]))
-        alpha_max = float(alpha.max())
         k_cutoff = float(ewald_params.reciprocal_space_cutoff.max())
-    if accuracy is not None:
-        # Ewald uses the same alpha as PME, so its reciprocal cutoff must be
-        # recomputed when the PME real-space cutoff is capped.
-        k_cutoff = 2.0 * alpha_max * math.sqrt(-math.log(accuracy))
     return alpha, real_cutoff, mesh_dims, k_cutoff
 
 
@@ -1252,7 +1249,7 @@ def _el_build_nl(positions, cell, pbc, batch_idx, real_cutoff, backend, jax_api)
 
 
 class ElConfigSetup(NamedTuple):
-    """Return shape of :func:`_el_setup_config`.
+    """Method-specific return shape of :func:`_el_setup_config`.
 
     Named over positional unpacking — the eight fields are a mix of
     backend-polymorphic tensors (``inputs``, ``alpha``) and plain scalars
@@ -1292,11 +1289,12 @@ def _el_setup_config(
     cfg: dict,
     sys_name: str,
     accuracy: float,
+    method: str,
     backend: str,
     jax_api: dict | None,
-    max_real_space_cutoff: float = 9.0,
+    max_pme_real_space_cutoff: float = 9.0,
 ) -> ElConfigSetup | ElConfigFailure:
-    """Build the per-config :class:`ElectrostaticsInputs` + derived params.
+    """Build method-specific inputs and automatically derived parameters.
 
     Returns an ``ElConfigFailure`` on expected failures (create_system error,
     params estimation failure, NL build failure) after printing a diagnostic
@@ -1339,7 +1337,7 @@ def _el_setup_config(
             backend,
             accuracy,
             jax_api,
-            max_real_space_cutoff,
+            max_pme_real_space_cutoff,
         )
     except Exception as e:
         error_type = failure_error_type(e)
@@ -1351,7 +1349,7 @@ def _el_setup_config(
         return ElConfigFailure(str(e), error_type, "parameter_setup")
 
     alpha, real_cutoff, mesh_dims, k_cutoff = _el_unpack_params(
-        pme_params, ewald_params, backend, accuracy
+        pme_params, ewald_params, backend, method
     )
     del pme_params, ewald_params
 
@@ -1518,11 +1516,11 @@ def dry_run_from_config(config: dict, backend: str | None = None) -> list[dict]:
     params = config["parameters"]
     max_total_atoms = params.get("max_total_atoms")
     profile_components = bool(params.get("profile_components", False))
-    max_real_space_cutoff = float(params.get("max_real_space_cutoff", 9.0))
-    if not math.isfinite(max_real_space_cutoff) or max_real_space_cutoff <= 0.0:
-        raise ValueError("max_real_space_cutoff must be a positive finite value")
-    if max_real_space_cutoff > 9.0:
-        raise ValueError("max_real_space_cutoff must not exceed 9 Angstrom")
+    max_pme_real_space_cutoff = float(params.get("max_real_space_cutoff", 9.0))
+    if not math.isfinite(max_pme_real_space_cutoff) or max_pme_real_space_cutoff <= 0.0:
+        raise ValueError("PME max_real_space_cutoff must be positive and finite")
+    if max_pme_real_space_cutoff > 9.0:
+        raise ValueError("PME max_real_space_cutoff must not exceed 9 Angstrom")
     accuracies = config["accuracies"]
     method_names = [m["name"] for m in config["methods"] if m.get("enabled", True)]
     plan_output = config.get("runtime", {}).get("plan_output", "dry_run")
@@ -1621,11 +1619,11 @@ def run_from_config(
     num_runs = params["timing_runs"]
     warmup_runs = params["warmup_runs"]
     profile_components = bool(params.get("profile_components", False))
-    max_real_space_cutoff = float(params.get("max_real_space_cutoff", 9.0))
-    if not math.isfinite(max_real_space_cutoff) or max_real_space_cutoff <= 0.0:
-        raise ValueError("max_real_space_cutoff must be a positive finite value")
-    if max_real_space_cutoff > 9.0:
-        raise ValueError("max_real_space_cutoff must not exceed 9 Angstrom")
+    max_pme_real_space_cutoff = float(params.get("max_real_space_cutoff", 9.0))
+    if not math.isfinite(max_pme_real_space_cutoff) or max_pme_real_space_cutoff <= 0.0:
+        raise ValueError("PME max_real_space_cutoff must be positive and finite")
+    if max_pme_real_space_cutoff > 9.0:
+        raise ValueError("PME max_real_space_cutoff must not exceed 9 Angstrom")
     accuracies = config["accuracies"]
     max_total_atoms = params.get("max_total_atoms")
     methods_config = config["methods"]
@@ -1662,7 +1660,10 @@ def run_from_config(
     print(f"Electrostatics Benchmark | GPU: {gpu_name}")
     print(f"Backend: {backend}")
     print(f"Methods: {method_names} | Accuracies: {accuracies}")
-    print(f"Maximum real-space cutoff: {max_real_space_cutoff:g} Angstrom")
+    print(
+        f"Maximum PME real-space cutoff: {max_pme_real_space_cutoff:g} Angstrom; "
+        "Ewald cutoff: automatic"
+    )
     print(f"Timing: {num_runs} runs | component profiling: {profile_components}")
     print(f"Output: {output_dir}")
 
@@ -1735,28 +1736,29 @@ def run_from_config(
                     atoms_per_system, batch_size, total_atoms = planned_atom_counts(
                         sys_name, cfg
                     )
-                    if backend == "jax":
-                        clean_jax()
-                    clean_gpu()
-                    setup = _el_setup_config(
-                        cfg,
+                    row_meta = make_row_meta(
                         sys_name,
-                        accuracy,
+                        mode_name,
                         backend,
-                        jax_api,
-                        max_real_space_cutoff,
+                        atoms_per_system,
+                        batch_size,
+                        total_atoms,
                     )
-                    if isinstance(setup, ElConfigFailure):
-                        row_meta = make_row_meta(
+                    for idx, method in enumerate(method_names):
+                        if backend == "jax":
+                            clean_jax()
+                        clean_gpu()
+                        setup = _el_setup_config(
+                            cfg,
                             sys_name,
-                            mode_name,
+                            accuracy,
+                            method,
                             backend,
-                            atoms_per_system,
-                            batch_size,
-                            total_atoms,
+                            jax_api,
+                            max_pme_real_space_cutoff,
                         )
-                        results.extend(
-                            build_failure_result(
+                        if isinstance(setup, ElConfigFailure):
+                            result = build_failure_result(
                                 method=method,
                                 accuracy=accuracy,
                                 error=setup.error,
@@ -1767,31 +1769,54 @@ def run_from_config(
                                 **_energy_derivative_metadata(profile_components),
                                 **row_meta,
                             )
-                            for method in method_names
-                        )
-                        if backend == "jax":
-                            clean_jax(
-                                clear_executables=(
-                                    setup.error_type == "OutOfMemoryError"
+                            results.append(result)
+                            if backend == "jax":
+                                clean_jax(
+                                    clear_executables=(
+                                        setup.error_type == "OutOfMemoryError"
+                                    )
                                 )
-                            )
-                        continue
+                            if (
+                                backend == "jax"
+                                and setup.error_type == "OutOfMemoryError"
+                            ):
+                                results.extend(
+                                    build_failure_result(
+                                        method=next_method,
+                                        accuracy=accuracy,
+                                        error=(
+                                            "Previous JAX method OOM for this "
+                                            "configuration; remaining methods "
+                                            "were not executed in the same process."
+                                        ),
+                                        error_type="SkippedAfterOOM",
+                                        failure_stage="post_oom_containment",
+                                        timing_runs=num_runs,
+                                        warmup_runs=warmup_runs,
+                                        **_energy_derivative_metadata(
+                                            profile_components
+                                        ),
+                                        **row_meta,
+                                    )
+                                    for next_method in method_names[idx + 1 :]
+                                )
+                                break
+                            continue
 
-                    print(
-                        f"    alpha={float(setup.alpha.mean()):.4f}, "
-                        f"r_cut={setup.real_cutoff:.2f}Å, "
-                        f"NL pairs={setup.inputs.nl_data.shape[1]:,}"
-                    )
-
-                    row_meta = make_row_meta(
-                        sys_name,
-                        mode_name,
-                        backend,
-                        setup.atoms_per_system,
-                        setup.batch_size,
-                        setup.actual_total,
-                    )
-                    for idx, method in enumerate(method_names):
+                        print(
+                            f"    {method.upper()} params: "
+                            f"alpha={float(setup.alpha.mean()):.4f}, "
+                            f"r_cut={setup.real_cutoff:.2f}Å, "
+                            f"NL pairs={setup.inputs.nl_data.shape[1]:,}"
+                        )
+                        row_meta = make_row_meta(
+                            sys_name,
+                            mode_name,
+                            backend,
+                            setup.atoms_per_system,
+                            setup.batch_size,
+                            setup.actual_total,
+                        )
                         result = _el_run_method(
                             method,
                             setup.inputs,
@@ -1808,6 +1833,7 @@ def run_from_config(
                         )
                         if result is not None:
                             results.append(result)
+                        del setup
                         if (
                             backend == "jax"
                             and result is not None
@@ -1834,10 +1860,8 @@ def run_from_config(
                                 for next_method in method_names[idx + 1 :]
                             )
                             break
-
-                    del setup
-                    if backend == "jax":
-                        clean_jax()
+                        if backend == "jax":
+                            clean_jax()
 
             if results:
                 csv_name = make_csv_name("el", sys_name, mode_name)

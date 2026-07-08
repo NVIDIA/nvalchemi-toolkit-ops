@@ -4555,18 +4555,20 @@ class TestElectrostaticsParameterUnpack:
     """Test electrostatics benchmark parameter shape handling."""
 
     def test_torch_alpha_keeps_per_system_shape(self):
-        """Torch component timing receives vector alpha, not a collapsed scalar."""
+        """Torch PME timing receives vector alpha, not a collapsed scalar."""
         pme_params = SimpleNamespace(
             alpha=torch.tensor([0.1, 0.2], dtype=torch.float64),
             real_space_cutoff=torch.tensor([8.0, 8.0], dtype=torch.float64),
             mesh_dimensions=(16, 16, 16),
         )
         ewald_params = SimpleNamespace(
-            reciprocal_space_cutoff=torch.tensor([4.0, 4.0], dtype=torch.float64)
+            alpha=torch.tensor([0.3, 0.4], dtype=torch.float64),
+            real_space_cutoff=torch.tensor([12.0, 14.0], dtype=torch.float64),
+            reciprocal_space_cutoff=torch.tensor([4.0, 4.0], dtype=torch.float64),
         )
 
         alpha, real_cutoff, mesh_dims, k_cutoff = _el_unpack_params(
-            pme_params, ewald_params, "torch"
+            pme_params, ewald_params, "torch", "pme"
         )
 
         assert alpha.shape == (2,)
@@ -4575,26 +4577,73 @@ class TestElectrostaticsParameterUnpack:
         assert mesh_dims == (16, 16, 16)
         assert k_cutoff == 4.0
 
-    def test_jax_alpha_object_is_preserved(self):
-        """JAX component timing receives the original array-like alpha."""
-        alpha_value = object()
+    def test_torch_ewald_keeps_automatic_parameters(self):
+        """Torch Ewald uses its uncapped automatic alpha and cutoffs."""
         pme_params = SimpleNamespace(
-            alpha=alpha_value,
-            real_space_cutoff=[8.0],
+            alpha=torch.tensor([0.1, 0.2], dtype=torch.float64),
+            real_space_cutoff=torch.tensor([8.0, 8.0], dtype=torch.float64),
             mesh_dimensions=(16, 16, 16),
         )
         ewald_params = SimpleNamespace(
-            reciprocal_space_cutoff=SimpleNamespace(max=lambda: 4.0)
+            alpha=torch.tensor([0.3, 0.4], dtype=torch.float64),
+            real_space_cutoff=torch.tensor([12.0, 14.0], dtype=torch.float64),
+            reciprocal_space_cutoff=torch.tensor([4.0, 5.0], dtype=torch.float64),
         )
 
         alpha, real_cutoff, mesh_dims, k_cutoff = _el_unpack_params(
-            pme_params, ewald_params, "jax"
+            pme_params, ewald_params, "torch", "ewald"
+        )
+
+        assert torch.allclose(alpha, ewald_params.alpha)
+        assert real_cutoff == 14.0
+        assert mesh_dims == (16, 16, 16)
+        assert k_cutoff == 5.0
+
+    def test_jax_alpha_object_is_preserved(self):
+        """JAX PME timing receives the original array-like alpha."""
+        alpha_value = object()
+        pme_params = SimpleNamespace(
+            alpha=alpha_value,
+            real_space_cutoff=np.array([8.0]),
+            mesh_dimensions=(16, 16, 16),
+        )
+        ewald_params = SimpleNamespace(
+            alpha=object(),
+            real_space_cutoff=np.array([12.0]),
+            reciprocal_space_cutoff=np.array([4.0]),
+        )
+
+        alpha, real_cutoff, mesh_dims, k_cutoff = _el_unpack_params(
+            pme_params, ewald_params, "jax", "pme"
         )
 
         assert alpha is alpha_value
         assert real_cutoff == 8.0
         assert mesh_dims == (16, 16, 16)
         assert k_cutoff == 4.0
+
+    def test_jax_ewald_keeps_automatic_parameters(self):
+        """JAX Ewald timing receives its independent automatic parameters."""
+        ewald_alpha = object()
+        pme_params = SimpleNamespace(
+            alpha=object(),
+            real_space_cutoff=np.array([8.0]),
+            mesh_dimensions=(16, 16, 16),
+        )
+        ewald_params = SimpleNamespace(
+            alpha=ewald_alpha,
+            real_space_cutoff=np.array([12.0, 14.0]),
+            reciprocal_space_cutoff=np.array([4.0, 5.0]),
+        )
+
+        alpha, real_cutoff, mesh_dims, k_cutoff = _el_unpack_params(
+            pme_params, ewald_params, "jax", "ewald"
+        )
+
+        assert alpha is ewald_alpha
+        assert real_cutoff == 14.0
+        assert mesh_dims == (16, 16, 16)
+        assert k_cutoff == 5.0
 
 
 class TestBenchmarkCsvLoading:
