@@ -33,6 +33,11 @@ import numpy as np
 import warp as wp
 from warp.jax_experimental import GraphMode, jax_callable
 
+from nvalchemiops.jax.neighbors._cluster_tile_preload import (
+    _preload_cluster_tile_build_kernel,
+    _preload_cluster_tile_coo_kernel,
+    _preload_cluster_tile_query_kernel,
+)
 from nvalchemiops.neighbors.cluster_tile import (
     TILE_GROUP_SIZE,
 )
@@ -1147,6 +1152,11 @@ def batch_build_cluster_tile_list(
         tile_system = jnp.zeros(max_tiles, dtype=jnp.int32)
 
     if rebuild_flags is None:
+        _preload_cluster_tile_build_kernel(
+            batched=True,
+            segmented=False,
+            selective=False,
+        )
         (
             group_ctr_x,
             group_ctr_y,
@@ -1184,6 +1194,11 @@ def batch_build_cluster_tile_list(
                 "rebuild_flags requires tile_offsets and tile_counts for "
                 "batched cluster_tile builds"
             )
+        _preload_cluster_tile_build_kernel(
+            batched=True,
+            segmented=True,
+            selective=True,
+        )
         rf = rebuild_flags.astype(jnp.bool_)
         (
             group_ctr_x,
@@ -1314,6 +1329,15 @@ def batch_query_cluster_tile(
             )
         if batch_idx is None:
             raise ValueError("batch_idx is required when rebuild_flags is provided")
+    _preload_cluster_tile_query_kernel(
+        batched=True,
+        tile_segmented=selective,
+        selective=selective,
+        dual_cutoff=dual_cutoff,
+        return_vectors=has_pair_outputs,
+        return_distances=has_pair_outputs,
+        pair_fn=pair_fn,
+    )
     if fill_value is None:
         fill_value = natom
     inv_cell_batch = jnp.linalg.inv(cell_batch)
@@ -1607,6 +1631,12 @@ def batch_query_cluster_tile_coo(
         raise ValueError("rebuild_flags requires pair_offsets and pair_counts")
     if rebuild_flags is not None and (tile_offsets is None or tile_counts is None):
         raise ValueError("rebuild_flags requires tile_offsets and tile_counts")
+    _preload_cluster_tile_coo_kernel(
+        batched=True,
+        tile_segmented=segmented,
+        coo_segmented=segmented,
+        selective=segmented,
+    )
 
     inv_cell_batch = jnp.linalg.inv(cell_batch)
     pair_counter = jnp.zeros(1, dtype=jnp.int32)
