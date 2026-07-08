@@ -66,6 +66,7 @@ Environment variables for ``--backend jax``:
 from __future__ import annotations
 
 import argparse
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -1012,30 +1013,48 @@ def _el_tensors_from_data(data, backend):
     return positions, charges, cell, pbc, batch_idx
 
 
-def _el_estimate_params(positions, cell, batch_idx, backend, accuracy, jax_api):
+def _el_estimate_params(
+    positions,
+    cell,
+    batch_idx,
+    backend,
+    accuracy,
+    jax_api,
+    max_real_space_cutoff=9.0,
+):
     """Estimate PME + Ewald parameters for one system at the given accuracy.
 
     Dispatches on backend; returns ``(pme_params, ewald_params)`` parameter
     dataclasses from the underlying library.
     """
     if backend == "torch":
-        pme_params = estimate_pme_parameters(
-            positions, cell, batch_idx=batch_idx, accuracy=accuracy
-        )
-        ewald_params = estimate_ewald_parameters(
-            positions, cell, batch_idx=batch_idx, accuracy=accuracy
-        )
+        pme_estimator = estimate_pme_parameters
+        ewald_estimator = estimate_ewald_parameters
     else:
-        pme_params = jax_api["estimate_pme_parameters"](
-            positions, cell, batch_idx=batch_idx, accuracy=accuracy
+        pme_estimator = jax_api["estimate_pme_parameters"]
+        ewald_estimator = jax_api["estimate_ewald_parameters"]
+
+    pme_params = pme_estimator(positions, cell, batch_idx=batch_idx, accuracy=accuracy)
+    if backend == "torch":
+        estimated_cutoff = float(pme_params.real_space_cutoff.max().item())
+    else:
+        estimated_cutoff = float(pme_params.real_space_cutoff.max())
+    if estimated_cutoff > max_real_space_cutoff:
+        pme_params = pme_estimator(
+            positions,
+            cell,
+            batch_idx=batch_idx,
+            accuracy=accuracy,
+            real_space_cutoff=max_real_space_cutoff,
         )
-        ewald_params = jax_api["estimate_ewald_parameters"](
-            positions, cell, batch_idx=batch_idx, accuracy=accuracy
-        )
+
+    ewald_params = ewald_estimator(
+        positions, cell, batch_idx=batch_idx, accuracy=accuracy
+    )
     return pme_params, ewald_params
 
 
-def _el_unpack_params(pme_params, ewald_params, backend):
+def _el_unpack_params(pme_params, ewald_params, backend, accuracy=None):
     """Extract alpha / cutoffs / mesh_dims from the parameter dataclasses.
 
     Returns ``(alpha, real_cutoff, mesh_dims, k_cutoff)``. ``alpha`` keeps the
@@ -1050,13 +1069,19 @@ def _el_unpack_params(pme_params, ewald_params, backend):
             else pme_params.real_space_cutoff.item()
         )
         mesh_dims = tuple(pme_params.mesh_dimensions)
+        alpha_max = float(alpha.max().item())
         k_cutoff = ewald_params.reciprocal_space_cutoff.max().item()
     else:
         alpha = pme_params.alpha
         real_cutoff = float(pme_params.real_space_cutoff[0])
         md = pme_params.mesh_dimensions
         mesh_dims = (int(md[0]), int(md[1]), int(md[2]))
+        alpha_max = float(alpha.max())
         k_cutoff = float(ewald_params.reciprocal_space_cutoff.max())
+    if accuracy is not None:
+        # Ewald uses the same alpha as PME, so its reciprocal cutoff must be
+        # recomputed when the PME real-space cutoff is capped.
+        k_cutoff = 2.0 * alpha_max * math.sqrt(-math.log(accuracy))
     return alpha, real_cutoff, mesh_dims, k_cutoff
 
 
@@ -1264,7 +1289,12 @@ def _ordered_configs_for_backend(configs: list[dict], sys_name: str, backend: st
 
 
 def _el_setup_config(
-    cfg: dict, sys_name: str, accuracy: float, backend: str, jax_api: dict | None
+    cfg: dict,
+    sys_name: str,
+    accuracy: float,
+    backend: str,
+    jax_api: dict | None,
+    max_real_space_cutoff: float = 9.0,
 ) -> ElConfigSetup | ElConfigFailure:
     """Build the per-config :class:`ElectrostaticsInputs` + derived params.
 
@@ -1303,7 +1333,13 @@ def _el_setup_config(
 
     try:
         pme_params, ewald_params = _el_estimate_params(
-            positions, cell, batch_idx, backend, accuracy, jax_api
+            positions,
+            cell,
+            batch_idx,
+            backend,
+            accuracy,
+            jax_api,
+            max_real_space_cutoff,
         )
     except Exception as e:
         error_type = failure_error_type(e)
@@ -1315,7 +1351,7 @@ def _el_setup_config(
         return ElConfigFailure(str(e), error_type, "parameter_setup")
 
     alpha, real_cutoff, mesh_dims, k_cutoff = _el_unpack_params(
-        pme_params, ewald_params, backend
+        pme_params, ewald_params, backend, accuracy
     )
     del pme_params, ewald_params
 
@@ -1482,6 +1518,11 @@ def dry_run_from_config(config: dict, backend: str | None = None) -> list[dict]:
     params = config["parameters"]
     max_total_atoms = params.get("max_total_atoms")
     profile_components = bool(params.get("profile_components", False))
+    max_real_space_cutoff = float(params.get("max_real_space_cutoff", 9.0))
+    if not math.isfinite(max_real_space_cutoff) or max_real_space_cutoff <= 0.0:
+        raise ValueError("max_real_space_cutoff must be a positive finite value")
+    if max_real_space_cutoff > 9.0:
+        raise ValueError("max_real_space_cutoff must not exceed 9 Angstrom")
     accuracies = config["accuracies"]
     method_names = [m["name"] for m in config["methods"] if m.get("enabled", True)]
     plan_output = config.get("runtime", {}).get("plan_output", "dry_run")
@@ -1580,6 +1621,11 @@ def run_from_config(
     num_runs = params["timing_runs"]
     warmup_runs = params["warmup_runs"]
     profile_components = bool(params.get("profile_components", False))
+    max_real_space_cutoff = float(params.get("max_real_space_cutoff", 9.0))
+    if not math.isfinite(max_real_space_cutoff) or max_real_space_cutoff <= 0.0:
+        raise ValueError("max_real_space_cutoff must be a positive finite value")
+    if max_real_space_cutoff > 9.0:
+        raise ValueError("max_real_space_cutoff must not exceed 9 Angstrom")
     accuracies = config["accuracies"]
     max_total_atoms = params.get("max_total_atoms")
     methods_config = config["methods"]
@@ -1616,6 +1662,7 @@ def run_from_config(
     print(f"Electrostatics Benchmark | GPU: {gpu_name}")
     print(f"Backend: {backend}")
     print(f"Methods: {method_names} | Accuracies: {accuracies}")
+    print(f"Maximum real-space cutoff: {max_real_space_cutoff:g} Angstrom")
     print(f"Timing: {num_runs} runs | component profiling: {profile_components}")
     print(f"Output: {output_dir}")
 
@@ -1691,7 +1738,14 @@ def run_from_config(
                     if backend == "jax":
                         clean_jax()
                     clean_gpu()
-                    setup = _el_setup_config(cfg, sys_name, accuracy, backend, jax_api)
+                    setup = _el_setup_config(
+                        cfg,
+                        sys_name,
+                        accuracy,
+                        backend,
+                        jax_api,
+                        max_real_space_cutoff,
+                    )
                     if isinstance(setup, ElConfigFailure):
                         row_meta = make_row_meta(
                             sys_name,

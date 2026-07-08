@@ -16,6 +16,9 @@ parameters:
   warmup_runs: 3
   timing_runs: 10
   profile_components: false
+  # Cap the real-space neighbor-list radius. If the cost model selects a
+  # smaller cutoff, that smaller value is retained.
+  max_real_space_cutoff: 9.0
 
 # -----------------------------------------------------------------------------
 # Systems

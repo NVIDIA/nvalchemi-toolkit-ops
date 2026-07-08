@@ -15,7 +15,7 @@ parameters:
   # the cost model picks the cutoff that minimizes real + reciprocal time.
   # When set, alpha and the mesh dimensions are derived from this rc.
   # CLI: --real-space-cutoff overrides this value.
-  real_space_cutoff: 12.0
+  real_space_cutoff: 9.0
 
 # System configurations to test
 systems:
