@@ -188,14 +188,21 @@ def configure_jax_environment(
 
     The benchmark suite keeps JAX's default preallocator for steady-state
     throughput and caps it with ``XLA_PYTHON_CLIENT_MEM_FRACTION``. When users
-    have not explicitly chosen a preallocation policy, emit a one-line note so
-    the large XLA allocation is visible before the first JAX import.
+    explicitly disable preallocation, default to CUDA's asynchronous allocator
+    so shape sweeps can reuse large freed regions without BFC fragmentation.
+    When no policy is selected, emit a one-line note before the first JAX import.
     """
     global _JAX_ALLOCATOR_WARNING_EMITTED
 
     if need_x64:
         os.environ.setdefault("JAX_ENABLE_X64", "1")
     mem_fraction = os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.95")
+    preallocate = os.environ.get("XLA_PYTHON_CLIENT_PREALLOCATE", "").lower()
+    if (
+        preallocate in {"0", "false"}
+        and "XLA_PYTHON_CLIENT_ALLOCATOR" not in os.environ
+    ):
+        os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "cuda_async"
 
     if (
         "XLA_PYTHON_CLIENT_PREALLOCATE" not in os.environ

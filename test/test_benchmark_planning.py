@@ -18,6 +18,7 @@
 import csv
 import inspect
 import math
+import os
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -163,14 +164,17 @@ class TestBenchmarkMethodSelection:
         """EL keeps reusable jitted entrypoints at module scope."""
         assert isinstance(benchmark_electrostatics._JAX_EL_KERNEL_CACHE, dict)
 
-    def test_jax_cleanup_preserves_executable_caches_by_default(self):
-        """Successful JAX rows do not clear compiled executables per cutoff."""
+    def test_jax_cleanup_can_release_executable_caches(self):
+        """JAX row cleanup can clear executables between unrelated shapes."""
         signature = inspect.signature(clean_jax)
         source = inspect.getsource(clean_jax)
 
         assert signature.parameters["clear_executables"].default is False
         assert "if clear_executables:" in source
         assert "jax.clear_caches()" in source
+
+        row_source = inspect.getsource(benchmark_neighborlist._nl_run_one_method)
+        assert "clean_jax(clear_executables=True)" in row_source
 
     def test_jax_nl_timing_falls_back_to_serial_after_oom(self):
         """Large JAX NL rows can time serially when batched dispatch OOMs."""
@@ -252,7 +256,9 @@ class TestBenchmarkMethodSelection:
         )
         assert "XLA_PYTHON_CLIENT_PREALLOCATE" in helper_source
         assert "on-demand allocation" in helper_source
-        assert "TF_GPU_ALLOCATOR" not in helper_source
+        assert (
+            'os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "cuda_async"' in helper_source
+        )
 
     def test_suite_rejects_profile_selector(self, monkeypatch, capsys):
         """The reportable suite has no reduced profile selector."""
@@ -288,6 +294,16 @@ class TestBenchmarkMethodSelection:
         assert "XLA_PYTHON_CLIENT_MEM_FRACTION=0.95" in captured.out
         assert "on-demand allocation" in captured.out
         assert "XLA_PYTHON_CLIENT_PREALLOCATE" not in captured.err
+
+    def test_jax_env_uses_async_allocator_with_on_demand_allocation(self, monkeypatch):
+        """On-demand JAX shape sweeps avoid BFC high-water fragmentation."""
+        monkeypatch.setenv("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+        monkeypatch.delenv("XLA_PYTHON_CLIENT_ALLOCATOR", raising=False)
+        monkeypatch.delenv("TF_GPU_ALLOCATOR", raising=False)
+
+        configure_jax_environment()
+
+        assert os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] == "cuda_async"
 
     def test_jax_naive_benchmark_uses_supported_timing_boundary(self):
         """JAX naive timing follows each public strategy's supported boundary."""
@@ -1184,8 +1200,12 @@ class TestBenchmarkMethodSelection:
         assert 'BACKEND="all"' in source
         assert 'suite_benchmark="nl"' in source
         assert '"$BACKEND" == "warp" && "$BENCHMARK" != "nl"' in source
-        assert 'common_args+=(--system "$SYSTEM_FILTER")' in source
-        assert 'common_args+=(--mode "$MODE_FILTER")' in source
+        assert 'common_args+=(--system "$suite_system")' in source
+        assert 'common_args+=(--mode "$suite_mode")' in source
+        assert "run_jax_isolated_shards()" in source
+        assert "run_suite \\" in source
+        assert "                    jax \\" in source
+        assert 'echo "--- jax shard=' in source
         assert "full_suite_selection()" in source
         assert "REPORTABLE_CSV_NAMES" in source
         assert "found_names != REPORTABLE_CSV_NAMES" in source
@@ -1297,7 +1317,12 @@ class TestBenchmarkMethodSelection:
         assert 'read -r -a uv_sync_args <<< "$UV_SYNC_ARGS"' in source
         assert '"$UV_BIN" sync "${uv_sync_args[@]}"' in source
         assert "uv_run_args+=(--no-sync)" in source
-        assert 'run "${uv_run_args[@]}" python' in source
+        assert "run_python()" in source
+        assert '"$PYTHON_BIN" "$@"' in source
+        assert '"$UV_BIN" run "${uv_run_args[@]}" python "$@"' in source
+        assert 'export XLA_PYTHON_CLIENT_ALLOCATOR="cuda_async"' in source
+        assert 'echo "xla_python_client_allocator=' in source
+        assert 'echo "tf_gpu_allocator=${TF_GPU_ALLOCATOR:-<unset>}"' in source
         assert '--python "${UV_PROJECT_ENVIRONMENT}/bin/python"' in source
         assert "BENCHMARK_PIP_PACKAGES" in source
         assert "pyyaml>=6.0.3" in source
@@ -4100,7 +4125,11 @@ class TestDryRunSkipPlanning:
             raise RuntimeError("kernel boom")
 
         monkeypatch.setattr(benchmark_neighborlist, "benchmark_nl", fail_benchmark)
-        monkeypatch.setattr(benchmark_neighborlist, "clean_jax", lambda: None)
+        monkeypatch.setattr(
+            benchmark_neighborlist,
+            "clean_jax",
+            lambda **_kwargs: None,
+        )
 
         row = benchmark_neighborlist._nl_run_one_method(
             data={},

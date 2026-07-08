@@ -1425,7 +1425,11 @@ def _nl_run_one_method(data, cutoff, method, num_runs, warmup_runs, backend, row
         )
     finally:
         if backend == "jax":
-            clean_jax()
+            # Reportable rows sweep many unrelated shapes and cutoffs. Keeping
+            # every executable alive makes XLA's on-demand allocator retain a
+            # fragmented high-water-mark pool, so a later dense output can OOM
+            # even when that row fits in a fresh process.
+            clean_jax(clear_executables=True)
 
 
 def dry_run_from_config(config: dict, backend: str | None = None) -> list[dict]:

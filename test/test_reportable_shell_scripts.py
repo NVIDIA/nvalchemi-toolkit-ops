@@ -165,6 +165,37 @@ def _reportable_fixture(tmp_path: Path) -> tuple[Path, dict[str, str]]:
         : > "$run_dir/RUN_LOG.md"
         """,
     )
+    _write_executable(
+        fake_bin / "python",
+        """
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        if [[ -n "${FAKE_UV_CALLS:-}" ]]; then
+            printf '%s\n' "$*" >> "$FAKE_UV_CALLS"
+        fi
+        if [[ "${1:-}" == "-m" && "${2:-}" == "benchmarks.benchmark_suite" ]]; then
+            simulate=1
+        elif [[ "${1:-}" == "-" && "${2:-}" == "run-suite-with-nh3" ]]; then
+            simulate=1
+        else
+            exec python3 "$@"
+        fi
+
+        run_dir=""
+        previous=""
+        for argument in "$@"; do
+            if [[ "$previous" == "--run-dir" ]]; then
+                run_dir="$argument"
+                break
+            fi
+            previous="$argument"
+        done
+        [[ -n "$run_dir" ]] || exit 92
+        mkdir -p "$run_dir"
+        : > "$run_dir/RUN_LOG.md"
+        """,
+    )
 
     scratch = tmp_path / "scratch"
     result_dir = tmp_path / "results"
@@ -274,9 +305,19 @@ def test_backend_all_uses_only_supported_d3_backends(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     calls = Path(environment["FAKE_UV_CALLS"]).read_text()
     suite_calls = [line for line in calls.splitlines() if "run-suite-with-nh3" in line]
-    assert len(suite_calls) == 2
+    # Torch runs the selected system in one process; JAX isolates each scaling
+    # mode so its process-global allocator cannot accumulate across CSVs.
+    assert len(suite_calls) == 4
     assert any("--backend torch" in line for line in suite_calls)
-    assert any("--backend jax" in line for line in suite_calls)
+    jax_calls = [line for line in suite_calls if "--backend jax" in line]
+    assert len(jax_calls) == 3
+    assert all("--system cscl" in line for line in jax_calls)
+    assert {
+        mode
+        for line in jax_calls
+        for mode in ("system_size", "constant_workload", "batch_scaling")
+        if f"--mode {mode}" in line
+    } == {"system_size", "constant_workload", "batch_scaling"}
     assert not any("--backend warp" in line for line in suite_calls)
 
 

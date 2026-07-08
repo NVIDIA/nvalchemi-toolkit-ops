@@ -32,6 +32,7 @@ SKIP_SYNC=0
 USE_CURRENT_ENV=0
 VALIDATE_ONLY=0
 UV_BIN="${UV_BIN:-uv}"
+PYTHON_BIN="${PYTHON_BIN:-python}"
 UV_SYNC_ARGS="${UV_SYNC_ARGS:---extra torch --extra jax --group docs}"
 BENCHMARK_PIP_PACKAGES="${BENCHMARK_PIP_PACKAGES:-pyyaml>=6.0.3 nvidia-ml-py==13.590.48}"
 D3_PARAMS_PATH="${BENCHMARK_D3_PARAMS_PATH:-}"
@@ -77,6 +78,8 @@ Environment:
   BENCHMARK_NH3_DIR          Same as --nh3-dir.
   BENCHMARK_RUN_ID           Same as --run-id.
   UV_BIN                     uv executable to use. Default: uv.
+  PYTHON_BIN                 Python executable used with --use-current-env.
+                             Default: python.
   UV_SYNC_ARGS               Arguments for uv sync. Default selects compatible
                              CUDA 13 Torch/JAX extras plus docs plotting deps.
   BENCHMARK_PIP_PACKAGES     Extra runtime packages installed into the uv env.
@@ -326,6 +329,13 @@ export JAX_COMPILATION_CACHE_DIR="$SCRATCH/cache/jax"
 export MPLCONFIGDIR="$SCRATCH/cache/matplotlib"
 export CUDA_CACHE_PATH="$SCRATCH/cache/cuda"
 export XLA_PYTHON_CLIENT_MEM_FRACTION="${XLA_PYTHON_CLIENT_MEM_FRACTION:-0.95}"
+case "${XLA_PYTHON_CLIENT_PREALLOCATE:-}" in
+    0|false|False|FALSE)
+        if [[ -z "${XLA_PYTHON_CLIENT_ALLOCATOR:-}" ]]; then
+            export XLA_PYTHON_CLIENT_ALLOCATOR="cuda_async"
+        fi
+        ;;
+esac
 
 cd "$ROOT"
 
@@ -353,9 +363,12 @@ echo "skip_sync=$SKIP_SYNC"
 echo "use_current_env=$USE_CURRENT_ENV"
 echo "validate_only=$VALIDATE_ONLY"
 echo "uv_bin=$UV_BIN"
+echo "python_bin=$PYTHON_BIN"
 echo "uv_sync_args=$UV_SYNC_ARGS"
 echo "benchmark_pip_packages=${BENCHMARK_PIP_PACKAGES:-<none>}"
 echo "uv_project_environment=${UV_PROJECT_ENVIRONMENT:-<current>}"
+echo "xla_python_client_allocator=${XLA_PYTHON_CLIENT_ALLOCATOR:-<unset>}"
+echo "tf_gpu_allocator=${TF_GPU_ALLOCATOR:-<unset>}"
 echo "d3_params_path=${D3_PARAMS_PATH:-<xdg-cache-default>}"
 echo "nh3_dir=$NH3_DIR"
 echo
@@ -388,12 +401,20 @@ if [[ "$SKIP_SYNC" -eq 1 ]]; then
     uv_run_args+=(--no-sync)
 fi
 
+run_python() {
+    if [[ "$USE_CURRENT_ENV" -eq 1 ]]; then
+        "$PYTHON_BIN" "$@"
+    else
+        "$UV_BIN" run "${uv_run_args[@]}" python "$@"
+    fi
+}
+
 selection_uses_nh3() {
     [[ -z "$SYSTEM_FILTER" || "$SYSTEM_FILTER" == "all" || "$SYSTEM_FILTER" == "nh3" ]]
 }
 
 if [[ "$DRY_RUN" -eq 0 ]] && selection_uses_nh3; then
-    "$UV_BIN" run "${uv_run_args[@]}" python - preflight-nh3-inputs \
+    run_python - preflight-nh3-inputs \
         "$BENCHMARK" "$MODE_FILTER" "$NH3_DIR" "$ROOT" <<'PY'
 from __future__ import annotations
 
@@ -477,7 +498,7 @@ PY
 fi
 
 run_benchmark_suite_with_nh3() {
-    "$UV_BIN" run "${uv_run_args[@]}" python - run-suite-with-nh3 "$NH3_DIR" "$@" <<'PY'
+    run_python - run-suite-with-nh3 "$NH3_DIR" "$@" <<'PY'
 from __future__ import annotations
 
 import sys
@@ -514,14 +535,16 @@ PY
 
 run_suite() {
     local backend="$1"
-    local suite_benchmark="$BENCHMARK"
+    local suite_benchmark="${2:-$BENCHMARK}"
+    local suite_system="${3:-$SYSTEM_FILTER}"
+    local suite_mode="${4:-$MODE_FILTER}"
     if [[ "$backend" == "warp" && "$suite_benchmark" == "all" ]]; then
         suite_benchmark="nl"
     fi
     local log_suffix="${backend}-${INVOCATION_TAG}"
     [[ "$suite_benchmark" == "all" ]] || log_suffix="${log_suffix}-${suite_benchmark}"
-    [[ -z "$SYSTEM_FILTER" ]] || log_suffix="${log_suffix}-${SYSTEM_FILTER}"
-    [[ -z "$MODE_FILTER" ]] || log_suffix="${log_suffix}-${MODE_FILTER}"
+    [[ -z "$suite_system" ]] || log_suffix="${log_suffix}-${suite_system}"
+    [[ -z "$suite_mode" ]] || log_suffix="${log_suffix}-${suite_mode}"
     local log_file="$RESULT_DIR/logs/${log_suffix}.log"
     local common_args=(
         --benchmark "$suite_benchmark"
@@ -529,11 +552,11 @@ run_suite() {
         --timing-runs 10
         --warmup-runs 3
     )
-    if [[ -n "$SYSTEM_FILTER" ]]; then
-        common_args+=(--system "$SYSTEM_FILTER")
+    if [[ -n "$suite_system" ]]; then
+        common_args+=(--system "$suite_system")
     fi
-    if [[ -n "$MODE_FILTER" ]]; then
-        common_args+=(--mode "$MODE_FILTER")
+    if [[ -n "$suite_mode" ]]; then
+        common_args+=(--mode "$suite_mode")
     fi
     if [[ -n "$D3_PARAMS_PATH" ]]; then
         common_args+=(--d3-params-path "$D3_PARAMS_PATH")
@@ -557,11 +580,47 @@ run_suite() {
     fi
 }
 
+run_jax_isolated_shards() {
+    local benchmarks=(nl d3 el)
+    local systems=(cscl nh3)
+    local modes=(system_size constant_workload batch_scaling)
+    if [[ "$BENCHMARK" != "all" ]]; then
+        benchmarks=("$BENCHMARK")
+    fi
+    if [[ -n "$SYSTEM_FILTER" && "$SYSTEM_FILTER" != "all" ]]; then
+        systems=("$SYSTEM_FILTER")
+    fi
+    if [[ -n "$MODE_FILTER" && "$MODE_FILTER" != "all" ]]; then
+        modes=("$MODE_FILTER")
+    fi
+
+    # XLA's device allocator is process-global and keeps a high-water-mark
+    # pool. Each reportable CSV covers unrelated shapes, so run every JAX CSV
+    # shard in a fresh interpreter and let process exit release the pool.
+    for suite_benchmark in "${benchmarks[@]}"; do
+        for suite_system in "${systems[@]}"; do
+            for suite_mode in "${modes[@]}"; do
+                echo
+                echo "--- jax shard=${suite_benchmark}/${suite_system}/${suite_mode} ---"
+                run_suite \
+                    jax \
+                    "$suite_benchmark" \
+                    "$suite_system" \
+                    "$suite_mode"
+            done
+        done
+    done
+}
+
 if [[ "$VALIDATE_ONLY" -eq 0 ]]; then
     for backend in "${BACKENDS[@]}"; do
         echo
         echo "=== backend=$backend ==="
-        run_suite "$backend"
+        if [[ "$backend" == "jax" && "$DRY_RUN" -eq 0 ]]; then
+            run_jax_isolated_shards
+        else
+            run_suite "$backend"
+        fi
     done
 else
     echo
@@ -577,7 +636,7 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
         echo
         echo "Skipping full-suite CSV completeness check for selected shard."
     else
-    "$UV_BIN" run "${uv_run_args[@]}" python - "$RESULT_DIR" "$NH3_DIR" "${BACKENDS[@]}" <<'PY'
+    run_python - "$RESULT_DIR" "$NH3_DIR" "${BACKENDS[@]}" <<'PY'
 from __future__ import annotations
 
 import csv
@@ -669,7 +728,7 @@ PY
         fi
     fi
     if [[ "$RUN_PLOTS" -eq 1 ]]; then
-        "$UV_BIN" run "${uv_run_args[@]}" python -m benchmarks.benchmark_suite \
+        run_python -m benchmarks.benchmark_suite \
             --plot-only "$RESULT_DIR" \
             --expected-backends "${BACKENDS[@]}" \
             --plots all
