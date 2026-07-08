@@ -3298,7 +3298,7 @@ class TestBenchmarkAtomPlanning:
                     "atom_counts": [128, 256],
                     "constant_atoms_sizes": [256],
                 }
-            }
+            },
         }
         (tmp_path / "ammonia_pbc_128.pdb").write_text("pdb-128")
         (tmp_path / "ammonia_pbc_128.inp").write_text(
@@ -3324,7 +3324,7 @@ class TestBenchmarkAtomPlanning:
                     "atom_counts": [128],
                     "constant_atoms_sizes": [256],
                 }
-            }
+            },
         }
 
         assert configured_nh3_artifacts(config) == {
