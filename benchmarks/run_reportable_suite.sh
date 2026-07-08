@@ -329,13 +329,6 @@ export JAX_COMPILATION_CACHE_DIR="$SCRATCH/cache/jax"
 export MPLCONFIGDIR="$SCRATCH/cache/matplotlib"
 export CUDA_CACHE_PATH="$SCRATCH/cache/cuda"
 export XLA_PYTHON_CLIENT_MEM_FRACTION="${XLA_PYTHON_CLIENT_MEM_FRACTION:-0.95}"
-case "${XLA_PYTHON_CLIENT_PREALLOCATE:-}" in
-    0|false|False|FALSE)
-        if [[ -z "${XLA_PYTHON_CLIENT_ALLOCATOR:-}" ]]; then
-            export XLA_PYTHON_CLIENT_ALLOCATOR="cuda_async"
-        fi
-        ;;
-esac
 
 cd "$ROOT"
 

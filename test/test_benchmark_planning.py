@@ -327,8 +327,8 @@ class TestBenchmarkMethodSelection:
         assert "native_strategy=native_strategy" not in source
         assert source.count("strategy=native_strategy") == 2
 
-    def test_suite_sets_jax_allocator_env_before_runner_imports(self):
-        """Suite-level JAX env includes the throughput allocator policy."""
+    def test_suite_sets_jax_memory_env_before_runner_imports(self):
+        """Suite-level JAX env does not silently replace JAX's allocator."""
         source = inspect.getsource(benchmark_suite.main)
         env_block = source.split("if args.plot_only:", 1)[0]
 
@@ -341,9 +341,7 @@ class TestBenchmarkMethodSelection:
         )
         assert "XLA_PYTHON_CLIENT_PREALLOCATE" in helper_source
         assert "on-demand allocation" in helper_source
-        assert (
-            'os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "cuda_async"' in helper_source
-        )
+        assert 'os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"]' not in helper_source
 
     def test_suite_rejects_profile_selector(self, monkeypatch, capsys):
         """The reportable suite has no reduced profile selector."""
@@ -380,15 +378,17 @@ class TestBenchmarkMethodSelection:
         assert "on-demand allocation" in captured.out
         assert "XLA_PYTHON_CLIENT_PREALLOCATE" not in captured.err
 
-    def test_jax_env_uses_async_allocator_with_on_demand_allocation(self, monkeypatch):
-        """On-demand JAX shape sweeps avoid BFC high-water fragmentation."""
+    def test_jax_env_keeps_default_allocator_with_on_demand_allocation(
+        self, monkeypatch
+    ):
+        """Disabling preallocation does not opt into another allocator."""
         monkeypatch.setenv("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
         monkeypatch.delenv("XLA_PYTHON_CLIENT_ALLOCATOR", raising=False)
         monkeypatch.delenv("TF_GPU_ALLOCATOR", raising=False)
 
         configure_jax_environment()
 
-        assert os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] == "cuda_async"
+        assert "XLA_PYTHON_CLIENT_ALLOCATOR" not in os.environ
 
     def test_jax_naive_benchmark_uses_supported_timing_boundary(self):
         """JAX naive timing follows each public strategy's supported boundary."""
@@ -1405,7 +1405,7 @@ class TestBenchmarkMethodSelection:
         assert "run_python()" in source
         assert '"$PYTHON_BIN" "$@"' in source
         assert '"$UV_BIN" run "${uv_run_args[@]}" python "$@"' in source
-        assert 'export XLA_PYTHON_CLIENT_ALLOCATOR="cuda_async"' in source
+        assert 'export XLA_PYTHON_CLIENT_ALLOCATOR="cuda_async"' not in source
         assert 'echo "xla_python_client_allocator=' in source
         assert 'echo "tf_gpu_allocator=${TF_GPU_ALLOCATOR:-<unset>}"' in source
         assert '--python "${UV_PROJECT_ENVIRONMENT}/bin/python"' in source
