@@ -1139,7 +1139,8 @@ def _pme_reciprocal_space_impl(
     input_dtype = _normalize_dtype(positions.dtype)
     is_batch = batch_idx is not None
     fft_dims = (1, 2, 3) if is_batch else (0, 1, 2)
-    reciprocal_metadata_is_supplied = k_vectors is not None and k_squared is not None
+    k_vectors_are_supplied = k_vectors is not None
+    k_squared_is_supplied = k_squared is not None
     volume_is_supplied = volume is not None
 
     # hybrid_forces: forward-only spline/FFT chain. We sever ∂/∂{positions,
@@ -1236,15 +1237,24 @@ def _pme_reciprocal_space_impl(
     # Step 3: Generate k-space grid and compute Green's function + structure factor.
     # When cell_inv_t is supplied, derive reciprocal_cell = 2π · cell_inv from
     # the cached transpose so generate_k_vectors_pme skips its own inv.
-    if k_vectors is None or k_squared is None:
+    if k_squared is None or (compute_virial and k_vectors is None):
         reciprocal_cell = (2.0 * jnp.pi) * cell_inv
-        k_vectors, k_squared = generate_k_vectors_pme(
+        generated_k_vectors, generated_k_squared = generate_k_vectors_pme(
             cell,
             mesh_dimensions,
             reciprocal_cell=reciprocal_cell,
         )
-    if hybrid_forces or reciprocal_metadata_is_supplied:
+        if compute_virial and k_vectors is None:
+            k_vectors = generated_k_vectors
+        else:
+            del generated_k_vectors
+        if k_squared is None:
+            k_squared = generated_k_squared
+        else:
+            del generated_k_squared
+    if k_vectors is not None and (hybrid_forces or k_vectors_are_supplied):
         k_vectors = jax.lax.stop_gradient(k_vectors)
+    if hybrid_forces or k_squared_is_supplied:
         k_squared = jax.lax.stop_gradient(k_squared)
 
     # Step 4: Fused Green's function + B-spline deconvolution + multiply in a
@@ -1728,7 +1738,7 @@ def _pme_reciprocal_energy_reference(
         complex_dtype
     )
 
-    if k_vectors is None or k_squared is None:
+    if k_squared is None:
         reciprocal_cell = (2.0 * jnp.pi) * cell_inv_ref
         _k_vectors, k_squared = generate_k_vectors_pme(
             cell,
@@ -2652,10 +2662,11 @@ def pme_reciprocal_space(
         system: ``batch_idx`` must be contiguous, nondecreasing, and use system
         IDs ``0..B-1``.
     k_vectors, k_squared : jax.Array or None
-        Optional precomputed reciprocal grid values. These are setup constants
-        for the JAX custom-JVP path; tangents through them are ignored. When
-        supplied while differentiating with respect to ``cell``, they are
-        assumed to correspond to the current ``cell``.
+        Optional precomputed reciprocal grid values. ``k_squared`` may be
+        supplied without ``k_vectors`` unless ``compute_virial=True``. These
+        are setup constants for the JAX custom-JVP path; tangents through them
+        are ignored. When supplied while differentiating with respect to
+        ``cell``, they are assumed to correspond to the current ``cell``.
     compute_forces, compute_charge_gradients, compute_virial : bool
         Direct-output flags. ``compute_forces=True`` remains supported for
         no-autograd MD/inference use; charge-gradient and virial direct outputs
@@ -3200,7 +3211,8 @@ def particle_mesh_ewald(
         system: ``batch_idx`` must be contiguous, nondecreasing, and use system
         IDs ``0..B-1``.
     k_vectors, k_squared : jax.Array or None
-        Precomputed PME reciprocal grid values.
+        Precomputed PME reciprocal grid values. ``k_squared`` may be supplied
+        without ``k_vectors`` unless ``compute_virial=True``.
     neighbor_list, neighbor_ptr, neighbor_shifts : jax.Array or None
         CSR neighbor-list inputs for the real-space component.
     neighbor_matrix, neighbor_matrix_shifts : jax.Array or None

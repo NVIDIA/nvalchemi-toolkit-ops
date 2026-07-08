@@ -2620,15 +2620,27 @@ def _pme_reciprocal_space_impl(
     # Step 3: Generate k-space grid and compute Green's function + structure factor
     # Green's function: G(k) = 2*pi * exp(-k^2/(4*alpha^2)) / (V * k^2)
     # (includes 1/2 pair-counting factor; see pme_kernels.py)
-    # Use precomputed k_vectors/k_squared if provided, otherwise generate them
-    if k_vectors is None or k_squared is None:
-        k_vectors, k_squared = generate_k_vectors_pme(
+    # k-vectors are only needed for the optional virial path. Energy, forces,
+    # and charge gradients consume k-squared directly, so callers may cache
+    # only that substantially smaller tensor.
+    need_virial_output = compute_virial or cache_virial
+    if k_squared is None or (need_virial_output and k_vectors is None):
+        generated_k_vectors, generated_k_squared = generate_k_vectors_pme(
             cell_spline,
             mesh_dimensions=mesh_dimensions,
             reciprocal_cell=reciprocal_cell,
         )
+        if need_virial_output and k_vectors is None:
+            k_vectors = generated_k_vectors
+        else:
+            del generated_k_vectors
+        if k_squared is None:
+            k_squared = generated_k_squared
+        else:
+            del generated_k_squared
     if hybrid_forces:
-        k_vectors = k_vectors.detach()
+        if k_vectors is not None:
+            k_vectors = k_vectors.detach()
         k_squared = k_squared.detach()
 
     alpha_gsf = alpha.detach() if hybrid_forces else alpha
@@ -2671,7 +2683,6 @@ def _pme_reciprocal_space_impl(
     mesh_fft = torch.fft.rfftn(mesh_grid, norm="backward", dim=fft_dims)
     if torch.compiler.is_compiling():
         mesh_fft = mesh_fft.contiguous()
-    need_virial_output = compute_virial or cache_virial
     mesh_fft_raw = mesh_fft if need_virial_output else None
     register_pme_ops()
     convolved_mesh = torch.ops.nvalchemiops.pme_fused_convolve(
@@ -2966,9 +2977,9 @@ def pme_reciprocal_space(
         When supplied while ``cell.requires_grad`` is true, the cache is
         assumed to correspond to the current ``cell``.
     k_squared : torch.Tensor, shape (nx, ny, nz//2+1), optional
-        Precomputed :math:`|k|^2` values. Must be provided together with k_vectors.
-        PME metadata tensors are setup constants and are detached from public
-        autograd outputs.
+        Precomputed :math:`|k|^2` values. May be supplied without
+        ``k_vectors`` unless ``compute_virial=True``. PME metadata tensors are
+        setup constants and are detached from public autograd outputs.
     compute_forces : bool, default=False
         Whether to compute explicit component reciprocal-space forces. This
         direct output is kept for no-autograd MD/inference use; use energy
@@ -3336,7 +3347,8 @@ def particle_mesh_ewald(
         ``cell.requires_grad`` is true, the cache is assumed to correspond to
         the current ``cell``.
     k_squared : torch.Tensor, shape (nx, ny, nz//2+1), optional
-        Precomputed :math:`|k|^2` values. Must be provided together with k_vectors.
+        Precomputed :math:`|k|^2` values. May be supplied without
+        ``k_vectors`` unless ``compute_virial=True``.
     cell_inv_t : torch.Tensor, shape (3, 3) or (B, 3, 3), optional
         Precomputed transposed cell inverse :math:`(M^{-1})^T`. When supplied,
         the reciprocal-space path skips the per-call ``torch.linalg.inv`` of
