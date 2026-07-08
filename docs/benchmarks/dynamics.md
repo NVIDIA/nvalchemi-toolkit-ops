@@ -61,12 +61,6 @@ Average step time vs. system size for single-system MD integrators.
 Throughput (atom-steps/s) for single-system MD integrators.
 ```
 
-### Batched MD
-
-The current shipped benchmark artifacts do not include a batched MD CSV. The
-plot generator therefore omits batched MD figures until fresh batched MD timing
-data is added under `docs/benchmarks/benchmark_results/`.
-
 ### Available Integrators
 
 Velocity Verlet (NVE)
