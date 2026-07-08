@@ -48,6 +48,13 @@ __all__ = [
 TILE_GROUP_SIZE = 32
 TILE = wp.constant(TILE_GROUP_SIZE)
 
+# JAX callbacks can force-load this module before entering the Python launcher,
+# so Warp compiles it with the module default rather than the launcher's explicit
+# block dimension. All tiled kernels in this module use one 32-lane block per
+# tile group; compiling them with Warp's default of 256 makes ``wp.untile``
+# reject their 32-wide tiles before the callback can run.
+wp.set_module_options({"block_dim": TILE_GROUP_SIZE})
+
 _MORTON_PADDING_SENTINEL = 0x40000000
 
 
