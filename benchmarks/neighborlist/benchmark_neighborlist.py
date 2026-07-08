@@ -983,20 +983,27 @@ def _benchmark_nl_jax(data, cutoff, method, num_runs, warmup_runs):
             return compiled_nl(positions, cell)
 
     elif jax_family == "batch_cluster_tile":
-        # The public dispatcher host-reads pbc and batch_ptr. Time the eager
-        # public API so both values remain concrete.
-        def run_nl_jit():
-            return jax_neighbor_list(
-                positions=positions,
+        # Trace the method-specific API once with structural batch data closed
+        # over.  Calling the unified dispatcher eagerly creates a new Warp FFI
+        # call descriptor on every timing iteration, which forces
+        # ``GraphMode.WARP`` to capture a fresh CUDA graph instead of replaying
+        # the existing one.
+        _validate_jax_cluster_tile_pbc(pbc, jax, jnp)
+        batch_cluster_tile_neighbor_list = jax_api["batch_cluster_tile_neighbor_list"]
+
+        def direct_nl_kernel(positions_arg):
+            return batch_cluster_tile_neighbor_list(
+                positions=positions_arg,
                 cutoff=float(cutoff),
-                cell=cell,
-                pbc=pbc,
-                batch_idx=batch_idx,
+                cell_batch=cell,
                 batch_ptr=batch_ptr,
-                method=jax_method,
-                return_neighbor_list=False,
                 max_neighbors=int(maxnb),
             )
+
+        compiled_nl = jax.jit(direct_nl_kernel)
+
+        def run_nl_jit():
+            return compiled_nl(positions)
 
     else:
         raise ValueError(f"Unsupported NL method for jax backend: {method}")

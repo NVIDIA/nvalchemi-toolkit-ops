@@ -269,6 +269,7 @@ def lazy_import_jax(
 
         from nvalchemiops.jax.neighbors import (
             batch_build_cell_list,
+            batch_cluster_tile_neighbor_list,
             batch_query_cell_list,
             build_cell_list,
             cluster_tile_neighbor_list,
@@ -290,6 +291,7 @@ def lazy_import_jax(
             "batch_build_cell_list": batch_build_cell_list,
             "batch_query_cell_list": batch_query_cell_list,
             "cluster_tile_neighbor_list": cluster_tile_neighbor_list,
+            "batch_cluster_tile_neighbor_list": batch_cluster_tile_neighbor_list,
             # Sizing helpers: CPU-side, called outside jit to compute the
             # static kwargs the jitted `neighbor_list` needs.
             "estimate_batch_cell_list_sizes": estimate_batch_cell_list_sizes,
