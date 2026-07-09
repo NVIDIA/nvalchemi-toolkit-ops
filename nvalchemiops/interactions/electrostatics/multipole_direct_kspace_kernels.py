@@ -39,8 +39,8 @@ k-space pipeline is:
    with per-atom multipole moments to produce :math:`\rho(\mathbf{k})`.
 4. **Per-k multiplier** (:func:`apply_per_k_factor`): generic
    :math:`V(\mathbf{k}) = f(\mathbf{k}) \cdot \rho(\mathbf{k})` kernel.
-   The direct k-space sum passes ``f(k) = F / k²`` with the k=0 mode zeroed;
-   the Ewald reciprocal sum passes ``f(k) = F · exp(-k²/4α²) / k²``. The kernel
+   The direct k-space sum passes ``f(k) = F / k^2`` with the k=0 mode zeroed;
+   the Ewald reciprocal sum passes ``f(k) = F * exp(-k^2/4alpha^2) / k^2``. The kernel
    is factor-agnostic.
 5. **Energy product / feature projection** (follow-ups).
 
@@ -294,7 +294,7 @@ def batch_build_structure_factor_table(
     positions : wp.array, shape (N_total,), dtype wp.vec3f/wp.vec3d
         Flat atomic positions across the batch.
     batch_idx : wp.array, shape (N_total,), dtype wp.int32
-        System index for each atom; ``batch_idx[i] ∈ [0, B)``.
+        System index for each atom; ``batch_idx[i] in [0, B)``.
     cos_table, sin_table : wp.array, shape (K_max, N_total), dtype wp.float64
         Pre-allocated output buffers.
     wp_dtype : type
@@ -345,9 +345,9 @@ def _eval_gto_fourier_dipole_kernel(
             \cdot k^l \cdot e^{-k^2 \sigma^2 / 2}
             \cdot Y_l^m(\hat{\mathbf{k}}) \cdot i^{-l}.
 
-    For l=1 the ``k^l · Y_l^m(k̂)`` product is written directly in Cartesian
+    For l=1 the ``k^l * Y_l^m(k_hat)`` product is written directly in Cartesian
     form so the ``k = 0`` case falls out analytically (``k_component = 0``
-    at the origin → zero without an explicit guard).
+    at the origin -> zero without an explicit guard).
 
     Launch Grid
     -----------
@@ -361,7 +361,7 @@ def _eval_gto_fourier_dipole_kernel(
         Pre-computed :math:`|\mathbf{k}|^2`. Avoids recomputation since the
         caller typically already has it from k-vector generation.
     sigma : wp.float64
-        Single-σ density-basis width.
+        Single-:math:`\sigma` density-basis width.
     inv_cl_l0, inv_cl_l1 : wp.float64
         Host-computed :math:`1/C_l(\sigma, \text{mode})` factors from
         :func:`nvalchemiops.torch.math.gto.inv_cl`.
@@ -429,7 +429,9 @@ def eval_gto_fourier_dipole(
     Parameters
     ----------
     k_vectors : wp.array, shape (N_k,), dtype wp.vec3d
+        Reciprocal-space k-vectors.
     k_norm2 : wp.array, shape (N_k,), dtype wp.float64
+        Squared magnitudes :math:`|k|^2` of the k-vectors.
     sigma : float
         Density-basis Gaussian width.
     inv_cl_l0, inv_cl_l1 : float
@@ -538,12 +540,19 @@ def batch_eval_gto_fourier_dipole(
     Parameters
     ----------
     k_vectors : wp.array, shape (B, K_max), dtype wp.vec3d
+        Reciprocal-space k-vectors, one row per system.
     k_norm2 : wp.array, shape (B, K_max), dtype wp.float64
-    sigma, inv_cl_l0, inv_cl_l1 : float
-        Shared across batch.
+        Squared magnitudes :math:`|k|^2` of the k-vectors.
+    sigma : float
+        Density-basis Gaussian width; shared across the batch.
+    inv_cl_l0 : float
+        Inverse :math:`l=0` overlap normalization constant; shared across the batch.
+    inv_cl_l1 : float
+        Inverse :math:`l=1` overlap normalization constant; shared across the batch.
     output : wp.array, shape (B, K_max, 4, 2), dtype wp.float64
-        Pre-allocated.
+        Pre-allocated output buffer.
     device : str, optional
+        Defaults to ``k_vectors.device``.
     """
     batch_size = k_vectors.shape[0]
     k_max = k_vectors.shape[1]
@@ -595,7 +604,7 @@ def _assemble_rho_k_dipole_kernel(
 
     The per-atom multipole moments are taken in the form this codebase
     natively uses: a scalar ``charge`` and a Cartesian ``dipole`` vector
-    ``(μ_x, μ_y, μ_z)``. The ``Y_1^m`` basis is permuted to ``(y, z, x)``
+    ``(mu_x, mu_y, mu_z)``. The ``Y_1^m`` basis is permuted to ``(y, z, x)``
     internally to line up with ``gto_fourier``'s layout.
 
     Launch Grid
@@ -606,7 +615,7 @@ def _assemble_rho_k_dipole_kernel(
     ----------
     charges : wp.array, shape (N_atoms,), dtype wp.float32 or wp.float64
     dipoles : wp.array, shape (N_atoms,), dtype wp.vec3f or wp.vec3d
-        Cartesian ``(μ_x, μ_y, μ_z)``.
+        Cartesian ``(mu_x, mu_y, mu_z)``.
     cosines, sines : wp.array2d, shape (N_k, N_atoms), dtype wp.float64
         Pre-computed :math:`(\cos(\mathbf{k}\cdot\mathbf{r}),\ \sin(\mathbf{k}\cdot\mathbf{r}))`
         from :func:`build_structure_factor_table`.
@@ -786,10 +795,10 @@ def _batch_assemble_rho_k_dipole_kernel(
     atom_end: wp.array(dtype=wp.int32),  # (B,)
     rho: wp.array3d(dtype=wp.float64),  # (B, K_max, 2) OUTPUT
 ):
-    r"""Batched ρ(k) assembly — per-(system, k-vector) thread with atom inner loop.
+    r"""Batched :math:`\rho`(k) assembly — per-(system, k-vector) thread with atom inner loop.
 
     Each thread sums over ``[atom_start[b], atom_end[b])`` — the atoms
-    belonging to system ``b``. Pad k-vectors (``k ≥ K_b`` for a given
+    belonging to system ``b``. Pad k-vectors (``k >= K_b`` for a given
     system) have ``gto_fourier[b, k, :, :] = 0`` in the batched cache,
     so their contributions cancel naturally regardless of what ``c_lm``,
     ``s_lm`` accumulate.
@@ -887,7 +896,7 @@ def _batch_assemble_rho_k_dipole_kernel(
 
 
 def _batch_assemble_rho_sig(v, t):
-    """Signature builder for batched ρ assembly."""
+    r"""Signature builder for batched :math:`\rho` assembly."""
     return [
         wp.array(dtype=t),  # charges
         wp.array(dtype=v),  # dipoles
@@ -932,7 +941,9 @@ def batch_assemble_rho_k_dipole(
     rho : wp.array, shape (B, K_max, 2), dtype wp.float64
         Pre-allocated output.
     wp_dtype : type
+        ``wp.float32`` or ``wp.float64``; selects the overload for ``charges``/``dipoles``.
     device : str, optional
+        Defaults to ``cosines.device``.
     """
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
 
@@ -990,10 +1001,10 @@ def _position_gradient_from_rhok_kernel(
     scale: wp.float64,
     grad_positions: wp.array2d(dtype=wp.float64),
 ):
-    r"""Analytical backward of ρ(k) assembly w.r.t. per-atom positions.
+    r"""Analytical backward of :math:`\rho`(k) assembly w.r.t. per-atom positions.
 
     Each thread owns one atom ``i`` and accumulates the contribution of
-    every k-vector to ``∂L/∂r_i``. The kernel layout mirrors
+    every k-vector to ``dL/dr_i``. The kernel layout mirrors
     :func:`_assemble_rho_k_dipole_kernel` (same ``(cosines, sines,
     source_phi_hat)`` input shape and ``(charges, dipoles)`` lm ordering)
     so the two can coexist in the same launch graph with shared
@@ -1019,12 +1030,12 @@ def _position_gradient_from_rhok_kernel(
         Source-basis GTO Fourier coefficients (identical to what
         ``assemble_rho_k_dipole`` consumes).
     grad_rho : wp.array2d(dtype=wp.float64), shape (N_k, 2)
-        Cotangent ``∂L/∂ρ(k)`` with ``[:, 0]`` / ``[:, 1]`` = (real,
+        Cotangent ``dL/drho(k)`` with ``[:, 0]`` / ``[:, 1]`` = (real,
         imag).
     k_vectors : wp.array(dtype=wp.vec3d), shape (N_k,)
         Reciprocal-lattice k-vectors (float64).
     scale : wp.float64
-        Forward's prefactor ``(2π)³ / V``. Passed in from the host so
+        Forward's prefactor ``(2pi)^3 / V``. Passed in from the host so
         the kernel doesn't have to know the volume.
     grad_positions : wp.array2d(dtype=wp.float64), shape (N_atoms, 3)
         OUTPUT (Cartesian). Must be zero-initialized by the caller, or
@@ -1033,8 +1044,8 @@ def _position_gradient_from_rhok_kernel(
 
     Notes
     -----
-    The per-k accumulator collects ``(A · cos + B · sin)`` in a single
-    float64 scalar (no ``k_α`` factor yet), then multiplies by the three
+    The per-k accumulator collects ``(A * cos + B * sin)`` in a single
+    float64 scalar (no ``k_alpha`` factor yet), then multiplies by the three
     Cartesian components of ``k_vectors[k_idx]``. This keeps the
     k-loop's working set small (one float per k) and lets the kernel
     fuse the three-component output write.
@@ -1177,7 +1188,7 @@ def _cossin_native_matmul_kernel(
     m_sin: wp.array2d(dtype=wp.float64),
     contribs: wp.array2d(dtype=wp.float64),  # (N_atoms, N_cols) OUTPUT
 ):
-    r"""``contribs = cosᵀ @ m_cos + sinᵀ @ m_sin`` reading cos/sin in their
+    r"""``contribs = cos.T @ m_cos + sin.T @ m_sin`` reading cos/sin in their
     NATIVE ``(N_k, N_atoms)`` layout — the transpose is an in-kernel
     ``wp.tile_transpose`` per tile, so no ``(N_atoms, N_k)`` transpose+pad copy
     is materialized at the wrapper. ``wp.tile_load`` / ``wp.tile_store``
@@ -1205,7 +1216,7 @@ def _cossin_native_matmul_kernel(
 def _launch_cossin_native_matmul(cosines, sines, m_cos, m_sin, contribs, device):
     r"""Launch :func:`_cossin_native_matmul_kernel` over a ``ceil`` grid.
 
-    ``contribs[i, j] = Σ_k cos[k, i]·m_cos[k, j] + sin[k, i]·m_sin[k, j]``,
+    ``contribs[i, j] = sum_k cos[k, i]*m_cos[k, j] + sin[k, i]*m_sin[k, j]``,
     with cos/sin in native ``(N_k, N_atoms)`` and ``m_cos`` / ``m_sin`` in
     ``(N_k, N_cols)``. No transpose+pad copy; bounds-checked tiles.
     """
@@ -1355,7 +1366,7 @@ def _rhok_pos_grad_precompute_big_matrices_kernel(
     Launch dim: ``N_k_pad``. Each thread:
 
     * Reads ``grad_rho[k, :]``, ``source_phi_hat[k, lm, :]``, ``k_vec``.
-    * Writes the 12 real columns (``α * 4 + lm``) per ``big_cos`` /
+    * Writes the 12 real columns (``alpha * 4 + lm``) per ``big_cos`` /
       ``big_sin`` row and zeros columns ``[12, 16)``.
     * Threads with ``k >= n_k_valid`` (the pad region) write all zeros.
 
@@ -1430,10 +1441,10 @@ def _rhok_pos_grad_tiled_reduce_kernel(
     n_atoms_valid: wp.int32,
     grad_positions: wp.array2d(dtype=wp.float64),  # (N_atoms, 3) OUTPUT
 ):
-    r"""Final per-atom ``(N_atoms, 12) → (N_atoms, 3)`` reduction.
+    r"""Final per-atom ``(N_atoms, 12) -> (N_atoms, 3)`` reduction.
 
-    ``grad_positions[i, α] = scale · Σ_lm q(i, lm) · contribs(i, α*4+lm)``.
-    ``q`` is packed in e3nn layout: ``[q, μ_y, μ_z, μ_x]``.
+    ``grad_positions[i, alpha] = scale * sum_lm q(i, lm) * contribs(i, alpha*4+lm)``.
+    ``q`` is packed in e3nn layout: ``[q, mu_y, mu_z, mu_x]``.
 
 
     Launch Grid
@@ -1510,9 +1521,9 @@ def _position_gradient_from_rhok_tiled_launch(
     r"""Tiled-matmul implementation orchestrator — GPU path only.
 
     Runs three kernels:
-    1. :func:`_rhok_pos_grad_precompute_big_matrices_kernel` → ``big_cos`` / ``big_sin``.
-    2. :func:`_rhok_pos_grad_tiled_matmul_kernel` → ``contribs``.
-    3. :func:`_rhok_pos_grad_tiled_reduce_kernel` → ``grad_positions``.
+    1. :func:`_rhok_pos_grad_precompute_big_matrices_kernel` -> ``big_cos`` / ``big_sin``.
+    2. :func:`_rhok_pos_grad_tiled_matmul_kernel` -> ``contribs``.
+    3. :func:`_rhok_pos_grad_tiled_reduce_kernel` -> ``grad_positions``.
     """
     import torch  # local import — CPU path has no torch dependency at launcher time
 
@@ -1589,15 +1600,17 @@ def position_gradient_from_rhok(
 ) -> None:
     r"""Launcher for :func:`_position_gradient_from_rhok_kernel`.
 
-    Produces the per-atom position gradient ``∂L/∂r_i`` analytically, in
+    Produces the per-atom position gradient ``dL/dr_i`` analytically, in
     one kernel launch, given the forward's ``source_phi_hat`` /
     ``cosines`` / ``sines`` and the upstream cotangent
-    ``grad_rho = ∂L/∂ρ(k)``.
+    ``grad_rho = dL/drho(k)``.
 
     Parameters
     ----------
-    charges, dipoles
-        Same dtype / shape as the forward. Picks the kernel overload.
+    charges : wp.array, shape (N_atoms,), dtype wp.float32 or wp.float64
+        Per-atom monopole charges; dtype selects the kernel overload.
+    dipoles : wp.array, shape (N_atoms,), dtype wp.vec3f or wp.vec3d
+        Per-atom Cartesian dipole moments ``(mu_x, mu_y, mu_z)``.
     cosines, sines : wp.array, shape (N_k, N_atoms), dtype wp.float64
         Must be from the same forward pass as ``grad_rho`` — the gradient
         is only defined w.r.t. the positions those tables were built
@@ -1606,7 +1619,7 @@ def position_gradient_from_rhok(
     grad_rho : wp.array, shape (N_k, 2), dtype wp.float64
     k_vectors : wp.array, shape (N_k,), dtype wp.vec3d
     scale : float
-        Forward prefactor ``(2π)³ / V``.
+        Forward prefactor ``(2pi)^3 / V``.
     grad_positions : wp.array, shape (N_atoms, 3), dtype wp.float64
         Pre-allocated output. The kernel overwrites every entry.
     wp_dtype : type
@@ -1675,7 +1688,7 @@ def _batch_position_gradient_from_rhok_kernel(
     batch_idx: wp.array(dtype=wp.int32),  # (N_total,)
     grad_positions: wp.array2d(dtype=wp.float64),  # (N_total, 3) OUTPUT
 ):
-    r"""Batched analytical backward of ρ(k) assembly w.r.t. per-atom positions.
+    r"""Batched analytical backward of :math:`\rho`(k) assembly w.r.t. per-atom positions.
 
     One thread per atom, flat across the batch. ``batch_idx[i]`` picks
     the system; per-k quantities (``k_vectors``, ``source_phi_hat``,
@@ -1705,7 +1718,7 @@ def _batch_position_gradient_from_rhok_kernel(
     k_vectors : wp.array2d, shape (B, K_max), dtype wp.vec3d
         Reciprocal-space k-vectors.
     scale : wp.array, shape (B,), dtype wp.float64
-        Per-system (2π)³/V_b.
+        Per-system (2:math:`\pi`)^3/V_b.
     batch_idx : wp.array, shape (N_total,), dtype wp.int32
         Per-atom system index into the batch (or scalar system id).
     grad_positions : wp.array2d, shape (N_total, 3), dtype wp.float64
@@ -1759,7 +1772,7 @@ def _batch_position_gradient_from_rhok_kernel(
 
 
 def _batch_position_gradient_sig(v, t):
-    """Signature builder for the batched ρ-position-gradient kernel."""
+    r"""Signature builder for the batched :math:`\rho`-position-gradient kernel."""
     return [
         wp.array(dtype=t),  # charges
         wp.array(dtype=v),  # dipoles
@@ -1795,7 +1808,7 @@ def batch_position_gradient_from_rhok(
 ) -> None:
     r"""Launcher for :func:`_batch_position_gradient_from_rhok_kernel`.
 
-    ``scale`` is a ``(B,)`` per-system array of ``(2π)³/V_b`` prefactors.
+    ``scale`` is a ``(B,)`` per-system array of ``(2pi)^3/V_b`` prefactors.
     ``grad_positions`` is a flat ``(N_total, 3)`` output on the batched
     atom axis.
 
@@ -1866,8 +1879,8 @@ def _apply_per_k_factor_kernel(
     r"""Elementwise per-k scalar multiply: :math:`V(\mathbf{k}) = f(\mathbf{k}) \cdot \rho(\mathbf{k})`.
 
     The caller supplies ``per_k_factor[k]`` fully formed — for the direct
-    k-space sum this is ``FIELD_CONSTANT / k²`` with the k=0 entry zeroed; for
-    the Ewald reciprocal sum it is ``FIELD_CONSTANT · exp(-k²/4α²) / k²``. The
+    k-space sum this is ``FIELD_CONSTANT / k^2`` with the k=0 entry zeroed; for
+    the Ewald reciprocal sum it is ``FIELD_CONSTANT * exp(-k^2/4alpha^2) / k^2``. The
     kernel is agnostic to the physical interpretation.
 
     Launch Grid
@@ -1900,9 +1913,10 @@ def apply_per_k_factor(
     Parameters
     ----------
     rho : wp.array, shape (N_k, 2), dtype wp.float64
+        Complex reciprocal-space density :math:`\hat\rho(k)` (re, im).
     per_k_factor : wp.array, shape (N_k,), dtype wp.float64
         Scalar multiplier per k-vector. For the direct k-space sum,
-        ``FIELD_CONSTANT / k²`` with k=0 zeroed.
+        ``FIELD_CONSTANT / k^2`` with k=0 zeroed.
     potential : wp.array, shape (N_k, 2), dtype wp.float64
         Pre-allocated output.
     device : str, optional
@@ -1930,7 +1944,7 @@ def _batch_apply_per_k_factor_kernel(
     per_k_factor: wp.array2d(dtype=wp.float64),  # (B, K_max)
     potential: wp.array3d(dtype=wp.float64),  # (B, K_max, 2) OUTPUT
 ):
-    r"""Batched elementwise: ``V[b, k] = per_k_factor[b, k] · ρ[b, k]``.
+    r"""Batched elementwise: ``V[b, k] = per_k_factor[b, k] * rho[b, k]``.
 
     Launch Grid
     -----------
@@ -1961,12 +1975,12 @@ def batch_apply_per_k_factor(
 
     Parameters
     ----------
-    rho : wp.array
-        OUTPUT: complex reciprocal-space density :math:`\hat\rho(k)` (re, im).
-    per_k_factor : wp.array
+    rho : wp.array, shape (B, K_max, 2), dtype wp.float64
+        Complex reciprocal-space density :math:`\hat\rho(k)` (re, im).
+    per_k_factor : wp.array, shape (B, K_max), dtype wp.float64
         Per-k multiplicative factor (Green/structure factor).
-    potential : wp.array
-        Per-k reciprocal-space potential factor.
+    potential : wp.array, shape (B, K_max, 2), dtype wp.float64
+        OUTPUT: per-k reciprocal-space potential factor.
     device : str
         Warp device string; defaults to the input array's device.
     """
@@ -2117,17 +2131,17 @@ def batch_compute_energy_product_per_k(
     r"""Launcher for :func:`_batch_energy_product_per_k_kernel`.
 
     The caller reduces ``per_k_energy`` over the K axis per-system and
-    applies the scalar ``0.5 · V_b / (2π)⁶`` factor to get per-system
+    applies the scalar ``0.5 * V_b / (2pi)^6`` factor to get per-system
     total reciprocal energies.
 
 
     Parameters
     ----------
-    rho : wp.array
-        OUTPUT: complex reciprocal-space density :math:`\hat\rho(k)` (re, im).
-    potential : wp.array
+    rho : wp.array, shape (B, K_max, 2), dtype wp.float64
+        Complex reciprocal-space density :math:`\hat\rho(k)` (re, im).
+    potential : wp.array, shape (B, K_max, 2), dtype wp.float64
         Per-k reciprocal-space potential factor.
-    per_k_energy : wp.array
+    per_k_energy : wp.array, shape (B, K_max), dtype wp.float64
         OUTPUT: per-k energy contribution.
     device : str
         Warp device string; defaults to the input array's device.
@@ -2164,22 +2178,22 @@ def _eval_receiver_gto_fourier_dipole_kernel(
     inv_cl_table: wp.array2d(dtype=wp.float64),
     output: wp.array4d(dtype=wp.float64),
 ):
-    r"""Evaluate receiver-basis :math:`\hat\phi_{l,m}^{\sigma_r}(\mathbf{k})` across multi-σ at l_max = 1.
+    r"""Evaluate receiver-basis :math:`\hat\phi_{l,m}^{\sigma_r}(\mathbf{k})` across multi-:math:`\sigma` at l_max = 1.
 
     Same radial form as :func:`_eval_gto_fourier_dipole_kernel`, but iterates
-    over a list of receiver ``σ_r`` widths so the output has shape
-    ``(N_k, N_σ, 4, 2)``. Used by the feature-projection kernel to get
-    :math:`\hat\phi_{l,m}^{\sigma_r}(\mathbf{k})` per-(k, σ) without
+    over a list of receiver ``sigma_r`` widths so the output has shape
+    ``(N_k, N_sigma, 4, 2)``. Used by the feature-projection kernel to get
+    :math:`\hat\phi_{l,m}^{\sigma_r}(\mathbf{k})` per-(k, :math:`\sigma`) without
     recomputing the k-dependent radial prefactor for every (l, m).
 
-    The per-(σ, l) :math:`1/C_l(\sigma_r, \text{mode})` factors arrive in
-    ``inv_cl_table[σ_i, l]`` so the caller (binding layer) picks the
+    The per-(:math:`\sigma`, l) :math:`1/C_l(\sigma_r, \text{mode})` factors arrive in
+    ``inv_cl_table[sigma_i, l]`` so the caller (binding layer) picks the
     ``"receiver"`` / ``"multipoles"`` / ``"none"`` convention without this
     kernel needing to know about NormMode.
 
     Launch Grid
     -----------
-    dim = [N_k, N_σ] — one thread per (k-vector, receiver sigma) pair.
+    dim = [N_k, N_:math:`\sigma`] — one thread per (k-vector, receiver sigma) pair.
 
     Parameters
     ----------
@@ -2187,15 +2201,15 @@ def _eval_receiver_gto_fourier_dipole_kernel(
         Reciprocal-lattice k-vectors (float64).
     k_norm2 : wp.array, shape (N_k,), dtype wp.float64
         Pre-computed :math:`|\mathbf{k}|^2`.
-    sigmas : wp.array, shape (N_σ,), dtype wp.float64
-        Receiver-basis Gaussian widths. Each σ produces its own 4×2 block
+    sigmas : wp.array, shape (N_:math:`\sigma`,), dtype wp.float64
+        Receiver-basis Gaussian widths. Each :math:`\sigma` produces its own 4x2 block
         in the output.
-    inv_cl_table : wp.array2d, shape (N_σ, 2), dtype wp.float64
-        Host-computed ``1/C_l`` factors. ``inv_cl_table[σ_i, 0]`` is for
-        ``l=0``, ``inv_cl_table[σ_i, 1]`` is for ``l=1``.
-    output : wp.array4d(dtype=wp.float64), shape (N_k, N_σ, 4, 2)
-        OUTPUT. Layout matches the source-side kernel: ``[k, σ, 0, :] =
-        (l=0, m=0)``, ``[k, σ, 1, :] = (l=1, m=-1)``, etc. Does not need
+    inv_cl_table : wp.array2d, shape (N_:math:`\sigma`, 2), dtype wp.float64
+        Host-computed ``1/C_l`` factors. ``inv_cl_table[sigma_i, 0]`` is for
+        ``l=0``, ``inv_cl_table[sigma_i, 1]`` is for ``l=1``.
+    output : wp.array4d(dtype=wp.float64), shape (N_k, N_:math:`\sigma`, 4, 2)
+        OUTPUT. Layout matches the source-side kernel: ``[k, :math:`\sigma`, 0, :] =
+        (l=0, m=0)``, ``[k, :math:`\sigma`, 1, :] = (l=1, m=-1)``, etc. Does not need
         pre-zeroing — every entry is written unconditionally.
 
     Notes
@@ -2249,8 +2263,8 @@ def eval_receiver_gto_fourier_dipole(
 ) -> None:
     r"""Launcher for :func:`_eval_receiver_gto_fourier_dipole_kernel`.
 
-    Multi-σ receiver-basis :math:`\hat\phi_{l,m}^{\sigma_r}(\mathbf{k})` at
-    l_max = 1, output shape ``(N_k, N_σ, 4, 2)``. All arrays are float64 —
+    Multi-:math:`\sigma` receiver-basis :math:`\hat\phi_{l,m}^{\sigma_r}(\mathbf{k})` at
+    l_max = 1, output shape ``(N_k, N_sigma, 4, 2)``. All arrays are float64 —
     no polymorphism to dispatch on (everything in k-space stays in
     float64).
 
@@ -2258,10 +2272,10 @@ def eval_receiver_gto_fourier_dipole(
     ----------
     k_vectors : wp.array, shape (N_k,), dtype wp.vec3d
     k_norm2 : wp.array, shape (N_k,), dtype wp.float64
-    sigmas : wp.array, shape (N_σ,), dtype wp.float64
-    inv_cl_table : wp.array2d, shape (N_σ, 2), dtype wp.float64
-        Rows are ``[inv_cl_l0, inv_cl_l1]`` for each receiver σ.
-    output : wp.array4d, shape (N_k, N_σ, 4, 2), dtype wp.float64
+    sigmas : wp.array, shape (N_:math:`\sigma`,), dtype wp.float64
+    inv_cl_table : wp.array2d, shape (N_:math:`\sigma`, 2), dtype wp.float64
+        Rows are ``[inv_cl_l0, inv_cl_l1]`` for each receiver :math:`\sigma`.
+    output : wp.array4d, shape (N_k, N_:math:`\sigma`, 4, 2), dtype wp.float64
         Pre-allocated output buffer.
     device : str, optional
         Defaults to ``k_vectors.device``.
@@ -2291,15 +2305,15 @@ def _batch_eval_receiver_gto_fourier_dipole_kernel(
     inv_cl_table: wp.array2d(dtype=wp.float64),  # (N_σ, 2)
     output: wp.array4d(dtype=wp.vec2d),  # (B, K_max, N_σ, 4) — vec2d = (real, imag)
 ):
-    r"""Batched receiver-basis φ̂ across ``B`` systems.
+    r"""Batched receiver-basis :math:`\hat\phi` across ``B`` systems.
 
     Uses ``wp.array4d(dtype=wp.vec2d)`` for the output so the logical
-    shape ``(B, K_max, N_σ, 4, 2)`` fits within Warp's 4D-array limit;
+    shape ``(B, K_max, N_sigma, 4, 2)`` fits within Warp's 4D-array limit;
     the last axis is the packed ``(real, imag)`` vec2d.
 
     Launch Grid
     -----------
-    ``dim = (B, K_max, N_σ)``.
+    ``dim = (B, K_max, N_sigma)``.
 
 
     Parameters
@@ -2308,11 +2322,11 @@ def _batch_eval_receiver_gto_fourier_dipole_kernel(
         Reciprocal-space k-vectors.
     k_norm2 : wp.array2d, shape (B, K_max), dtype wp.float64
         Squared magnitudes :math:`|k|^2` of the k-vectors.
-    sigmas : wp.array, shape (N_σ,), dtype wp.float64
+    sigmas : wp.array, shape (N_:math:`\sigma`,), dtype wp.float64
         Per-channel Gaussian (GTO) width parameters.
-    inv_cl_table : wp.array2d, shape (N_σ, 2), dtype wp.float64
+    inv_cl_table : wp.array2d, shape (N_:math:`\sigma`, 2), dtype wp.float64
         Per-channel inverse overlap normalization constants.
-    output : wp.array4d, shape (B, K_max, N_σ, 4), dtype wp.vec2d
+    output : wp.array4d, shape (B, K_max, N_:math:`\sigma`, 4), dtype wp.vec2d
         — vec2d = (real, imag).
     """
     b, k_idx, s_idx = wp.tid()
@@ -2354,11 +2368,11 @@ def batch_eval_receiver_gto_fourier_dipole(
     ----------
     k_vectors : wp.array, shape (B, K_max), dtype wp.vec3d
     k_norm2 : wp.array, shape (B, K_max), dtype wp.float64
-    sigmas : wp.array, shape (N_σ,), dtype wp.float64
-    inv_cl_table : wp.array2d, shape (N_σ, 2), dtype wp.float64
-    output : wp.array, shape (B, K_max, N_σ, 4), dtype wp.vec2d
+    sigmas : wp.array, shape (N_:math:`\sigma`,), dtype wp.float64
+    inv_cl_table : wp.array2d, shape (N_:math:`\sigma`, 2), dtype wp.float64
+    output : wp.array, shape (B, K_max, N_:math:`\sigma`, 4), dtype wp.vec2d
         Pre-allocated. Caller passes the underlying float64 buffer of
-        shape ``(B, K_max, N_σ, 4, 2)`` reinterpreted via
+        shape ``(B, K_max, N_sigma, 4, 2)`` reinterpreted via
         ``wp.from_torch(t, dtype=wp.vec2d)``.
     device : str, optional
     """
@@ -2396,7 +2410,7 @@ def _project_features_dipole_kernel(
     r"""Project :math:`V(\mathbf{k})` onto the receiver basis at every atom, with optional self-interaction subtract and arbitrary output layout.
 
     Fused Phase 4 core — extended for Phase 5. For each ``(atom i,
-    receiver σ σ_r, lm index)`` thread, accumulates
+    receiver :math:`\sigma` :math:`\sigma`_r, lm index)`` thread, accumulates
 
     .. math::
 
@@ -2413,7 +2427,7 @@ def _project_features_dipole_kernel(
     inside the same thread to produce the self-interaction-corrected
     feature value. The corrected value is finally written to
     ``features[i, out_col_lut[s_idx, lm_idx]]`` — a 2-D output with an
-    arbitrary per-``(σ, lm)`` column remap. Pass an identity LUT
+    arbitrary per-``(sigma, lm)`` column remap. Pass an identity LUT
     (``lut[s, lm] = s * 4 + lm``) for the natural flat layout; pass the
     ``graph_longrange`` output permutation to write the customer-
     drop-in layout directly.
@@ -2427,13 +2441,13 @@ def _project_features_dipole_kernel(
 
     Launch Grid
     -----------
-    dim = [N_atoms, N_σ, 4] — one thread per ``(i, σ, lm)`` output entry.
+    dim = [N_atoms, N_:math:`\sigma`, 4] — one thread per ``(i, sigma, lm)`` output entry.
 
     Parameters
     ----------
     potential : wp.array2d(dtype=wp.float64), shape (N_k, 2)
         :math:`V(\mathbf{k})` from :func:`apply_per_k_factor`.
-    receiver_phi_hat : wp.array4d(dtype=wp.float64), shape (N_k, N_σ, 4, 2)
+    receiver_phi_hat : wp.array4d(dtype=wp.float64), shape (N_k, N_:math:`\sigma`, 4, 2)
         Receiver-basis Fourier coefficients from
         :func:`eval_receiver_gto_fourier_dipole`.
     cosines, sines : wp.array2d(dtype=wp.float64), shape (N_k, N_atoms)
@@ -2442,26 +2456,26 @@ def _project_features_dipole_kernel(
         Per-k weight: ``0.5`` at ``k = 0``, ``1`` elsewhere.
     source_feats_lm : wp.array2d(dtype=wp.float64), shape (N_atoms, 4)
         Per-atom source moments in e3nn layout:
-        ``[q, μ_y, μ_z, μ_x]``. Ignored when ``subtract_self == 0`` — but
+        ``[q, mu_y, mu_z, mu_x]``. Ignored when ``subtract_self == 0`` — but
         still must be a valid float64 ``(N_atoms, 4)`` array, as Warp
         does not support optional arguments. Callers can pass a zero
         tensor if they never want self-interaction.
-    overlap_constants : wp.array2d(dtype=wp.float64), shape (N_σ, 2)
-        Per-σ overlap constants: ``[:, 0]`` = ``l=0`` factor, ``[:, 1]``
+    overlap_constants : wp.array2d(dtype=wp.float64), shape (N_:math:`\sigma`, 2)
+        Per-:math:`\sigma` overlap constants: ``[:, 0]`` = ``l=0`` factor, ``[:, 1]``
         = ``l=1`` factor. From
         :func:`nvalchemiops.torch.math.compute_overlap_constants`, cached
         by the SCF cache. Also ignored when ``subtract_self == 0``.
     subtract_self : wp.int32
         ``0`` to skip the self-interaction subtract; anything else to
         apply it.
-    out_col_lut : wp.array2d(dtype=wp.int32), shape (N_σ, 4)
-        Per-``(σ, lm)`` flat output column index in ``[0, N_σ * 4)``.
+    out_col_lut : wp.array2d(dtype=wp.int32), shape (N_:math:`\sigma`, 4)
+        Per-``(sigma, lm)`` flat output column index in ``[0, N_sigma * 4)``.
         Pass ``lut[s, lm] = s * 4 + lm`` for the natural row-major
         layout. Pass the ``graph_longrange`` permutation for the
         customer-drop-in layout.
-    features : wp.array2d(dtype=wp.float64), shape (N_atoms, N_σ * 4)
+    features : wp.array2d(dtype=wp.float64), shape (N_atoms, N_:math:`\sigma` * 4)
         OUTPUT — flat (atom, column) layout; the ``out_col_lut`` picks
-        which flat column each per-``(σ, lm)`` result writes to. Does
+        which flat column each per-``(sigma, lm)`` result writes to. Does
         not need pre-zeroing **only if every flat column is covered by
         the LUT** (which is true for bijective LUTs like the identity
         and the graph_longrange permutation); pre-zero defensively
@@ -2522,19 +2536,19 @@ def project_features_dipole(
     Parameters
     ----------
     potential : wp.array, shape (N_k, 2), dtype wp.float64
-    receiver_phi_hat : wp.array, shape (N_k, N_σ, 4, 2), dtype wp.float64
+    receiver_phi_hat : wp.array, shape (N_k, N_:math:`\sigma`, 4, 2), dtype wp.float64
     cosines, sines : wp.array, shape (N_k, N_atoms), dtype wp.float64
     k_factor_proj : wp.array, shape (N_k,), dtype wp.float64
     source_feats_lm : wp.array, shape (N_atoms, 4), dtype wp.float64
         Per-atom source moments in e3nn layout. Used only when
         ``subtract_self=True``.
-    overlap_constants : wp.array, shape (N_σ, 2), dtype wp.float64
-        Per-σ overlap constants. Used only when ``subtract_self=True``.
+    overlap_constants : wp.array, shape (N_:math:`\sigma`, 2), dtype wp.float64
+        Per-:math:`\sigma` overlap constants. Used only when ``subtract_self=True``.
     subtract_self : bool
         Whether to subtract the self-interaction term inside the kernel.
-    out_col_lut : wp.array, shape (N_σ, 4), dtype wp.int32
-        Per-``(σ, lm)`` flat output column index.
-    features : wp.array, shape (N_atoms, N_σ * 4), dtype wp.float64
+    out_col_lut : wp.array, shape (N_:math:`\sigma`, 4), dtype wp.int32
+        Per-``(sigma, lm)`` flat output column index.
+    features : wp.array, shape (N_atoms, N_:math:`\sigma` * 4), dtype wp.float64
         Pre-allocated output (flat).
     device : str, optional
         Defaults to ``potential.device``.
@@ -2628,7 +2642,7 @@ def _batch_project_features_dipole_kernel(
     out_col_lut: wp.array2d(dtype=wp.int32),  # (N_σ, 4)
     features: wp.array2d(dtype=wp.float64),  # (N_total, N_σ*4) OUTPUT
 ):
-    r"""Batched feature projection — one thread per ``(atom_i, σ, lm)``.
+    r"""Batched feature projection — one thread per ``(atom_i, sigma, lm)``.
 
     Same math as the single-system kernel. Per-atom lookup of
     ``batch_idx[i] = b`` gives the system; the k-sum then reads
@@ -2638,11 +2652,11 @@ def _batch_project_features_dipole_kernel(
     bound check.
 
     ``overlap_constants`` / ``out_col_lut`` are shared across the batch
-    (same σ for every system).
+    (same :math:`\sigma` for every system).
 
     Launch Grid
     -----------
-    ``dim = (N_total, N_σ, 4)``.
+    ``dim = (N_total, N_sigma, 4)``.
 
 
     Parameters
@@ -2661,13 +2675,13 @@ def _batch_project_features_dipole_kernel(
         Per-atom system index into the batch (or scalar system id).
     source_feats_lm : wp.array2d, shape (N_total, 4), dtype wp.float64
         E3nn layout.
-    overlap_constants : wp.array2d, shape (N_σ, 2), dtype wp.float64
+    overlap_constants : wp.array2d, shape (N_:math:`\sigma`, 2), dtype wp.float64
         — shared.
     subtract_self : wp.int32
         Flag: subtract the self-interaction term when nonzero.
-    out_col_lut : wp.array2d, shape (N_σ, 4), dtype wp.int32
+    out_col_lut : wp.array2d, shape (N_:math:`\sigma`, 4), dtype wp.int32
         Lookup table mapping channels to output feature columns.
-    features : wp.array2d, shape (N_total, N_σ*4), dtype wp.float64
+    features : wp.array2d, shape (N_total, N_:math:`\sigma`*4), dtype wp.float64
         OUTPUT: projected per-atom features.
     """
     i_idx, s_idx, lm_idx = wp.tid()
@@ -2723,19 +2737,19 @@ def batch_project_features_dipole(
     Parameters
     ----------
     potential : wp.array, shape (B, K_max, 2), dtype wp.float64
-    receiver_phi_hat : wp.array, shape (B, K_max, N_σ, 4), dtype wp.vec2d
+    receiver_phi_hat : wp.array, shape (B, K_max, N_:math:`\sigma`, 4), dtype wp.vec2d
         Caller supplies the underlying torch tensor of shape
-        ``(B, K_max, N_σ, 4, 2)`` via ``wp.from_torch(t, dtype=wp.vec2d)``
+        ``(B, K_max, N_sigma, 4, 2)`` via ``wp.from_torch(t, dtype=wp.vec2d)``
         — see :func:`batch_eval_receiver_gto_fourier_dipole` for the
         producer.
     cosines, sines : wp.array, shape (K_max, N_total), dtype wp.float64
     k_factor_proj : wp.array, shape (B, K_max), dtype wp.float64
     batch_idx : wp.array, shape (N_total,), dtype wp.int32
     source_feats_lm : wp.array, shape (N_total, 4), dtype wp.float64
-    overlap_constants : wp.array, shape (N_σ, 2), dtype wp.float64
+    overlap_constants : wp.array, shape (N_:math:`\sigma`, 2), dtype wp.float64
     subtract_self : bool
-    out_col_lut : wp.array, shape (N_σ, 4), dtype wp.int32
-    features : wp.array, shape (N_total, N_σ*4), dtype wp.float64
+    out_col_lut : wp.array, shape (N_:math:`\sigma`, 4), dtype wp.int32
+    features : wp.array, shape (N_total, N_:math:`\sigma`*4), dtype wp.float64
         Pre-allocated output.
     device : str, optional
     """
@@ -2846,9 +2860,9 @@ def _project_features_precompute_ab_kernel(
     a_flat: wp.array2d(dtype=wp.float64),  # (N_k_pad, N_sl_pad) OUTPUT
     b_flat: wp.array2d(dtype=wp.float64),  # (N_k_pad, N_sl_pad) OUTPUT
 ):
-    r"""Build the ``a_flat`` / ``b_flat`` matrices with ``2/(2π)³ · kfp`` folded in.
+    r"""Build the ``a_flat`` / ``b_flat`` matrices with ``2/(2pi)^3 * kfp`` folded in.
 
-    Launch dim: ``(N_k_pad, N_σ)``. Each thread writes the 4 ``lm``
+    Launch dim: ``(N_k_pad, N_sigma)``. Each thread writes the 4 ``lm``
     cols (`sl = s_idx * 4 + lm`) for its ``(k_idx, s_idx)`` pair. Pads
     columns in ``[n_sl_valid, N_sl_pad)`` and entire pad k-rows to
     zero.
@@ -2862,14 +2876,14 @@ def _project_features_precompute_ab_kernel(
     ----------
     potential : wp.array2d, shape (N_k, 2), dtype wp.float64
         Per-k reciprocal-space potential factor.
-    receiver_phi_hat : wp.array4d, shape (N_k, N_σ, 4, 2), dtype wp.float64
+    receiver_phi_hat : wp.array4d, shape (N_k, N_:math:`\sigma`, 4, 2), dtype wp.float64
         Receiver-side GTO Fourier coefficients :math:`\hat\phi(k)`.
     k_factor_proj : wp.array, shape (N_k,), dtype wp.float64
         Per-k projection factor for the feature/direct-k-space projection.
     n_k_valid : wp.int32
         Number of valid (non-padded) k-vectors.
     n_sl_valid : wp.int32, shape (before padding)
-        = N_σ * 4.
+        = N_:math:`\sigma` * 4.
     a_flat : wp.array2d, shape (N_k_pad, N_sl_pad), dtype wp.float64
         OUTPUT: Flattened left operand for the tiled matmul.
     b_flat : wp.array2d, shape (N_k_pad, N_sl_pad), dtype wp.float64
@@ -2923,8 +2937,8 @@ def _project_features_postprocess_kernel(
 ):
     r"""Apply the self-interaction subtract and the output-column LUT.
 
-    Launch dim ``(N_atoms, N_σ, 4)`` — matches the original kernel's
-    grid so the per-``(i, σ, lm)`` logic is identical (other than
+    Launch dim ``(N_atoms, N_sigma, 4)`` — matches the original kernel's
+    grid so the per-``(i, sigma, lm)`` logic is identical (other than
     reading the k-sum from ``contribs`` instead of computing it).
 
 
@@ -2938,15 +2952,15 @@ def _project_features_postprocess_kernel(
         OUTPUT: per-tile partial contributions awaiting reduction.
     source_feats_lm : wp.array2d, shape (N_atoms, 4), dtype wp.float64
         Per-atom source features in the spherical (l, m) layout.
-    overlap_constants : wp.array2d, shape (N_σ, 2), dtype wp.float64
+    overlap_constants : wp.array2d, shape (N_:math:`\sigma`, 2), dtype wp.float64
         Per-channel overlap normalization constants.
     subtract_self : wp.int32
         Flag: subtract the self-interaction term when nonzero.
-    out_col_lut : wp.array2d, shape (N_σ, 4), dtype wp.int32
+    out_col_lut : wp.array2d, shape (N_:math:`\sigma`, 4), dtype wp.int32
         Lookup table mapping channels to output feature columns.
     n_atoms_valid : wp.int32
         Number of valid (non-padded) atoms.
-    features : wp.array2d, shape (N_atoms, N_σ*4), dtype wp.float64
+    features : wp.array2d, shape (N_atoms, N_:math:`\sigma`*4), dtype wp.float64
         OUTPUT: projected per-atom features.
     """
     i_idx, s_idx, lm_idx = wp.tid()
@@ -2984,10 +2998,10 @@ def _project_features_dipole_tiled_launch(
 
     Sub-kernels:
 
-    1. :func:`_project_features_precompute_ab_kernel` → ``a_flat`` / ``b_flat``
-       with ``2/(2π)³ · kfp`` already folded in.
-    2. :func:`_project_features_tiled_matmul_kernel` → ``contribs``.
-    3. :func:`_project_features_postprocess_kernel` → ``features`` with
+    1. :func:`_project_features_precompute_ab_kernel` -> ``a_flat`` / ``b_flat``
+       with ``2/(2pi)^3 * kfp`` already folded in.
+    2. :func:`_project_features_tiled_matmul_kernel` -> ``contribs``.
+    3. :func:`_project_features_postprocess_kernel` -> ``features`` with
        optional self-interaction subtract + output-column remap.
     """
     import torch
@@ -3083,8 +3097,8 @@ def _v_gradient_from_feature_grad_kernel(
 ):
     r"""Analytical backward of :func:`project_features_dipole` w.r.t. ``V(k)``.
 
-    One thread per k-vector; inner loop over atoms and ``(σ, lm)``. The
-    per-atom ``(Q_r, Q_i)`` reduction over ``(σ, lm)`` is recomputed
+    One thread per k-vector; inner loop over atoms and ``(sigma, lm)``. The
+    per-atom ``(Q_r, Q_i)`` reduction over ``(sigma, lm)`` is recomputed
     inside each thread rather than cached, to avoid materializing the
     ``(N_k, N_atoms, 2)`` intermediate.
 
@@ -3094,10 +3108,10 @@ def _v_gradient_from_feature_grad_kernel(
 
     Parameters
     ----------
-    grad_raw : wp.array3d, shape (N_atoms, N_σ, 4), dtype wp.float64
+    grad_raw : wp.array3d, shape (N_atoms, N_:math:`\sigma`, 4), dtype wp.float64
         Cotangent of the raw (un-self-interaction-subtracted,
         natural-layout) feature tensor.
-    receiver_phi_hat : wp.array4d, shape (N_k, N_σ, 4, 2), dtype wp.float64
+    receiver_phi_hat : wp.array4d, shape (N_k, N_:math:`\sigma`, 4, 2), dtype wp.float64
         Receiver-basis Fourier coefficients from
         :func:`eval_receiver_gto_fourier_dipole`.
     cosines, sines : wp.array2d, shape (N_k, N_atoms), dtype wp.float64
@@ -3105,7 +3119,7 @@ def _v_gradient_from_feature_grad_kernel(
     k_factor_proj : wp.array, shape (N_k,), dtype wp.float64
         Per-k weight (``0.5`` at k = 0, ``1`` elsewhere in the direct k-space sum).
     grad_v : wp.array2d, shape (N_k, 2), dtype wp.float64
-        OUTPUT: ``∂L/∂V(k)`` with ``[:, 0]`` / ``[:, 1]`` = (real, imag).
+        OUTPUT: ``dL/dV(k)`` with ``[:, 0]`` / ``[:, 1]`` = (real, imag).
         Does not need pre-zeroing.
     """
     k_idx = wp.tid()
@@ -3149,30 +3163,30 @@ def v_gradient_from_feature_grad(
     r"""Launcher for :func:`_v_gradient_from_feature_grad_kernel`.
 
     The per-k kernel here is already well-served by a serial inner
-    ``atoms × (σ * 4)`` loop — ``≤ N_atoms · 4 ≲ 3k`` iterations per
-    thread at ``N_atoms ≲ 700``. A tile-matmul rewrite (see
+    ``atoms x (sigma * 4)`` loop — ``<= N_atoms * 4 ~< 3k`` iterations per
+    thread at ``N_atoms ~< 700``. A tile-matmul rewrite (see
     :func:`_v_gradient_from_feature_grad_tiled_launch` below) was
-    tried and came out 3× slower because the matmul's ``N`` dimension
-    (``N_σ * 4``) is too narrow for Tensor Cores to amortize, and
+    tried and came out 3x slower because the matmul's ``N`` dimension
+    (``N_sigma * 4``) is too narrow for Tensor Cores to amortize, and
     materializing the ``GRC`` / ``GRS`` intermediates doubled the
     output bandwidth. We therefore dispatch the per-k kernel on both
     CPU and CUDA. Kept the tile implementation for reference /
-    future reconsideration with larger ``N_σ``.
+    future reconsideration with larger ``N_sigma``.
 
 
     Parameters
     ----------
-    grad_raw : wp.array
+    grad_raw : wp.array, shape (N_atoms, N_:math:`\sigma`, 4), dtype wp.float64
         Upstream gradient w.r.t. the raw (pre-projection) features.
-    receiver_phi_hat : wp.array
+    receiver_phi_hat : wp.array, shape (N_k, N_:math:`\sigma`, 4, 2), dtype wp.float64
         Receiver-side GTO Fourier coefficients :math:`\hat\phi(k)`.
-    cosines : wp.array
+    cosines : wp.array, shape (N_k, N_atoms), dtype wp.float64
         Per-(k, atom) cosine table :math:`\cos(k\cdot r)`.
-    sines : wp.array
+    sines : wp.array, shape (N_k, N_atoms), dtype wp.float64
         Per-(k, atom) sine table :math:`\sin(k\cdot r)`.
-    k_factor_proj : wp.array
+    k_factor_proj : wp.array, shape (N_k,), dtype wp.float64
         Per-k projection factor for the feature/direct-k-space projection.
-    grad_v : wp.array
+    grad_v : wp.array, shape (N_k, 2), dtype wp.float64
         OUTPUT: gradient w.r.t. the input feature vector ``v``.
     device : str
         Warp device string; defaults to the input array's device.
@@ -3205,11 +3219,11 @@ def _batch_v_gradient_from_feature_grad_kernel(
     atom_end: wp.array(dtype=wp.int32),  # (B,)
     grad_v: wp.array3d(dtype=wp.float64),  # (B, K_max, 2) OUTPUT
 ):
-    r"""Batched ``∂L/∂V(k)`` backward of feature projection.
+    r"""Batched ``dL/dV(k)`` backward of feature projection.
 
     One thread per ``(b, k_idx)``. Inner sum over atoms in system
     ``b`` (from ``atom_start[b]`` to ``atom_end[b]``) and over the
-    ``(σ, lm)`` feature axes. ``receiver_phi_hat`` stored as
+    ``(sigma, lm)`` feature axes. ``receiver_phi_hat`` stored as
     ``vec2d`` for the ``(real, imag)`` axis to fit within 4-D
     Warp arrays.
 
@@ -3220,9 +3234,9 @@ def _batch_v_gradient_from_feature_grad_kernel(
 
     Parameters
     ----------
-    grad_raw : wp.array3d, shape (N_total, N_σ, 4), dtype wp.float64
+    grad_raw : wp.array3d, shape (N_total, N_:math:`\sigma`, 4), dtype wp.float64
         Upstream gradient w.r.t. the raw (pre-projection) features.
-    receiver_phi_hat : wp.array4d, shape (B, K_max, N_σ, 4), dtype wp.vec2d
+    receiver_phi_hat : wp.array4d, shape (B, K_max, N_:math:`\sigma`, 4), dtype wp.vec2d
         Vec2d.
     cosines : wp.array2d, shape (K_max, N_total), dtype wp.float64
         Per-(k, atom) cosine table :math:`\cos(k\cdot r)`.
@@ -3281,8 +3295,8 @@ def batch_v_gradient_from_feature_grad(
 
     Parameters
     ----------
-    grad_raw : wp.array, shape (N_total, N_σ, 4), dtype wp.float64
-    receiver_phi_hat : wp.array, shape (B, K_max, N_σ, 4), dtype wp.vec2d
+    grad_raw : wp.array, shape (N_total, N_:math:`\sigma`, 4), dtype wp.float64
+    receiver_phi_hat : wp.array, shape (B, K_max, N_:math:`\sigma`, 4), dtype wp.vec2d
     cosines, sines : wp.array, shape (K_max, N_total), dtype wp.float64
     k_factor_proj : wp.array, shape (B, K_max), dtype wp.float64
     atom_start, atom_end : wp.array, shape (B,), dtype wp.int32
@@ -3363,10 +3377,10 @@ def _v_grad_flatten_grad_raw_kernel(
     n_sl_valid: wp.int32,
     grad_raw_flat: wp.array2d(dtype=wp.float64),  # (N_atoms_pad, N_sl_pad) OUTPUT
 ):
-    r"""Flatten ``grad_raw`` from ``(N_atoms, N_σ, 4)`` to ``(N_atoms_pad, N_σ*4)``.
+    r"""Flatten ``grad_raw`` from ``(N_atoms, N_sigma, 4)`` to ``(N_atoms_pad, N_sigma*4)``.
 
     Launch dim: ``(N_atoms_pad, N_sl_pad)``. Pad entries beyond the
-    real ``(N_atoms, N_σ*4)`` get zero so the tile matmul doesn't pick
+    real ``(N_atoms, N_sigma*4)`` get zero so the tile matmul doesn't pick
     up garbage.
 
 
@@ -3376,7 +3390,7 @@ def _v_grad_flatten_grad_raw_kernel(
 
     Parameters
     ----------
-    grad_raw : wp.array3d, shape (N_atoms, N_σ, 4), dtype wp.float64
+    grad_raw : wp.array3d, shape (N_atoms, N_:math:`\sigma`, 4), dtype wp.float64
         Upstream gradient w.r.t. the raw (pre-projection) features.
     n_atoms_valid : wp.int32
         Number of valid (non-padded) atoms.
@@ -3458,7 +3472,7 @@ def _v_grad_per_k_reduce_kernel(
     n_k_valid: wp.int32,
     grad_v: wp.array2d(dtype=wp.float64),  # (N_k, 2) OUTPUT
 ):
-    r"""Per-k final reduction: combine ``GRC`` / ``GRS`` with receiver φ̂.
+    r"""Per-k final reduction: combine ``GRC`` / ``GRS`` with receiver :math:`\hat\phi`.
 
     Launch Grid
     -----------
@@ -3466,7 +3480,7 @@ def _v_grad_per_k_reduce_kernel(
 
     Parameters
     ----------
-    receiver_phi_hat : wp.array4d, shape (N_k, N_σ, 4, 2), dtype wp.float64
+    receiver_phi_hat : wp.array4d, shape (N_k, N_:math:`\sigma`, 4, 2), dtype wp.float64
         Receiver-side GTO Fourier coefficients :math:`\hat\phi(k)`.
     grc : wp.array2d, shape (N_k, N_sl), dtype wp.float64
         OUTPUT: cosine-channel reduced intermediate.
@@ -3513,8 +3527,8 @@ def _v_gradient_from_feature_grad_tiled_launch(
 ) -> None:
     r"""CUDA tile-matmul implementation of :func:`v_gradient_from_feature_grad`.
 
-    grad_raw is already contiguous in ``(N_atoms, N_σ, 4)`` memory
-    layout, which is identical to ``(N_atoms, N_σ*4)`` — we just
+    grad_raw is already contiguous in ``(N_atoms, N_sigma, 4)`` memory
+    layout, which is identical to ``(N_atoms, N_sigma*4)`` — we just
     reinterpret as a 2D tensor via ``torch.reshape`` (a view, no copy).
     cos/sin/grad_raw are passed to the matmul unpadded; ``wp.tile_load`` /
     ``wp.tile_store`` bounds-check, so no transpose+pad copy is materialized.
@@ -3597,7 +3611,7 @@ def _position_gradient_from_feature_grad_kernel(
     r"""Analytical backward of :func:`project_features_dipole` w.r.t. atomic positions.
 
     One thread per atom. Inner loop over k performs the same ``(Q_r, Q_i)``
-    reduction over ``(σ, lm)`` as the V-gradient kernel, then combines
+    reduction over ``(sigma, lm)`` as the V-gradient kernel, then combines
     with ``V(k)`` to form ``(C, D)`` and accumulates the three Cartesian
     components of the position gradient.
 
@@ -3607,8 +3621,8 @@ def _position_gradient_from_feature_grad_kernel(
 
     Parameters
     ----------
-    grad_raw : wp.array3d, shape (N_atoms, N_σ, 4), dtype wp.float64
-    receiver_phi_hat : wp.array4d, shape (N_k, N_σ, 4, 2), dtype wp.float64
+    grad_raw : wp.array3d, shape (N_atoms, N_:math:`\sigma`, 4), dtype wp.float64
+    receiver_phi_hat : wp.array4d, shape (N_k, N_:math:`\sigma`, 4, 2), dtype wp.float64
     cosines, sines : wp.array2d, shape (N_k, N_atoms), dtype wp.float64
     k_factor_proj : wp.array, shape (N_k,), dtype wp.float64
     potential : wp.array2d, shape (N_k, 2), dtype wp.float64
@@ -3676,21 +3690,21 @@ def position_gradient_from_feature_grad(
 
     Parameters
     ----------
-    grad_raw : wp.array
+    grad_raw : wp.array, shape (N_atoms, N_:math:`\sigma`, 4), dtype wp.float64
         Upstream gradient w.r.t. the raw (pre-projection) features.
-    receiver_phi_hat : wp.array
+    receiver_phi_hat : wp.array, shape (N_k, N_:math:`\sigma`, 4, 2), dtype wp.float64
         Receiver-side GTO Fourier coefficients :math:`\hat\phi(k)`.
-    cosines : wp.array
+    cosines : wp.array, shape (N_k, N_atoms), dtype wp.float64
         Per-(k, atom) cosine table :math:`\cos(k\cdot r)`.
-    sines : wp.array
+    sines : wp.array, shape (N_k, N_atoms), dtype wp.float64
         Per-(k, atom) sine table :math:`\sin(k\cdot r)`.
-    k_factor_proj : wp.array
+    k_factor_proj : wp.array, shape (N_k,), dtype wp.float64
         Per-k projection factor for the feature/direct-k-space projection.
-    potential : wp.array
-        Per-k reciprocal-space potential factor.
-    k_vectors : wp.array
+    potential : wp.array, shape (N_k, 2), dtype wp.float64
+        Per-k reciprocal-space potential factor ``V(k)`` from the forward.
+    k_vectors : wp.array, shape (N_k,), dtype wp.vec3d
         Reciprocal-space k-vectors.
-    grad_positions : wp.array
+    grad_positions : wp.array, shape (N_atoms, 3), dtype wp.float64
         OUTPUT: gradient w.r.t. atomic positions.
     device : str
         Warp device string; defaults to the input array's device.
@@ -3763,9 +3777,9 @@ def _batch_position_gradient_from_feature_grad_kernel(
 
     Parameters
     ----------
-    grad_raw : wp.array3d, shape (N_total, N_σ, 4), dtype wp.float64
+    grad_raw : wp.array3d, shape (N_total, N_:math:`\sigma`, 4), dtype wp.float64
         Upstream gradient w.r.t. the raw (pre-projection) features.
-    receiver_phi_hat : wp.array4d, shape (B, K_max, N_σ, 4), dtype wp.vec2d
+    receiver_phi_hat : wp.array4d, shape (B, K_max, N_:math:`\sigma`, 4), dtype wp.vec2d
         Vec2d.
     cosines : wp.array2d, shape (K_max, N_total), dtype wp.float64
         Per-(k, atom) cosine table :math:`\cos(k\cdot r)`.
@@ -3838,23 +3852,23 @@ def batch_position_gradient_from_feature_grad(
 
     Parameters
     ----------
-    grad_raw : wp.array
+    grad_raw : wp.array, shape (N_total, N_:math:`\sigma`, 4), dtype wp.float64
         Upstream gradient w.r.t. the raw (pre-projection) features.
-    receiver_phi_hat : wp.array
+    receiver_phi_hat : wp.array, shape (B, K_max, N_:math:`\sigma`, 4), dtype wp.vec2d
         Receiver-side GTO Fourier coefficients :math:`\hat\phi(k)`.
-    cosines : wp.array
+    cosines : wp.array, shape (K_max, N_total), dtype wp.float64
         Per-(k, atom) cosine table :math:`\cos(k\cdot r)`.
-    sines : wp.array
+    sines : wp.array, shape (K_max, N_total), dtype wp.float64
         Per-(k, atom) sine table :math:`\sin(k\cdot r)`.
-    k_factor_proj : wp.array
+    k_factor_proj : wp.array, shape (B, K_max), dtype wp.float64
         Per-k projection factor for the feature/direct-k-space projection.
-    potential : wp.array
+    potential : wp.array, shape (B, K_max, 2), dtype wp.float64
         Per-k reciprocal-space potential factor.
-    k_vectors : wp.array
+    k_vectors : wp.array, shape (B, K_max), dtype wp.vec3d
         Reciprocal-space k-vectors.
-    batch_idx : wp.array
+    batch_idx : wp.array, shape (N_total,), dtype wp.int32
         Per-atom system index into the batch (or scalar system id).
-    grad_positions : wp.array
+    grad_positions : wp.array, shape (N_total, 3), dtype wp.float64
         OUTPUT: gradient w.r.t. atomic positions.
     device : str
         Warp device string; defaults to the input array's device.
@@ -3942,10 +3956,10 @@ def _feat_pos_grad_precompute_beta_kernel(
     beta_cos: wp.array2d(dtype=wp.float64),  # (N_k_pad, N_p_pad) OUTPUT
     beta_sin: wp.array2d(dtype=wp.float64),  # (N_k_pad, N_p_pad) OUTPUT
 ):
-    r"""Precompute β matrices for the tile matmul.
+    r"""Precompute :math:`\beta` matrices for the tile matmul.
 
-    Launch dim ``(N_k_pad, N_σ)``. Each thread handles one ``(k, σ)``
-    pair and writes 3·4 = 12 columns of β_cos / β_sin.
+    Launch dim ``(N_k_pad, N_sigma)``. Each thread handles one ``(k, sigma)``
+    pair and writes 3*4 = 12 columns of :math:`\beta`_cos / :math:`\beta`_sin.
 
 
     Launch Grid
@@ -3954,9 +3968,9 @@ def _feat_pos_grad_precompute_beta_kernel(
 
     Parameters
     ----------
-    grad_raw : wp.array3d, shape (N_atoms, N_σ, 4), dtype wp.float64
+    grad_raw : wp.array3d, shape (N_atoms, N_:math:`\sigma`, 4), dtype wp.float64
         — unused (for symmetry).
-    receiver_phi_hat : wp.array4d, shape (N_k, N_σ, 4, 2), dtype wp.float64
+    receiver_phi_hat : wp.array4d, shape (N_k, N_:math:`\sigma`, 4, 2), dtype wp.float64
         Receiver-side GTO Fourier coefficients :math:`\hat\phi(k)`.
     k_factor_proj : wp.array, shape (N_k,), dtype wp.float64
         Per-k projection factor for the feature/direct-k-space projection.
@@ -3967,7 +3981,7 @@ def _feat_pos_grad_precompute_beta_kernel(
     n_k_valid : wp.int32
         Number of valid (non-padded) k-vectors.
     n_p_valid : wp.int32
-        = 3 * N_σ * 4.
+        = 3 * N_:math:`\sigma` * 4.
     beta_cos : wp.array2d, shape (N_k_pad, N_p_pad), dtype wp.float64
         OUTPUT: precomputed per-k cosine-weighted reduction coefficients.
     beta_sin : wp.array2d, shape (N_k_pad, N_p_pad), dtype wp.float64
@@ -4036,7 +4050,7 @@ def _feat_pos_grad_reduce_kernel(
     n_atoms_valid: wp.int32,
     grad_positions: wp.array2d(dtype=wp.float64),  # (N_atoms, 3) OUTPUT
 ):
-    r"""Final per-atom contraction: ``∂L/∂r_{i,α} = scale · Σ_{sl} grad_raw(i, sl) · T(i, α*N_sl+sl)``.
+    r"""Final per-atom contraction: ``dL/dr_{i,alpha} = scale * sum_{sl} grad_raw(i, sl) * T(i, alpha*N_sl+sl)``.
 
     Launch Grid
     -----------
@@ -4044,7 +4058,7 @@ def _feat_pos_grad_reduce_kernel(
 
     Parameters
     ----------
-    grad_raw : wp.array3d, shape (N_atoms, N_σ, 4), dtype wp.float64
+    grad_raw : wp.array3d, shape (N_atoms, N_:math:`\sigma`, 4), dtype wp.float64
         Upstream gradient w.r.t. the raw (pre-projection) features.
     contribs : wp.array2d, shape (N_atoms_pad, N_p_pad), dtype wp.float64
         OUTPUT: per-tile partial contributions awaiting reduction.
@@ -4222,7 +4236,7 @@ def _source_phi_hat_backward_dipole_kernel(
     Parameters
     ----------
     grad_output : wp.array3d, shape (N_k, 4, 2), dtype wp.float64
-        Upstream cotangent ``∂L/∂source_phi_hat``.
+        Upstream cotangent ``dL/dsource_phi_hat``.
     k_vectors : wp.array, shape (N_k,), dtype wp.vec3d
     k_norm2 : wp.array, shape (N_k,), dtype wp.float64
     sigma, inv_cl_l0, inv_cl_l1 : wp.float64
@@ -4339,18 +4353,18 @@ def _source_phi_hat_double_backward_dipole_kernel(
 
     The first-order backward (:func:`_source_phi_hat_backward_dipole_kernel`) is
     linear in ``grad_output`` and depends on ``(k_vectors, k_norm2)`` through the
-    shared Gaussian ``g(k²) = C₀·e^{γ·k²}`` (``γ = -σ²/2``). With upstream
+    shared Gaussian ``g(k^2) = C0*e^{gamma*k^2}`` (``gamma = -sigma^2/2``). With upstream
     cotangents ``(gg_kv, gg_k2)`` on ``(grad_k_vectors, grad_k_norm2)`` the
-    closed-form second-order grads (per k) are, with ``a₀ = invcl₀·g·σ³·Y₀₀``,
-    ``c₁ = -invcl₁·g·σ⁵·Y₁``, ``S = Σ_α G_{1,α}·k_α``:
+    closed-form second-order grads (per k) are, with ``a0 = invcl0*g*sigma^3*Y00``,
+    ``c1 = -invcl1*g*sigma^5*Y1``, ``S = sum_alpha G_{1,alpha}*k_alpha``:
 
     .. math::
 
-        \partial L_2/\partial G_{0,0} &= gg_{k²}\,\gamma\,a_0 \\
-        \partial L_2/\partial G_{1,\alpha} &= c_1(gg_{kv,\alpha} + gg_{k²}\,\gamma\,k_\alpha) \\
-        \partial L_2/\partial k_\alpha &= gg_{k²}\,\gamma\,c_1\,G_{1,\alpha} \\
-        \partial L_2/\partial k² &= \gamma\,c_1(gg_{kv}\!\cdot\!G_{1})
-            + gg_{k²}\,\gamma^2(a_0 G_{0,0} + c_1 S)
+        \partial L_2/\partial G_{0,0} &= gg_{k^2}\,\gamma\,a_0 \\
+        \partial L_2/\partial G_{1,\alpha} &= c_1(gg_{kv,\alpha} + gg_{k^2}\,\gamma\,k_\alpha) \\
+        \partial L_2/\partial k_\alpha &= gg_{k^2}\,\gamma\,c_1\,G_{1,\alpha} \\
+        \partial L_2/\partial k^2 &= \gamma\,c_1(gg_{kv}\!\cdot\!G_{1})
+            + gg_{k^2}\,\gamma^2(a_0 G_{0,0} + c_1 S)
 
     Launch Grid
     -----------
@@ -4419,7 +4433,35 @@ def source_phi_hat_double_backward_dipole(
     grad_k_norm2: wp.array,
     device: str | None = None,
 ) -> None:
-    """Launcher for :func:`_source_phi_hat_double_backward_dipole_kernel`."""
+    r"""Launcher for :func:`_source_phi_hat_double_backward_dipole_kernel`.
+
+    Parameters
+    ----------
+    gg_k_vectors : wp.array, shape (N_k,), dtype wp.vec3d
+        Cotangent on ``grad_k_vectors`` from the outer backward pass.
+    gg_k_norm2 : wp.array, shape (N_k,), dtype wp.float64
+        Cotangent on ``grad_k_norm2`` from the outer backward pass.
+    grad_output : wp.array, shape (N_k, 4, 2), dtype wp.float64
+        Upstream cotangent ``dL/d\hat\phi`` from the first-order backward.
+    k_vectors : wp.array, shape (N_k,), dtype wp.vec3d
+        Reciprocal-space k-vectors from the forward pass.
+    k_norm2 : wp.array, shape (N_k,), dtype wp.float64
+        Squared magnitudes :math:`|k|^2` of the k-vectors.
+    sigma : float
+        Density-basis Gaussian width.
+    inv_cl_l0 : float
+        Inverse :math:`l=0` overlap normalization constant.
+    inv_cl_l1 : float
+        Inverse :math:`l=1` overlap normalization constant.
+    grad_grad_output : wp.array, shape (N_k, 4, 2), dtype wp.float64
+        OUTPUT: double-backward gradient w.r.t. ``grad_output``.
+    grad_k_vectors : wp.array, shape (N_k,), dtype wp.vec3d
+        OUTPUT: double-backward gradient w.r.t. k-vectors.
+    grad_k_norm2 : wp.array, shape (N_k,), dtype wp.float64
+        OUTPUT: double-backward gradient w.r.t. :math:`|k|^2`.
+    device : str, optional
+        Defaults to ``k_vectors.device``.
+    """
     n_k = k_vectors.shape[0]
     if device is None:
         device = str(k_vectors.device)
@@ -4461,10 +4503,10 @@ def _receiver_phi_hat_backward_dipole_kernel(
     r"""Analytical backward of :func:`eval_receiver_gto_fourier_dipole` w.r.t. ``(k_vectors, k_norm2)``.
 
     Same structure as :func:`_source_phi_hat_backward_dipole_kernel` but
-    with an inner ``σ`` loop — each (k, σ) block of ``grad_output``
+    with an inner ``sigma`` loop — each (k, :math:`\sigma`) block of ``grad_output``
     contributes to the same ``(grad_k_vectors[k], grad_k_norm2[k])``
-    slot. Launched one thread per k-vector; the thread sweeps all σ to
-    avoid a per-(k, σ) atomic add.
+    slot. Launched one thread per k-vector; the thread sweeps all :math:`\sigma` to
+    avoid a per-(k, :math:`\sigma`) atomic add.
 
     Launch Grid
     -----------
@@ -4472,12 +4514,12 @@ def _receiver_phi_hat_backward_dipole_kernel(
 
     Parameters
     ----------
-    grad_output : wp.array4d, shape (N_k, N_σ, 4, 2), dtype wp.float64
-        Upstream cotangent ``∂L/∂receiver_phi_hat``.
+    grad_output : wp.array4d, shape (N_k, N_:math:`\sigma`, 4, 2), dtype wp.float64
+        Upstream cotangent ``dL/dreceiver_phi_hat``.
     k_vectors : wp.array, shape (N_k,), dtype wp.vec3d
     k_norm2 : wp.array, shape (N_k,), dtype wp.float64
-    sigmas : wp.array, shape (N_σ,), dtype wp.float64
-    inv_cl_table : wp.array2d, shape (N_σ, 2), dtype wp.float64
+    sigmas : wp.array, shape (N_:math:`\sigma`,), dtype wp.float64
+    inv_cl_table : wp.array2d, shape (N_:math:`\sigma`, 2), dtype wp.float64
     grad_k_vectors : wp.array, shape (N_k,), dtype wp.vec3d
         OUTPUT. Written unconditionally.
     grad_k_norm2 : wp.array, shape (N_k,), dtype wp.float64
@@ -4773,7 +4815,7 @@ def _rhok_position_grad_backward_moments_kernel(
     r"""Backward of :func:`position_gradient_from_rhok` w.r.t. ``(charges, dipoles)``.
 
     Produces ``ggrad_moments`` of shape ``(N_atoms, 4)`` in e3nn layout
-    (``lm = 0`` → charge, ``1`` → μ_y, ``2`` → μ_z, ``3`` → μ_x). The
+    (``lm = 0`` -> charge, ``1`` -> :math:`\mu`_y, ``2`` -> :math:`\mu`_z, ``3`` -> :math:`\mu`_x). The
     caller is responsible for splitting into charge / Cartesian-dipole
     pieces.
 
@@ -4854,9 +4896,9 @@ def rhok_position_grad_backward_moments(
     per-(atom, lm) serial kernel on CPU.
 
     The tile implementation shares the inner-matmul intermediate
-    ``T = cos.T @ β_cos + sin.T @ β_sin`` with
+    ``T = cos.T @ beta_cos + sin.T @ beta_sin`` with
     :func:`position_gradient_from_rhok` — only the final per-atom
-    reduction differs (contracts α instead of lm).
+    reduction differs (contracts :math:`\alpha` instead of lm).
 
 
     Parameters
@@ -4944,7 +4986,7 @@ def _rhok_pg_back_moments_reduce_kernel(
     n_atoms_valid: wp.int32,
     ggrad_moments: wp.array2d(dtype=wp.float64),  # (N_atoms, 4) OUTPUT
 ):
-    r"""``gg_q(i, lm) = scale · Σ_α gp_α(i) · T(i, α*4+lm)``.
+    r"""``gg_q(i, lm) = scale * sum_alpha gp_alpha(i) * T(i, alpha*4+lm)``.
 
     Launch Grid
     -----------
@@ -5401,7 +5443,7 @@ def _rhok_pg_back_positions_reduce_kernel(
     n_atoms_valid: wp.int32,
     ggrad_positions: wp.array2d(dtype=wp.float64),  # (N_atoms, 3) OUTPUT
 ):
-    r"""Per-atom reduce: ``gg_pos[i, β] = scale · Σ_{α,lm} gp_α(i) · q(i, lm) · T(i, β*12 + α*4 + lm)``.
+    r"""Per-atom reduce: ``gg_pos[i, beta] = scale * sum_{alpha,lm} gp_alpha(i) * q(i, lm) * T(i, beta*12 + alpha*4 + lm)``.
 
     Launch Grid
     -----------
@@ -5594,12 +5636,12 @@ def _feat_position_grad_backward_grad_raw_kernel(
     where :math:`dC = V_r \hat\phi_i - V_i \hat\phi_r`,
     :math:`dD = V_r \hat\phi_r + V_i \hat\phi_i`, :math:`w` =
     ``k_factor_proj``, and :math:`h(k, i) = \sum_\alpha k_\alpha \,
-    gg_{pos}(i, \alpha)`. The ``scale`` prefactor ``2/(2π)³`` is baked
+    gg_{pos}(i, \alpha)`. The ``scale`` prefactor ``2/(2pi)^3`` is baked
     in as the module-level constant :data:`_INV_TWO_PI_CUBED_TIMES_TWO`.
 
     Launch Grid
     -----------
-    dim = [N_atoms, N_σ, 4].
+    dim = [N_atoms, N_:math:`\sigma`, 4].
 
 
     Parameters
@@ -5661,26 +5703,26 @@ def feat_position_grad_backward_grad_raw(
     r"""Launcher for :func:`_feat_position_grad_backward_grad_raw_kernel`.
 
     Dispatches to the tile-matmul implementation on CUDA and the
-    serial per-(i, σ, lm) kernel on CPU.
+    serial per-(i, :math:`\sigma`, lm) kernel on CPU.
 
 
     Parameters
     ----------
-    receiver_phi_hat : wp.array
+    receiver_phi_hat : wp.array, shape (N_k, N_:math:`\sigma`, 4, 2), dtype wp.float64
         Receiver-side GTO Fourier coefficients :math:`\hat\phi(k)`.
-    cosines : wp.array
+    cosines : wp.array, shape (N_k, N_atoms), dtype wp.float64
         Per-(k, atom) cosine table :math:`\cos(k\cdot r)`.
-    sines : wp.array
+    sines : wp.array, shape (N_k, N_atoms), dtype wp.float64
         Per-(k, atom) sine table :math:`\sin(k\cdot r)`.
-    k_factor_proj : wp.array
+    k_factor_proj : wp.array, shape (N_k,), dtype wp.float64
         Per-k projection factor for the feature/direct-k-space projection.
-    potential : wp.array
-        Per-k reciprocal-space potential factor.
-    gg_positions : wp.array
+    potential : wp.array, shape (N_k, 2), dtype wp.float64
+        Per-k reciprocal-space potential factor ``V(k)`` from the forward.
+    gg_positions : wp.array, shape (N_atoms, 3), dtype wp.float64
         Second-order upstream gradient w.r.t. positions (HVP seed).
-    k_vectors : wp.array
+    k_vectors : wp.array, shape (N_k,), dtype wp.vec3d
         Reciprocal-space k-vectors.
-    ggrad_grad_raw : wp.array
+    ggrad_grad_raw : wp.array, shape (N_atoms, N_:math:`\sigma`, 4), dtype wp.float64
         OUTPUT: double-backward gradient w.r.t. ``grad_raw``.
     device : str
         Warp device string; defaults to the input array's device.
@@ -5761,7 +5803,7 @@ def _feat_pg_back_grad_raw_precompute_kernel(
     m_cos: wp.array2d(dtype=wp.float64),
     m_sin: wp.array2d(dtype=wp.float64),
 ):
-    r"""Precompute M_cos / M_sin packed ``p = α * (N_σ * 4) + σ * 4 + lm``.
+    r"""Precompute M_cos / M_sin packed ``p = alpha * (N_sigma * 4) + sigma * 4 + lm``.
 
     Launch Grid
     -----------
@@ -5780,7 +5822,7 @@ def _feat_pg_back_grad_raw_precompute_kernel(
     n_k_valid : wp.int32
         Number of valid (non-padded) k-vectors.
     n_p_valid : wp.int32
-        3 * N_σ * 4.
+        3 * N_:math:`\sigma` * 4.
     m_cos : wp.array2d, dtype wp.float64
         OUTPUT: precomputed per-k cosine-weighted intermediate matrix.
     m_sin : wp.array2d, dtype wp.float64
@@ -5839,7 +5881,7 @@ def _feat_pg_back_grad_raw_reduce_kernel(
     n_sigma: wp.int32,
     ggrad_grad_raw: wp.array3d(dtype=wp.float64),
 ):
-    r"""``gg_grad_raw(i, σ, lm) = scale · Σ_α gp_α(i) · T(i, α * (N_σ*4) + σ*4 + lm)``.
+    r"""``gg_grad_raw(i, sigma, lm) = scale * sum_alpha gp_alpha(i) * T(i, alpha * (N_sigma*4) + sigma*4 + lm)``.
 
     Launch Grid
     -----------
@@ -5970,7 +6012,7 @@ def _feat_position_grad_backward_v_kernel(
 ):
     r"""Backward of :func:`position_gradient_from_feature_grad` w.r.t. ``V(k)``.
 
-    Per-k thread; inner sum over atoms and (σ, lm) to rebuild the Q-tuple:
+    Per-k thread; inner sum over atoms and (:math:`\sigma`, lm) to rebuild the Q-tuple:
 
     .. math::
 
@@ -6315,8 +6357,8 @@ def _feat_pg_back_positions_precompute_kernel(
 ):
     r"""Precompute M_cos / M_sin for K8.
 
-    Launch dim ``(N_k_pad, N_σ)`` — each thread handles one ``(k, σ)``
-    pair and writes the ``3·3·4 = 36`` cols for that σ block.
+    Launch dim ``(N_k_pad, N_sigma)`` — each thread handles one ``(k, sigma)``
+    pair and writes the ``3*3*4 = 36`` cols for that :math:`\sigma` block.
 
 
     Launch Grid
@@ -6325,7 +6367,7 @@ def _feat_pg_back_positions_precompute_kernel(
 
     Parameters
     ----------
-    receiver_phi_hat : wp.array4d, shape (N_k, N_σ, 4, 2), dtype wp.float64
+    receiver_phi_hat : wp.array4d, shape (N_k, N_:math:`\sigma`, 4, 2), dtype wp.float64
         Receiver-side GTO Fourier coefficients :math:`\hat\phi(k)`.
     k_factor_proj : wp.array, shape (N_k,), dtype wp.float64
         Per-k projection factor for the feature/direct-k-space projection.
@@ -6336,7 +6378,7 @@ def _feat_pg_back_positions_precompute_kernel(
     n_k_valid : wp.int32
         Number of valid (non-padded) k-vectors.
     n_p_valid : wp.int32
-        = 3 * 3 * N_σ * 4 = 36 for N_σ=1.
+        = 3 * 3 * N_:math:`\sigma` * 4 = 36 for N_:math:`\sigma`=1.
     m_cos : wp.array2d, shape (N_k_pad, N_p_pad), dtype wp.float64
         OUTPUT: precomputed per-k cosine-weighted intermediate matrix.
     m_sin : wp.array2d, dtype wp.float64
@@ -6397,7 +6439,7 @@ def _feat_pg_back_positions_reduce_kernel(
     n_atoms_valid: wp.int32,
     ggrad_positions: wp.array2d(dtype=wp.float64),  # (N_atoms, 3) OUTPUT
 ):
-    r"""``gg_pos[i, β] = scale · Σ_{α,σ,lm} gp_α(i) · grad_raw(i,σ,lm) · T(i, σ*36 + β*12 + α*4 + lm)``.
+    r"""``gg_pos[i, beta] = scale * sum_{alpha,sigma,lm} gp_alpha(i) * grad_raw(i,sigma,lm) * T(i, sigma*36 + beta*12 + alpha*4 + lm)``.
 
     Launch Grid
     -----------
@@ -6405,7 +6447,7 @@ def _feat_pg_back_positions_reduce_kernel(
 
     Parameters
     ----------
-    grad_raw : wp.array3d, shape (N_atoms, N_σ, 4), dtype wp.float64
+    grad_raw : wp.array3d, shape (N_atoms, N_:math:`\sigma`, 4), dtype wp.float64
         Upstream gradient w.r.t. the raw (pre-projection) features.
     gg_positions : wp.array2d, shape (N_atoms, 3), dtype wp.float64
         Second-order upstream gradient w.r.t. positions (HVP seed).
@@ -6548,7 +6590,7 @@ def _v_grad_from_feat_grad_backward_positions_kernel(
             \cos(k \cdot r_i) [gg_{V_r} Q_i - gg_{V_i} Q_r]
           - \sin(k \cdot r_i) [gg_{V_r} Q_r + gg_{V_i} Q_i] \bigr\}
 
-    One thread per atom; inner loop over k, inner-inner over ``(σ, lm)``.
+    One thread per atom; inner loop over k, inner-inner over ``(sigma, lm)``.
 
     Launch Grid
     -----------
@@ -6727,7 +6769,7 @@ def _v_grad_back_positions_precompute_kernel(
     m_cos: wp.array2d(dtype=wp.float64),  # (N_k_pad, N_p_pad) OUTPUT
     m_sin: wp.array2d(dtype=wp.float64),
 ):
-    r"""Precompute M_cos / M_sin for K9. Launch dim: ``(N_k_pad, N_σ)``.
+    r"""Precompute M_cos / M_sin for K9. Launch dim: ``(N_k_pad, N_sigma)``.
 
     Launch Grid
     -----------
@@ -6735,7 +6777,7 @@ def _v_grad_back_positions_precompute_kernel(
 
     Parameters
     ----------
-    receiver_phi_hat : wp.array4d, shape (N_k, N_σ, 4, 2), dtype wp.float64
+    receiver_phi_hat : wp.array4d, shape (N_k, N_:math:`\sigma`, 4, 2), dtype wp.float64
         Receiver-side GTO Fourier coefficients :math:`\hat\phi(k)`.
     k_factor_proj : wp.array, shape (N_k,), dtype wp.float64
         Per-k projection factor for the feature/direct-k-space projection.
@@ -6746,7 +6788,7 @@ def _v_grad_back_positions_precompute_kernel(
     n_k_valid : wp.int32
         Number of valid (non-padded) k-vectors.
     n_p_valid : wp.int32
-        = 3 * N_σ * 4.
+        = 3 * N_:math:`\sigma` * 4.
     m_cos : wp.array2d, shape (N_k_pad, N_p_pad), dtype wp.float64
         OUTPUT: precomputed per-k cosine-weighted intermediate matrix.
     m_sin : wp.array2d, dtype wp.float64
@@ -6807,7 +6849,7 @@ def _v_grad_back_positions_reduce_kernel(
     n_atoms_valid: wp.int32,
     ggrad_positions: wp.array2d(dtype=wp.float64),
 ):
-    r"""``gg_pos[i, β] = scale · Σ_{σ,lm} grad_raw(i, σ, lm) · T(i, β*(N_σ*4) + σ*4 + lm)``.
+    r"""``gg_pos[i, beta] = scale * sum_{sigma,lm} grad_raw(i, sigma, lm) * T(i, beta*(N_sigma*4) + sigma*4 + lm)``.
 
     Launch Grid
     -----------
@@ -6951,7 +6993,7 @@ def _batch_source_phi_hat_backward_dipole_kernel(
     grad_k_vectors: wp.array2d(dtype=wp.vec3d),  # (B, K_max) OUTPUT
     grad_k_norm2: wp.array2d(dtype=wp.float64),  # (B, K_max) OUTPUT
 ):
-    r"""Batched per-(b, k) backward of source GTO Fourier w.r.t. (k_vec, k²).
+    r"""Batched per-(b, k) backward of source GTO Fourier w.r.t. (k_vec, k^2).
 
     Mirror of :func:`_source_phi_hat_backward_dipole_kernel`. Pad k-rows
     have ``grad_output = 0`` and ``k_vectors = 0`` so their outputs are
@@ -7080,9 +7122,9 @@ def _batch_receiver_phi_hat_backward_dipole_kernel(
     grad_k_vectors: wp.array2d(dtype=wp.vec3d),  # (B, K_max) OUTPUT
     grad_k_norm2: wp.array2d(dtype=wp.float64),  # (B, K_max) OUTPUT
 ):
-    r"""Batched per-(b, k) backward of receiver GTO Fourier w.r.t. (k_vec, k²).
+    r"""Batched per-(b, k) backward of receiver GTO Fourier w.r.t. (k_vec, k^2).
 
-    Mirror of :func:`_receiver_phi_hat_backward_dipole_kernel`. Inner σ
+    Mirror of :func:`_receiver_phi_hat_backward_dipole_kernel`. Inner :math:`\sigma`
     loop at each ``(b, k)``. ``grad_output`` uses the ``vec2d`` storage
     trick (see :func:`_batch_eval_receiver_gto_fourier_dipole_kernel`)
     to keep the 4-D array cap.
@@ -7094,15 +7136,15 @@ def _batch_receiver_phi_hat_backward_dipole_kernel(
 
     Parameters
     ----------
-    grad_output : wp.array4d, shape (B, K_max, N_σ, 4), dtype wp.vec2d
+    grad_output : wp.array4d, shape (B, K_max, N_:math:`\sigma`, 4), dtype wp.vec2d
         Vec2d.
     k_vectors : wp.array2d, shape (B, K_max), dtype wp.vec3d
         Reciprocal-space k-vectors.
     k_norm2 : wp.array2d, shape (B, K_max), dtype wp.float64
         Squared magnitudes :math:`|k|^2` of the k-vectors.
-    sigmas : wp.array, shape (N_σ,), dtype wp.float64
+    sigmas : wp.array, shape (N_:math:`\sigma`,), dtype wp.float64
         Per-channel Gaussian (GTO) width parameters.
-    inv_cl_table : wp.array2d, shape (N_σ, 2), dtype wp.float64
+    inv_cl_table : wp.array2d, shape (N_:math:`\sigma`, 2), dtype wp.float64
         Per-channel inverse overlap normalization constants.
     grad_k_vectors : wp.array2d, shape (B, K_max), dtype wp.vec3d
         OUTPUT: gradient w.r.t. the k-vectors.
@@ -7222,7 +7264,7 @@ def _batch_rhok_position_grad_backward_grad_rho_kernel(
     atom_end: wp.array(dtype=wp.int32),  # (B,)
     ggrad_grad_rho: wp.array3d(dtype=wp.float64),  # (B, K_max, 2) OUTPUT
 ):
-    r"""Batched K3 — ``∂²L / (∂grad_rho ∂…)`` contribution.
+    r"""Batched K3 — ``d^2L / (dgrad_rho d…)`` contribution.
 
     One thread per ``(b, k_idx)``. Inner atom loop from ``atom_start[b]``
     to ``atom_end[b]``. Pad rows have ``source_phi_hat = 0`` so their
@@ -7412,7 +7454,7 @@ def _batch_rhok_position_grad_backward_moments_kernel(
     batch_idx: wp.array(dtype=wp.int32),  # (N_total,)
     ggrad_moments: wp.array2d(dtype=wp.float64),  # (N_total, 4) OUTPUT
 ):
-    r"""Batched K4 — ``∂²L / (∂moments ∂…)`` contribution.
+    r"""Batched K4 — ``d^2L / (dmoments d…)`` contribution.
 
     One thread per ``(i, lm)`` (flat over atoms). ``batch_idx[i]`` picks
     the system. Inner loop over the full ``K_max`` axis; pad k-rows
@@ -7548,7 +7590,7 @@ def _batch_rhok_position_grad_backward_positions_kernel(
     batch_idx: wp.array(dtype=wp.int32),  # (N_total,)
     ggrad_positions: wp.array2d(dtype=wp.float64),  # (N_total, 3) OUTPUT
 ):
-    r"""Batched K5 — ``∂²L / (∂r_i ∂…)`` position Hessian diagonal block.
+    r"""Batched K5 — ``d^2L / (dr_i d…)`` position Hessian diagonal block.
 
     One thread per atom (flat across batch). ``batch_idx[i]`` picks the
     system; inner loop over the full ``K_max`` axis. Pad k-rows have
@@ -7746,20 +7788,20 @@ def _batch_feat_position_grad_backward_grad_raw_kernel(
     batch_idx: wp.array(dtype=wp.int32),  # (N_total,)
     ggrad_grad_raw: wp.array3d(dtype=wp.float64),  # (N_total, N_σ, 4) OUTPUT
 ):
-    r"""Batched K6 — ``∂²L / (∂grad_raw ∂…)`` contribution.
+    r"""Batched K6 — ``d^2L / (dgrad_raw d…)`` contribution.
 
-    One thread per ``(i, σ, lm)``. ``batch_idx[i]`` picks the system.
+    One thread per ``(i, sigma, lm)``. ``batch_idx[i]`` picks the system.
     Pad rows have ``k_factor_proj = 0`` and ``receiver_phi_hat = 0``
     so they contribute nothing.
 
     Launch Grid
     -----------
-    ``dim = (N_total, N_σ, 4)``.
+    ``dim = (N_total, N_sigma, 4)``.
 
 
     Parameters
     ----------
-    receiver_phi_hat : wp.array4d, shape (B, K_max, N_σ, 4), dtype wp.vec2d
+    receiver_phi_hat : wp.array4d, shape (B, K_max, N_:math:`\sigma`, 4), dtype wp.vec2d
         Vec2d.
     cosines : wp.array2d, shape (K_max, N_total), dtype wp.float64
         Per-(k, atom) cosine table :math:`\cos(k\cdot r)`.
@@ -7775,7 +7817,7 @@ def _batch_feat_position_grad_backward_grad_raw_kernel(
         Reciprocal-space k-vectors.
     batch_idx : wp.array, shape (N_total,), dtype wp.int32
         Per-atom system index into the batch (or scalar system id).
-    ggrad_grad_raw : wp.array3d, shape (N_total, N_σ, 4), dtype wp.float64
+    ggrad_grad_raw : wp.array3d, shape (N_total, N_:math:`\sigma`, 4), dtype wp.float64
         OUTPUT: double-backward gradient w.r.t. ``grad_raw``.
     """
     i_idx, s_idx, lm_idx = wp.tid()
@@ -7883,7 +7925,7 @@ def _batch_feat_position_grad_backward_v_kernel(
     atom_end: wp.array(dtype=wp.int32),  # (B,)
     ggrad_v: wp.array3d(dtype=wp.float64),  # (B, K_max, 2) OUTPUT
 ):
-    r"""Batched K7 — ``∂²L / (∂V(k) ∂…)`` contribution.
+    r"""Batched K7 — ``d^2L / (dV(k) d…)`` contribution.
 
     One thread per ``(b, k_idx)``. Inner atom loop from
     ``atom_start[b]`` to ``atom_end[b]``. ``grad_v`` / ``ggrad_v``
@@ -7898,9 +7940,9 @@ def _batch_feat_position_grad_backward_v_kernel(
 
     Parameters
     ----------
-    grad_raw : wp.array3d, shape (N_total, N_σ, 4), dtype wp.float64
+    grad_raw : wp.array3d, shape (N_total, N_:math:`\sigma`, 4), dtype wp.float64
         Upstream gradient w.r.t. the raw (pre-projection) features.
-    receiver_phi_hat : wp.array4d, shape (B, K_max, N_σ, 4), dtype wp.vec2d
+    receiver_phi_hat : wp.array4d, shape (B, K_max, N_:math:`\sigma`, 4), dtype wp.vec2d
         Vec2d.
     cosines : wp.array2d, shape (K_max, N_total), dtype wp.float64
         Per-(k, atom) cosine table :math:`\cos(k\cdot r)`.
@@ -8036,7 +8078,7 @@ def _batch_feat_position_grad_backward_positions_kernel(
     batch_idx: wp.array(dtype=wp.int32),  # (N_total,)
     ggrad_positions: wp.array2d(dtype=wp.float64),  # (N_total, 3) OUTPUT
 ):
-    r"""Batched K8 — ``∂²L / (∂r_i ∂…)`` position Hessian diagonal block (features).
+    r"""Batched K8 — ``d^2L / (dr_i d…)`` position Hessian diagonal block (features).
 
     One thread per atom (flat across batch). ``batch_idx[i]`` picks the
     system; inner ``K_max`` loop. Pad rows have ``k_factor_proj = 0``
@@ -8049,9 +8091,9 @@ def _batch_feat_position_grad_backward_positions_kernel(
 
     Parameters
     ----------
-    grad_raw : wp.array3d, shape (N_total, N_σ, 4), dtype wp.float64
+    grad_raw : wp.array3d, shape (N_total, N_:math:`\sigma`, 4), dtype wp.float64
         Upstream gradient w.r.t. the raw (pre-projection) features.
-    receiver_phi_hat : wp.array4d, shape (B, K_max, N_σ, 4), dtype wp.vec2d
+    receiver_phi_hat : wp.array4d, shape (B, K_max, N_:math:`\sigma`, 4), dtype wp.vec2d
         Vec2d.
     cosines : wp.array2d, shape (K_max, N_total), dtype wp.float64
         Per-(k, atom) cosine table :math:`\cos(k\cdot r)`.
@@ -8193,7 +8235,7 @@ def _batch_v_grad_from_feat_grad_backward_positions_kernel(
     batch_idx: wp.array(dtype=wp.int32),  # (N_total,)
     ggrad_positions: wp.array2d(dtype=wp.float64),  # (N_total, 3) OUTPUT
 ):
-    r"""Batched K9 — ``∂²L / (∂r_i ∂…)`` via v_gradient_from_feature_grad.
+    r"""Batched K9 — ``d^2L / (dr_i d…)`` via v_gradient_from_feature_grad.
 
     One thread per atom (flat across batch). ``batch_idx[i]`` picks the
     system; inner ``K_max`` loop. Pad rows have ``k_factor_proj = 0``
@@ -8206,9 +8248,9 @@ def _batch_v_grad_from_feat_grad_backward_positions_kernel(
 
     Parameters
     ----------
-    grad_raw : wp.array3d, shape (N_total, N_σ, 4), dtype wp.float64
+    grad_raw : wp.array3d, shape (N_total, N_:math:`\sigma`, 4), dtype wp.float64
         Upstream gradient w.r.t. the raw (pre-projection) features.
-    receiver_phi_hat : wp.array4d, shape (B, K_max, N_σ, 4), dtype wp.vec2d
+    receiver_phi_hat : wp.array4d, shape (B, K_max, N_:math:`\sigma`, 4), dtype wp.vec2d
         Vec2d.
     cosines : wp.array2d, shape (K_max, N_total), dtype wp.float64
         Per-(k, atom) cosine table :math:`\cos(k\cdot r)`.
@@ -8338,8 +8380,8 @@ def _assemble_rho_q_kernel(
 ):
     r"""Cartesian-quadrupole contribution to rho(k) (REAL channel).
 
-    Per k: ``acc_c = Σ_i (k·Q_i·k) cos(k·r_i)``,
-    ``acc_s = Σ_i (k·Q_i·k) sin(k·r_i)``, then
+    Per k: ``acc_c = sum_i (k*Q_i*k) cos(k*r_i)``,
+    ``acc_s = sum_i (k*Q_i*k) sin(k*r_i)``, then
 
     .. math::
 
@@ -8348,7 +8390,7 @@ def _assemble_rho_q_kernel(
         \rho_Q(\mathbf{k})_{\mathrm{imag}} &= -\mathrm{scale}\cdot
             \mathrm{coeff2}(\mathbf{k})\cdot \mathrm{acc}_s,
 
-    with ``scale = (2π)³ / V``.
+    with ``scale = (2pi)^3 / V``.
 
     Launch Grid
     -----------
@@ -8427,7 +8469,7 @@ def _batch_assemble_rho_q_kernel(
     atom_end: wp.array(dtype=wp.int32),  # (B,)
     rho: wp.array3d(dtype=wp.float64),  # (B, K_max, 2) OUTPUT
 ):
-    r"""Batched Cartesian-quadrupole ρ_Q(k) (REAL channel).
+    r"""Batched Cartesian-quadrupole :math:`\rho`_Q(k) (REAL channel).
 
     Each thread sums over ``[atom_start[b], atom_end[b])`` and writes the
     additive Cartesian-quadrupole contribution to ``rho[b, k_idx, :]``.
@@ -8513,7 +8555,7 @@ def _batch_eval_receiver_gto_fourier_quadrupole_kernel(
     inv_cl_l2: wp.array(dtype=wp.float64),  # (N_σ,)
     output: wp.array4d(dtype=wp.vec2d),  # (B, K_max, N_σ, 5) — vec2d = (real, imag)
 ):
-    r"""Batched receiver-basis φ̂ at l = 2 across ``B`` systems.
+    r"""Batched receiver-basis :math:`\hat\phi` at l = 2 across ``B`` systems.
 
     Launch Grid
     -----------
@@ -8525,11 +8567,11 @@ def _batch_eval_receiver_gto_fourier_quadrupole_kernel(
         Reciprocal-space k-vectors.
     k_norm2 : wp.array2d, shape (B, K_max), dtype wp.float64
         Squared magnitudes :math:`|k|^2` of the k-vectors.
-    sigmas : wp.array, shape (N_σ,), dtype wp.float64
+    sigmas : wp.array, shape (N_:math:`\sigma`,), dtype wp.float64
         Per-channel Gaussian (GTO) width parameters.
-    inv_cl_l2 : wp.array, shape (N_σ,), dtype wp.float64
+    inv_cl_l2 : wp.array, shape (N_:math:`\sigma`,), dtype wp.float64
         Inverse :math:`l=2` overlap normalization constant.
-    output : wp.array4d, shape (B, K_max, N_σ, 5), dtype wp.vec2d
+    output : wp.array4d, shape (B, K_max, N_:math:`\sigma`, 5), dtype wp.vec2d
         — vec2d = (real, imag).
     """
     b, k_idx, s_idx = wp.tid()
@@ -8802,7 +8844,7 @@ def _batch_position_gradient_from_feature_grad_quadrupole_kernel(
     batch_idx: wp.array(dtype=wp.int32),
     grad_positions: wp.array2d(dtype=wp.float64),
 ):
-    r"""Batched ``∂L/∂r_i`` backward of the l=2 projection. ``dim = N_total``.
+    r"""Batched ``dL/dr_i`` backward of the l=2 projection. ``dim = N_total``.
 
     Launch Grid
     -----------
@@ -8881,7 +8923,7 @@ def _batch_position_gradient_from_rhoq_kernel(
     batch_idx: wp.array(dtype=wp.int32),  # (N_total,)
     grad_positions: wp.array2d(dtype=wp.float64),  # (N_total, 3) OUTPUT
 ):
-    r"""Batched Q-channel ∂L/∂r_i (one thread per atom).
+    r"""Batched Q-channel :math:`\partial`L/:math:`\partial`r_i (one thread per atom).
 
     Launch Grid
     -----------
@@ -9034,7 +9076,7 @@ def _batch_project_kphase_grad_kernel(
     batch_idx: wp.array(dtype=wp.int32),
     grad_k_vectors: wp.array2d(dtype=wp.vec3d),
 ):
-    r"""Batched backward of the l≤1 feature projection w.r.t. the k-phase ``k·r`` (stress path).
+    r"""Batched backward of the l<=1 feature projection w.r.t. the k-phase ``k*r`` (stress path).
 
     Launch Grid
     -----------
@@ -9115,7 +9157,7 @@ def _batch_project_phihat_grad_kernel(
     batch_idx: wp.array(dtype=wp.int32),
     grad_phi: wp.array4d(dtype=wp.vec2d),
 ):
-    r"""Batched backward of the l≤1 feature projection w.r.t. ``receiver_phi_hat`` (stress path).
+    r"""Batched backward of the l<=1 feature projection w.r.t. ``receiver_phi_hat`` (stress path).
 
     Launch Grid
     -----------
@@ -9173,7 +9215,7 @@ def _batch_receiver_phi_hat_backward_quadrupole_kernel(
     grad_k_vectors: wp.array2d(dtype=wp.vec3d),  # (B, K_max) OUTPUT
     grad_k_norm2: wp.array2d(dtype=wp.float64),  # (B, K_max) OUTPUT
 ):
-    r"""Batched per-(b, k) backward of receiver GTO Fourier (l = 2) w.r.t. (k_vec, k²).
+    r"""Batched per-(b, k) backward of receiver GTO Fourier (l = 2) w.r.t. (k_vec, k^2).
 
     Launch Grid
     -----------
@@ -9181,15 +9223,15 @@ def _batch_receiver_phi_hat_backward_quadrupole_kernel(
 
     Parameters
     ----------
-    grad_output : wp.array4d, shape (B, K_max, N_σ, 5), dtype wp.vec2d
+    grad_output : wp.array4d, shape (B, K_max, N_:math:`\sigma`, 5), dtype wp.vec2d
         Vec2d.
     k_vectors : wp.array2d, shape (B, K_max), dtype wp.vec3d
         Reciprocal-space k-vectors.
     k_norm2 : wp.array2d, shape (B, K_max), dtype wp.float64
         Squared magnitudes :math:`|k|^2` of the k-vectors.
-    sigmas : wp.array, shape (N_σ,), dtype wp.float64
+    sigmas : wp.array, shape (N_:math:`\sigma`,), dtype wp.float64
         Per-channel Gaussian (GTO) width parameters.
-    inv_cl_l2 : wp.array, shape (N_σ,), dtype wp.float64
+    inv_cl_l2 : wp.array, shape (N_:math:`\sigma`,), dtype wp.float64
         Inverse :math:`l=2` overlap normalization constant.
     grad_k_vectors : wp.array2d, shape (B, K_max), dtype wp.vec3d
         OUTPUT: gradient w.r.t. the k-vectors.
@@ -9654,7 +9696,7 @@ def _batch_rho_q_moment_grad_kernel(
     batch_idx: wp.array(dtype=wp.int32),  # (N_total,)
     grad_quadrupoles: wp.array2d(dtype=wp.float64),  # (N_total, 9) OUTPUT
 ):
-    r"""Batched Q-channel ∂L/∂Q_i (one thread per atom; symmetric 3x3).
+    r"""Batched Q-channel :math:`\partial`L/:math:`\partial`Q_i (one thread per atom; symmetric 3x3).
 
     Launch Grid
     -----------
@@ -10003,7 +10045,7 @@ def _batch_v_grad_from_feat_grad_backward_positions_quadrupole_kernel(
     batch_idx: wp.array(dtype=wp.int32),  # (N_total,)
     ggrad_positions: wp.array2d(dtype=wp.float64),  # (N_total, 3) OUTPUT
 ):
-    r"""Batched K9 — ``l = 2`` ``∂²L / (∂r_i ∂…)`` via v_gradient_from_feature_grad.
+    r"""Batched K9 — ``l = 2`` ``d^2L / (dr_i d…)`` via v_gradient_from_feature_grad.
 
     One thread per atom (flat across batch). ``batch_idx[i]`` picks the
     system; inner ``K_max`` loop with the five ``l = 2`` angular channels.
@@ -10017,9 +10059,9 @@ def _batch_v_grad_from_feat_grad_backward_positions_quadrupole_kernel(
 
     Parameters
     ----------
-    grad_raw : wp.array3d, shape (N_total, N_σ, 5), dtype wp.float64
+    grad_raw : wp.array3d, shape (N_total, N_:math:`\sigma`, 5), dtype wp.float64
         Upstream gradient w.r.t. the raw (pre-projection) features.
-    receiver_phi_hat_l2 : wp.array4d, shape (B, K_max, N_σ, 5), dtype wp.vec2d
+    receiver_phi_hat_l2 : wp.array4d, shape (B, K_max, N_:math:`\sigma`, 5), dtype wp.vec2d
         Vec2d.
     cosines : wp.array2d, shape (K_max, N_total), dtype wp.float64
         Per-(k, atom) cosine table :math:`\cos(k\cdot r)`.
@@ -10087,11 +10129,11 @@ def _batch_v_gradient_from_feature_grad_quadrupole_kernel(
     atom_end: wp.array(dtype=wp.int32),  # (B,)
     grad_v: wp.array3d(dtype=wp.float64),  # (B, K_max, 2) OUTPUT
 ):
-    r"""Batched ``∂L/∂V(k)`` backward of ``l = 2`` feature projection.
+    r"""Batched ``dL/dV(k)`` backward of ``l = 2`` feature projection.
 
     One thread per ``(b, k_idx)``. Inner sum over atoms in system
     ``b`` (from ``atom_start[b]`` to ``atom_end[b]``) and over the
-    ``(σ, lm)`` feature axes with the five ``l = 2`` angular channels.
+    ``(sigma, lm)`` feature axes with the five ``l = 2`` angular channels.
     ``receiver_phi_hat_l2`` stored as ``vec2d`` for the ``(real, imag)``
     axis to fit within 4-D Warp arrays.
 
@@ -10102,9 +10144,9 @@ def _batch_v_gradient_from_feature_grad_quadrupole_kernel(
 
     Parameters
     ----------
-    grad_raw : wp.array3d, shape (N_total, N_σ, 5), dtype wp.float64
+    grad_raw : wp.array3d, shape (N_total, N_:math:`\sigma`, 5), dtype wp.float64
         Upstream gradient w.r.t. the raw (pre-projection) features.
-    receiver_phi_hat_l2 : wp.array4d, shape (B, K_max, N_σ, 5), dtype wp.vec2d
+    receiver_phi_hat_l2 : wp.array4d, shape (B, K_max, N_:math:`\sigma`, 5), dtype wp.vec2d
         Vec2d.
     cosines : wp.array2d, shape (K_max, N_total), dtype wp.float64
         Per-(k, atom) cosine table :math:`\cos(k\cdot r)`.
@@ -10177,7 +10219,7 @@ def _eval_gto_fourier_q_kernel(
     k_norm2 : wp.array, shape (N_k,), dtype wp.float64
         Pre-computed :math:`|\mathbf{k}|^2`.
     sigma : wp.float64
-        Single-σ density-basis width.
+        Single-:math:`\sigma` density-basis width.
     inv_cl_l0 : wp.float64
         Host-computed :math:`1/C_0(\sigma)` factor.
     coeff2 : wp.array, shape (N_k,), dtype wp.float64
@@ -10200,7 +10242,7 @@ def _eval_receiver_gto_fourier_quadrupole_kernel(
     inv_cl_l2: wp.array(dtype=wp.float64),
     output: wp.array4d(dtype=wp.float64),
 ):
-    r"""Evaluate receiver-basis :math:`\hat\phi_{2,m}^{\sigma_r}(\mathbf{k})` across multi-σ at l = 2.
+    r"""Evaluate receiver-basis :math:`\hat\phi_{2,m}^{\sigma_r}(\mathbf{k})` across multi-:math:`\sigma` at l = 2.
 
     Launch Grid
     -----------
@@ -10479,10 +10521,10 @@ def _position_gradient_from_feature_grad_quadrupole_kernel(
     k_vectors: wp.array(dtype=wp.vec3d),
     grad_positions: wp.array2d(dtype=wp.float64),
 ):
-    r"""Analytical ``∂L/∂r_i`` backward of :func:`project_features_quadrupole`.
+    r"""Analytical ``dL/dr_i`` backward of :func:`project_features_quadrupole`.
 
     One thread per atom; inner k-loop with the same ``(C, D)`` combination as
-    the l≤1 :func:`_position_gradient_from_feature_grad_kernel`, but the Q
+    the l<=1 :func:`_position_gradient_from_feature_grad_kernel`, but the Q
     reduction runs over the 5 l=2 channels. ``dim = N_atoms``.
 
 
@@ -10561,8 +10603,8 @@ def _position_gradient_from_rhoq_kernel(
     r"""Position gradient of the Q channel (backward of ``_assemble_rho_q``).
 
     Mirrors the rho-k position-gradient: per atom, accumulates over all
-    k-vectors ``k · contrib`` where ``contrib = a_k·cos + b_k·sin`` with
-    ``a_k = -gi·p_r``, ``b_k = -gr·p_r``, ``p_r = coeff2[k]·(k·Q·k)``.
+    k-vectors ``k * contrib`` where ``contrib = a_k*cos + b_k*sin`` with
+    ``a_k = -gi*p_r``, ``b_k = -gr*p_r``, ``p_r = coeff2[k]*(k*Q*k)``.
 
     Launch Grid
     -----------
@@ -10703,7 +10745,7 @@ def _project_kphase_grad_dipole_kernel(
     positions: wp.array(dtype=wp.vec3d),
     grad_k_vectors: wp.array2d(dtype=wp.float64),
 ):
-    r"""Backward of the l≤1 feature projection w.r.t. the k-phase ``k·r`` (stress path).
+    r"""Backward of the l<=1 feature projection w.r.t. the k-phase ``k*r`` (stress path).
 
     Launch Grid
     -----------
@@ -10777,7 +10819,7 @@ def _project_phihat_grad_dipole_kernel(
     potential: wp.array2d(dtype=wp.float64),
     grad_phi: wp.array4d(dtype=wp.float64),
 ):
-    r"""Backward of the l≤1 feature projection w.r.t. ``receiver_phi_hat`` (stress path).
+    r"""Backward of the l<=1 feature projection w.r.t. ``receiver_phi_hat`` (stress path).
 
     Launch Grid
     -----------
@@ -10912,9 +10954,9 @@ def _recv_l2_grad_kspace(
     kz: wp.float64,
     k2: wp.float64,
 ) -> wp.vec4d:
-    r"""Per-(k, σ) cotangent → (grad_kx, grad_ky, grad_kz, grad_k2) for the
+    r"""Per-(k, :math:`\sigma`) cotangent -> (grad_kx, grad_ky, grad_kz, grad_k2) for the
     l=2 receiver block. ``g_*`` are the real cotangents on the 5 columns;
-    ``coeff_l2 = -inv_cl_l2 · 4π√(π/2) · σ⁷ · e^{-k²σ²/2}``.
+    ``coeff_l2 = -inv_cl_l2 * 4pi:math:`\sqrt`(pi/2) * sigma^7 * e^{-k^2sigma^2/2}``.
 
     Parameters
     ----------
@@ -10993,13 +11035,13 @@ def _rho_kphase_grad_kernel(
     scale: wp.float64,
     grad_k: wp.array2d(dtype=wp.float64),  # (N_k, 3) OUTPUT
 ):
-    r"""∂L/∂k_vectors through the phase (transpose of position_gradient_from_rhok).
+    r""":math:`\partial`L/:math:`\partial`k_vectors through the phase (transpose of position_gradient_from_rhok).
 
-    Per (k, i): ``contrib = A·cos + B·sin`` with
-    ``A = gr·P_i − gi·P_r``, ``B = −(gr·P_r + gi·P_i)``,
-    ``P_{r/i} = Σ_lm φ̂_{r/i}·Q_{i,lm}``. The position grad sums
-    ``scale·Σ_k k·contrib``; the k-phase grad sums ``scale·Σ_i r_i·contrib``.
-    Captures ONLY the phase k-dependence — φ̂(k) is threaded separately via
+    Per (k, i): ``contrib = A*cos + B*sin`` with
+    ``A = gr*P_i - gi*P_r``, ``B = -(gr*P_r + gi*P_i)``,
+    ``P_{r/i} = sum_lm phi_hat_{r/i}*Q_{i,lm}``. The position grad sums
+    ``scale*sum_k k*contrib``; the k-phase grad sums ``scale*sum_i r_i*contrib``.
+    Captures ONLY the phase k-dependence — :math:`\hat\phi`(k) is threaded separately via
     ``source_phi_hat`` + SourcePhiHatFunction.
 
 
@@ -11097,18 +11139,18 @@ def _rho_kphase_grad_double_backward_kernel(
 ):
     r"""Second-order backward of :func:`_rho_kphase_grad_kernel`.
 
-    First backward: ``grad_k[k] = scale·Σ_i r_i·e_{ki}``,
-    ``e_{ki} = a_{ki}\cos + b_{ki}\sin``, ``a = gr·p_i − gi·p_r``,
-    ``b = −(gr·p_r + gi·p_i)``, ``p_{r/i} = Σ_lm φ̂_{r/i}[lm]·Q_{i,lm}``. With
-    cotangent ``G_k = ∂L/∂grad_k`` and ``d_{ki} = G_k·r_i``:
+    First backward: ``grad_k[k] = scale*sum_i r_i*e_{ki}``,
+    ``e_{ki} = a_{ki}\cos + b_{ki}\sin``, ``a = gr*p_i - gi*p_r``,
+    ``b = -(gr*p_r + gi*p_i)``, ``p_{r/i} = sum_lm phi_hat_{r/i}[lm]*Q_{i,lm}``. With
+    cotangent ``G_k = dL/dgrad_k`` and ``d_{ki} = G_k*r_i``:
 
-    grads (× ``scale``) — ``∂/∂gr = Σ_i d(p_i\cos − p_r\sin)``,
-    ``∂/∂gi = Σ_i d(−p_r\cos − p_i\sin)``;
-    ``∂/∂φ_r[lm] = Σ_i d·(−Q_{i,lm})(gi\cos + gr\sin)``,
-    ``∂/∂φ_i[lm] = Σ_i d·Q_{i,lm}(gr\cos − gi\sin)``;
-    ``∂/∂Q_{i,lm} = Σ_k d[(gr φ_i−gi φ_r)\cos − (gr φ_r+gi φ_i)\sin]``;
-    ``∂/∂r_i = Σ_k [G_k e_{ki} + d·w_{ki}·k]``,
-    ``∂/∂k = Σ_i d·w_{ki}·r_i`` with ``w_{ki} = −a\sin + b\cos``.
+    grads (x ``scale``) — ``d/dgr = sum_i d(p_i\cos - p_r\sin)``,
+    ``d/dgi = sum_i d(-p_r\cos - p_i\sin)``;
+    ``d/dphi_r[lm] = sum_i d*(-Q_{i,lm})(gi\cos + gr\sin)``,
+    ``d/dphi_i[lm] = sum_i d*Q_{i,lm}(gr\cos - gi\sin)``;
+    ``d/dQ_{i,lm} = sum_k d[(gr phi_i-gi phi_r)\cos - (gr phi_r+gi phi_i)\sin]``;
+    ``d/dr_i = sum_k [G_k e_{ki} + d*w_{ki}*k]``,
+    ``d/dk = sum_i d*w_{ki}*r_i`` with ``w_{ki} = -a\sin + b\cos``.
     ``ggrad_moments`` / ``ggrad_positions`` accumulate over k (pre-zero).
 
     Launch Grid
@@ -11266,7 +11308,7 @@ def _batch_rho_kphase_grad_double_backward_kernel(
 
     Per-system mirror of :func:`_rho_kphase_grad_double_backward_kernel`: the
     ``(b, k_idx)`` grid sweeps system ``b``'s atoms ``[atom_start[b],
-    atom_end[b])`` and applies ``scale = (2π)³/volume[b]``. ``ggrad_moments`` /
+    atom_end[b])`` and applies ``scale = (2:math:`\pi`)^3/volume[b]``. ``ggrad_moments`` /
     ``ggrad_positions`` accumulate over k and must be pre-zeroed.
 
     Launch Grid
@@ -11408,12 +11450,12 @@ def _rho_phihat_grad_kernel(
     scale: wp.float64,
     grad_phi: wp.array3d(dtype=wp.float64),  # (N_k, 4, 2) OUTPUT
 ):
-    r"""∂L/∂source_phi_hat from grad_ρ + per-atom moments.
+    r""":math:`\partial`L/:math:`\partial`source_phi_hat from grad_:math:`\rho` + per-atom moments.
 
-    ρ_r = scale·Σ_lm(φ_r·c_lm + φ_i·s_lm), ρ_i = scale·Σ_lm(φ_i·c_lm − φ_r·s_lm)
-    with c_lm = Σ_i Q_{i,lm}·cos(k·r_i), s_lm = Σ_i Q_{i,lm}·sin(k·r_i). So
-        ∂L/∂φ_r[lm] = scale·(gr·c_lm − gi·s_lm)
-        ∂L/∂φ_i[lm] = scale·(gr·s_lm + gi·c_lm).
+    :math:`\rho`_r = scale*:math:`\sum`_lm(:math:`\phi`_r*c_lm + :math:`\phi`_i*s_lm), :math:`\rho`_i = scale*:math:`\sum`_lm(:math:`\phi`_i*c_lm - :math:`\phi`_r*s_lm)
+    with c_lm = :math:`\sum`_i Q_{i,lm}*cos(k*r_i), s_lm = :math:`\sum`_i Q_{i,lm}*sin(k*r_i). So
+        :math:`\partial`L/:math:`\partial`:math:`\phi`_r[lm] = scale*(gr*c_lm - gi*s_lm)
+        :math:`\partial`L/:math:`\partial`:math:`\phi`_i[lm] = scale*(gr*s_lm + gi*c_lm).
 
 
     Launch Grid
@@ -11505,21 +11547,21 @@ def _rho_phihat_grad_double_backward_kernel(
 ):
     r"""Second-order backward of :func:`_rho_phihat_grad_kernel`.
 
-    The first backward is ``grad_phi[lm] = scale·(gr·c_lm − gi·s_lm,
-    gr·s_lm + gi·c_lm)`` with ``c_lm = Σ_i Q_{i,lm}·cos(k·r_i)``. With cotangent
-    ``G = ∂L/∂grad_phi`` and ``dLdc[lm] = scale·(gr·G_{lm,r} + gi·G_{lm,i})``,
-    ``dLds[lm] = scale·(−gi·G_{lm,r} + gr·G_{lm,i})``:
+    The first backward is ``grad_phi[lm] = scale*(gr*c_lm - gi*s_lm,
+    gr*s_lm + gi*c_lm)`` with ``c_lm = :math:`\sum`_i Q_{i,lm}*cos(k*r_i)``. With cotangent
+    ``G = dL/dgrad_phi`` and ``dLdc[lm] = scale*(gr*G_{lm,r} + gi*G_{lm,i})``,
+    ``dLds[lm] = scale*(-gi*G_{lm,r} + gr*G_{lm,i})``:
 
     .. math::
 
-        \partial L/\partial gr &= scale·Σ_{lm}(G_{lm,r} c_{lm} + G_{lm,i} s_{lm}) \\
-        \partial L/\partial gi &= scale·Σ_{lm}(−G_{lm,r} s_{lm} + G_{lm,i} c_{lm}) \\
-        \partial L/\partial Q_{i,lm} &= Σ_k(dLdc[lm]\cos_{ki} + dLds[lm]\sin_{ki}) \\
-        \partial L/\partial r_i &= Σ_k w_{ki}\,k, \quad
-        \partial L/\partial k &= Σ_i w_{ki}\,r_i
+        \partial L/\partial gr &= scale\cdot \sum_{lm}(G_{lm,r} c_{lm} + G_{lm,i} s_{lm}) \\
+        \partial L/\partial gi &= scale\cdot \sum_{lm}(-G_{lm,r} s_{lm} + G_{lm,i} c_{lm}) \\
+        \partial L/\partial Q_{i,lm} &= \sum_k(dLdc[lm]\cos_{ki} + dLds[lm]\sin_{ki}) \\
+        \partial L/\partial r_i &= \sum_k w_{ki}\,k, \quad
+        \partial L/\partial k &= \sum_i w_{ki}\,r_i
 
-    with ``w_{ki} = Σ_{lm} Q_{i,lm}(−dLdc[lm]\sin_{ki} + dLds[lm]\cos_{ki})``.
-    ``Q_{i,lm}`` layout: ``(q, μ_y, μ_z, μ_x)``. ``ggrad_moments`` /
+    with ``w_{ki} = sum_{lm} Q_{i,lm}(-dLdc[lm]\sin_{ki} + dLds[lm]\cos_{ki})``.
+    ``Q_{i,lm}`` layout: ``(q, mu_y, mu_z, mu_x)``. ``ggrad_moments`` /
     ``ggrad_positions`` accumulate over k (per-k threads) so must be pre-zeroed.
 
     Launch Grid
@@ -11652,7 +11694,7 @@ def _batch_rho_phihat_grad_double_backward_kernel(
 
     Per-system mirror of :func:`_rho_phihat_grad_double_backward_kernel`: the
     ``(b, k_idx)`` grid sweeps system ``b``'s atoms ``[atom_start[b],
-    atom_end[b])`` and applies ``scale = (2π)³/volume[b]``. ``ggrad_moments`` /
+    atom_end[b])`` and applies ``scale = (2:math:`\pi`)^3/volume[b]``. ``ggrad_moments`` /
     ``ggrad_positions`` accumulate over k and must be pre-zeroed.
 
     Launch Grid
@@ -11775,7 +11817,7 @@ def _rho_q_coeff2_grad_kernel(
     scale: wp.float64,
     grad_coeff2: wp.array(dtype=wp.float64),  # (N_k,) OUTPUT
 ):
-    r"""∂L/∂coeff2[k] = scale·(gr·C_Q − gi·S_Q), C_Q=Σ(kQk)cos, S_Q=Σ(kQk)sin.
+    r""":math:`\partial`L/:math:`\partial`coeff2[k] = scale*(gr*C_Q - gi*S_Q), C_Q=:math:`\sum`(kQk)cos, S_Q=:math:`\sum`(kQk)sin.
 
     Launch Grid
     -----------
@@ -11859,15 +11901,15 @@ def _rho_q_coeff2_grad_double_backward_kernel(
 ):
     r"""Second-order backward of :func:`_rho_q_coeff2_grad_kernel`.
 
-    First backward: ``grad_coeff2[k] = scale·(gr·C_Q − gi·S_Q)``,
-    ``C_Q = Σ_i (k·Q_i·k)\cos``, ``S_Q = Σ_i (k·Q_i·k)\sin``. With cotangent
-    ``G_c = ∂L/∂grad_coeff2`` and ``f_{ki} = gr\cos_{ki} − gi\sin_{ki}``:
+    First backward: ``grad_coeff2[k] = scale*(gr*C_Q - gi*S_Q)``,
+    ``C_Q = sum_i (k*Q_i*k)\cos``, ``S_Q = sum_i (k*Q_i*k)\sin``. With cotangent
+    ``G_c = dL/dgrad_coeff2`` and ``f_{ki} = gr\cos_{ki} - gi\sin_{ki}``:
 
-    grads (× ``scale·G_c[k]``) — ``∂/∂gr = Σ_i kQk\cos``,
-    ``∂/∂gi = −Σ_i kQk\sin``;
-    ``∂/∂Q_{i,ab} = f_{ki}\,k_a k_b``;
-    ``∂/∂r_i = kQk(−gr\sin − gi\cos)\,k``;
-    ``∂/∂k = Σ_i [2(Q_i k) f_{ki} + kQk(−gr\sin − gi\cos) r_i]``.
+    grads (x ``scale*G_c[k]``) — ``d/dgr = sum_i kQk\cos``,
+    ``d/dgi = -sum_i kQk\sin``;
+    ``d/dQ_{i,ab} = f_{ki}\,k_a k_b``;
+    ``d/dr_i = kQk(-gr\sin - gi\cos)\,k``;
+    ``d/dk = sum_i [2(Q_i k) f_{ki} + kQk(-gr\sin - gi\cos) r_i]``.
     ``ggrad_quad`` / ``ggrad_positions`` accumulate over k (pre-zero).
 
     Launch Grid
@@ -11983,7 +12025,7 @@ def _batch_rho_q_coeff2_grad_double_backward_kernel(
 
     Per-system mirror of :func:`_rho_q_coeff2_grad_double_backward_kernel`: the
     ``(b, k_idx)`` grid sweeps system ``b``'s atoms and applies ``scale =
-    (2π)³/volume[b]``. ``ggrad_quad`` / ``ggrad_positions`` accumulate over k
+    (2:math:`\pi`)^3/volume[b]``. ``ggrad_quad`` / ``ggrad_positions`` accumulate over k
     and must be pre-zeroed.
 
     Launch Grid
@@ -12089,10 +12131,10 @@ def _rho_q_kvec_grad_kernel(
     scale: wp.float64,
     grad_k: wp.array2d(dtype=wp.float64),  # (N_k, 3) OUTPUT
 ):
-    r"""∂L/∂k via the (k·Q·k) form AND the phase (coeff2 held fixed).
+    r""":math:`\partial`L/:math:`\partial`k via the (k*Q*k) form AND the phase (coeff2 held fixed).
 
-    ∂L/∂k = scale·c2·Σ_i [ 2(gr·cos − gi·sin)·(Q·k)
-              − (k·Q·k)(gr·sin + gi·cos)·r_i ].
+    :math:`\partial`L/:math:`\partial`k = scale*c2*:math:`\sum`_i [ 2(gr*cos - gi*sin)*(Q*k)
+              - (k*Q*k)(gr*sin + gi*cos)*r_i ].
 
     Launch Grid
     -----------
@@ -12195,16 +12237,16 @@ def _rho_q_kvec_grad_double_backward_kernel(
 ):
     r"""Second-order backward of :func:`_rho_q_kvec_grad_kernel`.
 
-    First backward: ``grad_k[k] = scale·c2·Σ_i [w1·(Q_i k) + w2·r_i]``,
-    ``w1 = 2(gr\cos − gi\sin)``, ``w2 = −kQk(gr\sin + gi\cos)``. With cotangent
-    ``G_k``, ``GQk = G_k·(Q_i k)``, ``d = G_k·r_i``, ``s = gr\sin+gi\cos``,
-    ``h = gr\cos−gi\sin``, ``h1 = −gr\sin−gi\cos``: grads (× ``scale·c2`` except
-    coeff2 which is ``× scale``) —
-    ``∂/∂c2 = Σ_i(w1 GQk + w2 d)`` (×scale);
-    ``∂/∂gr = Σ_i[2\cos GQk − kQk\sin d]``, ``∂/∂gi = Σ_i[−2\sin GQk − kQk\cos d]``;
-    ``∂/∂Q_{i,ab} = w1 G_k[a] k_b − d·s·k_a k_b``;
-    ``∂/∂r_i = w2 G_k + (2 GQk h1 − d kQk h) k``;
-    ``∂/∂k = Σ_i[2 h1 GQk r_i + w1(Q G_k) + (−2(Q k)s − kQk h r_i) d]``.
+    First backward: ``grad_k[k] = scale*c2*sum_i [w1*(Q_i k) + w2*r_i]``,
+    ``w1 = 2(gr\cos - gi\sin)``, ``w2 = -kQk(gr\sin + gi\cos)``. With cotangent
+    ``G_k``, ``GQk = G_k*(Q_i k)``, ``d = G_k*r_i``, ``s = gr\sin+gi\cos``,
+    ``h = gr\cos-gi\sin``, ``h1 = -gr\sin-gi\cos``: grads (x ``scale*c2`` except
+    coeff2 which is ``x scale``) —
+    ``d/dc2 = sum_i(w1 GQk + w2 d)`` (xscale);
+    ``d/dgr = sum_i[2\cos GQk - kQk\sin d]``, ``d/dgi = sum_i[-2\sin GQk - kQk\cos d]``;
+    ``d/dQ_{i,ab} = w1 G_k[a] k_b - d*s*k_a k_b``;
+    ``d/dr_i = w2 G_k + (2 GQk h1 - d kQk h) k``;
+    ``d/dk = sum_i[2 h1 GQk r_i + w1(Q G_k) + (-2(Q k)s - kQk h r_i) d]``.
     ``ggrad_quad`` / ``ggrad_positions`` accumulate over k (pre-zero).
 
     Launch Grid
@@ -12361,7 +12403,7 @@ def _batch_rho_q_kvec_grad_double_backward_kernel(
 
     Per-system mirror of :func:`_rho_q_kvec_grad_double_backward_kernel`: the
     ``(b, k_idx)`` grid sweeps system ``b``'s atoms and applies ``scale =
-    (2π)³/volume[b]``. ``ggrad_quad`` / ``ggrad_positions`` accumulate over k
+    (2:math:`\pi`)^3/volume[b]``. ``ggrad_quad`` / ``ggrad_positions`` accumulate over k
     and must be pre-zeroed.
 
     Launch Grid
@@ -12507,9 +12549,9 @@ def _rho_q_moment_grad_kernel(
     r"""Moment gradient ``dL/dQ_i`` (backward of ``_assemble_rho_q`` w.r.t. Q).
 
     Per atom ``i``, accumulates over all k-vectors the symmetric outer
-    product ``w · k ⊗ k`` where
-    ``w = coeff2[k]·(grad_rho[k,0]·cos[k,i] − grad_rho[k,1]·sin[k,i])``,
-    then writes ``scale·`` the full (symmetric) 3×3 into the flat 9-slot
+    product ``w * k otimes k`` where
+    ``w = coeff2[k]*(grad_rho[k,0]*cos[k,i] - grad_rho[k,1]*sin[k,i])``,
+    then writes ``scale*`` the full (symmetric) 3x3 into the flat 9-slot
     ``grad_quadrupoles`` row.
 
     Launch Grid
@@ -12576,7 +12618,7 @@ def _rhoq_posgrad_backward_grad_rho_kernel(
     scale: wp.float64,
     grad_rho_grad: wp.array2d(dtype=wp.float64),  # (N_k, 2) OUTPUT
 ):
-    r"""K_a: ``∂L/∂grad_rho`` of the Q-channel position gradient.
+    r"""K_a: ``dL/dgrad_rho`` of the Q-channel position gradient.
 
     Per k (one thread per k, sweeps atoms):
         u_i = (k.Q_i.k) * (k . gg_pos_i)
@@ -12653,7 +12695,7 @@ def _rhoq_posgrad_backward_positions_kernel(
     scale: wp.float64,
     grad_positions: wp.array2d(dtype=wp.float64),  # (N_atoms, 3) OUTPUT
 ):
-    r"""K_c: ``∂L/∂positions`` of the Q-channel position gradient (Hessian diag).
+    r"""K_c: ``dL/dpositions`` of the Q-channel position gradient (Hessian diag).
 
     Per atom (one thread):
         v_k = coeff2(k) * (k.Q_i.k) * (k . gg_pos_i) * (gr*cos_ki - gi*sin_ki)
@@ -12741,7 +12783,7 @@ def _rhoq_posgrad_backward_quad_kernel(
     scale: wp.float64,
     grad_quadrupoles: wp.array2d(dtype=wp.float64),  # (N_atoms, 9) OUTPUT
 ):
-    r"""K_b: ``∂L/∂Q_i`` of the Q-channel position gradient (mixed ∂r∂Q).
+    r"""K_b: ``dL/dQ_i`` of the Q-channel position gradient (mixed :math:`\partial`r:math:`\partial`Q).
 
     Independent of Q (grad_pos is linear in Q). Per atom (one thread):
         w_k = coeff2(k) * (k . gg_pos_i) * (gr*sin_ki + gi*cos_ki)
@@ -12859,7 +12901,7 @@ def _v_grad_from_feat_grad_backward_positions_quadrupole_kernel(
             \cos(k \cdot r_i) [gg_{V_r} Q_i - gg_{V_i} Q_r]
           - \sin(k \cdot r_i) [gg_{V_r} Q_r + gg_{V_i} Q_i] \bigr\}
 
-    One thread per atom; inner loop over k, inner-inner over ``(σ, lm)``
+    One thread per atom; inner loop over k, inner-inner over ``(sigma, lm)``
     with the five ``l = 2`` angular channels.
 
     Launch Grid
@@ -12935,9 +12977,9 @@ def _v_gradient_from_feature_grad_quadrupole_kernel(
 ):
     r"""Analytical backward of :func:`project_features_lmax2` w.r.t. ``V(k)``.
 
-    One thread per k-vector; inner loop over atoms and ``(σ, lm)`` with the
+    One thread per k-vector; inner loop over atoms and ``(sigma, lm)`` with the
     five ``l = 2`` angular channels. The per-atom ``(Q_r, Q_i)`` reduction
-    over ``(σ, lm)`` is recomputed inside each thread rather than cached, to
+    over ``(sigma, lm)`` is recomputed inside each thread rather than cached, to
     avoid materializing the ``(N_k, N_atoms, 2)`` intermediate.
 
     Launch Grid
@@ -12946,10 +12988,10 @@ def _v_gradient_from_feature_grad_quadrupole_kernel(
 
     Parameters
     ----------
-    grad_raw : wp.array3d, shape (N_atoms, N_σ, 5), dtype wp.float64
+    grad_raw : wp.array3d, shape (N_atoms, N_:math:`\sigma`, 5), dtype wp.float64
         Cotangent of the raw (un-self-interaction-subtracted,
         natural-layout) ``l = 2`` feature tensor.
-    receiver_phi_hat_l2 : wp.array4d, shape (N_k, N_σ, 5, 2), dtype wp.float64
+    receiver_phi_hat_l2 : wp.array4d, shape (N_k, N_:math:`\sigma`, 5, 2), dtype wp.float64
         Receiver-basis ``l = 2`` Fourier coefficients from
         :func:`eval_receiver_gto_fourier_quadrupole`.
     cosines, sines : wp.array2d, shape (N_k, N_atoms), dtype wp.float64
@@ -12957,7 +12999,7 @@ def _v_gradient_from_feature_grad_quadrupole_kernel(
     k_factor_proj : wp.array, shape (N_k,), dtype wp.float64
         Per-k weight (``0.5`` at k = 0, ``1`` elsewhere in the direct k-space sum).
     grad_v : wp.array2d, shape (N_k, 2), dtype wp.float64
-        OUTPUT: ``∂L/∂V(k)`` with ``[:, 0]`` / ``[:, 1]`` = (real, imag).
+        OUTPUT: ``dL/dV(k)`` with ``[:, 0]`` / ``[:, 1]`` = (real, imag).
         Does not need pre-zeroing.
     """
     k_idx = wp.tid()
@@ -13111,8 +13153,8 @@ def batch_eval_receiver_gto_fourier_quadrupole(
 ) -> None:
     r"""Launcher for :func:`_batch_eval_receiver_gto_fourier_quadrupole_kernel`.
 
-    ``output`` is ``(B, K_max, N_σ, 5)`` dtype ``wp.vec2d`` (the underlying
-    ``(B, K_max, N_σ, 5, 2)`` float64 buffer reinterpreted via
+    ``output`` is ``(B, K_max, N_sigma, 5)`` dtype ``wp.vec2d`` (the underlying
+    ``(B, K_max, N_sigma, 5, 2)`` float64 buffer reinterpreted via
     ``wp.from_torch(t, dtype=wp.vec2d)``).
 
 
@@ -13465,10 +13507,10 @@ def batch_project_features_quadrupole(
 ) -> None:
     r"""Launcher for :func:`_batch_project_features_quadrupole_kernel`.
 
-    ``receiver_phi_hat_l2`` is ``(B, K_max, N_σ, 5)`` ``vec2d`` (caller passes
-    the underlying ``(B, K_max, N_σ, 5, 2)`` torch tensor via
+    ``receiver_phi_hat_l2`` is ``(B, K_max, N_sigma, 5)`` ``vec2d`` (caller passes
+    the underlying ``(B, K_max, N_sigma, 5, 2)`` torch tensor via
     ``wp.from_torch(t, dtype=wp.vec2d)``). ``features`` is
-    ``(N_total, N_σ, 5)`` float64, pre-allocated.
+    ``(N_total, N_sigma, 5)`` float64, pre-allocated.
 
 
     Parameters
@@ -13780,7 +13822,7 @@ def batch_rho_kphase_grad_double_backward(
     """Launcher for :func:`_batch_rho_kphase_grad_double_backward_kernel`.
 
     ``ggrad_moments`` / ``ggrad_positions`` accumulate over k via atomics and
-    must be pre-zeroed by the caller. ``scale = (2π)³/volume[b]`` is applied
+    must be pre-zeroed by the caller. ``scale = (2pi)^3/volume[b]`` is applied
     per-system inside the kernel.
     """
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
@@ -13899,7 +13941,7 @@ def batch_rho_phihat_grad_double_backward(
     """Launcher for :func:`_batch_rho_phihat_grad_double_backward_kernel`.
 
     ``ggrad_moments`` / ``ggrad_positions`` accumulate over k via atomics and
-    must be pre-zeroed by the caller. ``scale = (2π)³/volume[b]`` is applied
+    must be pre-zeroed by the caller. ``scale = (2pi)^3/volume[b]`` is applied
     per-system inside the kernel.
     """
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
@@ -14086,7 +14128,7 @@ def batch_rho_q_coeff2_grad_double_backward(
     """Launcher for :func:`_batch_rho_q_coeff2_grad_double_backward_kernel`.
 
     ``ggrad_quad`` / ``ggrad_positions`` accumulate over k via atomics and must
-    be pre-zeroed. ``scale = (2π)³/volume[b]`` is applied per-system inside the
+    be pre-zeroed. ``scale = (2pi)^3/volume[b]`` is applied per-system inside the
     kernel.
     """
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
@@ -14140,7 +14182,7 @@ def batch_rho_q_kvec_grad_double_backward(
     """Launcher for :func:`_batch_rho_q_kvec_grad_double_backward_kernel`.
 
     ``ggrad_quad`` / ``ggrad_positions`` accumulate over k via atomics and must
-    be pre-zeroed. ``scale = (2π)³/volume[b]`` is applied per-system inside the
+    be pre-zeroed. ``scale = (2pi)^3/volume[b]`` is applied per-system inside the
     kernel.
     """
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
@@ -14580,10 +14622,10 @@ def eval_receiver_gto_fourier_quadrupole(
     ----------
     k_vectors : wp.array, shape (N_k,), dtype wp.vec3d
     k_norm2 : wp.array, shape (N_k,), dtype wp.float64
-    sigmas : wp.array, shape (N_σ,), dtype wp.float64
-    inv_cl_l2 : wp.array, shape (N_σ,), dtype wp.float64
-        ``1 / C_2(σ, mode)`` per receiver σ.
-    output : wp.array4d, shape (N_k, N_σ, 5, 2), dtype wp.float64
+    sigmas : wp.array, shape (N_:math:`\sigma`,), dtype wp.float64
+    inv_cl_l2 : wp.array, shape (N_:math:`\sigma`,), dtype wp.float64
+        ``1 / C_2(sigma, mode)`` per receiver :math:`\sigma`.
+    output : wp.array4d, shape (N_k, N_:math:`\sigma`, 5, 2), dtype wp.float64
         Pre-allocated. The 5 l=2 columns only (m = -2..+2), purely real.
     device : str, optional
     """
@@ -14902,21 +14944,21 @@ def project_features_quadrupole(
     Parameters
     ----------
     potential : wp.array, shape (N_k, 2), dtype wp.float64
-    receiver_phi_hat_l2 : wp.array, shape (N_k, N_σ, 5, 2), dtype wp.float64
+    receiver_phi_hat_l2 : wp.array, shape (N_k, N_:math:`\sigma`, 5, 2), dtype wp.float64
         The l=2 sub-block of the cached 9-column ``receiver_phi_hat``
         (columns ``4:9``) — produced by
         :func:`eval_receiver_gto_fourier_quadrupole`.
     cosines, sines : wp.array, shape (N_k, N_atoms), dtype wp.float64
     k_factor_proj : wp.array, shape (N_k,), dtype wp.float64
-    features : wp.array, shape (N_atoms, N_σ, 5), dtype wp.float64
+    features : wp.array, shape (N_atoms, N_:math:`\sigma`, 5), dtype wp.float64
         Pre-allocated raw-feature output (no self-subtract).
     device : str, optional
 
     Notes
     -----
-    The serial per-``(i, σ, m)`` kernel is dispatched on **both** CPU and
+    The serial per-``(i, sigma, m)`` kernel is dispatched on **both** CPU and
     CUDA. As documented for :func:`v_gradient_from_feature_grad`, the
-    ``N_σ * 5`` matmul N-dimension is too narrow for a tile-matmul rewrite to
+    ``N_sigma * 5`` matmul N-dimension is too narrow for a tile-matmul rewrite to
     pay off; the serial kernel is the production path here.
     """
     n_k = potential.shape[0]
@@ -15020,7 +15062,7 @@ def project_phihat_grad_dipole(
     r"""Launcher for :func:`_project_phihat_grad_dipole_kernel`.
 
     Channel-generic: the lm count comes from ``grad_raw.shape[2]`` (4 for the
-    l≤1 block, 5 for the l=2 block), so the same kernel serves both.
+    l<=1 block, 5 for the l=2 block), so the same kernel serves both.
 
 
     Parameters
@@ -15599,7 +15641,7 @@ def rhoq_posgrad_backward_grad_rho(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    r"""Launcher for K_a (``∂L/∂grad_rho`` of the Q-channel position grad).
+    r"""Launcher for K_a (``dL/dgrad_rho`` of the Q-channel position grad).
 
     Parameters
     ----------

@@ -186,8 +186,6 @@ $ uv add nvalchemi-toolkit-ops
 
 </details>
 
-(cuda-13-installation)=
-
 ## CUDA 13 Installation
 
 Blackwell GPUs require packages/dependencies that are built for CUDA 13, which

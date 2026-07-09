@@ -74,9 +74,9 @@ Structure factors:
 
     S(k) = \\sum_j q_j \\exp(ik \\cdot r_j)
 
-    Note: G(k) uses 8*pi (not 4*pi) because we use half-space k-vectors, exploiting
-    the symmetry S(-k) = S*(k). This halves the number of k-vectors while
-    maintaining correct energies/forces.
+Note: :math:`G(k)` uses :math:`8\\pi` (not :math:`4\\pi`) because we use half-space
+k-vectors, exploiting the symmetry :math:`S(-k) = S^*(k)`. This halves the number of
+k-vectors while maintaining correct energies/forces.
 
 Self-Energy Correction (removes spurious self-interaction):
 
@@ -209,7 +209,22 @@ def _recip_tiling_override() -> bool | None:
 
 
 def should_tile_ewald_recip_fill(num_atoms: int) -> bool:
-    """Return whether reciprocal fill should use a tiled launch."""
+    """Return whether reciprocal fill should use a tiled launch.
+
+    Checks the ``NVALCHEMIOPS_EWALD_RECIP_TILED`` environment override first;
+    if unset, falls back to a threshold comparison against
+    ``NVALCHEMIOPS_EWALD_RECIP_MIN_ATOMS`` (default 1024).
+
+    Parameters
+    ----------
+    num_atoms : int
+        Number of atoms in the system (used for the threshold comparison).
+
+    Returns
+    -------
+    bool
+        ``True`` if a tiled launch is preferred, ``False`` otherwise.
+    """
     override = _recip_tiling_override()
     if override is not None:
         return override
@@ -217,7 +232,21 @@ def should_tile_ewald_recip_fill(num_atoms: int) -> bool:
 
 
 def can_tile_ewald_recip_on_device(device: object) -> bool:
-    """Return whether reciprocal tiled kernels can run on ``device``."""
+    """Return whether reciprocal tiled kernels can run on ``device``.
+
+    Tiled reciprocal kernels require CUDA; they are disabled on CPU because
+    Warp's tile primitives degrade to scalar pass-through there.
+
+    Parameters
+    ----------
+    device : object
+        A Warp device object or a device string (e.g. ``"cuda:0"``).
+
+    Returns
+    -------
+    bool
+        ``True`` if ``device`` is a CUDA device, ``False`` otherwise.
+    """
     return str(device).startswith("cuda")
 
 
@@ -313,14 +342,18 @@ def _ewald_real_space_charge_grad_potential(
     distance: wp.float64,
     alpha: wp.float64,
 ) -> wp.float64:
-    """Compute the damped Coulomb potential for charge gradient.
+    r"""Compute the damped Coulomb potential for charge gradient.
 
-    Returns (1/2) * erfc(α·r) / r, which when multiplied by q_j gives
+    Returns :math:`\frac{1}{2} \frac{\text{erfc}(\alpha r)}{r}`, which when multiplied by q_j gives
     the charge gradient contribution to atom i.
 
-    For pair (i,j) with energy E_ij = (1/2) * q_i * q_j * erfc(α·r) / r:
-        ∂E_ij/∂q_i = (1/2) * q_j * erfc(α·r) / r = potential * q_j
-        ∂E_ij/∂q_j = (1/2) * q_i * erfc(α·r) / r = potential * q_i
+    For pair (i,j) with energy :math:`E_{ij} = \frac{1}{2} q_i q_j \frac{\text{erfc}(\alpha r)}{r}`:
+
+    .. math::
+
+        \frac{\partial E_{ij}}{\partial q_i} = \frac{1}{2} q_j \frac{\text{erfc}(\alpha r)}{r} = \phi \cdot q_j
+
+        \frac{\partial E_{ij}}{\partial q_j} = \frac{1}{2} q_i \frac{\text{erfc}(\alpha r)}{r} = \phi \cdot q_i
 
     Parameters
     ----------
@@ -355,7 +388,7 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     real_structure_factors: wp.array(dtype=wp.float64),
     imag_structure_factors: wp.array(dtype=wp.float64),
 ):
-    """Compute structure factors for reciprocal-space Ewald summation.
+    r"""Compute structure factors for reciprocal-space Ewald summation.
 
     This kernel uses K-major iteration: each thread processes one k-vector
     over all atoms. This avoids atomics entirely since each thread fully
@@ -365,12 +398,12 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors(
 
     .. math::
 
-        \\begin{aligned}
-        S_{\\text{real}}(k) &= \\frac{G(k)}{V} \\sum_i q_i \\cos(k \\cdot r_i) \\\\
-        S_{\\text{imag}}(k) &= \\frac{G(k)}{V} \\sum_i q_i \\sin(k \\cdot r_i)
-        \\end{aligned}
+        \begin{aligned}
+        S_{\text{real}}(k) &= \frac{G(k)}{V} \sum_i q_i \cos(k \cdot r_i) \\
+        S_{\text{imag}}(k) &= \frac{G(k)}{V} \sum_i q_i \sin(k \cdot r_i)
+        \end{aligned}
 
-    where :math:`G(k) = \\frac{4\\pi}{k^2} \\exp(-k^2/(4\\alpha^2))` is the Green's function.
+    where :math:`G(k) = \frac{4\pi}{k^2} \exp(-k^2/(4\alpha^2))` is the Green's function.
 
     Launch Grid
     -----------
@@ -394,13 +427,13 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors(
         OUTPUT: Accumulated total charge divided by volume (Q/V) for
         background correction. Only the first k-vector thread accumulates this.
     cos_k_dot_r : wp.array2d, shape (K, N), dtype=wp.float64
-        OUTPUT: :math:`\\cos(k \\cdot r_i)` for each (k, atom) pair.
+        OUTPUT: :math:`\cos(k \cdot r_i)` for each (k, atom) pair.
     sin_k_dot_r : wp.array2d, shape (K, N), dtype=wp.float64
-        OUTPUT: :math:`\\sin(k \\cdot r_i)` for each (k, atom) pair.
+        OUTPUT: :math:`\sin(k \cdot r_i)` for each (k, atom) pair.
     real_structure_factors : wp.array, shape (K,), dtype=wp.float64
-        OUTPUT: :math:`(G(k)/V) \\sum_i q_i \\cos(k \\cdot r_i)`.
+        OUTPUT: :math:`(G(k)/V) \sum_i q_i \cos(k \cdot r_i)`.
     imag_structure_factors : wp.array, shape (K,), dtype=wp.float64
-        OUTPUT: :math:`(G(k)/V) \\sum_i q_i \\sin(k \\cdot r_i)`.
+        OUTPUT: :math:`(G(k)/V) \sum_i q_i \sin(k \cdot r_i)`.
 
     Notes
     -----
@@ -409,7 +442,7 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     - Thread 0 accumulates total_charge as Q/V for background correction.
     - All internal computations use float64 for numerical stability.
     - cos_k_dot_r and sin_k_dot_r store unweighted phases for charge gradient computation.
-    - Half-space k-vectors use the corresponding 8π Green's function factor.
+    - Half-space k-vectors use the corresponding :math:`8\pi` Green's function factor.
     """
     k_idx = wp.tid()
     num_atoms = positions.shape[0]
@@ -1344,7 +1377,7 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     real_structure_factors: wp.array2d(dtype=wp.float64),
     imag_structure_factors: wp.array2d(dtype=wp.float64),
 ):
-    """Compute structure factors for batched reciprocal-space Ewald summation.
+    r"""Compute structure factors for batched reciprocal-space Ewald summation.
 
     This kernel uses a blocked strategy: each thread handles one (k-vector, system,
     atom_block) triplet. This significantly reduces atomic contention compared to
@@ -1357,12 +1390,12 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors(
 
     .. math::
 
-        \\begin{aligned}
-        S_{\\text{real}}(s, k) &+= \\frac{G_s(k)}{V_s} q_i \\cos(k \\cdot r_i) \\\\
-        S_{\\text{imag}}(s, k) &+= \\frac{G_s(k)}{V_s} q_i \\sin(k \\cdot r_i)
-        \\end{aligned}
+        \begin{aligned}
+        S_{\text{real}}(s, k) &+= \frac{G_s(k)}{V_s} q_i \cos(k \cdot r_i) \\
+        S_{\text{imag}}(s, k) &+= \frac{G_s(k)}{V_s} q_i \sin(k \cdot r_i)
+        \end{aligned}
 
-    where :math:`G_s(k) = 8\\pi * \\exp(-k^2/(4\\alpha_s^2)) / k^2` uses half-space k-vectors.
+    where :math:`G_s(k) = 8\pi * \exp(-k^2/(4\alpha_s^2)) / k^2` uses half-space k-vectors.
 
     Launch Grid
     -----------
@@ -1389,13 +1422,13 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     total_charges : wp.array, shape (B,), dtype=wp.float64
         OUTPUT: Accumulated (Q_total/V) per system for background correction.
     cos_k_dot_r : wp.array2d, shape (K, N_total), dtype=wp.float64
-        OUTPUT: :math:`\\cos(k \\cdot r_i)` for each (k, atom) pair.
+        OUTPUT: :math:`\cos(k \cdot r_i)` for each (k, atom) pair.
     sin_k_dot_r : wp.array2d, shape (K, N_total), dtype=wp.float64
-        OUTPUT: :math:`\\sin(k \\cdot r_i)` for each (k, atom) pair.
+        OUTPUT: :math:`\sin(k \cdot r_i)` for each (k, atom) pair.
     real_structure_factors : wp.array2d, shape (B, K), dtype=wp.float64
-        OUTPUT: Per-system :math:`(G(k)/V) \\sum_i q_i \\cos(k \\cdot r_i)`.
+        OUTPUT: Per-system :math:`(G(k)/V) \sum_i q_i \cos(k \cdot r_i)`.
     imag_structure_factors : wp.array2d, shape (B, K), dtype=wp.float64
-        OUTPUT: Per-system :math:`(G(k)/V) \\sum_i q_i \\sin(k \\cdot r_i)`.
+        OUTPUT: Per-system :math:`(G(k)/V) \sum_i q_i \sin(k \cdot r_i)`.
 
     Notes
     -----
@@ -1406,7 +1439,7 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     - Blocks beyond the system's atoms cause early return.
     - Thread 0 accumulates total_charges as Q/V for background correction.
     - All internal computations use float64 for numerical stability.
-    - Half-space k-vectors use the corresponding 8π Green's function factor.
+    - Half-space k-vectors use the corresponding :math:`8\pi` Green's function factor.
     """
     k_idx, system_id, block_idx = wp.tid()
 
@@ -3588,7 +3621,31 @@ def ewald_energy_corrections(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Launch single-system differentiable Ewald reciprocal corrections."""
+    """Launch single-system differentiable Ewald reciprocal corrections.
+
+    Applies the self-energy and background corrections to raw reciprocal-space
+    energies through a differentiable (factory-backed) Warp kernel, allowing
+    gradients to flow through ``alpha``, ``volume``, and ``total_charge``.
+
+    Parameters
+    ----------
+    raw_energies : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Raw reciprocal-space energy per atom before corrections.
+    charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Atomic charges.
+    volume : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Unit cell volume |det(cell)|.
+    alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Ewald splitting parameter.
+    total_charge : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Total charge divided by volume (Q_total/V).
+    corrected_energies : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        OUTPUT: Corrected reciprocal-space energy per atom.
+    wp_dtype : type
+        Warp scalar type (``wp.float32`` or ``wp.float64``).
+    device : str, optional
+        Warp device. If None, inferred from ``raw_energies``.
+    """
     num_atoms = raw_energies.shape[0]
     if device is None:
         device = str(raw_energies.device)
@@ -3617,7 +3674,40 @@ def ewald_energy_corrections_backward(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Launch single-system Ewald reciprocal correction backward."""
+    """Launch single-system Ewald reciprocal correction backward.
+
+    Computes gradients of the correction loss with respect to ``raw_energies``,
+    ``charges``, ``volume``, ``alpha``, and ``total_charge``.
+
+    Parameters
+    ----------
+    grad_E : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Upstream gradient of the loss with respect to corrected energies.
+    raw_energies : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Raw reciprocal-space energies from the forward pass.
+    charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Atomic charges.
+    volume : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Unit cell volume |det(cell)|.
+    alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Ewald splitting parameter.
+    total_charge : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Total charge divided by volume (Q_total/V).
+    grad_raw : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        OUTPUT: Gradient with respect to raw energies.
+    grad_charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        OUTPUT: Gradient with respect to charges.
+    grad_volume : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        OUTPUT: Gradient with respect to volume. Modified in-place via atomic add.
+    grad_alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        OUTPUT: Gradient with respect to alpha. Modified in-place via atomic add.
+    grad_total_charge : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        OUTPUT: Gradient with respect to total_charge. Modified in-place via atomic add.
+    wp_dtype : type
+        Warp scalar type (``wp.float32`` or ``wp.float64``).
+    device : str, optional
+        Warp device. If None, inferred from ``raw_energies``.
+    """
     num_atoms = raw_energies.shape[0]
     if device is None:
         device = str(raw_energies.device)
@@ -3654,7 +3744,52 @@ def ewald_energy_corrections_double_backward(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Launch single-system Ewald reciprocal correction double-backward."""
+    """Launch single-system Ewald reciprocal correction double-backward.
+
+    Computes the second-order (Hessian-vector product) gradients needed for
+    higher-order differentiation of the correction pass.
+
+    Parameters
+    ----------
+    h_raw : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Incoming vector for raw-energy gradient (HVP tangent).
+    h_chg : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Incoming vector for charge gradient (HVP tangent).
+    h_vol : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Incoming vector for volume gradient (HVP tangent).
+    h_alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Incoming vector for alpha gradient (HVP tangent).
+    h_qtot : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Incoming vector for total-charge gradient (HVP tangent).
+    grad_E : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Upstream gradient from the first backward pass.
+    raw_energies : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Raw reciprocal-space energies from the forward pass.
+    charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Atomic charges.
+    volume : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Unit cell volume |det(cell)|.
+    alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Ewald splitting parameter.
+    total_charge : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Total charge divided by volume (Q_total/V).
+    grad_grad_E : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient with respect to corrected energies.
+    grad_raw : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient with respect to raw energies.
+    grad_charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient with respect to charges.
+    grad_volume : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient with respect to volume. Modified in-place.
+    grad_alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient with respect to alpha. Modified in-place.
+    grad_total_charge : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient with respect to total_charge. Modified in-place.
+    wp_dtype : type
+        Warp scalar type (``wp.float32`` or ``wp.float64``).
+    device : str, optional
+        Warp device. If None, inferred from ``raw_energies``.
+    """
     num_atoms = raw_energies.shape[0]
     if device is None:
         device = str(raw_energies.device)
@@ -4028,7 +4163,32 @@ def batch_ewald_energy_corrections(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Launch batched differentiable Ewald reciprocal corrections."""
+    """Launch batched differentiable Ewald reciprocal corrections.
+
+    Applies per-system self-energy and background corrections to raw
+    reciprocal-space energies through a differentiable factory-backed kernel.
+
+    Parameters
+    ----------
+    raw_energies : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        Raw reciprocal-space energy per atom before corrections.
+    charges : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        Atomic charges for all systems concatenated.
+    batch_idx : wp.array, shape (N_total,), dtype=wp.int32
+        System index for each atom (0 to B-1).
+    volumes : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system unit cell volume |det(cell)|.
+    alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system Ewald splitting parameter.
+    total_charges : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system total charge divided by volume (Q_total/V).
+    corrected_energies : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        OUTPUT: Corrected reciprocal-space energy per atom.
+    wp_dtype : type
+        Warp scalar type (``wp.float32`` or ``wp.float64``).
+    device : str, optional
+        Warp device. If None, inferred from ``raw_energies``.
+    """
     num_atoms = raw_energies.shape[0]
     if device is None:
         device = str(raw_energies.device)
@@ -4060,7 +4220,42 @@ def batch_ewald_energy_corrections_backward(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Launch batched Ewald reciprocal correction backward."""
+    """Launch batched Ewald reciprocal correction backward.
+
+    Computes per-system gradients of the correction loss with respect to
+    ``raw_energies``, ``charges``, ``volumes``, ``alpha``, and ``total_charges``.
+
+    Parameters
+    ----------
+    grad_E : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        Upstream gradient of the loss with respect to corrected energies.
+    raw_energies : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        Raw reciprocal-space energies from the forward pass.
+    charges : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        Atomic charges for all systems concatenated.
+    batch_idx : wp.array, shape (N_total,), dtype=wp.int32
+        System index for each atom (0 to B-1).
+    volumes : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system unit cell volume.
+    alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system Ewald splitting parameter.
+    total_charges : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system total charge divided by volume (Q_total/V).
+    grad_raw : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        OUTPUT: Gradient with respect to raw energies.
+    grad_charges : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        OUTPUT: Gradient with respect to charges.
+    grad_volumes : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        OUTPUT: Gradient with respect to volumes. Modified in-place via atomic add.
+    grad_alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        OUTPUT: Gradient with respect to alpha. Modified in-place via atomic add.
+    grad_total_charges : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        OUTPUT: Gradient with respect to total_charges. Modified in-place via atomic add.
+    wp_dtype : type
+        Warp scalar type (``wp.float32`` or ``wp.float64``).
+    device : str, optional
+        Warp device. If None, inferred from ``raw_energies``.
+    """
     num_atoms = raw_energies.shape[0]
     if device is None:
         device = str(raw_energies.device)
@@ -4106,7 +4301,54 @@ def batch_ewald_energy_corrections_double_backward(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Launch batched Ewald reciprocal correction double-backward."""
+    """Launch batched Ewald reciprocal correction double-backward.
+
+    Computes the second-order (Hessian-vector product) gradients for the
+    batched correction pass, needed for higher-order differentiation.
+
+    Parameters
+    ----------
+    h_raw : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        Incoming HVP tangent for raw-energy gradient.
+    h_chg : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        Incoming HVP tangent for charge gradient.
+    h_vol : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Incoming HVP tangent for volume gradient.
+    h_alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Incoming HVP tangent for alpha gradient.
+    h_qtot : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Incoming HVP tangent for total-charge gradient.
+    grad_E : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        Upstream gradient from the first backward pass.
+    raw_energies : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        Raw reciprocal-space energies from the forward pass.
+    charges : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        Atomic charges for all systems concatenated.
+    batch_idx : wp.array, shape (N_total,), dtype=wp.int32
+        System index for each atom (0 to B-1).
+    volumes : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system unit cell volume.
+    alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system Ewald splitting parameter.
+    total_charges : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system total charge divided by volume (Q_total/V).
+    grad_grad_E : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient with respect to corrected energies.
+    grad_raw : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient with respect to raw energies.
+    grad_charges : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient with respect to charges.
+    grad_volumes : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient with respect to volumes. Modified in-place.
+    grad_alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient with respect to alpha. Modified in-place.
+    grad_total_charges : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient with respect to total_charges. Modified in-place.
+    wp_dtype : type
+        Warp scalar type (``wp.float32`` or ``wp.float64``).
+    device : str, optional
+        Warp device. If None, inferred from ``raw_energies``.
+    """
     num_atoms = raw_energies.shape[0]
     if device is None:
         device = str(raw_energies.device)

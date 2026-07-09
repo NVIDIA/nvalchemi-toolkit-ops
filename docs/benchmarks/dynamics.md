@@ -61,12 +61,6 @@ Average step time vs. system size for single-system MD integrators.
 Throughput (atom-steps/s) for single-system MD integrators.
 ```
 
-### Batched MD
-
-The current shipped benchmark artifacts do not include a batched MD CSV. The
-plot generator therefore omits batched MD figures until fresh batched MD timing
-data is added under `docs/benchmarks/benchmark_results/`.
-
 ### Available Integrators
 
 Velocity Verlet (NVE)
@@ -153,14 +147,16 @@ Total throughput (atom-steps/s) for batched optimization.
 
 **Adaptive Timestep:**
 
-- Increases timestep when optimization is progressing smoothly (power P = F · v > 0)
-- Decreases timestep and resets velocities when moving uphill (P < 0)
+- Increases timestep when optimization is progressing smoothly
+  (power $P = \mathbf{F} \cdot \mathbf{v} > 0$)
+- Decreases timestep and resets velocities when moving uphill ($P < 0$)
 - Parameters: `dt_max` (10.0 fs), `f_inc` (1.1), `f_dec` (0.5)
 
 **Velocity Mixing:**
 
-- Mixes velocity with force direction: v → (1-α)v + α|v|F̂
-- Decreases mixing parameter α over time for faster convergence
+- Mixes velocity with force direction:
+  $\mathbf{v} \rightarrow (1-\alpha)\mathbf{v} + \alpha |\mathbf{v}| \hat{\mathbf{F}}$
+- Decreases mixing parameter $\alpha$ over time for faster convergence
 - Parameter: `f_alpha` (0.99)
 
 **Maximum Displacement:**
@@ -169,7 +165,7 @@ Total throughput (atom-steps/s) for batched optimization.
 
 **Convergence:**
 
-- Checks maximum force component: max(|F|) < fmax (default 0.01 eV/Å)
+- Checks maximum force component: $\max(|\mathbf{F}|) < f_{\max}$ (default 0.01 eV/Å)
 
 ## Hardware Information
 

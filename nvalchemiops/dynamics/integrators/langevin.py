@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
+r"""
 Langevin Dynamics Kernels
 =========================
 
@@ -30,8 +30,8 @@ Langevin equation of motion:
 
 .. math::
 
-    m\\ddot{\\mathbf{r}} = \\mathbf{F} - \\gamma m \\mathbf{v}
-                         + \\sqrt{2 \\gamma m k_B T} \\boldsymbol{\\eta}(t)
+    m\ddot{\mathbf{r}} = \mathbf{F} - \gamma m \mathbf{v}
+                         + \sqrt{2 \gamma m k_B T} \boldsymbol{\eta}(t)
 
 BAOAB SPLITTING SCHEME
 ======================
@@ -40,20 +40,20 @@ The BAOAB splitting provides optimal configurational sampling accuracy:
 
 .. math::
 
-    B: \\quad \\mathbf{v} \\leftarrow \\mathbf{v} + \\frac{\\Delta t}{2m}\\mathbf{F}
+    B: \quad \mathbf{v} \leftarrow \mathbf{v} + \frac{\Delta t}{2m}\mathbf{F}
 
-    A: \\quad \\mathbf{r} \\leftarrow \\mathbf{r} + \\frac{\\Delta t}{2}\\mathbf{v}
+    A: \quad \mathbf{r} \leftarrow \mathbf{r} + \frac{\Delta t}{2}\mathbf{v}
 
-    O: \\quad \\mathbf{v} \\leftarrow c_1 \\mathbf{v} + c_2 \\boldsymbol{\\xi}
+    O: \quad \mathbf{v} \leftarrow c_1 \mathbf{v} + c_2 \boldsymbol{\xi}
 
-    A: \\quad \\mathbf{r} \\leftarrow \\mathbf{r} + \\frac{\\Delta t}{2}\\mathbf{v}
+    A: \quad \mathbf{r} \leftarrow \mathbf{r} + \frac{\Delta t}{2}\mathbf{v}
 
-    B: \\quad \\mathbf{v} \\leftarrow \\mathbf{v} + \\frac{\\Delta t}{2m}\\mathbf{F}
+    B: \quad \mathbf{v} \leftarrow \mathbf{v} + \frac{\Delta t}{2m}\mathbf{F}
 
 where:
-- :math:`c_1 = e^{-\\gamma \\Delta t}` (velocity damping factor)
-- :math:`c_2 = \\sqrt{k_B T (1 - c_1^2)/m}` (noise amplitude)
-- :math:`\\boldsymbol{\\xi} \\sim \\mathcal{N}(0, 1)` (standard normal)
+- :math:`c_1 = e^{-\gamma \Delta t}` (velocity damping factor)
+- :math:`c_2 = \sqrt{k_B T (1 - c_1^2)/m}` (noise amplitude)
+- :math:`\boldsymbol{\xi} \sim \mathcal{N}(0, 1)` (standard normal)
 
 BATCH MODE
 ==========
@@ -812,11 +812,30 @@ def langevin_baoab_half_step(
     atom_ptr: wp.array = None,
     device: str = None,
 ) -> None:
-    """
+    r"""
     Perform BAOAB Langevin half-step (B-A-O-A sequence) in-place.
 
     This function performs the first four operations of the BAOAB splitting:
-    B (velocity), A (position), O (thermostat), A (position).
+    B (velocity kick), A (drift), O (Ornstein-Uhlenbeck thermostat), A (drift).
+    The kernel evaluates the following updates in order:
+
+    .. math::
+
+        B:\quad \mathbf{v} \leftarrow \mathbf{v}
+                + \tfrac{\Delta t}{2m}\mathbf{F}
+
+        A:\quad \mathbf{r} \leftarrow \mathbf{r}
+                + \tfrac{\Delta t}{2}\mathbf{v}
+
+        O:\quad \mathbf{v} \leftarrow c_1\,\mathbf{v}
+                + c_2\,\boldsymbol{\xi}
+
+        A:\quad \mathbf{r} \leftarrow \mathbf{r}
+                + \tfrac{\Delta t}{2}\mathbf{v}
+
+    with damping :math:`c_1 = e^{-\gamma \Delta t}`, noise amplitude
+    :math:`c_2 = \sqrt{k_B T\,(1 - c_1^2)/m}`, and
+    :math:`\boldsymbol{\xi} \sim \mathcal{N}(0, 1)`.
 
     After calling this function, recalculate forces at the new positions,
     then call langevin_baoab_finalize() to complete the step.
@@ -834,9 +853,9 @@ def langevin_baoab_half_step(
     dt : wp.array(dtype=wp.float32 or wp.float64)
         Timestep(s). Shape (1,) for single, (B,) for batched.
     temperature : wp.array(dtype=wp.float32 or wp.float64)
-        Temperature (kT). Shape (1,) for single, (B,) for batched.
+        Temperature :math:`k_B T`. Shape (1,) for single, (B,) for batched.
     friction : wp.array(dtype=wp.float32 or wp.float64)
-        Friction coefficient. Shape (1,) for single, (B,) for batched.
+        Friction coefficient :math:`\gamma`. Shape (1,) for single, (B,) for batched.
     random_seed : int
         Random seed for stochastic forces.
     batch_idx : wp.array(dtype=wp.int32), optional
@@ -952,11 +971,16 @@ def langevin_baoab_finalize(
     atom_ptr: wp.array = None,
     device: str = None,
 ) -> None:
-    """
+    r"""
     Finalize BAOAB Langevin step (final B step) in-place.
 
-    Completes the BAOAB sequence with the final velocity half-step update
-    using forces calculated at the new positions.
+    Completes the BAOAB sequence with the final velocity half-kick using
+    forces :math:`\mathbf{F}_\text{new}` calculated at the new positions:
+
+    .. math::
+
+        B:\quad \mathbf{v} \leftarrow \mathbf{v}
+                + \tfrac{\Delta t}{2m}\mathbf{F}_\text{new}
 
     Parameters
     ----------
@@ -1007,28 +1031,47 @@ def langevin_baoab_half_step_out(
     atom_ptr: wp.array = None,
     device: str = None,
 ) -> tuple[wp.array, wp.array]:
-    """
+    r"""
     Perform BAOAB Langevin half-step (B-A-O-A sequence) non-mutating.
 
     Writes new positions and velocities to output arrays.
-    Input arrays are NOT modified.
+    Input arrays are NOT modified. The kernel evaluates the following
+    updates in order:
+
+    .. math::
+
+        B:\quad \mathbf{v} \leftarrow \mathbf{v}
+                + \tfrac{\Delta t}{2m}\mathbf{F}
+
+        A:\quad \mathbf{r} \leftarrow \mathbf{r}
+                + \tfrac{\Delta t}{2}\mathbf{v}
+
+        O:\quad \mathbf{v} \leftarrow c_1\,\mathbf{v}
+                + c_2\,\boldsymbol{\xi}
+
+        A:\quad \mathbf{r} \leftarrow \mathbf{r}
+                + \tfrac{\Delta t}{2}\mathbf{v}
+
+    with damping :math:`c_1 = e^{-\gamma \Delta t}`, noise amplitude
+    :math:`c_2 = \sqrt{k_B T\,(1 - c_1^2)/m}`, and
+    :math:`\boldsymbol{\xi} \sim \mathcal{N}(0, 1)`.
 
     Parameters
     ----------
     positions : wp.array(dtype=wp.vec3f or wp.vec3d)
-        Atomic positions at time t. Shape (N,).
+        Atomic positions at time :math:`t`. Shape (N,).
     velocities : wp.array(dtype=wp.vec3f or wp.vec3d)
-        Atomic velocities at time t. Shape (N,).
+        Atomic velocities at time :math:`t`. Shape (N,).
     forces : wp.array(dtype=wp.vec3f or wp.vec3d)
-        Forces on atoms at time t. Shape (N,).
+        Forces on atoms at time :math:`t`. Shape (N,).
     masses : wp.array(dtype=wp.float32 or wp.float64)
         Atomic masses. Shape (N,).
     dt : wp.array
         Timestep(s). Shape (1,) for single, (B,) for batched.
     temperature : wp.array
-        Temperature (kT). Shape (1,) for single, (B,) for batched.
+        Temperature :math:`k_B T`. Shape (1,) for single, (B,) for batched.
     friction : wp.array
-        Friction coefficient. Shape (1,) for single, (B,) for batched.
+        Friction coefficient :math:`\gamma`. Shape (1,) for single, (B,) for batched.
     random_seed : int
         Random seed for stochastic forces.
     positions_out : wp.array
@@ -1110,11 +1153,17 @@ def langevin_baoab_finalize_out(
     atom_ptr: wp.array = None,
     device: str = None,
 ) -> wp.array:
-    """
+    r"""
     Finalize BAOAB Langevin step (final B step) non-mutating.
 
-    Writes full-step velocities to output array.
-    Input arrays are NOT modified.
+    Writes full-step velocities to output array. Input arrays are NOT
+    modified. The kernel applies the final velocity half-kick using forces
+    :math:`\mathbf{F}_\text{new}` calculated at the new positions:
+
+    .. math::
+
+        B:\quad \mathbf{v} \leftarrow \mathbf{v}
+                + \tfrac{\Delta t}{2m}\mathbf{F}_\text{new}
 
     Parameters
     ----------

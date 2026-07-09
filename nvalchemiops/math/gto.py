@@ -629,10 +629,11 @@ def _eval_gto_density_kernel(
     L_max: int,
     output: wp.array2d(dtype=wp.float64),
 ):
-    """Evaluate Gaussian Type Orbital (GTO) density functions at multiple positions.
+    r"""Evaluate Gaussian Type Orbital (GTO) density functions at multiple positions.
 
-    Computes φ_{l,m}(r, σ) = N_l · Y_l^m(r̂) · exp(-r²/(2σ²)) for all harmonics
-    up to L_max. The normalization N_l ensures ∫φ_{0,0} dr = 1.
+    Computes :math:`\phi_{l,m}(\mathbf{r}, \sigma) = N_l \cdot Y_l^m(\hat{\mathbf{r}}) \cdot \exp(-r^2/(2\sigma^2))`
+    for all harmonics up to ``L_max``. The normalization :math:`N_l` ensures
+    :math:`\int \phi_{0,0}\,d\mathbf{r} = 1`.
 
     Launch Grid
     -----------
@@ -645,7 +646,8 @@ def _eval_gto_density_kernel(
     positions : wp.array(dtype=wp.vec3d), shape (N,)
         Position vectors relative to GTO center.
     sigma : wp.float64
-        Gaussian width parameter (σ). Relates to Ewald parameter via σ = 1/(2α).
+        Gaussian width parameter (:math:`\sigma`). Relates to Ewald parameter via
+        :math:`\sigma = 1/(2\alpha)`.
     L_max : int
         Maximum angular momentum quantum number (0, 1, or 2).
     output : wp.array2d(dtype=wp.float64), shape (N, num_components)
@@ -656,7 +658,7 @@ def _eval_gto_density_kernel(
 
     Notes
     -----
-    - Uses integral normalization: N = √(4π) / (2πσ²)^(3/2).
+    - Uses integral normalization: :math:`N = \sqrt{4\pi} / (2\pi\sigma^2)^{3/2}`.
     - GTOs decay exponentially with distance from center.
     - L=0 integrates to 1; L>0 integrates to 0 by symmetry.
     - Useful for multipole charge distributions in electrostatics.
@@ -695,9 +697,9 @@ def _eval_gto_fourier_kernel(
     output_real: wp.array2d(dtype=wp.float64),
     output_imag: wp.array2d(dtype=wp.float64),
 ):
-    """Evaluate Fourier transforms of GTO density functions at multiple k-vectors.
+    r"""Evaluate Fourier transforms of GTO density functions at multiple k-vectors.
 
-    Computes φ̂_{l,m}(k, σ) = (i/2)^l · √(4π) · Y_l^m(k̂) · exp(-k²σ²/2).
+    Computes :math:`\hat{\phi}_{l,m}(\mathbf{k}, \sigma) = (i/2)^l \cdot \sqrt{4\pi} \cdot Y_l^m(\hat{\mathbf{k}}) \cdot \exp(-k^2\sigma^2/2)`.
     The Gaussian factor damps high-frequency components, making GTOs smooth in real space.
 
     Launch Grid
@@ -711,7 +713,7 @@ def _eval_gto_fourier_kernel(
     k_vectors : wp.array(dtype=wp.vec3d), shape (K,)
         Reciprocal space wave vectors.
     sigma : wp.float64
-        Gaussian width parameter (σ). Same σ as real-space GTOs.
+        Gaussian width parameter (:math:`\sigma`). Same :math:`\sigma` as real-space GTOs.
     L_max : int
         Maximum angular momentum quantum number (0, 1, or 2).
     output_real : wp.array2d(dtype=wp.float64), shape (K, num_components)
@@ -721,9 +723,9 @@ def _eval_gto_fourier_kernel(
 
     Notes
     -----
-    - L=0: Purely real (imag=0). Result is exp(-k²σ²/2).
-    - L=1: Purely imaginary (real=0). Factor (i/2)^1 = i/2.
-    - L=2: Purely real (imag=0). Factor (i/2)^2 = -1/4.
+    - L=0: Purely real (imag=0). Result is :math:`\exp(-k^2\sigma^2/2)`.
+    - L=1: Purely imaginary (real=0). Factor :math:`(i/2)^1 = i/2`.
+    - L=2: Purely real (imag=0). Factor :math:`(i/2)^2 = -1/4`.
     - Analytical Fourier transforms enable efficient reciprocal-space calculations.
     - Used for multipole electrostatics in reciprocal space.
     """

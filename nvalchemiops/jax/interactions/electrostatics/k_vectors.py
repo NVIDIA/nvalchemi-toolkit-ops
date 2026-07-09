@@ -80,7 +80,7 @@ def generate_k_vectors_ewald_summation(
     k_cutoff: float | jax.Array,
     miller_bounds: tuple[int, int, int] | None = None,
 ) -> jax.Array:
-    """Generate reciprocal lattice vectors for Ewald summation (half-space).
+    r"""Generate reciprocal lattice vectors for Ewald summation (half-space).
 
     Creates k-vectors within the specified cutoff for the reciprocal space
     summation in the Ewald method. Uses half-space optimization to reduce
@@ -98,7 +98,7 @@ def generate_k_vectors_ewald_summation(
         - (h == 0 AND k == 0 AND l > 0)
 
     The kernels in ewald_kernels.py compensate by doubling the Green's function
-    (using :math:`8\\pi` instead of :math:`4\\pi`), so energies, forces, and charge gradients are
+    (using :math:`8\pi` instead of :math:`4\pi`), so energies, forces, and charge gradients are
     computed correctly.
 
     Mathematical Background
@@ -108,17 +108,17 @@ def generate_k_vectors_ewald_summation(
 
     .. math::
 
-        \\mathbf{a}^* &= \\frac{2\\pi (\\mathbf{b} \\times \\mathbf{c})}{V}
+        \mathbf{a}^* &= \frac{2\pi (\mathbf{b} \times \mathbf{c})}{V}
 
-        \\mathbf{b}^* &= \\frac{2\\pi (\\mathbf{c} \\times \\mathbf{a})}{V}
+        \mathbf{b}^* &= \frac{2\pi (\mathbf{c} \times \mathbf{a})}{V}
 
-        \\mathbf{c}^* &= \\frac{2\\pi (\\mathbf{a} \\times \\mathbf{b})}{V}
+        \mathbf{c}^* &= \frac{2\pi (\mathbf{a} \times \mathbf{b})}{V}
 
-    where :math:`V = \\mathbf{a} \\cdot (\\mathbf{b} \\times \\mathbf{c})` is the cell volume.
+    where :math:`V = \mathbf{a} \cdot (\mathbf{b} \times \mathbf{c})` is the cell volume.
 
-    In matrix form: :math:`\\text{reciprocal_matrix} = 2\\pi \\cdot (\\text{cell}^T)^{-1}`
+    In matrix form: :math:`\text{reciprocal_matrix} = 2\pi \cdot (\text{cell}^T)^{-1}`
 
-    Each k-vector is: :math:`\\mathbf{k} = h \\mathbf{a}^* + k \\mathbf{b}^* + l \\mathbf{c}^*`
+    Each k-vector is: :math:`\mathbf{k} = h \mathbf{a}^* + k \mathbf{b}^* + l \mathbf{c}^*`
     where (h, k, l) are Miller indices (integers).
 
     Parameters
@@ -127,8 +127,8 @@ def generate_k_vectors_ewald_summation(
         Unit cell matrix with lattice vectors as rows.
         Shape (3, 3) for single system or (B, 3, 3) for batch.
     k_cutoff : float or jax.Array
-        Maximum magnitude of k-vectors to include (:math:`|\\mathbf{k}| \\leq k_{\\text{cutoff}}`).
-        Typical values: 8-12 :math:`\\text{\\AA}^{-1}` for molecular systems.
+        Maximum magnitude of k-vectors to include (:math:`|\mathbf{k}| \leq k_{\text{cutoff}}`).
+        Typical values: 8-12 :math:`\text{\AA}^{-1}` for molecular systems.
         Higher values increase accuracy but also computational cost.
     miller_bounds : tuple[int, int, int] | None, optional
         Precomputed maximum Miller indices (M_h, M_k, M_l) for each lattice
@@ -177,7 +177,7 @@ def generate_k_vectors_ewald_summation(
       transformed using each system's reciprocal cell. If ``k_cutoff`` is given
       per system, the maximum cutoff across the batch determines the shared
       Miller bounds.
-    - The number of k-vectors K scales as O(k_cutoff³ · V) where V is the cell volume.
+    - The number of k-vectors K scales as :math:`O(k_{\text{cutoff}}^3 \cdot V)` where V is the cell volume.
     - When using inside ``jax.jit``, you **must** provide ``miller_bounds``
       as a concrete ``tuple[int, int, int]``. The bounds determine array shapes
       (via ``jnp.arange``), which must be statically known at trace time.

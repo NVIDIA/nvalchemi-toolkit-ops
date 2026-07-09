@@ -18,8 +18,11 @@
 Wraps the framework-agnostic Warp kernels from
 ``nvalchemiops.interactions.electrostatics.ewald_kernels`` with JAX bindings.
 
-The Ewald method splits long-range Coulomb interactions into:
-    E_total = E_real + E_reciprocal - E_self - E_background
+The Ewald method splits long-range Coulomb interactions into components:
+
+.. math::
+
+    E_{\\text{total}} = E_{\\text{real}} + E_{\\text{reciprocal}} - E_{\\text{self}} - E_{\\text{background}}
 """
 
 from __future__ import annotations
@@ -450,13 +453,15 @@ _jax_batch_ewald_reciprocal_virial = _jax_ewald_recip_component(
 )
 
 _jax_ewald_reciprocal_double_backward_reduce = _make_jax_kernel_factory(
-    lambda wp_dtype: get_ewald_recip_kernel(
-        wp_dtype,
-        batched=False,
-        deriv_state=_DerivState.E_F_dQ,
-        cell_grad=False,
-        order="double_backward",
-    ).fill,
+    lambda wp_dtype: (
+        get_ewald_recip_kernel(
+            wp_dtype,
+            batched=False,
+            deriv_state=_DerivState.E_F_dQ,
+            cell_grad=False,
+            order="double_backward",
+        ).fill
+    ),
     7,
     [
         "gA",
@@ -470,25 +475,29 @@ _jax_ewald_reciprocal_double_backward_reduce = _make_jax_kernel_factory(
 )
 
 _jax_ewald_reciprocal_double_backward_compute = _make_jax_kernel_factory(
-    lambda wp_dtype: get_ewald_recip_kernel(
-        wp_dtype,
-        batched=False,
-        deriv_state=_DerivState.E_F_dQ,
-        cell_grad=False,
-        order="double_backward",
-    ).compute,
+    lambda wp_dtype: (
+        get_ewald_recip_kernel(
+            wp_dtype,
+            batched=False,
+            deriv_state=_DerivState.E_F_dQ,
+            cell_grad=False,
+            order="double_backward",
+        ).compute
+    ),
     2,
     ["grad_positions", "grad_charges"],
 )
 
 _jax_batch_ewald_reciprocal_double_backward_reduce = _make_jax_kernel_factory(
-    lambda wp_dtype: get_ewald_recip_kernel(
-        wp_dtype,
-        batched=True,
-        deriv_state=_DerivState.E_F_dQ,
-        cell_grad=False,
-        order="double_backward",
-    ).fill,
+    lambda wp_dtype: (
+        get_ewald_recip_kernel(
+            wp_dtype,
+            batched=True,
+            deriv_state=_DerivState.E_F_dQ,
+            cell_grad=False,
+            order="double_backward",
+        ).fill
+    ),
     7,
     [
         "gA",
@@ -502,13 +511,15 @@ _jax_batch_ewald_reciprocal_double_backward_reduce = _make_jax_kernel_factory(
 )
 
 _jax_batch_ewald_reciprocal_double_backward_compute = _make_jax_kernel_factory(
-    lambda wp_dtype: get_ewald_recip_kernel(
-        wp_dtype,
-        batched=True,
-        deriv_state=_DerivState.E_F_dQ,
-        cell_grad=False,
-        order="double_backward",
-    ).compute,
+    lambda wp_dtype: (
+        get_ewald_recip_kernel(
+            wp_dtype,
+            batched=True,
+            deriv_state=_DerivState.E_F_dQ,
+            cell_grad=False,
+            order="double_backward",
+        ).compute
+    ),
     2,
     ["grad_positions", "grad_charges"],
 )
@@ -865,6 +876,61 @@ def ewald_real_space(
     wrapper. ``compute_forces=True`` remains a forward/direct escape hatch for
     no-autograd MD/inference loops; charge-gradient and virial direct outputs
     are deprecated training-style outputs and warn.
+
+    Parameters
+    ----------
+    positions : jax.Array, shape (N, 3)
+        Atomic coordinates.
+    charges : jax.Array, shape (N,)
+        Atomic partial charges.
+    cell : jax.Array, shape (3, 3) or (B, 3, 3)
+        Unit cell matrices. A 2-D input is promoted to (1, 3, 3) internally.
+    alpha : float or jax.Array
+        Ewald splitting parameter. A scalar float or array of shape (1,) or (B,).
+    neighbor_list : jax.Array or None, shape (2, M), optional
+        Neighbor pairs in COO format; row 0 is ``idx_i``, row 1 is ``idx_j``.
+        Provide either ``neighbor_list`` + ``neighbor_ptr`` + ``neighbor_shifts``
+        or ``neighbor_matrix`` + ``neighbor_matrix_shifts``.
+    neighbor_ptr : jax.Array or None, shape (N+1,), optional
+        CSR row pointers for ``neighbor_list``.
+    neighbor_shifts : jax.Array or None, shape (M, 3), optional
+        Integer periodic image shifts for each neighbor pair.
+    neighbor_matrix : jax.Array or None, shape (N, max_neighbors), optional
+        Dense neighbor matrix; each row lists neighbor indices for one atom.
+    neighbor_matrix_shifts : jax.Array or None, shape (N, max_neighbors, 3), optional
+        Integer periodic image shifts for each entry in ``neighbor_matrix``.
+    mask_value : int or None, optional
+        Sentinel indicating unused slots in ``neighbor_matrix``.
+        Defaults to ``N`` (number of atoms) when ``None``.
+    batch_idx : jax.Array or None, shape (N,), optional
+        System index per atom for batched mode. Atoms must be grouped
+        contiguously with IDs ``0..B-1``.
+    compute_forces : bool, default=False
+        Return explicit forces :math:`-\\partial E / \\partial \\mathbf{r}_i`.
+        For differentiable force computation prefer JAX autodiff.
+    compute_charge_gradients : bool, default=False
+        .. deprecated:: 0.4.0
+            Deprecated. Return explicit :math:`\\partial E / \\partial q_i`.
+            Raises ``DeprecationWarning`` when True.
+    compute_virial : bool, default=False
+        .. deprecated:: 0.4.0
+            Deprecated. Return explicit virial tensor. Raises
+            ``DeprecationWarning`` when True.
+
+    Returns
+    -------
+    jax.Array, shape (N,)
+        Per-atom real-space Ewald energy when no derivative flags are set.
+    tuple[jax.Array, ...]
+        ``(energies, forces)`` when ``compute_forces=True``;
+        ``(energies, forces, charge_gradients)`` when
+        ``compute_charge_gradients=True``; additionally appends the virial
+        tensor of shape (1, 3, 3) or (B, 3, 3) when ``compute_virial=True``.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.interactions.electrostatics.ewald.ewald_reciprocal_space` : Reciprocal-space Ewald contribution.
+    :func:`nvalchemiops.jax.interactions.electrostatics.ewald.ewald_summation` : Complete Ewald summation combining both components.
     """
     component_deprecated_flags = tuple(
         name
@@ -1338,10 +1404,60 @@ def ewald_reciprocal_space(
 ) -> jax.Array | tuple[jax.Array, ...]:
     """Compute reciprocal-space Ewald energy and optional direct outputs.
 
+    Includes self-energy and background (net-charge) corrections so the
+    returned energies are the full reciprocal contribution to the Ewald sum.
     Energy-only calls participate in JAX autodiff through a private custom-JVP
     wrapper. ``compute_forces=True`` remains a forward/direct escape hatch for
     no-autograd MD/inference loops; charge-gradient and virial direct outputs
     are deprecated training-style outputs and warn.
+
+    Parameters
+    ----------
+    positions : jax.Array, shape (N, 3)
+        Atomic coordinates.
+    charges : jax.Array, shape (N,)
+        Atomic partial charges.
+    cell : jax.Array, shape (3, 3) or (B, 3, 3)
+        Unit cell matrices. A 2-D input is promoted to (1, 3, 3) internally.
+    k_vectors : jax.Array, shape (K, 3) or (B, K, 3)
+        Reciprocal-space lattice vectors. Gradients are stopped internally
+        so this argument must not depend on ``cell`` outside this function.
+        Use :func:`nvalchemiops.jax.interactions.electrostatics.ewald.ewald_summation`
+        for cell-differentiable k-vectors.
+    alpha : float or jax.Array
+        Ewald splitting parameter. A scalar float or array of shape (1,) or (B,).
+    batch_idx : jax.Array or None, shape (N,), optional
+        System index per atom for batched mode. Atoms must be grouped
+        contiguously with IDs ``0..B-1``.
+    max_atoms_per_system : int or None, optional
+        Maximum number of atoms in any single system. Required under
+        ``jax.jit`` with batched inputs; inferred from data otherwise.
+    compute_forces : bool, default=False
+        Return explicit forces :math:`-\\partial E / \\partial \\mathbf{r}_i`.
+        For differentiable force computation prefer JAX autodiff.
+    compute_charge_gradients : bool, default=False
+        Deprecated. Return explicit :math:`\\partial E / \\partial q_i`.
+        Raises ``DeprecationWarning`` when True.
+    compute_virial : bool, default=False
+        Deprecated. Return explicit virial tensor. Raises
+        ``DeprecationWarning`` when True.
+
+    Returns
+    -------
+    jax.Array, shape (N,)
+        Per-atom reciprocal-space Ewald energy (with self and background
+        corrections) when no derivative flags are set.
+    tuple[jax.Array, ...]
+        ``(energies, forces)`` when ``compute_forces=True``;
+        ``(energies, forces, charge_gradients)`` when
+        ``compute_charge_gradients=True``; additionally appends the virial
+        tensor of shape (1, 3, 3) or (B, 3, 3) when ``compute_virial=True``.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.interactions.electrostatics.ewald.ewald_real_space` : Real-space Ewald contribution.
+    :func:`nvalchemiops.jax.interactions.electrostatics.ewald.ewald_summation` : Complete Ewald summation combining both components.
+    :func:`nvalchemiops.jax.interactions.electrostatics.k_vectors.generate_k_vectors_ewald_summation` : Generates ``k_vectors`` from a cell and cutoff.
     """
     component_deprecated_flags = tuple(
         name
@@ -2698,8 +2814,11 @@ def _ewald_summation_impl(
 ) -> jax.Array | tuple[jax.Array, ...]:
     """Compute complete Ewald summation implementation.
 
-    The Ewald method splits long-range Coulomb into:
-        E_total = E_real + E_reciprocal - E_self - E_background
+    The Ewald method splits long-range Coulomb into components:
+
+    .. math::
+
+        E_{\\text{total}} = E_{\\text{real}} + E_{\\text{reciprocal}} - E_{\\text{self}} - E_{\\text{background}}
 
     Parameters
     ----------
@@ -2747,7 +2866,7 @@ def _ewald_summation_impl(
     compute_forces : bool, default=False
         Whether to compute forces.
     compute_charge_gradients : bool, default=False
-        Whether to compute charge gradients dE/dq_i.
+        Whether to compute charge gradients :math:`\\partial E / \\partial q_i`.
     compute_virial : bool, default=False
         Whether to compute the virial tensor.
     hybrid_forces : bool, default=False
@@ -2988,13 +3107,16 @@ def ewald_summation(
     mask_value : int or None, default=None
         Sentinel value for invalid neighbor-matrix entries.
     compute_forces : bool, default=False
-        Deprecated direct-output flag. Compute energy and use JAX autodiff for
-        differentiable forces.
+        .. deprecated:: 0.4.0
+            Deprecated direct-output flag. Compute energy and use JAX autodiff for
+            differentiable forces.
     compute_charge_gradients : bool, default=False
-        Deprecated direct-output flag. Compute energy and use JAX autodiff for
-        ``dE/dq_i``.
+        .. deprecated:: 0.4.0
+            Deprecated direct-output flag. Compute energy and use JAX autodiff for
+            :math:`\\partial E / \\partial q_i`.
     compute_virial : bool, default=False
-        Deprecated direct-output flag for the virial tensor.
+        .. deprecated:: 0.4.0
+            Deprecated direct-output flag for the virial tensor.
     accuracy : float, default=1e-6
         Target accuracy for automatic parameter estimation.
     hybrid_forces : bool, default=False
@@ -3006,8 +3128,23 @@ def ewald_summation(
 
     Returns
     -------
-    jax.Array or tuple[jax.Array, ...]
-        Per-atom energy, plus deprecated direct outputs when requested.
+    jax.Array, shape (N,)
+        Per-atom total Ewald energy when no deprecated direct-output flags are
+        set. Gradients flow through positions, charges, and cell via the
+        registered custom-JVP rules.
+    tuple[jax.Array, ...]
+        When any deprecated flag is True: ``(energies,)`` extended by the
+        requested outputs in order — forces of shape (N, 3),
+        charge gradients of shape (N,), virial of shape (1, 3, 3) or
+        (B, 3, 3) — matching the ordering of
+        :func:`nvalchemiops.jax.interactions.electrostatics.ewald.ewald_real_space`.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.interactions.electrostatics.ewald.ewald_real_space` : Real-space component.
+    :func:`nvalchemiops.jax.interactions.electrostatics.ewald.ewald_reciprocal_space` : Reciprocal-space component.
+    :func:`nvalchemiops.jax.interactions.electrostatics.parameters.estimate_ewald_parameters` : Automatic alpha and k-cutoff estimation.
+    :func:`nvalchemiops.jax.interactions.electrostatics.k_vectors.generate_k_vectors_ewald_summation` : Generates k-vectors from cell and cutoff.
     """
     if compute_forces or compute_virial or compute_charge_gradients or hybrid_forces:
         warnings.warn(

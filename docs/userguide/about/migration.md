@@ -6,7 +6,7 @@
 
 This guide lists user-visible migrations by release.
 
-## v0.4.0 (Unreleased): Electrostatics
+## v0.4.0: Electrostatics
 
 ### Energy-Derivative Training
 

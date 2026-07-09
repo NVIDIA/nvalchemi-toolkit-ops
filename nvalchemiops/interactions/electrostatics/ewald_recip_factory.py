@@ -208,6 +208,14 @@ def alloc_ewald_recip_sentinels(wp_dtype: type, device: str) -> dict[str, wp.arr
     per ``(wp_dtype, device)`` (the sentinels are zero-size and read-only) so the
     backward, launched every training step, does not re-allocate them per call.
 
+    Parameters
+    ----------
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64``; determines the vector/matrix element dtype
+        of the sentinel arrays.
+    device : str
+        Warp device string (e.g. ``"cuda:0"``).
+
     Returns
     -------
     dict[str, wp.array]
@@ -336,6 +344,17 @@ def make_ewald_recip_kernel(
         ``deriv_state`` in ``{E_F, E_F_dQ}``.
     order : {"forward", "backward", "double_backward"}
         Forward output, first-derivative autograd node, or second-derivative node.
+    tiled : bool
+        When ``True``, selects the cooperative tiled fill kernel
+        (``_ewald_recip_dbwd_reduce_tiled``); only effective for
+        ``order="double_backward"``.
+
+    Returns
+    -------
+    _RecipKernels
+        Named tuple with fields ``fill``, ``compute``, ``virial``, ``kspace``;
+        ``virial`` is ``None`` unless ``cell_grad=True``, and ``kspace`` is ``None``
+        unless ``cell_grad=True`` and ``order="backward"``.
     """
     _validate_axes(wp_dtype, batched, neighbor_input, deriv_state, cell_grad, order)
 
@@ -384,6 +403,39 @@ def get_ewald_recip_kernel(
     Memoization is the ``@lru_cache`` on ``make_*``; every argument is forwarded **by
     keyword** so a positional vs keyword call can never produce a duplicate cache
     entry.
+
+    Parameters
+    ----------
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64``.
+    batched : bool
+        Single-system (``False``) vs batched (``True``).
+    neighbor_input : {"none"}
+        Reciprocal kernels are k-vector based; must be ``"none"``.
+    deriv_state : _DerivState
+        ``E`` (forward only), ``E_F`` (+forces), ``E_F_dQ`` (+charge gradient).
+    cell_grad : bool
+        When ``True``, the bundle includes the optional virial / cell-input
+        gradient kernel. Valid only with ``deriv_state`` in ``{E_F, E_F_dQ}``.
+    order : {"forward", "backward", "double_backward"}
+        Forward output, first-derivative autograd node, or second-derivative node.
+    component : str
+        Specialization component tag; for ``ewald_recip`` this must be
+        ``"ewald_recip"`` (the default).
+    tiled : bool
+        When ``True``, selects the cooperative tiled fill kernel for
+        ``order="double_backward"``.
+
+    Returns
+    -------
+    _RecipKernels
+        Named tuple with fields ``fill``, ``compute``, ``virial``, ``kspace``;
+        ``virial`` is ``None`` unless ``cell_grad=True``, and ``kspace`` is ``None``
+        unless ``cell_grad=True`` and ``order="backward"``.
+
+    See Also
+    --------
+    :func:`nvalchemiops.interactions.electrostatics.ewald_recip_factory.make_ewald_recip_kernel` : Underlying cached factory.
     """
     _require_supported_dtype(wp_dtype)
     _require_component(component, "ewald_recip")
@@ -411,6 +463,28 @@ def get_ewald_recip_component_kernel(
     This accessor covers legacy public-launcher signatures that are not the
     bundled atom-major factory shape, notably single-system 1D ``k_vectors`` /
     structure-factor arrays and the self/background correction kernels.
+
+    Parameters
+    ----------
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64``; selects the floating-point and
+        vector/matrix dtypes for the returned kernel overload.
+    component : str
+        Kernel component name. Valid values are ``"fill"``, ``"compute_energy"``,
+        ``"compute_energy_forces"``, ``"compute_energy_forces_charge_grad"``,
+        ``"subtract_self"``, ``"corrections"``, ``"corrections_backward"``,
+        ``"corrections_double_backward"``, and ``"virial"``.
+    batched : bool
+        Single-system (``False``) vs batched (``True``).
+    tiled : bool
+        When ``True`` and ``component="fill"``, selects the cooperative tiled
+        fill kernel variant.
+
+    Returns
+    -------
+    wp.Kernel
+        The requested type-specialized Warp kernel overload, ready to pass to
+        ``wp.launch``.
     """
     _require_supported_dtype(wp_dtype)
     info = _DTYPE_INFO[wp_dtype]

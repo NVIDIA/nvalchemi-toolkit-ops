@@ -49,13 +49,13 @@ prefer the high-level :func:`dftd3` wrapper above. These operators are exposed f
 advanced users who need fine-grained control or ``torch.compile`` compatibility.
 
 Non-Periodic Systems
-~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^
 
 .. autofunction:: nvalchemiops.torch.interactions.dispersion._dftd3._dftd3_matrix_op
 .. autofunction:: nvalchemiops.torch.interactions.dispersion._dftd3._dftd3_op
 
 Periodic Boundary Conditions (PBC)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. autofunction:: nvalchemiops.torch.interactions.dispersion._dftd3._dftd3_matrix_pbc_op
 .. autofunction:: nvalchemiops.torch.interactions.dispersion._dftd3._dftd3_pbc_op

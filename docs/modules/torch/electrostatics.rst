@@ -140,6 +140,7 @@ evaluations at fixed cell (MD steps / SCF iterations).
 
 .. autoclass:: MultipoleSCFCache
    :members:
+   :exclude-members: n_systems, valid_k_counts
 
 Parameter Estimation
 ~~~~~~~~~~~~~~~~~~~~~~

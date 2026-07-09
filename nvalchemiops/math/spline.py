@@ -40,10 +40,10 @@ OPERATIONS
    mesh[g] += value[atom] * weight(atom, g)
 
 2. GATHER: Collect mesh values at atom positions
-   value[atom] = Σ_g mesh[g] * weight(atom, g)
+   value[atom] = sum_g mesh[g] * weight(atom, g)
 
 3. GATHER_VEC3: Collect 3D vector field values at atom positions
-   vector[atom] = Σ_g mesh[g] * weight(atom, g)
+   vector[atom] = sum_g mesh[g] * weight(atom, g)
 
 4. GATHER_GRADIENT: Collect mesh values with weight gradients (forces)
    grad[atom] = sum_g mesh[g] * grad_weight(atom, g)
@@ -52,7 +52,7 @@ OPERATIONS
    mesh[c, g] += values[atom, c] * weight(atom, g)
 
 6. GATHER_CHANNELS: Collect multi-channel values from mesh
-   values[atom, c] = Σ_g mesh[c, g] * weight(atom, g)
+   values[atom, c] = sum_g mesh[c, g] * weight(atom, g)
 
 REFERENCES
 ==========
@@ -419,7 +419,7 @@ def bspline_derivative(u: Any, order: wp.int32) -> Any:
 
 @wp.func
 def bspline_second_derivative(u: Any, order: wp.int32) -> Any:
-    """Compute B-spline second derivative ``d²M_n(u)/du²``.
+    """Compute B-spline second derivative ``d^2M_n(u)/du^2``.
 
     Mirrors the order-2 through order-6 coverage of ``bspline_derivative`` (order
     1 returns zero, matching the first-derivative convention).
@@ -551,7 +551,7 @@ def bspline_weight_hessian_dot_vec3(
     B-spline weight at the given stencil point.
 
     The Hessian is symmetric and has entries
-    ``H[c, d] = mesh_dims[c] · ∂²W/∂θ_c∂θ_d · mesh_dims[d]`` (matching the
+    ``H[c, d] = mesh_dims[c] * d^2W/dtheta_c dtheta_d * mesh_dims[d]`` (matching the
     ``mesh_dims``-scaling convention used by ``bspline_weight_gradient_3d``).
     Off-diagonal entries are products of two 1D first-derivatives; diagonal
     entries multiply the 1D second-derivative by the other two 1D weights.
@@ -777,22 +777,22 @@ def bspline_weight_gradient_3d(
     order: wp.int32,
     mesh_dims: wp.vec3i,
 ) -> Any:
-    """Compute gradient of 3D B-spline weight.
+    r"""Compute gradient of 3D B-spline weight.
 
     The B-spline parameter u is computed as:
 
     .. math::
 
-        u = \\text{order}/2 + \\theta - \\text{offset}
+        u = \text{order}/2 + \theta - \text{offset}
 
     The gradient with respect to theta is:
 
     .. math::
 
-        \\begin{aligned}
-        \\frac{\\partial u}{\\partial \\theta} &= +1 \\\\
-        \\frac{\\partial \\text{weight}}{\\partial \\theta} &= \\frac{\\partial M}{\\partial u} \\cdot \\frac{\\partial u}{\\partial \\theta} = \\frac{\\partial M}{\\partial u}
-        \\end{aligned}
+        \begin{aligned}
+        \frac{\partial u}{\partial \theta} &= +1 \\
+        \frac{\partial \text{weight}}{\partial \theta} &= \frac{\partial M}{\partial u} \cdot \frac{\partial u}{\partial \theta} = \frac{\partial M}{\partial u}
+        \end{aligned}
 
     Parameters
     ----------
@@ -809,7 +809,7 @@ def bspline_weight_gradient_3d(
     Returns
     -------
     vec3 (Any)
-        Gradient :math:`\\nabla` weight in fractional coordinates (scaled by mesh_dims).
+        Gradient :math:`\nabla` weight in fractional coordinates (scaled by mesh_dims).
         Same type as theta.
     """
     # Get scalar type from theta vector
@@ -847,13 +847,13 @@ def bspline_weight_gradient_3d(
 
 @wp.func
 def bspline_third_derivative(u: Any, order: wp.int32) -> Any:
-    r"""Compute B-spline third derivative ``d³M_n(u)/du³``.
+    r"""Compute B-spline third derivative ``d^3M_n(u)/du^3``.
 
     Same piecewise structure as :func:`bspline_second_derivative`. Used
-    by the multipole-PME ``l_max = 2`` (quadrupole) backward kernels —
-    the position-gradient slot ``∂L/∂r_i`` of the Q channel needs
-    ``∂³B`` (since ``E_recip^(Q) ∝ Q : ∇²φ`` and ``∂/∂r_i`` adds one
-    more derivative).
+    by the multipole-PME ``l_max = 2`` (quadrupole) backward kernels ---
+    the position-gradient slot :math:`\partial L/\partial r_i` of the Q channel needs
+    :math:`\partial^3 B` (since :math:`E_\text{recip}^{(Q)} \propto Q : \nabla^2 \varphi`
+    and :math:`\partial/\partial r_i` adds one more derivative).
 
     Defined for orders 4, 5, 6 (cubic and above). Lower orders return
     zero (their third derivative is a Dirac delta train, sampled at
@@ -952,19 +952,21 @@ def bspline_third_derivative(u: Any, order: wp.int32) -> Any:
 
 @wp.func
 def bspline_fourth_derivative(u: Any, order: wp.int32) -> Any:
-    r"""Compute B-spline fourth derivative ``d⁴M_n(u)/du⁴``.
+    r"""Compute B-spline fourth derivative ``d^4M_n(u)/du^4``.
 
     Same piecewise structure as :func:`bspline_third_derivative`, one order
     higher. Used by the multipole-PME ``l_max = 2`` **double-backward** (Q5r-2):
-    the position-position Hessian block ``∂(∂L/∂r_i)/∂r_j`` of the Q channel
-    needs ``∂⁴B`` (the Q-channel forward spread already carries ``∂²B``, its
-    first backward ``∂³B``, and create_graph adds one more).
+    the position-position Hessian block :math:`\partial(\partial L/\partial r_i)/\partial r_j`
+    of the Q channel needs :math:`\partial^4 B` (the Q-channel forward spread
+    already carries :math:`\partial^2 B`, its first backward :math:`\partial^3 B`,
+    and create_graph adds one more).
 
-    Defined for orders 5, 6. ``M_6'''`` is quadratic per piece → ``M_6''''``
-    is **linear** per piece (C⁰-continuous, since ``M_6`` is C⁴). ``M_5'''`` is
-    linear per piece → ``M_5''''`` is **piecewise-constant** ``(1, −4, 6, −4,
-    1)`` (discontinuous at knots — ``M_5`` is only C³). Orders ≤ 4 return zero
-    (their fourth derivative is a Dirac train, zero on the open interior).
+    Defined for orders 5, 6. ``M_6'''`` is quadratic per piece -- ``M_6''''``
+    is **linear** per piece (:math:`C^0`-continuous, since ``M_6`` is :math:`C^4`).
+    ``M_5'''`` is linear per piece -- ``M_5''''`` is **piecewise-constant**
+    ``(1, -4, 6, -4, 1)`` (discontinuous at knots -- ``M_5`` is only :math:`C^3`).
+    Orders <= 4 return zero (their fourth derivative is a Dirac train, zero on the
+    open interior).
 
     Parameters
     ----------
@@ -1040,13 +1042,13 @@ def bspline_weight_hessian_3d(
         w_{3D}(\theta) = M_n(u_x) \, M_n(u_y) \, M_n(u_z)
 
     where :math:`u_\alpha = \mathrm{order}/2 + \theta_\alpha - \mathrm{offset}_\alpha`.
-    The Hessian is the symmetric 3×3 matrix of second partials:
+    The Hessian is the symmetric 3x3 matrix of second partials:
 
     * Diagonal :math:`\partial^2 w_{3D}/\partial \theta_\alpha^2 = M_n''(u_\alpha) \cdot \prod_{\beta \neq \alpha} M_n(u_\beta)`.
     * Off-diagonal :math:`\partial^2 w_{3D}/\partial \theta_\alpha \partial \theta_\beta = M_n'(u_\alpha) \, M_n'(u_\beta) \, M_n(u_\gamma)`
       with :math:`\gamma` the remaining axis.
 
-    Each component is scaled by ``mesh_dims_α · mesh_dims_β`` to match
+    Each component is scaled by ``mesh_dims_alpha * mesh_dims_beta`` to match
     the fractional-mesh convention used by :func:`bspline_weight_gradient_3d`
     (the chain rule from parametric ``u`` to ``r`` introduces the same
     Jacobian factors per derivative).
@@ -1064,7 +1066,7 @@ def bspline_weight_hessian_3d(
 
     Two-vec3 return chosen over a ``mat33`` to avoid importing matrix
     types into the spline-primitive layer; callers (e.g., the
-    Multipole PME Hessian-gather kernel) accumulate ``μ_i · H · μ_j``
+    Multipole PME Hessian-gather kernel) accumulate ``mu_i * H * mu_j``
     directly from the six unique entries without materializing a
     matrix.
 
@@ -1245,7 +1247,7 @@ def _bspline_gather_kernel(
     For each atom, interpolates the mesh value at its position by summing nearby
     grid points weighted by the B-spline basis function.
 
-    Formula: output[atom] = Σ_g mesh[g] * w(atom, g)
+    Formula: output[atom] = sum_g mesh[g] * w(atom, g)
 
     where the sum is over the order^3 grid points in the atom's stencil.
 
@@ -1311,7 +1313,7 @@ def _bspline_gather_vec3_kernel(
     Similar to _bspline_gather_kernel but multiplies by the atom's charge and
     outputs to a 3D vector array (for use with vector-valued mesh fields).
 
-    Formula: output[atom] = q[atom] * Σ_g mesh[g] * w(atom, g)
+    Formula: output[atom] = q[atom] * sum_g mesh[g] * w(atom, g)
 
     Launch Grid
     -----------
@@ -1372,11 +1374,11 @@ def _bspline_gather_with_force_kernel(
     """Single-pass interpolation: gather potential AND spline-derivative force.
 
     Reads each mesh stencil cell ONCE, accumulating both:
-      - ``output[atom] += Σ_g mesh[g] * w(atom, g)``           (raw potential)
-      - ``forces[atom] += -q_atom * Σ_g mesh[g] * (Cell^{-T} ∇w)``  (Cartesian force)
+      - ``output[atom] += sum_g mesh[g] * w(atom, g)``           (raw potential)
+      - ``forces[atom] += -q_atom * sum_g mesh[g] * (Cell^{-T} grad_w)``  (Cartesian force)
 
     This replaces calling ``_bspline_gather_kernel`` followed by
-    ``_bspline_gather_gradient_kernel`` on the same mesh — they would each
+    ``_bspline_gather_gradient_kernel`` on the same mesh -- they would each
     re-read every stencil cell and recompute the per-thread weight
     derivatives. The fused kernel halves the mesh DRAM traffic for the
     PME-with-forces path and reuses one set of 1D weight evaluations across
@@ -1393,7 +1395,7 @@ def _bspline_gather_with_force_kernel(
     output : wp.array, shape (N,), dtype=float32/float64
         OUTPUT: raw potential per atom. Must be zero-initialized.
     forces : wp.array, shape (N,), dtype=vec3f/vec3d
-        OUTPUT: Cartesian force per atom (already including −q). Must be
+        OUTPUT: Cartesian force per atom (already including -q). Must be
         zero-initialized.
     """
     atom_idx, point_idx = wp.tid()
@@ -1514,8 +1516,8 @@ def _make_bspline_gather_with_force_kernel(
     """Factory: per-order specialized fused gather kernel.
 
     Returns a Warp kernel parameterized for the given spline ``ORDER``. The
-    kernel walks the order^3 stencil entirely in registers — fully unrolled
-    by Warp's codegen because ORDER is a Python int literal in scope — and
+    kernel walks the order^3 stencil entirely in registers -- fully unrolled
+    by Warp's codegen because ORDER is a Python int literal in scope -- and
     writes potential and force without atomics.
     """
     vec_ord = _PER_ORDER_VEC[(ORDER, scalar_dtype)]
@@ -1784,7 +1786,7 @@ def _make_bspline_spread_kernel(
     axis), fully-unrolled order^3 inner loop. Eliminates the
     per-(atom, stencil_pt) thread
     explosion of the generic ``_bspline_spread_kernel`` (which spawns
-    ``num_atoms × order^3`` threads each computing one atomic_add).
+    ``num_atoms * order^3`` threads each computing one atomic_add).
     """
     vec_ord = _PER_ORDER_VEC[(ORDER, scalar_dtype)]
     HALF_ORDER_PY = float(ORDER) * 0.5
@@ -1949,16 +1951,16 @@ def _bspline_gather_gradient_kernel(
     mesh: wp.array3d(dtype=Any),
     forces: wp.array(dtype=Any),
 ):
-    """Compute forces by gathering mesh gradients using B-spline derivatives.
+    r"""Compute forces by gathering mesh gradients using B-spline derivatives.
 
     Computes:
 
     .. math::
 
-        F_i = -q_i \\sum_g \\phi(g) \\nabla w(r_i, g)
+        F_i = -q_i \sum_g \phi(g) \nabla w(r_i, g)
 
-    The gradient ∇w is computed in fractional coordinates and then transformed
-    to Cartesian coordinates via the cell matrix.
+    The gradient :math:`\nabla w` is computed in fractional coordinates and then
+    transformed to Cartesian coordinates via the cell matrix.
 
     Launch Grid
     -----------
@@ -1977,7 +1979,7 @@ def _bspline_gather_gradient_kernel(
     order : wp.int32
         B-spline order (1-6). Order 4 (cubic) recommended for PME.
     mesh : wp.array3d, shape (nx, ny, nz), dtype=wp.float32 or wp.float64
-        3D mesh containing potential values (e.g., electrostatic potential φ).
+        3D mesh containing potential values (e.g., electrostatic potential phi).
     forces : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
         OUTPUT: Forces per atom in Cartesian coordinates. Must be zero-initialized.
 
@@ -2046,7 +2048,7 @@ def _bspline_spread_gradient_weights_kernel(
     """Single-system "spread-with-gradient-weights" kernel.
 
     For each ``(atom, support point)``:
-        mesh[g] += Σ_d per_atom_vec[n, d] · ∇W_frac[d](x_n, g)
+        mesh[g] += sum_d per_atom_vec[n, d] * grad_W_frac[d](x_n, g)
     """
     atom_idx, point_idx = wp.tid()
 
@@ -2239,7 +2241,7 @@ def _batch_bspline_spread_kernel(
     order : wp.int32
         B-spline order (1-6). Order 4 (cubic) recommended for PME.
     mesh : wp.array4d, shape (B, nx, ny, nz), dtype=wp.float32 or wp.float64
-        OUTPUT: 4D mesh (batch × spatial) to accumulate values. Must be zero-initialized.
+        OUTPUT: 4D mesh (batch x spatial) to accumulate values. Must be zero-initialized.
 
     Notes
     -----
@@ -2283,7 +2285,7 @@ def _batch_bspline_gather_kernel(
     Batched version of _bspline_gather_kernel for multiple systems. Each atom
     reads from its assigned system's mesh slice via batch_idx.
 
-    Formula: output[atom] = Σ_g mesh[sys, g] * w(atom, g)
+    Formula: output[atom] = sum_g mesh[sys, g] * w(atom, g)
 
     Launch Grid
     -----------
@@ -2302,7 +2304,7 @@ def _batch_bspline_gather_kernel(
     order : wp.int32
         B-spline order (1-6). Order 4 (cubic) recommended for PME.
     mesh : wp.array4d, shape (B, nx, ny, nz), dtype=wp.float32 or wp.float64
-        4D mesh (batch × spatial) containing values to interpolate.
+        4D mesh (batch x spatial) containing values to interpolate.
     output : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
         OUTPUT: Interpolated values per atom. Must be zero-initialized.
 
@@ -2349,7 +2351,7 @@ def _batch_bspline_gather_vec3_kernel(
 
     Batched version of _bspline_gather_vec3_kernel for multiple systems.
 
-    Formula: output[atom] = q[atom] * Σ_g mesh[sys, g] * w(atom, g)
+    Formula: output[atom] = q[atom] * sum_g mesh[sys, g] * w(atom, g)
 
     Launch Grid
     -----------
@@ -2370,7 +2372,7 @@ def _batch_bspline_gather_vec3_kernel(
     order : wp.int32
         B-spline order (1-6). Order 4 (cubic) recommended for PME.
     mesh : wp.array4d, shape (B, nx, ny, nz), dtype=wp.vec3f or wp.vec3d
-        4D mesh (batch × spatial) containing vector values.
+        4D mesh (batch x spatial) containing vector values.
     output : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
         OUTPUT: Charge-weighted interpolated vectors per atom. Must be zero-initialized.
 
@@ -2413,16 +2415,16 @@ def _batch_bspline_gather_gradient_kernel(
     mesh: wp.array(dtype=Any, ndim=4),  # (B, nx, ny, nz)
     forces: wp.array(dtype=Any),
 ):
-    """Compute forces by gathering mesh gradients from batched mesh using B-spline derivatives.
+    r"""Compute forces by gathering mesh gradients from batched mesh using B-spline derivatives.
 
     Computes:
 
     .. math::
 
-        F_i = -q_i \\sum_g \\phi(g) \\nabla w(r_i, g)
+        F_i = -q_i \sum_g \phi(g) \nabla w(r_i, g)
 
-    The gradient ∇w is computed in fractional coordinates and then transformed
-    to Cartesian coordinates via each system's cell matrix.
+    The gradient :math:`\nabla w` is computed in fractional coordinates and then
+    transformed to Cartesian coordinates via each system's cell matrix.
 
     Launch Grid
     -----------
@@ -2443,7 +2445,7 @@ def _batch_bspline_gather_gradient_kernel(
     order : wp.int32
         B-spline order (1-6). Order 4 (cubic) recommended for PME.
     mesh : wp.array4d, shape (B, nx, ny, nz), dtype=wp.float32 or wp.float64
-        4D mesh (batch × spatial) containing potential values.
+        4D mesh (batch x spatial) containing potential values.
     forces : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
         OUTPUT: Forces per atom in Cartesian coordinates. Must be zero-initialized.
 
@@ -2527,7 +2529,7 @@ def _bspline_spread_channels_kernel(
     order : wp.int32
         B-spline order (1-6). Order 4 (cubic) recommended for PME.
     mesh : wp.array4d, shape (C, nx, ny, nz), dtype=wp.float32 or wp.float64
-        OUTPUT: 4D mesh (channels × spatial) to accumulate values. Must be zero-initialized.
+        OUTPUT: 4D mesh (channels x spatial) to accumulate values. Must be zero-initialized.
 
     Notes
     -----
@@ -2571,7 +2573,7 @@ def _bspline_gather_channels_kernel(
     Similar to _bspline_gather_kernel but handles multiple channels,
     useful for multipole-based methods.
 
-    Formula: output[atom, c] = Σ_g mesh[c, g] * w(atom, g)
+    Formula: output[atom, c] = sum_g mesh[c, g] * w(atom, g)
 
     for each channel c = 0, 1, ..., C-1.
 
@@ -2590,7 +2592,7 @@ def _bspline_gather_channels_kernel(
     order : wp.int32
         B-spline order (1-6). Order 4 (cubic) recommended for PME.
     mesh : wp.array4d, shape (C, nx, ny, nz), dtype=wp.float32 or wp.float64
-        4D mesh (channels × spatial) containing values to interpolate.
+        4D mesh (channels x spatial) containing values to interpolate.
     output : wp.array2d, shape (N, C), dtype=wp.float32 or wp.float64
         OUTPUT: Interpolated multi-channel values per atom. Must be zero-initialized.
 
@@ -2711,7 +2713,7 @@ def _batch_bspline_gather_channels_kernel(
     Batched version of _bspline_gather_channels_kernel. Due to Warp's 4D array
     limit, the batch and channel dimensions are flattened into a single dimension.
 
-    Formula: output[atom, c] = Σ_g mesh[sys*C + c, g] * w(atom, g)
+    Formula: output[atom, c] = sum_g mesh[sys*C + c, g] * w(atom, g)
 
     Launch Grid
     -----------
@@ -2732,7 +2734,7 @@ def _batch_bspline_gather_channels_kernel(
     num_channels : wp.int32
         Number of channels (C).
     mesh : wp.array4d, shape (B*C, nx, ny, nz), dtype=wp.float32 or wp.float64
-        Flattened 4D mesh (batch*channels × spatial) containing values.
+        Flattened 4D mesh (batch*channels x spatial) containing values.
     output : wp.array2d, shape (N_total, C), dtype=wp.float32 or wp.float64
         OUTPUT: Interpolated multi-channel values per atom. Must be zero-initialized.
 
@@ -3286,10 +3288,10 @@ def spline_gather_with_force(
     """Fused energy-gather + force-gather in a single kernel launch.
 
     Computes simultaneously, reading each mesh cell ONCE:
-      - ``output[atom] = Σ_g mesh[g] * w(atom, g)``           (raw potential)
-      - ``forces[atom] = -q_atom * Σ_g mesh[g] * Cell^{-T} ∇w`` (Cartesian force)
+      - ``output[atom] = sum_g mesh[g] * w(atom, g)``           (raw potential)
+      - ``forces[atom] = -q_atom * sum_g mesh[g] * Cell^{-T} grad_w`` (Cartesian force)
 
-    Replaces the (``spline_gather`` → ``spline_gather_gradient``) pair when
+    Replaces the (``spline_gather`` -> ``spline_gather_gradient``) pair when
     both outputs are needed (PME forces path). Halves the mesh DRAM traffic
     and reuses the per-thread 1D weight evaluations across both outputs.
     Output buffers must be zero-initialized.

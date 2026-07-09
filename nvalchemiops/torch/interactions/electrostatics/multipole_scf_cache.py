@@ -72,7 +72,7 @@ class MultipoleSCFCache:
 
     For the batched case every per-k tensor carries a leading-``B`` layout and
     is uniform-shape ``(B, K_max, ...)`` with zero padding beyond each system's
-    ``K_b`` valid k-vectors. Pad rows get ``k_vectors = 0`` (so ``k_α = 0`` in
+    ``K_b`` valid k-vectors. Pad rows get ``k_vectors = 0`` (so ``k_alpha = 0`` in
     any k-weighted sum), ``per_k_factor = 0`` (zero Coulomb contribution), and
     ``k_factor_proj = 0`` (zero feature-projection weight); that is sufficient
     to make every kernel in the direct-k-space pipeline ignore pad rows without
@@ -87,16 +87,16 @@ class MultipoleSCFCache:
         row 0. Batched: ``(B, K_max, 3)`` per-system grids zero-padded to
         ``K_max``.
     k_norm2 : torch.Tensor, float64
-        ``|k|²``. Single ``(N_k,)`` / batched ``(B, K_max)``.
+        :math:`|k|^2`. Single ``(N_k,)`` / batched ``(B, K_max)``.
     source_phi_hat : torch.Tensor, float64
         Source-basis GTO Fourier coefficients
         :math:`\hat\phi_{l,m}^{\sigma}(\mathbf{k})`. Single ``(N_k, 4, 2)`` /
         batched ``(B, K_max, 4, 2)`` (pad rows zeroed).
     receiver_phi_hat : torch.Tensor, float64
-        Receiver-basis GTO Fourier coefficients across all receiver σ. Single
-        ``(N_k, N_σ, 4|9, 2)`` / batched ``(B, K_max, N_σ, 4|9, 2)``.
+        Receiver-basis GTO Fourier coefficients across all receiver sigma. Single
+        ``(N_k, N_sigma, 4|9, 2)`` / batched ``(B, K_max, N_sigma, 4|9, 2)``.
     per_k_factor : torch.Tensor, float64
-        Coulomb multiplier ``FIELD_CONSTANT / k²`` (or the Ewald damped form)
+        Coulomb multiplier :math:`\text{FIELD\_CONSTANT} / k^2` (or the Ewald damped form)
         with the ``k = 0`` entry zeroed. Single ``(N_k,)`` / batched
         ``(B, K_max)`` (pad + ``k = 0`` rows zeroed).
     k_factor_proj : torch.Tensor, float64
@@ -105,14 +105,14 @@ class MultipoleSCFCache:
     source_overlap_constants : torch.Tensor, shape (3,), float64
         Per-l self-overlap constants for the source basis (l=0, l=1, l=2),
         shared across the batch.
-    feature_overlap_constants : torch.Tensor, shape (N_σ, 2), float64
-        Per-(σ, l) self-overlap constants for the receiver basis, shared
+    feature_overlap_constants : torch.Tensor, shape (N_sigma, 2), float64
+        Per-(sigma, l) self-overlap constants for the receiver basis, shared
         across the batch. The ``l=1`` column is zeroed when ``l_max == 0``.
-    out_col_lut_natural : torch.Tensor, shape (N_σ, 4|9), int32
+    out_col_lut_natural : torch.Tensor, shape (N_sigma, 4|9), int32
         Natural row-major output LUT for the feature projection kernel.
-    out_col_lut_permuted : torch.Tensor, shape (N_σ, 4|9), int32
+    out_col_lut_permuted : torch.Tensor, shape (N_sigma, 4|9), int32
         Permuted output LUT for the feature projection kernel.
-    out_col_inv_perm : torch.Tensor, shape (N_σ · (feature_max_l+1)**2,), int64
+    out_col_inv_perm : torch.Tensor, shape (N_sigma * (feature_max_l+1)**2,), int64
         Precomputed inverse permutation ``argsort(out_col_lut_permuted)`` that
         maps the natural feature layout to the reference permuted flat layout.
         Cached here (it is position-independent) so the feature step does not
@@ -174,16 +174,16 @@ class MultipoleSCFCache:
     """Receiver feature angular cap, independent of ``l_max`` (the source cap).
     ``receiver_phi_hat`` is ``(..., 4, 2)`` for ``feature_max_l <= 1`` and
     ``(..., 9, 2)`` for ``feature_max_l == 2``; feature output width is
-    ``(feature_max_l + 1)**2`` per σ."""
+    ``(feature_max_l + 1)**2`` per sigma."""
     source_coeff2: torch.Tensor | None = None
     """Cartesian-quadrupole per-k coefficient ``coeff2(k) = -0.5*phi0(k)``.
     Single ``(N_k,)`` / batched ``(B, K_max)`` float64. ``None`` when
-    ``l_max < 2``. Geometry-only (depends on k + σ, not moments); consumed by
+    ``l_max < 2``. Geometry-only (depends on k + sigma, not moments); consumed by
     the l=2 reciprocal channel."""
     feature_overlap_l2: torch.Tensor | None = None
-    """l=2 receiver self-overlap constant, shape ``(N_σ,)`` float64, shared
+    """l=2 receiver self-overlap constant, shape ``(N_sigma,)`` float64, shared
     across the batch. ``None`` when ``feature_max_l < 2``. Kept separate from
-    the ``(N_σ, 2)`` ``feature_overlap_constants`` so the l<=1 projection
+    the ``(N_sigma, 2)`` ``feature_overlap_constants`` so the l<=1 projection
     kernel's shape contract is unchanged."""
 
     @property
@@ -208,7 +208,7 @@ class MultipoleSCFCache:
 
     @property
     def n_sigma(self) -> int:
-        """Number of receiver σ widths."""
+        """Number of receiver sigma widths."""
         return len(self.receiver_sigmas)
 
     @property
@@ -259,7 +259,7 @@ def prepare_multipole_scf_cache(
     sigma : float
         Density-basis Gaussian width.
     receiver_sigmas : list / tuple / 1-D tensor of floats
-        Multi-σ receiver widths. Must be non-empty.
+        Multi-sigma receiver widths. Must be non-empty.
     k_cutoff, k_vectors
         Same semantics as the step functions: either pass
         ``k_cutoff`` to generate the k-grid internally (with origin
@@ -275,7 +275,7 @@ def prepare_multipole_scf_cache(
         Receiver feature angular cap (independent of the source ``l_max``).
         ``0``, ``1``, or ``2``. Selects the receiver :math:`\hat\phi` width
         (``(..., 4, 2)`` for :math:`\le 1`, ``(..., 9, 2)`` for ``2``) and the
-        feature output width ``(feature_max_l + 1)**2`` per σ.
+        feature output width ``(feature_max_l + 1)**2`` per sigma.
     density_normalize, feature_normalize : NormMode | int | str
         Normalization conventions.
     alpha : float, optional

@@ -69,7 +69,6 @@ Simple velocity rescaling thermostat for quick equilibration (non-canonical).
 
 .. autofunction:: nvalchemiops.dynamics.integrators.velocity_rescaling.velocity_rescale
 .. autofunction:: nvalchemiops.dynamics.integrators.velocity_rescaling.velocity_rescale_out
-.. autofunction:: nvalchemiops.dynamics.integrators.velocity_rescaling.compute_rescale_factor
 
 NPT/NPH (Isothermal-Isobaric / Isenthalpic-Isobaric)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -1,7 +1,5 @@
 <!-- markdownlint-disable MD013 -->
 
-<!-- markdownlint-disable MD013 -->
-
 (neighborlist_userguide)=
 
 # Neighbor Lists
@@ -22,7 +20,7 @@ both single and batched inputs.
 
 Neighbor list construction can dominate runtime when called repeatedly:
 
-- **Naive algorithms scale as \(O(N^2)\)**: Checking all atom pairs becomes
+- **Naive algorithms scale as $O(N^2)$**: Checking all atom pairs becomes
   prohibitive for systems with a large number of atoms. The "~2000 atoms"
   figures used below are illustrative only — the actual `naive`/`cell_list`
   crossover is decided per system by the geometry cost model (see the
@@ -63,7 +61,7 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
-Dispatches to {func}`~nvalchemiops.torch.neighbors.cell_list` --- \(O(N)\) algorithm
+Dispatches to {func}`~nvalchemiops.torch.neighbors.cell_list` --- $O(N)$ algorithm
 using spatial decomposition.
 :::
 
@@ -80,7 +78,7 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
-Dispatches to {func}`~nvalchemiops.torch.neighbors.naive_neighbor_list` --- \(O(N^2)\)
+Dispatches to {func}`~nvalchemiops.torch.neighbors.naive_neighbor_list` --- $O(N^2)$
 algorithm with lower overhead.
 :::
 
@@ -98,7 +96,7 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
-Dispatches to {func}`~nvalchemiops.torch.neighbors.batch_cell_list` --- \(O(N)\)
+Dispatches to {func}`~nvalchemiops.torch.neighbors.batch_cell_list` --- $O(N)$
 algorithm for heterogeneous batches.
 :::
 
@@ -117,7 +115,7 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 ```
 
 Dispatches to {func}`~nvalchemiops.torch.neighbors.batch_naive_neighbor_list` ---
-\(O(N^2)\) algorithm for batched small systems.
+$O(N^2)$ algorithm for batched small systems.
 :::
 
 ::::
@@ -142,7 +140,7 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
-Dispatches to {func}`~nvalchemiops.jax.neighbors.cell_list` --- \(O(N)\) algorithm
+Dispatches to {func}`~nvalchemiops.jax.neighbors.cell_list` --- $O(N)$ algorithm
 using spatial decomposition.
 :::
 
@@ -159,7 +157,7 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
-Dispatches to {func}`~nvalchemiops.jax.neighbors.naive_neighbor_list` --- \(O(N^2)\)
+Dispatches to {func}`~nvalchemiops.jax.neighbors.naive_neighbor_list` --- $O(N^2)$
 algorithm with lower overhead.
 :::
 
@@ -177,7 +175,7 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
-Dispatches to {func}`~nvalchemiops.jax.neighbors.batch_cell_list` --- \(O(N)\)
+Dispatches to {func}`~nvalchemiops.jax.neighbors.batch_cell_list` --- $O(N)$
 algorithm for heterogeneous batches.
 :::
 
@@ -196,7 +194,7 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 ```
 
 Dispatches to {func}`~nvalchemiops.jax.neighbors.batch_naive_neighbor_list` ---
-\(O(N^2)\) algorithm for batched small systems.
+$O(N^2)$ algorithm for batched small systems.
 :::
 
 ::::
@@ -213,7 +211,7 @@ rather than atom count alone.  The `naive`↔`cell_list` crossover is governed b
 cutoff-sized cells `V / cutoff**3` (atom count and density cancel out of the
 per-system ratio): small or dense systems use `naive`, larger sparse systems
 use `cell_list`.  This avoids routing large high-cutoff systems to the
-\(O(N^2)\) path.  Auto-dispatch also considers `cluster_tile` for feasible
+$O(N^2)$ path.  Auto-dispatch also considers `cluster_tile` for feasible
 CUDA float32 fully-periodic workloads with compatible outputs and contiguous
 batch metadata.  The same estimate is exposed publicly via
 `suggest_neighbor_list_method` / `estimate_neighbor_list_costs` (see
@@ -413,7 +411,7 @@ The estimate is a hardware-independent model of *algorithmic* work; it does not
 measure your GPU.  The true crossover between strategies shifts with the device
 (memory bandwidth, occupancy, launch overhead), so on a given machine the
 predicted best strategy may be marginally slower than a close runner-up.  The
-ranking is reliable for the large gaps that matter (avoiding an \(O(N^2)\) blow-up
+ranking is reliable for the large gaps that matter (avoiding an $O(N^2)$ blow-up
 on a big system); for cases where the top costs are within a small factor,
 benchmark the top few candidates on your target hardware and pass the winner as
 `method=` explicitly.  Two calibration constants are env-overridable:
@@ -434,12 +432,12 @@ batched inputs.
 
 | Method | Algorithm | Use Case |
 |--------|-----------|----------|
-| `"naive"`, `"naive_scalar"` | \(O(N^2)\) scalar pairwise | Small single systems |
-| `"naive_tile"` | \(O(N^2)\) tiled CUDA kernel | Small single systems on GPU |
-| `"cell_list"`, `"cell_list_atom_centric"` | \(O(N)\) spatial decomposition, one thread per atom | Large single systems |
-| `"cell_list_pair_centric"` | \(O(N)\) cell list, one thread per candidate pair | Large, high-parallelism systems |
+| `"naive"`, `"naive_scalar"` | $O(N^2)$ scalar pairwise | Small single systems |
+| `"naive_tile"` | $O(N^2)$ tiled CUDA kernel | Small single systems on GPU |
+| `"cell_list"`, `"cell_list_atom_centric"` | $O(N)$ spatial decomposition, one thread per atom | Large single systems |
+| `"cell_list_pair_centric"` | $O(N)$ cell list, one thread per candidate pair | Large, high-parallelism systems |
 | `"cluster_tile"` | Cluster-pair tile (CUDA, float32, fully periodic) | Large single systems on GPU |
-| `"naive_dual_cutoff"` | \(O(N^2)\) with two cutoffs | Two-cutoff queries |
+| `"naive_dual_cutoff"` | $O(N^2)$ with two cutoffs | Two-cutoff queries |
 | `"batch_*"` | Per-system batched form of any of the above (e.g. `"batch_cell_list"`, `"batch_cluster_tile"`, `"batch_naive_dual_cutoff"`) | Batched systems |
 
 Method names that do not start with `batch_` refer to single-system algorithms.

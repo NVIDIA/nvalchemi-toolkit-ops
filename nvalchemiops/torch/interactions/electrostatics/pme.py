@@ -45,8 +45,8 @@ Helper APIs:
     pme_energy_corrections(): Self-energy and background corrections
 
 The batch_idx parameter determines kernel dispatch:
-    batch_idx=None → Single-system kernels
-    batch_idx provided → Batch kernels (multiple independent systems)
+    batch_idx=None -- Single-system kernels
+    batch_idx provided -- Batch kernels (multiple independent systems)
 
 ``particle_mesh_ewald`` treats energy autograd as the differentiable training
 contract; its direct-output flags warn and are deprecated. The
@@ -353,6 +353,23 @@ def compute_bspline_moduli_1d(
     1e-10 clamp + square. Precomputing the LUT lets the convolve kernel
     replace three sinc transcendentals + an order-dependent power loop
     per (i, j, k) thread with three reads + two multiplies.
+
+    Parameters
+    ----------
+    miller_indices : torch.Tensor, shape (M,)
+        Integer Miller indices along one mesh axis, typically produced by
+        ``torch.fft.fftfreq`` or ``torch.fft.rfftfreq`` scaled by ``mesh_N``.
+    mesh_N : int
+        Number of mesh points along this axis.
+    spline_order : int
+        B-spline interpolation order ``p``. The modulus is
+        :math:`\\operatorname{sinc}(m/N)^p`.
+
+    Returns
+    -------
+    torch.Tensor, shape (M,)
+        1D B-spline modulus values, one per Miller index. Same dtype as
+        ``miller_indices``.
     """
     # sinc(x) for x in [-0.5, 0.5] is bounded in [2/pi, 1], so s^spline_order
     # (for orders 2-6) stays well within fp32 range. Stay in the input dtype
@@ -564,8 +581,8 @@ def _pme_convolve_backward(
     produced by a single Warp kernel that walks the k-space mesh once.
     See the kernel docstring in ``pme_kernels.py`` for the analytical
     derivatives. ``grad_k_squared`` is required because the Green's
-    function uses k² (which itself depends on cell via the reciprocal
-    lattice) and the per-cell gradient chain needs to flow through k².
+    function uses :math:`k^2` (which itself depends on cell via the reciprocal
+    lattice) and the per-cell gradient chain needs to flow through :math:`k^2`.
 
     Layout: ``alpha`` and ``volume`` may be scalar (0-d) or shape ``(1,)``
     for single-system; shape ``(B,)`` for batch. Grad shape matches input.
@@ -707,7 +724,7 @@ def _pme_convolve_double_backward(
     ``grad_mesh_fft_out`` (dL/dmesh_fft) and ``grad_grad_convolved``
     (dL/dgrad_convolved) carry the force-loss second order. The ``k_squared`` /
     ``alpha`` / ``volume`` second-order grads carry the cell/stress second order
-    (k² and V are functions of the cell; PyTorch maps them → cell outside this
+    (:math:`k^2` and V are functions of the cell; PyTorch maps them to cell outside this
     op).
     """
     from nvalchemiops.interactions.electrostatics.pme_kernels import (
@@ -1573,17 +1590,25 @@ def pme_energy_corrections_with_charge_grad(
     """Apply corrections and compute charge gradients for PME energies.
 
     Computes both corrected energies and analytical charge gradients:
-        E_i = q_i * φ_i - E_self_i - E_background_i
-        ∂E/∂q_i = 2*φ_i - 2*(α/√π)*q_i - (π/(α²V))*Q_total
 
-    The factor of 2 on φ_i arises because changing q_i affects both the
-    direct energy term (q_i * φ_i) and all other potentials through the
-    structure factor (∑_j q_j * ∂φ_j/∂q_i = φ_i).
+    .. math::
+
+        E_i = q_i \\phi_i - E_{\\text{self},i} - E_{\\text{background},i}
+
+    .. math::
+
+        \\frac{\\partial E}{\\partial q_i} = 2\\phi_i - \\frac{2\\alpha}{\\sqrt{\\pi}} q_i
+        - \\frac{\\pi}{\\alpha^2 V} Q_{\\text{total}}
+
+    The factor of 2 on :math:`\\phi_i` arises because changing :math:`q_i` affects
+    both the direct energy term :math:`q_i \\phi_i` and all other potentials through
+    the structure factor
+    :math:`\\sum_j q_j \\, \\partial\\phi_j/\\partial q_i = \\phi_i`.
 
     Parameters
     ----------
     raw_energies : torch.Tensor, shape (N,) or (N_total,)
-        Raw potential values φ_i from mesh interpolation.
+        Raw potential values :math:`\\phi_i` from mesh interpolation.
     charges : torch.Tensor, shape (N,) or (N_total,)
         Atomic charges.
     cell : torch.Tensor
@@ -1602,7 +1627,7 @@ def pme_energy_corrections_with_charge_grad(
     corrected_energies : torch.Tensor, shape (N,) or (N_total,)
         Final per-atom reciprocal-space energy with corrections applied.
     charge_gradients : torch.Tensor, shape (N,) or (N_total,)
-        Analytical charge gradients ∂E/∂q_i.
+        Analytical charge gradients :math:`\\partial E/\\partial q_i`.
     """
     ensure_electrostatics_ops_registered()
     input_dtype = raw_energies.dtype
@@ -1890,7 +1915,7 @@ def _compute_pme_reciprocal_virial(
     device: torch.device,
     dtype: torch.dtype,
 ) -> torch.Tensor:
-    """Compute PME reciprocal-space virial tensor in k-space.
+    r"""Compute PME reciprocal-space virial tensor in k-space.
 
     Uses the exact spectral pair from the pipeline (mesh_fft_raw before
     deconvolution, and convolved_mesh after Green's function multiplication)
@@ -1899,7 +1924,7 @@ def _compute_pme_reciprocal_virial(
     The virial per k-point is W_ab(k) = E_k * sigma_ab(k) where:
     - E_k = prefactor * weight(k) * Re(mesh_fft_raw(k) * convolved_mesh(k)*)
     - sigma_ab(k) = delta_ab - 2*k_a*k_b/k^2 * (1 + k^2/(4*alpha^2))
-    (sign reflects W = -dE/dε convention)
+    (sign reflects :math:`W = -dE/d\varepsilon` convention)
 
     Parameters
     ----------
@@ -2902,7 +2927,7 @@ def pme_reciprocal_space(
     """Compute PME reciprocal-space energy and optionally forces and/or charge gradients.
 
     Performs the FFT-based reciprocal-space calculation using the Particle Mesh
-    Ewald algorithm. This achieves O(N log N) scaling through:
+    Ewald algorithm. This achieves :math:`O(N \\log N)` scaling through:
 
     1. B-spline charge interpolation to mesh (spreading)
     2. FFT of charge mesh to reciprocal space
@@ -2937,8 +2962,8 @@ def pme_reciprocal_space(
         automatically promoted to (1, 3, 3).
     alpha : float or torch.Tensor
         Ewald splitting parameter controlling real/reciprocal space balance.
-        - float: Same α for all systems
-        - Tensor shape (B,): Per-system α values
+        - float: Same :math:`\\alpha` for all systems
+        - Tensor shape (B,): Per-system :math:`\\alpha` values
     mesh_dimensions : tuple[int, int, int], optional
         Explicit FFT mesh dimensions (nx, ny, nz). Power-of-2 values are
         optimal for FFT performance. Either mesh_dimensions or mesh_spacing
@@ -2952,7 +2977,7 @@ def pme_reciprocal_space(
         B-spline interpolation order. Higher orders are more accurate but slower.
         - 4: Cubic B-splines (good balance, most common)
         - 5-6: Higher accuracy for demanding applications
-        - Must be ≥ 3 for smooth interpolation
+        - Must be >= 3 for smooth interpolation
     batch_idx : torch.Tensor, shape (N,), dtype=int32, optional
         System index for each atom (0 to B-1). Determines kernel dispatch:
         - None: Single-system optimized kernels
@@ -2974,8 +2999,8 @@ def pme_reciprocal_space(
         direct output is kept for no-autograd MD/inference use; use energy
         autograd for differentiable training.
     compute_charge_gradients : bool, default=False
-        Whether to compute explicit component charge gradients ∂E/∂q_i. This
-        direct output follows the same no-autograd contract as
+        Whether to compute explicit component charge gradients :math:`\\partial E/\\partial q_i`.
+        This direct output follows the same no-autograd contract as
         ``compute_forces``.
     compute_virial : bool, default=False
         Whether to compute the component virial tensor
@@ -2994,7 +3019,7 @@ def pme_reciprocal_space(
     forces : torch.Tensor, shape (N, 3), optional
         Direct reciprocal-space forces. Only returned if compute_forces=True.
     charge_gradients : torch.Tensor, shape (N,), optional
-        Direct charge gradients ∂E_recip/∂q_i. Only returned if compute_charge_gradients=True.
+        Direct charge gradients :math:`\\partial E_{\\text{recip}}/\\partial q_i`. Only returned if compute_charge_gradients=True.
     virial : torch.Tensor, shape (1, 3, 3) or (B, 3, 3), optional
         Virial tensor. Only returned if compute_virial=True. Always last in tuple.
 
@@ -3008,8 +3033,10 @@ def pme_reciprocal_space(
     static setup state that corresponds to the current ``cell``.
 
     When ``charges`` is a non-leaf tensor that may depend on ``positions``
-    (q = q(R)), ordinary first-order losses may use cached partial derivatives
-    and let PyTorch apply dE/dq * dq/dR once. Weighted losses and higher-order
+    (:math:`q = q(R)`), ordinary first-order losses may use cached partial
+    derivatives and let PyTorch apply
+    :math:`\\partial E/\\partial q \\cdot \\mathrm{d}q/\\mathrm{d}R` once.
+    Weighted losses and higher-order
     derivatives recompute safe partials or connected gradients as needed to
     avoid double-counting that chain term (issue #115).
 
@@ -3290,10 +3317,13 @@ def particle_mesh_ewald(
 
     .. math::
 
-        E_{\\text{real}} = \\frac{1}{2} \\sum_{i \\neq j} q_i q_j \\frac{\\text{erfc}(\\alpha r_{ij})}{r_{ij}}
-        E_{\\text{reciprocal}} = FFT-based smooth long-range contribution
-        E_{\\text{self}} = \\sum_i \\frac{\\alpha}{\\sqrt{\\pi}} q_i^2
-        E_{\\text{background}} = \\frac{\\pi}{2\\alpha^2 V} Q_{\\text{total}}^2
+        \\begin{aligned}
+        E_{\\text{real}} &= \\frac{1}{2} \\sum_{i \\neq j} q_i q_j
+            \\frac{\\operatorname{erfc}(\\alpha r_{ij})}{r_{ij}} \\\\
+        E_{\\text{reciprocal}} &= \\text{FFT-based smooth long-range contribution} \\\\
+        E_{\\text{self}} &= \\sum_i \\frac{\\alpha}{\\sqrt{\\pi}} q_i^2 \\\\
+        E_{\\text{background}} &= \\frac{\\pi}{2\\alpha^2 V} Q_{\\text{total}}^2
+        \\end{aligned}
 
     Parameters
     ----------
@@ -3306,10 +3336,10 @@ def particle_mesh_ewald(
         automatically promoted to (1, 3, 3) for single-system mode.
     alpha : float, torch.Tensor, or None, default=None
         Ewald splitting parameter controlling real/reciprocal space balance.
-        - float: Same α for all systems
-        - Tensor shape (B,): Per-system α values
+        - float: Same :math:`\\alpha` for all systems
+        - Tensor shape (B,): Per-system :math:`\\alpha` values
         - None: Automatically estimated using Kolafa-Perram formula
-        Larger α shifts more computation to reciprocal space.
+        Larger :math:`\\alpha` shifts more computation to reciprocal space.
     mesh_spacing : float, optional
         Target mesh spacing in same units as cell (typically Å). Mesh dimensions
         computed as ceil(cell_length / mesh_spacing). Typical value: 0.8-1.2 Å.
@@ -3373,17 +3403,20 @@ def particle_mesh_ewald(
     mask_value : int, optional
         Value indicating invalid entries in neighbor_matrix. Defaults to N.
     compute_forces : bool, default=False
-        Deprecated direct-output flag. Compute energy and use
-        ``torch.autograd.grad`` for differentiable forces.
+        .. deprecated:: 0.4.0
+            Deprecated direct-output flag. Compute energy and use
+            ``torch.autograd.grad`` for differentiable forces.
     compute_charge_gradients : bool, default=False
-        Deprecated direct-output flag. Compute energy and use
-        ``torch.autograd.grad`` for ``dE/dq_i``.
+        .. deprecated:: 0.4.0
+            Deprecated direct-output flag. Compute energy and use
+            ``torch.autograd.grad`` for :math:`\\partial E/\\partial q_i`.
     compute_virial : bool, default=False
-        Deprecated direct-output flag for the virial tensor
-        ``W = -dE/d(displacement)``.
-        Stress = -virial / volume.
+        .. deprecated:: 0.4.0
+            Deprecated direct-output flag for the virial tensor
+            ``W = -dE/d(displacement)``.
+            Stress = -virial / volume.
     accuracy : float, default=1e-6
-        Target relative accuracy for automatic parameter estimation (α, mesh dims).
+        Target relative accuracy for automatic parameter estimation (:math:`\\alpha`, mesh dims).
         Only used when alpha or mesh_dimensions is None.
         Smaller values increase accuracy but also computational cost.
     hybrid_forces : bool, default=False
@@ -3407,9 +3440,11 @@ def particle_mesh_ewald(
     energies : torch.Tensor, shape (N,)
         Per-atom contribution to total PME energy. Sum gives total energy.
     forces : torch.Tensor, shape (N, 3), optional
-        Deprecated direct forces. Only returned if compute_forces=True.
+        .. deprecated:: 0.4.0
+            Deprecated direct forces. Only returned if compute_forces=True.
     charge_gradients : torch.Tensor, shape (N,), optional
-        Deprecated direct charge gradients ∂E/∂q_i. Only returned if compute_charge_gradients=True.
+        .. deprecated:: 0.4.0
+            Deprecated direct charge gradients :math:`\\partial E/\\partial q_i`. Only returned if compute_charge_gradients=True.
     virial : torch.Tensor, shape (1, 3, 3) or (B, 3, 3), optional
         Virial tensor. Only returned if compute_virial=True. Always last in tuple.
 
@@ -3423,8 +3458,10 @@ def particle_mesh_ewald(
     static setup state that corresponds to the current ``cell``.
 
     When ``charges`` is a non-leaf tensor that may depend on ``positions``
-    (q = q(R)), ordinary first-order losses may use cached partial derivatives
-    and let PyTorch apply dE/dq * dq/dR once. Weighted losses and higher-order
+    (:math:`q = q(R)`), ordinary first-order losses may use cached partial
+    derivatives and let PyTorch apply
+    :math:`\\partial E/\\partial q \\cdot \\mathrm{d}q/\\mathrm{d}R` once.
+    Weighted losses and higher-order
     derivatives recompute safe partials or connected gradients as needed to
     avoid double-counting that chain term (issue #115).
 
@@ -3471,7 +3508,7 @@ def particle_mesh_ewald(
     Batched systems (multiple independent structures)::
 
         >>> # positions: concatenated atoms from all systems
-        >>> # batch_idx: [0,0,0,0, 1,1,1,1, 2,2,2,2] for 4 atoms × 3 systems
+        >>> # batch_idx: [0,0,0,0, 1,1,1,1, 2,2,2,2] for 4 atoms x 3 systems
         >>> energies = particle_mesh_ewald(
         ...     positions, charges, cells,  # cells shape (3, 3, 3)
         ...     alpha=torch.tensor([0.3, 0.35, 0.3]),

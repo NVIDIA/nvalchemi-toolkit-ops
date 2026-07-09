@@ -21,7 +21,25 @@ import warp as wp
 
 
 def get_wp_dtype(dtype: torch.dtype):
-    """Get the warp dtype for a given torch dtype."""
+    """Get the Warp scalar dtype corresponding to a PyTorch dtype.
+
+    Parameters
+    ----------
+    dtype : torch.dtype
+        PyTorch floating-point dtype. Supported values: ``torch.float32``,
+        ``torch.float64``, ``torch.float16``.
+
+    Returns
+    -------
+    wp.type
+        Corresponding Warp scalar dtype (``wp.float32``, ``wp.float64``, or
+        ``wp.float16``).
+
+    Raises
+    ------
+    ValueError
+        If ``dtype`` is not one of the supported floating-point dtypes.
+    """
     if dtype == torch.float32:
         return wp.float32
     elif dtype == torch.float64:
@@ -33,7 +51,25 @@ def get_wp_dtype(dtype: torch.dtype):
 
 
 def get_wp_vec_dtype(dtype: torch.dtype):
-    """Get the warp vec dtype for a given torch dtype."""
+    """Get the Warp 3-vector dtype corresponding to a PyTorch dtype.
+
+    Parameters
+    ----------
+    dtype : torch.dtype
+        PyTorch floating-point dtype. Supported values: ``torch.float32``,
+        ``torch.float64``, ``torch.float16``.
+
+    Returns
+    -------
+    wp.type
+        Corresponding Warp vec3 dtype (``wp.vec3f``, ``wp.vec3d``, or
+        ``wp.vec3h``).
+
+    Raises
+    ------
+    ValueError
+        If ``dtype`` is not one of the supported floating-point dtypes.
+    """
     if dtype == torch.float32:
         return wp.vec3f
     elif dtype == torch.float64:
@@ -45,7 +81,25 @@ def get_wp_vec_dtype(dtype: torch.dtype):
 
 
 def get_wp_mat_dtype(dtype: torch.dtype):
-    """Get the warp mat dtype for a given torch dtype."""
+    """Get the Warp 3x3 matrix dtype corresponding to a PyTorch dtype.
+
+    Parameters
+    ----------
+    dtype : torch.dtype
+        PyTorch floating-point dtype. Supported values: ``torch.float32``,
+        ``torch.float64``, ``torch.float16``.
+
+    Returns
+    -------
+    wp.type
+        Corresponding Warp mat33 dtype (``wp.mat33f``, ``wp.mat33d``, or
+        ``wp.mat33h``).
+
+    Raises
+    ------
+    ValueError
+        If ``dtype`` is not one of the supported floating-point dtypes.
+    """
     if dtype == torch.float32:
         return wp.mat33f
     elif dtype == torch.float64:

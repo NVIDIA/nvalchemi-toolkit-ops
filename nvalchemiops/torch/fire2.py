@@ -13,12 +13,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
+r"""
 PyTorch Adapter for FIRE2 Optimizer
 ====================================
 
 Thin wrapper that accepts PyTorch tensors, allocates scratch buffers via
 PyTorch's CUDA caching allocator, and calls the pure-Warp FIRE2 kernels.
+
+Every entry point runs the FIRE2 scheme of Guenole et al. (2020): the
+leapfrog half-step is deferred into the reduction, so the per-system power is
+measured on the post-kick velocity and the half-step is fused into the mixing:
+
+.. math::
+
+    P = \sum_i (\mathbf{v}_i + \Delta t\,\mathbf{F}_i) \cdot \mathbf{F}_i,\qquad
+    \mathbf{v} = (1-\alpha)\,\mathbf{v}
+        + \left[(1-\alpha)\,\Delta t
+        + \alpha\sqrt{\tfrac{\mathbf{v}\cdot\mathbf{v}}
+        {\mathbf{F}\cdot\mathbf{F}}}\right]\mathbf{F}
+
+The displacement is :math:`\Delta\mathbf{r} = \Delta t\,\mathbf{v}` downhill and
+:math:`-\tfrac{1}{2}\Delta t\,\mathbf{v}` uphill (:math:`P \le 0`, velocity then
+zeroed), clamped by :math:`\min(1, \text{maxstep}/\lVert\Delta\mathbf{r}\rVert)`
+per system with :math:`\Delta t` scaled by the same factor.
 
 Entry points:
 
@@ -324,10 +341,28 @@ def fire2_step_coord(
     maxstep: float = 0.1,
     compute_reductions: bool = True,
 ) -> None:
-    """FIRE2 coordinate-only optimization step.
+    r"""FIRE2 coordinate-only optimization step.
 
     Converts PyTorch tensors to Warp arrays (zero-copy) and delegates to
     the pure-Warp :func:`~nvalchemiops.dynamics.optimizers.fire2.fire2_step`.
+
+    The deferred half-step is folded into the reduction, so the per-system
+    power is measured on the post-kick velocity, and the mixing fuses that
+    half-step with the FIRE2 rule:
+
+    .. math::
+
+        P = \sum_i (\mathbf{v}_i + \Delta t\,\mathbf{F}_i) \cdot \mathbf{F}_i,\qquad
+        \mathbf{v} = (1-\alpha)\,\mathbf{v}
+            + \left[(1-\alpha)\,\Delta t
+            + \alpha\sqrt{\tfrac{\mathbf{v}\cdot\mathbf{v}}
+            {\mathbf{F}\cdot\mathbf{F}}}\right]\mathbf{F}
+
+    The displacement is :math:`\Delta\mathbf{r} = \Delta t\,\mathbf{v}` downhill
+    and :math:`-\tfrac{1}{2}\Delta t\,\mathbf{v}` uphill (:math:`P \le 0`,
+    velocity then zeroed), capped by
+    :math:`\min(1, \text{maxstep}/\lVert\Delta\mathbf{r}\rVert)` per system with
+    :math:`\Delta t` scaled by the same factor.
 
     Modifies *positions*, *velocities*, *alpha*, *dt*, and *nsteps_inc*
     in-place.
@@ -485,7 +520,7 @@ def fire2_step_coord_cell(
     cell_force_scale: float = 1.0,
     compute_reductions: bool = True,
 ) -> None:
-    """FIRE2 variable-cell optimization step.
+    r"""FIRE2 variable-cell optimization step.
 
     Performs a FIRE2 step on both atomic coordinates and cell degrees of
     freedom. Internally packs atomic + cell velocity/force DOFs into an
@@ -494,6 +529,29 @@ def fire2_step_coord_cell(
     DOFs, unpacks the mixed velocities, and then applies the physically
     coupled atomic/cell update directly on the caller's coordinate and cell
     tensors.
+
+    FIRE2 runs on the generalized DOF vectors :math:`\mathbf{v}`,
+    :math:`\mathbf{F}` that stack the atomic velocities/forces and the (scaled)
+    cell velocity/force rows. The power and mixing are taken over those
+    generalized DOFs:
+
+    .. math::
+
+        P = \sum_i (\mathbf{v}_i + \Delta t\,\mathbf{F}_i) \cdot \mathbf{F}_i,\qquad
+        \mathbf{v} = (1-\alpha)\,\mathbf{v}
+            + \left[(1-\alpha)\,\Delta t
+            + \alpha\sqrt{\tfrac{\mathbf{v}\cdot\mathbf{v}}
+            {\mathbf{F}\cdot\mathbf{F}}}\right]\mathbf{F}
+
+    where :math:`\mathbf{v}\cdot\mathbf{v}` and :math:`\mathbf{F}\cdot\mathbf{F}`
+    sum over each system's atomic and cell DOFs. The mixed generalized velocity
+    is then applied as a coupled atomic/cell position update: cell DOFs deform
+    the cell while atoms follow the affine cell remap plus their own coordinate
+    motion. The resulting Cartesian atomic displacement is capped by
+    :math:`\min(1, \text{maxstep}/\lVert\Delta\mathbf{r}\rVert)` per system
+    (uphill systems, :math:`P \le 0`, take the :math:`-\tfrac{1}{2}\Delta t`
+    correction and zero their velocities), with :math:`\Delta t` scaled by the
+    same factor.
 
     The cell must be pre-aligned to upper-triangular form via
     :func:`nvalchemiops.dynamics.utils.cell_filter.align_cell` before
@@ -780,12 +838,24 @@ def fire2_step_coord_cell_mix(
     cell_force_scale: float = 1.0,
     compute_reductions: bool = True,
 ) -> None:
-    """Phase 1 of the coupled variable-cell FIRE2 step: reduce + mix only.
+    r"""Phase 1 of the coupled variable-cell FIRE2 step: reduce + mix only.
 
     Packs atomic + cell DOFs, runs the FIRE2 reduction (gated by
     ``compute_reductions``) and velocity mixing on the generalized DOFs, and
     unpacks the mixed velocities back into ``velocities`` / ``cell_velocities``.
-    Updates ``alpha``, ``dt``, ``nsteps_inc`` in-place. It does **not** apply the
+    Updates ``alpha``, ``dt``, ``nsteps_inc`` in-place.
+
+    The reduction and mixing run over the generalized (atomic + cell) DOFs:
+
+    .. math::
+
+        P = \sum_i (\mathbf{v}_i + \Delta t\,\mathbf{F}_i) \cdot \mathbf{F}_i,\qquad
+        \mathbf{v} = (1-\alpha)\,\mathbf{v}
+            + \left[(1-\alpha)\,\Delta t
+            + \alpha\sqrt{\tfrac{\mathbf{v}\cdot\mathbf{v}}
+            {\mathbf{F}\cdot\mathbf{F}}}\right]\mathbf{F}
+
+    It does **not** apply the
     position/cell step — pair it with :func:`fire2_step_coord_cell_couple` and
     :func:`fire2_step_coord_cell_apply` so the displacement clamp can use a
     ``max_norm`` post-processed between the couple and apply phases.
@@ -839,13 +909,47 @@ def fire2_step_coord_cell_couple(
     ext_atom_ptr: torch.Tensor | None = None,
     ext_batch_idx: torch.Tensor | None = None,
 ) -> None:
-    """Phase 2 of the coupled variable-cell FIRE2 step: measure ``max_norm``.
+    r"""Phase 2 of the coupled variable-cell FIRE2 step: measure ``max_norm``.
 
     Recomputes each atom's cell-coupled step from the mixed velocities (output
     of :func:`fire2_step_coord_cell_mix`) and writes the per-system maximum
-    physical Cartesian displacement norm into ``max_norm`` (zeroed first).
+    physical Cartesian displacement norm into ``max_norm`` (zeroed first):
+
+    .. math::
+
+        \text{max\_norm}[s] = \max_{i \in s} \lVert \Delta\mathbf{r}_i \rVert,
+
+    where :math:`\Delta\mathbf{r}_i = \Delta t\,\mathbf{v}_i` downhill and
+    :math:`-\tfrac{1}{2}\Delta t\,\mathbf{v}_i` uphill (:math:`vf[s] \le 0`), each
+    the coupled Cartesian atomic displacement including the affine cell remap.
     Positions and cell are **not** moved, so a caller can post-process
     ``max_norm`` before :func:`fire2_step_coord_cell_apply`.
+
+    Parameters
+    ----------
+    positions : torch.Tensor, shape (N, 3), dtype float32/float64
+        Atomic positions (read-only).
+    velocities : torch.Tensor, shape (N, 3), dtype float32/float64
+        Atomic velocities after the mix phase (read-only).
+    cell : torch.Tensor, shape (M, 3, 3), dtype float32/float64
+        Cell matrices (read-only).
+    cell_velocities : torch.Tensor, shape (M, 3, 3), dtype float32/float64
+        Cell velocity matrices after the mix phase (read-only).
+    dt : torch.Tensor, shape (M,), dtype float32/float64
+        Per-system timestep.
+    vf : torch.Tensor, shape (M,), dtype float32/float64
+        Per-system velocity-force dot product from the mix phase (read-only).
+    batch_idx : torch.Tensor, shape (N,), dtype int32
+        Sorted system index per atom.
+    max_norm : torch.Tensor, shape (M,), dtype float32/float64
+        Output buffer: zeroed then filled with the per-system maximum physical
+        Cartesian displacement norm. Modified in-place.
+    atom_ptr : torch.Tensor, shape (M+1,), dtype int32, optional
+        CSR-style atom pointers. Computed from *batch_idx* if ``None``.
+    ext_atom_ptr : torch.Tensor, shape (M+1,), dtype int32, optional
+        Extended atom pointers (2 cell DOFs per system). Computed if ``None``.
+    ext_batch_idx : torch.Tensor, shape (N+2M,), dtype int32, optional
+        System index for each element of the extended layout. Computed if ``None``.
     """
     device = positions.device
     M = dt.shape[0]
@@ -893,13 +997,54 @@ def fire2_step_coord_cell_apply(
     ext_atom_ptr: torch.Tensor | None = None,
     ext_batch_idx: torch.Tensor | None = None,
 ) -> None:
-    """Phase 3 of the coupled variable-cell FIRE2 step: clamp + apply.
+    r"""Phase 3 of the coupled variable-cell FIRE2 step: clamp + apply.
 
     Recomputes the same cell-coupled step as
     :func:`fire2_step_coord_cell_couple`, clamps it by
-    ``min(1, maxstep / max_norm[s])`` using the supplied ``max_norm``, and writes
+    :math:`\min(1, \text{maxstep}/\text{max\_norm}[s])` using the supplied
+    ``max_norm``, and applies
+
+    .. math::
+
+        \mathbf{r} \leftarrow \mathbf{r}
+            + \min\!\left(1, \tfrac{\text{maxstep}}{\text{max\_norm}[s]}\right)
+            \Delta\mathbf{r},
+
+    with :math:`\Delta\mathbf{r} = \Delta t\,\mathbf{v}` downhill and
+    :math:`-\tfrac{1}{2}\Delta t\,\mathbf{v}` uphill (:math:`vf[s] \le 0`). Writes
     ``positions``, ``cell``, ``cell_velocities`` (uphill zeroing), and the clamped
     ``dt`` in-place.
+
+    Parameters
+    ----------
+    positions : torch.Tensor, shape (N, 3), dtype float32/float64
+        Atomic positions. Modified in-place.
+    velocities : torch.Tensor, shape (N, 3), dtype float32/float64
+        Atomic velocities after the mix phase (read-only; cell_velocities are
+        zeroed for uphill systems by the underlying Warp kernel).
+    cell : torch.Tensor, shape (M, 3, 3), dtype float32/float64
+        Cell matrices. Modified in-place.
+    cell_velocities : torch.Tensor, shape (M, 3, 3), dtype float32/float64
+        Cell velocity matrices. Modified in-place (zeroed for uphill systems).
+    dt : torch.Tensor, shape (M,), dtype float32/float64
+        Per-system timestep. Modified in-place (shrunk when step is clamped).
+    vf : torch.Tensor, shape (M,), dtype float32/float64
+        Per-system velocity-force dot product from the mix phase (read-only).
+    batch_idx : torch.Tensor, shape (N,), dtype int32
+        Sorted system index per atom.
+    max_norm : torch.Tensor, shape (M,), dtype float32/float64
+        Per-system maximum physical Cartesian displacement norm, as computed by
+        :func:`fire2_step_coord_cell_couple` (possibly post-processed by the
+        caller). Read-only.
+    maxstep : float, default 0.1
+        Maximum allowed displacement per atom. Steps larger than this are
+        rescaled by ``maxstep / max_norm[s]``.
+    atom_ptr : torch.Tensor, shape (M+1,), dtype int32, optional
+        CSR-style atom pointers. Computed from *batch_idx* if ``None``.
+    ext_atom_ptr : torch.Tensor, shape (M+1,), dtype int32, optional
+        Extended atom pointers (2 cell DOFs per system). Computed if ``None``.
+    ext_batch_idx : torch.Tensor, shape (N+2M,), dtype int32, optional
+        System index for each element of the extended layout. Computed if ``None``.
     """
     device = positions.device
     M = dt.shape[0]
@@ -952,7 +1097,17 @@ def fire2_compute_extended_reductions(
     tuple[torch.Tensor, torch.Tensor, torch.Tensor],
     tuple[torch.Tensor, torch.Tensor, torch.Tensor],
 ]:
-    """Split the variable-cell FIRE2 reductions into atom and cell parts.
+    r"""Split the variable-cell FIRE2 reductions into atom and cell parts.
+
+    Computes the FIRE2 generalized-DOF reductions over the extended (atomic +
+    cell) degrees of freedom, using the same deferred :math:`\mathbf{v} +
+    \Delta t\,\mathbf{F}` half-step:
+
+    .. math::
+
+        \sum_i (\mathbf{v}_i + \Delta t\,\mathbf{F}_i) \cdot \mathbf{F}_i,\qquad
+        \sum_i \lVert \mathbf{v}_i + \Delta t\,\mathbf{F}_i \rVert^2,\qquad
+        \sum_i \mathbf{F}_i \cdot \mathbf{F}_i
 
     Returns ``(atom_partial, cell_term)``, each a ``(vf, v_sumsq, f_sumsq)``
     triple of ``(M,)`` tensors, such that ``atom_partial + cell_term`` equals the
@@ -967,6 +1122,54 @@ def fire2_compute_extended_reductions(
 
     Uses the same ``v + f*dt`` half-step as the internal reduction, so the
     combined result is bit-parity with recomputing it in one pass.
+
+    Parameters
+    ----------
+    positions : torch.Tensor, shape (N, 3), dtype float32/float64
+        Atomic positions (read-only; used only to determine N and dtype).
+    velocities : torch.Tensor, shape (N, 3), dtype float32/float64
+        Atomic velocities (read-only).
+    forces : torch.Tensor, shape (N, 3), dtype float32/float64
+        Forces on atoms (read-only).
+    cell : torch.Tensor, shape (M, 3, 3), dtype float32/float64
+        Cell matrices (read-only; used only to determine M).
+    cell_velocities : torch.Tensor, shape (M, 3, 3), dtype float32/float64
+        Cell velocity matrices (read-only).
+    cell_force : torch.Tensor, shape (M, 3, 3), dtype float32/float64
+        Raw cell force matrices (read-only). Divided by
+        ``atoms_per_system * cell_force_scale`` before packing.
+    batch_idx : torch.Tensor, shape (N,), dtype int32
+        Sorted system index per atom.
+    dt : torch.Tensor, shape (M,), dtype float32/float64
+        Per-system timestep used for the ``v + f*dt`` half-step projection.
+    atom_ptr : torch.Tensor, shape (M+1,), dtype int32, optional
+        CSR-style atom pointers. Computed from *batch_idx* if ``None``.
+    ext_atom_ptr : torch.Tensor, shape (M+1,), dtype int32, optional
+        Extended atom pointers (2 cell DOFs per system). Computed if ``None``.
+    ext_velocities : torch.Tensor, shape (N+2M, 3), optional
+        Scratch buffer for the packed extended velocity array. Allocated if ``None``.
+    ext_forces : torch.Tensor, shape (N+2M, 3), optional
+        Scratch buffer for the packed extended force array. Allocated if ``None``.
+    ext_batch_idx : torch.Tensor, shape (N+2M,), dtype int32, optional
+        System index for each element of the extended layout. Computed if ``None``.
+    cell_force_scale : float, default 1.0
+        Extra positive multiplier for cell-force normalization; cell forces are
+        divided by ``atoms_per_system * cell_force_scale``.
+
+    Returns
+    -------
+    atom_partial : tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        ``(vf, v_sumsq, f_sumsq)`` reduction contributions from the atom DOFs
+        only, each of shape ``(M,)``. Sum across a caller-side partition before
+        combining with *cell_term*.
+    cell_term : tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        ``(vf, v_sumsq, f_sumsq)`` reduction contributions from the cell DOFs
+        only, each of shape ``(M,)``. Replicated — add exactly once regardless
+        of the partition scheme.
+
+    See Also
+    --------
+    :func:`nvalchemiops.torch.fire2.fire2_step_coord_cell_mix` : Runs the mix phase with caller-supplied reductions.
     """
     dtype = positions.dtype
     device = positions.device
@@ -1098,12 +1301,29 @@ def fire2_step_extended(
     tmin: float = 0.005,
     maxstep: float = 0.1,
 ) -> None:
-    """Run FIRE2 directly on pre-packed extended arrays (no pack/unpack).
+    r"""Run FIRE2 directly on pre-packed extended arrays (no pack/unpack).
 
     This is a lower-level API for callers that maintain persistent extended
     arrays (positions + cell DOFs interleaved).  The caller is responsible
     for packing data into the extended layout before the first call and
     unpacking results after the last call (or as needed).
+
+    Runs the standard FIRE2 scheme directly on the packed generalized DOFs
+    :math:`\mathbf{v}`, :math:`\mathbf{F}`:
+
+    .. math::
+
+        P = \sum_i (\mathbf{v}_i + \Delta t\,\mathbf{F}_i) \cdot \mathbf{F}_i,\qquad
+        \mathbf{v} = (1-\alpha)\,\mathbf{v}
+            + \left[(1-\alpha)\,\Delta t
+            + \alpha\sqrt{\tfrac{\mathbf{v}\cdot\mathbf{v}}
+            {\mathbf{F}\cdot\mathbf{F}}}\right]\mathbf{F}
+
+    with displacement :math:`\Delta\mathbf{r} = \Delta t\,\mathbf{v}` downhill and
+    :math:`-\tfrac{1}{2}\Delta t\,\mathbf{v}` uphill (:math:`P \le 0`, velocity
+    then zeroed), capped by
+    :math:`\min(1, \text{maxstep}/\lVert\Delta\mathbf{r}\rVert)` per system with
+    :math:`\Delta t` scaled by the same factor.
 
     This eliminates the per-step pack/unpack overhead that
     ``fire2_step_coord_cell`` incurs.

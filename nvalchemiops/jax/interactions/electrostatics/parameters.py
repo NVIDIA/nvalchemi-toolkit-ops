@@ -161,23 +161,25 @@ def estimate_pme_mesh_dimensions(
     accuracy: float = 1e-6,
     mesh_safety_factor: float = 1.0,
 ) -> tuple[int, int, int]:
-    """Estimate PME mesh dimensions for a given accuracy.
+    r"""Estimate PME mesh dimensions for a given accuracy.
 
     The mesh size along each axis is chosen as
 
-        K_i = ceil(mesh_safety_factor · 2 α L_i / (3 ε^{1/5}))
+    .. math::
+
+        K_i = \lceil \text{mesh\_safety\_factor} \cdot 2 \alpha L_i / (3 \varepsilon^{1/5}) \rceil
 
     rounded up to the next power of 2. The fifth-root scaling
-    ``ε^{1/5}`` is the standard heuristic used by production PME
-    codes; it grows the safety margin faster than ``√(-ln ε)`` as
-    ``ε`` tightens, which is empirically necessary to cover both the
+    :math:`\varepsilon^{1/5}` is the standard heuristic used by production PME
+    codes; it grows the safety margin faster than :math:`\sqrt{-\ln \varepsilon}` as
+    :math:`\varepsilon` tightens, which is empirically necessary to cover both the
     Gaussian-decay truncation and the B-spline aliasing error at the
     accuracies typically requested (1e-3 to 1e-6) across a wide
-    ``(α, L, spline_order)`` envelope.
+    :math:`(\alpha, L, \text{spline\_order})` envelope.
 
-    The canonical Essmann lower bound ``2 α L √(-ln ε) / π`` is the
-    Gaussian-decay term only; it can under-allocate by 2-4× at low
-    α (large rc), where the B-spline aliasing term dominates.
+    The canonical Essmann lower bound :math:`2 \alpha L \sqrt{-\ln \varepsilon} / \pi` is the
+    Gaussian-decay term only; it can under-allocate by 2-4x at low
+    :math:`\alpha` (large rc), where the B-spline aliasing term dominates.
 
     Parameters
     ----------
@@ -193,7 +195,7 @@ def estimate_pme_mesh_dimensions(
         configurations covered by the convergence script. Raise for
         extra paranoia at tight accuracy. **Lower at your own risk:**
         values below 1.0 can fail the accuracy guarantee on
-        low-α / large-L systems (verify with the convergence script
+        low-:math:`\alpha` / large-L systems (verify with the convergence script
         before using).
 
     Returns
@@ -229,11 +231,11 @@ def estimate_pme_parameters(
     real_space_cutoff: float | None = None,
     mesh_safety_factor: float = 1.0,
 ) -> PMEParameters:
-    """Estimate PME parameters for a given accuracy.
+    r"""Estimate PME parameters for a given accuracy.
 
     Uses the closed-form Essmann/Kolafa-Perram derivation: a single
-    length scale ``η = (V² / N)^{1/6} / √(2π)`` determines both ``rc``
-    and ``α``. Callers who want to pin a specific cutoff (e.g. tied to
+    length scale :math:`\eta = (V^2 / N)^{1/6} / \sqrt{2\pi}` determines both ``rc``
+    and :math:`\alpha`. Callers who want to pin a specific cutoff (e.g. tied to
     neighbor-list update frequency in MD) should pass ``real_space_cutoff``.
 
     Parameters
@@ -247,11 +249,11 @@ def estimate_pme_parameters(
     accuracy : float, default=1e-6
         Target accuracy.
     real_space_cutoff : float, optional
-        Caller-supplied cutoff. When given, ``α`` is derived from it via
-        ``α = √(-log ε) / rc``; otherwise rc and α come from η.
+        Caller-supplied cutoff. When given, :math:`\alpha` is derived from it via
+        :math:`\alpha = \sqrt{-\log \varepsilon} / r_c`; otherwise rc and :math:`\alpha` come from :math:`\eta`.
     mesh_safety_factor : float, default=1.0
         Multiplier on the standard mesh-size heuristic
-        ``K = 2 α L / (3 ε^{1/5})``. Raise for extra safety at tight ε.
+        :math:`K = 2 \alpha L / (3 \varepsilon^{1/5})`. Raise for extra safety at tight :math:`\varepsilon`.
 
     Returns
     -------

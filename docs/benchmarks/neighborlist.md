@@ -19,7 +19,7 @@ Time Scaling
   timings also include launch, build/query, and output costs.
 
 Throughput
-: Atoms processed per second (plotted as 10⁶ atoms/s). Higher is better.
+: Atoms processed per second (plotted as $10^6$ atoms/s). Higher is better.
   This metric helps compare efficiency across different system sizes.
 
 Memory
@@ -143,7 +143,7 @@ Batch Scaling
            :width: 90%
            :align: center
 
-           Throughput (10⁶ atoms/s) vs. system size.
+           Throughput (:math:`10^6` atoms/s) vs. system size.
 
         .. figure:: _static/nl-cscl-system-size-scaling-memory.png
            :width: 90%
@@ -211,7 +211,7 @@ Batch Scaling
            :width: 90%
            :align: center
 
-           Throughput (10⁶ atoms/s) vs. system size (NH₃).
+           Throughput (:math:`10^6` atoms/s) vs. system size (NH₃).
 
         .. figure:: _static/nl-nh3-system-size-scaling-memory.png
            :width: 90%
@@ -294,7 +294,7 @@ periodic cells; unsupported inputs are retained as explicit policy rows.
            :width: 90%
            :align: center
 
-           Throughput (10⁶ atoms/s) vs. system size (JAX).
+           Throughput (:math:`10^6` atoms/s) vs. system size (JAX).
 
     .. tab-item:: Constant Workload
 
@@ -353,7 +353,7 @@ allocators differ.
            :width: 90%
            :align: center
 
-           Throughput (10⁶ atoms/s) vs. system size (JAX, NH₃).
+           Throughput (:math:`10^6` atoms/s) vs. system size (JAX, NH₃).
 
     .. tab-item:: Constant Workload
 

@@ -311,15 +311,16 @@ def compute_vf_vv_ff(
     velocity: Any,  # wp.vec3f or wp.vec3d
     force: Any,  # wp.vec3f or wp.vec3d
 ):
-    """Compute triple dot product for FIRE optimizer diagnostics.
+    r"""Compute triple dot product for FIRE optimizer diagnostics.
 
     Computes all three diagnostic quantities needed by FIRE:
-    - v·f: power (force-velocity alignment), indicates uphill/downhill
-    - v·v: velocity magnitude squared (kinetic energy proxy)
-    - f·f: force magnitude squared
 
-    These are used to compute the mixing ratio √(v·v / f·f) and detect
-    uphill steps (v·f < 0).
+    - :math:`v \cdot f`: power (force-velocity alignment), indicates uphill/downhill
+    - :math:`v \cdot v`: velocity magnitude squared (kinetic energy proxy)
+    - :math:`f \cdot f`: force magnitude squared
+
+    These are used to compute the mixing ratio :math:`\sqrt{v \cdot v / f \cdot f}` and detect
+    uphill steps (:math:`v \cdot f < 0`).
 
     Parameters
     ----------
@@ -331,11 +332,11 @@ def compute_vf_vv_ff(
     Returns
     -------
     vf : float32 or float64
-        Dot product v·f (power).
+        Dot product :math:`v \cdot f` (power).
     vv : float32 or float64
-        Dot product v·v (velocity magnitude squared).
+        Dot product :math:`v \cdot v` (velocity magnitude squared).
     ff : float32 or float64
-        Dot product f·f (force magnitude squared).
+        Dot product :math:`f \cdot f` (force magnitude squared).
 
     Examples
     --------
@@ -374,16 +375,20 @@ def fire_velocity_mixing(
     vv: Any,  # wp.float32 or wp.float64
     ff: Any,  # wp.float32 or wp.float64
 ) -> Any:
-    """Perform FIRE velocity mixing with zero-safety.
+    r"""Perform FIRE velocity mixing with zero-safety.
 
     Computes the core FIRE velocity update:
-        v_new = (1 - α)v + α·F·√(v·v / f·f)
+
+    .. math::
+
+        v_\text{new} = (1 - \alpha) v + \alpha F \sqrt{v \cdot v / f \cdot f}
 
     This mixes the current velocity with a force-based velocity scaled to
-    match the current speed. The mixing parameter α controls the strength
-    of the damping.
+    match the current speed. The mixing parameter :math:`\alpha` controls the
+    strength of the damping.
 
-    The function includes safety for zero-force case (√(v·v / f·f) → 0).
+    The function includes safety for zero-force case
+    (:math:`\sqrt{v \cdot v / f \cdot f} \to 0`).
 
     Parameters
     ----------
@@ -392,11 +397,11 @@ def fire_velocity_mixing(
     force : wp.vec3f or wp.vec3d
         Current force vector.
     alpha : wp.float32 or wp.float64
-        FIRE mixing parameter (0 < α ≤ 1). Typically starts at 0.1-0.25.
+        FIRE mixing parameter (:math:`0 < \alpha \leq 1`). Typically starts at 0.1-0.25.
     vv : wp.float32 or wp.float64
-        Pre-computed v·v (velocity magnitude squared).
+        Pre-computed :math:`v \cdot v` (velocity magnitude squared).
     ff : wp.float32 or wp.float64
-        Pre-computed f·f (force magnitude squared).
+        Pre-computed :math:`f \cdot f` (force magnitude squared).
 
     Returns
     -------
@@ -419,7 +424,7 @@ def fire_velocity_mixing(
 
     Notes
     -----
-    - The ratio √(v·v / f·f) normalizes forces to have the same magnitude as velocities
+    - The ratio :math:`\sqrt{v \cdot v / f \cdot f}` normalizes forces to have the same magnitude as velocities
     - If ff = 0 (no forces), returns original velocity (safe guard)
     - Used in both standard FIRE and FIRE2 variants
     - The mixing makes forces act like friction/damping rather than acceleration
@@ -446,19 +451,20 @@ def clamp_displacement(
     displacement: Any,  # wp.vec3f or wp.vec3d
     maxstep: Any,  # wp.float32 or wp.float64
 ) -> Any:
-    """Clamp vector displacement to maximum magnitude.
+    r"""Clamp vector displacement to maximum magnitude.
 
     Limits the displacement vector to a maximum length without changing
     its direction. This prevents excessively large steps in optimization
     or integration.
 
-    If ||dr|| ≤ maxstep: returns dr unchanged
-    If ||dr|| > maxstep: returns dr·(maxstep / ||dr||)
+    If :math:`\|dr\| \leq \text{maxstep}`: returns dr unchanged
+
+    If :math:`\|dr\| > \text{maxstep}`: returns :math:`dr \cdot (\text{maxstep} / \|dr\|)`
 
     Parameters
     ----------
     displacement : wp.vec3f or wp.vec3d
-        Proposed displacement vector (e.g., dt·v).
+        Proposed displacement vector (e.g., ``dt * v``).
     maxstep : wp.float32 or wp.float64
         Maximum allowed displacement magnitude.
 
@@ -492,7 +498,7 @@ def clamp_displacement(
     - FIRE uses this to limit atom movements per step
 
     Performance Note:
-        Uses wp.length() which computes sqrt(x²+y²+z²). For very small
+        Uses wp.length() which computes :math:`\sqrt{x^2+y^2+z^2}`. For very small
         displacements, the sqrt cost is minimal compared to safety benefit.
 
     See Also

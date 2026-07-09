@@ -1258,7 +1258,7 @@ def wrap_positions_single(
 
     Computes per-atom integer cell offsets and wrapped positions in a single
     GPU pass. Call this before naive PBC neighbor-list kernels to move the
-    wrapping out of the hot ishift × iatom loop.
+    wrapping out of the hot ``ishift`` x ``iatom`` loop.
 
     Parameters
     ----------
@@ -1317,7 +1317,7 @@ def wrap_positions_batch(
     Each atom uses the cell matrix of its system (indexed via batch_idx).
     Computes per-atom integer cell offsets and wrapped positions in a single
     GPU pass. Call this before batch naive PBC neighbor-list kernels to move
-    the wrapping out of the hot ishift × iatom loop.
+    the wrapping out of the hot ``ishift`` x ``iatom`` loop.
 
     Parameters
     ----------

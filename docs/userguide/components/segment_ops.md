@@ -64,7 +64,7 @@ complete public signatures.
 ## Accelerating Hot Loops with CUDA Graphs
 
 The segment-op kernels themselves are small and bandwidth-bound. For low-N
-problem sizes (≲100k elements), the wall time is dominated by **host-side
+problem sizes ($\lesssim 100\text{k}$ elements), the wall time is dominated by **host-side
 launch overhead**: Python dispatch, dtype-keyed overload lookup, parameter
 packing, and the CUDA driver's `cuLaunchKernel` call. This shows up as a
 2-3× gap between our launchers and PyTorch's fused C++ kernels at small N,

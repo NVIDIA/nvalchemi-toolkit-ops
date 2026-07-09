@@ -46,7 +46,26 @@ from nvalchemiops.dynamics.utils.launch_helpers import build_family_dict
 
 @wp.func
 def velocity_half_kick(vel: Any, force: Any, mass: Any, dt_val: Any) -> Any:
-    """Half-step velocity kick: ``v_new = v + 0.5 * (F / m) * dt``."""
+    r"""Compute the half-step velocity kick: :math:`v_{new} = v + 0.5 (F/m) \Delta t`.
+
+    Zero-mass atoms are handled by zeroing the inverse mass.
+
+    Parameters
+    ----------
+    vel : wp.vec3f or wp.vec3d
+        Current velocity of the atom.
+    force : wp.vec3f or wp.vec3d
+        Current force on the atom.
+    mass : wp.float32 or wp.float64
+        Atom mass. Zero-mass atoms receive no kick.
+    dt_val : wp.float32 or wp.float64
+        Full timestep :math:`\Delta t`; the half-step factor 0.5 is applied internally.
+
+    Returns
+    -------
+    wp.vec3f or wp.vec3d
+        Updated velocity after the half kick.
+    """
     inv_mass = wp.where(mass > type(mass)(0.0), type(mass)(1.0) / mass, type(mass)(0.0))
     half_dt = type(dt_val)(0.5) * dt_val
     return vel + half_dt * force * inv_mass
@@ -54,14 +73,42 @@ def velocity_half_kick(vel: Any, force: Any, mass: Any, dt_val: Any) -> Any:
 
 @wp.func
 def scale_velocity(vel: Any, scale: Any) -> Any:
-    """Rescale velocity: ``v_new = v * scale``."""
+    r"""Rescale a velocity vector component-wise: :math:`v_{new} = v \cdot scale`.
+
+    Parameters
+    ----------
+    vel : wp.vec3f or wp.vec3d
+        Current velocity of the atom.
+    scale : wp.float32 or wp.float64
+        Scalar rescaling factor applied uniformly to all three components.
+
+    Returns
+    -------
+    wp.vec3f or wp.vec3d
+        Rescaled velocity.
+    """
     s = type(vel[0])(scale)
     return type(vel)(vel[0] * s, vel[1] * s, vel[2] * s)
 
 
 @wp.func
 def simple_position_update(pos: Any, vel: Any, dt_val: Any) -> Any:
-    """Full-step position update: ``r_new = r + v * dt``."""
+    r"""Advance position by one full timestep: :math:`r_{new} = r + v \Delta t`.
+
+    Parameters
+    ----------
+    pos : wp.vec3f or wp.vec3d
+        Current atomic position.
+    vel : wp.vec3f or wp.vec3d
+        Current atomic velocity.
+    dt_val : wp.float32 or wp.float64
+        Full timestep :math:`\Delta t`.
+
+    Returns
+    -------
+    wp.vec3f or wp.vec3d
+        Updated position after the full-step advance.
+    """
     return pos + vel * dt_val
 
 

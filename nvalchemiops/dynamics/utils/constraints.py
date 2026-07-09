@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
+r"""
 SHAKE and RATTLE Constraint Algorithms
 ======================================
 
@@ -30,11 +30,12 @@ SHAKE Algorithm (Position Constraints)
 
 For each constrained bond (i, j) with target distance d_ij:
 
-1. Compute constraint violation: σ = |r_ij|² - d_ij²
-2. Compute Lagrange multiplier: λ = σ / (2 * (1/m_i + 1/m_j) * r_ij · r_ij_old)
+1. Compute constraint violation: :math:`\sigma = |\mathbf{r}_{ij}|^2 - d_{ij}^2`
+2. Compute Lagrange multiplier: :math:`\lambda = \sigma / (2 (1/m_i + 1/m_j) \mathbf{r}_{ij} \cdot \mathbf{r}_{ij}^{\text{old}})`
 3. Update positions:
-   - r_i += λ * r_ij_old / m_i
-   - r_j -= λ * r_ij_old / m_j
+
+   - :math:`\mathbf{r}_i \mathrel{+}= \lambda \mathbf{r}_{ij}^{\text{old}} / m_i`
+   - :math:`\mathbf{r}_j \mathrel{-}= \lambda \mathbf{r}_{ij}^{\text{old}} / m_j`
 
 Iterate until all constraints are satisfied within tolerance.
 
@@ -45,11 +46,12 @@ After SHAKE, velocities must also satisfy constraints:
 
 For each constrained bond (i, j):
 
-1. Compute velocity constraint violation: κ = v_ij · r_ij
-2. Compute Lagrange multiplier: μ = κ / ((1/m_i + 1/m_j) * |r_ij|²)
+1. Compute velocity constraint violation: :math:`\kappa = \mathbf{v}_{ij} \cdot \mathbf{r}_{ij}`
+2. Compute Lagrange multiplier: :math:`\mu = \kappa / ((1/m_i + 1/m_j) |\mathbf{r}_{ij}|^2)`
 3. Update velocities:
-   - v_i -= μ * r_ij / m_i
-   - v_j += μ * r_ij / m_j
+
+   - :math:`\mathbf{v}_i \mathrel{-}= \mu \mathbf{r}_{ij} / m_i`
+   - :math:`\mathbf{v}_j \mathrel{+}= \mu \mathbf{r}_{ij} / m_j`
 
 USAGE
 =====

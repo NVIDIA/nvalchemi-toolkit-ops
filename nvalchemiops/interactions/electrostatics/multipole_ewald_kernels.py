@@ -233,9 +233,9 @@ def _gto_ewald_A_single(r: wp.float64, x: wp.float64) -> wp.vec4d:
 
 @wp.func
 def _gto_ewald_t0(r: wp.float64, a: wp.float64, b: wp.float64) -> wp.float64:
-    r"""Scalar GTO-Ewald kernel ``T^(0)(r; σ, α) = [erf(ar) − erf(br)] / r``.
+    r"""Scalar GTO-Ewald kernel ``T^(0)(r; sigma, alpha) = [erf(ar) - erf(br)] / r``.
 
-    Equivalent to ``[erfc(br) − erfc(ar)] / r`` — avoids the 1 − erfc
+    Equivalent to ``[erfc(br) - erfc(ar)] / r`` -- avoids the 1 - erfc
     cancellation since ``a > b`` means ``erfc(ar) < erfc(br)`` and the
     subtraction is numerically well-conditioned.
     """
@@ -244,9 +244,9 @@ def _gto_ewald_t0(r: wp.float64, a: wp.float64, b: wp.float64) -> wp.float64:
 
 @wp.func
 def _gto_ewald_ab(sigma: wp.float64, alpha: wp.float64) -> wp.vec2d:
-    r"""Precompute ``(a, b) = (1/(2σ), 1/(2σ_c))`` from ``(σ, α)``.
+    r"""Precompute ``(a, b) = (1/(2*sigma), 1/(2*sigma_c))`` from ``(sigma, alpha)``.
 
-    ``σ_c = √(σ² + 1/(4α²))`` is the combined GTO + Ewald smearing.
+    :math:`\sigma_c = \sqrt{\sigma^2 + 1/(4\alpha^2)}` is the combined GTO + Ewald smearing.
     """
     sigma_c = wp.sqrt(sigma * sigma + wp.float64(0.25) / (alpha * alpha))
     return wp.vec2d(
@@ -264,8 +264,8 @@ def _gto_ewald_ab(sigma: wp.float64, alpha: wp.float64) -> wp.vec2d:
 class _MonopolePairTerms:
     """Fused lmax=0 per-pair physics terms.
 
-    `t0`       — energy factor `(erfc(br) − erfc(ar)) / r`.
-    `a_scalar` — radial derivative `-dt0/dr` = `A(r,a)[0] − A(r,b)[0]`,
+    `t0`       -- energy factor `(erfc(br) - erfc(ar)) / r`.
+    `a_scalar` -- radial derivative `-dt0/dr` = `A(r,a)[0] - A(r,b)[0]`,
                  where `A` is the lmax=0 component of `_gto_ewald_A_single`.
                  Used to assemble position-gradient contributions.
     """
@@ -310,12 +310,12 @@ def _gto_ewald_monopole_pair_terms_fused(
 
 @wp.struct
 class _DipoleRadialTerms:
-    """Fused lmax=1 radial helpers — sharing erfc + exp evaluations.
+    """Fused lmax=1 radial helpers -- sharing erfc + exp evaluations.
 
-    `t0`             — energy factor `(erfc(br) − erfc(ar)) / r`.
-    `a_scalar`       — `A(r,a)[0] − A(r,b)[0]` (forward energy + gradients).
-    `a_prime`        — `A(r,a)[1] − A(r,b)[1]` (forward energy + gradients).
-    `a_double_prime` — `A(r,a)[2] − A(r,b)[2]` (used only by position-gradient
+    `t0`             -- energy factor `(erfc(br) - erfc(ar)) / r`.
+    `a_scalar`       -- `A(r,a)[0] - A(r,b)[0]` (forward energy + gradients).
+    `a_prime`        -- `A(r,a)[1] - A(r,b)[1]` (forward energy + gradients).
+    `a_double_prime` -- `A(r,a)[2] - A(r,b)[2]` (used only by position-gradient
                         c3 coefficient; computed unconditionally because the
                         marginal cost relative to the shared erfc/exp
                         evaluations is small).
@@ -581,23 +581,23 @@ def _dipole_pair_energy_only(
 
 @wp.struct
 class _QuadrupoleRadialTerms:
-    """Fused lmax=2 radial helpers — sharing erfc + exp evaluations.
+    r"""Fused lmax=2 radial helpers -- sharing erfc + exp evaluations.
 
     Same shape as ``_DipoleRadialTerms`` plus two extra entries:
 
-    - ``a_triple_prime``   — ``A(r,a)[3] − A(r,b)[3]``: 4th radial
-                              derivative coefficient (used by μQ channel
+    - ``a_triple_prime``   -- ``A(r,a)[3] - A(r,b)[3]``: 4th radial
+                              derivative coefficient (used by :math:`\mu Q` channel
                               and by QQ K2 / K3 coefficients).
-    - ``a_quadruple_prime`` — analogous 5th radial derivative; used by
+    - ``a_quadruple_prime`` -- analogous 5th radial derivative; used by
                               QQ channel K3 coefficient.
 
     The energy-only path uses ``a, a', a'', a''', a''''`` to compute the
     Python-convention radial helpers ``T1..T4`` (with sign inversion:
     ``T_n_python = -a^(n-1)_kernel``) and assemble the QQ closed forms
 
-        K1 = T2/r²  −  T1/r³                          (sym3(δδ))
-        K2 = T3/r  −  3·T2/r²  +  3·T1/r³             (sym6(δr̂r̂))
-        K3 = T4  −  6·T3/r  +  15·T2/r²  −  15·T1/r³  (r̂r̂r̂r̂)
+        K1 = T2/r^2  -  T1/r^3                          (sym3(delta*delta))
+        K2 = T3/r  -  3*T2/r^2  +  3*T1/r^3             (sym6(delta*rhat*rhat))
+        K3 = T4  -  6*T3/r  +  15*T2/r^2  -  15*T1/r^3  (rhat*rhat*rhat*rhat)
     """
 
     t0: wp.float64
@@ -693,7 +693,7 @@ def _gto_ewald_A_single_v5(r: wp.float64, x: wp.float64) -> _QuadrupoleRadialTer
 def _gto_ewald_quadrupole_pair_terms_fused(
     r: wp.float64, a: wp.float64, b: wp.float64
 ) -> _QuadrupoleRadialTerms:
-    """Fused per-pair radial helpers for LMAX=2 — shared erfc/exp pairs."""
+    """Fused per-pair radial helpers for LMAX=2 -- shared erfc/exp pairs."""
     erfc_ar = wp_erfc(a * r)
     erfc_br = wp_erfc(b * r)
     erf_ar = wp.float64(1.0) - erfc_ar
@@ -809,14 +809,14 @@ def _quadrupole_pair_energy_only(
     a_coef: wp.float64,
     b_coef: wp.float64,
 ) -> wp.float64:
-    """Per-pair LMAX=2 GTO-Ewald energy in the kernel's r_vec convention.
+    r"""Per-pair LMAX=2 GTO-Ewald energy in the kernel's r_vec convention.
 
-    Computes all 6 channels (qq, qμ, qQ, μμ, μQ, QQ) using factored
+    Computes all 6 channels (qq, qmu, qQ, mumu, muQ, QQ) using factored
     contractions:
 
-    - rank-≤2 channels share the LMAX=1 closed forms with the added qQ
-      pieces (``Qi:T2 = (a/r)·tr(Qi) + (a'/r² - a/r³)·r·Qi·r``).
-    - μQ uses the factored ``μi · (Qj:T_αβγ)`` form.
+    - rank-<=2 channels share the LMAX=1 closed forms with the added qQ
+      pieces (``Qi:T2 = (a/r)*tr(Qi) + (a'/r^2 - a/r^3)*r*Qi*r``).
+    - :math:`\mu Q` uses the factored :math:`\mu_i \cdot (Q_j : T_{\alpha\beta\gamma})` form.
     - QQ uses the K1/K2/K3 closed form.
     """
     radial = _gto_ewald_quadrupole_pair_terms_fused(distance, a_coef, b_coef)
@@ -996,7 +996,7 @@ class _QuadrupolePairContrib:
 
     The quadrupole grad fields ``dPE_dQ_i`` / ``dPE_dQ_j`` hold the
     "free-index" partials (treating each Q matrix entry as independent).
-    The qQ + QQ contributions are symmetric in (α,β); the μQ contribution
+    The qQ + QQ contributions are symmetric in (alpha, beta); the muQ contribution
     is not. Upstream torch.autograd wrappers symmetrize when needed.
     """
 
@@ -2018,7 +2018,7 @@ def _make_real_space_pair_kernel_csr_single(
 
         Launch Grid
         -----------
-        dim = [num_atoms] — one thread per atom ``i``; the thread walks its
+        dim = [num_atoms] -- one thread per atom ``i``; the thread walks its
         CSR neighbor slice ``idx_j[neighbor_ptr[i]:neighbor_ptr[i+1]]``.
 
         Parameters
@@ -2184,7 +2184,7 @@ def _make_real_space_pair_kernel_csr_batched(
 
         Launch Grid
         -----------
-        dim = [num_atoms_total] — one thread per atom across all batched
+        dim = [num_atoms_total] -- one thread per atom across all batched
         systems; inner loop over the atom's CSR neighbor slice.
 
         Parameters
@@ -2336,7 +2336,7 @@ def _make_real_space_pair_kernel_csr_single_dipole(
 
         Launch Grid
         -----------
-        dim = [num_atoms] — one thread per atom ``i``; inner loop over the
+        dim = [num_atoms] -- one thread per atom ``i``; inner loop over the
         atom's CSR neighbor slice.
 
         Parameters
@@ -2526,7 +2526,7 @@ def _make_real_space_pair_kernel_csr_batched_dipole(
 
         Launch Grid
         -----------
-        dim = [num_atoms_total] — one thread per atom across all batched
+        dim = [num_atoms_total] -- one thread per atom across all batched
         systems; inner loop over the atom's CSR neighbor slice.
 
         Parameters
@@ -2702,12 +2702,12 @@ def _make_real_space_pair_kernel_csr_single_quadrupole(
 
       w = 0.25 * (grad_energies[atom_i] + grad_energies[atom_j])
 
-    Full neighbor lists visit each pair twice (i→j and j→i); the 0.25
-    factor is 0.5 (half-pair) × 0.5 (symmetric (ge_i + ge_j)/2 weighting).
+    Full neighbor lists visit each pair twice (i->j and j->i); the 0.25
+    factor is 0.5 (half-pair) * 0.5 (symmetric (ge_i + ge_j)/2 weighting).
     With ``grad_energies = ones(N)`` w = 0.5.
 
     The energy-only branch (``any_grad=False``) does not read
-    ``grad_energies`` — callers may pass a scratch array.
+    ``grad_energies`` -- callers may pass a scratch array.
     """
     any_grad = with_pos_grad or with_charge_grad or with_dipole_grad or with_quad_grad
 
@@ -2732,7 +2732,7 @@ def _make_real_space_pair_kernel_csr_single_quadrupole(
     ):
         r"""Unified real-space pair kernel (LMAX=2 CSR single).
 
-        Computes all 6 channels (qq, qμ, qQ, μμ, μQ, QQ); body branches at
+        Computes all 6 channels (qq, qmu, qQ, mumu, muQ, QQ); body branches at
         codegen time on the four ``with_*_grad`` closure flags. Per-pair
         gradient scatters are weighted by ``0.25 * (grad_energies[i] +
         grad_energies[j])`` (pass ``grad_energies = 1`` for uniform 0.5
@@ -2740,7 +2740,7 @@ def _make_real_space_pair_kernel_csr_single_quadrupole(
 
         Launch Grid
         -----------
-        dim = [num_atoms] — one thread per atom ``i``; inner loop over the
+        dim = [num_atoms] -- one thread per atom ``i``; inner loop over the
         atom's CSR neighbor slice.
 
         Parameters
@@ -2766,7 +2766,7 @@ def _make_real_space_pair_kernel_csr_single_quadrupole(
         alpha : wp.array, shape (1,), dtype matching ``charges``
             Ewald splitting parameter.
         grad_energies : wp.array, shape (N,), dtype wp.float64
-            Upstream cotangent ``∂L/∂pair_energies`` for the gradient
+            Upstream cotangent ``dL/d(pair_energies)`` for the gradient
             weights; unused (1-element scratch) on the energy-only path.
         pair_energies : wp.array, shape (N,), dtype wp.float64
             OUTPUT (pre-zeroed). Per-atom accumulated energy.
@@ -2995,14 +2995,14 @@ def _make_real_space_pair_kernel_csr_batched_quadrupole(
         r"""Unified real-space pair kernel (LMAX=2 CSR batched).
 
         Per-system ``cells[b]`` / ``sigmas[b]`` / ``alphas[b]`` lookup via
-        ``b = batch_idx[i]``. Computes all 6 channels (qq, qμ, qQ, μμ, μQ,
+        ``b = batch_idx[i]``. Computes all 6 channels (qq, qmu, qQ, mumu, muQ,
         QQ); body branches at codegen time on the four ``with_*_grad``
         closure flags. Per-pair gradient scatters are weighted by
         ``0.25 * (grad_energies[i] + grad_energies[j])``.
 
         Launch Grid
         -----------
-        dim = [num_atoms_total] — one thread per atom across all batched
+        dim = [num_atoms_total] -- one thread per atom across all batched
         systems; inner loop over the atom's CSR neighbor slice.
 
         Parameters
@@ -3030,7 +3030,7 @@ def _make_real_space_pair_kernel_csr_batched_quadrupole(
         batch_idx : wp.array, shape (N_total,), dtype wp.int32
             System index ``b`` for each atom.
         grad_energies : wp.array, shape (N_total,), dtype wp.float64
-            Upstream cotangent ``∂L/∂pair_energies`` for the gradient
+            Upstream cotangent ``dL/d(pair_energies)`` for the gradient
             weights; unused (1-element scratch) on the energy-only path.
         pair_energies : wp.array, shape (N_total,), dtype wp.float64
             OUTPUT (pre-zeroed). Per-atom accumulated energy.
@@ -3568,7 +3568,7 @@ def _multipole_real_space_monopole_csr_energy_backward_kernel(
 
     Launch Grid
     -----------
-    dim = [num_atoms] — one thread per atom; inner loop over CSR neighbors.
+    dim = [num_atoms] -- one thread per atom; inner loop over CSR neighbors.
 
     Parameters
     ----------
@@ -3576,7 +3576,7 @@ def _multipole_real_space_monopole_csr_energy_backward_kernel(
         Identical to the forward kernel (the pair geometry + GTO/Ewald
         smearing parameters ``sigma`` and ``alpha``).
     grad_energies : wp.array, shape (N,), dtype wp.float64
-        Upstream cotangent ``∂L/∂pair_energies``.
+        Upstream cotangent ``dL/d(pair_energies)``.
     grad_positions : wp.array, shape (N,), dtype ``vec3f`` / ``vec3d``
         OUTPUT (pre-zeroed). Gradient w.r.t. atomic positions.
     grad_charges : wp.array, shape (N,), dtype matching ``charges``
@@ -3588,7 +3588,7 @@ def _multipole_real_space_monopole_csr_energy_backward_kernel(
     to the input dtype via ``atomic_add``. The pair math is symmetric
     across threads (thread ``i`` on edge ``(i, j)`` writes to both
     ``grad_*[i]`` and ``grad_*[j]``), which is why every output slot
-    goes through ``atomic_add`` — no thread is the exclusive owner of its
+    goes through ``atomic_add`` -- no thread is the exclusive owner of its
     own slot under arbitrary neighbor-list conventions.
     """
     atom_i = wp.tid()
@@ -3718,13 +3718,13 @@ def multipole_real_space_monopole_csr_energy_backward(
     positions, charges, cell, idx_j, neighbor_ptr, unit_shifts, sigma, alpha :
         Same semantics as :func:`multipole_real_space_monopole_csr_energy`.
     grad_energies : wp.array, shape (N,), dtype wp.float64
-        Upstream cotangent ``∂L/∂pair_energies``.
+        Upstream cotangent ``dL/d(pair_energies)``.
     grad_positions : wp.array, shape (N,), dtype matching ``positions``
         OUTPUT (pre-zeroed).
     grad_charges : wp.array, shape (N,), dtype matching ``charges``
         OUTPUT (pre-zeroed).
     wp_dtype : type
-        ``wp.float32`` or ``wp.float64`` — selects the overloaded variant.
+        ``wp.float32`` or ``wp.float64`` -- selects the overloaded variant.
     device : str, optional
         Warp device string. Defaults to ``positions.device``.
     """
@@ -3785,7 +3785,7 @@ def multipole_real_space_monopole_csr_energy_fused(
     Routes on ``(with_pos_grad, with_charge_grad)``. Output slots are
     written iff the corresponding flag is ``True``; the kernel body's
     Python-time ``if`` guards prevent writes when False. Gradient outputs
-    assume uniform upstream ``grad_energies = 1`` — the torch wrapper
+    assume uniform upstream ``grad_energies = 1`` -- the torch wrapper
     scalar-broadcasts the actual upstream gradient.
 
     Parameters
@@ -3926,7 +3926,7 @@ def _multipole_real_space_monopole_csr_energy_2nd_backward_kernel(
         Identical to the forward kernel (the pair geometry + GTO/Ewald
         smearing parameters ``sigma`` and ``alpha``).
     grad_energies : wp.array, shape (N,), dtype wp.float64
-        Original first-order upstream cotangent ``∂L/∂pair_energies``.
+        Original first-order upstream cotangent ``dL/d(pair_energies)``.
         Saved from the first-order backward's forward pass.
     gg_positions : wp.array, shape (N,), dtype matching ``positions``
         Upstream cotangent on ``grad_positions`` (the first-order
@@ -3934,11 +3934,11 @@ def _multipole_real_space_monopole_csr_energy_2nd_backward_kernel(
     gg_charges : wp.array, shape (N,), dtype matching ``charges``
         Upstream cotangent on ``grad_charges``.
     gg_grad_energies_2nd : wp.array, shape (N,), dtype wp.float64
-        OUTPUT (pre-zeroed). ``∂L'/∂grad_energies``.
+        OUTPUT (pre-zeroed). ``dL'/d(grad_energies)``.
     gg_positions_2nd : wp.array, shape (N,), dtype matching ``positions``
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂positions``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(positions)``.
     gg_charges_2nd : wp.array, shape (N,), dtype matching ``charges``
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂charges``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(charges)``.
     """
     atom_i = wp.tid()
 
@@ -4108,19 +4108,19 @@ def multipole_real_space_monopole_csr_energy_2nd_backward(
     positions, charges, cell, idx_j, neighbor_ptr, unit_shifts, sigma, alpha :
         Same semantics as :func:`multipole_real_space_monopole_csr_energy`.
     grad_energies : wp.array, shape (N,), dtype wp.float64
-        Original first-order upstream cotangent ``∂L/∂pair_energies``.
+        Original first-order upstream cotangent ``dL/d(pair_energies)``.
     gg_positions : wp.array, shape (N,), dtype matching ``positions``
         Upstream cotangent on the first-order ``grad_positions``.
     gg_charges : wp.array, shape (N,), dtype matching ``charges``
         Upstream cotangent on ``grad_charges``.
     gg_grad_energies_2nd : wp.array, shape (N,), dtype wp.float64
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂grad_energies``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(grad_energies)``.
     gg_positions_2nd : wp.array, shape (N,), dtype matching ``positions``
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂positions``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(positions)``.
     gg_charges_2nd : wp.array, shape (N,), dtype matching ``charges``
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂charges``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(charges)``.
     wp_dtype : type
-        ``wp.float32`` or ``wp.float64`` — selects the overloaded variant.
+        ``wp.float32`` or ``wp.float64`` -- selects the overloaded variant.
     device : str, optional
         Warp device string. Defaults to ``positions.device``.
     """
@@ -4171,17 +4171,17 @@ def _multipole_real_space_monopole_csr_cell_grad_backward_kernel(
 ):
     r"""Double-backward of the l=0 real-space cell-grad (stress-loss).
 
-    The forward cell-grad is ``grad_cell[a,b] = Σ_pairs scale·n[a]·f[b]`` with
-    ``f = ∂E_pair/∂r_ij = -q_i q_j (A/r) r_vec`` and ``n = unit_shifts``. For a
-    cotangent ``g_cell`` on ``grad_cell``, ``S = ⟨g_cell, grad_cell⟩ =
-    Σ_pairs scale·(w·f)`` with the per-pair direction ``w = g_cellᵀ·n``. The
+    The forward cell-grad is ``grad_cell[a,b] = sum_pairs scale*n[a]*f[b]`` with
+    ``f = dE_pair/dr_ij = -q_i q_j (A/r) r_vec`` and ``n = unit_shifts``. For a
+    cotangent ``g_cell`` on ``grad_cell``, ``S = dot(g_cell, grad_cell) =
+    sum_pairs scale*(w*f)`` with the per-pair direction ``w = g_cell^T*n``. The
     grads (same radial algebra as the force-loss 2nd-order kernel, with the
     position-direction replaced by ``w``):
 
-    - ``G = q_i q_j (c_quad·(w·r_vec)·r_vec + (A/r)·w)``,
-      ``∂S/∂r_i = +scale·G``, ``∂S/∂r_j = -scale·G``;
-    - ``∂S/∂q_i = -scale·q_j·(A/r)·(w·r_vec)``, sym for ``q_j``;
-    - ``∂S/∂cell[a,b] = -scale·n[a]·G[b]`` (cell-cell / stress-stress block).
+    - ``G = q_i q_j (c_quad*(w*r_vec)*r_vec + (A/r)*w)``,
+      ``dS/dr_i = +scale*G``, ``dS/dr_j = -scale*G``;
+    - ``dS/dq_i = -scale*q_j*(A/r)*(w*r_vec)``, sym for ``q_j``;
+    - ``dS/d(cell[a,b]) = -scale*n[a]*G[b]`` (cell-cell / stress-stress block).
     """
     atom_i = wp.tid()
     sigma_ = wp.float64(sigma[0])
@@ -4335,7 +4335,29 @@ def multipole_real_space_monopole_csr_cell_grad_backward(
 ) -> None:
     r"""Launcher for the l=0 cell-grad double-backward (stress-loss).
 
-    Caller pre-zeroes ``grad_positions``, ``grad_charges``, ``grad_cell_out``.
+    Framework-agnostic: operates directly on Warp arrays. Computes the
+    double-backward through the cell-gradient (stress) of the LMAX=0
+    real-space pair energy with respect to ``positions``, ``charges``, and
+    ``cell`` given an upstream cotangent ``g_cell`` on ``grad_cell``.
+
+    Parameters
+    ----------
+    positions, charges, cell, idx_j, neighbor_ptr, unit_shifts, sigma, alpha :
+        Same semantics as :func:`multipole_real_space_monopole_csr_energy`.
+    per_direction_scale : wp.array, shape (1,), dtype wp.float64
+        Scalar prefactor applied to the stress contribution (e.g. ``1/V``).
+    g_cell : wp.array, shape (1,), dtype wp.mat33f or wp.mat33d
+        Upstream cotangent on the first-order ``grad_cell`` (stress tensor).
+    grad_positions : wp.array, shape (N,), dtype matching ``positions``
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. positions.
+    grad_charges : wp.array, shape (N,), dtype matching ``charges``
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. charges.
+    grad_cell_out : wp.array, shape (1,), dtype wp.mat33f or wp.mat33d
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. cell (stress-stress block).
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` -- selects the overloaded variant.
+    device : str, optional
+        Warp device string. Defaults to ``positions.device``.
     """
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
     if device is None:
@@ -4379,17 +4401,17 @@ def _batch_multipole_real_space_monopole_csr_cell_grad_backward_kernel(
 ):
     r"""Double-backward of the l=0 real-space cell-grad (stress-loss).
 
-    The forward cell-grad is ``grad_cell[a,b] = Σ_pairs scale·n[a]·f[b]`` with
-    ``f = ∂E_pair/∂r_ij = -q_i q_j (A/r) r_vec`` and ``n = unit_shifts``. For a
-    cotangent ``g_cell`` on ``grad_cell``, ``S = ⟨g_cell, grad_cell⟩ =
-    Σ_pairs scale·(w·f)`` with the per-pair direction ``w = g_cellᵀ·n``. The
+    The forward cell-grad is ``grad_cell[a,b] = sum_pairs scale*n[a]*f[b]`` with
+    ``f = dE_pair/dr_ij = -q_i q_j (A/r) r_vec`` and ``n = unit_shifts``. For a
+    cotangent ``g_cell`` on ``grad_cell``, ``S = dot(g_cell, grad_cell) =
+    sum_pairs scale*(w*f)`` with the per-pair direction ``w = g_cell^T*n``. The
     grads (same radial algebra as the force-loss 2nd-order kernel, with the
     position-direction replaced by ``w``):
 
-    - ``G = q_i q_j (c_quad·(w·r_vec)·r_vec + (A/r)·w)``,
-      ``∂S/∂r_i = +scale·G``, ``∂S/∂r_j = -scale·G``;
-    - ``∂S/∂q_i = -scale·q_j·(A/r)·(w·r_vec)``, sym for ``q_j``;
-    - ``∂S/∂cell[a,b] = -scale·n[a]·G[b]`` (cell-cell / stress-stress block).
+    - ``G = q_i q_j (c_quad*(w*r_vec)*r_vec + (A/r)*w)``,
+      ``dS/dr_i = +scale*G``, ``dS/dr_j = -scale*G``;
+    - ``dS/dq_i = -scale*q_j*(A/r)*(w*r_vec)``, sym for ``q_j``;
+    - ``dS/d(cell[a,b]) = -scale*n[a]*G[b]`` (cell-cell / stress-stress block).
     """
     atom_i = wp.tid()
     b = atom_batch_idx[atom_i]
@@ -4546,9 +4568,40 @@ def batch_multipole_real_space_monopole_csr_cell_grad_backward(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    r"""Launcher for the l=0 cell-grad double-backward (stress-loss).
+    r"""Launcher for the batched l=0 cell-grad double-backward (stress-loss).
 
-    Caller pre-zeroes ``grad_positions``, ``grad_charges``, ``grad_cell_out``.
+    Batched variant of
+    :func:`multipole_real_space_monopole_csr_cell_grad_backward`: each system
+    in the batch has its own cell and per-system ``sigma`` / ``alpha`` scalars.
+    Framework-agnostic: operates directly on Warp arrays.
+
+    Parameters
+    ----------
+    positions, charges, idx_j, neighbor_ptr, unit_shifts :
+        Same semantics as :func:`multipole_real_space_monopole_csr_energy`.
+    cells : wp.array, shape (B,), dtype wp.mat33f or wp.mat33d
+        Per-system lattice matrices; ``cells[b]`` is used for system ``b``.
+    atom_batch_idx : wp.array, shape (N,), dtype wp.int32
+        Maps each atom to its system index ``b``.
+    sigma : wp.array, shape (B,), dtype matching ``charges``
+        Per-system GTO smearing width.
+    alpha : wp.array, shape (B,), dtype matching ``charges``
+        Per-system Ewald splitting parameter.
+    per_direction_scale : wp.array, shape (1,), dtype wp.float64
+        Scalar prefactor applied to the stress contribution (e.g. ``1/V``).
+    g_cell : wp.array, shape (B,), dtype wp.mat33f or wp.mat33d
+        Upstream cotangent on the first-order ``grad_cell`` (stress tensor),
+        one per system.
+    grad_positions : wp.array, shape (N,), dtype matching ``positions``
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. positions.
+    grad_charges : wp.array, shape (N,), dtype matching ``charges``
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. charges.
+    grad_cell_out : wp.array, shape (B,), dtype wp.mat33f or wp.mat33d
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. cells (stress-stress block).
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` -- selects the overloaded variant.
+    device : str, optional
+        Warp device string. Defaults to ``positions.device``.
     """
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
     if device is None:
@@ -4632,7 +4685,7 @@ def _multipole_real_space_dipole_csr_energy_backward_kernel(
 
     Launch Grid
     -----------
-    dim = [num_atoms] — one thread per atom; inner loop over CSR neighbors.
+    dim = [num_atoms] -- one thread per atom; inner loop over CSR neighbors.
     Every output slot is written via ``atomic_add`` so the same kernel
     works for both half- and full-list conventions; the per-edge math
     above is applied symmetrically (with the ``0.5`` ``pair_energies``
@@ -4645,7 +4698,7 @@ def _multipole_real_space_dipole_csr_energy_backward_kernel(
         Identical to the forward kernel (the pair geometry, source moments,
         and GTO/Ewald smearing parameters ``sigma`` and ``alpha``).
     grad_energies : wp.array, shape (N,), dtype wp.float64
-        Upstream cotangent ``∂L/∂pair_energies``.
+        Upstream cotangent ``dL/d(pair_energies)``.
     grad_positions : wp.array, shape (N,), dtype matching ``positions``
         OUTPUT (pre-zeroed).
     grad_charges : wp.array, shape (N,), dtype matching ``charges``
@@ -4901,7 +4954,7 @@ def multipole_real_space_dipole_csr_energy_backward(
         ``grad_dipoles`` output for the per-atom dipole-moment gradient
         in Cartesian layout.
     wp_dtype : type
-        ``wp.float32`` or ``wp.float64`` — selects the overloaded variant.
+        ``wp.float32`` or ``wp.float64`` -- selects the overloaded variant.
     device : str, optional
         Warp device string. Defaults to ``positions.device``.
     """
@@ -5003,7 +5056,7 @@ def _multipole_real_space_dipole_csr_energy_2nd_backward_kernel(
 
     Launch Grid
     -----------
-    dim = [num_atoms] — one thread per atom; inner loop over the CSR
+    dim = [num_atoms] -- one thread per atom; inner loop over the CSR
     neighbor slice ``idx_j[neighbor_ptr[i]:neighbor_ptr[i+1]]``. Every
     output slot is written via ``atomic_add`` so the kernel works for both
     half- and full-list conventions.
@@ -5015,7 +5068,7 @@ def _multipole_real_space_dipole_csr_energy_2nd_backward_kernel(
         Identical to the forward kernel (the pair geometry, source moments,
         and GTO/Ewald smearing parameters ``sigma`` and ``alpha``).
     grad_energies : wp.array, shape (N,), dtype wp.float64
-        Original first-order upstream cotangent ``∂L/∂pair_energies``,
+        Original first-order upstream cotangent ``dL/d(pair_energies)``,
         saved from the first-order backward's forward pass.
     gg_positions : wp.array, shape (N,), dtype matching ``positions``
         Upstream cotangent on the first-order backward's ``grad_positions``
@@ -5025,13 +5078,13 @@ def _multipole_real_space_dipole_csr_energy_2nd_backward_kernel(
     gg_dipoles : wp.array, shape (N,), dtype matching ``dipoles``
         Upstream cotangent on ``grad_dipoles``.
     gg_grad_energies_2nd : wp.array, shape (N,), dtype wp.float64
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂grad_energies``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(grad_energies)``.
     gg_positions_2nd : wp.array, shape (N,), dtype matching ``positions``
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂positions``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(positions)``.
     gg_charges_2nd : wp.array, shape (N,), dtype matching ``charges``
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂charges``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(charges)``.
     gg_dipoles_2nd : wp.array, shape (N,), dtype matching ``dipoles``
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂dipoles``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(dipoles)``.
     """
     atom_i = wp.tid()
 
@@ -5404,7 +5457,7 @@ def multipole_real_space_dipole_csr_energy_2nd_backward(
     sigma, alpha :
         Same semantics as :func:`multipole_real_space_dipole_csr_energy`.
     grad_energies : wp.array, shape (N,), dtype wp.float64
-        Original first-order upstream cotangent ``∂L/∂pair_energies``.
+        Original first-order upstream cotangent ``dL/d(pair_energies)``.
     gg_positions : wp.array, shape (N,), dtype matching ``positions``
         Upstream cotangent on the first-order ``grad_positions``.
     gg_charges : wp.array, shape (N,), dtype matching ``charges``
@@ -5412,15 +5465,15 @@ def multipole_real_space_dipole_csr_energy_2nd_backward(
     gg_dipoles : wp.array, shape (N,), dtype matching ``dipoles``
         Upstream cotangent on ``grad_dipoles``.
     gg_grad_energies_2nd : wp.array, shape (N,), dtype wp.float64
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂grad_energies``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(grad_energies)``.
     gg_positions_2nd : wp.array, shape (N,), dtype matching ``positions``
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂positions``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(positions)``.
     gg_charges_2nd : wp.array, shape (N,), dtype matching ``charges``
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂charges``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(charges)``.
     gg_dipoles_2nd : wp.array, shape (N,), dtype matching ``dipoles``
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂dipoles``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(dipoles)``.
     wp_dtype : type
-        ``wp.float32`` or ``wp.float64`` — selects the overloaded variant.
+        ``wp.float32`` or ``wp.float64`` -- selects the overloaded variant.
     device : str, optional
         Warp device string. Defaults to ``positions.device``.
     """
@@ -5476,13 +5529,13 @@ def _multipole_real_space_dipole_csr_cell_grad_backward_kernel(
 ):
     r"""Double-backward of the l=1 real-space cell-grad (stress-loss).
 
-    Reuses the force-loss dipole Hessian (``∂Ω/∂θ``) with the incoming
+    Reuses the force-loss dipole Hessian (``dOmega/dtheta``) with the incoming
     charge/dipole directions set to zero and the position direction replaced by
-    the per-pair ``w = g_cellᵀ·n`` (n = unit_shifts), so ``Ω_gp = -w·f`` with
-    ``f = ∂E_pair/∂r``. With ``S = ⟨g_cell, grad_cell⟩ = Σ scale·(w·f) =
-    -scale·Σ Ω_gp``: ``grad_r_i = +scale·G_pos``, ``grad_r_j = -scale·G_pos``,
-    ``grad_θ = -scale·∂Ω/∂θ`` (θ = q_i,q_j,μ_i,μ_j),
-    ``grad_cell[a,b] = -scale·n[a]·G_pos[b]``. Verified to reduce to the
+    the per-pair ``w = g_cell^T*n`` (n = unit_shifts), so ``Omega_gp = -w*f`` with
+    ``f = dE_pair/dr``. With ``S = dot(g_cell, grad_cell) = sum scale*(w*f) =
+    -scale*sum Omega_gp``: ``grad_r_i = +scale*G_pos``, ``grad_r_j = -scale*G_pos``,
+    ``grad_theta = -scale*dOmega/dtheta`` (theta = q_i, q_j, mu_i, mu_j),
+    ``grad_cell[a,b] = -scale*n[a]*G_pos[b]``. Verified to reduce to the
     monopole kernel when dipoles vanish.
     """
     atom_i = wp.tid()
@@ -5813,7 +5866,34 @@ def multipole_real_space_dipole_csr_cell_grad_backward(
 ) -> None:
     r"""Launcher for the l=1 cell-grad double-backward (stress-loss).
 
-    Caller pre-zeroes the four output arrays.
+    Framework-agnostic: operates directly on Warp arrays. Computes the
+    double-backward through the cell-gradient (stress) of the LMAX=1
+    real-space pair energy with respect to ``positions``, ``charges``,
+    ``dipoles``, and ``cell`` given an upstream cotangent ``g_cell`` on
+    ``grad_cell``.
+
+    Parameters
+    ----------
+    positions, charges, cell, idx_j, neighbor_ptr, unit_shifts, sigma, alpha :
+        Same semantics as :func:`multipole_real_space_dipole_csr_energy`.
+    dipoles : wp.array, shape (N,), dtype wp.vec3f or wp.vec3d
+        Atomic dipole moments.
+    per_direction_scale : wp.array, shape (1,), dtype wp.float64
+        Scalar prefactor applied to the stress contribution (e.g. ``1/V``).
+    g_cell : wp.array, shape (1,), dtype wp.mat33f or wp.mat33d
+        Upstream cotangent on the first-order ``grad_cell`` (stress tensor).
+    grad_positions : wp.array, shape (N,), dtype matching ``positions``
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. positions.
+    grad_charges : wp.array, shape (N,), dtype matching ``charges``
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. charges.
+    grad_dipoles : wp.array, shape (N,), dtype matching ``dipoles``
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. dipoles.
+    grad_cell_out : wp.array, shape (1,), dtype wp.mat33f or wp.mat33d
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. cell (stress-stress block).
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` -- selects the overloaded variant.
+    device : str, optional
+        Warp device string. Defaults to ``positions.device``.
     """
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
     if device is None:
@@ -5860,13 +5940,13 @@ def _batch_multipole_real_space_dipole_csr_cell_grad_backward_kernel(
 ):
     r"""Double-backward of the l=1 real-space cell-grad (stress-loss).
 
-    Reuses the force-loss dipole Hessian (``∂Ω/∂θ``) with the incoming
+    Reuses the force-loss dipole Hessian (``dOmega/dtheta``) with the incoming
     charge/dipole directions set to zero and the position direction replaced by
-    the per-pair ``w = g_cellᵀ·n`` (n = unit_shifts), so ``Ω_gp = -w·f`` with
-    ``f = ∂E_pair/∂r``. With ``S = ⟨g_cell, grad_cell⟩ = Σ scale·(w·f) =
-    -scale·Σ Ω_gp``: ``grad_r_i = +scale·G_pos``, ``grad_r_j = -scale·G_pos``,
-    ``grad_θ = -scale·∂Ω/∂θ`` (θ = q_i,q_j,μ_i,μ_j),
-    ``grad_cell[a,b] = -scale·n[a]·G_pos[b]``. Verified to reduce to the
+    the per-pair ``w = g_cell^T*n`` (n = unit_shifts), so ``Omega_gp = -w*f`` with
+    ``f = dE_pair/dr``. With ``S = dot(g_cell, grad_cell) = sum scale*(w*f) =
+    -scale*sum Omega_gp``: ``grad_r_i = +scale*G_pos``, ``grad_r_j = -scale*G_pos``,
+    ``grad_theta = -scale*dOmega/dtheta`` (theta = q_i, q_j, mu_i, mu_j),
+    ``grad_cell[a,b] = -scale*n[a]*G_pos[b]``. Verified to reduce to the
     monopole kernel when dipoles vanish.
     """
     atom_i = wp.tid()
@@ -6200,9 +6280,42 @@ def batch_multipole_real_space_dipole_csr_cell_grad_backward(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    r"""Launcher for the l=1 cell-grad double-backward (stress-loss).
+    r"""Launcher for the batched l=1 cell-grad double-backward (stress-loss).
 
-    Caller pre-zeroes the four output arrays.
+    Batched variant of
+    :func:`multipole_real_space_dipole_csr_cell_grad_backward`: each system
+    in the batch has its own cell and per-system ``sigma`` / ``alpha`` scalars.
+    Framework-agnostic: operates directly on Warp arrays.
+
+    Parameters
+    ----------
+    positions, charges, dipoles, idx_j, neighbor_ptr, unit_shifts :
+        Same semantics as :func:`batch_multipole_real_space_dipole_csr_energy`.
+    cells : wp.array, shape (B,), dtype wp.mat33f or wp.mat33d
+        Per-system lattice matrices; ``cells[b]`` is used for system ``b``.
+    atom_batch_idx : wp.array, shape (N,), dtype wp.int32
+        Maps each atom to its system index ``b``.
+    sigma : wp.array, shape (B,), dtype matching ``charges``
+        Per-system GTO smearing width.
+    alpha : wp.array, shape (B,), dtype matching ``charges``
+        Per-system Ewald splitting parameter.
+    per_direction_scale : wp.array, shape (1,), dtype wp.float64
+        Scalar prefactor applied to the stress contribution (e.g. ``1/V``).
+    g_cell : wp.array, shape (B,), dtype wp.mat33f or wp.mat33d
+        Upstream cotangent on the first-order ``grad_cell`` (stress tensor),
+        one per system.
+    grad_positions : wp.array, shape (N,), dtype matching ``positions``
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. positions.
+    grad_charges : wp.array, shape (N,), dtype matching ``charges``
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. charges.
+    grad_dipoles : wp.array, shape (N,), dtype matching ``dipoles``
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. dipoles.
+    grad_cell_out : wp.array, shape (B,), dtype wp.mat33f or wp.mat33d
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. cells (stress-stress block).
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` -- selects the overloaded variant.
+    device : str, optional
+        Warp device string. Defaults to ``positions.device``.
     """
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
     if device is None:
@@ -6464,7 +6577,7 @@ def _batch_multipole_real_space_monopole_csr_energy_backward_kernel(
 
     Launch Grid
     -----------
-    dim = [num_atoms_total] — one thread per atom across all batched
+    dim = [num_atoms_total] -- one thread per atom across all batched
     systems; inner loop over the atom's CSR neighbor slice. Every output
     slot is written via ``atomic_add`` (half/full-list agnostic).
 
@@ -6489,7 +6602,7 @@ def _batch_multipole_real_space_monopole_csr_energy_backward_kernel(
     batch_idx : wp.array, shape (N_total,), dtype wp.int32
         System index ``b`` for each atom.
     grad_energies : wp.array, shape (N_total,), dtype wp.float64
-        Upstream cotangent ``∂L/∂pair_energies``.
+        Upstream cotangent ``dL/d(pair_energies)``.
     grad_positions : wp.array, shape (N_total,), dtype matching ``positions``
         OUTPUT (pre-zeroed). Gradient w.r.t. atomic positions.
     grad_charges : wp.array, shape (N_total,), dtype matching ``charges``
@@ -6625,13 +6738,13 @@ def batch_multipole_real_space_monopole_csr_energy_backward(
         Same semantics as
         :func:`batch_multipole_real_space_monopole_csr_energy`.
     grad_energies : wp.array, shape (N_total,), dtype wp.float64
-        Upstream cotangent ``∂L/∂pair_energies``.
+        Upstream cotangent ``dL/d(pair_energies)``.
     grad_positions : wp.array, shape (N_total,), dtype matching ``positions``
         OUTPUT (pre-zeroed). Gradient w.r.t. atomic positions.
     grad_charges : wp.array, shape (N_total,), dtype matching ``charges``
         OUTPUT (pre-zeroed). Gradient w.r.t. atomic charges.
     wp_dtype : type
-        ``wp.float32`` or ``wp.float64`` — selects the overloaded variant.
+        ``wp.float32`` or ``wp.float64`` -- selects the overloaded variant.
     device : str, optional
         Warp device string. Defaults to ``positions.device``.
     """
@@ -6884,7 +6997,7 @@ def _batch_multipole_real_space_dipole_csr_energy_backward_kernel(
 
     Launch Grid
     -----------
-    dim = [num_atoms_total] — one thread per atom across all batched
+    dim = [num_atoms_total] -- one thread per atom across all batched
     systems; inner loop over the atom's CSR neighbor slice. Every output
     slot is written via ``atomic_add`` (half/full-list agnostic).
 
@@ -6911,7 +7024,7 @@ def _batch_multipole_real_space_dipole_csr_energy_backward_kernel(
     batch_idx : wp.array, shape (N_total,), dtype wp.int32
         System index ``b`` for each atom.
     grad_energies : wp.array, shape (N_total,), dtype wp.float64
-        Upstream cotangent ``∂L/∂pair_energies``.
+        Upstream cotangent ``dL/d(pair_energies)``.
     grad_positions : wp.array, shape (N_total,), dtype matching ``positions``
         OUTPUT (pre-zeroed). Gradient w.r.t. atomic positions.
     grad_charges : wp.array, shape (N_total,), dtype matching ``charges``
@@ -7143,7 +7256,7 @@ def batch_multipole_real_space_dipole_csr_energy_backward(
         Same semantics as
         :func:`batch_multipole_real_space_dipole_csr_energy`.
     grad_energies : wp.array, shape (N_total,), dtype wp.float64
-        Upstream cotangent ``∂L/∂pair_energies``.
+        Upstream cotangent ``dL/d(pair_energies)``.
     grad_positions : wp.array, shape (N_total,), dtype matching ``positions``
         OUTPUT (pre-zeroed). Gradient w.r.t. atomic positions.
     grad_charges : wp.array, shape (N_total,), dtype matching ``charges``
@@ -7151,7 +7264,7 @@ def batch_multipole_real_space_dipole_csr_energy_backward(
     grad_dipoles : wp.array, shape (N_total,), dtype matching ``dipoles``
         OUTPUT (pre-zeroed). Gradient w.r.t. dipole moments.
     wp_dtype : type
-        ``wp.float32`` or ``wp.float64`` — selects the overloaded variant.
+        ``wp.float32`` or ``wp.float64`` -- selects the overloaded variant.
     device : str, optional
         Warp device string. Defaults to ``positions.device``.
     """
@@ -7319,7 +7432,7 @@ def _batch_multipole_real_space_monopole_csr_energy_2nd_backward_kernel(
 
     Launch Grid
     -----------
-    dim = [num_atoms_total] — one thread per atom across all batched
+    dim = [num_atoms_total] -- one thread per atom across all batched
     systems; inner loop over the atom's CSR neighbor slice. Every output
     slot is written via ``atomic_add``.
 
@@ -7344,17 +7457,17 @@ def _batch_multipole_real_space_monopole_csr_energy_2nd_backward_kernel(
     batch_idx : wp.array, shape (N_total,), dtype wp.int32
         System index ``b`` for each atom.
     grad_energies : wp.array, shape (N_total,), dtype wp.float64
-        Original first-order upstream cotangent ``∂L/∂pair_energies``.
+        Original first-order upstream cotangent ``dL/d(pair_energies)``.
     gg_positions : wp.array, shape (N_total,), dtype matching ``positions``
         Upstream cotangent on the first-order backward's ``grad_positions``.
     gg_charges : wp.array, shape (N_total,), dtype matching ``charges``
         Upstream cotangent on ``grad_charges``.
     gg_grad_energies_2nd : wp.array, shape (N_total,), dtype wp.float64
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂grad_energies``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(grad_energies)``.
     gg_positions_2nd : wp.array, shape (N_total,), dtype matching ``positions``
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂positions``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(positions)``.
     gg_charges_2nd : wp.array, shape (N_total,), dtype matching ``charges``
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂charges``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(charges)``.
     """
     atom_i = wp.tid()
     b = batch_idx[atom_i]
@@ -7517,19 +7630,19 @@ def batch_multipole_real_space_monopole_csr_energy_2nd_backward(
         Same semantics as
         :func:`batch_multipole_real_space_monopole_csr_energy`.
     grad_energies : wp.array, shape (N_total,), dtype wp.float64
-        Original first-order upstream cotangent ``∂L/∂pair_energies``.
+        Original first-order upstream cotangent ``dL/d(pair_energies)``.
     gg_positions : wp.array, shape (N_total,), dtype matching ``positions``
         Upstream cotangent on the first-order ``grad_positions``.
     gg_charges : wp.array, shape (N_total,), dtype matching ``charges``
         Upstream cotangent on ``grad_charges``.
     gg_grad_energies_2nd : wp.array, shape (N_total,), dtype wp.float64
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂grad_energies``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(grad_energies)``.
     gg_positions_2nd : wp.array, shape (N_total,), dtype matching ``positions``
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂positions``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(positions)``.
     gg_charges_2nd : wp.array, shape (N_total,), dtype matching ``charges``
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂charges``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(charges)``.
     wp_dtype : type
-        ``wp.float32`` or ``wp.float64`` — selects the overloaded variant.
+        ``wp.float32`` or ``wp.float64`` -- selects the overloaded variant.
     device : str, optional
         Warp device string. Defaults to ``positions.device``.
     """
@@ -7593,7 +7706,7 @@ def _batch_multipole_real_space_dipole_csr_energy_2nd_backward_kernel(
 
     Launch Grid
     -----------
-    dim = [num_atoms_total] — one thread per atom across all batched
+    dim = [num_atoms_total] -- one thread per atom across all batched
     systems; inner loop over the atom's CSR neighbor slice. Every output
     slot is written via ``atomic_add``.
 
@@ -7620,7 +7733,7 @@ def _batch_multipole_real_space_dipole_csr_energy_2nd_backward_kernel(
     batch_idx : wp.array, shape (N_total,), dtype wp.int32
         System index ``b`` for each atom.
     grad_energies : wp.array, shape (N_total,), dtype wp.float64
-        Original first-order upstream cotangent ``∂L/∂pair_energies``.
+        Original first-order upstream cotangent ``dL/d(pair_energies)``.
     gg_positions : wp.array, shape (N_total,), dtype matching ``positions``
         Upstream cotangent on the first-order backward's ``grad_positions``.
     gg_charges : wp.array, shape (N_total,), dtype matching ``charges``
@@ -7628,13 +7741,13 @@ def _batch_multipole_real_space_dipole_csr_energy_2nd_backward_kernel(
     gg_dipoles : wp.array, shape (N_total,), dtype matching ``dipoles``
         Upstream cotangent on ``grad_dipoles``.
     gg_grad_energies_2nd : wp.array, shape (N_total,), dtype wp.float64
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂grad_energies``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(grad_energies)``.
     gg_positions_2nd : wp.array, shape (N_total,), dtype matching ``positions``
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂positions``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(positions)``.
     gg_charges_2nd : wp.array, shape (N_total,), dtype matching ``charges``
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂charges``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(charges)``.
     gg_dipoles_2nd : wp.array, shape (N_total,), dtype matching ``dipoles``
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂dipoles``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(dipoles)``.
     """
     atom_i = wp.tid()
     b = batch_idx[atom_i]
@@ -7995,7 +8108,7 @@ def batch_multipole_real_space_dipole_csr_energy_2nd_backward(
         Same semantics as
         :func:`batch_multipole_real_space_dipole_csr_energy`.
     grad_energies : wp.array, shape (N_total,), dtype wp.float64
-        Original first-order upstream cotangent ``∂L/∂pair_energies``.
+        Original first-order upstream cotangent ``dL/d(pair_energies)``.
     gg_positions : wp.array, shape (N_total,), dtype matching ``positions``
         Upstream cotangent on the first-order ``grad_positions``.
     gg_charges : wp.array, shape (N_total,), dtype matching ``charges``
@@ -8003,15 +8116,15 @@ def batch_multipole_real_space_dipole_csr_energy_2nd_backward(
     gg_dipoles : wp.array, shape (N_total,), dtype matching ``dipoles``
         Upstream cotangent on ``grad_dipoles``.
     gg_grad_energies_2nd : wp.array, shape (N_total,), dtype wp.float64
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂grad_energies``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(grad_energies)``.
     gg_positions_2nd : wp.array, shape (N_total,), dtype matching ``positions``
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂positions``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(positions)``.
     gg_charges_2nd : wp.array, shape (N_total,), dtype matching ``charges``
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂charges``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(charges)``.
     gg_dipoles_2nd : wp.array, shape (N_total,), dtype matching ``dipoles``
-        OUTPUT (pre-zeroed). Second-order ``∂L'/∂dipoles``.
+        OUTPUT (pre-zeroed). Second-order ``dL'/d(dipoles)``.
     wp_dtype : type
-        ``wp.float32`` or ``wp.float64`` — selects the overloaded variant.
+        ``wp.float32`` or ``wp.float64`` -- selects the overloaded variant.
     device : str, optional
         Warp device string. Defaults to ``positions.device``.
     """
@@ -8261,7 +8374,7 @@ def multipole_real_space_quadrupole_csr_energy_fused(
     alpha : wp.array, shape (1,), dtype matching ``charges``
         Ewald splitting parameter.
     grad_energies : wp.array, shape (N,), dtype wp.float64
-        Upstream cotangent ``∂L/∂pair_energies`` used for the per-pair
+        Upstream cotangent ``dL/d(pair_energies)`` used for the per-pair
         gradient weights (see above).
     pair_energies : wp.array, shape (N,), dtype wp.float64
         OUTPUT (pre-zeroed). Per-atom accumulated energy.
@@ -8499,7 +8612,7 @@ def batch_multipole_real_space_quadrupole_csr_energy_fused(
     batch_idx : wp.array, shape (N_total,), dtype wp.int32
         System index ``b`` for each atom.
     grad_energies : wp.array, shape (N_total,), dtype wp.float64
-        Upstream cotangent ``∂L/∂pair_energies`` used for the per-pair
+        Upstream cotangent ``dL/d(pair_energies)`` used for the per-pair
         gradient weights (see above).
     pair_energies : wp.array, shape (N_total,), dtype wp.float64
         OUTPUT (pre-zeroed). Per-atom accumulated energy.

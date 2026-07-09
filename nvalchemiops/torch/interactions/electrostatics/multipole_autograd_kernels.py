@@ -176,7 +176,7 @@ def _source_phi_hat_double_backward(
 
     Propagates ``(gg_k_vectors, gg_k_norm2)`` to grads w.r.t. the backward's
     differentiable inputs ``(grad_output, k_vectors, k_norm2)`` — enabling
-    reciprocal stress-loss (``∂²E/∂cell∂θ``) while staying fully on Warp.
+    reciprocal stress-loss (``d^2E/dcell/dtheta``) while staying fully on Warp.
     """
     device = k_vectors.device
     grad_grad_output = torch.empty(
@@ -270,7 +270,26 @@ class SourcePhiHatFunction:
         icl0: float,
         icl1: float,
     ) -> torch.Tensor:
-        """Dispatch to ``torch.ops.nvalchemiops.multipole_source_phi_hat``."""
+        r"""Dispatch to ``torch.ops.nvalchemiops.multipole_source_phi_hat``.
+
+        Parameters
+        ----------
+        k_vectors : torch.Tensor, shape (N_k, 3)
+            Reciprocal-lattice vectors.
+        k_norm2 : torch.Tensor, shape (N_k,)
+            Squared k-norms :math:`|k|^2`.
+        sigma : float
+            Source Gaussian width (non-differentiable hyper-parameter).
+        icl0 : float
+            Inverse closure-length normalization for l=0 (non-differentiable).
+        icl1 : float
+            Inverse closure-length normalization for l=1 (non-differentiable).
+
+        Returns
+        -------
+        torch.Tensor, shape (N_k, 4, 2)
+            Source-basis :math:`\hat\phi(k)`, dtype float64.
+        """
         return torch.ops.nvalchemiops.multipole_source_phi_hat(
             k_vectors, k_norm2, float(sigma), float(icl0), float(icl1)
         )
@@ -296,7 +315,7 @@ class ReceiverPhiHatFunction(torch.autograd.Function):
     k_norm2 : torch.Tensor
         Squared k-norms :math:`|k|^2`, shape ``(N_k,)``.
     sigmas : torch.Tensor
-        Per-receiver Gaussian widths, shape ``(N_σ,)`` (non-differentiable).
+        Per-receiver Gaussian widths, shape ``(N_sigma,)`` (non-differentiable).
     inv_cl_table : torch.Tensor
         Inverse closure-length normalization table (non-differentiable).
 
@@ -314,7 +333,28 @@ class ReceiverPhiHatFunction(torch.autograd.Function):
         sigmas: torch.Tensor,
         inv_cl_table: torch.Tensor,
     ) -> torch.Tensor:
-        """Run eval_receiver_gto_fourier_dipole and save tensors for backward."""
+        r"""Evaluate the l<=1 receiver Fourier block via :func:`eval_receiver_gto_fourier_dipole`.
+
+        Saves ``k_vectors``, ``k_norm2``, ``sigmas``, and ``inv_cl_table`` for backward.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context object used to stash tensors for backward.
+        k_vectors : torch.Tensor, shape (N_k, 3)
+            Reciprocal-lattice vectors, dtype float64.
+        k_norm2 : torch.Tensor, shape (N_k,)
+            Squared k-norms :math:`|k|^2`, dtype float64.
+        sigmas : torch.Tensor, shape (N_sigma,)
+            Per-receiver Gaussian widths (non-differentiable), dtype float64.
+        inv_cl_table : torch.Tensor
+            Inverse closure-length normalization table (non-differentiable), dtype float64.
+
+        Returns
+        -------
+        torch.Tensor, shape (N_k, N_sigma, 4, 2)
+            Receiver-basis :math:`\hat\phi(k)`, dtype float64.
+        """
         n_k = k_vectors.shape[0]
         n_sigma = sigmas.shape[0]
         device = k_vectors.device
@@ -337,7 +377,31 @@ class ReceiverPhiHatFunction(torch.autograd.Function):
     def backward(
         ctx, grad_output: torch.Tensor
     ) -> tuple[torch.Tensor | None, torch.Tensor | None, None, None]:
-        r""":math:`\partial/\partial`\ (k_vectors, k_norm2); sigmas/inv_cl treated as constants."""
+        r"""Propagate gradients through :func:`eval_receiver_gto_fourier_dipole`.
+
+        Computes :math:`\partial L/\partial` ``k_vectors`` and
+        :math:`\partial L/\partial` ``k_norm2`` via
+        :func:`receiver_phi_hat_backward_dipole`. The ``sigmas`` and
+        ``inv_cl_table`` slots return ``None`` (non-differentiable).
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context holding saved tensors from forward.
+        grad_output : torch.Tensor, shape (N_k, N_sigma, 4, 2)
+            Upstream gradient w.r.t. the forward output.
+
+        Returns
+        -------
+        grad_k_vec : torch.Tensor, shape (N_k, 3)
+            Gradient w.r.t. ``k_vectors``.
+        grad_k_n2 : torch.Tensor, shape (N_k,)
+            Gradient w.r.t. ``k_norm2``.
+        None
+            Placeholder for ``sigmas`` (non-differentiable).
+        None
+            Placeholder for ``inv_cl_table`` (non-differentiable).
+        """
         k_vectors, k_norm2, sigmas, inv_cl_table = ctx.saved_tensors
         device = k_vectors.device
         wp_device = wp.device_from_torch(device)
@@ -376,7 +440,7 @@ class ReceiverPhiHatQuadrupoleFunction(torch.autograd.Function):
     k_norm2 : torch.Tensor
         Squared k-norms :math:`|k|^2`, shape ``(N_k,)``.
     sigmas : torch.Tensor
-        Per-receiver Gaussian widths, shape ``(N_σ,)`` (non-differentiable).
+        Per-receiver Gaussian widths, shape ``(N_sigma,)`` (non-differentiable).
     inv_cl_l2 : torch.Tensor
         l=2 inverse closure-length normalization table (non-differentiable).
 
@@ -394,16 +458,27 @@ class ReceiverPhiHatQuadrupoleFunction(torch.autograd.Function):
         sigmas: torch.Tensor,
         inv_cl_l2: torch.Tensor,
     ) -> torch.Tensor:
-        """Evaluate the l=2 receiver Fourier block via
-        :func:`eval_receiver_gto_fourier_quadrupole`.
+        """Evaluate the l=2 receiver Fourier block via :func:`eval_receiver_gto_fourier_quadrupole`.
 
-        Saves ``k_vectors`` / ``k_norm2`` / ``sigmas`` / ``inv_cl_l2`` for
-        backward.
+        Saves ``k_vectors``, ``k_norm2``, ``sigmas``, and ``inv_cl_l2`` for backward.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context object used to stash tensors for backward.
+        k_vectors : torch.Tensor, shape (N_k, 3)
+            Reciprocal-lattice vectors, dtype float64.
+        k_norm2 : torch.Tensor, shape (N_k,)
+            Squared k-norms :math:`|k|^2`, dtype float64.
+        sigmas : torch.Tensor, shape (N_sigma,)
+            Per-receiver Gaussian widths (non-differentiable), dtype float64.
+        inv_cl_l2 : torch.Tensor
+            l=2 inverse closure-length normalization table (non-differentiable), dtype float64.
 
         Returns
         -------
-        torch.Tensor
-            l=2 receiver block, shape ``(N_k, N_σ, 5, 2)`` (purely real).
+        torch.Tensor, shape (N_k, N_sigma, 5, 2)
+            l=2 receiver block, dtype float64 (purely real).
         """
         n_k = k_vectors.shape[0]
         n_sigma = sigmas.shape[0]
@@ -427,11 +502,30 @@ class ReceiverPhiHatQuadrupoleFunction(torch.autograd.Function):
     def backward(
         ctx, grad_output: torch.Tensor
     ) -> tuple[torch.Tensor | None, torch.Tensor | None, None, None]:
-        """Backward of the l=2 receiver Fourier block.
+        r"""Propagate gradients through :func:`eval_receiver_gto_fourier_quadrupole`.
 
-        Returns ``∂L/∂k_vectors`` and ``∂L/∂k_norm2`` (via
-        :func:`receiver_phi_hat_backward_quadrupole`); the ``sigmas`` and
-        ``inv_cl_l2`` slots are ``None``.
+        Computes :math:`\partial L/\partial` ``k_vectors`` and
+        :math:`\partial L/\partial` ``k_norm2`` via
+        :func:`receiver_phi_hat_backward_quadrupole`. The ``sigmas`` and
+        ``inv_cl_l2`` slots return ``None`` (non-differentiable).
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context holding saved tensors from forward.
+        grad_output : torch.Tensor, shape (N_k, N_sigma, 5, 2)
+            Upstream gradient w.r.t. the forward output.
+
+        Returns
+        -------
+        grad_k_vec : torch.Tensor, shape (N_k, 3)
+            Gradient w.r.t. ``k_vectors``.
+        grad_k_n2 : torch.Tensor, shape (N_k,)
+            Gradient w.r.t. ``k_norm2``.
+        None
+            Placeholder for ``sigmas`` (non-differentiable).
+        None
+            Placeholder for ``inv_cl_l2`` (non-differentiable).
         """
         k_vectors, k_norm2, sigmas, inv_cl_l2 = ctx.saved_tensors
         device = k_vectors.device

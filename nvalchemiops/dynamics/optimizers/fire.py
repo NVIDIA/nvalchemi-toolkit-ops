@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
+r"""
 FIRE and FIRE2 Optimizer Kernels
 ================================
 
@@ -32,19 +32,19 @@ Velocity mixing:
 
 .. math::
 
-    \\mathbf{v}(t) \\leftarrow (1-\\alpha) \\mathbf{v}(t)
-                              + \\alpha \\hat{\\mathbf{F}}(t) |\\mathbf{v}(t)|
+    \mathbf{v}(t) \leftarrow (1-\alpha) \mathbf{v}(t)
+                              + \alpha \hat{\mathbf{F}}(t) |\mathbf{v}(t)|
 
-Adaptive parameter update based on power :math:`P = \\mathbf{F} \\cdot \\mathbf{v}`:
+Adaptive parameter update based on power :math:`P = \mathbf{F} \cdot \mathbf{v}`:
 
-If :math:`P > 0` for :math:`N_{\\min}` consecutive steps:
-    - :math:`\\Delta t \\leftarrow \\min(\\Delta t \\cdot f_{\\text{inc}}, \\Delta t_{\\max})`
-    - :math:`\\alpha \\leftarrow \\alpha \\cdot f_\\alpha`
+If :math:`P > 0` for :math:`N_{\min}` consecutive steps:
+    - :math:`\Delta t \leftarrow \min(\Delta t \cdot f_{\text{inc}}, \Delta t_{\max})`
+    - :math:`\alpha \leftarrow \alpha \cdot f_\alpha`
 
-If :math:`P \\leq 0`:
-    - :math:`\\mathbf{v} \\leftarrow 0`
-    - :math:`\\Delta t \\leftarrow \\max(\\Delta t \\cdot f_{\\text{dec}}, \\Delta t_{\\min})`
-    - :math:`\\alpha \\leftarrow \\alpha_{\\text{start}}`
+If :math:`P \leq 0`:
+    - :math:`\mathbf{v} \leftarrow 0`
+    - :math:`\Delta t \leftarrow \max(\Delta t \cdot f_{\text{dec}}, \Delta t_{\min})`
+    - :math:`\alpha \leftarrow \alpha_{\text{start}}`
 
 TYPICAL FIRE PARAMETERS
 =======================
@@ -539,7 +539,7 @@ def _fire_reduce_batch_idx_rle_kernel(
     N: wp.int32,
     elems_per_thread: wp.int32,
 ):
-    """RLE-based reduction for FIRE diagnostics (vf, vv, ff).
+    r"""RLE-based reduction for FIRE diagnostics (vf, vv, ff).
 
     Uses run-length encoding to minimize atomic operations: accumulates
     locally while batch_idx stays constant, emits atomic_add only on
@@ -547,9 +547,9 @@ def _fire_reduce_batch_idx_rle_kernel(
 
     This kernel implements the reduction phase for FIRE optimization,
     computing three per-system inner products:
-    - vf[s] = sum(v·f for atoms in system s)
-    - vv[s] = sum(v·v for atoms in system s)
-    - ff[s] = sum(f·f for atoms in system s)
+    - vf[s] = sum(:math:`\mathbf{v} \cdot \mathbf{f}` for atoms in system s)
+    - vv[s] = sum(:math:`\mathbf{v} \cdot \mathbf{v}` for atoms in system s)
+    - ff[s] = sum(:math:`\mathbf{f} \cdot \mathbf{f}` for atoms in system s)
 
     Launch Grid
     -----------
@@ -564,11 +564,11 @@ def _fire_reduce_batch_idx_rle_kernel(
     batch_idx : wp.array, shape (N,), dtype int32
         Sorted system index per atom in [0, M). **MUST BE SORTED**.
     vf : wp.array, shape (M,), dtype float32/float64
-        OUTPUT: v·f per system. Zeroed internally before each use.
+        OUTPUT: :math:`\mathbf{v} \cdot \mathbf{f}` per system. Zeroed internally before each use.
     vv : wp.array, shape (M,), dtype float32/float64
-        OUTPUT: v·v per system. Zeroed internally before each use.
+        OUTPUT: :math:`\mathbf{v} \cdot \mathbf{v}` per system. Zeroed internally before each use.
     ff : wp.array, shape (M,), dtype float32/float64
-        OUTPUT: f·f per system. Zeroed internally before each use.
+        OUTPUT: :math:`\mathbf{f} \cdot \mathbf{f}` per system. Zeroed internally before each use.
     N : int32
         Total number of atoms.
     elems_per_thread : int32
@@ -1561,10 +1561,22 @@ def fire_compute_vf_vv_ff(
     batch_idx: wp.array = None,
     device: str = None,
 ) -> None:
-    """
-    Fill vf[s]=Sum F.v, vv[s]=Sum v.v, ff[s]=Sum F.F over each system's atoms —
-    the same reduction ``fire_step`` / ``fire_update`` perform internally,
-    exposed standalone.
+    r"""
+    Fill the per-system FIRE reductions over each system's atoms.
+
+    For every system :math:`s` this accumulates the three inner products used
+    by the FIRE parameter update and velocity mixing:
+
+    .. math::
+
+        vf[s] &= \sum_{i \in s} \mathbf{F}_i \cdot \mathbf{v}_i \\
+        vv[s] &= \sum_{i \in s} \mathbf{v}_i \cdot \mathbf{v}_i \\
+        ff[s] &= \sum_{i \in s} \mathbf{F}_i \cdot \mathbf{F}_i
+
+    where the power :math:`P = \sum_i \mathbf{F}_i \cdot \mathbf{v}_i` sets the
+    uphill/downhill decision and :math:`\sqrt{vv/ff}` sets the mixing scale.
+    This is the same reduction ``fire_step`` / ``fire_update`` perform
+    internally, exposed standalone.
 
     Lets a caller compute these reductions separately, optionally post-process
     them, and feed them back via ``fire_step(..., compute_reductions=False)``
@@ -1644,8 +1656,33 @@ def fire_step(
     velocities_last: wp.array = None,
     compute_reductions: bool = True,
 ) -> None:
-    """
+    r"""
     Unified FIRE optimization step with MD integration.
+
+    Per system, reduce the power :math:`P = \sum_i \mathbf{F}_i \cdot \mathbf{v}_i`
+    together with :math:`\sum_i \mathbf{v}_i \cdot \mathbf{v}_i` and
+    :math:`\sum_i \mathbf{F}_i \cdot \mathbf{F}_i`, mix each atom's velocity
+    toward the force direction, take a mass-weighted MD kick, and apply the
+    displacement with a per-step cap:
+
+    .. math::
+
+        \mathbf{v} &\leftarrow (1-\alpha)\,\mathbf{v}
+            + \alpha \sqrt{\tfrac{\mathbf{v}\cdot\mathbf{v}}
+            {\mathbf{F}\cdot\mathbf{F}}}\,\mathbf{F} \\
+        \mathbf{v} &\leftarrow \mathbf{v} + \Delta t\,\mathbf{F}/m \\
+        \Delta\mathbf{r} &= \Delta t\,\mathbf{v},\quad
+            \mathbf{r} \leftarrow \mathbf{r}
+            + \min\!\left(1, \tfrac{\text{maxstep}}{\lVert\Delta\mathbf{r}\rVert}\right)
+            \Delta\mathbf{r}
+
+    When :math:`P > 0` the timestep grows (after ``n_min`` consecutive positive
+    steps) and :math:`\alpha` decays; when :math:`P \le 0` (uphill) the velocity
+    is zeroed, :math:`\Delta t` shrinks, and :math:`\alpha` resets to
+    ``alpha_start``. Mixing uses the ``fire_velocity_mixing`` form
+    :math:`\alpha\sqrt{vv/ff}\,\mathbf{F}` rather than the textbook
+    :math:`\alpha\lVert\mathbf{v}\rVert\hat{\mathbf{F}}`; the two coincide only
+    when the pre-mix speed already matches the force-scaled velocity.
 
     This function dispatches to the appropriate kernel based on:
     - Batching mode: single system, batch_idx, or atom_ptr
@@ -1703,7 +1740,8 @@ def fire_step(
         Last accepted velocities (for downhill rollback).
     compute_reductions : bool, optional
         If True (default), recompute the per-system reductions vf/vv/ff
-        (Sum F.v / Sum v.v / Sum F.F) internally from velocities/forces. If
+        (:math:`\sum \mathbf{F} \cdot \mathbf{v}` / :math:`\sum \mathbf{v} \cdot \mathbf{v}` /
+        :math:`\sum \mathbf{F} \cdot \mathbf{F}`) internally from velocities/forces. If
         False, use the caller-supplied values already in vf/vv/ff instead of
         recomputing them (they are not zeroed); the state roll-back still runs,
         so the supplied values must reflect the post-roll-back velocities. Only
@@ -1991,8 +2029,26 @@ def fire_update(
     velocities_last: wp.array = None,
     compute_reductions: bool = True,
 ) -> None:
-    """
+    r"""
     FIRE parameter update and velocity mixing WITHOUT MD integration.
+
+    Reduces the per-system power :math:`P = \sum_i \mathbf{F}_i \cdot \mathbf{v}_i`
+    (with :math:`\sum_i \mathbf{v}_i \cdot \mathbf{v}_i` and
+    :math:`\sum_i \mathbf{F}_i \cdot \mathbf{F}_i`), advances :math:`\Delta t`,
+    :math:`\alpha`, and the positive-step counter by the FIRE rules, and mixes
+    each velocity toward the force direction:
+
+    .. math::
+
+        \mathbf{v} \leftarrow (1-\alpha)\,\mathbf{v}
+            + \alpha \sqrt{\tfrac{\mathbf{v}\cdot\mathbf{v}}
+            {\mathbf{F}\cdot\mathbf{F}}}\,\mathbf{F}
+
+    Unlike :func:`fire_step`, it stops here: no MD kick
+    (:math:`\mathbf{v} \mathrel{+}= \Delta t\,\mathbf{F}/m`), no displacement
+    (:math:`\Delta\mathbf{r} = \Delta t\,\mathbf{v}`), and no ``maxstep`` clamp.
+    Uphill systems (:math:`P \le 0`) still have their velocity zeroed and
+    :math:`\alpha`/:math:`\Delta t` reset.
 
     Use this for variable-cell optimization where you want to:
     1. Pack atomic + cell DOFs into extended arrays

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
+r"""
 Nosé-Hoover Chain (NHC) Thermostat for NVT Ensemble.
 
 This module implements the Nosé-Hoover chain thermostat following the
@@ -26,17 +26,24 @@ References
 - Tuckerman et al. J Phys A: Math Gen, 39, 5629 (2006)
 
 The Nosé-Hoover chain equations of motion:
-    ṙᵢ = vᵢ
-    v̇ᵢ = Fᵢ/mᵢ - η̇₁·vᵢ
-    η̇₁ = (2·KE - Ndof·kT) / Q₁
-    η̇ₖ = (Qₖ₋₁·η̇²ₖ₋₁ - kT) / Qₖ   for k > 1
+
+.. math::
+
+    \dot{r}_i = v_i
+
+    \dot{v}_i = F_i/m_i - \dot{\eta}_1 v_i
+
+    \dot{\eta}_1 = (2 \cdot \text{KE} - N_\text{dof} k T) / Q_1
+
+    \dot{\eta}_k = (Q_{k-1} \dot{\eta}_{k-1}^2 - kT) / Q_k \quad \text{for } k > 1
 
 Where:
-    η   : thermostat chain positions (unitless)
-    η̇   : thermostat chain velocities (1/time)
-    Q   : thermostat chain masses (energy·time²)
-    Ndof: degrees of freedom (typically 3N - 3)
-    kT  : target temperature in energy units (k_B = 1)
+
+- :math:`\eta` : thermostat chain positions (unitless)
+- :math:`\dot{\eta}` : thermostat chain velocities (1/time)
+- :math:`Q` : thermostat chain masses (energy*time^2)
+- :math:`N_\text{dof}` : degrees of freedom (typically 3N - 3)
+- :math:`kT` : target temperature in energy units (k_B = 1)
 
 BATCH MODE
 ==========
@@ -290,17 +297,18 @@ def _nhc_chain_propagate_kernel(
     chain_length: int,
     vel_scale: wp.array(dtype=Any),
 ):
-    """Propagate Nosé-Hoover chain for one Yoshida-Suzuki sub-step.
+    r"""Propagate Nosé-Hoover chain for one Yoshida-Suzuki sub-step.
 
     This kernel implements the time-reversible Martyna-Tobias-Klein (MTK)
     integration scheme for Nosé-Hoover chains.
 
     Algorithm (for each system):
-    1. Half-step position update: η_k += 0.5 * dt * η̇_k
-    2. Backward sweep: Update η̇ from chain end to start with friction
-    3. Compute velocity scale factor: exp(-0.5 * dt * η̇_0)
-    4. Forward sweep: Update η̇ from start to chain end with new forces
-    5. Half-step position update: η_k += 0.5 * dt * η̇_k
+
+    1. Half-step position update: :math:`\eta_k \mathrel{+}= 0.5 \cdot dt \cdot \dot{\eta}_k`
+    2. Backward sweep: Update :math:`\dot{\eta}` from chain end to start with friction
+    3. Compute velocity scale factor: :math:`\exp(-0.5 \cdot dt \cdot \dot{\eta}_0)`
+    4. Forward sweep: Update :math:`\dot{\eta}` from start to chain end with new forces
+    5. Half-step position update: :math:`\eta_k \mathrel{+}= 0.5 \cdot dt \cdot \dot{\eta}_k`
 
     Launch Grid
     -----------
@@ -595,10 +603,14 @@ def _nhc_compute_chain_energy_kernel(
     ke_chain: wp.array(dtype=Any),
     pe_chain: wp.array(dtype=Any),
 ):
-    """Compute NHC kinetic and potential energy for single system.
+    r"""Compute NHC kinetic and potential energy for single system.
 
-    KE_chain = sum_k 0.5 * Q_k * η̇_k²
-    PE_chain = ndof * kT * η_0 + kT * sum_{k>0} η_k
+    .. math::
+
+        \text{KE}_\text{chain} = \sum_k \tfrac{1}{2} Q_k \dot{\eta}_k^2
+
+        \text{PE}_\text{chain} = N_\text{dof} \cdot kT \cdot \eta_0 + kT \sum_{k>0} \eta_k
+
 
     Parameters
     ----------
@@ -990,11 +1002,14 @@ def nhc_compute_masses(
     device: str = None,
     dtype=wp.float64,
 ) -> wp.array:
-    """Compute Nosé-Hoover chain masses using GPU kernel.
+    r"""Compute Nosé-Hoover chain masses using GPU kernel.
 
-    Computes Q_k values for Nosé-Hoover chain:
-        Q_0 = ndof * kT * tau^2
-        Q_k = kT * tau^2 for k > 0
+    Computes :math:`Q_k` values for the Nosé-Hoover chain:
+
+    .. math::
+
+        Q_0 &= N_\text{dof} \cdot k_B T \cdot \tau^2 \\
+        Q_k &= k_B T \cdot \tau^2 \quad \text{for } k > 0
 
     Parameters
     ----------
@@ -1002,10 +1017,10 @@ def nhc_compute_masses(
         Number of degrees of freedom per system. Shape (1,) for single system,
         (num_systems,) for batched.
     target_temp : wp.array
-        Target temperature (kT) per system. Shape (1,) for single system,
+        Target temperature :math:`k_B T` per system. Shape (1,) for single system,
         (num_systems,) for batched.
     tau : wp.array
-        Time constant per system. Shape (1,) for single system,
+        Time constant :math:`\tau` per system. Shape (1,) for single system,
         (num_systems,) for batched.
     chain_length : int
         Number of thermostats in the chain.
@@ -1136,8 +1151,18 @@ def nhc_thermostat_chain_update(
     device: str = None,
     compute_ke: bool = True,
 ) -> None:
-    """
+    r"""
     Propagate Nosé-Hoover chain and scale velocities (in-place).
+
+    Propagates the chain over the Yoshida-Suzuki sub-steps, accumulating the
+    per-step velocity scale factor :math:`\exp(-\tfrac{1}{2}\,\Delta t_c\,\dot{\eta}_0)`
+    into ``total_scale``, then rescales every particle velocity by it:
+
+    .. math::
+
+        \mathbf{v}_i \leftarrow s\,\mathbf{v}_i,
+        \qquad
+        s = \prod_j \exp\!\left(-\tfrac{1}{2}\,\Delta t_{c,j}\,\dot{\eta}_0\right)
 
     Uses Yoshida-Suzuki factorization for time-reversible integration.
     All computations are performed on GPU using Warp kernels.
@@ -1158,16 +1183,17 @@ def nhc_thermostat_chain_update(
     eta_mass : wp.array(dtype=wp.float64)
         Thermostat chain masses. Same shape as eta.
     target_temp : wp.array(dtype=wp.float64)
-        Target temperature (kT). Shape (1,) or (num_systems,).
+        Target temperature :math:`k_B T`. Shape (1,) or (num_systems,).
     dt : wp.array(dtype=wp.float32 or wp.float64)
         Time step. Shape (1,) or (num_systems,).
     ndof : wp.array(dtype=wp.float64)
         Degrees of freedom. Shape (1,) or (num_systems,).
     ke2 : wp.array
-        2*KE = sum(m * v^2) per system. When compute_ke is True (default) this
+        :math:`2\,\mathrm{KE} = \sum_i m_i \lVert \mathbf{v}_i \rVert^2` per
+        system. When compute_ke is True (default) this
         is a scratch array zeroed and filled internally from velocities/masses
         before use. When compute_ke is False it is an INPUT supplying a
-        caller-precomputed 2*KE; it is not zeroed. Either way the chain forward
+        caller-precomputed :math:`2\,\mathrm{KE}`; it is not zeroed. Either way the chain forward
         sweep rescales it in place.
         Shape (1,) for single system, (num_systems,) for batched.
     total_scale : wp.array
@@ -1190,9 +1216,9 @@ def nhc_thermostat_chain_update(
     device : str, optional
         Warp device. If None, inferred from velocities.
     compute_ke : bool, optional
-        If True (default), recompute 2*KE from velocities/masses internally
-        (byte-identical to legacy behavior). If False, use the caller-supplied
-        value already in ``ke2`` instead of recomputing it. See
+        If True (default), recompute :math:`2\,\mathrm{KE}` from velocities/masses
+        internally (byte-identical to legacy behavior). If False, use the
+        caller-supplied value already in ``ke2`` instead of recomputing it. See
         ``nhc_compute_2ke`` for the matching reduction helper.
     """
     if device is None:
@@ -1387,8 +1413,13 @@ def nhc_thermostat_chain_update_out(
     device: str = None,
     compute_ke: bool = True,
 ) -> tuple[wp.array, wp.array, wp.array]:
-    """
+    r"""
     Propagate Nosé-Hoover chain and scale velocities (non-mutating).
+
+    Out-of-place counterpart of :func:`nhc_thermostat_chain_update`: copies
+    ``velocities``/``eta``/``eta_dot`` into the ``*_out`` buffers and applies the
+    same chain propagation and velocity rescaling
+    :math:`\mathbf{v}_i \leftarrow s\,\mathbf{v}_i` to the copies.
 
     Parameters
     ----------
@@ -1403,15 +1434,16 @@ def nhc_thermostat_chain_update_out(
     eta_mass : wp.array(dtype=wp.float64)
         Thermostat chain masses. Shape (M,) or (B, M).
     target_temp : wp.array(dtype=wp.float64)
-        Target temperature (kT). Shape (1,) or (B,).
+        Target temperature :math:`k_B T`. Shape (1,) or (B,).
     dt : wp.array(dtype=wp.float32 or wp.float64)
         Time step. Shape (1,) or (B,).
     ndof : wp.array(dtype=wp.float64)
         Degrees of freedom. Shape (1,) or (B,).
     ke2 : wp.array
-        2*KE = sum(m * v^2) per system. Zeroed and filled internally when
+        :math:`2\,\mathrm{KE} = \sum_i m_i \lVert \mathbf{v}_i \rVert^2` per
+        system. Zeroed and filled internally when
         compute_ke is True (default); when compute_ke is False it is an INPUT
-        supplying a caller-precomputed 2*KE that is not zeroed. See
+        supplying a caller-precomputed :math:`2\,\mathrm{KE}` that is not zeroed. See
         ``nhc_thermostat_chain_update``.
         Shape (1,) for single system, (num_systems,) for batched.
     total_scale : wp.array
@@ -1439,7 +1471,7 @@ def nhc_thermostat_chain_update_out(
     device : str, optional
         Warp device. If None, inferred from velocities.
     compute_ke : bool, optional
-        If True (default), recompute 2*KE internally. If False, use the
+        If True (default), recompute :math:`2\,\mathrm{KE}` internally. If False, use the
         caller-supplied value in ``ke2``. See
         ``nhc_thermostat_chain_update`` for details.
 
@@ -1493,10 +1525,12 @@ def nhc_velocity_half_step(
     atom_ptr: wp.array = None,
     device: str = None,
 ) -> None:
-    """
+    r"""
     Half-step velocity update (in-place).
 
-    v += 0.5 * (F/m) * dt
+    .. math::
+
+        \mathbf{v}_i \leftarrow \mathbf{v}_i + \tfrac{1}{2}\,\frac{\mathbf{F}_i}{m_i}\,\Delta t
 
     Parameters
     ----------
@@ -1537,8 +1571,11 @@ def nhc_velocity_half_step_out(
     atom_ptr: wp.array = None,
     device: str = None,
 ) -> wp.array:
-    """
+    r"""
     Half-step velocity update (non-mutating).
+
+    Writes :math:`\mathbf{v}_i + \tfrac{1}{2}\,\frac{\mathbf{F}_i}{m_i}\,\Delta t`
+    into ``velocities_out``.
 
     Parameters
     ----------
@@ -1586,10 +1623,12 @@ def nhc_position_update(
     atom_ptr: wp.array = None,
     device: str = None,
 ) -> None:
-    """
+    r"""
     Full-step position update (in-place).
 
-    r += v * dt
+    .. math::
+
+        \mathbf{r}_i \leftarrow \mathbf{r}_i + \mathbf{v}_i\,\Delta t
 
     Parameters
     ----------
@@ -1627,8 +1666,10 @@ def nhc_position_update_out(
     atom_ptr: wp.array = None,
     device: str = None,
 ) -> wp.array:
-    """
+    r"""
     Full-step position update (non-mutating).
+
+    Writes :math:`\mathbf{r}_i + \mathbf{v}_i\,\Delta t` into ``positions_out``.
 
     Parameters
     ----------
@@ -1678,15 +1719,23 @@ def nhc_compute_chain_energy(
     num_systems: int = 1,
     device: str = None,
 ) -> tuple[wp.array, wp.array]:
-    """
+    r"""
     Compute Nosé-Hoover chain kinetic and potential energy.
 
     For conservation checks, the extended system Hamiltonian is:
-        H_ext = KE_particles + PE + KE_chain + PE_chain
+
+    .. math::
+
+        H_\text{ext} = \text{KE}_\text{particles} + \text{PE} + \text{KE}_\text{chain} + \text{PE}_\text{chain}
 
     where:
-        KE_chain = sum_k 0.5 * Q_k * eta_dot_k^2
-        PE_chain = ndof * kT * eta_0 + kT * sum_{k>0} eta_k
+
+    .. math::
+
+        \text{KE}_\text{chain} = \sum_k \tfrac{1}{2} Q_k \dot{\eta}_k^2
+
+        \text{PE}_\text{chain} = N_\text{dof} \cdot kT \cdot \eta_0 + kT \sum_{k>0} \eta_k
+
 
     Parameters
     ----------
@@ -1697,7 +1746,7 @@ def nhc_compute_chain_energy(
     eta_mass : wp.array(dtype=wp.float64)
         Thermostat chain masses. Shape (M,) or (B, M).
     target_temp : wp.array(dtype=wp.float64)
-        Target temperature (kT). Shape (1,) or (B,).
+        Target temperature :math:`k_B T`. Shape (1,) or (B,).
     ndof : wp.array(dtype=wp.float64)
         Degrees of freedom. Shape (1,) or (B,).
     ke_chain : wp.array

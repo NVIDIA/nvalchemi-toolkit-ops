@@ -20,8 +20,8 @@ Framework-agnostic Warp launchers that extend the monopole PME
 infrastructure (``pme_kernels.py``, ``nvalchemiops/math/spline.py``) to
 multipole sources (charges, dipoles, and quadrupoles).
 
-The reciprocal-space pipeline mirrors monopole PME — spread → FFT →
-Green's function multiply → inverse FFT → gather — with the same FFT
+The reciprocal-space pipeline mirrors monopole PME — spread -> FFT ->
+Green's function multiply -> inverse FFT -> gather — with the same FFT
 plumbing (``torch.fft.rfftn`` / ``irfftn``) and aliasing correction. The
 dipole branch enters at the spread step (the density gains an extra
 :math:`\boldsymbol{\mu}_i \cdot \nabla B_p(r_\text{grid} - r_i)` term)
@@ -87,7 +87,25 @@ def bspline_moduli_1d_launch(
     moduli: wp.array,
     device: str | None = None,
 ) -> None:
-    """Launcher for :func:`_bspline_moduli_1d_kernel` (one thread per axis index)."""
+    """Launcher for :func:`_bspline_moduli_1d_kernel` (one thread per axis index).
+
+    Parameters
+    ----------
+    miller : wp.array, shape (n_axis,), dtype=wp.float64
+        Integer Miller indices for this axis (``0 .. n_axis-1``).
+    inv_n : float
+        Reciprocal of the mesh dimension along this axis (``1 / n_axis``).
+    order : int
+        B-spline order (3, 4, 5, or 6).
+    moduli : wp.array, shape (n_axis,), dtype=wp.float64
+        OUTPUT. B-spline modulus at each Miller index.
+    device : str, optional
+        Warp device string. Defaults to ``miller.device``.
+
+    Launch Grid
+    -----------
+    ``dim = (n_axis,)`` — one thread per axis index.
+    """
     if device is None:
         device = str(miller.device)
     wp.launch(
@@ -130,7 +148,7 @@ def multipole_pme_spread_launch(
     dipoles : wp.array, shape (N,), dtype=vec3f/vec3d
         Per-atom Cartesian dipole vectors.
     cell_inv_t : wp.array, shape (1,), dtype=mat33f/mat33d
-        Transpose of the inverse cell matrix (fractional → Cartesian map).
+        Transpose of the inverse cell matrix (fractional -> Cartesian map).
     order : int
         B-spline order (one of ``_PER_ORDER_SUPPORTED`` = ``(3, 4, 5, 6)``).
     mesh : wp.array3d, shape (Nx, Ny, Nz), dtype=wp.float32/float64
@@ -863,7 +881,7 @@ def _pme_multipole_gather_hessian_kernel(
     hessian_diag: wp.array(dtype=Any),
     hessian_off: wp.array(dtype=Any),
 ):
-    r"""Gather the Cartesian Hessian of ``φ`` at atom positions.
+    r"""Gather the Cartesian Hessian of :math:`\varphi` at atom positions.
 
     For each atom, gathers
 
@@ -898,11 +916,11 @@ def _pme_multipole_gather_hessian_kernel(
     positions, cell_inv_t, order
         Same convention as the spread kernel.
     mesh : wp.array3d
-        Potential grid ``φ(g)`` — the inverse FFT of ``ρ̃ · G̃`` in
-        the PME pipeline.
+        Potential grid :math:`\varphi(g)` — the inverse FFT of
+        :math:`\tilde{\rho} \cdot \tilde{G}` in the PME pipeline.
     hessian_diag, hessian_off : wp.array(dtype=vec3)
         OUTPUTS, pre-zeroed. Per-atom diagonal and off-diagonal of
-        the Cartesian Hessian of ``φ``.
+        the Cartesian Hessian of :math:`\varphi`.
     """
     atom_idx, point_idx = wp.tid()
 
@@ -998,7 +1016,7 @@ def multipole_pme_gather_hessian_launch(
 ) -> None:
     r"""Launcher for :func:`_pme_multipole_gather_hessian_kernel`.
 
-    Gathers the per-atom Cartesian Hessian of the potential ``φ`` (needed
+    Gathers the per-atom Cartesian Hessian of the potential :math:`\varphi` (needed
     for quadrupole forces). Uses a per-order specialized kernel when one
     is registered, else the generic ``order**3``-grid kernel.
 
@@ -1011,7 +1029,8 @@ def multipole_pme_gather_hessian_launch(
     order : int
         B-spline order.
     mesh : wp.array, shape (Nx, Ny, Nz), dtype=wp.float32/float64
-        Potential grid ``φ(g)`` (inverse FFT of ``ρ̃ · G̃``).
+        Potential grid :math:`\varphi(g)` (inverse FFT of
+        :math:`\tilde{\rho} \cdot \tilde{G}`).
     hessian_diag : wp.array, shape (N,), dtype=vec3f/vec3d
         OUTPUT, pre-zeroed. Diagonal ``(H_xx, H_yy, H_zz)`` per atom.
     hessian_off : wp.array, shape (N,), dtype=vec3f/vec3d
@@ -1870,14 +1889,14 @@ def _pme_multipole_convolve_double_backward_kernel(
 
     Second-order of the backward
     :math:`(gc, mf, k^2, V) \mapsto (g_{mf}, g_{k^2}, g_V)`. With
-    ``factor`` and ``β = -(1/4α² + σ²) - 1/k²`` as in the backward, the real
-    dots ``P = gg_mf·gc``, ``D = gc·mf``, the scalar
-    ``s = gg_ksq·β - gg_vol/V`` and ``W = P + D·s``:
+    :math:`\mathtt{factor}` and :math:`\beta = -(1/(4\alpha^2) + \sigma^2) - 1/k^2`
+    as in the backward, the real dots ``P = gg_mf*gc``, ``D = gc*mf``, the scalar
+    ``s = gg_ksq*beta - gg_vol/V`` and ``W = P + D*s``:
 
-    - ``∂/∂grad_convolved = factor·gg_mf + factor·s·mf``
-    - ``∂/∂mesh_fft = factor·s·gc``
-    - ``∂/∂k² = factor·(β·W + gg_ksq·D/k⁴)``
-    - ``∂/∂V = Σ_g (factor/V)·(-W + D·gg_vol/V)`` (atomic).
+    - ``d/d_grad_convolved = factor*gg_mf + factor*s*mf``
+    - ``d/d_mesh_fft = factor*s*gc``
+    - :math:`\partial/\partial k^2 = \mathtt{factor} \cdot (\beta W + \mathtt{gg\_ksq} \cdot D/k^4)`
+    - :math:`\partial/\partial V = \sum_g (\mathtt{factor}/V) \cdot (-W + D \cdot \mathtt{gg\_vol}/V)` (atomic).
 
     The ``mesh_fft`` cotangent path (``gg_mesh_fft``) is the force-loss term;
     the ``gg_k_squared``/``gg_volume`` paths are the cell-coupled stress-loss
@@ -1994,6 +2013,49 @@ def multipole_pme_convolve_double_backward_launch(
     r"""Launch :func:`_pme_multipole_convolve_double_backward_kernel`.
 
     ``d_volume`` is a ``(1,)`` array — must be zero-initialized.
+
+    Parameters
+    ----------
+    mesh_fft : wp.array, shape (Nx, Ny, Nz_rfft), dtype=vec2f/vec2d
+        Forward-FFT of the spread density (complex as ``vec2``).
+    k_squared : wp.array, shape (Nx, Ny, Nz_rfft), dtype=wp.float32/float64
+        Squared k-vector magnitude.
+    moduli_x : wp.array, shape (Nx,), dtype=wp.float32/float64
+        1D B-spline modulus along x.
+    moduli_y : wp.array, shape (Ny,), dtype=wp.float32/float64
+        1D B-spline modulus along y.
+    moduli_z : wp.array, shape (Nz_rfft,), dtype=wp.float32/float64
+        1D B-spline modulus along z.
+    alpha : wp.array, shape (1,), dtype=wp.float32/float64
+        Ewald splitting parameter.
+    sigma : wp.array, shape (1,), dtype=wp.float32/float64
+        GTO Gaussian width.
+    volume : wp.array, shape (1,), dtype=wp.float32/float64
+        Unit cell volume.
+    grad_convolved : wp.array, shape (Nx, Ny, Nz_rfft), dtype=vec2f/vec2d
+        Upstream gradient w.r.t. the convolved mesh (from the backward pass).
+    gg_mesh_fft : wp.array, shape (Nx, Ny, Nz_rfft), dtype=vec2f/vec2d
+        Upstream cotangent on ``grad_mesh_fft``.
+    gg_k_squared : wp.array, shape (Nx, Ny, Nz_rfft), dtype=wp.float32/float64
+        Upstream cotangent on ``grad_k_squared``.
+    gg_volume : wp.array, shape (1,), dtype=wp.float32/float64
+        Upstream cotangent on ``grad_volume``.
+    d_grad_convolved : wp.array, shape (Nx, Ny, Nz_rfft), dtype=vec2f/vec2d
+        OUTPUT. Second-order gradient w.r.t. ``grad_convolved``.
+    d_mesh_fft : wp.array, shape (Nx, Ny, Nz_rfft), dtype=vec2f/vec2d
+        OUTPUT. Second-order gradient w.r.t. ``mesh_fft``.
+    d_k_squared : wp.array, shape (Nx, Ny, Nz_rfft), dtype=wp.float32/float64
+        OUTPUT. Second-order gradient w.r.t. ``k_squared``.
+    d_volume : wp.array, shape (1,), dtype=wp.float32/float64
+        OUTPUT, pre-zeroed. Second-order gradient w.r.t. volume (atomic).
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` — selects the registered overload.
+    device : str, optional
+        Warp device string. Defaults to ``mesh_fft.device``.
+
+    Launch Grid
+    -----------
+    ``dim = (Nx, Ny, Nz_rfft)`` — one thread per rfft cell.
     """
     if device is None:
         device = str(mesh_fft.device)
@@ -2505,7 +2567,51 @@ def batch_multipole_pme_convolve_double_backward_launch(
 ) -> None:
     r"""Batched launcher for :func:`_batch_pme_multipole_convolve_double_backward_kernel`.
 
-    ``d_volume`` is a ``(B,)`` array — must be zero-initialized."""
+    ``d_volume`` is a ``(B,)`` array — must be zero-initialized.
+
+    Parameters
+    ----------
+    mesh_fft : wp.array4d, shape (B, Nx, Ny, Nz_rfft), dtype=vec2f/vec2d
+        Per-system forward-FFT of the spread density (complex as ``vec2``).
+    k_squared : wp.array4d, shape (B, Nx, Ny, Nz_rfft), dtype=wp.float32/float64
+        Per-system squared k-vector magnitude.
+    moduli_x : wp.array, shape (Nx,), dtype=wp.float32/float64
+        1D B-spline modulus along x (shared across the batch).
+    moduli_y : wp.array, shape (Ny,), dtype=wp.float32/float64
+        1D B-spline modulus along y (shared across the batch).
+    moduli_z : wp.array, shape (Nz_rfft,), dtype=wp.float32/float64
+        1D B-spline modulus along z (shared across the batch).
+    alpha : wp.array, shape (B,), dtype=wp.float32/float64
+        Per-system Ewald splitting parameter.
+    sigma : wp.array, shape (B,), dtype=wp.float32/float64
+        Per-system GTO Gaussian width.
+    volume : wp.array, shape (B,), dtype=wp.float32/float64
+        Per-system unit cell volume.
+    grad_convolved : wp.array4d, shape (B, Nx, Ny, Nz_rfft), dtype=vec2f/vec2d
+        Upstream gradient w.r.t. the convolved mesh (from the backward pass).
+    gg_mesh_fft : wp.array4d, shape (B, Nx, Ny, Nz_rfft), dtype=vec2f/vec2d
+        Upstream cotangent on ``grad_mesh_fft``.
+    gg_k_squared : wp.array4d, shape (B, Nx, Ny, Nz_rfft), dtype=wp.float32/float64
+        Upstream cotangent on ``grad_k_squared``.
+    gg_volume : wp.array, shape (B,), dtype=wp.float32/float64
+        Upstream cotangent on ``grad_volume``.
+    d_grad_convolved : wp.array4d, shape (B, Nx, Ny, Nz_rfft), dtype=vec2f/vec2d
+        OUTPUT. Second-order gradient w.r.t. ``grad_convolved``.
+    d_mesh_fft : wp.array4d, shape (B, Nx, Ny, Nz_rfft), dtype=vec2f/vec2d
+        OUTPUT. Second-order gradient w.r.t. ``mesh_fft``.
+    d_k_squared : wp.array4d, shape (B, Nx, Ny, Nz_rfft), dtype=wp.float32/float64
+        OUTPUT. Second-order gradient w.r.t. ``k_squared``.
+    d_volume : wp.array, shape (B,), dtype=wp.float32/float64
+        OUTPUT, pre-zeroed. Second-order gradient w.r.t. volume (atomic per system).
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` — selects the registered overload.
+    device : str, optional
+        Warp device string. Defaults to ``mesh_fft.device``.
+
+    Launch Grid
+    -----------
+    ``dim = (B, Nx, Ny, Nz_rfft)`` — one thread per (system, rfft cell).
+    """
     if device is None:
         device = str(mesh_fft.device)
     B, nx, ny, nz_rfft = mesh_fft.shape
@@ -2855,7 +2961,7 @@ def _make_pme_multipole_gather_hessian_kernel(
 ):
     r"""Factory for the per-(order, dtype) Cartesian-Hessian gather kernel.
 
-    1 thread per atom. The order³ stencil walk is fully unrolled at
+    1 thread per atom. The order^3 stencil walk is fully unrolled at
     codegen time and the fractional-frame Hessian-times-mesh-value is
     accumulated in six scalar registers (xx, yy, zz, xy, xz, yz). The
     ``M^\top H_\text{frac} M`` chain-rule transform is hoisted out of
@@ -3048,22 +3154,22 @@ def _make_pme_multipole_spread_backward_kernel(
     Per stencil cell ``(i, j, k)``, the kernel updates ten scalar
     register accumulators:
 
-    * ``acc_q``                     — ``Σ_g grad_mesh[g] · B(g)``
-    * ``acc_field_frac_{x,y,z}``    — ``Σ_g grad_mesh[g] · ∇_frac B(g)``
-    * ``acc_H_{xx,yy,zz,xy,xz,yz}`` — ``Σ_g grad_mesh[g] · ∂²_frac B(g)``
+    * ``acc_q``                     — :math:`\sum_g \mathtt{grad\_mesh}[g] \cdot B(g)`
+    * ``acc_field_frac_{x,y,z}``    — :math:`\sum_g \mathtt{grad\_mesh}[g] \cdot \nabla_{\text{frac}} B(g)`
+    * ``acc_H_{xx,yy,zz,xy,xz,yz}`` — :math:`\sum_g \mathtt{grad\_mesh}[g] \cdot \partial^2_{\text{frac}} B(g)`
 
     After the stencil walk, the per-atom output is assembled in one
     pass by transforming the fractional accumulators with the per-atom
     constant ``cell_inv_t`` matrix (avoiding the per-cell
-    ``transpose(cell_inv_t) · grad_frac`` and ``M^T · H_frac · M``
+    ``transpose(cell_inv_t) * grad_frac`` and ``M^T * H_frac * M``
     cuBLAS-dispatch shapes the generic kernel paid for every stencil
     point). Outputs are written non-atomically — each thread owns its
     ``atom_idx`` slot.
 
     Math identities used:
 
-    * ``grad_μ_cart  = M^T · (Σ_g grad_mesh · ∇_frac B)``
-    * ``grad_pos     = q · grad_μ_cart + M^T · ((Σ_g grad_mesh · H_frac) · M · μ)``
+    * :math:`\mathtt{grad\_\mu\_cart} = M^T \cdot \bigl(\sum_g \mathtt{grad\_mesh} \cdot \nabla_{\text{frac}} B\bigr)`
+    * :math:`\mathtt{grad\_pos} = q \cdot \mathtt{grad\_\mu\_cart} + M^T \cdot \bigl((\sum_g \mathtt{grad\_mesh} \cdot H_{\text{frac}}) \cdot M \cdot \mu\bigr)`
 
     See :func:`_pme_multipole_spread_backward_kernel` for the per-cell
     formulation and the sign-convention notes.
@@ -3423,7 +3529,7 @@ def _make_pme_multipole_gather_gradient_kernel(
 ):
     r"""Factory for the per-(order, dtype) gather-gradient kernel.
 
-    Computes the "force" form ``F_i = -q_i · Σ_g φ(g) · ∇_cart B(r_i, g)``
+    Computes the "force" form :math:`F_i = -q_i \sum_g \varphi(g) \cdot \nabla_{\text{cart}} B(r_i, g)`
     consumed by the multipole PME gather-potential backward and the
     gather-field forward (which negates the result). Same math as
     ``_bspline_gather_gradient_kernel`` in ``math.spline``, but with the
@@ -3575,7 +3681,7 @@ def multipole_pme_gather_gradient_launch(
     order : int
         B-spline order.
     mesh : wp.array, shape (Nx, Ny, Nz), dtype=wp.float32/float64
-        Potential grid ``φ(g)``.
+        Potential grid :math:`\varphi(g)`.
     forces : wp.array, shape (N,), dtype=vec3f/vec3d
         OUTPUT, pre-zeroed. Per-atom force contribution.
     wp_dtype : type
@@ -3837,7 +3943,7 @@ def _make_pme_multipole_spread_unified_kernel(
     r"""Factory for the unified per-(ORDER, LMAX, dtype) spread kernel.
 
     1 thread per atom. Always emits the charge contribution. Codegen-time
-    ``if LMAX >= N`` gates the dipole (LMAX≥1) and quadrupole (LMAX≥2)
+    ``if LMAX >= N`` gates the dipole (LMAX>=1) and quadrupole (LMAX>=2)
     branches: NVRTC sees a flat kernel with only the active channels.
 
     Per stencil cell ``(i, j, k)``:
@@ -3849,9 +3955,9 @@ def _make_pme_multipole_spread_unified_kernel(
                           + \tfrac{1}{2}\, Q_i^{\alpha\beta}
                             (\nabla \nabla_{\text{cart}})_{\alpha\beta} B
 
-    Common subexpressions ``wx[i]·wy[j]``, ``dwx[i]·wy[j]``, etc. are
+    Common subexpressions ``wx[i]*wy[j]``, ``dwx[i]*wy[j]``, etc. are
     factored out of the innermost loop. The cell-transform matrices
-    ``M^T`` and ``M Q M^T`` (latter for ``LMAX ≥ 2``) are hoisted to
+    ``M^T`` and ``M Q M^T`` (latter for ``LMAX >= 2``) are hoisted to
     per-atom constants outside the stencil walk.
     """
     HALF_ORDER_PY = float(ORDER) * 0.5
@@ -4044,7 +4150,7 @@ def multipole_pme_spread_unified_launch(
 ) -> bool:
     r"""Launch the unified ``(ORDER, LMAX)`` spread kernel.
 
-    Spreads charges (LMAX≥0), dipoles (LMAX≥1), and quadrupoles (LMAX≥2)
+    Spreads charges (LMAX>=0), dipoles (LMAX>=1), and quadrupoles (LMAX>=2)
     onto a single density mesh. The kernel signature is fixed across LMAX;
     unused moment arrays may be zero-sized dummies.
 
@@ -4112,7 +4218,7 @@ def _make_pme_multipole_spread_backward_unified_kernel(
 
     1 thread per atom. Same codegen-time ``if LMAX >= N`` gating as the
     forward factory: outputs per-atom gradients of ``charges``, ``dipoles``
-    (LMAX≥1), ``quadrupoles`` (LMAX≥2), and ``positions``.
+    (LMAX>=1), ``quadrupoles`` (LMAX>=2), and ``positions``.
 
     Math:
 
@@ -4132,9 +4238,9 @@ def _make_pme_multipole_spread_backward_unified_kernel(
     - LMAX = 0: ``acc_q`` (1 scalar) + ``acc_f_frac`` (3 scalars) for
       position gradient via field gather.
     - LMAX = 1: + ``acc_H_frac`` (6 sym entries) for the
-      ``μ·∇∇B`` position gradient.
+      :math:`\mu \cdot \nabla\nabla B` position gradient.
     - LMAX = 2: + rank-3 fractional moments (10 sym entries) for the
-      ``Q:∇³B`` position gradient.
+      :math:`Q{:}\nabla^3 B` position gradient.
 
     All Cartesian transforms (``M^T``, ``M Q M^T``, etc.) are hoisted
     out of the stencil walk.
@@ -4545,7 +4651,7 @@ def _make_pme_multipole_spread_backward_unified_kernel(
         r_d_y = position[1]
         r_d_z = position[2]
 
-        # ``grad_theta[c] = q acc_f_c + hmu_c (LMAX≥1) + (1/2) F_frac_c (LMAX≥2)``
+        # ``grad_theta[c] = q acc_f_c + hmu_c (LMAX>=1) + (1/2) F_frac_c (LMAX>=2)``
         gtheta_x = charge * acc_fx
         gtheta_y = charge * acc_fy
         gtheta_z = charge * acc_fz
@@ -4700,7 +4806,7 @@ def multipole_pme_spread_backward_unified_launch(
 
     Backward of :func:`multipole_pme_spread_unified_launch`.
     ``grad_cell_inv_t`` is a ``(3, 3)`` 2D Warp array that receives the
-    atomic-accumulated ``∂L/∂M`` (M = ``cell_inv_t[0]``). The kernel
+    atomic-accumulated :math:`\partial L/\partial M` (M = ``cell_inv_t[0]``). The kernel
     expects the buffer to be zero-initialized — the launcher does not
     clear it for the caller.
 
@@ -5482,7 +5588,7 @@ def batch_multipole_pme_spread_backward_unified_launch(
     Batched analog of
     :func:`multipole_pme_spread_backward_unified_launch`.
     ``grad_cell_inv_t`` is a ``(B, 3, 3)`` Warp array receiving the
-    per-system atomic-accumulated ``∂L/∂M``; caller pre-zeros all outputs.
+    per-system atomic-accumulated :math:`\partial L/\partial M`; caller pre-zeros all outputs.
 
     Parameters
     ----------
@@ -5575,7 +5681,7 @@ def batch_multipole_pme_spread_backward_unified_launch(
 
 
 def _make_pme_octupole_spread_kernel(ORDER, scalar_dtype, vec_pos_dtype, mat33_dtype):
-    """Octupole (∇³) spread: mesh += ½ Σ_ijk Qe_ij g_k ∂³_frac B,  g = M gg_pos."""
+    r"""Octupole (:math:`\nabla^3`) spread: :math:`\mathrm{mesh} \mathrel{+}= \tfrac{1}{2} \sum_{ijk} Q^e_{ij} g_k \partial^3_{\text{frac}} B`,  ``g = M * gg_pos``."""
     HALF_ORDER_PY = float(ORDER) * 0.5
     HALF_N_MINUS_2_PY = float(ORDER - 2) * 0.5
     vec_ord = _PER_ORDER_VEC[(ORDER, scalar_dtype)]
@@ -5749,9 +5855,9 @@ def _pme_effective_moments_kernel(
 ):
     r"""Effective dipole / quadrupole for the spread double-back (per atom).
 
-    ``eff_d = gg_d + q · gg_pos`` and
-    ``eff_Q = gg_Q + (gg_pos ⊗ μ) + (gg_pos ⊗ μ)ᵀ`` — promotes the incoming
-    2nd-order cotangents to an l_max=2 effective spread.
+    ``eff_d = gg_d + q * gg_pos`` and
+    :math:`\mathtt{eff\_Q} = \mathtt{gg\_Q} + (\mathtt{gg\_pos} \otimes \mu) + (\mathtt{gg\_pos} \otimes \mu)^\top`
+    — promotes the incoming 2nd-order cotangents to an l_max=2 effective spread.
 
     Launch Grid
     -----------
@@ -5762,7 +5868,7 @@ def _pme_effective_moments_kernel(
     charges : wp.array, shape (N,), dtype=wp.float32/float64
         Per-atom charge (saved forward input).
     dipoles : wp.array, shape (N,), dtype=vec3f/vec3d
-        Per-atom dipole μ (saved forward input).
+        Per-atom dipole :math:`\mu` (saved forward input).
     gg_pos : wp.array, shape (N,), dtype=vec3f/vec3d
         Incoming position cotangent.
     gg_dipoles : wp.array, shape (N,), dtype=vec3f/vec3d
@@ -5811,7 +5917,34 @@ def pme_effective_moments_launch(
     wp_dtype,
     device=None,
 ):
-    r"""Launch :func:`_pme_effective_moments_kernel` (one thread per atom)."""
+    r"""Launch :func:`_pme_effective_moments_kernel` (one thread per atom).
+
+    Parameters
+    ----------
+    charges : wp.array, shape (N,), dtype=wp.float32/float64
+        Per-atom monopole charges (saved forward input).
+    dipoles : wp.array, shape (N,), dtype=vec3f/vec3d
+        Per-atom Cartesian dipole vectors (saved forward input).
+    gg_pos : wp.array, shape (N,), dtype=vec3f/vec3d
+        Incoming position cotangent.
+    gg_dipoles : wp.array, shape (N,), dtype=vec3f/vec3d
+        Incoming dipole cotangent.
+    gg_quadrupoles : wp.array, shape (N,), dtype=mat33f/mat33d
+        Incoming quadrupole cotangent.
+    eff_d : wp.array, shape (N,), dtype=vec3f/vec3d
+        OUTPUT. Effective dipole ``gg_dipoles + charges * gg_pos``.
+    eff_Q : wp.array, shape (N,), dtype=mat33f/mat33d
+        OUTPUT. Effective quadrupole
+        ``gg_quadrupoles + gg_pos ⊗ dipoles + (gg_pos ⊗ dipoles)^T``.
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` — selects the registered overload.
+    device : str, optional
+        Warp device string. Defaults to ``charges.device``.
+
+    Launch Grid
+    -----------
+    ``dim = (N,)`` — one thread per atom.
+    """
     if device is None:
         device = str(charges.device)
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
@@ -5893,7 +6026,36 @@ def pme_fractionalize_launch(
     wp_dtype,
     device=None,
 ):
-    r"""Launch :func:`_pme_fractionalize_kernel` (one thread per atom)."""
+    r"""Launch :func:`_pme_fractionalize_kernel` (one thread per atom).
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N,), dtype=vec3f/vec3d
+        Cartesian atom positions.
+    cell_inv_t : wp.array, shape (B,), dtype=mat33f/mat33d
+        Per-system transpose of the inverse cell matrix
+        :math:`M = \text{cell}^{-T}`.
+    batch_idx : wp.array, shape (N,), dtype=wp.int32
+        Per-atom system index into the batch (``0 .. B-1``).
+    dipoles : wp.array, shape (N,), dtype=vec3f/vec3d
+        Per-atom Cartesian dipole vectors.
+    quadrupoles : wp.array, shape (N,), dtype=mat33f/mat33d
+        Per-atom Cartesian quadrupole tensors.
+    p_out : wp.array, shape (N,), dtype=vec3f/vec3d
+        OUTPUT. Fractional-coordinate positions ``M * r``.
+    df_out : wp.array, shape (N,), dtype=vec3f/vec3d
+        OUTPUT. Fractional dipoles ``M * mu``.
+    Qf_out : wp.array, shape (N,), dtype=mat33f/mat33d
+        OUTPUT. Fractional quadrupoles ``M * Q * M^T``.
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` — selects the registered overload.
+    device : str, optional
+        Warp device string. Defaults to ``positions.device``.
+
+    Launch Grid
+    -----------
+    ``dim = (N,)`` — one thread per atom.
+    """
     if device is None:
         device = str(positions.device)
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
@@ -5924,8 +6086,9 @@ def _pme_fractionalize_backward_kernel(
     r"""Adjoint of :func:`_pme_fractionalize_kernel` (the map is multilinear).
 
     With ``M = cell_inv_t[b]``:
-    ``grad_r = Mᵀ·gp``; ``grad_μ = Mᵀ·gdf``; ``grad_Q = Mᵀ·gQf·M``; and
-    ``grad_M = gp⊗r + gdf⊗μ + gQf·M·Qᵀ + gQfᵀ·M·Q`` (atomic-added per system).
+    ``grad_r = M^T * gp``; ``grad_mu = M^T * gdf``; ``grad_Q = M^T * gQf * M``; and
+    :math:`\nabla_M = gp \otimes r + gdf \otimes \mu + gQf \cdot M \cdot Q^\top + gQf^\top \cdot M \cdot Q`
+    (atomic-added per system).
     """
     i = wp.tid()
     b = batch_idx[i]
@@ -5987,7 +6150,43 @@ def pme_fractionalize_backward_launch(
     wp_dtype,
     device=None,
 ):
-    r"""Launch :func:`_pme_fractionalize_backward_kernel` (one thread per atom)."""
+    r"""Launch :func:`_pme_fractionalize_backward_kernel` (one thread per atom).
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N,), dtype=vec3f/vec3d
+        Cartesian atom positions (saved forward input).
+    cell_inv_t : wp.array, shape (B,), dtype=mat33f/mat33d
+        Per-system transpose of the inverse cell matrix (saved forward input).
+    batch_idx : wp.array, shape (N,), dtype=wp.int32
+        Per-atom system index into the batch (``0 .. B-1``).
+    dipoles : wp.array, shape (N,), dtype=vec3f/vec3d
+        Per-atom Cartesian dipole vectors (saved forward input).
+    quadrupoles : wp.array, shape (N,), dtype=mat33f/mat33d
+        Per-atom Cartesian quadrupole tensors (saved forward input).
+    gp : wp.array, shape (N,), dtype=vec3f/vec3d
+        Upstream cotangent on fractional positions ``p_out``.
+    gdf : wp.array, shape (N,), dtype=vec3f/vec3d
+        Upstream cotangent on fractional dipoles ``df_out``.
+    gQf : wp.array, shape (N,), dtype=mat33f/mat33d
+        Upstream cotangent on fractional quadrupoles ``Qf_out``.
+    grad_positions : wp.array, shape (N,), dtype=vec3f/vec3d
+        OUTPUT. Gradient w.r.t. Cartesian positions.
+    grad_cell_inv_t : wp.array, shape (B,), dtype=mat33f/mat33d
+        OUTPUT, pre-zeroed. Gradient w.r.t. ``cell_inv_t`` (atomic per system).
+    grad_dipoles : wp.array, shape (N,), dtype=vec3f/vec3d
+        OUTPUT. Gradient w.r.t. Cartesian dipoles.
+    grad_quadrupoles : wp.array, shape (N,), dtype=mat33f/mat33d
+        OUTPUT. Gradient w.r.t. Cartesian quadrupoles.
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` — selects the registered overload.
+    device : str, optional
+        Warp device string. Defaults to ``positions.device``.
+
+    Launch Grid
+    -----------
+    ``dim = (N,)`` — one thread per atom.
+    """
     if device is None:
         device = str(positions.device)
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
@@ -6034,19 +6233,19 @@ def _pme_fractionalize_double_backward_kernel(
     r"""Double-backward of :func:`_pme_fractionalize_kernel` (stress-loss).
 
     The forward map is multilinear, so the second-order is closed-form. With
-    ``M = cell_inv_t[b]`` and the four incoming cotangents ``(Gr, GM, Gμ, GQ)``
+    ``M = cell_inv_t[b]`` and the four incoming cotangents ``(Gr, GM, G_mu, GQ)``
     on the backward outputs
     ``(grad_positions, grad_cell_inv_t, grad_dipoles, grad_quadrupoles)``, the
     grads w.r.t. the backward inputs are:
 
-    - ``grad_gp = M·Gr + GM·r`` (gp enters BOTH grad_positions and grad_cell)
-    - ``grad_gdf = GM·μ + M·Gμ``
-    - ``grad_gQf = GM·Q·Mᵀ + M·Q·GMᵀ + M·GQ·Mᵀ``
-    - ``grad_r = GMᵀ·gp``
-    - ``grad_μ = GMᵀ·gdf``
-    - ``grad_Q = GMᵀ·gQf·M + Mᵀ·gQf·GM``
-    - ``grad_M = gp⊗Gr + gdf⊗Gμ + gQfᵀ·GM·Q + gQf·GM·Qᵀ
-      + gQf·M·GQᵀ + gQfᵀ·M·GQ`` (atomic per system).
+    - ``grad_gp = M*Gr + GM*r`` (gp enters BOTH grad_positions and grad_cell)
+    - :math:`\mathtt{grad\_gdf} = GM \cdot \mu + M \cdot G_\mu`
+    - :math:`\mathtt{grad\_gQf} = GM \cdot Q \cdot M^\top + M \cdot Q \cdot GM^\top + M \cdot GQ \cdot M^\top`
+    - :math:`\mathtt{grad\_r} = GM^\top \cdot gp`
+    - :math:`\mathtt{grad\_\mu} = GM^\top \cdot gdf`
+    - :math:`\mathtt{grad\_Q} = GM^\top \cdot gQf \cdot M + M^\top \cdot gQf \cdot GM`
+    - :math:`\mathtt{grad\_M} = gp \otimes Gr + gdf \otimes G_\mu + gQf^\top \cdot GM \cdot Q + gQf \cdot GM \cdot Q^\top + gQf \cdot M \cdot GQ^\top + gQf^\top \cdot M \cdot GQ`
+      (atomic per system).
     """
     i = wp.tid()
     b = batch_idx[i]
@@ -6137,7 +6336,58 @@ def pme_fractionalize_double_backward_launch(
     wp_dtype,
     device=None,
 ):
-    r"""Launch :func:`_pme_fractionalize_double_backward_kernel` (one thread/atom)."""
+    r"""Launch :func:`_pme_fractionalize_double_backward_kernel` (one thread/atom).
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N,), dtype=vec3f/vec3d
+        Cartesian atom positions (saved forward input).
+    cell_inv_t : wp.array, shape (B,), dtype=mat33f/mat33d
+        Per-system transpose of the inverse cell matrix (saved forward input).
+    batch_idx : wp.array, shape (N,), dtype=wp.int32
+        Per-atom system index into the batch (``0 .. B-1``).
+    dipoles : wp.array, shape (N,), dtype=vec3f/vec3d
+        Per-atom Cartesian dipole vectors (saved forward input).
+    quadrupoles : wp.array, shape (N,), dtype=mat33f/mat33d
+        Per-atom Cartesian quadrupole tensors (saved forward input).
+    gp : wp.array, shape (N,), dtype=vec3f/vec3d
+        First-order cotangent on fractional positions ``p_out`` (saved backward input).
+    gdf : wp.array, shape (N,), dtype=vec3f/vec3d
+        First-order cotangent on fractional dipoles (saved backward input).
+    gQf : wp.array, shape (N,), dtype=mat33f/mat33d
+        First-order cotangent on fractional quadrupoles (saved backward input).
+    g_pos : wp.array, shape (N,), dtype=vec3f/vec3d
+        Upstream cotangent on ``grad_positions``.
+    g_cell : wp.array, shape (B,), dtype=mat33f/mat33d
+        Upstream cotangent on ``grad_cell_inv_t``.
+    g_dip : wp.array, shape (N,), dtype=vec3f/vec3d
+        Upstream cotangent on ``grad_dipoles``.
+    g_quad : wp.array, shape (N,), dtype=mat33f/mat33d
+        Upstream cotangent on ``grad_quadrupoles``.
+    grad_gp : wp.array, shape (N,), dtype=vec3f/vec3d
+        OUTPUT. Second-order gradient w.r.t. ``gp``.
+    grad_gdf : wp.array, shape (N,), dtype=vec3f/vec3d
+        OUTPUT. Second-order gradient w.r.t. ``gdf``.
+    grad_gQf : wp.array, shape (N,), dtype=mat33f/mat33d
+        OUTPUT. Second-order gradient w.r.t. ``gQf``.
+    grad_positions : wp.array, shape (N,), dtype=vec3f/vec3d
+        OUTPUT. Second-order gradient w.r.t. positions.
+    grad_cell_inv_t : wp.array, shape (B,), dtype=mat33f/mat33d
+        OUTPUT, pre-zeroed. Second-order gradient w.r.t. ``cell_inv_t``
+        (atomic per system).
+    grad_dipoles : wp.array, shape (N,), dtype=vec3f/vec3d
+        OUTPUT. Second-order gradient w.r.t. dipoles.
+    grad_quadrupoles : wp.array, shape (N,), dtype=mat33f/mat33d
+        OUTPUT. Second-order gradient w.r.t. quadrupoles.
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` — selects the registered overload.
+    device : str, optional
+        Warp device string. Defaults to ``positions.device``.
+
+    Launch Grid
+    -----------
+    ``dim = (N,)`` — one thread per atom.
+    """
     if device is None:
         device = str(positions.device)
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
@@ -6181,7 +6431,7 @@ def _pme_spread_dbwd_readout_kernel(
 ):
     r"""Readout combinations of the spread double-back (per atom).
 
-    ``d_charges = gg_pos · gd2`` and ``d_dipoles = 2 · gQ2 · gg_pos`` — the
+    :math:`\mathtt{d\_charges} = \mathtt{gg\_pos} \cdot \mathtt{gd2}` and :math:`\mathtt{d\_dipoles} = 2 \, \mathtt{gQ2} \cdot \mathtt{gg\_pos}` — the
     moment-independent field readouts contracted against the incoming position
     cotangent.
 
@@ -6194,13 +6444,13 @@ def _pme_spread_dbwd_readout_kernel(
     gg_pos : wp.array, shape (N,), dtype=vec3f/vec3d
         Incoming position cotangent.
     gd2 : wp.array, shape (N,), dtype=vec3f/vec3d
-        Spread-backward dipole readout (Mᵀ acc_f).
+        Spread-backward dipole readout (``M^T * acc_f``).
     gQ2 : wp.array, shape (N,), dtype=mat33f/mat33d
-        Spread-backward quadrupole readout (½ Mᵀ acc_H M).
+        Spread-backward quadrupole readout (:math:`\tfrac{1}{2} M^\top \mathtt{acc\_H} M`).
     d_charges : wp.array, shape (N,), dtype=wp.float32/float64
-        OUTPUT. ∂L/∂charges.
+        OUTPUT. :math:`\partial L/\partial \mathtt{charges}`.
     d_dipoles : wp.array, shape (N,), dtype=vec3f/vec3d
-        OUTPUT. ∂L/∂dipoles.
+        OUTPUT. :math:`\partial L/\partial \mathtt{dipoles}`.
     """
     i = wp.tid()
     gp = gg_pos[i]
@@ -6235,7 +6485,32 @@ def pme_spread_dbwd_readout_launch(
     wp_dtype,
     device=None,
 ):
-    r"""Launch :func:`_pme_spread_dbwd_readout_kernel` (one thread per atom)."""
+    r"""Launch :func:`_pme_spread_dbwd_readout_kernel` (one thread per atom).
+
+    Parameters
+    ----------
+    gg_pos : wp.array, shape (N,), dtype=vec3f/vec3d
+        Incoming position cotangent.
+    gd2 : wp.array, shape (N,), dtype=vec3f/vec3d
+        Spread-backward dipole field readout (``M^T * acc_f``).
+    gQ2 : wp.array, shape (N,), dtype=mat33f/mat33d
+        Spread-backward quadrupole field readout
+        (:math:`\tfrac{1}{2} M^\top \text{acc\_H}\, M`).
+    d_charges : wp.array, shape (N,), dtype=wp.float32/float64
+        OUTPUT. :math:`\partial L / \partial \text{charges}` contribution
+        (``dot(gg_pos, gd2)``).
+    d_dipoles : wp.array, shape (N,), dtype=vec3f/vec3d
+        OUTPUT. :math:`\partial L / \partial \text{dipoles}` contribution
+        (``2 * gQ2 * gg_pos``).
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` — selects the registered overload.
+    device : str, optional
+        Warp device string. Defaults to ``gg_pos.device``.
+
+    Launch Grid
+    -----------
+    ``dim = (N,)`` — one thread per atom.
+    """
     if device is None:
         device = str(gg_pos.device)
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
@@ -6258,7 +6533,7 @@ def multipole_pme_octupole_spread_launch(
     wp_dtype,
     device=None,
 ):
-    r"""Launch the octupole (∇³) spread kernel (l_max=2 double-back).
+    r"""Launch the octupole (:math:`\nabla^3`) spread kernel (l_max=2 double-back).
 
     Spreads the octupole-like density
     :math:`\rho[g] \mathrel{+}= \tfrac{1}{2}\sum_{ijk} Q^e_{ij}\,g_k\,
@@ -6315,14 +6590,14 @@ def _make_pme_octupole_backward_kernel(ORDER, scalar_dtype, vec_pos_dtype, mat33
 
     Reads ``grad_mesh`` and emits the two input-Q octupole VJP slots:
 
-      * ``grad_positions`` (∂L/∂r octupole term, ∇⁴):
-            grad_pos = ½ Mᵀ (P4 · g),   g = M·gg_pos,
-            P4[k,l] = Σ_ij Qe_ij acc4[i,j,k,l],   acc4 = Σ_g gm ∂⁴_frac B.
-      * ``grad_quadrupoles`` (∂L/∂Q octupole term, ∇³):
-            grad_Q = ½ Mᵀ R M,   R_ij = Σ_k g_k acc3[i,j,k],
-            acc3 = Σ_g gm ∂³_frac B.
+      * ``grad_positions`` (:math:`\partial L/\partial r` octupole term, :math:`\nabla^4`):
+            :math:`\mathtt{grad\_pos} = \tfrac{1}{2} M^\top (P_4 \cdot g),\quad g = M \cdot \mathtt{gg\_pos}`,
+            :math:`P_4[k,l] = \sum_{ij} Q^e_{ij} \, \mathtt{acc4}[i,j,k,l],\quad \mathtt{acc4} = \sum_g gm \, \partial^4_{\text{frac}} B`.
+      * ``grad_quadrupoles`` (:math:`\partial L/\partial Q` octupole term, :math:`\nabla^3`):
+            :math:`\mathtt{grad\_Q} = \tfrac{1}{2} M^\top R M,\quad R_{ij} = \sum_k g_k \, \mathtt{acc3}[i,j,k]`,
+            :math:`\mathtt{acc3} = \sum_g gm \, \partial^3_{\text{frac}} B`.
     Both accumulate ATOMIC-add into the supplied output buffers (the caller
-    sums them with the l≤1 effective-moment reuse results).
+    sums them with the l<=1 effective-moment reuse results).
     """
     HALF_ORDER_PY = float(ORDER) * 0.5
     HALF_N_MINUS_2_PY = float(ORDER - 2) * 0.5
@@ -6607,7 +6882,7 @@ def multipole_pme_octupole_backward_launch(
     r"""Launch the octupole backward kernel (l_max=2 double-back).
 
     Backward of :func:`multipole_pme_octupole_spread_launch`: emits the
-    octupole VJP slots for positions (∇⁴ term) and quadrupoles (∇³ term).
+    octupole VJP slots for positions (:math:`\nabla^4` term) and quadrupoles (:math:`\nabla^3` term).
 
     Parameters
     ----------
@@ -6622,9 +6897,9 @@ def multipole_pme_octupole_backward_launch(
     grad_mesh : wp.array, shape (Nx, Ny, Nz), dtype=wp.float32/float64
         Upstream gradient w.r.t. the octupole spread mesh.
     grad_positions : wp.array, shape (N,), dtype=vec3f/vec3d
-        OUTPUT, pre-zeroed. Octupole ``∂L/∂r`` contribution (atomic add).
+        OUTPUT, pre-zeroed. Octupole :math:`\partial L/\partial r` contribution (atomic add).
     grad_quadrupoles : wp.array, shape (N,), dtype=mat33f/mat33d
-        OUTPUT, pre-zeroed. Octupole ``∂L/∂Q`` contribution (atomic add).
+        OUTPUT, pre-zeroed. Octupole :math:`\partial L/\partial Q` contribution (atomic add).
     order : int
         B-spline order.
     wp_dtype : type
@@ -6666,7 +6941,7 @@ def multipole_pme_octupole_backward_launch(
 def _make_batch_pme_octupole_spread_kernel(
     ORDER, scalar_dtype, vec_pos_dtype, mat33_dtype
 ):
-    """Batched octupole (∇³) spread."""
+    r"""Batched octupole (:math:`\nabla^3`) spread."""
     HALF_ORDER_PY = float(ORDER) * 0.5
     HALF_N_MINUS_2_PY = float(ORDER - 2) * 0.5
     vec_ord = _PER_ORDER_VEC[(ORDER, scalar_dtype)]
@@ -6839,7 +7114,7 @@ def batch_multipole_pme_octupole_spread_launch(
     wp_dtype,
     device=None,
 ):
-    r"""Launch the batched octupole (∇³) spread kernel.
+    r"""Launch the batched octupole (:math:`\nabla^3`) spread kernel.
 
     Batched analog of :func:`multipole_pme_octupole_spread_launch`;
     ``sys_idx = batch_idx[atom]`` selects the per-system mesh slice and
@@ -6893,7 +7168,7 @@ def batch_multipole_pme_octupole_spread_launch(
 def _make_batch_pme_octupole_backward_kernel(
     ORDER, scalar_dtype, vec_pos_dtype, mat33_dtype
 ):
-    """Batched octupole backward (∇⁴ grad_positions + ∇³ grad_quadrupoles)."""
+    r"""Batched octupole backward (:math:`\nabla^4` grad_positions + :math:`\nabla^3` grad_quadrupoles)."""
     HALF_ORDER_PY = float(ORDER) * 0.5
     HALF_N_MINUS_2_PY = float(ORDER - 2) * 0.5
     vec_ord = _PER_ORDER_VEC[(ORDER, scalar_dtype)]
@@ -7194,9 +7469,9 @@ def batch_multipole_pme_octupole_backward_launch(
     grad_mesh : wp.array, shape (B, Nx, Ny, Nz), dtype=wp.float32/float64
         Upstream gradient w.r.t. the per-system octupole spread mesh.
     grad_positions : wp.array, shape (N_total,), dtype=vec3f/vec3d
-        OUTPUT, pre-zeroed. Octupole ``∂L/∂r`` contribution (atomic add).
+        OUTPUT, pre-zeroed. Octupole :math:`\partial L/\partial r` contribution (atomic add).
     grad_quadrupoles : wp.array, shape (N_total,), dtype=mat33f/mat33d
-        OUTPUT, pre-zeroed. Octupole ``∂L/∂Q`` contribution (atomic add).
+        OUTPUT, pre-zeroed. Octupole :math:`\partial L/\partial Q` contribution (atomic add).
     order : int
         B-spline order.
     wp_dtype : type
@@ -7382,9 +7657,10 @@ def _pme_multipole_corrections_backward_kernel(
         \partial L/\partial Q_i &= g\,2\,c_{Q}\,Q_i, \\
         \partial L/\partial V &= -g\,(c_{bg}/V^2)\,Q_\text{tot}^2 .
 
-    The ``q_i·Q_total`` background term contributes to ``∂L/∂q_j`` through
-    BOTH the explicit ``q_i`` and the shared ``Q_total = Σ_k q_k``; summed
-    over atoms this yields the symmetric ``2·(c_bg/V)·Q_total`` per atom.
+    The ``q_i * Q_total`` background term contributes to
+    :math:`\partial L/\partial q_j` through BOTH the explicit ``q_i`` and
+    the shared :math:`Q_\text{total} = \sum_k q_k`; summed over atoms this
+    yields the symmetric ``2*(c_bg/V)*Q_total`` per atom.
 
     Launch Grid
     -----------
@@ -7495,9 +7771,9 @@ def _pme_multipole_corrections_double_backward_kernel(
 ):
     r"""Single-system double-backward of the corrections op.
 
-    The first-order backward is linear in ``(grad_out, q, μ, Q, V)``;
+    The first-order backward is linear in ``(grad_out, q, mu, Q, V)``;
     this kernel propagates upstream cotangents ``gg_*`` (one per backward
-    output) to ``(grad_out, q, μ, Q, V)``. Needed for moment-moment HVPs
+    output) to ``(grad_out, q, mu, Q, V)``. Needed for moment-moment HVPs
     (e.g. the l=2 quadrupole-quadrupole Hessian) through the PME composite.
 
     Launch Grid

@@ -112,8 +112,7 @@ def allocate_query_sort_scratch(
     dtype: torch.dtype = torch.float32,
     device: torch.device | str = "cuda",
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Allocate the sort-side scratch tensors consumed by
-    ``query_cell_list``.
+    """Allocate sort-side scratch tensors consumed by ``query_cell_list``.
 
     Required by both atom-centric and pair-centric query paths when the
     call is wrapped in a captured CUDA graph.  Allocate once during
@@ -121,21 +120,27 @@ def allocate_query_sort_scratch(
     sorted_positions=..., sorted_shifts=...)`` so the captured region
     does no allocation of its own.
 
-    Returns
-    -------
-    sorted_positions : torch.Tensor, shape ``(total_atoms, 3)``, dtype=``dtype``
-        Per-cell-contiguous gathered positions.  Written by
-        ``gather_fused`` each call.
-    sorted_shifts : torch.Tensor, shape ``(total_atoms, 3)``, dtype=int32
-        Per-cell-contiguous gathered periodic shifts.  Written by
-        ``gather_fused`` each call.
-
     Parameters
     ----------
     total_atoms : int
-    dtype : torch.dtype
-        Must match the positions dtype passed to ``query_cell_list``.
-    device : torch.device | str
+        Number of atoms in the system; determines the leading dimension of
+        both returned scratch tensors.
+    dtype : torch.dtype, optional
+        Floating-point dtype of the positions scratch tensor.  Must match
+        the positions dtype passed to ``query_cell_list``.
+        Default is ``torch.float32``.
+    device : torch.device or str, optional
+        Device on which to allocate the scratch tensors.
+        Default is ``"cuda"``.
+
+    Returns
+    -------
+    sorted_positions : torch.Tensor, shape (total_atoms, 3), dtype=dtype
+        Per-cell-contiguous gathered positions.  Written by
+        ``gather_fused`` each call.
+    sorted_shifts : torch.Tensor, shape (total_atoms, 3), dtype=int32
+        Per-cell-contiguous gathered periodic shifts.  Written by
+        ``gather_fused`` each call.
     """
     sorted_positions = torch.empty(
         (int(total_atoms), 3),
@@ -1777,7 +1782,7 @@ def cell_list(
     --------
     nvalchemiops.neighbors.cell_list.build_cell_list : Core warp launcher for building
     nvalchemiops.neighbors.cell_list.query_cell_list : Core warp launcher for querying
-    naive_neighbor_list : O(N^2) method for small systems
+    naive_neighbor_list : :math:`O(N^2)` method for small systems
     """
 
     total_atoms = positions.shape[0]

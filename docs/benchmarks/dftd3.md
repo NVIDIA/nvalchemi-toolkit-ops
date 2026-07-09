@@ -17,7 +17,7 @@ Time Scaling
   exclude neighbor list construction, and only comprise the DFT-D3 computation.
 
 Throughput
-: Atoms processed per second (plotted as 10⁶ atoms/s). Higher is better.
+: Atoms processed per second (plotted as $10^6$ atoms/s). Higher is better.
   This indicates the scaling point where the GPU saturates.
 
 Memory
@@ -52,7 +52,7 @@ Memory
            :width: 90%
            :align: center
 
-           Throughput (10⁶ atoms/s) vs. system size.
+           Throughput (:math:`10^6` atoms/s) vs. system size.
 
         .. figure:: _static/d3-cscl-system-size-scaling-memory.png
            :width: 90%
@@ -120,7 +120,7 @@ Memory
            :width: 90%
            :align: center
 
-           Throughput (10⁶ atoms/s) vs. system size (NH₃).
+           Throughput (:math:`10^6` atoms/s) vs. system size (NH₃).
 
         .. figure:: _static/d3-nh3-system-size-scaling-memory.png
            :width: 90%
@@ -197,7 +197,7 @@ Memory
            :width: 90%
            :align: center
 
-           Throughput (10⁶ atoms/s) vs. system size (JAX).
+           Throughput (:math:`10^6` atoms/s) vs. system size (JAX).
 
     .. tab-item:: Constant Workload
 
@@ -256,7 +256,7 @@ allocators differ.
            :width: 90%
            :align: center
 
-           Throughput (10⁶ atoms/s) vs. system size (JAX, NH₃).
+           Throughput (:math:`10^6` atoms/s) vs. system size (JAX, NH₃).
 
     .. tab-item:: Constant Workload
 

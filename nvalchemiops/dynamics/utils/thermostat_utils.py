@@ -128,9 +128,9 @@ def _compute_kinetic_energy_kernel(
     masses: wp.array(dtype=Any),
     kinetic_energy: wp.array(dtype=Any),
 ):
-    """Compute kinetic energy contribution from each atom.
+    r"""Compute kinetic energy contribution from each atom.
 
-    Accumulates KE = 0.5 * sum_i(m_i * v_i · v_i) using atomic adds.
+    Accumulates :math:`KE = \frac{1}{2} \sum_i m_i \, v_i \cdot v_i` using atomic adds.
 
     Parameters
     ----------
@@ -163,9 +163,9 @@ def _compute_kinetic_energy_tiled_kernel(
     masses: wp.array(dtype=Any),
     kinetic_energy: wp.array(dtype=Any),
 ):
-    """Compute kinetic energy with tile reductions (single system).
+    r"""Compute kinetic energy with tile reductions (single system).
 
-    Accumulates KE = 0.5 * sum_i(m_i * v_i · v_i) using block-level reductions.
+    Accumulates :math:`KE = \frac{1}{2} \sum_i m_i \, v_i \cdot v_i` using block-level reductions.
 
     Launch Grid: dim = [num_atoms], block_dim = TILE_DIM
     """

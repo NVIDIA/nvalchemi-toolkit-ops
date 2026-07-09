@@ -361,9 +361,9 @@ def _gather_gradient_forward_launch(
     cell_inv_t: torch.Tensor,
     spline_order: int,
 ) -> torch.Tensor:
-    """Single-system spline gather-gradient forward launch.
+    r"""Single-system spline gather-gradient forward launch.
 
-    Returns Cartesian "force" ``-q_n · Σ mesh · d(W)/d(position)`` per atom.
+    Returns Cartesian "force" :math:`-q_n \cdot \sum_g \text{mesh}[g] \cdot \partial W / \partial \text{position}` per atom.
     """
     from nvalchemiops.math.spline import (
         spline_gather_gradient as _grad_launch,
@@ -443,9 +443,9 @@ def _pos_hessian_forward_launch(
     mesh: torch.Tensor,
     spline_order: int,
 ) -> torch.Tensor:
-    """Single-system B-spline position-Hessian launch.
+    r"""Single-system B-spline position-Hessian launch.
 
-    Implements ``grad_pos[n] = Σ_g -q[n] · mesh[g] · ∇²W_frac(x_n, g)``
+    Implements :math:`\text{grad\_pos}[n] = \sum_g -q[n] \cdot \text{mesh}[g] \cdot \nabla^2 W_\text{frac}(x_n, g)`
     used inside the gather_gradient / gather_with_force backward chains.
     """
     device = wp.device_from_torch(positions.device)
@@ -608,12 +608,12 @@ def _cell_inv_t_grad_from_force(
     positions: torch.Tensor,
     cell_inv_t: torch.Tensor,
 ) -> torch.Tensor:
-    """Compute ``grad_cell_inv_t`` (shape ``(1, 3, 3)``) as a differentiable
+    r"""Compute ``grad_cell_inv_t`` (shape ``(1, 3, 3)``) as a differentiable
     Torch expression.
 
     With ``cell = inv(cell_inv_t.T)`` and the Cartesian gather "force"
     ``force = cell_inv_t.T @ force_frac``, the q-weighted gather-force outer
-    positions is ``grad_cell_inv_t[a, b] = Σ_n qgf[n, a] · positions[n, b]``
+    positions is :math:`\text{grad\_cell\_inv\_t}[a, b] = \sum_n \text{qgf}[n, a] \cdot \text{positions}[n, b]`
     with ``qgf = -(cell @ force) = -force_frac`` (the ``cell_inv_t`` Cartesian
     transform cancels). Expressed in Torch so the cell second order flows through
     ordinary autograd: ``forces`` carries the differentiable ``cell_inv_t``
@@ -1117,11 +1117,11 @@ def _spline_gather_with_force(
     spline_order: int,
     cell_inv_t: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Internal: single-system fused gather + gather-gradient (registered op).
+    r"""Internal: single-system fused gather + gather-gradient (registered op).
 
     Returns ``(potential, forces)``:
-      - ``potential[atom] = Σ_g mesh[g] * w(atom, g)``           (raw potential)
-      - ``forces[atom] = -q_atom * Σ_g mesh[g] * Cell^{-T} ∇w`` (Cartesian force)
+      - ``potential[atom]`` = :math:`\sum_g \text{mesh}[g] \cdot w(\text{atom}, g)` (raw potential)
+      - ``forces[atom]`` = :math:`-q_\text{atom} \sum_g \text{mesh}[g] \cdot C^{-T} \nabla w` (Cartesian force)
     """
     if cell.dim() == 2:
         cell = cell.unsqueeze(0)
@@ -1518,11 +1518,11 @@ def _batch_cell_inv_t_grad_from_force(
     batch_idx: torch.Tensor,
     cell_inv_t: torch.Tensor,
 ) -> torch.Tensor:
-    """Batched ``grad_cell_inv_t`` as a differentiable Torch expression.
+    r"""Batched ``grad_cell_inv_t`` as a differentiable Torch expression.
 
     Per-system analog of :func:`_cell_inv_t_grad_from_force`:
     ``qgf[n] = -(cell[s] @ force[n])`` with ``s = batch_idx[n]``, and
-    ``grad_cell_inv_t[s, a, b] = Σ_{n: batch_idx[n]=s} qgf[n, a] · positions[n, b]``.
+    :math:`\text{grad\_cell\_inv\_t}[s, a, b] = \sum_{n:\, \text{batch\_idx}[n]=s} \text{qgf}[n, a] \cdot \text{positions}[n, b]`.
     Reduced over atoms with ``index_add_`` so the cell second order flows through
     autograd.
     """
@@ -2826,12 +2826,12 @@ def spline_gather_with_force(
     batch_idx: torch.Tensor | None = None,
     cell_inv_t: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Fused gather of scalar potential AND derivative-based force from one mesh.
+    r"""Fused gather of scalar potential AND derivative-based force from one mesh.
 
     Returns ``(output, forces)`` where:
-      - ``output[atom] = Σ_g mesh[g] * w(atom, g)``       — raw potential per atom
+      - ``output[atom]`` = :math:`\sum_g \text{mesh}[g] \cdot w(\text{atom}, g)` — raw potential per atom
         (the caller multiplies by charge in the PME corrections step).
-      - ``forces[atom] = -q_atom * Σ_g mesh[g] * Cell^{-T} ∇w`` — Cartesian force.
+      - ``forces[atom]`` = :math:`-q_\text{atom} \sum_g \text{mesh}[g] \cdot C^{-T} \nabla w` — Cartesian force.
 
     This replaces ``spline_gather(...)`` followed by ``spline_gather_gradient(...)``
     on the same mesh: each thread reads its stencil cell ONCE and accumulates

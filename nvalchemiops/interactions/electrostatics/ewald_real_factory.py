@@ -746,6 +746,24 @@ def make_ewald_real_kernel(
         launched with :func:`warp.launch_tiled` (``block_dim=REAL_SPACE_TILED_BLOCK_DIM``).
         The serial (``tiled=False``) kernel stays the bit-exact parity oracle and the
         per-pair ``@wp.func`` math is shared, so the tiled output agrees to round-off.
+    cell_literal : bool
+        Forward-only variant that also emits ``dedcell_atom`` -- the per-atom literal
+        ``dE/dcell`` block (``wp.array(dtype=wp.mat33d)``, shape ``(N,)``). Requires
+        ``order="forward"`` and ``deriv_state`` in ``{E_F, E_F_dQ}``. Restricted to
+        ``neighbor_input="list"`` (non-tiled) or ``neighbor_input="matrix"`` (tiled).
+
+    Returns
+    -------
+    wp.Kernel
+        Cached, specialized Warp kernel for the requested ``(wp_dtype, batched,
+        neighbor_input, deriv_state, cell_grad, order, tiled, cell_literal)``
+        combination. The same object is returned on repeated calls with identical
+        arguments (``@lru_cache``).
+
+    See Also
+    --------
+    :func:`nvalchemiops.interactions.electrostatics.ewald_real_factory.get_ewald_real_kernel` : Validated entry point that also checks dtype and component.
+    :func:`nvalchemiops.interactions.electrostatics.ewald_real_factory.alloc_ewald_real_sentinels` : Allocates zero-size sentinel arrays for inactive kernel slots.
     """
     _validate_axes(
         wp_dtype,
@@ -806,6 +824,39 @@ def get_ewald_real_kernel(
     Memoization is the ``@lru_cache`` on ``make_*``; there is no separate cache
     dict. Every argument is forwarded **by keyword** (including ``wp_dtype``) so a
     positional vs keyword call can never produce a duplicate ``@lru_cache`` entry.
+
+    Parameters
+    ----------
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64``.
+    batched : bool
+        Single-system (``False``) vs batched (``True``).
+    neighbor_input : {"list", "matrix"}
+        CSR neighbor list (``"list"``) or neighbor matrix (``"matrix"``).
+    deriv_state : _DerivState
+        ``E`` (forward only), ``E_F`` (+forces), ``E_F_dQ`` (+charge gradient).
+    cell_grad : bool
+        Enable virial / cell-gradient output. Valid only with ``deriv_state`` in
+        ``{E_F, E_F_dQ}``.
+    order : {"forward", "backward", "double_backward"}
+        Forward output, first-derivative autograd node, or second-derivative node.
+    tiled : bool
+        Cooperative-block matrix variant; requires ``neighbor_input="matrix"``.
+    cell_literal : bool
+        Forward-only variant that also emits the literal ``dE/dcell`` per-atom output.
+    component : str
+        Must be ``"ewald_real"``; validated before delegating to
+        :func:`make_ewald_real_kernel`.
+
+    Returns
+    -------
+    wp.Kernel
+        Cached, specialized Warp kernel for the requested combination.
+
+    See Also
+    --------
+    :func:`nvalchemiops.interactions.electrostatics.ewald_real_factory.make_ewald_real_kernel` : Unchecked factory; use this function when dtype validation is desired.
+    :func:`nvalchemiops.interactions.electrostatics.ewald_real_factory.alloc_ewald_real_sentinels` : Allocates zero-size sentinel arrays for inactive kernel slots.
     """
     _require_supported_dtype(wp_dtype)
     _require_component(component, "ewald_real")

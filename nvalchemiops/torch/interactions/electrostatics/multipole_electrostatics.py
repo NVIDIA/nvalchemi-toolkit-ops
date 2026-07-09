@@ -109,7 +109,7 @@ def multipole_electrostatic_energy(
         systems in the batched case), ``float32`` or ``float64``.
     multipole_moments : torch.Tensor
         Packed per-atom multipole moments, shape ``(N, (l_max+1)**2)``,
-        in e3nn spherical layout: ``[q]`` (l_max=0), ``[q, μ_y, μ_z, μ_x]``
+        in e3nn spherical layout: ``[q]`` (l_max=0), ``[q, mu_y, mu_z, mu_x]``
         (l_max=1), or the l_max=1 block plus the five traceless l=2 channels
         (l_max=2). The l=2 quadrupole is expanded to the Cartesian symmetric
         ``(N, 3, 3)`` form and threaded through the SCF-cache Q channel.
@@ -140,7 +140,7 @@ def multipole_electrostatic_energy(
         ``NormMode.MULTIPOLES`` (the only physically meaningful choice for
         source moments; the other modes exist for debugging / cross-checks).
     include_self_interaction : bool
-        If False (default), subtracts ``0.5 · E_self`` where
+        If False (default), subtracts :math:`0.5 \cdot E_{\text{self}}` where
         :math:`E_\text{self} = \sum_i \mathrm{oc}[0]\,q_i^2 +
         \mathrm{oc}[1]\,|\boldsymbol{\mu}_i|^2` and ``oc`` comes from
         :func:`nvalchemiops.torch.math.compute_overlap_constants`.
@@ -243,7 +243,7 @@ def multipole_reciprocal_space_energy(
 
     (``k = 0`` zeroed). Intended to be paired with a real-space
     erfc-damped contribution (see :func:`multipole_real_space_energy`)
-    at the same ``α`` to assemble the full Ewald-split Coulomb sum.
+    at the same :math:`\alpha` to assemble the full Ewald-split Coulomb sum.
 
     Single-system vs batched dispatch
     ---------------------------------
