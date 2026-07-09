@@ -20,6 +20,7 @@
 import logging
 import os
 import pathlib
+import re
 import sys
 from importlib.metadata import version
 from inspect import signature
@@ -230,11 +231,15 @@ def generate_benchmark_plots(app):
 
 
 def set_multiversion_release(app, config):  # noqa: ARG001
-    """Use a release tag as the displayed version for historical docs."""
+    """Use a tag or RC branch as the displayed documentation version."""
     ref_name = os.getenv("SPHINX_MULTIVERSION_NAME", "")
-    if not ref_name.startswith("v"):
+    if ref_name.startswith("v"):
+        release_name = ref_name.removeprefix("v")
+    elif re.fullmatch(r"\d+\.\d+\.\d+-rc(?:\.\d+)?", ref_name):
+        release_name = ref_name
+    else:
         return
-    config.release = ref_name.removeprefix("v")
+    config.release = release_name
     config.version = ".".join(config.release.split(".")[:2])
 
 
