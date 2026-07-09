@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
+r"""
 Velocity Verlet Integrator Kernels
 ==================================
 
@@ -32,29 +32,31 @@ Position update:
 
 .. math::
 
-    \\mathbf{r}(t + \\Delta t) = \\mathbf{r}(t) + \\mathbf{v}(t) \\Delta t
-                                + \\frac{1}{2} \\mathbf{a}(t) \\Delta t^2
+    \mathbf{r}(t + \Delta t) = \mathbf{r}(t) + \mathbf{v}(t) \Delta t
+                                + \frac{1}{2} \mathbf{a}(t) \Delta t^2
 
 Velocity update:
 
 .. math::
 
-    \\mathbf{v}(t + \\Delta t) = \\mathbf{v}(t) + \\frac{1}{2}[\\mathbf{a}(t)
-                                + \\mathbf{a}(t + \\Delta t)] \\Delta t
+    \mathbf{v}(t + \Delta t) = \mathbf{v}(t) + \frac{1}{2}[\mathbf{a}(t)
+                                + \mathbf{a}(t + \Delta t)] \Delta t
 
-where :math:`\\mathbf{a} = \\mathbf{F}/m` is the acceleration.
+where :math:`\mathbf{a} = \mathbf{F}/m` is the acceleration.
 
 TWO-PASS ALGORITHM
 ==================
 
 **Pass 1 (position_update):**
-    - Update positions to r(t+dt)
-    - Update velocities to half-step v(t+dt/2) = v(t) + 0.5*a(t)*dt
+    - Update positions to :math:`\mathbf{r}(t + \Delta t)`
+    - Update velocities to the half step
+      :math:`\mathbf{v}(t + \Delta t/2) = \mathbf{v}(t) + \frac{1}{2} \mathbf{a}(t) \Delta t`
 
 **[User recalculates forces at new positions]**
 
 **Pass 2 (velocity_finalize):**
-    - Complete velocity update: v(t+dt) = v(t+dt/2) + 0.5*a(t+dt)*dt
+    - Complete velocity update:
+      :math:`\mathbf{v}(t + \Delta t) = \mathbf{v}(t + \Delta t/2) + \frac{1}{2} \mathbf{a}(t + \Delta t) \Delta t`
 
 USAGE EXAMPLE
 =============
@@ -648,12 +650,23 @@ def velocity_verlet_position_update(
     atom_ptr: wp.array = None,
     device: str = None,
 ) -> None:
-    """
+    r"""
     Perform velocity Verlet position update step (in-place).
 
-    Updates positions to r(t+dt) and velocities to half-step v(t+dt/2).
-    After calling this function, recalculate forces at the new positions,
-    then call velocity_verlet_velocity_finalize().
+    Updates positions to :math:`\mathbf{r}(t + \Delta t)` and velocities to
+    the half step :math:`\mathbf{v}(t + \Delta t/2)`. After calling this
+    function, recalculate forces at the new positions, then call
+    velocity_verlet_velocity_finalize().
+
+    The kernel evaluates, with :math:`\mathbf{a}(t) = \mathbf{F}(t)/m`:
+
+    .. math::
+
+        \mathbf{r}(t + \Delta t) = \mathbf{r}(t) + \mathbf{v}(t)\,\Delta t
+                                   + \tfrac{1}{2}\mathbf{a}(t)\,\Delta t^2
+
+        \mathbf{v}(t + \tfrac{\Delta t}{2}) = \mathbf{v}(t)
+                                   + \tfrac{1}{2}\mathbf{a}(t)\,\Delta t
 
     Parameters
     ----------
@@ -699,18 +712,23 @@ def velocity_verlet_velocity_finalize(
     atom_ptr: wp.array = None,
     device: str = None,
 ) -> None:
-    """
+    r"""
     Finalize velocity Verlet velocity update (in-place).
 
-    Completes the velocity update using forces evaluated at the new positions:
-    v(t+dt) = v(t+dt/2) + 0.5*a(t+dt)*dt
+    Completes the velocity update using forces evaluated at the new positions,
+    with :math:`\mathbf{a}(t + \Delta t) = \mathbf{F}_\text{new}/m`:
+
+    .. math::
+
+        \mathbf{v}(t + \Delta t) = \mathbf{v}(t + \tfrac{\Delta t}{2})
+                                   + \tfrac{1}{2}\mathbf{a}(t + \Delta t)\,\Delta t
 
     Parameters
     ----------
     velocities : wp.array(dtype=wp.vec3f or wp.vec3d)
         Half-step velocities. Shape (N,). MODIFIED in-place to full-step.
     forces_new : wp.array(dtype=wp.vec3f or wp.vec3d)
-        Forces evaluated at new positions r(t+dt). Shape (N,).
+        Forces evaluated at new positions :math:`\mathbf{r}(t + \Delta t)`. Shape (N,).
     masses : wp.array(dtype=wp.float32 or wp.float64)
         Atomic masses. Shape (N,).
     dt : wp.array(dtype=wp.float32 or wp.float64)
@@ -755,11 +773,22 @@ def velocity_verlet_position_update_out(
     atom_ptr: wp.array = None,
     device: str = None,
 ) -> tuple[wp.array, wp.array]:
-    """
+    r"""
     Perform velocity Verlet position update step (non-mutating).
 
-    Writes new positions r(t+dt) and half-step velocities v(t+dt/2) to
-    output arrays. Input arrays are NOT modified.
+    Writes new positions :math:`\mathbf{r}(t + \Delta t)` and half-step
+    velocities :math:`\mathbf{v}(t + \Delta t/2)` to output arrays. Input
+    arrays are NOT modified.
+
+    The kernel evaluates, with :math:`\mathbf{a}(t) = \mathbf{F}(t)/m`:
+
+    .. math::
+
+        \mathbf{r}(t + \Delta t) = \mathbf{r}(t) + \mathbf{v}(t)\,\Delta t
+                                   + \tfrac{1}{2}\mathbf{a}(t)\,\Delta t^2
+
+        \mathbf{v}(t + \tfrac{\Delta t}{2}) = \mathbf{v}(t)
+                                   + \tfrac{1}{2}\mathbf{a}(t)\,\Delta t
 
     Parameters
     ----------
@@ -768,7 +797,7 @@ def velocity_verlet_position_update_out(
     velocities : wp.array(dtype=wp.vec3f or wp.vec3d)
         Atomic velocities at time t. Shape (N,).
     forces : wp.array(dtype=wp.vec3f or wp.vec3d)
-        Forces on atoms at time t. Shape (N,).
+        Forces on atoms at time :math:`t`. Shape (N,).
     masses : wp.array(dtype=wp.float32 or wp.float64)
         Atomic masses. Shape (N,).
     dt : wp.array(dtype=wp.float32 or wp.float64)
@@ -844,18 +873,25 @@ def velocity_verlet_velocity_finalize_out(
     atom_ptr: wp.array = None,
     device: str = None,
 ) -> wp.array:
-    """
+    r"""
     Finalize velocity Verlet velocity update (non-mutating).
 
-    Writes full-step velocities v(t+dt) to output array.
-    Input arrays are NOT modified.
+    Writes full-step velocities :math:`\mathbf{v}(t + \Delta t)` to output
+    array. Input arrays are NOT modified.
+
+    The kernel evaluates, with :math:`\mathbf{a}(t + \Delta t) = \mathbf{F}_\text{new}/m`:
+
+    .. math::
+
+        \mathbf{v}(t + \Delta t) = \mathbf{v}(t + \tfrac{\Delta t}{2})
+                                   + \tfrac{1}{2}\mathbf{a}(t + \Delta t)\,\Delta t
 
     Parameters
     ----------
     velocities : wp.array(dtype=wp.vec3f or wp.vec3d)
-        Half-step velocities v(t+dt/2). Shape (N,).
+        Half-step velocities :math:`\mathbf{v}(t + \Delta t/2)`. Shape (N,).
     forces_new : wp.array(dtype=wp.vec3f or wp.vec3d)
-        Forces at new positions r(t+dt). Shape (N,).
+        Forces at new positions :math:`\mathbf{r}(t + \Delta t)`. Shape (N,).
     masses : wp.array(dtype=wp.float32 or wp.float64)
         Atomic masses. Shape (N,).
     dt : wp.array(dtype=wp.float32 or wp.float64)
@@ -873,7 +909,7 @@ def velocity_verlet_velocity_finalize_out(
     Returns
     -------
     wp.array
-        Full-step velocities v(t+dt).
+        Full-step velocities :math:`\mathbf{v}(t + \Delta t)`.
     """
     validate_out_array(velocities_out, velocities, "velocities_out")
 

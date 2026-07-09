@@ -345,7 +345,7 @@ def neighbor_list(
     See Also
     --------
     naive_neighbor_list : Direct access to naive :math:`O(N^2)` algorithm
-    cell_list : Direct access to cell list O(N) algorithm
+    cell_list : Direct access to cell list :math:`O(N)` algorithm
     cluster_tile_neighbor_list : Direct access to cluster-pair tile algorithm
     batch_naive_neighbor_list : Batched naive algorithm
     batch_cell_list : Batched cell list algorithm

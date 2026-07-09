@@ -34,6 +34,7 @@ jax/electrostatics.rst
 :maxdepth: 2
 
 warp/neighbors.rst
+warp/segment_ops.rst
 warp/dispersion.rst
 warp/electrostatics.rst
 warp/dynamics.rst

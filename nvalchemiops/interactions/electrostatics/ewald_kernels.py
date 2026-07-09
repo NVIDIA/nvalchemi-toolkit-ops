@@ -74,9 +74,9 @@ Structure factors:
 
     S(k) = \\sum_j q_j \\exp(ik \\cdot r_j)
 
-    Note: G(k) uses 8*pi (not 4*pi) because we use half-space k-vectors, exploiting
-    the symmetry S(-k) = S*(k). This halves the number of k-vectors while
-    maintaining correct energies/forces.
+Note: :math:`G(k)` uses :math:`8\\pi` (not :math:`4\\pi`) because we use half-space
+k-vectors, exploiting the symmetry :math:`S(-k) = S^*(k)`. This halves the number of
+k-vectors while maintaining correct energies/forces.
 
 Self-Energy Correction (removes spurious self-interaction):
 

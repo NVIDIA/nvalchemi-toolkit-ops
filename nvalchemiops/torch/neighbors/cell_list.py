@@ -1782,7 +1782,7 @@ def cell_list(
     --------
     nvalchemiops.neighbors.cell_list.build_cell_list : Core warp launcher for building
     nvalchemiops.neighbors.cell_list.query_cell_list : Core warp launcher for querying
-    naive_neighbor_list : O(N^2) method for small systems
+    naive_neighbor_list : :math:`O(N^2)` method for small systems
     """
 
     total_atoms = positions.shape[0]

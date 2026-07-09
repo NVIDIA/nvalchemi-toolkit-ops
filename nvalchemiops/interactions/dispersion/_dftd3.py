@@ -35,7 +35,7 @@ dependency in force calculations:
 2. **Pass 1 (_cn_kernel)**: Compute coordination numbers using geometric counting
    function
 
-3. **Pass 2 (_direct_forces_and_dE_dCN_kernel)**: Compute C6 interpolation,
+3. **Pass 2 (_direct_forces_and_dE_dCN_kernel)**: Compute :math:`C_6` interpolation,
    dispersion energy, direct forces, and accumulate :math:`\\partial E/\\partial \\text{CN}`
 
 4. **Pass 3 (_cn_forces_contrib_kernel)**: Add CN-dependent force contribution
@@ -215,7 +215,7 @@ parameters use **atomic units (Bohr, Hartree)**, which is recommended:
 Technical Notes
 ---------------
 - Supports float32 and float64 positions and cell. Outputs are always float32
-- **Two-body only**: Axilrod-Teller-Muto (C9) three-body terms not included
+- **Two-body only**: Axilrod-Teller-Muto (:math:`C_9`) three-body terms not included
 
 See Also
 --------
@@ -825,7 +825,7 @@ def _cn_kernel_matrix(
     - Launch with dim=(num_atoms, DFTD3_MATRIX_CN_BLOCK_SIZE), block_dim=DFTD3_MATRIX_CN_BLOCK_SIZE
     - Two warps per atom (64 threads); 32 blocks/SM on H100 -> 100% warp occupancy
     - Block-level tile_sum reduction; thread 0 writes coord_num[atom_i]
-    - Padding atoms indicated by numbers[i] == 0 are skipped
+    - Padding atoms indicated by ``numbers[i] == 0`` are skipped
     - Neighbor entries with j >= fill_value are padding and are skipped
 
     See Also
@@ -2323,7 +2323,7 @@ def dftd3_matrix(
     Multi-Pass Algorithm
     ---------------------
     1. **Pass 1**: Compute coordination numbers using geometric counting function
-    2. **Pass 2**: Compute direct forces, energy, and accumulate dE/dCN
+    2. **Pass 2**: Compute direct forces, energy, and accumulate :math:`\\partial E/\\partial \\text{CN}`
     3. **Pass 3**: Add CN-dependent force contribution using chain rule
 
     Parameters
@@ -2338,9 +2338,9 @@ def dftd3_matrix(
     covalent_radii : wp.array(dtype=float32), shape [max_Z+1]
         Covalent radii indexed by atomic number, in same units as positions
     r4r2 : wp.array(dtype=float32), shape [max_Z+1]
-        :math:`\\langle r^4 \\rangle / \\langle r^2 \\rangle` expectation values for C8 computation (dimensionless)
+        :math:`\\langle r^4 \\rangle / \\langle r^2 \\rangle` expectation values for :math:`C_8` computation (dimensionless)
     c6_reference : wp.array4d(dtype=float32), shape [max_Z+1, max_Z+1, 5, 5]
-        C6 reference values in energy x distance^6 units
+        :math:`C_6` reference values in energy :math:`\\times` distance\\ :math:`^6` units
     coord_num_ref : wp.array4d(dtype=float32), shape [max_Z+1, max_Z+1, 5, 5]
         CN reference grid (dimensionless)
     a1 : float
@@ -2348,7 +2348,7 @@ def dftd3_matrix(
     a2 : float
         Becke-Johnson damping parameter 2 (functional-dependent), in same units as positions
     s8 : float
-        C8 term scaling factor (functional-dependent, dimensionless)
+        :math:`C_8` term scaling factor (functional-dependent, dimensionless)
     coord_num : wp.array(dtype=float32), shape [num_atoms]
         OUTPUT: Coordination numbers (dimensionless). Must be pre-allocated and zeroed.
     forces : wp.array(dtype=vec3f), shape [num_atoms]
@@ -2366,7 +2366,7 @@ def dftd3_matrix(
         still be provided with shape matching neighbor_matrix.
         Must be pre-allocated by caller.
     dE_dCN : wp.array(dtype=float32), shape [num_atoms]
-        SCRATCH: Pre-allocated buffer for chain rule dE/dCN intermediate.
+        SCRATCH: Pre-allocated buffer for chain rule :math:`\\partial E/\\partial \\text{CN}` intermediate.
         Must be pre-allocated and zeroed by caller.
     wp_dtype : type
         Warp scalar dtype (wp.float32 or wp.float64) matching positions dtype.
@@ -2379,7 +2379,7 @@ def dftd3_matrix(
         CN interpolation Gaussian width parameter (typically -4.0, dimensionless).
         Default: -4.0
     s6 : float, optional
-        C6 term scaling factor (typically 1.0, dimensionless). Default: 1.0
+        :math:`C_6` term scaling factor (typically 1.0, dimensionless). Default: 1.0
     s5_smoothing_on : float, optional
         Distance where S5 switching begins, in same units as positions. Default: 0.0
     s5_smoothing_off : float, optional
@@ -2396,8 +2396,8 @@ def dftd3_matrix(
     -----
     - All output arrays must be pre-allocated and zeroed by the caller
     - Supports float32 and float64 positions; outputs always float32
-    - Padding atoms indicated by numbers[i] == 0 are skipped
-    - **Two-body only**: Three-body Axilrod-Teller-Muto terms not included
+    - Padding atoms indicated by ``numbers[i] == 0`` are skipped
+    - **Two-body only**: Three-body Axilrod-Teller-Muto (:math:`C_9`) terms not included
     - Unit consistency required: standard D3 parameters use atomic units
       (Bohr for distances, Hartree for energy)
     - Virial is NOT computed for non-periodic systems (use dftd3_matrix_pbc for PBC)
@@ -2548,7 +2548,7 @@ def dftd3_matrix_pbc(
     ---------------------
     1. **Pass 0**: Convert unit cell shifts to Cartesian coordinates
     2. **Pass 1**: Compute coordination numbers using geometric counting function
-    3. **Pass 2**: Compute direct forces, energy, and accumulate dE/dCN
+    3. **Pass 2**: Compute direct forces, energy, and accumulate :math:`\\partial E/\\partial \\text{CN}`
     4. **Pass 3**: Add CN-dependent force contribution using chain rule
 
     Parameters
@@ -2569,9 +2569,9 @@ def dftd3_matrix_pbc(
     covalent_radii : wp.array(dtype=float32), shape [max_Z+1]
         Covalent radii indexed by atomic number, in same units as positions
     r4r2 : wp.array(dtype=float32), shape [max_Z+1]
-        :math:`\\langle r^4 \\rangle / \\langle r^2 \\rangle` expectation values for C8 computation (dimensionless)
+        :math:`\\langle r^4 \\rangle / \\langle r^2 \\rangle` expectation values for :math:`C_8` computation (dimensionless)
     c6_reference : wp.array4d(dtype=float32), shape [max_Z+1, max_Z+1, 5, 5]
-        C6 reference values in energy x distance^6 units
+        :math:`C_6` reference values in energy :math:`\\times` distance\\ :math:`^6` units
     coord_num_ref : wp.array4d(dtype=float32), shape [max_Z+1, max_Z+1, 5, 5]
         CN reference grid (dimensionless)
     a1 : float
@@ -2579,7 +2579,7 @@ def dftd3_matrix_pbc(
     a2 : float
         Becke-Johnson damping parameter 2 (functional-dependent), in same units as positions
     s8 : float
-        C8 term scaling factor (functional-dependent, dimensionless)
+        :math:`C_8` term scaling factor (functional-dependent, dimensionless)
     coord_num : wp.array(dtype=float32), shape [num_atoms]
         OUTPUT: Coordination numbers (dimensionless). Must be pre-allocated and zeroed.
     forces : wp.array(dtype=vec3f), shape [num_atoms]
@@ -2596,7 +2596,7 @@ def dftd3_matrix_pbc(
         Populated by Pass 0 from unit cell shifts. Must be pre-allocated
         with shape matching neighbor_matrix.
     dE_dCN : wp.array(dtype=float32), shape [num_atoms]
-        SCRATCH: Pre-allocated buffer for chain rule dE/dCN intermediate.
+        SCRATCH: Pre-allocated buffer for chain rule :math:`\\partial E/\\partial \\text{CN}` intermediate.
         Must be pre-allocated and zeroed by caller.
     wp_dtype : type
         Warp scalar dtype (wp.float32 or wp.float64) matching positions dtype.
@@ -2609,7 +2609,7 @@ def dftd3_matrix_pbc(
         CN interpolation Gaussian width parameter (typically -4.0, dimensionless).
         Default: -4.0
     s6 : float, optional
-        C6 term scaling factor (typically 1.0, dimensionless). Default: 1.0
+        :math:`C_6` term scaling factor (typically 1.0, dimensionless). Default: 1.0
     s5_smoothing_on : float, optional
         Distance where S5 switching begins, in same units as positions. Default: 0.0
     s5_smoothing_off : float, optional
@@ -2628,8 +2628,8 @@ def dftd3_matrix_pbc(
     -----
     - All output arrays must be pre-allocated and zeroed by the caller
     - Supports float32 and float64 positions/cell; outputs always float32
-    - Padding atoms indicated by numbers[i] == 0 are skipped
-    - **Two-body only**: Three-body Axilrod-Teller-Muto terms not included
+    - Padding atoms indicated by ``numbers[i] == 0`` are skipped
+    - **Two-body only**: Three-body Axilrod-Teller-Muto (:math:`C_9`) terms not included
     - Unit consistency required: standard D3 parameters use atomic units
       (Bohr for distances, Hartree for energy)
     - Virial tensor is computed when compute_virial=True
@@ -2846,7 +2846,7 @@ def dftd3(
     Multi-Pass Algorithm
     ---------------------
     1. **Pass 1**: Compute coordination numbers using geometric counting function
-    2. **Pass 2**: Compute direct forces, energy, and accumulate dE/dCN
+    2. **Pass 2**: Compute direct forces, energy, and accumulate :math:`\\partial E/\\partial \\text{CN}`
     3. **Pass 3**: Add CN-dependent force contribution using chain rule
 
     Parameters
@@ -2864,9 +2864,9 @@ def dftd3(
     covalent_radii : wp.array(dtype=float32), shape [max_Z+1]
         Covalent radii indexed by atomic number, in same units as positions
     r4r2 : wp.array(dtype=float32), shape [max_Z+1]
-        :math:`\\langle r^4 \\rangle / \\langle r^2 \\rangle` expectation values for C8 computation (dimensionless)
+        :math:`\\langle r^4 \\rangle / \\langle r^2 \\rangle` expectation values for :math:`C_8` computation (dimensionless)
     c6_reference : wp.array4d(dtype=float32), shape [max_Z+1, max_Z+1, 5, 5]
-        C6 reference values in energy x distance^6 units
+        :math:`C_6` reference values in energy :math:`\\times` distance\\ :math:`^6` units
     coord_num_ref : wp.array4d(dtype=float32), shape [max_Z+1, max_Z+1, 5, 5]
         CN reference grid (dimensionless)
     a1 : float
@@ -2874,7 +2874,7 @@ def dftd3(
     a2 : float
         Becke-Johnson damping parameter 2 (functional-dependent), in same units as positions
     s8 : float
-        C8 term scaling factor (functional-dependent, dimensionless)
+        :math:`C_8` term scaling factor (functional-dependent, dimensionless)
     coord_num : wp.array(dtype=float32), shape [num_atoms]
         OUTPUT: Coordination numbers (dimensionless). Must be pre-allocated and zeroed.
     forces : wp.array(dtype=vec3f), shape [num_atoms]
@@ -2892,7 +2892,7 @@ def dftd3(
         still be provided with length matching idx_j.
         Must be pre-allocated by caller.
     dE_dCN : wp.array(dtype=float32), shape [num_atoms]
-        SCRATCH: Pre-allocated buffer for chain rule dE/dCN intermediate.
+        SCRATCH: Pre-allocated buffer for chain rule :math:`\\partial E/\\partial \\text{CN}` intermediate.
         Must be pre-allocated and zeroed by caller.
     wp_dtype : type
         Warp scalar dtype (wp.float32 or wp.float64) matching positions dtype.
@@ -2905,7 +2905,7 @@ def dftd3(
         CN interpolation Gaussian width parameter (typically -4.0, dimensionless).
         Default: -4.0
     s6 : float, optional
-        C6 term scaling factor (typically 1.0, dimensionless). Default: 1.0
+        :math:`C_6` term scaling factor (typically 1.0, dimensionless). Default: 1.0
     s5_smoothing_on : float, optional
         Distance where S5 switching begins, in same units as positions. Default: 0.0
     s5_smoothing_off : float, optional
@@ -2921,8 +2921,8 @@ def dftd3(
     -----
     - All output arrays must be pre-allocated and zeroed by the caller
     - Supports float32 and float64 positions; outputs always float32
-    - Padding atoms indicated by numbers[i] == 0 are skipped
-    - **Two-body only**: Three-body Axilrod-Teller-Muto terms not included
+    - Padding atoms indicated by ``numbers[i] == 0`` are skipped
+    - **Two-body only**: Three-body Axilrod-Teller-Muto (:math:`C_9`) terms not included
     - Unit consistency required: standard D3 parameters use atomic units
       (Bohr for distances, Hartree for energy)
     - CSR format is more memory-efficient for sparse neighbor lists
@@ -3073,7 +3073,7 @@ def dftd3_pbc(
     ---------------------
     1. **Pass 0**: Convert unit cell shifts to Cartesian coordinates
     2. **Pass 1**: Compute coordination numbers using geometric counting function
-    3. **Pass 2**: Compute direct forces, energy, and accumulate dE/dCN
+    3. **Pass 2**: Compute direct forces, energy, and accumulate :math:`\\partial E/\\partial \\text{CN}`
     4. **Pass 3**: Add CN-dependent force contribution using chain rule
 
     Parameters
@@ -3096,9 +3096,9 @@ def dftd3_pbc(
     covalent_radii : wp.array(dtype=float32), shape [max_Z+1]
         Covalent radii indexed by atomic number, in same units as positions
     r4r2 : wp.array(dtype=float32), shape [max_Z+1]
-        :math:`\\langle r^4 \\rangle / \\langle r^2 \\rangle` expectation values for C8 computation (dimensionless)
+        :math:`\\langle r^4 \\rangle / \\langle r^2 \\rangle` expectation values for :math:`C_8` computation (dimensionless)
     c6_reference : wp.array4d(dtype=float32), shape [max_Z+1, max_Z+1, 5, 5]
-        C6 reference values in energy x distance^6 units
+        :math:`C_6` reference values in energy :math:`\\times` distance\\ :math:`^6` units
     coord_num_ref : wp.array4d(dtype=float32), shape [max_Z+1, max_Z+1, 5, 5]
         CN reference grid (dimensionless)
     a1 : float
@@ -3106,7 +3106,7 @@ def dftd3_pbc(
     a2 : float
         Becke-Johnson damping parameter 2 (functional-dependent), in same units as positions
     s8 : float
-        C8 term scaling factor (functional-dependent, dimensionless)
+        :math:`C_8` term scaling factor (functional-dependent, dimensionless)
     coord_num : wp.array(dtype=float32), shape [num_atoms]
         OUTPUT: Coordination numbers (dimensionless). Must be pre-allocated and zeroed.
     forces : wp.array(dtype=vec3f), shape [num_atoms]
@@ -3123,7 +3123,7 @@ def dftd3_pbc(
         Populated by Pass 0 from unit cell shifts. Must be pre-allocated
         with length matching idx_j.
     dE_dCN : wp.array(dtype=float32), shape [num_atoms]
-        SCRATCH: Pre-allocated buffer for chain rule dE/dCN intermediate.
+        SCRATCH: Pre-allocated buffer for chain rule :math:`\\partial E/\\partial \\text{CN}` intermediate.
         Must be pre-allocated and zeroed by caller.
     wp_dtype : type
         Warp scalar dtype (wp.float32 or wp.float64) matching positions dtype.
@@ -3136,7 +3136,7 @@ def dftd3_pbc(
         CN interpolation Gaussian width parameter (typically -4.0, dimensionless).
         Default: -4.0
     s6 : float, optional
-        C6 term scaling factor (typically 1.0, dimensionless). Default: 1.0
+        :math:`C_6` term scaling factor (typically 1.0, dimensionless). Default: 1.0
     s5_smoothing_on : float, optional
         Distance where S5 switching begins, in same units as positions. Default: 0.0
     s5_smoothing_off : float, optional
@@ -3153,8 +3153,8 @@ def dftd3_pbc(
     -----
     - All output arrays must be pre-allocated and zeroed by the caller
     - Supports float32 and float64 positions/cell; outputs always float32
-    - Padding atoms indicated by numbers[i] == 0 are skipped
-    - **Two-body only**: Three-body Axilrod-Teller-Muto terms not included
+    - Padding atoms indicated by ``numbers[i] == 0`` are skipped
+    - **Two-body only**: Three-body Axilrod-Teller-Muto (:math:`C_9`) terms not included
     - Unit consistency required: standard D3 parameters use atomic units
       (Bohr for distances, Hartree for energy)
     - Virial tensor is computed when compute_virial=True

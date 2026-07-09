@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
+r"""
 FIRE2 Optimizer Kernels
 =======================
 
@@ -31,19 +31,26 @@ final apply step, such as coupled variable-cell optimization.
 FIRE2 ALGORITHM (Guenole et al., 2020)
 =======================================
 
-Given positions *r*, velocities *v*, and forces *f*:
+Given positions :math:`\mathbf{r}`, velocities :math:`\mathbf{v}`, and forces
+:math:`\mathbf{F}`:
 
-1. Half-step velocity update:  v += f * dt
-2. Compute power:  P = sum(v . f)  per system
+1. Half-step velocity update:
+   :math:`\mathbf{v} \leftarrow \mathbf{v} + \mathbf{F} \Delta t`
+2. Compute power:  :math:`P = \sum \mathbf{v} \cdot \mathbf{F}`  per system
 3. Adaptive parameter update:
-   - If P > 0: increment counter, optionally grow dt, shrink alpha
-   - If P <= 0: reset counter, shrink dt, reset alpha
+   - If :math:`P > 0`: increment counter, optionally grow :math:`\Delta t`,
+     shrink :math:`\alpha`
+   - If :math:`P \leq 0`: reset counter, shrink :math:`\Delta t`, reset
+     :math:`\alpha`
 4. Velocity mixing:
-   v = (1 - alpha) * v + alpha * sqrt(v.v / f.f) * f
-5. Compute step:  step = v * dt
+   :math:`\mathbf{v} = (1 - \alpha) \mathbf{v}
+   + \alpha \sqrt{(\mathbf{v} \cdot \mathbf{v}) / (\mathbf{F} \cdot \mathbf{F})}\, \mathbf{F}`
+5. Compute step:  :math:`\Delta \mathbf{r} = \mathbf{v} \Delta t`
 6. Uphill correction:
-   if P <= 0:  step = -0.5 * dt * v_mixed;  v = 0
-7. Step clamping + position update + coupled dt scaling
+   if :math:`P \leq 0`:
+   :math:`\Delta \mathbf{r} = -\frac{1}{2} \Delta t\, \mathbf{v}_\text{mixed}`;
+   :math:`\mathbf{v} = 0`
+7. Step clamping + position update + coupled :math:`\Delta t` scaling
 
 KERNEL STRUCTURE
 ================
@@ -657,9 +664,36 @@ def fire2_step(
     maxstep: float = 0.1,
     compute_reductions: bool = True,
 ) -> None:
-    """Complete FIRE2 optimization step.
+    r"""Complete FIRE2 optimization step.
 
     Modifies *positions*, *velocities*, *alpha*, *dt*, and *nsteps_inc* in-place.
+
+    Runs the full FIRE2 scheme of Guenole et al. (2020): the leapfrog half-step
+    is deferred into the reduction, so the per-system power is measured on the
+    post-kick velocity :math:`\mathbf{v} + \Delta t\,\mathbf{F}`:
+
+    .. math::
+
+        P = \sum_i (\mathbf{v}_i + \Delta t\,\mathbf{F}_i) \cdot \mathbf{F}_i,\quad
+        vv = \sum_i \lVert \mathbf{v}_i + \Delta t\,\mathbf{F}_i \rVert^2,\quad
+        ff = \sum_i \mathbf{F}_i \cdot \mathbf{F}_i
+
+    The half-step and the FIRE2 mixing are then fused (no intermediate velocity
+    write):
+
+    .. math::
+
+        \mathbf{v} = (1-\alpha)\,\mathbf{v}
+            + \big[(1-\alpha)\,\Delta t + \alpha\sqrt{vv/ff}\big]\,\mathbf{F}
+
+    Displacement is :math:`\Delta\mathbf{r} = \Delta t\,\mathbf{v}` when
+    :math:`P > 0`; for uphill systems (:math:`P \le 0`) the FIRE2 correction
+    :math:`\Delta\mathbf{r} = -\tfrac{1}{2}\Delta t\,\mathbf{v}` is applied and
+    the velocity is then zeroed. The step is capped by
+    :math:`\min(1, \text{maxstep}/\lVert\text{step}\rVert)` per system, and :math:`\Delta t`
+    is scaled by the same factor. This differs from :func:`~nvalchemiops.dynamics.optimizers.fire.fire_step`
+    by the deferred half-step, the modified mixing coefficient, and the
+    half-back uphill correction (FIRE simply zeroes velocity uphill).
 
     Parameters
     ----------
@@ -779,13 +813,18 @@ def fire2_reduce(
     v_sumsq: wp.array,
     f_sumsq: wp.array,
 ) -> None:
-    """Fill the FIRE2 per-system reductions over the half-stepped velocities.
+    r"""Fill the FIRE2 per-system reductions over the half-stepped velocities.
 
-    Computes, per system s:
-    ``vf[s]      = sum_i (v_i + f_i*dt[s]) . f_i``,
-    ``v_sumsq[s] = sum_i (v_i + f_i*dt[s]) . (v_i + f_i*dt[s])``,
-    ``f_sumsq[s] = sum_i f_i . f_i`` — the same reduction ``fire2_update``
-    performs internally (the ``v + f*dt`` half-step is applied in registers,
+    Computes, per system :math:`s`:
+
+    .. math::
+
+        vf[s]      &= \sum_i (\mathbf{v}_i + \mathbf{F}_i \Delta t[s]) \cdot \mathbf{F}_i \\
+        v_{sumsq}[s] &= \sum_i (\mathbf{v}_i + \mathbf{F}_i \Delta t[s]) \cdot (\mathbf{v}_i + \mathbf{F}_i \Delta t[s]) \\
+        f_{sumsq}[s] &= \sum_i \mathbf{F}_i \cdot \mathbf{F}_i
+
+    — the same reduction ``fire2_update`` performs internally (the
+    :math:`\mathbf{v} + \mathbf{F} \Delta t` half-step is applied in registers,
     velocities are not modified). Exposed so a caller can build the reductions
     over a subset of the degrees of freedom and combine them.
 
@@ -830,14 +869,23 @@ def fire2_apply_step(
     vf: wp.array,
     maxstep: float = 0.1,
 ) -> None:
-    """Apply the final FIRE2 clamp + position update from mixed velocities.
+    r"""Apply the final FIRE2 clamp + position update from mixed velocities.
 
     This is the third phase of :func:`fire2_step`, exposed on its own so a
     caller can interpose between the velocity mix and the displacement clamp.
-    It recomputes each atom's step from the (already mixed) velocities, clamps
-    it by ``min(1, maxstep / max_norm[s])``, updates ``positions``, scales
-    ``dt`` by the same factor, and zeroes velocities for uphill systems
-    (``vf[s] <= 0``).
+    For each atom it recomputes the raw step from the (already mixed) velocity
+    — :math:`\mathbf{v}\,\Delta t` downhill, :math:`-\tfrac{1}{2}\Delta t\,\mathbf{v}`
+    uphill — clamps it by
+    :math:`\min(1, \text{maxstep} / \text{max\_norm}[s])`, applies
+
+    .. math::
+
+        \mathbf{r} \leftarrow \mathbf{r}
+            + \min\!\left(1, \tfrac{\text{maxstep}}{\text{max\_norm}[s]}\right)
+            \Delta\mathbf{r},
+
+    scales ``dt`` by the same factor, and zeroes velocities for uphill systems
+    (:math:`vf[s] \leq 0`).
 
     Pairing with :func:`fire2_update` reproduces :func:`fire2_step` exactly::
 
@@ -865,7 +913,8 @@ def fire2_apply_step(
         Maximum step norm per system used for the clamp. Supply the
         post-processed value here to override the one ``fire2_update`` produced.
     vf : wp.array, shape (M,), dtype float*
-        Per-system ``v . f``; a system is uphill when ``vf[s] <= 0``.
+        Per-system :math:`\mathbf{v} \cdot \mathbf{F}`; a system is uphill when
+        :math:`vf[s] \leq 0`.
     maxstep : float
         Maximum allowed step size.
     """
@@ -906,12 +955,28 @@ def fire2_update(
     compute_max_norm: bool = True,
     compute_reductions: bool = True,
 ) -> None:
-    """Run FIRE2 reduction, parameter update, and velocity mixing only.
+    r"""Run FIRE2 reduction, parameter update, and velocity mixing only.
 
     This low-level helper updates ``velocities``, ``alpha``, ``dt``, and
     ``nsteps_inc`` in-place, and refreshes ``vf``, ``v_sumsq``, ``f_sumsq``,
     and, by default, ``max_norm``. It deliberately does not apply positions,
     clamp the final displacement, or zero velocities on uphill systems.
+
+    The FIRE2 power is measured on the deferred half-step velocity, and mixing
+    fuses that half-step with the FIRE2 rule:
+
+    .. math::
+
+        P = \sum_i (\mathbf{v}_i + \Delta t\,\mathbf{F}_i) \cdot \mathbf{F}_i,\qquad
+        \mathbf{v} = (1-\alpha)\,\mathbf{v}
+            + \big[(1-\alpha)\,\Delta t + \alpha\sqrt{vv/ff}\big]\,\mathbf{F}
+
+    where :math:`vv = \sum_i \lVert \mathbf{v}_i + \Delta t\,\mathbf{F}_i \rVert^2`
+    and :math:`ff = \sum_i \mathbf{F}_i \cdot \mathbf{F}_i`. When
+    ``compute_max_norm`` is set, ``max_norm`` records
+    :math:`\max_i \lVert \Delta t\,\mathbf{v}_i \rVert` downhill and
+    :math:`\max_i \lVert -\tfrac{1}{2}\Delta t\,\mathbf{v}_i \rVert` uphill for a
+    later clamp.
 
     Parameters
     ----------
@@ -929,14 +994,14 @@ def fire2_update(
     nsteps_inc : wp.array, shape (M,), dtype int32
         Consecutive positive-power step counter, modified in-place.
     vf : wp.array, shape (M,), dtype float32/float64
-        Scratch buffer for per-system ``v . f`` power. Zeroed internally.
+        Scratch buffer for per-system :math:`\mathbf{v} \cdot \mathbf{F}` power. Zeroed internally.
     v_sumsq : wp.array, shape (M,), dtype float32/float64
-        Scratch buffer for per-system ``v . v`` after the half-step. Zeroed internally.
+        Scratch buffer for per-system :math:`\mathbf{v} \cdot \mathbf{v}` after the half-step. Zeroed internally.
     f_sumsq : wp.array, shape (M,), dtype float32/float64
-        Scratch buffer for per-system ``f . f``. Zeroed internally.
+        Scratch buffer for per-system :math:`\mathbf{F} \cdot \mathbf{F}`. Zeroed internally.
     max_norm : wp.array, shape (M,), dtype float32/float64
         Scratch buffer for the maximum raw final-step norm after mixing, using
-        ``dt * velocity`` downhill and ``-0.5 * dt * velocity`` uphill. Zeroed
+        :math:`\Delta t\, \mathbf{v}` downhill and :math:`-\frac{1}{2} \Delta t\, \mathbf{v}` uphill. Zeroed
         internally when ``compute_max_norm`` is true. Custom final apply phases
         may pass ``compute_max_norm=False`` and recompute this buffer for their
         own displacement definition.
@@ -966,10 +1031,11 @@ def fire2_update(
     Notes
     -----
     Callers that use this helper directly must finish the FIRE2 step
-    themselves. For systems with ``vf <= 0``, the final apply phase must use
-    the uphill correction ``step = -0.5 * dt * velocity`` and zero the
-    corresponding velocities after applying the step. Downhill systems use
-    ``step = dt * velocity``. Any final ``maxstep`` clamp must be applied by
+    themselves. For systems with :math:`vf \leq 0`, the final apply phase must use
+    the uphill correction :math:`\Delta \mathbf{r} = -\frac{1}{2} \Delta t\, \mathbf{v}`
+    and zero the corresponding velocities after applying the step. Downhill
+    systems use :math:`\Delta \mathbf{r} = \Delta t\, \mathbf{v}`. Any final
+    ``maxstep`` clamp must be applied by
     the caller and should scale ``dt`` consistently with the accepted step.
     """
     N = velocities.shape[0]

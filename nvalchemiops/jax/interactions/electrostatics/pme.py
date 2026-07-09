@@ -16,8 +16,8 @@
 """JAX Particle Mesh Ewald (PME) implementation.
 
 This module provides JAX bindings for PME long-range electrostatics calculations.
-PME achieves O(N log N) scaling through FFT-based reciprocal space computation
-combined with real-space Ewald summation.
+PME achieves :math:`O(N \\log N)` scaling through FFT-based reciprocal space
+computation combined with real-space Ewald summation.
 
 The implementation uses:
 - JAX FFT operations (jnp.fft.rfftn/irfftn)
@@ -811,7 +811,8 @@ def pme_energy_corrections_with_charge_grad(
 ) -> tuple[jax.Array, jax.Array]:
     r"""Apply energy corrections and compute charge gradients.
 
-    Same as pme_energy_corrections but also returns dE/dq for each atom.
+    Same as pme_energy_corrections but also returns :math:`\partial E/\partial q`
+    for each atom.
 
     Parameters
     ----------
@@ -840,7 +841,7 @@ def pme_energy_corrections_with_charge_grad(
     corrected_energies : jax.Array, shape (N,) or (N_total,)
         Final per-atom reciprocal-space energy with corrections applied.
     charge_gradients : jax.Array, shape (N,) or (N_total,)
-        Per-atom charge gradients dE/dq.
+        Per-atom charge gradients :math:`\partial E/\partial q`.
 
     Notes
     -----
@@ -1132,7 +1133,7 @@ def _pme_reciprocal_space_impl(
     compute_forces : bool, default=False
         If True, compute forces via Fourier gradient.
     compute_charge_gradients : bool, default=False
-        If True, compute charge gradients dE/dq.
+        If True, compute charge gradients :math:`\partial E/\partial q`.
     compute_virial : bool, default=False
         If True, compute the virial tensor ``W = -dE/d(displacement)`` for the
         row-vector displacement recipe.
@@ -2706,7 +2707,7 @@ def pme_reciprocal_space(
     forces : jax.Array, shape (N, 3), optional
         Per-atom forces. Only present when ``compute_forces=True``.
     charge_gradients : jax.Array, shape (N,), optional
-        Per-atom charge gradients dE/dq. Only present when
+        Per-atom charge gradients :math:`\\partial E/\\partial q`. Only present when
         ``compute_charge_gradients=True`` (deprecated direct-output flag).
     virial : jax.Array, shape (1, 3, 3) or (B, 3, 3), optional
         Virial tensor. Only present when ``compute_virial=True`` (deprecated
@@ -2829,14 +2830,31 @@ def _particle_mesh_ewald_impl(
 ):
     r"""Complete Particle Mesh Ewald (PME) calculation for long-range electrostatics.
 
-    Computes total Coulomb energy using the PME method, which achieves O(N log N)
-    scaling through FFT-based reciprocal space calculations. Combines:
+    Computes total Coulomb energy using the PME method, which achieves
+    :math:`O(N \log N)` scaling through FFT-based reciprocal space calculations.
+    Combines:
     1. Real-space contribution (short-range, erfc-damped)
     2. Reciprocal-space contribution (long-range, FFT + B-spline interpolation)
     3. Self-energy and background corrections
 
     Total Energy Formula:
-        E_total = E_real + E_reciprocal - E_self - E_background
+
+    .. math::
+
+        E_{\text{total}} = E_{\text{real}} + E_{\text{reciprocal}}
+        - E_{\text{self}} - E_{\text{background}}
+
+    where:
+
+    .. math::
+
+        \begin{aligned}
+        E_{\text{real}} &= \frac{1}{2} \sum_{i \neq j} q_i q_j
+            \frac{\operatorname{erfc}(\alpha r_{ij})}{r_{ij}} \\
+        E_{\text{reciprocal}} &= \text{FFT-based smooth long-range contribution} \\
+        E_{\text{self}} &= \sum_i \frac{\alpha}{\sqrt{\pi}} q_i^2 \\
+        E_{\text{background}} &= \frac{\pi}{2\alpha^2 V} Q_{\text{total}}^2
+        \end{aligned}
 
     Parameters
     ----------
@@ -2884,7 +2902,7 @@ def _particle_mesh_ewald_impl(
     compute_forces : bool, default=False
         If True, compute per-atom forces.
     compute_charge_gradients : bool, default=False
-        If True, compute per-atom charge gradients dE/dq.
+        If True, compute per-atom charge gradients :math:`\partial E/\partial q`.
     compute_virial : bool, default=False
         If True, compute the virial tensor ``W = -dE/d(displacement)`` for the
         row-vector displacement recipe.
@@ -3216,6 +3234,14 @@ def particle_mesh_ewald(
 ):
     """Complete Particle Mesh Ewald calculation for long-range electrostatics.
 
+    Computes the total Coulomb energy via the PME method, which achieves
+    :math:`O(N \\log N)` scaling through FFT-based reciprocal-space calculations:
+
+    .. math::
+
+        E_{\\text{total}} = E_{\\text{real}} + E_{\\text{reciprocal}}
+        - E_{\\text{self}} - E_{\\text{background}}
+
     Parameters
     ----------
     positions : jax.Array, shape (N, 3)
@@ -3267,7 +3293,7 @@ def particle_mesh_ewald(
     forces : jax.Array, shape (N, 3), optional
         Per-atom forces. Only present when ``compute_forces=True`` (deprecated).
     charge_gradients : jax.Array, shape (N,), optional
-        Per-atom charge gradients dE/dq. Only present when
+        Per-atom charge gradients :math:`\\partial E/\\partial q`. Only present when
         ``compute_charge_gradients=True`` (deprecated).
     virial : jax.Array, shape (1, 3, 3) or (B, 3, 3), optional
         Virial tensor. Only present when ``compute_virial=True`` (deprecated).

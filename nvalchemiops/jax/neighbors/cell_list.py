@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""JAX bindings for unbatched cell list O(N) neighbor list construction."""
+"""JAX bindings for unbatched cell list :math:`O(N)` neighbor list construction."""
 
 from __future__ import annotations
 
@@ -2955,7 +2955,7 @@ def cell_list(
     --------
     build_cell_list : Build cell list separately
     query_cell_list : Query cell list separately
-    naive_neighbor_list : Naive O(N^2) method
+    naive_neighbor_list : Naive :math:`O(N^2)` method
     """
 
     has_pair_outputs = _has_partial_or_pair_outputs(

@@ -58,16 +58,16 @@ class D3Parameters:
         padding; valid atomic numbers are 1 to max_Z.
     r4r2 : torch.Tensor
         :math:`\langle r^4 \rangle / \langle r^2 \rangle` expectation values [max_Z+1] as float32 or float64.
-        Dimensionless ratio used for computing C8 coefficients from C6 values.
+        Dimensionless ratio used for computing :math:`C_8` coefficients from :math:`C_6` values.
     c6ab : torch.Tensor
-        C6 reference coefficients [max_Z+1, max_Z+1, interp_mesh, interp_mesh]
-        as float32 or float64. Units are energy x distance^6. Indexed by atomic numbers and coordination number reference indices.
+        :math:`C_6` reference coefficients [max_Z+1, max_Z+1, interp_mesh, interp_mesh]
+        as float32 or float64. Units are energy :math:`\times` distance\ :math:`^6`. Indexed by atomic numbers and coordination number reference indices.
     cn_ref : torch.Tensor
         Coordination number reference grid [max_Z+1, max_Z+1, interp_mesh, interp_mesh]
         as float32 or float64. Dimensionless CN values for Gaussian interpolation.
     interp_mesh : int, optional
         Size of the coordination number interpolation mesh. Default: 5
-        (standard DFT-D3 uses a 5x5 grid)
+        (standard DFT-D3 uses a :math:`5 \times 5` grid)
 
     Raises
     ------
@@ -80,7 +80,7 @@ class D3Parameters:
     -----
     - Parameters should use consistent units matching your coordinate system.
       Standard D3 parameters from the Grimme group use atomic units (Bohr for
-      distances, Hartree x Bohr^6 for C6 coefficients).
+      distances, Hartree :math:`\times` Bohr\ :math:`^6` for :math:`C_6` coefficients).
     - Index 0 in all arrays is reserved for padding atoms (atomic number 0)
     - Valid atomic numbers range from 1 to max_z
     - The standard DFT-D3 implementation supports elements 1-94 (H to Pu)
@@ -1196,7 +1196,7 @@ def dftd3(
     tuple[torch.Tensor, torch.Tensor, torch.Tensor]
     | tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
 ):
-    """
+    r"""
     Compute DFT-D3(BJ) dispersion energy and forces using Warp
     with optional periodic boundary condition support and smoothing function.
 
@@ -1229,14 +1229,14 @@ def dftd3(
     a2 : float
         Becke-Johnson damping parameter 2 (functional-dependent), in same units as positions
     s8 : float
-        C8 term scaling factor (functional-dependent, dimensionless)
+        :math:`C_8` term scaling factor (functional-dependent, dimensionless)
     k1 : float, optional
         CN counting function steepness parameter, in inverse distance units
         (typically 16.0 1/Bohr for atomic units)
     k3 : float, optional
         CN interpolation Gaussian width parameter (typically -4.0, dimensionless)
     s6 : float, optional
-        C6 term scaling factor (typically 1.0, dimensionless)
+        :math:`C_6` term scaling factor (typically 1.0, dimensionless)
     s5_smoothing_on : float, optional
         Distance where S5 switching begins, in same units as positions. Set greater or
         equal to s5_smoothing_off to disable smoothing. Default: 1e10
@@ -1255,10 +1255,12 @@ def dftd3(
         Covalent radii [max_Z+1] as float32, indexed by atomic number, in same units
         as positions. If provided, overrides the value in d3_params.
     r4r2 : torch.Tensor | None, optional
-        <r4>/<r2> expectation values [max_Z+1] as float32 for C8 computation (dimensionless).
+        :math:`\langle r^4 \rangle / \langle r^2 \rangle` expectation values [max_Z+1] as float32
+        for :math:`C_8` computation (dimensionless).
         If provided, overrides the value in d3_params.
     c6_reference : torch.Tensor | None, optional
-        C6 reference values [max_Z+1, max_Z+1, 5, 5] as float32 in energy x distance^6 units.
+        :math:`C_6` reference values [max_Z+1, max_Z+1, 5, 5] as float32
+        in energy :math:`\times` distance\ :math:`^6` units.
         If provided, overrides the value in d3_params.
     coord_num_ref : torch.Tensor | None, optional
         CN reference grid [max_Z+1, max_Z+1, 5, 5] as float32 (dimensionless).
@@ -1332,10 +1334,10 @@ def dftd3(
     - Float32 or float64 precision for positions and cell; outputs always float32
     - **Neighbor formats**: Supports both neighbor_matrix (dense) and neighbor_list (sparse COO)
       formats. Choose neighbor_list for sparse systems or when memory efficiency is important.
-    - Padding atoms indicated by numbers[i] == 0
+    - Padding atoms indicated by ``numbers[i] == 0``
     - Requires symmetric neighbor representation (each pair appears twice)
-    - **Two-body only**: Computes pairwise C6 and C8 dispersion terms; three-body
-      Axilrod-Teller-Muto (ATM/C9) terms are not included
+    - **Two-body only**: Computes pairwise :math:`C_6` and :math:`C_8` dispersion terms;
+      three-body Axilrod-Teller-Muto (ATM/:math:`C_9`) terms are not included
     - Virial computation requires periodic boundary conditions.
     - Bulk stress tensor can be obtained by dividing virial by system volume.
 

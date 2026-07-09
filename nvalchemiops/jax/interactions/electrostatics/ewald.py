@@ -18,8 +18,11 @@
 Wraps the framework-agnostic Warp kernels from
 ``nvalchemiops.interactions.electrostatics.ewald_kernels`` with JAX bindings.
 
-The Ewald method splits long-range Coulomb interactions into:
-    E_total = E_real + E_reciprocal - E_self - E_background
+The Ewald method splits long-range Coulomb interactions into components:
+
+.. math::
+
+    E_{\\text{total}} = E_{\\text{real}} + E_{\\text{reciprocal}} - E_{\\text{self}} - E_{\\text{background}}
 """
 
 from __future__ import annotations
@@ -450,13 +453,15 @@ _jax_batch_ewald_reciprocal_virial = _jax_ewald_recip_component(
 )
 
 _jax_ewald_reciprocal_double_backward_reduce = _make_jax_kernel_factory(
-    lambda wp_dtype: get_ewald_recip_kernel(
-        wp_dtype,
-        batched=False,
-        deriv_state=_DerivState.E_F_dQ,
-        cell_grad=False,
-        order="double_backward",
-    ).fill,
+    lambda wp_dtype: (
+        get_ewald_recip_kernel(
+            wp_dtype,
+            batched=False,
+            deriv_state=_DerivState.E_F_dQ,
+            cell_grad=False,
+            order="double_backward",
+        ).fill
+    ),
     7,
     [
         "gA",
@@ -470,25 +475,29 @@ _jax_ewald_reciprocal_double_backward_reduce = _make_jax_kernel_factory(
 )
 
 _jax_ewald_reciprocal_double_backward_compute = _make_jax_kernel_factory(
-    lambda wp_dtype: get_ewald_recip_kernel(
-        wp_dtype,
-        batched=False,
-        deriv_state=_DerivState.E_F_dQ,
-        cell_grad=False,
-        order="double_backward",
-    ).compute,
+    lambda wp_dtype: (
+        get_ewald_recip_kernel(
+            wp_dtype,
+            batched=False,
+            deriv_state=_DerivState.E_F_dQ,
+            cell_grad=False,
+            order="double_backward",
+        ).compute
+    ),
     2,
     ["grad_positions", "grad_charges"],
 )
 
 _jax_batch_ewald_reciprocal_double_backward_reduce = _make_jax_kernel_factory(
-    lambda wp_dtype: get_ewald_recip_kernel(
-        wp_dtype,
-        batched=True,
-        deriv_state=_DerivState.E_F_dQ,
-        cell_grad=False,
-        order="double_backward",
-    ).fill,
+    lambda wp_dtype: (
+        get_ewald_recip_kernel(
+            wp_dtype,
+            batched=True,
+            deriv_state=_DerivState.E_F_dQ,
+            cell_grad=False,
+            order="double_backward",
+        ).fill
+    ),
     7,
     [
         "gA",
@@ -502,13 +511,15 @@ _jax_batch_ewald_reciprocal_double_backward_reduce = _make_jax_kernel_factory(
 )
 
 _jax_batch_ewald_reciprocal_double_backward_compute = _make_jax_kernel_factory(
-    lambda wp_dtype: get_ewald_recip_kernel(
-        wp_dtype,
-        batched=True,
-        deriv_state=_DerivState.E_F_dQ,
-        cell_grad=False,
-        order="double_backward",
-    ).compute,
+    lambda wp_dtype: (
+        get_ewald_recip_kernel(
+            wp_dtype,
+            batched=True,
+            deriv_state=_DerivState.E_F_dQ,
+            cell_grad=False,
+            order="double_backward",
+        ).compute
+    ),
     2,
     ["grad_positions", "grad_charges"],
 )
@@ -898,11 +909,13 @@ def ewald_real_space(
         Return explicit forces :math:`-\\partial E / \\partial \\mathbf{r}_i`.
         For differentiable force computation prefer JAX autodiff.
     compute_charge_gradients : bool, default=False
-        Deprecated. Return explicit :math:`\\partial E / \\partial q_i`.
-        Raises ``DeprecationWarning`` when True.
+        .. deprecated:: 0.4.0
+            Deprecated. Return explicit :math:`\\partial E / \\partial q_i`.
+            Raises ``DeprecationWarning`` when True.
     compute_virial : bool, default=False
-        Deprecated. Return explicit virial tensor. Raises
-        ``DeprecationWarning`` when True.
+        .. deprecated:: 0.4.0
+            Deprecated. Return explicit virial tensor. Raises
+            ``DeprecationWarning`` when True.
 
     Returns
     -------
@@ -2801,8 +2814,11 @@ def _ewald_summation_impl(
 ) -> jax.Array | tuple[jax.Array, ...]:
     """Compute complete Ewald summation implementation.
 
-    The Ewald method splits long-range Coulomb into:
-        E_total = E_real + E_reciprocal - E_self - E_background
+    The Ewald method splits long-range Coulomb into components:
+
+    .. math::
+
+        E_{\\text{total}} = E_{\\text{real}} + E_{\\text{reciprocal}} - E_{\\text{self}} - E_{\\text{background}}
 
     Parameters
     ----------
@@ -2850,7 +2866,7 @@ def _ewald_summation_impl(
     compute_forces : bool, default=False
         Whether to compute forces.
     compute_charge_gradients : bool, default=False
-        Whether to compute charge gradients dE/dq_i.
+        Whether to compute charge gradients :math:`\\partial E / \\partial q_i`.
     compute_virial : bool, default=False
         Whether to compute the virial tensor.
     hybrid_forces : bool, default=False
@@ -3091,13 +3107,16 @@ def ewald_summation(
     mask_value : int or None, default=None
         Sentinel value for invalid neighbor-matrix entries.
     compute_forces : bool, default=False
-        Deprecated direct-output flag. Compute energy and use JAX autodiff for
-        differentiable forces.
+        .. deprecated:: 0.4.0
+            Deprecated direct-output flag. Compute energy and use JAX autodiff for
+            differentiable forces.
     compute_charge_gradients : bool, default=False
-        Deprecated direct-output flag. Compute energy and use JAX autodiff for
-        ``dE/dq_i``.
+        .. deprecated:: 0.4.0
+            Deprecated direct-output flag. Compute energy and use JAX autodiff for
+            :math:`\\partial E / \\partial q_i`.
     compute_virial : bool, default=False
-        Deprecated direct-output flag for the virial tensor.
+        .. deprecated:: 0.4.0
+            Deprecated direct-output flag for the virial tensor.
     accuracy : float, default=1e-6
         Target accuracy for automatic parameter estimation.
     hybrid_forces : bool, default=False

@@ -39,13 +39,16 @@ This module provides low-level support for:
 
     G(k) = \\frac{2\\pi}{V} \\frac{\\exp(-k^2/(4\\alpha^2))}{k^2}
 
-The B-spline charge assignment introduces aliasing, corrected by:
+The B-spline charge assignment introduces aliasing, corrected by the squared
+B-spline structure factor:
 
 .. math::
 
-    C(k) = \\left[\\text{sinc}(k_x/N_x) \\cdot \\text{sinc}(k_y/N_y) \\cdot \\text{sinc}(k_z/N_z)\\right]^{-2p}
+    C^2(k) = \\left[\\operatorname{sinc}(m_x/N_x) \\cdot \\operatorname{sinc}(m_y/N_y)
+    \\cdot \\operatorname{sinc}(m_z/N_z)\\right]^{2p}
 
-where p is the spline order.
+where :math:`p` is the spline order and PME deconvolution multiplies by
+:math:`G(k) / C^2(k)`.
 
 2. Factory-backed energy corrections:
 

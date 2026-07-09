@@ -2927,7 +2927,7 @@ def pme_reciprocal_space(
     """Compute PME reciprocal-space energy and optionally forces and/or charge gradients.
 
     Performs the FFT-based reciprocal-space calculation using the Particle Mesh
-    Ewald algorithm. This achieves O(N log N) scaling through:
+    Ewald algorithm. This achieves :math:`O(N \\log N)` scaling through:
 
     1. B-spline charge interpolation to mesh (spreading)
     2. FFT of charge mesh to reciprocal space
@@ -3033,8 +3033,10 @@ def pme_reciprocal_space(
     static setup state that corresponds to the current ``cell``.
 
     When ``charges`` is a non-leaf tensor that may depend on ``positions``
-    (q = q(R)), ordinary first-order losses may use cached partial derivatives
-    and let PyTorch apply dE/dq * dq/dR once. Weighted losses and higher-order
+    (:math:`q = q(R)`), ordinary first-order losses may use cached partial
+    derivatives and let PyTorch apply
+    :math:`\\partial E/\\partial q \\cdot \\mathrm{d}q/\\mathrm{d}R` once.
+    Weighted losses and higher-order
     derivatives recompute safe partials or connected gradients as needed to
     avoid double-counting that chain term (issue #115).
 
@@ -3315,10 +3317,13 @@ def particle_mesh_ewald(
 
     .. math::
 
-        E_{\\text{real}} = \\frac{1}{2} \\sum_{i \\neq j} q_i q_j \\frac{\\text{erfc}(\\alpha r_{ij})}{r_{ij}}
-        E_{\\text{reciprocal}} = FFT-based smooth long-range contribution
-        E_{\\text{self}} = \\sum_i \\frac{\\alpha}{\\sqrt{\\pi}} q_i^2
-        E_{\\text{background}} = \\frac{\\pi}{2\\alpha^2 V} Q_{\\text{total}}^2
+        \\begin{aligned}
+        E_{\\text{real}} &= \\frac{1}{2} \\sum_{i \\neq j} q_i q_j
+            \\frac{\\operatorname{erfc}(\\alpha r_{ij})}{r_{ij}} \\\\
+        E_{\\text{reciprocal}} &= \\text{FFT-based smooth long-range contribution} \\\\
+        E_{\\text{self}} &= \\sum_i \\frac{\\alpha}{\\sqrt{\\pi}} q_i^2 \\\\
+        E_{\\text{background}} &= \\frac{\\pi}{2\\alpha^2 V} Q_{\\text{total}}^2
+        \\end{aligned}
 
     Parameters
     ----------
@@ -3398,15 +3403,18 @@ def particle_mesh_ewald(
     mask_value : int, optional
         Value indicating invalid entries in neighbor_matrix. Defaults to N.
     compute_forces : bool, default=False
-        Deprecated direct-output flag. Compute energy and use
-        ``torch.autograd.grad`` for differentiable forces.
+        .. deprecated:: 0.4.0
+            Deprecated direct-output flag. Compute energy and use
+            ``torch.autograd.grad`` for differentiable forces.
     compute_charge_gradients : bool, default=False
-        Deprecated direct-output flag. Compute energy and use
-        ``torch.autograd.grad`` for ``dE/dq_i``.
+        .. deprecated:: 0.4.0
+            Deprecated direct-output flag. Compute energy and use
+            ``torch.autograd.grad`` for :math:`\\partial E/\\partial q_i`.
     compute_virial : bool, default=False
-        Deprecated direct-output flag for the virial tensor
-        ``W = -dE/d(displacement)``.
-        Stress = -virial / volume.
+        .. deprecated:: 0.4.0
+            Deprecated direct-output flag for the virial tensor
+            ``W = -dE/d(displacement)``.
+            Stress = -virial / volume.
     accuracy : float, default=1e-6
         Target relative accuracy for automatic parameter estimation (:math:`\\alpha`, mesh dims).
         Only used when alpha or mesh_dimensions is None.
@@ -3432,9 +3440,11 @@ def particle_mesh_ewald(
     energies : torch.Tensor, shape (N,)
         Per-atom contribution to total PME energy. Sum gives total energy.
     forces : torch.Tensor, shape (N, 3), optional
-        Deprecated direct forces. Only returned if compute_forces=True.
+        .. deprecated:: 0.4.0
+            Deprecated direct forces. Only returned if compute_forces=True.
     charge_gradients : torch.Tensor, shape (N,), optional
-        Deprecated direct charge gradients :math:`\\partial E/\\partial q_i`. Only returned if compute_charge_gradients=True.
+        .. deprecated:: 0.4.0
+            Deprecated direct charge gradients :math:`\\partial E/\\partial q_i`. Only returned if compute_charge_gradients=True.
     virial : torch.Tensor, shape (1, 3, 3) or (B, 3, 3), optional
         Virial tensor. Only returned if compute_virial=True. Always last in tuple.
 
@@ -3448,8 +3458,10 @@ def particle_mesh_ewald(
     static setup state that corresponds to the current ``cell``.
 
     When ``charges`` is a non-leaf tensor that may depend on ``positions``
-    (q = q(R)), ordinary first-order losses may use cached partial derivatives
-    and let PyTorch apply dE/dq * dq/dR once. Weighted losses and higher-order
+    (:math:`q = q(R)`), ordinary first-order losses may use cached partial
+    derivatives and let PyTorch apply
+    :math:`\\partial E/\\partial q \\cdot \\mathrm{d}q/\\mathrm{d}R` once.
+    Weighted losses and higher-order
     derivatives recompute safe partials or connected gradients as needed to
     avoid double-counting that chain term (issue #115).
 

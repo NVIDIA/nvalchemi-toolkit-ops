@@ -24,15 +24,6 @@ Kernel orchestration uses :func:`warp.jax_experimental.jax_callable`, which
 runs the existing ``_launch_*`` Python wrappers directly on the JAX device
 arrays — no host roundtrip.
 
-Public functions
-----------------
-segmented_sum      : reduce per segment (scalar or vec3, f32 or f64)
-segmented_dot      : per-segment dot product (vec3, f32 or f64)
-segmented_mul      : per-element scale by per-segment scalar (vec3 * scalar)
-segmented_mean     : per-segment mean (scalar or vec3, f32 or f64)
-segmented_rms_norm : per-segment RMS norm of vec3 inputs
-segmented_matvec   : per-segment matvec ``out[i] = m[idx[i]]^T @ v[i]``
-
 Index inputs (``idx``) are non-differentiable — JAX returns ``None`` for them.
 ``num_segments`` (number of segments) is a static argument (compile-time constant).
 """

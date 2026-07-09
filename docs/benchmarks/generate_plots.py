@@ -61,6 +61,11 @@ from benchmarks.plotting.styles import (  # noqa: E402
 NL_DOC_CUTOFFS = (6.0, 15.0, 25.0)
 SUITE_RESULTS_ENV = "BENCHMARK_SUITE_RESULTS_DIR"
 PLOT_JOBS_ENV = "BENCHMARK_PLOT_JOBS"
+# Opt-in escape hatch: downgrade the reportable-snapshot integrity gate to a
+# warning so doc-only builds can render plots from a snapshot whose provenance
+# is not internally consistent (e.g. a benchmark family re-run at a different
+# commit). Strict by default so CI/reportable builds still fail loudly.
+ALLOW_MIXED_SNAPSHOT_ENV = "BENCHMARK_ALLOW_MIXED_SNAPSHOT"
 _PLOT_PROCESS_CONTEXT = multiprocessing.get_context("spawn")
 _SUITE_SYSTEMS = ("cscl", "nh3")
 _SUITE_MODES = ("system-size", "constant-workload", "batch")
@@ -856,8 +861,19 @@ def main(*, jobs: int | str = "auto") -> None:
     output_dir.mkdir(exist_ok=True)
 
     # Fail before rendering if the bundled or overridden reportable snapshot is
-    # incomplete, mixed, or missing required provenance.
-    _suite_csv_dirs(results_dir, require_complete=True)
+    # incomplete, mixed, or missing required provenance. Set
+    # ``BENCHMARK_ALLOW_MIXED_SNAPSHOT=1`` to downgrade this to a warning for
+    # doc-only builds (the plot rendering itself does not require a valid
+    # reportable snapshot).
+    try:
+        _suite_csv_dirs(results_dir, require_complete=True)
+    except RuntimeError as exc:
+        if os.getenv(ALLOW_MIXED_SNAPSHOT_ENV, "").lower() not in ("1", "true", "yes"):
+            raise
+        print(
+            f"WARNING: reportable snapshot validation skipped "
+            f"({ALLOW_MIXED_SNAPSHOT_ENV} set): {exc}"
+        )
 
     # Generate plots for each benchmark type
     generate_suite_csv_plots(results_dir, output_dir, jobs=jobs)

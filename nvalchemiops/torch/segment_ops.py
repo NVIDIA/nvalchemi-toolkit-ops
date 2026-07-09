@@ -30,15 +30,6 @@ Tensor layout conventions
 - Mat33 arrays   : shape ``(num_segments, 3, 3)``
 
 The dtype (float32 / float64) is inferred from the input tensor.
-
-Public API
-----------
-segmented_sum      : sum per segment; differentiable w.r.t. x.
-segmented_dot      : per-segment dot product; differentiable w.r.t. x, y.
-segmented_mul      : per-element scale by per-segment scalar; d.w.r.t. x, y.
-segmented_mean     : per-segment mean; differentiable w.r.t. x.
-segmented_rms_norm : RMS vector norm per segment; differentiable w.r.t. x.
-segmented_matvec   : per-segment matrix-vector multiply; d.w.r.t. v, m.
 """
 
 from __future__ import annotations
