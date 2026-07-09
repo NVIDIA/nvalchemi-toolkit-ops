@@ -1,0 +1,36 @@
+{# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. #}
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Render sphinx-multiversion refs using the PyData theme's dropdown styling. #}
+{% if versions %}
+{%- set button_id = unique_html_id("pst-version-switcher-button") -%}
+{%- set dropdown_id = unique_html_id("pst-version-switcher-list") -%}
+<div class="version-switcher__container dropdown">
+  <button id="{{ button_id }}"
+    type="button"
+    class="version-switcher__button btn btn-sm navbar-btn dropdown-toggle"
+    data-bs-toggle="dropdown"
+    aria-haspopup="listbox"
+    aria-controls="{{ dropdown_id }}"
+    aria-label="Version switcher list">
+    {{ current_version.name }}
+    <span class="caret"></span>
+  </button>
+  <div id="{{ dropdown_id }}"
+    class="version-switcher__menu dropdown-menu list-group-flush py-0"
+    role="listbox"
+    aria-labelledby="{{ button_id }}">
+    {% for item in versions.branches %}
+    <a class="dropdown-item list-group-item list-group-item-action py-1"
+      href="{{ item.url }}" role="option">
+      {{ item.name }}{% if item.name == "main" %} (development){% else %} (preview){% endif %}
+    </a>
+    {% endfor %}
+    {% for item in versions.tags | reverse %}
+    <a class="dropdown-item list-group-item list-group-item-action py-1"
+      href="{{ item.url }}" role="option">
+      {{ item.name }}
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}

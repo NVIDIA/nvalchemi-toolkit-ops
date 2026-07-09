@@ -22,6 +22,7 @@ import os
 import pathlib
 import sys
 from importlib.metadata import version
+from inspect import signature
 
 import dotenv
 from docutils import nodes
@@ -31,7 +32,10 @@ from sphinx_gallery.sorting import FileNameSortKey
 # Defaults build API docs, execute examples, and generate benchmark plots.
 dotenv.load_dotenv()
 os.environ.setdefault("JAX_ENABLE_X64", "1")
-doc_version = os.getenv("DOC_VERSION", "main")
+doc_version = os.getenv(
+    "SPHINX_MULTIVERSION_NAME",
+    os.getenv("DOC_VERSION", "main"),
+)
 legacy_plot_gallery = os.getenv("PLOT_GALLERY")
 run_examples_value = os.getenv(
     "RUN_EXAMPLES",
@@ -55,7 +59,23 @@ if legacy_plot_gallery is not None and "RUN_EXAMPLES" not in os.environ:
 root = pathlib.Path(__file__).parent
 release = version("nvalchemi-toolkit-ops")
 
-sys.path.insert(0, root.parent.as_posix())
+# A historical release can opt into compatible runtime dependencies without
+# changing the shared Sphinx environment. For example, v0.2.0 reads
+# ``SMV_SITE_PACKAGES_V0_2_0`` when sphinx-multiversion builds that tag.
+normalized_doc_version = "".join(
+    character if character.isalnum() else "_" for character in doc_version
+).upper()
+version_site_packages = os.getenv(
+    f"SMV_SITE_PACKAGES_{normalized_doc_version}",
+)
+if version_site_packages:
+    sys.path.insert(0, version_site_packages)
+
+# sphinx-multiversion builds tagged source trees with this configuration file.
+# Point autodoc at the source tree being rendered rather than the checkout that
+# launched the build.
+source_root = pathlib.Path(os.getenv("SPHINX_MULTIVERSION_SOURCEDIR", root))
+sys.path.insert(0, source_root.parent.as_posix())
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
@@ -78,9 +98,28 @@ extensions = [
     "sphinx_design",
     "sphinx_togglebutton",
     "sphinx_gallery.gen_gallery",
+    "sphinx_multiversion",
 ]
 
-# Sphinx-Gallery intentionally stores a sort-key class in its config. Sphinx 9
+# Publish the development branch, release-candidate preview branches, and
+# stable semantic-version release tags. RC branches follow the repository's
+# ``0.4.0-rc`` convention, with optional SemVer-style increments such as
+# ``0.4.0-rc.1``.
+smv_branch_whitelist = os.getenv(
+    "SMV_BRANCH_WHITELIST",
+    r"^(main|\d+\.\d+\.\d+-rc(?:\.\d+)?)$",
+)
+smv_tag_whitelist = os.getenv(
+    "SMV_TAG_WHITELIST",
+    r"^v\d+\.\d+\.\d+$",
+)
+# CI fetches non-checked-out branches as ``origin/*`` remote-tracking refs.
+smv_remote_whitelist = r"^origin$"
+smv_released_pattern = r"^refs/tags/v\d+\.\d+\.\d+$"
+smv_outputdir_format = "{ref.name}"
+smv_latest_version = "main"
+
+# Sphinx-Gallery intentionally stores a sort-key class in its config. Sphinx
 # cannot pickle that value, but the gallery regenerates it deterministically.
 suppress_warnings = ["config.cache"]
 
@@ -129,6 +168,7 @@ html_theme_options = {
     "navigation_with_keys": True,
     "navbar_start": [
         "navbar-logo",
+        "version-switcher",
     ],
     "external_links": [],
     "icon_links": [
@@ -144,11 +184,6 @@ html_theme_options = {
         }
     ],
     "show_toc_level": 2,
-    # Uncomment below when you have multiple doc versions deployed
-    # "switcher": {
-    #     "json_url": "https://your-gitlab-pages-url/versions.json",
-    #     "version_match": version,
-    # },
 }
 favicons = ["favicon.ico"]
 
@@ -188,7 +223,19 @@ def generate_benchmark_plots(app):
     """Generate benchmark plots at the start of the Sphinx build."""
     from docs.benchmarks.generate_plots import main as generate_plots_main
 
-    generate_plots_main(jobs=benchmark_plot_jobs)
+    if "jobs" in signature(generate_plots_main).parameters:
+        generate_plots_main(jobs=benchmark_plot_jobs)
+    else:
+        generate_plots_main()
+
+
+def set_multiversion_release(app, config):  # noqa: ARG001
+    """Use a release tag as the displayed version for historical docs."""
+    ref_name = os.getenv("SPHINX_MULTIVERSION_NAME", "")
+    if not ref_name.startswith("v"):
+        return
+    config.release = ref_name.removeprefix("v")
+    config.version = ".".join(config.release.split(".")[:2])
 
 
 def set_figure_alt_text(app, doctree, docname):  # noqa: ARG001
@@ -212,9 +259,11 @@ def set_figure_alt_text(app, doctree, docname):  # noqa: ARG001
 
 def setup(app):
     """Sphinx setup hook to register event handlers."""
-    from docs.benchmarks.sphinxext import inline_neighborlist_svgs
-
+    app.connect("config-inited", set_multiversion_release, priority=999)
     app.connect("builder-inited", generate_benchmark_plots)
     app.connect("doctree-resolved", set_figure_alt_text)
-    app.connect("doctree-resolved", inline_neighborlist_svgs)
+    if (source_root / "benchmarks" / "sphinxext.py").is_file():
+        from docs.benchmarks.sphinxext import inline_neighborlist_svgs
+
+        app.connect("doctree-resolved", inline_neighborlist_svgs)
     return {"parallel_read_safe": True, "parallel_write_safe": True}
