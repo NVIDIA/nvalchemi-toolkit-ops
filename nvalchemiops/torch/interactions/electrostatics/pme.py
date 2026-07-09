@@ -600,9 +600,16 @@ def _pme_convolve_backward(
     wp_vec2 = _vec2_wp_dtype_for(real_dtype)
 
     # Match shape conventions from _pme_convolve_forward (batch + B=1 squeeze).
+    # Track the k_squared unsqueeze independently of the mesh: for a single
+    # system, mesh_fft can arrive already 4D (rfftn keeps the batch dim) while
+    # k_squared is 3D, so squeezing grad_k_squared must key off its own flag
+    # (else grad_k_squared is returned 4D for a 3D input and torch.compile,
+    # which trusts the fake's 3D shape, asserts).
     squeeze_output = False
+    k_sq_unsqueezed = False
     if is_batch and k_squared.dim() == 3:
         k_squared = k_squared.unsqueeze(0)
+        k_sq_unsqueezed = True
     if is_batch and mesh_fft.dim() == 3:
         mesh_fft = mesh_fft.unsqueeze(0)
         squeeze_output = True
@@ -688,6 +695,7 @@ def _pme_convolve_backward(
     grad_mesh_fft = torch.view_as_complex(grad_mesh_fft_real)
     if squeeze_output:
         grad_mesh_fft = grad_mesh_fft.squeeze(0)
+    if k_sq_unsqueezed:
         grad_k_squared = grad_k_squared.squeeze(0)
     return grad_mesh_fft, grad_alpha, grad_volume, grad_k_squared
 
@@ -739,9 +747,15 @@ def _pme_convolve_double_backward(
     wp_dtype = wp.float32 if real_dtype == torch.float32 else wp.float64
     wp_vec2 = _vec2_wp_dtype_for(real_dtype)
 
+    # Track the k_squared unsqueeze independently of the mesh: k_squared can
+    # arrive 3D for a single system while mesh_fft is already 4D, so
+    # grad_k_squared_out must be squeezed by its own flag to keep the returned
+    # rank equal to the input (matching the fake, which torch.compile trusts).
     squeeze_output = False
+    k_sq_unsqueezed = False
     if is_batch and k_squared.dim() == 3:
         k_squared = k_squared.unsqueeze(0)
+        k_sq_unsqueezed = True
     if is_batch and mesh_fft.dim() == 3:
         mesh_fft = mesh_fft.unsqueeze(0)
         squeeze_output = True
@@ -830,6 +844,7 @@ def _pme_convolve_double_backward(
     if squeeze_output:
         grad_mesh_fft_out = grad_mesh_fft_out.squeeze(0)
         grad_grad_convolved = grad_grad_convolved.squeeze(0)
+    if k_sq_unsqueezed:
         grad_k_squared_out = grad_k_squared_out.squeeze(0)
     return (
         grad_mesh_fft_out,

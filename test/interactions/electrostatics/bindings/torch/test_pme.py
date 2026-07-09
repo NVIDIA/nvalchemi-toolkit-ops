@@ -3081,6 +3081,131 @@ class TestPMEReciprocalVirialBatch:
             msg="Batch PME virial[1] != single virial",
         )
 
+    def test_single_system_reciprocal_cell_grad_compile(self):
+        """Regression: single-system (3D k_squared / 4D mesh_fft) cell gradient
+        of the PME reciprocal energy under torch.compile.
+
+        The compiled convolve backward previously asserted because
+        ``grad_k_squared`` was returned 4D for a 3D input while the fake reported
+        3D (torch.compile trusts the fake to size buffers). Eager masks this via
+        autograd ``sum_to_size``; only the compiled path trips.
+        """
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA required for torch.compile of the PME warp op")
+        device = torch.device("cuda")
+        positions, charges, cell = make_virial_cscl_system(1, device=device)
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+        batch_idx = torch.zeros(positions.shape[0], dtype=torch.int32, device=device)
+        mesh_dims = (8, 8, 8)
+
+        def cell_energy(cell_):
+            return pme_reciprocal_space(
+                positions,
+                charges,
+                cell_,
+                alpha,
+                mesh_dimensions=mesh_dims,
+                batch_idx=batch_idx,
+                compute_forces=False,
+            ).sum()
+
+        cell_e = cell.detach().clone().requires_grad_(True)
+        (grad_eager,) = torch.autograd.grad(cell_energy(cell_e), cell_e)
+
+        compiled = torch.compile(cell_energy)
+        cell_c = cell.detach().clone().requires_grad_(True)
+        # Must not raise assert_size_stride on the compiled convolve backward.
+        (grad_compiled,) = torch.autograd.grad(compiled(cell_c), cell_c)
+
+        assert grad_compiled.shape == cell.shape
+        torch.testing.assert_close(grad_compiled, grad_eager, atol=1e-6, rtol=1e-5)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_convolve_backward_grad_k_squared_rank(self, device):
+        """Regression: the fused-convolve backward and double-backward must return
+        ``grad_k_squared`` with the same rank as the (3D) input for a single
+        system whose ``mesh_fft`` is 4D.
+
+        This is the exact rank the fake reports and torch.compile allocates from;
+        eager masks a wrong rank via ``sum_to_size``, so it is checked directly on
+        the internal functions.
+        """
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
+            generate_k_vectors_pme,
+        )
+        from nvalchemiops.torch.interactions.electrostatics.pme import (
+            _pme_convolve_backward,
+            _pme_convolve_double_backward,
+            compute_bspline_moduli_1d,
+        )
+
+        nx, ny, nz = 8, 8, 8
+        nzf = nz // 2 + 1
+        dtype = torch.float64
+        spline_order = 4
+        cell = torch.eye(3, dtype=dtype, device=device) * 5.0
+
+        # Single system: k_squared is 3D (batch dim squeezed).
+        _, k_squared = generate_k_vectors_pme(cell, (nx, ny, nz))
+        if k_squared.dim() == 4:
+            k_squared = k_squared.squeeze(0)
+        assert k_squared.shape == (nx, ny, nzf)
+
+        miller_x = torch.fft.fftfreq(nx, d=1.0 / nx, device=device, dtype=dtype)
+        miller_y = torch.fft.fftfreq(ny, d=1.0 / ny, device=device, dtype=dtype)
+        miller_z = torch.fft.rfftfreq(nz, d=1.0 / nz, device=device, dtype=dtype)
+        mx = compute_bspline_moduli_1d(miller_x, nx, spline_order)
+        my = compute_bspline_moduli_1d(miller_y, ny, spline_order)
+        mz = compute_bspline_moduli_1d(miller_z, nz, spline_order)
+
+        # mesh_fft keeps the batch dim (rfftn output) -> 4D for a single system.
+        mesh = torch.randn(1, nx, ny, nz, dtype=dtype, device=device)
+        mesh_fft = torch.fft.rfftn(mesh, dim=(1, 2, 3))
+        assert mesh_fft.shape == (1, nx, ny, nzf)
+        grad_convolved = torch.randn_like(mesh_fft)
+        alpha = torch.tensor([0.3], dtype=dtype, device=device)
+        volume = torch.tensor([125.0], dtype=dtype, device=device)
+
+        grad_mesh, _, _, grad_k_squared = _pme_convolve_backward(
+            mesh_fft, grad_convolved, k_squared, mx, my, mz, alpha, volume, True
+        )
+        assert grad_k_squared.shape == k_squared.shape  # 3D, not 4D
+        assert grad_mesh.shape == mesh_fft.shape  # mesh rank preserved (4D)
+
+        # Double backward (create_graph / second-order path) — same rank contract.
+        h_grad_mesh = torch.randn_like(mesh_fft)
+        h_grad_alpha = torch.zeros(1, dtype=dtype, device=device)
+        h_grad_volume = torch.zeros(1, dtype=dtype, device=device)
+        h_grad_ksq = torch.randn_like(k_squared)
+        (
+            grad_mesh_out,
+            grad_grad_conv,
+            grad_k_squared_out,
+            _,
+            _,
+        ) = _pme_convolve_double_backward(
+            k_squared,
+            h_grad_mesh,
+            h_grad_alpha,
+            h_grad_volume,
+            h_grad_ksq,
+            mesh_fft,
+            grad_convolved,
+            mx,
+            my,
+            mz,
+            alpha,
+            volume,
+            True,
+        )
+        assert grad_k_squared_out.shape == k_squared.shape  # 3D, not 4D
+        assert grad_mesh_out.shape == mesh_fft.shape
+        assert grad_grad_conv.shape == grad_convolved.shape
+
 
 class TestFullPMEVirial:
     """Test full particle_mesh_ewald (real + reciprocal) virial."""
