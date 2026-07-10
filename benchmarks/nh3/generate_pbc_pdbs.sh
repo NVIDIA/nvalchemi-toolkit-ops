@@ -42,23 +42,30 @@ NC='\033[0m' # No Color
 
 # Error handling function
 error_exit() {
-    echo -e "${RED}ERROR: $1${NC}" >&2
+    local msg=$1
+    echo -e "${RED}ERROR: ${msg}${NC}" >&2
     exit 1
 }
 
 # Warning function
 warn() {
-    echo -e "${YELLOW}WARNING: $1${NC}" >&2
+    local msg=$1
+    echo -e "${YELLOW}WARNING: ${msg}${NC}" >&2
+    return 0
 }
 
 # Info function
 info() {
-    echo -e "${BLUE}$1${NC}"
+    local msg=$1
+    echo -e "${BLUE}${msg}${NC}"
+    return 0
 }
 
 # Success function
 success() {
-    echo -e "${GREEN}$1${NC}"
+    local msg=$1
+    echo -e "${GREEN}${msg}${NC}"
+    return 0
 }
 
 usage() {
@@ -81,6 +88,7 @@ Environment:
                        installed packmol is preferred; otherwise uvx runs the
                        pinned packmol==21.1.4 package.
 USAGE
+    return 0
 }
 
 while [[ $# -gt 0 ]]; do
@@ -115,12 +123,16 @@ case "$OUTPUT_DIR" in
     "$SOURCE_ROOT"|"$SOURCE_ROOT"/*)
         error_exit "Output directory must be outside the source checkout: $OUTPUT_DIR"
         ;;
+    *)
+        ;;
 esac
 mkdir -p "$OUTPUT_DIR" || error_exit "Failed to create output directory: $OUTPUT_DIR"
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd -P)"
 case "$OUTPUT_DIR" in
     "$SOURCE_ROOT"|"$SOURCE_ROOT"/*)
         error_exit "Output directory must be outside the source checkout: $OUTPUT_DIR"
+        ;;
+    *)
         ;;
 esac
 
@@ -133,14 +145,14 @@ progress_bar() {
     local width=40
     local percent=$((current * 100 / total))
     local filled=$((current * width / total))
-    local empty=$((width - filled))
 
     # Build the bar
     local bar=""
     for ((i=0; i<filled; i++)); do bar+="█"; done
-    for ((i=0; i<empty; i++)); do bar+="░"; done
+    for ((i=0; i<width-filled; i++)); do bar+="░"; done
 
     printf "\r${prefix}: [${bar}] %3d%% (%d/%d)" "$percent" "$current" "$total"
+    return 0
 }
 
 # Function to calculate cell length
@@ -150,6 +162,7 @@ calc_cell_length() {
     # L = (41.47 * N)^(1/3)
     python3 -c "print(f'{(41.47 * $n_mols) ** (1/3):.3f}')" 2>/dev/null || \
         error_exit "Failed to calculate cell length. Is python3 installed?"
+    return 0
 }
 
 # Function to add CRYST1 record to PDB
@@ -166,20 +179,22 @@ add_cryst_record() {
 
     cat "$pdb_file" >> "$tmp_file" || error_exit "Failed to append PDB content"
     mv "$tmp_file" "$pdb_file" || error_exit "Failed to finalize PDB file"
+    return 0
 }
 
 # Function to format atom count for display (powers of 2)
 format_atoms() {
     local n=$1
-    if [ "$n" -ge 1048576 ]; then
+    if [[ "$n" -ge 1048576 ]]; then
         # 1M = 1024*1024 = 1048576
         echo "$((n / 1048576))M"
-    elif [ "$n" -ge 1024 ]; then
+    elif [[ "$n" -ge 1024 ]]; then
         # 1k = 1024
         echo "$((n / 1024))k"
     else
         echo "$n"
     fi
+    return 0
 }
 
 # =============================================================================
@@ -225,7 +240,7 @@ info "Output directory: $OUTPUT_DIR"
 
 # Check for ammonia.pdb template
 TEMPLATE_FILE="$SCRIPT_DIR/ammonia.pdb"
-if [ ! -f "$TEMPLATE_FILE" ]; then
+if [[ ! -f "$TEMPLATE_FILE" ]]; then
     error_exit "Template file '$TEMPLATE_FILE' not found in $SCRIPT_DIR
 
 This file should contain a single NH3 molecule in PDB format.
@@ -240,7 +255,7 @@ fi
 
 # Validate ammonia.pdb has expected atoms
 atom_count=$(grep -c "^HETATM\|^ATOM" "$TEMPLATE_FILE" 2>/dev/null || echo "0")
-if [ "$atom_count" -ne 4 ]; then
+if [[ "$atom_count" -ne 4 ]]; then
     error_exit "Template '$TEMPLATE_FILE' should have exactly 4 atoms (1 N + 3 H), found: $atom_count"
 fi
 
@@ -263,11 +278,11 @@ for i in "${!ALL_SIZES[@]}"; do
     formatted=$(format_atoms $n_atoms)
 
     # Rough time estimates
-    if [ "$n_atoms" -le 4096 ]; then
+    if [[ "$n_atoms" -le 4096 ]]; then
         est_time="< 1s"
-    elif [ "$n_atoms" -le 32768 ]; then
+    elif [[ "$n_atoms" -le 32768 ]]; then
         est_time="1-10s"
-    elif [ "$n_atoms" -le 131072 ]; then
+    elif [[ "$n_atoms" -le 131072 ]]; then
         est_time="10s-2min"
     else
         est_time="2-30min"
@@ -294,7 +309,7 @@ fi
 # Parse selection
 SELECTED_SIZES=()
 
-if [ -z "$selection" ]; then
+if [[ -z "$selection" ]]; then
     error_exit "No selection made. Exiting."
 fi
 
@@ -318,11 +333,11 @@ case "$selection" in
                 # Range
                 start=${BASH_REMATCH[1]}
                 end=${BASH_REMATCH[2]}
-                if [ "$start" -gt "$end" ]; then
+                if [[ "$start" -gt "$end" ]]; then
                     error_exit "Invalid range: $item (start > end)"
                 fi
                 for ((j=start; j<=end; j++)); do
-                    if [ "$j" -ge 1 ] && [ "$j" -le ${#ALL_SIZES[@]} ]; then
+                    if [[ "$j" -ge 1 ]] && [[ "$j" -le ${#ALL_SIZES[@]} ]]; then
                         SELECTED_SIZES+=("${ALL_SIZES[$((j-1))]}")
                     else
                         warn "Ignoring out-of-range index: $j"
@@ -330,7 +345,7 @@ case "$selection" in
                 done
             elif [[ "$item" =~ ^[0-9]+$ ]]; then
                 # Single number
-                if [ "$item" -ge 1 ] && [ "$item" -le ${#ALL_SIZES[@]} ]; then
+                if [[ "$item" -ge 1 ]] && [[ "$item" -le ${#ALL_SIZES[@]} ]]; then
                     SELECTED_SIZES+=("${ALL_SIZES[$((item-1))]}")
                 else
                     warn "Ignoring out-of-range index: $item"
@@ -345,7 +360,7 @@ esac
 # Remove duplicates and sort
 SELECTED_SIZES=($(printf '%s\n' "${SELECTED_SIZES[@]}" | sort -n | uniq))
 
-if [ ${#SELECTED_SIZES[@]} -eq 0 ]; then
+if [[ ${#SELECTED_SIZES[@]} -eq 0 ]]; then
     error_exit "No valid sizes selected. Exiting."
 fi
 
@@ -393,7 +408,7 @@ structure ${TEMPLATE_FILE}
 end structure
 EOF
 
-    if [ ! -f "$inp_file" ]; then
+    if [[ ! -f "$inp_file" ]]; then
         warn "Failed to create input file: $inp_file"
         fail_count=$((fail_count + 1))
         failed_sizes+=("$n_atoms")
@@ -408,11 +423,11 @@ EOF
         "${PACKMOL_CMD[@]}" < "$inp_file" > "$log_file" 2>&1
     ); then
         # Check if output file was created
-        if [ -f "$pdb_file" ]; then
+        if [[ -f "$pdb_file" ]]; then
             # Validate PDB has expected atom count
             actual_atoms=$(grep -Ec "^(HETATM|ATOM)" "$pdb_file" 2>/dev/null || true)
             actual_atoms=${actual_atoms:-0}
-            if [ "$actual_atoms" -ne "$n_atoms" ]; then
+            if [[ "$actual_atoms" -ne "$n_atoms" ]]; then
                 warn "Atom count mismatch: expected $n_atoms, got $actual_atoms"
                 echo "  See log: $log_file"
                 rm -f "$pdb_file"
@@ -455,16 +470,16 @@ echo ""
 info "=== Generation Complete ==="
 echo ""
 success "  Successful: $success_count"
-if [ $fail_count -gt 0 ]; then
+if [[ $fail_count -gt 0 ]]; then
     echo -e "  ${RED}Failed: $fail_count (${failed_sizes[*]})${NC}"
 fi
 echo ""
 
-if [ $success_count -gt 0 ]; then
+if [[ $success_count -gt 0 ]]; then
     echo "Generated files:"
     for n_atoms in "${SELECTED_SIZES[@]}"; do
         pdb_file="$OUTPUT_DIR/ammonia_pbc_${n_atoms}.pdb"
-        if [ -f "$pdb_file" ]; then
+        if [[ -f "$pdb_file" ]]; then
             cell_length=$(calc_cell_length $n_atoms)
             size=$(du -h "$pdb_file" | cut -f1)
             formatted=$(format_atoms $n_atoms)
@@ -475,7 +490,7 @@ if [ $success_count -gt 0 ]; then
 fi
 
 echo ""
-if [ "$fail_count" -gt 0 ]; then
+if [[ "$fail_count" -gt 0 ]]; then
     error_exit "Generation failed for: ${failed_sizes[*]}. See Packmol logs in $OUTPUT_DIR."
 fi
 success "Done!"

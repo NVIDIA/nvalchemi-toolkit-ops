@@ -29,6 +29,7 @@ from nvalchemiops.torch.neighbors.batch_cell_list import batch_cell_list
 from nvalchemiops.torch.neighbors.cell_list import cell_list
 
 from ...test_utils import brute_force_neighbors, create_simple_cubic_system
+from .conftest import requires_vesin
 
 
 def _partial_pair_sets(nm, nn, targets):
@@ -45,6 +46,7 @@ def _partial_pair_sets(nm, nn, targets):
     return pairs
 
 
+@requires_vesin
 def test_cell_list_target_indices_matches_brute_force(device, dtype):
     """Compact partial rows must match an independent brute-force reference."""
     positions, cell, pbc = create_simple_cubic_system(

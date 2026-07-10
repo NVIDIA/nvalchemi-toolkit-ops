@@ -74,7 +74,7 @@ jobs:
           echo "merge-base=$MERGE_BASE" >> $GITHUB_OUTPUT
           echo "Merge-base commit: $MERGE_BASE"
 
-      - uses: step-security/changed-files@v46
+      - uses: step-security/changed-files@95b56dadb92a30ca9036f16423fd3c088a71ee94 # v46
         id: changed-files
         with:
           base_sha: ${{ steps.merge-base.outputs.merge-base }}
@@ -104,7 +104,7 @@ jobs:
           python-version: "3.12"
 
       - name: Setup UV
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
         with:
           enable-cache: true
 
@@ -199,11 +199,11 @@ jobs:
       - name: Setup UV
         env:
           UV_VERSION: "0.9.25"
-          UV_CHECKSUM: "1e1aea6cead1a07a7cee24f6eaec415b"
+          UV_CHECKSUM: "10fb1f54d56f3eb60622006797339d4ea0bfda9b358d07db635f73cf89f7094c"
         run: |
           UV_INSTALLER=$(mktemp)
-          curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" -o "$UV_INSTALLER"
-          echo "${UV_CHECKSUM}  ${UV_INSTALLER}" | md5sum -c -
+          curl --proto '=https' --tlsv1.2 -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" -o "$UV_INSTALLER"
+          echo "${UV_CHECKSUM}  ${UV_INSTALLER}" | sha256sum -c -
           sh "$UV_INSTALLER"
           rm "$UV_INSTALLER"
           echo "$HOME/.local/bin" >> $GITHUB_PATH
@@ -346,7 +346,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         if: github.event_name != 'merge_group' && github.event_name != 'schedule'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@04b047e8bb82a0c002c8312c1c880fbc6a999d45 # v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./nvalchemiops.coverage.xml
@@ -390,11 +390,11 @@ jobs:
       - name: Setup UV
         env:
           UV_VERSION: "0.9.25"
-          UV_CHECKSUM: "1e1aea6cead1a07a7cee24f6eaec415b"
+          UV_CHECKSUM: "10fb1f54d56f3eb60622006797339d4ea0bfda9b358d07db635f73cf89f7094c"
         run: |
           UV_INSTALLER=$(mktemp)
-          curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" -o "$UV_INSTALLER"
-          echo "${UV_CHECKSUM}  ${UV_INSTALLER}" | md5sum -c -
+          curl --proto '=https' --tlsv1.2 -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" -o "$UV_INSTALLER"
+          echo "${UV_CHECKSUM}  ${UV_INSTALLER}" | sha256sum -c -
           sh "$UV_INSTALLER"
           rm "$UV_INSTALLER"
           echo "$HOME/.local/bin" >> $GITHUB_PATH

@@ -46,6 +46,14 @@
 
 ### Fixed
 
+- Torch PME fused-convolve backward returned `grad_k_squared` with the wrong
+  rank for a single system (4D for a 3D input, because `mesh_fft` keeps the
+  batch dim while `k_squared` is squeezed). Eager masked it via autograd
+  `sum_to_size`, but `torch.compile` — which trusts the op's fake shape — hit an
+  `assert_size_stride` in the compiled backward when differentiating the
+  reciprocal energy w.r.t. the cell. The `k_squared` unsqueeze is now tracked
+  independently of the mesh and squeezed back on return, in both
+  `_pme_convolve_backward` and `_pme_convolve_double_backward`.
 - Batched pressure kinetic tensor (`compute_kinetic_tensor` /
   `compute_pressure_tensor` with `batch_idx`) is now computed with a per-atom
   atomic reduction. The previous tiled reduction summed each thread block as a
