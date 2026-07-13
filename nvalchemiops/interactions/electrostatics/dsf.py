@@ -79,7 +79,7 @@ For PyTorch integration, see ``nvalchemiops.torch.interactions.electrostatics.ds
    appears in both directions (i->j and j->i). The 0.5 factor for pair energy
    and virial accounts for this double counting.
 
-   The virial follows the convention ``W = -dE/dε`` (negative strain derivative
+   The virial follows the convention :math:`W = -dE/d\varepsilon` (negative strain derivative
    of the energy).
 
 .. note::

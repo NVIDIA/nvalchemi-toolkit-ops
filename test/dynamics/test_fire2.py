@@ -37,10 +37,18 @@ import pytest
 import torch
 import warp as wp
 
-from nvalchemiops.dynamics.optimizers import fire2_step, fire2_update
+from nvalchemiops.dynamics.optimizers import (
+    fire2_apply_step,
+    fire2_step,
+    fire2_update,
+)
 from nvalchemiops.torch.fire2 import (
+    fire2_compute_extended_reductions,
     fire2_step_coord,
     fire2_step_coord_cell,
+    fire2_step_coord_cell_apply,
+    fire2_step_coord_cell_couple,
+    fire2_step_coord_cell_mix,
     fire2_step_extended,
 )
 
@@ -3965,3 +3973,355 @@ class TestFire2TorchCoordCell:
         )
         assert not np.allclose(pos_a.cpu().numpy(), pos_b.cpu().numpy())
         assert not np.allclose(frac_after_extended, frac_before)
+
+
+# ==============================================================================
+# compute_reductions flag (caller-supplied precomputed reductions)
+# ==============================================================================
+
+
+class TestFire2ComputeReductions:
+    """compute_reductions=True must match =False fed the same reductions."""
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("torch_dtype", [torch.float32, torch.float64])
+    def test_coord_compute_reductions_parity(self, device, torch_dtype):
+        N, M = 40, 2
+
+        def run(compute_reductions, seed_bufs=None):
+            (pos, vel, forces, batch_idx, alpha, dt, nsteps_inc, *_) = (
+                make_fire2_torch_state(
+                    N, M, torch_dtype, device, rng=np.random.default_rng(7)
+                )
+            )
+            vf = torch.zeros(M, dtype=torch_dtype, device=device)
+            vsq = torch.zeros(M, dtype=torch_dtype, device=device)
+            fsq = torch.zeros(M, dtype=torch_dtype, device=device)
+            mn = torch.zeros(M, dtype=torch_dtype, device=device)
+            if seed_bufs is not None:
+                vf.copy_(seed_bufs[0])
+                vsq.copy_(seed_bufs[1])
+                fsq.copy_(seed_bufs[2])
+            fire2_step_coord(
+                pos,
+                vel,
+                forces,
+                batch_idx,
+                alpha,
+                dt,
+                nsteps_inc,
+                vf=vf,
+                v_sumsq=vsq,
+                f_sumsq=fsq,
+                max_norm=mn,
+                compute_reductions=compute_reductions,
+                **FIRE2_DEFAULTS,
+            )
+            return pos, vel, alpha, dt, nsteps_inc, (vf, vsq, fsq)
+
+        rp, rv, ra, rd, rn, bufs = run(True)
+        dp, dv, da, dd, dn, _ = run(False, seed_bufs=[b.clone() for b in bufs])
+        torch.cuda.synchronize()
+
+        assert torch.equal(dp, rp)
+        assert torch.equal(dv, rv)
+        assert torch.equal(da, ra)
+        assert torch.equal(dd, rd)
+        assert torch.equal(dn, rn)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("torch_dtype", [torch.float32, torch.float64])
+    def test_coord_cell_compute_reductions_parity(self, device, torch_dtype):
+        N, M = 40, 2
+        np_dtype = np.float32 if torch_dtype == torch.float32 else np.float64
+
+        def run(compute_reductions, seed_bufs=None):
+            rng = np.random.default_rng(11)
+            (pos, vel, forces, batch_idx, alpha, dt, nsteps_inc, *_) = (
+                make_fire2_torch_state(N, M, torch_dtype, device, rng=rng)
+            )
+            cell = torch.tensor(
+                _make_upper_triangular_cell(M, np_dtype, rng=rng),
+                dtype=torch_dtype,
+                device=device,
+            )
+            cell_vel = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
+            cell_force = torch.tensor(
+                rng.standard_normal((M, 3, 3)).astype(np_dtype) * 0.01,
+                dtype=torch_dtype,
+                device=device,
+            )
+            vf = torch.zeros(M, dtype=torch_dtype, device=device)
+            vsq = torch.zeros(M, dtype=torch_dtype, device=device)
+            fsq = torch.zeros(M, dtype=torch_dtype, device=device)
+            mn = torch.zeros(M, dtype=torch_dtype, device=device)
+            if seed_bufs is not None:
+                vf.copy_(seed_bufs[0])
+                vsq.copy_(seed_bufs[1])
+                fsq.copy_(seed_bufs[2])
+            fire2_step_coord_cell(
+                pos,
+                vel,
+                forces,
+                cell,
+                cell_vel,
+                cell_force,
+                batch_idx,
+                alpha,
+                dt,
+                nsteps_inc,
+                vf=vf,
+                v_sumsq=vsq,
+                f_sumsq=fsq,
+                max_norm=mn,
+                compute_reductions=compute_reductions,
+                **FIRE2_CELL_DEFAULTS,
+            )
+            return pos, vel, cell, cell_vel, alpha, dt, nsteps_inc, (vf, vsq, fsq)
+
+        rp, rv, rc, rcv, ra, rd, rn, bufs = run(True)
+        dp, dv, dc, dcv, da, dd, dn, _ = run(False, seed_bufs=[b.clone() for b in bufs])
+        torch.cuda.synchronize()
+
+        assert torch.equal(dp, rp)
+        assert torch.equal(dv, rv)
+        assert torch.equal(dc, rc)
+        assert torch.equal(dcv, rcv)
+        assert torch.equal(da, ra)
+        assert torch.equal(dd, rd)
+        assert torch.equal(dn, rn)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("dtype_vec,dtype_scalar,np_dtype", DTYPE_CONFIGS)
+    def test_apply_step_two_phase_matches_fire2_step(
+        self, device, dtype_vec, dtype_scalar, np_dtype
+    ):
+        """fire2_update + fire2_apply_step must reproduce fire2_step exactly.
+
+        This is the seam that lets a caller post-process max_norm (e.g. combine
+        per-partition maxima) between the velocity mix and the clamp.
+        """
+        N, M = 12, 2
+        batch_np = np.repeat(np.arange(M, dtype=np.int32), N // M)
+        rng = np.random.default_rng(9)
+        pos_np = rng.standard_normal((N, 3)).astype(np_dtype)
+        vel_np = (rng.standard_normal((N, 3)) * 0.01).astype(np_dtype)
+        frc_np = rng.standard_normal((N, 3)).astype(np_dtype)
+
+        def make():
+            return (
+                wp.array(pos_np.copy(), dtype=dtype_vec, device=device),
+                wp.array(vel_np.copy(), dtype=dtype_vec, device=device),
+                wp.array(frc_np, dtype=dtype_vec, device=device),
+                wp.array(batch_np, dtype=wp.int32, device=device),
+                wp.array(np.full(M, 0.09, np_dtype), dtype=dtype_scalar, device=device),
+                wp.array(np.full(M, 0.05, np_dtype), dtype=dtype_scalar, device=device),
+                wp.zeros(M, dtype=wp.int32, device=device),
+            )
+
+        def bufs():
+            return [wp.zeros(M, dtype=dtype_scalar, device=device) for _ in range(4)]
+
+        p1, v1, f1, b1, a1, d1, n1 = make()
+        vf1, vs1, fs1, mn1 = bufs()
+        fire2_step(p1, v1, f1, b1, a1, d1, n1, vf1, vs1, fs1, mn1, maxstep=0.1)
+
+        p2, v2, f2, b2, a2, d2, n2 = make()
+        vf2, vs2, fs2, mn2 = bufs()
+        fire2_update(v2, f2, b2, a2, d2, n2, vf2, vs2, fs2, mn2)
+        fire2_apply_step(p2, v2, d2, b2, mn2, vf2, maxstep=0.1)
+        wp.synchronize_device(device)
+
+        np.testing.assert_array_equal(p2.numpy(), p1.numpy())
+        np.testing.assert_array_equal(v2.numpy(), v1.numpy())
+        np.testing.assert_array_equal(d2.numpy(), d1.numpy())
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("torch_dtype", [torch.float32, torch.float64])
+    def test_coord_cell_three_call_matches_monolith(self, device, torch_dtype):
+        """mix + couple + apply must reproduce fire2_step_coord_cell exactly."""
+        N, M = 40, 2
+        np_dtype = np.float32 if torch_dtype == torch.float32 else np.float64
+
+        def state():
+            rng = np.random.default_rng(3)
+            pos = torch.tensor(
+                rng.standard_normal((N, 3)).astype(np_dtype), device=device
+            )
+            vel = torch.tensor(
+                (rng.standard_normal((N, 3)) * 0.01).astype(np_dtype), device=device
+            )
+            frc = torch.tensor(
+                rng.standard_normal((N, 3)).astype(np_dtype), device=device
+            )
+            cell = torch.tensor(
+                _make_upper_triangular_cell(M, np_dtype, rng=rng),
+                dtype=torch_dtype,
+                device=device,
+            )
+            cell_vel = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
+            cell_force = torch.tensor(
+                rng.standard_normal((M, 3, 3)).astype(np_dtype) * 0.01,
+                dtype=torch_dtype,
+                device=device,
+            )
+            batch_idx = torch.tensor(
+                np.repeat(np.arange(M, dtype=np.int32), N // M),
+                dtype=torch.int32,
+                device=device,
+            )
+            alpha = torch.full((M,), 0.09, dtype=torch_dtype, device=device)
+            dt = torch.full((M,), 0.05, dtype=torch_dtype, device=device)
+            nsteps = torch.zeros(M, dtype=torch.int32, device=device)
+            return (
+                pos,
+                vel,
+                frc,
+                cell,
+                cell_vel,
+                cell_force,
+                batch_idx,
+                alpha,
+                dt,
+                nsteps,
+            )
+
+        p1, v1, f1, c1, cv1, cf1, b1, a1, d1, n1 = state()
+        fire2_step_coord_cell(
+            p1, v1, f1, c1, cv1, cf1, b1, a1, d1, n1, **FIRE2_CELL_DEFAULTS
+        )
+
+        p2, v2, f2, c2, cv2, cf2, b2, a2, d2, n2 = state()
+        vf = torch.zeros(M, dtype=torch_dtype, device=device)
+        vs = torch.zeros(M, dtype=torch_dtype, device=device)
+        fs = torch.zeros(M, dtype=torch_dtype, device=device)
+        mn = torch.zeros(M, dtype=torch_dtype, device=device)
+        fire2_step_coord_cell_mix(
+            p2,
+            v2,
+            f2,
+            c2,
+            cv2,
+            cf2,
+            b2,
+            a2,
+            d2,
+            n2,
+            vf=vf,
+            v_sumsq=vs,
+            f_sumsq=fs,
+            max_norm=mn,
+            **{k: v for k, v in FIRE2_CELL_DEFAULTS.items() if k != "maxstep"},
+        )
+        fire2_step_coord_cell_couple(p2, v2, c2, cv2, d2, vf, b2, mn)
+        fire2_step_coord_cell_apply(
+            p2, v2, c2, cv2, d2, vf, b2, mn, maxstep=FIRE2_CELL_DEFAULTS["maxstep"]
+        )
+        torch.cuda.synchronize()
+
+        assert torch.equal(p2, p1)
+        assert torch.equal(c2, c1)
+        assert torch.equal(v2, v1)
+        assert torch.equal(cv2, cv1)
+        assert torch.equal(d2, d1)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("torch_dtype", [torch.float32, torch.float64])
+    def test_extended_reductions_split_matches_internal(self, device, torch_dtype):
+        """atom_partial + cell_term fed with compute_reductions=False must match
+        the internally-computed reduction (bit-identical mixed state)."""
+        N, M = 40, 2
+        np_dtype = np.float32 if torch_dtype == torch.float32 else np.float64
+
+        def state():
+            rng = np.random.default_rng(3)
+            return (
+                torch.tensor(
+                    rng.standard_normal((N, 3)).astype(np_dtype), device=device
+                ),
+                torch.tensor(
+                    (rng.standard_normal((N, 3)) * 0.01).astype(np_dtype), device=device
+                ),
+                torch.tensor(
+                    rng.standard_normal((N, 3)).astype(np_dtype), device=device
+                ),
+                torch.tensor(
+                    _make_upper_triangular_cell(M, np_dtype, rng=rng),
+                    dtype=torch_dtype,
+                    device=device,
+                ),
+                torch.zeros(M, 3, 3, dtype=torch_dtype, device=device),
+                torch.tensor(
+                    rng.standard_normal((M, 3, 3)).astype(np_dtype) * 0.01,
+                    dtype=torch_dtype,
+                    device=device,
+                ),
+                torch.tensor(
+                    np.repeat(np.arange(M, dtype=np.int32), N // M),
+                    dtype=torch.int32,
+                    device=device,
+                ),
+                torch.full((M,), 0.09, dtype=torch_dtype, device=device),
+                torch.full((M,), 0.05, dtype=torch_dtype, device=device),
+                torch.zeros(M, dtype=torch.int32, device=device),
+            )
+
+        hp = {k: v for k, v in FIRE2_CELL_DEFAULTS.items() if k != "maxstep"}
+
+        # Reference: internal reduction.
+        pr, vr, fr, cr, cvr, cfr, br, ar, dr, nr = state()
+        vfr = torch.zeros(M, dtype=torch_dtype, device=device)
+        vsr = torch.zeros(M, dtype=torch_dtype, device=device)
+        fsr = torch.zeros(M, dtype=torch_dtype, device=device)
+        mnr = torch.zeros(M, dtype=torch_dtype, device=device)
+        fire2_step_coord_cell_mix(
+            pr,
+            vr,
+            fr,
+            cr,
+            cvr,
+            cfr,
+            br,
+            ar,
+            dr,
+            nr,
+            vf=vfr,
+            v_sumsq=vsr,
+            f_sumsq=fsr,
+            max_norm=mnr,
+            **hp,
+        )
+
+        # Combined split reductions fed with compute_reductions=False.
+        pd, vd, fd, cd, cvd, cfd, bd, ad, dd, nd_ = state()
+        atom, cell_t = fire2_compute_extended_reductions(
+            pd, vd, fd, cd, cvd, cfd, bd, dd, cell_force_scale=1.0
+        )
+        vfd = (atom[0] + cell_t[0]).clone()
+        vsd = (atom[1] + cell_t[1]).clone()
+        fsd = (atom[2] + cell_t[2]).clone()
+        mnd = torch.zeros(M, dtype=torch_dtype, device=device)
+        fire2_step_coord_cell_mix(
+            pd,
+            vd,
+            fd,
+            cd,
+            cvd,
+            cfd,
+            bd,
+            ad,
+            dd,
+            nd_,
+            vf=vfd,
+            v_sumsq=vsd,
+            f_sumsq=fsd,
+            max_norm=mnd,
+            compute_reductions=False,
+            **hp,
+        )
+        torch.cuda.synchronize()
+
+        rtol = 1e-6 if np_dtype == np.float32 else 1e-12
+        torch.testing.assert_close(vd, vr, rtol=rtol, atol=rtol)
+        torch.testing.assert_close(dd, dr, rtol=rtol, atol=rtol)
+        torch.testing.assert_close(ad, ar, rtol=rtol, atol=rtol)

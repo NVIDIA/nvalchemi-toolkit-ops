@@ -72,6 +72,13 @@ from nvalchemiops.interactions.electrostatics.ewald_kernels import (
 # ==============================================================================
 
 
+@pytest.fixture(params=["0", "1"])
+def recip_tiling_mode(request, monkeypatch):
+    """Force reciprocal tiling dispatch off/on for focused reciprocal tests."""
+    monkeypatch.setenv("NVALCHEMIOPS_EWALD_RECIP_TILED", request.param)
+    return request.param
+
+
 @pytest.fixture(scope="session")
 def two_atom_system():
     """Simple two-atom system for basic Ewald tests.
@@ -968,7 +975,9 @@ class TestWpBatchEwaldRealSpaceMatrix:
 class TestWpEwaldReciprocalSpaceStructureFactors:
     """Tests for wp_ewald_reciprocal_space_fill_structure_factors."""
 
-    def test_structure_factors_computation(self, device, simple_kvector_system):
+    def test_structure_factors_computation(
+        self, device, simple_kvector_system, recip_tiling_mode
+    ):
         """Test structure factor computation."""
         sys = simple_kvector_system
         dtype = wp.float64
@@ -1167,7 +1176,9 @@ class TestWpEwaldReciprocalSpaceStructureFactors:
 class TestWpEwaldReciprocalSpaceEnergy:
     """Tests for wp_ewald_reciprocal_space_compute_energy."""
 
-    def test_reciprocal_energy_computation(self, device, simple_kvector_system):
+    def test_reciprocal_energy_computation(
+        self, device, simple_kvector_system, recip_tiling_mode
+    ):
         """Test reciprocal-space energy computation."""
         sys = simple_kvector_system
         dtype = wp.float64
@@ -2249,7 +2260,9 @@ class TestWpBatchEwaldReciprocalSpaceStructureFactors:
 class TestWpBatchEwaldReciprocalSpaceComputeEnergy:
     """Tests for wp_batch_ewald_reciprocal_space_compute_energy."""
 
-    def test_batch_reciprocal_energy_shape(self, device, batch_kvector_system):
+    def test_batch_reciprocal_energy_shape(
+        self, device, batch_kvector_system, recip_tiling_mode
+    ):
         """Test batched reciprocal energy has correct shape."""
         sys = batch_kvector_system
         dtype = wp.float64

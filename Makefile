@@ -78,10 +78,16 @@ pytest:  ## Run pytest with coverage
 	uv run pytest --cov-fail-under=0 --cov=nvalchemiops test/test_types.py && \
 	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/math && \
 	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/neighbors && \
-	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/interactions
+	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/interactions && \
+	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/dynamics && \
+	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/torch && \
+	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append \
+		test/test_batch_utils.py test/test_warp_dispatch.py \
+		test/test_segment_ops.py test/test_segment_ops_backward.py \
+		test/test_segment_ops_torch.py test/test_segment_ops_jax.py
 
 PYTEST_TESTMON_FLAGS ?= --testmon --testmon-nocollect
-TEST_MODULES := types:test/test_types.py math:test/math neighbors:test/neighbors interactions:test/interactions
+TEST_MODULES := types:test/test_types.py math:test/math neighbors:test/neighbors interactions:test/interactions dynamics:test/dynamics batch_utils:test/test_batch_utils.py warp_dispatch:test/test_warp_dispatch.py torch_boundary:test/torch segment_ops:test/test_segment_ops.py segment_ops_backward:test/test_segment_ops_backward.py segment_ops_torch:test/test_segment_ops_torch.py segment_ops_jax:test/test_segment_ops_jax.py
 COVERAGE_DATA_FILES := $(foreach mod,$(TEST_MODULES),.coverage.$(firstword $(subst :, ,$(mod))))
 COVERAGE_BASELINE_FILE ?=
 
@@ -139,6 +145,10 @@ coverage-html:  ## Generate HTML coverage report
 # DOCUMENTATION
 # ==============================================================================
 
+# The PyData theme requires serial output; benchmark PNGs remain parallel.
+DOCS_JOBS ?= 1
+BENCHMARK_PLOT_JOBS ?= auto
+
 .PHONY: docs-install-examples
 docs-install-examples:  ## Install example dependencies
 	@echo "Installing example dependencies..."
@@ -159,7 +169,7 @@ docs-install-benchmarks:  ## Install benchmark dependencies
 
 .PHONY: docs
 docs: docs-install-examples docs-install-benchmarks  ## Build documentation
-	cd docs && make html
+	cd docs && $(MAKE) html DOCS_JOBS="$(DOCS_JOBS)" BENCHMARK_PLOT_JOBS="$(BENCHMARK_PLOT_JOBS)"
 
 .PHONY: docs-clean
 docs-clean:  ## Clean documentation build

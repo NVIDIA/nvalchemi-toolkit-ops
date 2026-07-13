@@ -72,7 +72,22 @@ def broadcast_shared_cell_for_batch(
     cell: torch.Tensor,
     num_systems: int,
 ) -> torch.Tensor:
-    """Return one cell per system for batched cluster-tile calls."""
+    """Broadcast a shared cell tensor to one cell per system for batched cluster-tile calls.
+
+    Parameters
+    ----------
+    cell : torch.Tensor, shape (3, 3) or (num_systems, 3, 3)
+        Unit cell matrix. If shape is ``(3, 3)``, the single cell is expanded
+        to ``(num_systems, 3, 3)`` via contiguous broadcast.  If already
+        ``(num_systems, 3, 3)`` it is returned unchanged.
+    num_systems : int
+        Number of systems in the batch.
+
+    Returns
+    -------
+    torch.Tensor, shape (num_systems, 3, 3)
+        Contiguous per-system cell tensor.
+    """
     if cell.ndim == 3:
         return cell
     if cell.ndim != 2:
@@ -198,7 +213,9 @@ def estimate_neighbor_list_costs(
     )
     if batch_ptr.ndim != 1:
         raise ValueError("batch_ptr must be a 1-D tensor")
-    num_systems = max(int(batch_ptr.shape[0]) - 1, 0)
+    if batch_ptr.shape[0] < 2:
+        raise ValueError("batch_ptr must have length at least 2")
+    num_systems = int(batch_ptr.shape[0]) - 1
     cell, pbc = _normalize_selector_cell_pbc(cell, pbc, num_systems)
     batch_ptr = batch_ptr.detach().to(dtype=torch.int32).contiguous()
     if batch_idx is not None:
@@ -252,8 +269,20 @@ def estimate_neighbor_list_costs(
 def suggest_neighbor_list_method(*args, **kwargs) -> str:
     """Return the cheapest feasible Torch neighbor-list strategy name.
 
-    Thin wrapper over :func:`estimate_neighbor_list_costs` returning only the
-    top-ranked strategy.  Same arguments and same host-only sync caveat.
+    Thin wrapper over :func:`nvalchemiops.torch.neighbors._dispatch.estimate_neighbor_list_costs`
+    that returns only the top-ranked strategy name.  Accepts identical
+    positional and keyword arguments.  Subject to the same host-only sync
+    caveat: do not call inside ``torch.compile``.
+
+    Returns
+    -------
+    str
+        Name of the lowest-cost feasible strategy, e.g. ``"cell_list_atom_centric"``
+        or ``"batch_cluster_tile"``.
+
+    See Also
+    --------
+    :func:`nvalchemiops.torch.neighbors._dispatch.estimate_neighbor_list_costs` : Returns full ranked list of strategies.
     """
     return estimate_neighbor_list_costs(*args, **kwargs)[0][0]
 

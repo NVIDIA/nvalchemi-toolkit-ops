@@ -28,6 +28,7 @@ from nvalchemiops.torch.neighbors.cluster_tile import (
     estimate_cluster_tile_list_sizes,
     query_cluster_tile,
 )
+from nvalchemiops.torch.neighbors.naive import naive_neighbor_list
 
 from ...test_utils import (
     assert_neighbor_lists_equal,
@@ -185,6 +186,43 @@ class TestTileNeighborListCorrectness:
         i_got, j_got, u_got = _matrix_to_coo_full(nm, nn, nms, N)
         i_ref, j_ref, u_ref, _ = brute_force_neighbors(positions, cell, pbc, cutoff)
         assert_neighbor_lists_equal((i_got, j_got, u_got), (i_ref, j_ref, u_ref))
+
+    def test_nonorthogonal_dense_random_matches_naive(self, device, dtype):
+        """FCC-style skewed cell must not prune valid cluster tiles."""
+        torch.manual_seed(0)
+        N = 512
+        scale = 51.2
+        cell_mat = scale * torch.tensor(
+            [[0.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 0.0]],
+            dtype=dtype,
+            device=device,
+        )
+        cell = cell_mat.reshape(1, 3, 3)
+        pbc = torch.ones(1, 3, dtype=torch.bool, device=device)
+        frac = torch.rand(N, 3, dtype=torch.float64, device=device)
+        positions = (frac @ cell_mat.double()).to(dtype).contiguous()
+        cutoff = 12.0
+        max_neighbors = 128
+
+        nm, nn, nms = cluster_tile_neighbor_list(
+            positions,
+            cutoff,
+            cell,
+            max_neighbors=max_neighbors,
+        )
+        nm_ref, nn_ref, nms_ref = naive_neighbor_list(
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=max_neighbors,
+        )
+
+        assert int(nn.sum().item()) == int(nn_ref.sum().item())
+        torch.testing.assert_close(nn, nn_ref)
+        ct_sets = _per_atom_neighbor_sets(nm, nn, nms, N)
+        ref_sets = _per_atom_neighbor_sets(nm_ref, nn_ref, nms_ref, N)
+        assert ct_sets == ref_sets
 
     @requires_vesin
     def test_larger_random_system(self, device, dtype):

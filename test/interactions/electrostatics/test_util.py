@@ -22,13 +22,18 @@ import pytest
 torch = pytest.importorskip("torch")
 _util = pytest.importorskip("nvalchemiops.torch.interactions.electrostatics._util")
 _InjectChargeGrad = _util._InjectChargeGrad
+_InjectCachedEvalGradWithFallback = _util._InjectCachedEvalGradWithFallback
 _is_uniform_cotangent = _util._is_uniform_cotangent
+
+from test.interactions.electrostatics._deriv_check import (  # noqa: E402
+    finite_difference_jacobian,
+)
 
 DT = torch.float64
 
 
-def _legacy_charge_grad(grad_energy, charge_grad, batch_idx):
-    """Reference: the historical charge-gradient injector backward math."""
+def _expected_charge_grad(grad_energy, charge_grad, batch_idx):
+    """Reference charge-gradient injector backward math."""
     if batch_idx is not None:
         atom_grad = grad_energy.index_select(0, batch_idx)
     else:
@@ -37,7 +42,7 @@ def _legacy_charge_grad(grad_energy, charge_grad, batch_idx):
 
 
 def test_charge_grad_single_system_bit_identical():
-    """Single-system per-system cotangent matches the legacy charge path."""
+    """Single-system per-system cotangent matches the injector charge path."""
     energy = torch.tensor([3.0], dtype=DT)
     charges = torch.tensor([1.0, -1.0, 0.5], dtype=DT, requires_grad=True)
     charge_grad = torch.tensor([0.2, -0.3, 0.1], dtype=DT)
@@ -47,7 +52,7 @@ def test_charge_grad_single_system_bit_identical():
     grad_energy = torch.tensor([1.7], dtype=DT)
     out.backward(grad_energy)
 
-    expected = _legacy_charge_grad(grad_energy, charge_grad, None)
+    expected = _expected_charge_grad(grad_energy, charge_grad, None)
     assert torch.equal(charges.grad, expected)
 
 
@@ -62,7 +67,7 @@ def test_charge_grad_batched_bit_identical():
     grad_energy = torch.tensor([2.0, 5.0], dtype=DT)
     out.backward(grad_energy)
 
-    expected = _legacy_charge_grad(grad_energy, charge_grad, batch_idx)
+    expected = _expected_charge_grad(grad_energy, charge_grad, batch_idx)
     assert torch.equal(charges.grad, expected)
 
 
@@ -93,6 +98,97 @@ def test_charge_grad_batched_per_atom_cotangent_uses_system_mean():
 
     assert charges.grad is None
     assert torch.equal(energy.grad, grad_energy)
+
+
+def test_cached_eval_qR_nonuniform_fallback_uses_partial_derivatives():
+    """q(R) weighted fallback returns partial dE/dR plus dE/dq for one chain term."""
+    positions = torch.randn(3, 3, dtype=DT, requires_grad=True)
+    theta = torch.randn(3, dtype=DT, requires_grad=True)
+    charges = positions[:, 0].square() + theta
+    cell = torch.eye(3, dtype=DT).unsqueeze(0).requires_grad_()
+    energy = positions[:, 1].detach().clone().requires_grad_()
+    pos_grad_state = torch.zeros_like(positions)
+    charge_grad_state = torch.zeros_like(charges)
+    cell_grad_state = torch.zeros_like(cell)
+    grad_energy = torch.tensor([1.0, 2.0, 4.0], dtype=DT)
+
+    def fallback_fn(p, q, _cell):
+        return p[:, 1] * q + 0.5 * p[:, 2].square()
+
+    out = _InjectCachedEvalGradWithFallback.apply(
+        energy,
+        positions,
+        charges,
+        cell,
+        pos_grad_state,
+        charge_grad_state,
+        cell_grad_state,
+        None,
+        fallback_fn,
+    )
+
+    out.backward(grad_energy)
+
+    expected_positions_grad = torch.stack(
+        (
+            grad_energy * 2.0 * positions.detach()[:, 0] * positions.detach()[:, 1],
+            grad_energy * charges.detach(),
+            grad_energy * positions.detach()[:, 2],
+        ),
+        dim=1,
+    )
+    torch.testing.assert_close(positions.grad, expected_positions_grad)
+
+    expected_theta_grad = grad_energy * positions.detach()[:, 1]
+    torch.testing.assert_close(theta.grad, expected_theta_grad)
+
+
+def test_cached_eval_qR_create_graph_second_order():
+    """create_graph q(R) fallback differentiates connected position gradients once."""
+    positions = torch.randn(3, 3, dtype=DT, requires_grad=True)
+    theta = torch.randn(3, dtype=DT, requires_grad=True)
+    charges = positions[:, 0].square() + theta
+    cell = torch.eye(3, dtype=DT).unsqueeze(0)
+    energy = positions[:, 1].detach().clone()
+    pos_grad_state = torch.zeros_like(positions)
+    charge_grad_state = torch.zeros_like(charges)
+    cell_grad_state = torch.zeros_like(cell)
+
+    def fallback_fn(p, q, _cell):
+        return p[:, 1] * q + 0.5 * p[:, 2].square()
+
+    out = _InjectCachedEvalGradWithFallback.apply(
+        energy,
+        positions,
+        charges,
+        cell,
+        pos_grad_state,
+        charge_grad_state,
+        cell_grad_state,
+        None,
+        fallback_fn,
+    )
+
+    grad_pos = torch.autograd.grad(out.sum(), positions, create_graph=True)[0]
+    loss = grad_pos.pow(2).sum()
+    (grad_theta_ad,) = torch.autograd.grad(loss, theta)
+
+    def loss_of_theta(theta_in: torch.Tensor) -> torch.Tensor:
+        p = positions.detach().clone().requires_grad_(True)
+        q = p[:, 0].square() + theta_in
+        e = fallback_fn(p, q, cell)
+        g = torch.autograd.grad(e.sum(), p, create_graph=True)[0]
+        return g.pow(2).sum()
+
+    eps = 1e-6
+    grad_theta_fd = finite_difference_jacobian(loss_of_theta, theta.detach(), eps=eps)
+
+    torch.testing.assert_close(
+        grad_theta_ad,
+        grad_theta_fd,
+        rtol=1e-5,
+        atol=1e-7,
+    )
 
 
 def _available_devices():

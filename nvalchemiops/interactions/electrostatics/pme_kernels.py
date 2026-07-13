@@ -39,13 +39,16 @@ This module provides low-level support for:
 
     G(k) = \\frac{2\\pi}{V} \\frac{\\exp(-k^2/(4\\alpha^2))}{k^2}
 
-The B-spline charge assignment introduces aliasing, corrected by:
+The B-spline charge assignment introduces aliasing, corrected by the squared
+B-spline structure factor:
 
 .. math::
 
-    C(k) = \\left[\\text{sinc}(k_x/N_x) \\cdot \\text{sinc}(k_y/N_y) \\cdot \\text{sinc}(k_z/N_z)\\right]^{-2p}
+    C^2(k) = \\left[\\operatorname{sinc}(m_x/N_x) \\cdot \\operatorname{sinc}(m_y/N_y)
+    \\cdot \\operatorname{sinc}(m_z/N_z)\\right]^{2p}
 
-where p is the spline order.
+where :math:`p` is the spline order and PME deconvolution multiplies by
+:math:`G(k) / C^2(k)`.
 
 2. Factory-backed energy corrections:
 
@@ -122,6 +125,16 @@ def compute_sinc(x: Any) -> Any:
     """Compute normalized sinc function: :math:`\\sin(\\pi x)/(\\pi x)`.
 
     Uses Taylor expansion near zero for numerical stability.
+
+    Parameters
+    ----------
+    x : Any
+        Scalar argument; dtype determined by the calling context (wp.float32 or wp.float64).
+
+    Returns
+    -------
+    Any
+        :math:`\\sin(\\pi x)/(\\pi x)`, or 1.0 when ``|x| < 1e-6``.
     """
     abs_x = wp.abs(x)
     one = type(x)(1.0)
@@ -136,7 +149,20 @@ def compute_sinc(x: Any) -> Any:
 
 @wp.func
 def wp_exp_kernel(k_sq: Any, prefactor: Any) -> Any:
-    """Compute exp(-prefactor * k_sq) / k_sq."""
+    """Compute exp(-prefactor * k_sq) / k_sq.
+
+    Parameters
+    ----------
+    k_sq : Any
+        Squared wave-vector magnitude; dtype determined by calling context.
+    prefactor : Any
+        Scalar prefactor in the exponent; same dtype as ``k_sq``.
+
+    Returns
+    -------
+    Any
+        :math:`\\exp(-\\text{prefactor} \\cdot k^2) / k^2`.
+    """
     return wp.exp(-prefactor * k_sq) / k_sq
 
 
@@ -160,10 +186,10 @@ def _pme_green_structure_factor_kernel(
     green_function: wp.array3d(dtype=Any),  # (Nx, Ny, Nz_rfft)
     structure_factor_sq: wp.array3d(dtype=Any),  # (Nx, Ny, Nz_rfft)
 ):
-    """Compute PME Green's function and B-spline structure factor correction.
+    r"""Compute PME Green's function and B-spline structure factor correction.
 
     Computes two arrays needed for PME reciprocal space:
-    1. Green's function: G(k) = (2π/V) * exp(-k²/(4α²)) / k²
+    1. Green's function: :math:`G(k) = (2\pi/V) \cdot \exp(-k^2/(4\alpha^2)) / k^2`
     2. Structure factor squared: :math:`|B(k)|^2` for B-spline dealiasing
 
     The structure factor correction accounts for aliasing from B-spline
@@ -201,7 +227,7 @@ def _pme_green_structure_factor_kernel(
     Notes
     -----
     - k=0 (grid point [0,0,0]) is explicitly set to zero (tin-foil boundary conditions).
-    - Near-zero k² values are set to zero to avoid division by zero.
+    - Near-zero :math:`k^2` values are set to zero to avoid division by zero.
     - Structure factor is clamped to avoid division by zero in dealiasing.
     - Uses rfft symmetry: only Nz_rfft = Nz//2 + 1 points in z.
     """
@@ -274,12 +300,12 @@ def _batch_pme_green_structure_factor_kernel(
     green_function: wp.array4d(dtype=Any),  # (B, Nx, Ny, Nz_rfft)
     structure_factor_sq: wp.array3d(dtype=Any),  # (Nx, Ny, Nz_rfft)
 ):
-    """Compute PME Green's function and B-spline structure factor for batched systems.
+    r"""Compute PME Green's function and B-spline structure factor for batched systems.
 
     Batched version of _pme_green_structure_factor_kernel. Each system can have
     different alpha and volume values, but shares the same mesh dimensions.
 
-    Green's function: G_s(k) = (2π/V_s) * exp(-k²/(4α_s²)) / k²
+    Green's function: :math:`G_s(k) = (2\pi/V_s) \cdot \exp(-k^2/(4\alpha_s^2)) / k^2`
     Structure factor: :math:`|B(k)|^2` (computed once, shared across systems)
 
     Launch Grid
@@ -314,7 +340,7 @@ def _batch_pme_green_structure_factor_kernel(
     Notes
     -----
     - k=0 (grid point [0,0,0]) is explicitly set to zero for each system.
-    - Near-zero k² values are set to zero to avoid division by zero.
+    - Near-zero :math:`k^2` values are set to zero to avoid division by zero.
     - Structure factor is computed only once (at batch_idx=0) since it depends
       only on mesh dimensions and spline order, not on system parameters.
     - Uses rfft symmetry: only Nz_rfft = Nz//2 + 1 points in z.
@@ -456,15 +482,23 @@ def _pme_virial_bg_backward_per_system_kernel(
     grad_alpha: wp.array(dtype=Any),  # (B,) OUT — dL/dα per system
     grad_cell: wp.array3d(dtype=Any),  # (B, 3, 3) OUT — dL/dC
 ):
-    """Per-system: turn the cotangent of virial_out into per-system dL/dQ, dL/dα, dL/dC.
+    r"""Per-system: turn the cotangent of virial_out into per-system dL/dQ, dL/dalpha, dL/dC.
 
-    From ``virial_out[s,i,j] = virial_in[s,i,j] - δ_ij · E_bg(s)`` (where
-    ``E_bg = π Q² / (2 α² V)`` and ``V = |det(C)|``):
-      dL/dE_bg(s) = -(g[s,0,0] + g[s,1,1] + g[s,2,2])
-      dE_bg/dQ    =  π Q / (α² V)
-      dE_bg/dα    = -π Q² / (α³ V)
-      dE_bg/dV    = -π Q² / (2 α² V²)
-      d|det C|/dC = sign(det C) · cofactor(C)   (Jacobi's formula)
+    From ``virial_out[s,i,j] = virial_in[s,i,j] - delta_ij * E_bg(s)`` (where
+    :math:`E_{bg} = \pi Q^2 / (2 \alpha^2 V)` and ``V = |det(C)|``):
+
+    .. math::
+
+        dL/dE_{bg}(s) = -(g[s,0,0] + g[s,1,1] + g[s,2,2])
+
+        dE_{bg}/dQ = \pi Q / (\alpha^2 V)
+
+        dE_{bg}/d\alpha = -\pi Q^2 / (\alpha^3 V)
+
+        dE_{bg}/dV = -\pi Q^2 / (2 \alpha^2 V^2)
+
+        d|\det C|/dC = \text{sign}(\det C) \cdot \text{cofactor}(C) \quad \text{(Jacobi's formula)}
+
     """
     s = wp.tid()
 
@@ -872,10 +906,32 @@ def pme_convolve(
 
     Parameters
     ----------
-    mesh_fft : wp.array3d, shape (nx, ny, nz_rfft), dtype=vec2f/vec2d
-        Input mesh after forward rFFT, complex represented as (real, imag).
-    convolved_mesh : wp.array3d, same shape/dtype as ``mesh_fft``
-        OUTPUT. May alias ``mesh_fft`` for in-place.
+    mesh_fft : wp.array, shape (nx, ny, nz_rfft), dtype=vec2f or vec2d
+        Input mesh after forward rFFT, complex values as (real, imag) pairs.
+    k_squared : wp.array, shape (nx, ny, nz_rfft), dtype=wp.float32 or wp.float64
+        Squared magnitude of k-vectors at each grid point.
+    moduli_x : wp.array, shape (nx,), dtype=wp.float32 or wp.float64
+        Precomputed 1D B-spline modulus LUT along x: ``sinc(m/Nx)^spline_order``.
+    moduli_y : wp.array, shape (ny,), dtype=wp.float32 or wp.float64
+        Precomputed 1D B-spline modulus LUT along y: ``sinc(m/Ny)^spline_order``.
+    moduli_z : wp.array, shape (nz_rfft,), dtype=wp.float32 or wp.float64
+        Precomputed 1D B-spline modulus LUT along z: ``sinc(m/Nz)^spline_order``.
+    alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Ewald splitting parameter.
+    volume : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Unit cell volume.
+    convolved_mesh : wp.array, shape (nx, ny, nz_rfft), dtype=vec2f or vec2d
+        OUTPUT: Convolved mesh ``mesh_fft * G(k) / C^2(k)``. May alias ``mesh_fft``
+        for in-place operation.
+    wp_dtype : type
+        Warp scalar dtype (wp.float32 or wp.float64).
+    device : str or None, optional
+        Warp device string. If None, inferred from arrays.
+
+    See Also
+    --------
+    :func:`nvalchemiops.interactions.electrostatics.pme_kernels.batch_pme_convolve` : Batched variant.
+    :func:`nvalchemiops.interactions.electrostatics.pme_kernels.pme_convolve_backward` : Backward pass.
     """
     nx, ny, nz_rfft = mesh_fft.shape[0], mesh_fft.shape[1], mesh_fft.shape[2]
     kernel = _get_pme_factory_kernel(wp_dtype, component="pme_convolve")
@@ -908,7 +964,37 @@ def batch_pme_convolve(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Batched version of ``pme_convolve``. Mesh shapes are (B, nx, ny, nz_r)."""
+    """Batched version of ``pme_convolve``; fused Green's + B-spline deconvolution for B systems.
+
+    Parameters
+    ----------
+    mesh_fft : wp.array, shape (B, nx, ny, nz_rfft), dtype=vec2f or vec2d
+        Per-system input mesh after forward rFFT, complex values as (real, imag) pairs.
+    k_squared : wp.array, shape (B, nx, ny, nz_rfft), dtype=wp.float32 or wp.float64
+        Per-system squared magnitude of k-vectors at each grid point.
+    moduli_x : wp.array, shape (nx,), dtype=wp.float32 or wp.float64
+        Precomputed 1D B-spline modulus LUT along x (shared across systems).
+    moduli_y : wp.array, shape (ny,), dtype=wp.float32 or wp.float64
+        Precomputed 1D B-spline modulus LUT along y (shared across systems).
+    moduli_z : wp.array, shape (nz_rfft,), dtype=wp.float32 or wp.float64
+        Precomputed 1D B-spline modulus LUT along z (shared across systems).
+    alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system Ewald splitting parameter.
+    volumes : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system unit cell volume.
+    convolved_mesh : wp.array, shape (B, nx, ny, nz_rfft), dtype=vec2f or vec2d
+        OUTPUT: Per-system convolved mesh ``mesh_fft * G_s(k) / C^2(k)``.
+        May alias ``mesh_fft`` for in-place operation.
+    wp_dtype : type
+        Warp scalar dtype (wp.float32 or wp.float64).
+    device : str or None, optional
+        Warp device string. If None, inferred from arrays.
+
+    See Also
+    --------
+    :func:`nvalchemiops.interactions.electrostatics.pme_kernels.pme_convolve` : Single-system variant.
+    :func:`nvalchemiops.interactions.electrostatics.pme_kernels.batch_pme_convolve_backward` : Backward pass.
+    """
     num_systems = mesh_fft.shape[0]
     nx, ny, nz_rfft = mesh_fft.shape[1], mesh_fft.shape[2], mesh_fft.shape[3]
     kernel = _get_pme_factory_kernel(wp_dtype, component="pme_convolve", batched=True)
@@ -945,11 +1031,44 @@ def pme_convolve_backward(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Single-system backward for ``pme_convolve``. See kernel docstring for math.
+    """Single-system backward for ``pme_convolve``.
 
-    ``grad_alpha`` and ``grad_volume`` must be zero-initialized 1-element arrays
-    (the kernel atomically accumulates into them across all k-points).
-    ``grad_k_squared`` is written elementwise (no zero-init required).
+    Parameters
+    ----------
+    mesh_fft : wp.array, shape (nx, ny, nz_rfft), dtype=vec2f or vec2d
+        Forward mesh values saved from the forward pass.
+    grad_convolved : wp.array, shape (nx, ny, nz_rfft), dtype=vec2f or vec2d
+        Cotangent of the convolved mesh output.
+    k_squared : wp.array, shape (nx, ny, nz_rfft), dtype=wp.float32 or wp.float64
+        Squared k-vector magnitudes from the forward pass.
+    moduli_x : wp.array, shape (nx,), dtype=wp.float32 or wp.float64
+        B-spline modulus LUT along x from the forward pass.
+    moduli_y : wp.array, shape (ny,), dtype=wp.float32 or wp.float64
+        B-spline modulus LUT along y from the forward pass.
+    moduli_z : wp.array, shape (nz_rfft,), dtype=wp.float32 or wp.float64
+        B-spline modulus LUT along z from the forward pass.
+    alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Ewald splitting parameter from the forward pass.
+    volume : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Unit cell volume from the forward pass.
+    grad_mesh_fft : wp.array, shape (nx, ny, nz_rfft), dtype=vec2f or vec2d
+        OUTPUT: Gradient w.r.t. ``mesh_fft``.
+    grad_alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        OUTPUT: Gradient w.r.t. ``alpha``. Must be zero-initialized; kernel
+        accumulates atomically across k-points.
+    grad_volume : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        OUTPUT: Gradient w.r.t. ``volume``. Must be zero-initialized; kernel
+        accumulates atomically across k-points.
+    grad_k_squared : wp.array, shape (nx, ny, nz_rfft), dtype=wp.float32 or wp.float64
+        OUTPUT: Gradient w.r.t. ``k_squared``. Written elementwise; no zero-init required.
+    wp_dtype : type
+        Warp scalar dtype (wp.float32 or wp.float64).
+    device : str or None, optional
+        Warp device string. If None, inferred from arrays.
+
+    See Also
+    --------
+    :func:`nvalchemiops.interactions.electrostatics.pme_kernels.pme_convolve` : Corresponding forward pass.
     """
     nx, ny, nz_rfft = mesh_fft.shape[0], mesh_fft.shape[1], mesh_fft.shape[2]
     kernel = _get_pme_factory_kernel(
@@ -989,9 +1108,45 @@ def batch_pme_convolve_backward(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Batched backward for ``batch_pme_convolve``. ``grad_alpha`` and
-    ``grad_volumes`` are length-B arrays zero-initialized by the caller.
-    ``grad_k_squared`` is written elementwise (no zero-init required)."""
+    """Batched backward for ``batch_pme_convolve``.
+
+    Parameters
+    ----------
+    mesh_fft : wp.array, shape (B, nx, ny, nz_rfft), dtype=vec2f or vec2d
+        Per-system forward mesh values saved from the forward pass.
+    grad_convolved : wp.array, shape (B, nx, ny, nz_rfft), dtype=vec2f or vec2d
+        Cotangent of the convolved mesh output.
+    k_squared : wp.array, shape (B, nx, ny, nz_rfft), dtype=wp.float32 or wp.float64
+        Per-system squared k-vector magnitudes from the forward pass.
+    moduli_x : wp.array, shape (nx,), dtype=wp.float32 or wp.float64
+        B-spline modulus LUT along x from the forward pass.
+    moduli_y : wp.array, shape (ny,), dtype=wp.float32 or wp.float64
+        B-spline modulus LUT along y from the forward pass.
+    moduli_z : wp.array, shape (nz_rfft,), dtype=wp.float32 or wp.float64
+        B-spline modulus LUT along z from the forward pass.
+    alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system Ewald splitting parameter from the forward pass.
+    volumes : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system unit cell volumes from the forward pass.
+    grad_mesh_fft : wp.array, shape (B, nx, ny, nz_rfft), dtype=vec2f or vec2d
+        OUTPUT: Gradient w.r.t. ``mesh_fft``.
+    grad_alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        OUTPUT: Per-system gradient w.r.t. ``alpha``. Must be zero-initialized; kernel
+        accumulates atomically across k-points.
+    grad_volumes : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        OUTPUT: Per-system gradient w.r.t. ``volumes``. Must be zero-initialized; kernel
+        accumulates atomically across k-points.
+    grad_k_squared : wp.array, shape (B, nx, ny, nz_rfft), dtype=wp.float32 or wp.float64
+        OUTPUT: Gradient w.r.t. ``k_squared``. Written elementwise; no zero-init required.
+    wp_dtype : type
+        Warp scalar dtype (wp.float32 or wp.float64).
+    device : str or None, optional
+        Warp device string. If None, inferred from arrays.
+
+    See Also
+    --------
+    :func:`nvalchemiops.interactions.electrostatics.pme_kernels.batch_pme_convolve` : Corresponding forward pass.
+    """
     num_systems = mesh_fft.shape[0]
     nx, ny, nz_rfft = mesh_fft.shape[1], mesh_fft.shape[2], mesh_fft.shape[3]
     kernel = _get_pme_factory_kernel(
@@ -1036,13 +1191,57 @@ def pme_convolve_double_backward(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Single-system double-backward for ``pme_convolve``. See kernel docstring.
+    """Single-system double-backward for ``pme_convolve``.
 
-    Emits the position-relevant second-order terms ``grad_mesh_out`` (dL/dmesh_fft)
-    and ``grad_grad_convolved`` (dL/dgrad_convolved) plus the cell/stress
-    second-order terms ``grad_k_squared_out`` (dL/ds, per-k) and ``grad_alpha_out``
-    / ``grad_volume_out`` (atomic-summed over k). Zero-initialize the three scalar
-    grad outputs before launch (alpha/volume accumulate atomically).
+    Emits position-relevant second-order terms and cell/stress second-order terms.
+
+    Parameters
+    ----------
+    h_grad_mesh : wp.array, shape (nx, ny, nz_rfft), dtype=vec2f or vec2d
+        Incoming cotangent for the ``grad_mesh_fft`` output of the backward pass.
+    h_alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Incoming cotangent for the ``grad_alpha`` output of the backward pass.
+    h_volume : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Incoming cotangent for the ``grad_volume`` output of the backward pass.
+    h_grad_ksq : wp.array, shape (nx, ny, nz_rfft), dtype=wp.float32 or wp.float64
+        Incoming cotangent for the ``grad_k_squared`` output of the backward pass.
+    mesh_fft : wp.array, shape (nx, ny, nz_rfft), dtype=vec2f or vec2d
+        Forward mesh values saved from the original forward pass.
+    grad_convolved : wp.array, shape (nx, ny, nz_rfft), dtype=vec2f or vec2d
+        Cotangent of the convolved mesh from the backward pass.
+    k_squared : wp.array, shape (nx, ny, nz_rfft), dtype=wp.float32 or wp.float64
+        Squared k-vector magnitudes from the forward pass.
+    moduli_x : wp.array, shape (nx,), dtype=wp.float32 or wp.float64
+        B-spline modulus LUT along x.
+    moduli_y : wp.array, shape (ny,), dtype=wp.float32 or wp.float64
+        B-spline modulus LUT along y.
+    moduli_z : wp.array, shape (nz_rfft,), dtype=wp.float32 or wp.float64
+        B-spline modulus LUT along z.
+    alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Ewald splitting parameter from the forward pass.
+    volume : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Unit cell volume from the forward pass.
+    grad_mesh_out : wp.array, shape (nx, ny, nz_rfft), dtype=vec2f or vec2d
+        OUTPUT: Second-order gradient w.r.t. ``mesh_fft`` (dL/dmesh_fft).
+    grad_grad_convolved : wp.array, shape (nx, ny, nz_rfft), dtype=vec2f or vec2d
+        OUTPUT: Second-order gradient w.r.t. ``grad_convolved`` (dL/dgrad_convolved).
+    grad_k_squared_out : wp.array, shape (nx, ny, nz_rfft), dtype=wp.float32 or wp.float64
+        OUTPUT: Per-k cell/stress second-order gradient (dL/ds per k-point).
+        Must be zero-initialized before launch.
+    grad_alpha_out : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient w.r.t. ``alpha``. Must be zero-initialized;
+        accumulated atomically over k-points.
+    grad_volume_out : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient w.r.t. ``volume``. Must be zero-initialized;
+        accumulated atomically over k-points.
+    wp_dtype : type
+        Warp scalar dtype (wp.float32 or wp.float64).
+    device : str or None, optional
+        Warp device string. If None, inferred from arrays.
+
+    See Also
+    --------
+    :func:`nvalchemiops.interactions.electrostatics.pme_kernels.pme_convolve_backward` : First-order backward pass.
     """
     nx, ny, nz_rfft = mesh_fft.shape[0], mesh_fft.shape[1], mesh_fft.shape[2]
     kernel = _get_pme_factory_kernel(
@@ -1097,10 +1296,55 @@ def batch_pme_convolve_double_backward(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Batched double-backward for ``batch_pme_convolve``. Per-system alpha /
-    volume are length-B arrays. ``grad_alpha_out`` / ``grad_volume_out`` are the
-    per-system cell/stress second-order grads (atomic-summed over k); zero-init
-    them and ``grad_k_squared_out`` (the per-k dL/ds output) before launch."""
+    """Batched double-backward for ``batch_pme_convolve``.
+
+    Parameters
+    ----------
+    h_grad_mesh : wp.array, shape (B, nx, ny, nz_rfft), dtype=vec2f or vec2d
+        Incoming cotangent for the ``grad_mesh_fft`` output of the backward pass.
+    h_alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Incoming cotangent for the per-system ``grad_alpha`` output of the backward pass.
+    h_volume : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Incoming cotangent for the per-system ``grad_volume`` output of the backward pass.
+    h_grad_ksq : wp.array, shape (B, nx, ny, nz_rfft), dtype=wp.float32 or wp.float64
+        Incoming cotangent for the ``grad_k_squared`` output of the backward pass.
+    mesh_fft : wp.array, shape (B, nx, ny, nz_rfft), dtype=vec2f or vec2d
+        Per-system forward mesh values saved from the original forward pass.
+    grad_convolved : wp.array, shape (B, nx, ny, nz_rfft), dtype=vec2f or vec2d
+        Per-system cotangent of the convolved mesh from the backward pass.
+    k_squared : wp.array, shape (B, nx, ny, nz_rfft), dtype=wp.float32 or wp.float64
+        Per-system squared k-vector magnitudes from the forward pass.
+    moduli_x : wp.array, shape (nx,), dtype=wp.float32 or wp.float64
+        B-spline modulus LUT along x (shared across systems).
+    moduli_y : wp.array, shape (ny,), dtype=wp.float32 or wp.float64
+        B-spline modulus LUT along y (shared across systems).
+    moduli_z : wp.array, shape (nz_rfft,), dtype=wp.float32 or wp.float64
+        B-spline modulus LUT along z (shared across systems).
+    alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system Ewald splitting parameter from the forward pass.
+    volume : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system unit cell volumes from the forward pass.
+    grad_mesh_out : wp.array, shape (B, nx, ny, nz_rfft), dtype=vec2f or vec2d
+        OUTPUT: Second-order gradient w.r.t. ``mesh_fft``.
+    grad_grad_convolved : wp.array, shape (B, nx, ny, nz_rfft), dtype=vec2f or vec2d
+        OUTPUT: Second-order gradient w.r.t. ``grad_convolved``.
+    grad_k_squared_out : wp.array, shape (B, nx, ny, nz_rfft), dtype=wp.float32 or wp.float64
+        OUTPUT: Per-k cell/stress second-order gradient. Must be zero-initialized.
+    grad_alpha_out : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        OUTPUT: Per-system second-order gradient w.r.t. ``alpha``. Must be
+        zero-initialized; accumulated atomically over k-points.
+    grad_volume_out : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        OUTPUT: Per-system second-order gradient w.r.t. ``volume``. Must be
+        zero-initialized; accumulated atomically over k-points.
+    wp_dtype : type
+        Warp scalar dtype (wp.float32 or wp.float64).
+    device : str or None, optional
+        Warp device string. If None, inferred from arrays.
+
+    See Also
+    --------
+    :func:`nvalchemiops.interactions.electrostatics.pme_kernels.batch_pme_convolve_backward` : First-order backward pass.
+    """
     num_systems = mesh_fft.shape[0]
     nx, ny, nz_rfft = mesh_fft.shape[1], mesh_fft.shape[2], mesh_fft.shape[3]
     kernel = _get_pme_factory_kernel(
@@ -1144,21 +1388,27 @@ def pme_energy_corrections(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Apply self-energy and background corrections to PME energies.
+    r"""Apply self-energy and background corrections to PME energies.
 
     Framework-agnostic launcher for single-system energy corrections.
 
-    Converts raw potential values (φ_i) to corrected per-atom energies by:
-    1. Multiplying potential by charge: E_pot = q_i * φ_i
-    2. Subtracting self-energy: E_self = (α/√π) * q_i²
-    3. Subtracting background: E_bg = (π/(2α²V)) * q_i * Q_total
+    Converts raw potential values :math:`\phi_i` to corrected per-atom energies by:
 
-    Final: E_i = q_i * φ_i - (α/√π) * q_i² - (π/(2α²V)) * q_i * Q_total
+    1. Multiplying potential by charge: :math:`E_{pot} = q_i \cdot \phi_i`
+    2. Subtracting self-energy: :math:`E_{self} = (\alpha/\sqrt{\pi}) \cdot q_i^2`
+    3. Subtracting background: :math:`E_{bg} = (\pi/(2\alpha^2 V)) \cdot q_i \cdot Q_{total}`
+
+    Final:
+
+    .. math::
+
+        E_i = q_i \cdot \phi_i - \frac{\alpha}{\sqrt{\pi}} q_i^2 - \frac{\pi}{2\alpha^2 V} q_i Q_{total}
+
 
     Parameters
     ----------
     raw_energies : wp.array, shape (N,), dtype=wp.float32 or wp.float64
-        Raw potential values φ_i from mesh interpolation.
+        Raw potential values :math:`\phi_i` from mesh interpolation.
     charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
         Atomic charges.
     volume : wp.array, shape (1,), dtype=wp.float32 or wp.float64
@@ -1166,7 +1416,7 @@ def pme_energy_corrections(
     alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
         Ewald splitting parameter.
     total_charge : wp.array, shape (1,), dtype=wp.float32 or wp.float64
-        Sum of all charges (Q_total = ∑_i q_i).
+        Sum of all charges (:math:`Q_{total} = \sum_i q_i`).
     corrected_energies : wp.array, shape (N,), dtype=wp.float32 or wp.float64
         OUTPUT: Corrected per-atom energies.
     wp_dtype : type
@@ -1206,7 +1456,7 @@ def batch_pme_energy_corrections(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Apply self-energy and background corrections for batched PME.
+    r"""Apply self-energy and background corrections for batched PME.
 
     Framework-agnostic launcher for batched energy corrections.
     Each atom looks up its system's parameters via batch_idx.
@@ -1214,7 +1464,7 @@ def batch_pme_energy_corrections(
     Parameters
     ----------
     raw_energies : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
-        Raw potential values φ_i from mesh interpolation.
+        Raw potential values :math:`\phi_i` from mesh interpolation.
     charges : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
         Atomic charges for all systems concatenated.
     batch_idx : wp.array, shape (N_total,), dtype=wp.int32
@@ -1224,7 +1474,7 @@ def batch_pme_energy_corrections(
     alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
         Per-system Ewald splitting parameter.
     total_charges : wp.array, shape (B,), dtype=wp.float32 or wp.float64
-        Per-system sum of charges (Q_s = ∑_{i∈s} q_i).
+        Per-system sum of charges (:math:`Q_s = \sum_{i \in s} q_i`).
     corrected_energies : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
         OUTPUT: Corrected per-atom energies.
     wp_dtype : type
@@ -1265,8 +1515,38 @@ def pme_energy_corrections_backward(
 ) -> None:
     """Single-system launcher for factory-backed PME correction backward.
 
-    ``grad_volume``, ``grad_alpha``, and ``grad_total_charge`` must be
-    zero-initialized 1-element arrays.
+    Parameters
+    ----------
+    grad_E : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Cotangent of the corrected per-atom energies.
+    raw_energies : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Raw potential values :math:`\\phi_i` saved from the forward pass.
+    charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Atomic charges saved from the forward pass.
+    volume : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Unit cell volume saved from the forward pass.
+    alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Ewald splitting parameter saved from the forward pass.
+    total_charge : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Sum of all charges saved from the forward pass.
+    grad_raw : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        OUTPUT: Gradient w.r.t. ``raw_energies``.
+    grad_charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        OUTPUT: Gradient w.r.t. ``charges``.
+    grad_volume : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        OUTPUT: Gradient w.r.t. ``volume``. Must be zero-initialized.
+    grad_alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        OUTPUT: Gradient w.r.t. ``alpha``. Must be zero-initialized.
+    grad_total_charge : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        OUTPUT: Gradient w.r.t. ``total_charge``. Must be zero-initialized.
+    wp_dtype : type
+        Warp scalar dtype (wp.float32 or wp.float64).
+    device : str or None, optional
+        Warp device string. If None, inferred from arrays.
+
+    See Also
+    --------
+    :func:`nvalchemiops.interactions.electrostatics.pme_kernels.pme_energy_corrections` : Corresponding forward pass.
     """
     launch_device = device if device is not None else str(raw_energies.device)
     sentinels = _get_pme_factory_sentinels(wp_dtype, launch_device)
@@ -1315,7 +1595,40 @@ def batch_pme_energy_corrections_backward(
 ) -> None:
     """Batched launcher for factory-backed PME correction backward.
 
-    Per-system grads must be zero-initialized length-B arrays.
+    Parameters
+    ----------
+    grad_E : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        Cotangent of the corrected per-atom energies.
+    raw_energies : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        Raw potential values :math:`\\phi_i` saved from the forward pass.
+    charges : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        Atomic charges for all systems concatenated, saved from the forward pass.
+    batch_idx : wp.array, shape (N_total,), dtype=wp.int32
+        System index for each atom (0 to B-1).
+    volumes : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system unit cell volumes saved from the forward pass.
+    alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system Ewald splitting parameter saved from the forward pass.
+    total_charges : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system sum of charges saved from the forward pass.
+    grad_raw : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        OUTPUT: Gradient w.r.t. ``raw_energies``.
+    grad_charges : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        OUTPUT: Gradient w.r.t. ``charges``.
+    grad_volumes : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        OUTPUT: Per-system gradient w.r.t. ``volumes``. Must be zero-initialized.
+    grad_alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        OUTPUT: Per-system gradient w.r.t. ``alpha``. Must be zero-initialized.
+    grad_total_charges : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        OUTPUT: Per-system gradient w.r.t. ``total_charges``. Must be zero-initialized.
+    wp_dtype : type
+        Warp scalar dtype (wp.float32 or wp.float64).
+    device : str or None, optional
+        Warp device string. If None, inferred from arrays.
+
+    See Also
+    --------
+    :func:`nvalchemiops.interactions.electrostatics.pme_kernels.batch_pme_energy_corrections` : Corresponding forward pass.
     """
     launch_device = device if device is not None else str(raw_energies.device)
 
@@ -1368,8 +1681,50 @@ def pme_energy_corrections_double_backward(
 ) -> None:
     """Single-system launcher for factory-backed PME correction double-backward.
 
-    ``grad_volume`` / ``grad_alpha`` / ``grad_total_charge`` must be
-    zero-initialized 1-element arrays.
+    Parameters
+    ----------
+    h_raw : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Incoming cotangent for the ``grad_raw`` output of the backward pass.
+    h_chg : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Incoming cotangent for the ``grad_charges`` output of the backward pass.
+    h_vol : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Incoming cotangent for the ``grad_volume`` output of the backward pass.
+    h_alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Incoming cotangent for the ``grad_alpha`` output of the backward pass.
+    h_qtot : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Incoming cotangent for the ``grad_total_charge`` output of the backward pass.
+    grad_E : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Cotangent of the corrected per-atom energies from the backward pass.
+    raw_energies : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Raw potential values :math:`\\phi_i` saved from the original forward pass.
+    charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Atomic charges saved from the original forward pass.
+    volume : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Unit cell volume saved from the original forward pass.
+    alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Ewald splitting parameter saved from the original forward pass.
+    total_charge : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Sum of all charges saved from the original forward pass.
+    grad_grad_E : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient w.r.t. ``grad_E``.
+    grad_raw : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient w.r.t. ``raw_energies``.
+    grad_charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient w.r.t. ``charges``.
+    grad_volume : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient w.r.t. ``volume``. Must be zero-initialized.
+    grad_alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient w.r.t. ``alpha``. Must be zero-initialized.
+    grad_total_charge : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient w.r.t. ``total_charge``. Must be zero-initialized.
+    wp_dtype : type
+        Warp scalar dtype (wp.float32 or wp.float64).
+    device : str or None, optional
+        Warp device string. If None, inferred from arrays.
+
+    See Also
+    --------
+    :func:`nvalchemiops.interactions.electrostatics.pme_kernels.pme_energy_corrections_backward` : First-order backward pass.
     """
     launch_device = device if device is not None else str(raw_energies.device)
     sentinels = _get_pme_factory_sentinels(wp_dtype, launch_device)
@@ -1428,7 +1783,55 @@ def batch_pme_energy_corrections_double_backward(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Batched launcher for factory-backed PME correction double-backward."""
+    """Batched launcher for factory-backed PME correction double-backward.
+
+    Parameters
+    ----------
+    h_raw : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        Incoming cotangent for the ``grad_raw`` output of the backward pass.
+    h_chg : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        Incoming cotangent for the ``grad_charges`` output of the backward pass.
+    h_vol : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Incoming cotangent for the ``grad_volumes`` output of the backward pass.
+    h_alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Incoming cotangent for the ``grad_alpha`` output of the backward pass.
+    h_qtot : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Incoming cotangent for the ``grad_total_charges`` output of the backward pass.
+    grad_E : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        Cotangent of the corrected per-atom energies from the backward pass.
+    raw_energies : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        Raw potential values :math:`\\phi_i` saved from the original forward pass.
+    charges : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        Atomic charges for all systems concatenated, saved from the original forward pass.
+    batch_idx : wp.array, shape (N_total,), dtype=wp.int32
+        System index for each atom (0 to B-1).
+    volumes : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system unit cell volumes saved from the original forward pass.
+    alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system Ewald splitting parameter saved from the original forward pass.
+    total_charges : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system sum of charges saved from the original forward pass.
+    grad_grad_E : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient w.r.t. ``grad_E``.
+    grad_raw : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient w.r.t. ``raw_energies``.
+    grad_charges : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        OUTPUT: Second-order gradient w.r.t. ``charges``.
+    grad_volumes : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        OUTPUT: Per-system second-order gradient w.r.t. ``volumes``. Must be zero-initialized.
+    grad_alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        OUTPUT: Per-system second-order gradient w.r.t. ``alpha``. Must be zero-initialized.
+    grad_total_charges : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        OUTPUT: Per-system second-order gradient w.r.t. ``total_charges``. Must be zero-initialized.
+    wp_dtype : type
+        Warp scalar dtype (wp.float32 or wp.float64).
+    device : str or None, optional
+        Warp device string. If None, inferred from arrays.
+
+    See Also
+    --------
+    :func:`nvalchemiops.interactions.electrostatics.pme_kernels.batch_pme_energy_corrections_backward` : First-order backward pass.
+    """
     launch_device = device if device is not None else str(raw_energies.device)
 
     kernel = _get_pme_factory_kernel(
@@ -1474,19 +1877,20 @@ def pme_energy_corrections_with_charge_grad(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Apply corrections and compute charge gradients for PME energies.
+    r"""Apply corrections and compute charge gradients for PME energies.
 
     Framework-agnostic launcher for single-system energy corrections
     with analytical charge gradient computation.
 
     Computes both corrected energies and analytical charge gradients:
-    - Energy: E_i = q_i * φ_i - (α/√π) * q_i² - (π/(2α²V)) * q_i * Q_total
-    - Charge gradient: ∂E_total/∂q_i = 2*φ_i - 2*(α/√π)*q_i - (π/(α²V))*Q_total
+
+    - Energy: :math:`E_i = q_i \phi_i - (\alpha/\sqrt{\pi}) q_i^2 - (\pi/(2\alpha^2 V)) q_i Q_{total}`
+    - Charge gradient: :math:`\partial E_{total}/\partial q_i = 2\phi_i - 2(\alpha/\sqrt{\pi})q_i - (\pi/(\alpha^2 V))Q_{total}`
 
     Parameters
     ----------
     raw_energies : wp.array, shape (N,), dtype=wp.float32 or wp.float64
-        Raw potential values φ_i from mesh interpolation.
+        Raw potential values :math:`\phi_i` from mesh interpolation.
     charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
         Atomic charges.
     volume : wp.array, shape (1,), dtype=wp.float32 or wp.float64
@@ -1494,11 +1898,11 @@ def pme_energy_corrections_with_charge_grad(
     alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
         Ewald splitting parameter.
     total_charge : wp.array, shape (1,), dtype=wp.float32 or wp.float64
-        Sum of all charges (Q_total = ∑_i q_i).
+        Sum of all charges (:math:`Q_{total} = \sum_i q_i`).
     corrected_energies : wp.array, shape (N,), dtype=wp.float32 or wp.float64
         OUTPUT: Corrected per-atom energies.
     charge_gradients : wp.array, shape (N,), dtype=wp.float32 or wp.float64
-        OUTPUT: Analytical charge gradients ∂E_total/∂q_i.
+        OUTPUT: Analytical charge gradients :math:`\partial E_{total}/\partial q_i`.
     wp_dtype : type
         Warp scalar dtype (wp.float32 or wp.float64).
     device : str | None
@@ -1539,7 +1943,7 @@ def batch_pme_energy_corrections_with_charge_grad(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Apply corrections and compute charge gradients for batched PME.
+    r"""Apply corrections and compute charge gradients for batched PME.
 
     Framework-agnostic launcher for batched energy corrections
     with analytical charge gradient computation.
@@ -1547,7 +1951,7 @@ def batch_pme_energy_corrections_with_charge_grad(
     Parameters
     ----------
     raw_energies : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
-        Raw potential values φ_i from mesh interpolation.
+        Raw potential values :math:`\phi_i` from mesh interpolation.
     charges : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
         Atomic charges for all systems concatenated.
     batch_idx : wp.array, shape (N_total,), dtype=wp.int32
@@ -1557,11 +1961,11 @@ def batch_pme_energy_corrections_with_charge_grad(
     alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
         Per-system Ewald splitting parameter.
     total_charges : wp.array, shape (B,), dtype=wp.float32 or wp.float64
-        Per-system sum of charges (Q_s = ∑_{i∈s} q_i).
+        Per-system sum of charges (:math:`Q_s = \sum_{i \in s} q_i`).
     corrected_energies : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
         OUTPUT: Corrected per-atom energies.
     charge_gradients : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
-        OUTPUT: Analytical charge gradients ∂E_total/∂q_i.
+        OUTPUT: Analytical charge gradients :math:`\partial E_{total}/\partial q_i`.
     wp_dtype : type
         Warp scalar dtype (wp.float32 or wp.float64).
     device : str | None
@@ -1595,24 +1999,46 @@ def pme_virial_bg_correction(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Apply non-neutral background virial correction.
+    r"""Apply non-neutral background virial correction.
 
-    Two-pass: pass 1 reduces per-atom ``charges`` into per-system
-    ``total_charges`` (zero-initialized by the caller) via atomic_add;
-    pass 2 computes ``V = |det(cell[s])|``, ``E_bg = π Q² / (2 α² V)``,
-    subtracts ``E_bg`` from the three diagonal entries of ``virial_in``,
-    and writes the result to ``virial_out``. Single-system uses
-    ``batch_idx`` filled with zeros.
+    Two-pass launcher: pass 1 scatter-adds per-atom ``charges`` into per-system
+    ``total_charges`` via atomic_add; pass 2 computes
+    :math:`E_{bg} = \pi Q^2 / (2 \alpha^2 V)` and subtracts it from the three
+    diagonal entries of ``virial_in``, writing the result to ``virial_out``.
+    For a single system, fill ``batch_idx`` with zeros.
 
-    Shapes:
-      charges       (N,)
-      batch_idx     (N,) int32
-      cell          (B, 3, 3)
-      volume        (B,) — caller-supplied volume or dummy
-      alpha         (B,)
-      total_charges (B,)  — zero-initialized by caller; written in pass 1
-      virial_in     (B, 3, 3)
-      virial_out    (B, 3, 3) — written in pass 2 (may alias virial_in)
+    Parameters
+    ----------
+    charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Per-atom charges.
+    batch_idx : wp.array, shape (N,), dtype=wp.int32
+        System index for each atom (0 to B-1).
+    cell : wp.array, shape (B, 3, 3), dtype=wp.float32 or wp.float64
+        Per-system unit cell matrix; volume computed as ``|det(cell[s])|``
+        when ``use_supplied_volume`` is False.
+    volume : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Caller-supplied per-system volume. Used only when ``use_supplied_volume``
+        is True; otherwise a dummy array is acceptable.
+    use_supplied_volume : bool
+        If True, use values from ``volume`` rather than computing from ``cell``.
+    alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system Ewald splitting parameter.
+    total_charges : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system total charge accumulator. Must be zero-initialized by the caller;
+        written in pass 1 via atomic_add.
+    virial_in : wp.array, shape (B, 3, 3), dtype=wp.float32 or wp.float64
+        Input virial tensor per system.
+    virial_out : wp.array, shape (B, 3, 3), dtype=wp.float32 or wp.float64
+        OUTPUT: ``virial_in`` with :math:`E_{bg}` subtracted from diagonal entries.
+        May alias ``virial_in`` for in-place operation.
+    wp_dtype : type
+        Warp scalar dtype (wp.float32 or wp.float64).
+    device : str or None, optional
+        Warp device string. If None, inferred from arrays.
+
+    See Also
+    --------
+    :func:`nvalchemiops.interactions.electrostatics.pme_kernels.pme_virial_bg_correction_backward` : Backward pass.
     """
     num_atoms = charges.shape[0]
     num_systems = total_charges.shape[0]
@@ -1656,15 +2082,49 @@ def pme_virial_bg_correction_backward(
 ) -> None:
     """Analytic backward for ``pme_virial_bg_correction``.
 
-    Three passes:
-      1) reduce ``charges`` into ``total_charges`` (Q per system)
-      2) per-system: turn cotangent ``grad_virial`` into ``grad_total_charges``,
-         ``grad_alpha``, ``grad_cell`` via dE_bg/dQ, dE_bg/dα, and Jacobi's
-         formula for d|det C|/dC
-      3) per-atom: scatter ``grad_total_charges[s(j)]`` to ``grad_charges[j]``
+    Three-pass launcher:
 
-    All output buffers (``total_charges``, ``grad_*``) are zero-initialized
-    by the caller.
+    1. Reduce per-atom ``charges`` into ``total_charges`` (Q per system).
+    2. Per-system: turn cotangent ``grad_virial`` into ``grad_total_charges``,
+       ``grad_alpha``, and ``grad_cell`` via :math:`dE_{bg}/dQ`, :math:`dE_{bg}/d\\alpha`,
+       and Jacobi's formula for :math:`d|\\det C|/dC`.
+    3. Per-atom: scatter ``grad_total_charges[s(j)]`` to ``grad_charges[j]``.
+
+    Parameters
+    ----------
+    grad_virial : wp.array, shape (B, 3, 3), dtype=wp.float32 or wp.float64
+        Cotangent of the ``virial_out`` output.
+    charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Per-atom charges (same as forward pass).
+    batch_idx : wp.array, shape (N,), dtype=wp.int32
+        System index for each atom (0 to B-1).
+    cell : wp.array, shape (B, 3, 3), dtype=wp.float32 or wp.float64
+        Per-system unit cell matrix from the forward pass.
+    volume : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Caller-supplied per-system volume. Used only when ``use_supplied_volume`` is True.
+    use_supplied_volume : bool
+        If True, use values from ``volume`` rather than computing from ``cell``.
+    alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system Ewald splitting parameter from the forward pass.
+    total_charges : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system total charge accumulator. Must be zero-initialized; written in pass 1.
+    grad_total_charges : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        OUTPUT: Per-system gradient w.r.t. total charge. Must be zero-initialized.
+    grad_charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        OUTPUT: Per-atom gradient w.r.t. ``charges``. Must be zero-initialized.
+    grad_alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        OUTPUT: Per-system gradient w.r.t. ``alpha``. Must be zero-initialized.
+    grad_cell : wp.array, shape (B, 3, 3), dtype=wp.float32 or wp.float64
+        OUTPUT: Per-system gradient w.r.t. ``cell``. Must be zero-initialized.
+        Zero when ``use_supplied_volume`` is True.
+    wp_dtype : type
+        Warp scalar dtype (wp.float32 or wp.float64).
+    device : str or None, optional
+        Warp device string. If None, inferred from arrays.
+
+    See Also
+    --------
+    :func:`nvalchemiops.interactions.electrostatics.pme_kernels.pme_virial_bg_correction` : Corresponding forward pass.
     """
     num_atoms = charges.shape[0]
     num_systems = total_charges.shape[0]

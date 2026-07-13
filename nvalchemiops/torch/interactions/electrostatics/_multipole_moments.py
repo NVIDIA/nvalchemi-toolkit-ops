@@ -24,7 +24,7 @@ slice           ``l``  contents
 ==============  =====  ==============================================
 ``[:, 0]``      0      charge
 ``[:, 1:4]``    1      dipole, e3nn ``(y, z, x)`` order (= raw Cartesian
-                       dipole, permuted) — matches the customer reference.
+                       dipole, permuted) -- matches the customer reference.
 ``[:, 4:9]``    2      quadrupole, e3nn ``component``-normalized real
                        spherical-harmonic coefficients (**traceless**, 5).
 ==============  =====  ==============================================
@@ -194,7 +194,7 @@ def cartesian_quadrupole_to_e3nn(quadrupoles: torch.Tensor) -> torch.Tensor:
     """Convert a symmetric Cartesian quadrupole to e3nn l=2 coefficients.
 
     The map annihilates the isotropic trace (l=2 is traceless), so any trace
-    in the input is silently dropped — callers that care should detrace first
+    in the input is silently dropped -- callers that care should detrace first
     (``pack_multipole_moments`` warns).
 
     Parameters
@@ -258,7 +258,7 @@ def split_packed_for_kernels(
     """Return ``(source_feats_l1, quadrupoles_cart, l_max)`` for the Ewald/PME
     internal contract.
 
-    ``source_feats_l1`` is the e3nn l<=1 block ``(N, 1)`` or ``(N, 4)`` — the
+    ``source_feats_l1`` is the e3nn l<=1 block ``(N, 1)`` or ``(N, 4)`` -- the
     legacy packed layout the internal kernels / self-energy / SCF-step consume
     unchanged. The l=2 block (when present) is converted to a Cartesian
     symmetric **traceless** ``(N, 3, 3)``. Both stay on the autograd graph, so
@@ -279,7 +279,7 @@ def split_source_feats(
     """Slice the l<=1 packed block into ``(charges, dipoles_cart, l_max)``.
 
     Kernel-boundary helper for the l<=1 charge+dipole packed block (``(N, 1)``
-    or ``(N, 4)`` in e3nn ``[q, μ_y, μ_z, μ_x]`` order) that the Warp
+    or ``(N, 4)`` in e3nn ``[q, mu_y, mu_z, mu_x]`` order) that the Warp
     kernels / SCF-step / self-energy consume. Equivalent to the l<=1 prefix
     of :func:`split_multipole_moments` (no quadrupole channel). All outputs
     stay on the autograd graph.
@@ -287,7 +287,7 @@ def split_source_feats(
     Parameters
     ----------
     source_feats : torch.Tensor, shape ``(N, 1)`` or ``(N, 4)``
-        Packed l<=1 e3nn block (``[q]`` or ``[q, μ_y, μ_z, μ_x]``).
+        Packed l<=1 e3nn block (``[q]`` or ``[q, mu_y, mu_z, mu_x]``).
 
     Returns
     -------
@@ -308,7 +308,7 @@ def split_source_feats(
 def pack_charges_dipoles(
     charges: torch.Tensor, dipoles_cart: torch.Tensor | None
 ) -> torch.Tensor:
-    """Inverse of :func:`split_source_feats` — build the l<=1 packed block.
+    """Inverse of :func:`split_source_feats` -- build the l<=1 packed block.
 
     Concatenates ``charges[..., None]`` with the e3nn-permuted
     ``dipoles_cart``; ``dipoles_cart=None`` yields shape ``(N, 1)``. Round-trip

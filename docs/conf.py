@@ -24,30 +24,38 @@ import sys
 from importlib.metadata import version
 
 import dotenv
+from docutils import nodes
 from sphinx_gallery.sorting import FileNameSortKey
 
 # -- Load environment vars -----------------------------------------------------
-# Note: To override, use environment variables (e.g. PLOT_GALLERY=True make html)
-# Defaults will build API docs and execute examples
+# Defaults build API docs, execute examples, and generate benchmark plots.
 dotenv.load_dotenv()
+os.environ.setdefault("JAX_ENABLE_X64", "1")
 doc_version = os.getenv("DOC_VERSION", "main")
-plot_gallery = os.getenv("PLOT_GALLERY", "True").lower() in ("true", "1", "yes")
+legacy_plot_gallery = os.getenv("PLOT_GALLERY")
+run_examples_value = os.getenv(
+    "RUN_EXAMPLES",
+    legacy_plot_gallery if legacy_plot_gallery is not None else "True",
+)
+run_examples = run_examples_value.lower() in ("true", "1", "yes")
 run_stale_examples = os.getenv("RUN_STALE_EXAMPLES", "False").lower() in (
     "true",
     "1",
     "yes",
 )
 filename_pattern = os.getenv("FILENAME_PATTERN", r"/[0-9]+.*\.py")
+benchmark_plot_jobs = os.getenv("BENCHMARK_PLOT_JOBS", "auto")
 logging.info(
-    f"Doc config - version: {doc_version}, plot_gallery: {plot_gallery}, run_stale: {run_stale_examples}"
+    f"Doc config - version: {doc_version}, run_examples: {run_examples}, "
+    f"run_stale: {run_stale_examples}, benchmark_plot_jobs: {benchmark_plot_jobs}"
 )
+if legacy_plot_gallery is not None and "RUN_EXAMPLES" not in os.environ:
+    logging.info("PLOT_GALLERY is kept for compatibility; prefer RUN_EXAMPLES")
 
 root = pathlib.Path(__file__).parent
 release = version("nvalchemi-toolkit-ops")
 
 sys.path.insert(0, root.parent.as_posix())
-# Add current folder to use sphinxext.py
-sys.path.insert(0, os.path.dirname(__file__))
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
@@ -72,6 +80,10 @@ extensions = [
     "sphinx_gallery.gen_gallery",
 ]
 
+# Sphinx-Gallery intentionally stores a sort-key class in its config. Sphinx 9
+# cannot pickle that value, but the gallery regenerates it deterministically.
+suppress_warnings = ["config.cache"]
+
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
     "numpy": ("https://numpy.org/doc/stable", None),
@@ -82,8 +94,18 @@ intersphinx_mapping = {
 
 source_suffix = [".rst", ".md"]
 myst_enable_extensions = ["colon_fence", "dollarmath"]
+myst_heading_anchors = 3
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "sphinxext.py", "Thumbs.db", ".DS_Store"]
+
+# Add any paths that contain templates here, relative to this directory.
+templates_path = ["templates"]
+exclude_patterns = [
+    "_build",
+    "sphinxext.py",
+    "Thumbs.db",
+    ".DS_Store",
+    "benchmarks/benchmark_results/README.md",
+]
 autodoc_typehints = "description"
 autodoc_preserve_defaults = True
 
@@ -91,9 +113,11 @@ autodoc_preserve_defaults = True
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
 html_theme = "pydata_sphinx_theme"
+html_context = {"default_mode": "light"}
 html_static_path = ["_static", "benchmarks/_static"]
 html_css_files = [
     "css/nvidia-sphinx-theme.css",
+    "css/benchmark-docs.css",
 ]
 html_theme_options = {
     "logo": {
@@ -128,25 +152,23 @@ html_theme_options = {
 }
 favicons = ["favicon.ico"]
 
-# Add any paths that contain templates here, relative to this directory.
-templates_path = ["templates"]
-
 # https://sphinx-gallery.github.io/stable/configuration.html
 # Multiple galleries: examples and benchmarks
 sphinx_gallery_conf = {
     "examples_dirs": ["../examples/"],
     "gallery_dirs": ["examples"],
-    "plot_gallery": plot_gallery,
+    # Sphinx-Gallery calls this setting ``plot_gallery``, but it controls
+    # whether example scripts execute, including examples that produce no plot.
+    "plot_gallery": run_examples,
     "filename_pattern": filename_pattern,
     "ignore_pattern": r"(^_|utils\.py$)",  # Exclude files starting with _ or ending with utils.py
     "image_srcset": ["1x"],
-    "within_subsection_order": FileNameSortKey,
     "run_stale_examples": run_stale_examples,
     "backreferences_dir": "modules/backreferences",
     "doc_module": ("nvalchemiops",),
     "reset_modules": (
         "matplotlib",
-        "sphinxext.reset_torch",
+        "docs.sphinxext.reset_torch",
     ),
     "reset_modules_order": "both",
     "show_memory": False,
@@ -156,17 +178,43 @@ sphinx_gallery_conf = {
     "thumbnail_size": (250, 250),
     "min_reported_time": 0,
     "capture_repr": ("_repr_html_", "__repr__"),
+    # Class ref causes a benign [config.cache] warning; default is NumberOfCodeLinesSortKey.
+    "within_subsection_order": FileNameSortKey,
 }
 
 
 # -- Benchmark plot generation ------------------------------------------------
 def generate_benchmark_plots(app):
     """Generate benchmark plots at the start of the Sphinx build."""
-    from benchmarks.generate_plots import main as generate_plots_main
+    from docs.benchmarks.generate_plots import main as generate_plots_main
 
-    generate_plots_main()
+    generate_plots_main(jobs=benchmark_plot_jobs)
+
+
+def set_figure_alt_text(app, doctree, docname):  # noqa: ARG001
+    """Use figure captions when Sphinx would expose an image filename as alt text."""
+    for figure in doctree.findall(nodes.figure):
+        caption = next(
+            (child for child in figure.children if isinstance(child, nodes.caption)),
+            None,
+        )
+        if caption is None:
+            continue
+        description = caption.astext().strip()
+        if not description:
+            continue
+        for image in figure.findall(nodes.image):
+            alt = str(image.get("alt", "")).strip()
+            image_name = pathlib.Path(str(image.get("uri", ""))).name
+            if not alt or (image_name and alt.endswith(image_name)):
+                image["alt"] = description
 
 
 def setup(app):
     """Sphinx setup hook to register event handlers."""
+    from docs.benchmarks.sphinxext import inline_neighborlist_svgs
+
     app.connect("builder-inited", generate_benchmark_plots)
+    app.connect("doctree-resolved", set_figure_alt_text)
+    app.connect("doctree-resolved", inline_neighborlist_svgs)
+    return {"parallel_read_safe": True, "parallel_write_safe": True}

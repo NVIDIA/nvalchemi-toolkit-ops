@@ -85,19 +85,104 @@ def _warn_low_level_pme_helper(name: str) -> None:
 
 
 def pme_green_structure_factor(*args, **kwargs):
-    """Deprecated top-level alias for the low-level PME Green helper."""
+    """Compute Green's function and B-spline structure factor correction.
+
+    .. deprecated::
+        ``nvalchemiops.jax.interactions.electrostatics.pme_green_structure_factor``
+        is a deprecated top-level alias. Import directly from
+        :mod:`nvalchemiops.jax.interactions.electrostatics.pme` instead, or use
+        :func:`nvalchemiops.jax.interactions.electrostatics.pme_reciprocal_space`
+        for the full reciprocal-space computation.
+
+    Parameters
+    ----------
+    *args
+        Forwarded to
+        :func:`nvalchemiops.jax.interactions.electrostatics.pme.pme_green_structure_factor`.
+    **kwargs
+        Forwarded to
+        :func:`nvalchemiops.jax.interactions.electrostatics.pme.pme_green_structure_factor`.
+
+    Returns
+    -------
+    green_function : jax.Array
+        Volume-normalised Green's function G(k).
+    structure_factor_sq : jax.Array
+        Squared B-spline structure factor :math:`C^2(k)` for deconvolution.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.interactions.electrostatics.pme.pme_green_structure_factor` : Canonical implementation.
+    :func:`nvalchemiops.jax.interactions.electrostatics.pme_reciprocal_space` : Reciprocal-space PME component.
+    """
     _warn_low_level_pme_helper("pme_green_structure_factor")
     return _pme_green_structure_factor(*args, **kwargs)
 
 
 def pme_energy_corrections(*args, **kwargs):
-    """Deprecated top-level alias for the low-level PME correction helper."""
+    """Apply self-energy and background corrections to PME energies.
+
+    .. deprecated::
+        ``nvalchemiops.jax.interactions.electrostatics.pme_energy_corrections``
+        is a deprecated top-level alias. Import directly from
+        :mod:`nvalchemiops.jax.interactions.electrostatics.pme` instead, or use
+        :func:`nvalchemiops.jax.interactions.electrostatics.particle_mesh_ewald`
+        for the complete PME calculation.
+
+    Parameters
+    ----------
+    *args
+        Forwarded to
+        :func:`nvalchemiops.jax.interactions.electrostatics.pme.pme_energy_corrections`.
+    **kwargs
+        Forwarded to
+        :func:`nvalchemiops.jax.interactions.electrostatics.pme.pme_energy_corrections`.
+
+    Returns
+    -------
+    corrected_energies : jax.Array, shape (N,) or (N_total,)
+        Per-atom reciprocal-space energy with self-energy and background
+        corrections applied.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.interactions.electrostatics.pme.pme_energy_corrections` : Canonical implementation.
+    :func:`nvalchemiops.jax.interactions.electrostatics.particle_mesh_ewald` : Complete PME calculation.
+    """
     _warn_low_level_pme_helper("pme_energy_corrections")
     return _pme_energy_corrections(*args, **kwargs)
 
 
 def pme_energy_corrections_with_charge_grad(*args, **kwargs):
-    """Deprecated top-level alias for the low-level PME correction helper."""
+    """Apply PME energy corrections and return per-atom charge gradients.
+
+    .. deprecated::
+        ``nvalchemiops.jax.interactions.electrostatics.pme_energy_corrections_with_charge_grad``
+        is a deprecated top-level alias. Import directly from
+        :mod:`nvalchemiops.jax.interactions.electrostatics.pme` instead.
+
+    Parameters
+    ----------
+    *args
+        Forwarded to
+        :func:`nvalchemiops.jax.interactions.electrostatics.pme.pme_energy_corrections_with_charge_grad`.
+    **kwargs
+        Forwarded to
+        :func:`nvalchemiops.jax.interactions.electrostatics.pme.pme_energy_corrections_with_charge_grad`.
+
+    Returns
+    -------
+    corrected_energies : jax.Array, shape (N,) or (N_total,)
+        Per-atom reciprocal-space energy with self-energy and background
+        corrections applied.
+    charge_gradients : jax.Array, shape (N,) or (N_total,)
+        Per-atom charge gradients dE/dq.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.interactions.electrostatics.pme.pme_energy_corrections_with_charge_grad` : Canonical implementation.
+    :func:`nvalchemiops.jax.interactions.electrostatics.pme_energy_corrections` : Variant without charge gradients.
+    """
     _warn_low_level_pme_helper("pme_energy_corrections_with_charge_grad")
     return _pme_energy_corrections_with_charge_grad(*args, **kwargs)
 

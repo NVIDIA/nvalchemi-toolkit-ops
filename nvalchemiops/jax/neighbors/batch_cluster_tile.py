@@ -33,6 +33,11 @@ import numpy as np
 import warp as wp
 from warp.jax_experimental import GraphMode, jax_callable
 
+from nvalchemiops.jax.neighbors._cluster_tile_preload import (
+    _preload_cluster_tile_build_kernel,
+    _preload_cluster_tile_coo_kernel,
+    _preload_cluster_tile_query_kernel,
+)
 from nvalchemiops.neighbors.cluster_tile import (
     TILE_GROUP_SIZE,
 )
@@ -49,7 +54,7 @@ from nvalchemiops.neighbors.cluster_tile import (
     estimate_batch_cluster_tile_segments as _warp_estimate_batch_cluster_tile_segments,
 )
 from nvalchemiops.neighbors.cluster_tile import (
-    estimate_max_tiles_per_group as _estimate_max_tiles_per_group,
+    estimate_batch_max_tiles_per_group as _estimate_batch_max_tiles_per_group,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
     NeighborOverflowError,
@@ -58,6 +63,7 @@ from nvalchemiops.neighbors.neighbor_utils import (
 
 __all__ = [
     "TILE_GROUP_SIZE",
+    "estimate_batch_max_tiles_per_group",
     "allocate_batch_cluster_tile_list",
     "batch_cluster_tile_neighbor_list",
     "batch_query_cluster_tile_coo",
@@ -90,23 +96,100 @@ def _batch_tile_buffer_max_tiles_per_group(
     max_ng = max(ngroups) if ngroups else 1
     cutoff_concrete = not isinstance(cutoff, jax.core.Tracer)
     vols = _concrete_cell_batch_volumes(cell_batch)
-    if isinstance(positions, jax.core.Tracer) or vols is None or not cutoff_concrete:
+    empty_batch = len(per_sys) == 0 and vols == []
+    if (
+        isinstance(positions, jax.core.Tracer)
+        or vols is None
+        or empty_batch
+        or not cutoff_concrete
+    ):
         return max(max_ng, 1)
-    best = 256
-    for n, vol in zip(per_sys, vols):
-        best = max(
-            best, _estimate_max_tiles_per_group(int(n), float(cutoff), float(vol))
-        )
-    return best
+    return estimate_batch_max_tiles_per_group(batch_ptr, cutoff, cell_batch)
 
 
 def _concrete_cell_batch_volumes(cell_batch) -> list[float] | None:
     """Per-system ``abs(det(cell))`` if ``cell_batch`` is concrete, else None."""
     try:
-        arr = np.asarray(cell_batch).reshape(-1, 3, 3)
+        arr = np.asarray(cell_batch)
     except Exception:
         return None
+    if arr.ndim != 3 or arr.shape[1:] != (3, 3):
+        return None
     return [float(abs(np.linalg.det(c))) for c in arr]
+
+
+def _concrete_batch_ptr_values(batch_ptr) -> list[int] | None:
+    """Host ``batch_ptr`` values if concrete, else None."""
+    try:
+        values = np.asarray(batch_ptr).reshape(-1)
+    except Exception:
+        return None
+    try:
+        return [int(v) for v in values]
+    except Exception:
+        return None
+
+
+def estimate_batch_max_tiles_per_group(
+    batch_ptr: jax.Array,
+    cutoff: float,
+    cell_batch: jax.Array,
+    *,
+    safety: float = 2.0,
+    floor: int = 256,
+) -> int:
+    """Estimate batched ``max_tiles_per_group`` from concrete per-system cells.
+
+    Parameters
+    ----------
+    batch_ptr : jax.Array, shape (num_systems + 1,)
+        Concrete cumulative atom counts.
+    cutoff : float
+        Cartesian cutoff used for cluster-tile construction.
+    cell_batch : jax.Array, shape (num_systems, 3, 3)
+        Concrete per-system cell matrices.
+    safety : float, default 2.0
+        Multiplier on the volumetric estimate.
+    floor : int, default 256
+        Minimum returned value for batched compact buffers.
+
+    Returns
+    -------
+    int
+        Shared ``max_tiles_per_group`` for the batched compact tile buffer.
+
+    Raises
+    ------
+    ValueError
+        If ``batch_ptr`` or ``cell_batch`` is traced / not host-concrete, or if
+        ``cell_batch`` does not have shape ``(num_systems, 3, 3)``.
+    """
+    ptr_values = _concrete_batch_ptr_values(batch_ptr)
+    if ptr_values is None:
+        raise ValueError(
+            "batch_ptr must be concrete to estimate batch max_tiles_per_group"
+        )
+    if len(ptr_values) < 2:
+        raise ValueError("batch_ptr must have length at least 2")
+
+    vols = _concrete_cell_batch_volumes(cell_batch)
+    if vols is None:
+        try:
+            arr = np.asarray(cell_batch)
+        except Exception as exc:
+            raise ValueError(
+                "cell_batch must be concrete to estimate batch max_tiles_per_group"
+            ) from exc
+        if arr.ndim != 3 or arr.shape[1:] != (3, 3):
+            raise ValueError("cell_batch must have shape (num_systems, 3, 3)")
+
+    return _estimate_batch_max_tiles_per_group(
+        ptr_values,
+        cutoff,
+        vols,
+        safety=safety,
+        floor=floor,
+    )
 
 
 def estimate_batch_cluster_tile_list_sizes(
@@ -117,17 +200,44 @@ def estimate_batch_cluster_tile_list_sizes(
 
     Mirrors
     :func:`nvalchemiops.torch.neighbors.batch_cluster_tile.estimate_batch_cluster_tile_list_sizes`.
+    Converting ``batch_ptr`` to NumPy synchronizes it to size static buffers;
+    cache the result if calling from a hot loop.
 
-    Returns ``(n_padded, ngroup, ngroup_padded, max_tiles, num_systems)``.
-    The ``.item()`` syncs are necessary to size buffers; cache the result
-    if calling from a hot loop.
+    Parameters
+    ----------
+    batch_ptr : jax.Array, shape (num_systems + 1,), dtype=int32
+        Cumulative atom counts across systems.
+    max_tiles_per_group : int, default 256
+        Per-group tile capacity used to size the compact tile buffer.
+
+    Returns
+    -------
+    n_padded : int
+        Total number of padded atom slots across all systems.
+    ngroup : int
+        Total number of tile groups (``n_padded // TILE_GROUP_SIZE``).
+    ngroup_padded : int
+        ``ngroup`` rounded up to the next ``TILE_GROUP_SIZE`` boundary plus one
+        extra group for alignment.
+    max_tiles : int
+        Compact tile-buffer capacity (``ngroup * min(ngroup, max_tiles_per_group)``).
+    num_systems : int
+        Number of systems (``batch_ptr.shape[0] - 1``).
     """
-    num_systems = int(batch_ptr.shape[0]) - 1
-    natom_per_system = (batch_ptr[1:] - batch_ptr[:-1]).astype(jnp.int32)
+    try:
+        ptr_values = np.asarray(batch_ptr, dtype=np.int64).reshape(-1)
+    except Exception as exc:
+        raise ValueError(
+            "batch_ptr must be concrete to estimate batch cluster-tile sizes"
+        ) from exc
+    if len(ptr_values) < 2:
+        raise ValueError("batch_ptr must have length at least 2")
+    num_systems = len(ptr_values) - 1
+    natom_per_system = ptr_values[1:] - ptr_values[:-1]
     natom_padded_per_system = (
         (natom_per_system + TILE_GROUP_SIZE - 1) // TILE_GROUP_SIZE
     ) * TILE_GROUP_SIZE
-    n_padded = int(natom_padded_per_system.sum())
+    n_padded = int(np.sum(natom_padded_per_system))
     ngroup = n_padded // TILE_GROUP_SIZE
     ngroup_padded = (
         (ngroup + TILE_GROUP_SIZE - 1) // TILE_GROUP_SIZE
@@ -143,9 +253,32 @@ def estimate_batch_cluster_tile_segments(
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     """Estimate fixed per-system tile and COO segment buffers.
 
-    Returns ``(tile_capacities, tile_offsets, pair_capacities, pair_offsets)``
-    as int32 JAX arrays on the same backend as ``batch_ptr``.
+    Parameters
+    ----------
+    batch_ptr : jax.Array, shape (num_systems + 1,), dtype=int32
+        Cumulative atom counts across systems.
+    max_neighbors : int
+        Per-atom neighbor capacity used to size the per-system COO segments.
+    max_tiles_per_group : int, default 256
+        Per-group tile capacity used by the segment estimator.
+
+    Returns
+    -------
+    tile_capacities : jax.Array, shape (num_systems,), dtype=int32
+        Per-system tile segment capacity.
+    tile_offsets : jax.Array, shape (num_systems + 1,), dtype=int32
+        CSR-style offsets into the flat tile buffer.
+    pair_capacities : jax.Array, shape (num_systems,), dtype=int32
+        Per-system COO pair segment capacity.
+    pair_offsets : jax.Array, shape (num_systems + 1,), dtype=int32
+        CSR-style offsets into the flat pair buffer.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.neighbors.batch_cluster_tile.allocate_batch_cluster_tile_list` : Allocates zeroed persistent tile buffers sized from these segments.
     """
+    if int(batch_ptr.shape[0]) < 2:
+        raise ValueError("batch_ptr must have length at least 2")
     tile_caps, tile_offsets, pair_caps, pair_offsets = (
         _warp_estimate_batch_cluster_tile_segments(
             batch_ptr,
@@ -494,7 +627,7 @@ def _batch_query_cluster_tile_selective_callback(
     cutoff: wp.float32,
     natom: wp.int32,
 ) -> None:
-    """jax_callable callback for selective batched tile-pair → matrix conversion."""
+    """jax_callable callback for selective batched tile-pair -> matrix conversion."""
     _warp_batch_query_cluster_tile(
         sorted_atom_index=sorted_atom_index,
         sorted_pos_x=sorted_pos_x,
@@ -858,7 +991,7 @@ _jax_batch_query_cluster_tile_pair = jax_callable(
 @functools.cache
 def _get_jax_batch_cluster_tile_pair_fn_callable(pair_fn):
     """Build (and cache) a batched ``jax_callable`` closing over ``pair_fn`` for the
-    cluster-tile pair-output → matrix kernel.
+    cluster-tile pair-output -> matrix kernel.
 
     Batched analogue of
     ``cluster_tile._get_jax_cluster_tile_pair_fn_callable``: adds the ``pair_params``
@@ -950,14 +1083,14 @@ _jax_batch_query_cluster_tile_coo_segmented = jax_callable(
 # =============================================================================
 # User-facing entry points
 # =============================================================================
-def _make_batch_idx(batch_ptr: jax.Array) -> jax.Array:
+def _make_batch_idx(batch_ptr: jax.Array, total_atoms: int) -> jax.Array:
     """Build per-atom system index from a batch_ptr (cumulative atom counts)."""
     num_systems = int(batch_ptr.shape[0]) - 1
     natom_per_system = (batch_ptr[1:] - batch_ptr[:-1]).astype(jnp.int32)
     return jnp.repeat(
         jnp.arange(num_systems, dtype=jnp.int32),
         natom_per_system,
-        total_repeat_length=int(batch_ptr[-1]),
+        total_repeat_length=int(total_atoms),
     )
 
 
@@ -990,15 +1123,40 @@ def batch_build_cluster_tile_list(
         Per-system unit cell matrices.
     batch_ptr : jax.Array, shape (S + 1,), dtype=int32
         Cumulative atom counts.
+    rebuild_flags : jax.Array, shape (S,), dtype=bool, optional
+        Per-system rebuild flags. When provided, only systems with a True
+        flag have their tiles rebuilt. Requires ``tile_offsets`` and
+        ``tile_counts``.
+    tile_offsets : jax.Array, shape (S + 1,), dtype=int32, optional
+        CSR-style per-system tile segment offsets. Required when
+        ``rebuild_flags`` is provided.
+    tile_counts : jax.Array, shape (S,), dtype=int32, optional
+        Previous per-system tile counts. Required when ``rebuild_flags``
+        is provided; updated in-place for rebuilt systems.
+    num_tiles : jax.Array, shape (1,), dtype=int32, optional
+        Previous global tile count buffer. Allocated as zeros if None.
+    tile_row_group : jax.Array, shape (max_tiles,), dtype=int32, optional
+        Previous tile row-group index buffer. Allocated as zeros if None.
+    tile_col_group : jax.Array, shape (max_tiles,), dtype=int32, optional
+        Previous tile col-group index buffer. Allocated as zeros if None.
+    tile_system : jax.Array, shape (max_tiles,), dtype=int32, optional
+        Previous per-tile system index buffer. Allocated as zeros if None.
 
     Returns
     -------
     tuple of jax.Array
-        ``(sorted_atom_index, sort_inv, sorted_pos_x, sorted_pos_y,
-        sorted_pos_z, batch_idx_sorted, batch_ptr_padded, group_system,
-        group_ptr, group_ctr_x, group_ctr_y, group_ctr_z, group_ext_x,
-        group_ext_y, group_ext_z, num_tiles, tile_row_group,
-        tile_col_group, tile_system)``.
+        19-element tuple ``(sorted_atom_index, sort_inv, sorted_pos_x,
+        sorted_pos_y, sorted_pos_z, batch_idx_sorted, batch_ptr_padded,
+        group_system, group_ptr, group_ctr_x, group_ctr_y, group_ctr_z,
+        group_ext_x, group_ext_y, group_ext_z, num_tiles, tile_row_group,
+        tile_col_group, tile_system)`` in the non-selective case, or a
+        20-element tuple with ``tile_counts`` appended when
+        ``rebuild_flags`` is provided.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.neighbors.batch_cluster_tile.batch_query_cluster_tile` : Converts the tile list to dense neighbor-matrix form.
+    :func:`nvalchemiops.jax.neighbors.batch_cluster_tile.batch_query_cluster_tile_coo` : Converts the tile list to flat COO form.
     """
     if positions.dtype != jnp.float32:
         raise TypeError(
@@ -1012,6 +1170,8 @@ def batch_build_cluster_tile_list(
         )
     if batch_ptr.dtype != jnp.int32:
         batch_ptr = batch_ptr.astype(jnp.int32)
+    if int(batch_ptr.shape[0]) < 2:
+        raise ValueError("batch_ptr must have length at least 2")
 
     # Geometry-size the compact tile buffer so dense/high-cutoff systems don't
     # silently overflow; trace-safe ``max_i ngroup_i`` fallback when traced.
@@ -1025,7 +1185,7 @@ def batch_build_cluster_tile_list(
     )
 
     inv_cell_batch = jnp.linalg.inv(cell_batch)
-    batch_idx = _make_batch_idx(batch_ptr)
+    batch_idx = _make_batch_idx(batch_ptr, positions.shape[0])
 
     (
         sorted_atom_index,
@@ -1063,6 +1223,11 @@ def batch_build_cluster_tile_list(
         tile_system = jnp.zeros(max_tiles, dtype=jnp.int32)
 
     if rebuild_flags is None:
+        _preload_cluster_tile_build_kernel(
+            batched=True,
+            segmented=False,
+            selective=False,
+        )
         (
             group_ctr_x,
             group_ctr_y,
@@ -1100,6 +1265,11 @@ def batch_build_cluster_tile_list(
                 "rebuild_flags requires tile_offsets and tile_counts for "
                 "batched cluster_tile builds"
             )
+        _preload_cluster_tile_build_kernel(
+            batched=True,
+            segmented=True,
+            selective=True,
+        )
         rf = rebuild_flags.astype(jnp.bool_)
         (
             group_ctr_x,
@@ -1202,10 +1372,94 @@ def batch_query_cluster_tile(
     """Convert the batched tile pair list to dense neighbor-matrix form.
 
     Cluster-tile does not support partial neighbor lists; no
-    ``target_indices`` kwarg.  Pair-output kwargs raise
-    ``NotImplementedError`` — see
-    :func:`nvalchemiops.jax.neighbors.cluster_tile.query_cluster_tile` for
-    the rationale.  Use the torch binding when these axes are needed.
+    ``target_indices`` kwarg.  Pair-output kwargs are supported on the
+    eager-cutoff fp32 matrix path and rejected with ``cutoff2`` /
+    ``rebuild_flags`` because those JAX cluster-tile paths are topology-only.
+
+    Parameters
+    ----------
+    sorted_atom_index : jax.Array, shape (n_padded,), dtype=int32
+        Sorted (padded) atom indices from :func:`batch_build_cluster_tile_list`.
+    sorted_pos_x : jax.Array, shape (n_padded,), dtype=float32
+        X coordinates in Morton-sorted padded order.
+    sorted_pos_y : jax.Array, shape (n_padded,), dtype=float32
+        Y coordinates in Morton-sorted padded order.
+    sorted_pos_z : jax.Array, shape (n_padded,), dtype=float32
+        Z coordinates in Morton-sorted padded order.
+    cell_batch : jax.Array, shape (S, 3, 3), dtype=float32
+        Per-system unit cell matrices.
+    num_tiles : jax.Array, shape (1,), dtype=int32
+        Number of active tile pairs written by the build step.
+    tile_row_group : jax.Array, shape (max_tiles,), dtype=int32
+        Row group index for each tile pair.
+    tile_col_group : jax.Array, shape (max_tiles,), dtype=int32
+        Column group index for each tile pair.
+    tile_system : jax.Array, shape (max_tiles,), dtype=int32
+        System index for each tile pair.
+    cutoff : float
+        Neighbor search cutoff radius.
+    natom : int
+        Total number of real atoms across all systems.
+    max_neighbors : int
+        Per-atom neighbor capacity.
+    fill_value : int, optional
+        Sentinel written to unused neighbor slots. Defaults to ``natom``.
+    cutoff2 : float, optional
+        Second cutoff for dual-cutoff matrix output. Cannot be combined
+        with pair outputs.
+    rebuild_flags : jax.Array, shape (S,), dtype=bool, optional
+        Per-system selective rebuild flags. Requires ``tile_offsets``,
+        ``tile_counts``, and ``batch_idx``.
+    tile_offsets : jax.Array, shape (S + 1,), dtype=int32, optional
+        Per-system tile segment offsets. Required with ``rebuild_flags``.
+    tile_counts : jax.Array, shape (S,), dtype=int32, optional
+        Per-system tile counts. Required with ``rebuild_flags``.
+    batch_idx : jax.Array, shape (natom,), dtype=int32, optional
+        Per-atom system index. Required with ``rebuild_flags``.
+    neighbor_matrix : jax.Array, shape (natom, max_neighbors), dtype=int32, optional
+        Previous neighbor-matrix buffer to update selectively.
+    num_neighbors : jax.Array, shape (natom,), dtype=int32, optional
+        Previous per-atom neighbor counts to update selectively.
+    neighbor_matrix_shifts : jax.Array, shape (natom, max_neighbors, 3), dtype=int32, optional
+        Previous per-pair image shifts to update selectively.
+    neighbor_matrix2 : jax.Array, shape (natom, max_neighbors), dtype=int32, optional
+        Second neighbor matrix for dual-cutoff output.
+    num_neighbors2 : jax.Array, shape (natom,), dtype=int32, optional
+        Per-atom counts for the second neighbor matrix.
+    neighbor_matrix_shifts2 : jax.Array, shape (natom, max_neighbors, 3), dtype=int32, optional
+        Image shifts for the second neighbor matrix.
+    return_vectors : bool, default False
+        If True, append per-pair displacement vectors. Matrix path only.
+    return_distances : bool, default False
+        If True, append per-pair scalar distances. Matrix path only.
+    pair_fn : wp.Function, optional
+        Inline Warp pair potential. Requires ``pair_params``.
+    pair_params : jax.Array, shape (natom, K), dtype=float32, optional
+        Per-atom parameters passed to ``pair_fn``.
+    neighbor_vectors : jax.Array, shape (natom, max_neighbors, 3), dtype=float32, optional
+        Pre-allocated buffer for displacement vectors.
+    neighbor_distances : jax.Array, shape (natom, max_neighbors), dtype=float32, optional
+        Pre-allocated buffer for scalar distances.
+    pair_energies : jax.Array, shape (natom, max_neighbors), dtype=float32, optional
+        Pre-allocated buffer for per-pair energies from ``pair_fn``.
+    pair_forces : jax.Array, shape (natom, max_neighbors, 3), dtype=float32, optional
+        Pre-allocated buffer for per-pair forces from ``pair_fn``.
+
+    Returns
+    -------
+    tuple of jax.Array
+        Base return is ``(neighbor_matrix, num_neighbors,
+        neighbor_matrix_shifts)``, shape ``(natom, max_neighbors)``,
+        ``(natom,)``, and ``(natom, max_neighbors, 3)`` respectively.
+        With ``cutoff2``, a second triple is appended. With
+        ``return_distances`` or ``return_vectors``, the corresponding
+        arrays are appended. With ``pair_fn``, ``(pair_energies,
+        pair_forces)`` are appended last.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.neighbors.batch_cluster_tile.batch_build_cluster_tile_list` : Builds the tile list consumed by this function.
+    :func:`nvalchemiops.jax.neighbors.batch_cluster_tile.batch_query_cluster_tile_coo` : Alternative COO output from the same tile list.
     """
 
     if pair_fn is not None and pair_params is None:
@@ -1231,6 +1485,15 @@ def batch_query_cluster_tile(
             )
         if batch_idx is None:
             raise ValueError("batch_idx is required when rebuild_flags is provided")
+    _preload_cluster_tile_query_kernel(
+        batched=True,
+        tile_segmented=selective,
+        selective=selective,
+        dual_cutoff=dual_cutoff,
+        return_vectors=has_pair_outputs,
+        return_distances=has_pair_outputs,
+        pair_fn=pair_fn,
+    )
     if fill_value is None:
         fill_value = natom
     inv_cell_batch = jnp.linalg.inv(cell_batch)
@@ -1514,7 +1777,69 @@ def batch_query_cluster_tile_coo(
     neighbor_list: jax.Array | None = None,
     neighbor_list_shifts: jax.Array | None = None,
 ) -> tuple[jax.Array, ...]:
-    """Convert the batched tile pair list to flat COO form."""
+    """Convert the batched tile pair list to flat COO form.
+
+    Parameters
+    ----------
+    sorted_atom_index : jax.Array, shape (n_padded,), dtype=int32
+        Sorted (padded) atom indices from :func:`batch_build_cluster_tile_list`.
+    sorted_pos_x : jax.Array, shape (n_padded,), dtype=float32
+        X coordinates in Morton-sorted padded order.
+    sorted_pos_y : jax.Array, shape (n_padded,), dtype=float32
+        Y coordinates in Morton-sorted padded order.
+    sorted_pos_z : jax.Array, shape (n_padded,), dtype=float32
+        Z coordinates in Morton-sorted padded order.
+    cell_batch : jax.Array, shape (S, 3, 3), dtype=float32
+        Per-system unit cell matrices.
+    num_tiles : jax.Array, shape (1,), dtype=int32
+        Number of active tile pairs written by the build step.
+    tile_row_group : jax.Array, shape (max_tiles,), dtype=int32
+        Row group index for each tile pair.
+    tile_col_group : jax.Array, shape (max_tiles,), dtype=int32
+        Column group index for each tile pair.
+    tile_system : jax.Array, shape (max_tiles,), dtype=int32
+        System index for each tile pair.
+    cutoff : float
+        Neighbor search cutoff radius.
+    natom : int
+        Total number of real atoms across all systems.
+    max_pairs : int
+        Upper bound on the number of output pair entries.
+    rebuild_flags : jax.Array, shape (S,), dtype=bool, optional
+        Per-system selective rebuild flags. Requires ``tile_offsets``,
+        ``tile_counts``, ``pair_offsets``, and ``pair_counts``.
+    tile_offsets : jax.Array, shape (S + 1,), dtype=int32, optional
+        Per-system tile segment offsets. Required with ``rebuild_flags``.
+    tile_counts : jax.Array, shape (S,), dtype=int32, optional
+        Per-system tile counts. Required with ``rebuild_flags``.
+    pair_offsets : jax.Array, shape (S + 1,), dtype=int32, optional
+        Per-system COO pair segment offsets for the segmented path.
+        Requires ``pair_counts``.
+    pair_counts : jax.Array, shape (S,), dtype=int32, optional
+        Previous per-system pair counts for selective update.
+    neighbor_list : jax.Array, shape (2, max_pairs), dtype=int32, optional
+        Pre-allocated COO pair buffer ``(i_idx, j_idx)`` for the
+        segmented path.
+    neighbor_list_shifts : jax.Array, shape (max_pairs, 3), dtype=int32, optional
+        Pre-allocated per-pair image shift buffer for the segmented path.
+
+    Returns
+    -------
+    tuple of jax.Array
+        Compact non-segmented path: ``(neighbor_list, neighbor_ptr,
+        coo_shifts)`` where ``neighbor_list`` has shape ``(2, npairs)``,
+        ``neighbor_ptr`` is a CSR atom pointer of shape ``(natom + 1,)``,
+        and ``coo_shifts`` has shape ``(npairs, 3)``.
+
+        Segmented path (when ``pair_offsets`` is provided):
+        ``(neighbor_list, pair_offsets, pair_counts, coo_shifts)`` where
+        ``neighbor_list`` has shape ``(2, total_pairs)``.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.neighbors.batch_cluster_tile.batch_build_cluster_tile_list` : Builds the tile list consumed by this function.
+    :func:`nvalchemiops.jax.neighbors.batch_cluster_tile.batch_query_cluster_tile` : Alternative dense matrix output from the same tile list.
+    """
     segmented = pair_offsets is not None or pair_counts is not None
     if (pair_offsets is None) != (pair_counts is None):
         raise ValueError("Pass both 'pair_offsets' and 'pair_counts', or neither.")
@@ -1524,6 +1849,12 @@ def batch_query_cluster_tile_coo(
         raise ValueError("rebuild_flags requires pair_offsets and pair_counts")
     if rebuild_flags is not None and (tile_offsets is None or tile_counts is None):
         raise ValueError("rebuild_flags requires tile_offsets and tile_counts")
+    _preload_cluster_tile_coo_kernel(
+        batched=True,
+        tile_segmented=segmented,
+        coo_segmented=segmented,
+        selective=segmented,
+    )
 
     inv_cell_batch = jnp.linalg.inv(cell_batch)
     pair_counter = jnp.zeros(1, dtype=jnp.int32)
@@ -1689,8 +2020,9 @@ def batch_cluster_tile_neighbor_list(
         If True, append per-pair displacement vectors / scalar distances
         to the matrix-format return tuple. Matrix format only.
     pair_fn, pair_params, neighbor_vectors, neighbor_distances, pair_energies, pair_forces : optional
-        Reserved for parity with the torch binding. Raise
-        ``NotImplementedError`` on the JAX path.
+        Pair-output buffers and inline pair potential. Supported on the
+        eager-cutoff fp32 matrix/COO paths; rejected with ``cutoff2``,
+        ``rebuild_flags``, or ``format="tile"``.
 
     Returns
     -------
@@ -1814,6 +2146,8 @@ def batch_cluster_tile_neighbor_list(
                 "rebuild_flags requires previous batch_cluster_tile state: "
                 + ", ".join(missing)
             )
+    if int(batch_ptr.shape[0]) < 2:
+        raise ValueError("batch_ptr must have length at least 2")
     N = positions.shape[0]
     if max_neighbors is None:
         max_neighbors = estimate_max_neighbors(
@@ -1908,7 +2242,7 @@ def batch_cluster_tile_neighbor_list(
     if has_pair_outputs:
         if fill_value is None:
             fill_value = N
-        batch_idx_arr = _make_batch_idx(batch_ptr).astype(jnp.int32)
+        batch_idx_arr = _make_batch_idx(batch_ptr, N).astype(jnp.int32)
 
         def _forward(p: jax.Array, c: jax.Array) -> _NeighborForwardOutput:
             p_det = jax.lax.stop_gradient(p)
@@ -2023,14 +2357,17 @@ def batch_cluster_tile_neighbor_list(
             tail.extend((pe_out, pf_out))
         return (*base, *tail)
 
+    positions_topology = jax.lax.stop_gradient(positions)
+    cell_batch_topology = jax.lax.stop_gradient(cell_batch)
+
     # Tile candidates must cover the larger radius so the cutoff2 matrix cannot
     # miss pairs in the (cutoff, cutoff2] shell; the query filters each matrix
     # by its own cutoff.
     build_cutoff = cutoff if cutoff2 is None else max(float(cutoff), float(cutoff2))
     build_out = batch_build_cluster_tile_list(
-        positions,
+        positions_topology,
         build_cutoff,
-        cell_batch,
+        cell_batch_topology,
         batch_ptr,
         rebuild_flags=rebuild_flags,
         tile_offsets=tile_offsets,
@@ -2134,7 +2471,7 @@ def batch_cluster_tile_neighbor_list(
                 sorted_pos_x,
                 sorted_pos_y,
                 sorted_pos_z,
-                cell_batch,
+                cell_batch_topology,
                 num_tiles,
                 tile_row_group,
                 tile_col_group,
@@ -2166,7 +2503,7 @@ def batch_cluster_tile_neighbor_list(
             sorted_pos_x,
             sorted_pos_y,
             sorted_pos_z,
-            cell_batch,
+            cell_batch_topology,
             num_tiles,
             tile_row_group,
             tile_col_group,
@@ -2181,7 +2518,7 @@ def batch_cluster_tile_neighbor_list(
         sorted_pos_x,
         sorted_pos_y,
         sorted_pos_z,
-        cell_batch,
+        cell_batch_topology,
         num_tiles,
         tile_row_group,
         tile_col_group,
@@ -2194,7 +2531,9 @@ def batch_cluster_tile_neighbor_list(
         rebuild_flags=rebuild_flags,
         tile_offsets=tile_offsets,
         tile_counts=tile_counts,
-        batch_idx=_make_batch_idx(batch_ptr).astype(jnp.int32) if selective else None,
+        batch_idx=_make_batch_idx(batch_ptr, N).astype(jnp.int32)
+        if selective
+        else None,
         neighbor_matrix=previous_neighbor_matrix,
         num_neighbors=previous_num_neighbors,
         neighbor_matrix_shifts=previous_neighbor_matrix_shifts,

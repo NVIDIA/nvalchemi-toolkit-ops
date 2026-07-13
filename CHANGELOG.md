@@ -1,12 +1,30 @@
 # Changelog
 
-## v0.4.0 (Unreleased)
+## 0.4.0 (Unreleased)
 
 ### Added
 
+- FIRE and FIRE2 optimizer steps accept caller-supplied per-system reductions
+  via a `compute_reductions=True` flag (`fire_step`, `fire_update`,
+  `fire2_step`, `fire2_update`, and the Torch `fire2_step_coord` /
+  `fire2_step_coord_cell`). When `False`, the values already in `vf`/`vv`/`ff`
+  (and FIRE2 `v_sumsq`/`f_sumsq`) are used for the mixing and dt/alpha update
+  instead of being recomputed; the per-atom state roll-back still runs. Adds a
+  standalone `fire_compute_vf_vv_ff` reduction helper. Default `True` is
+  byte-identical to previous behavior.
+- FIRE2 exposes its phases so a caller can post-process the displacement clamp
+  threshold between the velocity mix and the clamp: `fire2_apply_step` (Warp)
+  and the Torch `fire2_step_coord_cell_mix` / `_couple` / `_apply` split
+  `fire2_step_coord_cell` into reduce+mix, measure-`max_norm`, and clamp+apply
+  phases. `fire2_reduce` (Warp) and `fire2_compute_extended_reductions` (Torch,
+  returning separate owned-atom and replicated-cell contributions) expose the
+  reductions standalone. All default paths remain byte-identical.
 - Full Torch Ewald/PME APIs support energy-derived forces, charge
   gradients, and strain-first virials, including second-order force/stress
   losses.
+- 2D slab (Yeh-Berkowitz) correction for Ewald and PME summation, exposed as
+  `compute_slab_correction` and a `slab_correction=` keyword on the Ewald/PME
+  entry points, with both Torch and JAX bindings.
 - Torch slab correction participates in autograd when inputs require
   gradients.
 - Full JAX Ewald/PME energy-only calls support first-order gradients for
@@ -28,8 +46,49 @@
 
 ### Fixed
 
+- Torch PME fused-convolve backward returned `grad_k_squared` with the wrong
+  rank for a single system (4D for a 3D input, because `mesh_fft` keeps the
+  batch dim while `k_squared` is squeezed). Eager masked it via autograd
+  `sum_to_size`, but `torch.compile` — which trusts the op's fake shape — hit an
+  `assert_size_stride` in the compiled backward when differentiating the
+  reciprocal energy w.r.t. the cell. The `k_squared` unsqueeze is now tracked
+  independently of the mesh and squeezed back on return, in both
+  `_pme_convolve_backward` and `_pme_convolve_double_backward`.
+- Batched pressure kinetic tensor (`compute_kinetic_tensor` /
+  `compute_pressure_tensor` with `batch_idx`) is now computed with a per-atom
+  atomic reduction. The previous tiled reduction summed each thread block as a
+  whole and attributed it to a single system, corrupting per-system kinetic
+  tensors whenever a block spanned more than one system.
+- Cell-list size estimation no longer overflows when a cell is large relative
+  to the cutoff: the per-dimension cell-count product is now computed
+  overflow-safe (int64) and clamped per system, so `estimate_cell_list_sizes` /
+  `estimate_batch_cell_list_sizes` always return a positive, capped count
+  instead of a negative one that crashed `allocate_cell_list`. The estimate
+  wrappers and `allocate_cell_list` (Torch and JAX) also validate the count and
+  raise a clear error on a bad value.
+- `estimate_max_neighbors` exposes a `max_neighbors_lower_bound` keyword
+  (default 16) so callers can raise the floor for dense or clustered systems
+  where short cutoffs underestimate the neighbor count (#114). Its
+  `safety_factor` argument is deprecated (it scaled the estimate identically to
+  `atomic_density`); it now emits a `DeprecationWarning` and is folded into
+  `atomic_density`.
+- Naive PBC neighbor wrapping now leaves non-periodic axes unwrapped when
+  per-axis `pbc` flags are supplied, fixing partial-PBC and non-periodic
+  systems (#104).
 - Fixed Torch Ewald gradients for non-uniform per-atom energy cotangents
   (`torch.autograd.grad(..., grad_outputs=w)`).
+- Batched JAX Ewald autodiff no longer materializes a
+  systems-by-k-vectors-by-atoms phase tensor, avoiding excessive reciprocal-space
+  memory use without changing energies or derivatives.
+- JAX electrostatics no longer import the removed `jax.custom_transpose`. The
+  Ewald/PME real- and reciprocal-space and slab HVP transpose rules are
+  migrated to `jax.custom_vjp` (a stable API), restoring importability on
+  current JAX (0.10+) while preserving the second-order (force/stress-loss)
+  derivatives.
+- Coupled the FIRE2 variable-cell updates so positions and cell degrees of
+  freedom advance consistently during constrained/variable-cell relaxation.
+- Neighbor-list launchers now reject unbatched methods when batch metadata is
+  supplied, instead of silently producing incorrect lists.
 - **MTK NPT/NPH cell propagation**: kernels wrote `V·(P − P_ext)/W`
   (strain-rate units) into `cell_velocity` while consumers read it as
   `ḣ = dh/dt`, costing a factor of cell length in the cell response.
@@ -54,6 +113,8 @@
   the existing tuple order. Component `compute_forces=True` remains available for
   no-autograd MD/inference use; component charge-gradient, virial, and hybrid
   direct outputs warn as legacy training-style outputs.
+- `nvalchemiops.neighbors.zero_array` now emits a `DeprecationWarning` and
+  forwards to `array.zero_()`. Call `array.zero_()` directly.
 - `cells_inv` argument on `compute_cell_kinetic_energy`,
   `npt_velocity_half_step{,_out}`, `npt_position_update{,_out}`,
   `nph_velocity_half_step{,_out}`, `nph_position_update{,_out}`,
@@ -73,6 +134,7 @@
   `ḣ = dh/dt`. Kernel signatures unchanged.
 - `npt_barostat_half_step{,_aniso,_triclinic}` drop the `eta_dots`
   argument; thermostat coupling is now a separate Trotter operator.
+- The internal `make_outer_neigh_offsets` helper was removed.
 
 ### Added (neighbors)
 
@@ -95,6 +157,9 @@
   moved enough to need a fresh list; unchanged systems keep their
   previous output. Supported for matrix and segmented-COO outputs in
   both the JAX and PyTorch bindings.
+- **JAX CUDA graph replay**: JAX neighbor-list builders accept a
+  `graph_mode` keyword (`GraphMode`) to capture and replay the build as a
+  CUDA graph, reducing per-step launch overhead in MD loops.
 
 ### Changed (neighbors)
 
@@ -118,6 +183,21 @@
   Warp kernels and `nvalchemiops.torch` bindings, single-system and batched, with
   energies, forces, moment gradients, stress, and force-loss (`create_graph`)
   training; the forward and first-order backward are `torch.compile`-compatible.
+
+### Added (segment ops)
+
+- Differentiable segment operations: backward kernels for the segment-op
+  reductions enable autograd through `nvalchemiops.segment_ops`, with Torch
+  (`nvalchemiops.torch.segment_ops`) and JAX (`nvalchemiops.jax.segment_ops`)
+  bindings, an autograd example (`examples/02_segment_ops_autograd.py`), user
+  guide docs, and benchmarks.
+
+### Changed
+
+- DFT-D3 dispersion kernels optimized for improved performance.
+- Loosened the PyTorch version requirement to widen compatible installs.
+- Updated the CUDA backend extras (`torch-cu12`/`jax-cu12` and related
+  optional dependencies).
 
 ## 0.3.0 - 2026-XX-XX
 

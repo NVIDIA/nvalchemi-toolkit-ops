@@ -1,0 +1,16 @@
+{% extends "!layout.html" %}
+
+{% block scripts_end %}
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+{{ super() }}
+{% endblock scripts_end %}

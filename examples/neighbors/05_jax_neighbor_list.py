@@ -26,6 +26,7 @@ In this example you will learn:
 - Matrix format vs COO (list) format outputs
 - Comparing ``naive_neighbor_list`` and ``cell_list`` algorithms
 - Using ``half_fill`` mode for symmetric neighbor lists
+- Building compact partial lists with ``target_indices``
 - Validating neighbor distances are within cutoff
 - ``jax.jit`` compilation of the neighbor matrix
 - Estimating dispatch cost with ``estimate_neighbor_list_costs`` /
@@ -278,7 +279,7 @@ def run_compute_loop(
     """Example of encapsulating a compute loop"""
     num_loops = 100
     all_neighbors = jnp.zeros(
-        (num_loops, max_num_atoms, max_neighbors), dtype=positions.dtype
+        (num_loops, max_num_atoms, max_neighbors), dtype=jnp.int32
     )
     # generate some random positions
     key = jax.random.PRNGKey(64)
@@ -288,8 +289,8 @@ def run_compute_loop(
             + positions
         )
         # for JIT compilation, max_neighbors and total cells **must** be specified to
-        # accommoate for static array shapes
-        neighbor_matrix, neighbor_ptr, neighbor_matrix_shifts = cell_list(
+        # accommodate static array shapes
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
             new_positions,
             cutoff,
             cell * 1.5,
@@ -300,6 +301,7 @@ def run_compute_loop(
         # in this example we don't do any additional computation
         # other than neighborhoods; include your computation logic
         # within this scope
+        _ = num_neighbors, neighbor_matrix_shifts
         all_neighbors = all_neighbors.at[i].set(neighbor_matrix)
     return all_neighbors
 
@@ -327,9 +329,9 @@ print("=" * 70)
 
 batch_ptr = jnp.array([0, num_atoms], dtype=jnp.int32)
 cost_report = estimate_neighbor_list_costs(batch_ptr, cell, pbc, cutoff)
-print("\nFeasible strategies (cheapest first):")
-for strategy, cost in cost_report:
-    print(f"  {strategy:24s} estimated cost (arbitrary units): {cost:.3g}")
+print("\nFeasible methods (cheapest first):")
+for method_name, cost in cost_report:
+    print(f"  {method_name:24s} estimated cost (arbitrary units): {cost:.3g}")
 
 suggested_method = suggest_neighbor_list_method(batch_ptr, cell, pbc, cutoff)
 print(f"\nSuggested method: {suggested_method}")
@@ -341,12 +343,53 @@ nm_suggested, num_suggested, _ = neighbor_list(
 print(f"Total pairs via suggested method: {int(num_suggested.sum())}")
 
 # %%
+# Partial neighbor lists with ``target_indices``
+# ==============================================
+# ``target_indices`` builds neighbors only for selected central atoms. Matrix
+# rows are compact: row ``r`` maps to atom ``target_indices[r]``. In COO mode,
+# ``neighbor_list[0]`` also stores compact row ids, not original atom ids.
+
+print("\n" + "=" * 70)
+print("PARTIAL NEIGHBOR LISTS (target_indices)")
+print("=" * 70)
+
+target_indices = jnp.array([0, 4, 9], dtype=jnp.int32)
+partial_nm, partial_counts, _ = neighbor_list(
+    positions,
+    cutoff,
+    cell=cell,
+    pbc=pbc,
+    method="cell_list_atom_centric",
+    max_neighbors=128,
+    target_indices=target_indices,
+)
+print(f"\nSelected atoms: {target_indices.tolist()}")
+print(f"Partial matrix shape: {partial_nm.shape}")
+for row, atom in enumerate(target_indices.tolist()):
+    print(f"  compact row {row} -> atom {atom}: {int(partial_counts[row])} neighbors")
+
+partial_coo, partial_ptr, _ = neighbor_list(
+    positions,
+    cutoff,
+    cell=cell,
+    pbc=pbc,
+    method="cell_list_atom_centric",
+    max_neighbors=128,
+    target_indices=target_indices,
+    return_neighbor_list=True,
+)
+num_partial_pairs = int(partial_ptr[-1])
+compact_rows = jnp.unique(partial_coo[0, :num_partial_pairs])
+print(f"COO compact source rows present: {compact_rows.tolist()}")
+print(f"COO pointer length: {partial_ptr.shape[0]} (num_targets + 1)")
+
+# %%
 # Inline pair potentials with ``pair_fn``
 # =======================================
 # A Warp ``pair_fn`` evaluates a pairwise potential as neighbors are enumerated,
 # returning per-pair energy and force in the same pass (no second loop over the
-# list). On JAX, ``pair_fn`` is exposed through the direct algorithm bindings
-# (``naive_neighbor_list`` / ``cell_list``), not the unified ``neighbor_list``. The
+# list). On JAX, ``pair_fn`` is available through the direct algorithm bindings
+# and compatible unified-dispatch paths. The
 # ``pair_energies`` / ``pair_forces`` buffers are auto-allocated, appended to the
 # return tuple, and forward-only (use ``return_distances`` / ``return_vectors`` for
 # differentiable geometry).
@@ -414,7 +457,8 @@ print("  Auto-allocated, returned, and forward-only.")
 # - **Half-fill mode**: Store only unique pairs to save memory
 # - **Distance validation**: Verify all pairs are within cutoff
 # - **Cost-model dispatch**: ``estimate``/``suggest`` helpers pick a method
-# - **Inline pair_fn**: Per-pair energy/force via the direct algorithm bindings
+# - **Partial lists**: Compact ``target_indices`` rows for selected atoms
+# - **Inline pair_fn**: Per-pair energy/force during enumeration
 
 print("\n" + "=" * 70)
 print("SUMMARY")
@@ -426,5 +470,6 @@ print("  - Use half_fill=True to store only unique pairs")
 print("  - naive_neighbor_list performs O(N²) all-pairs checks")
 print("  - cell_list uses spatial decomposition")
 print("  - suggest_neighbor_list_method picks a method from geometry")
+print("  - target_indices builds compact partial neighbor lists")
 print("  - pair_fn evaluates a pairwise potential during enumeration")
 print("\nExample completed successfully!")

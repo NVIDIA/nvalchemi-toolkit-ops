@@ -22,7 +22,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from nvalchemiops.jax.neighbors.batch_cell_list import batch_cell_list
+from nvalchemiops.jax.neighbors.batch_cell_list import (
+    batch_build_cell_list,
+    batch_cell_list,
+    batch_query_cell_list,
+)
 
 from .conftest import requires_gpu
 
@@ -75,7 +79,207 @@ class TestBatchCellList:
         assert neighbor_matrix.shape[0] == 4
         assert num_neighbors.shape == (4,)
         assert shifts.shape[0] == 4
-        assert shifts.shape[2] == 3
+
+    def test_default_cell_pbc_matches_explicit_identity(self):
+        """Default batch cell/PBC inputs match explicit identity/all-periodic."""
+        positions = jnp.array(
+            [
+                [0.10, 0.10, 0.10],
+                [0.35, 0.10, 0.10],
+                [0.20, 0.20, 0.20],
+                [0.45, 0.20, 0.20],
+            ],
+            dtype=jnp.float32,
+        )
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+        cell = jnp.broadcast_to(jnp.eye(3, dtype=jnp.float32), (2, 3, 3))
+        pbc = jnp.ones((2, 3), dtype=jnp.bool_)
+
+        default_out = batch_cell_list(
+            positions,
+            0.4,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=8,
+            return_distances=True,
+            return_vectors=True,
+        )
+        explicit_out = batch_cell_list(
+            positions,
+            0.4,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=8,
+            return_distances=True,
+            return_vectors=True,
+        )
+
+        for default_value, explicit_value in zip(default_out, explicit_out):
+            np.testing.assert_allclose(
+                np.asarray(default_value),
+                np.asarray(explicit_value),
+            )
+
+    def test_build_default_cell_pbc_matches_explicit_identity(self):
+        """Build-only batch cell-list normalizes default cell/PBC."""
+        positions = jnp.array(
+            [
+                [0.10, 0.10, 0.10],
+                [0.35, 0.10, 0.10],
+                [0.20, 0.20, 0.20],
+                [0.45, 0.20, 0.20],
+            ],
+            dtype=jnp.float32,
+        )
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+        cell = jnp.broadcast_to(jnp.eye(3, dtype=jnp.float32), (2, 3, 3))
+        pbc = jnp.ones((2, 3), dtype=jnp.bool_)
+
+        default_out = batch_build_cell_list(
+            positions,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cutoff=0.4,
+            max_total_cells=16,
+        )
+        explicit_out = batch_build_cell_list(
+            positions,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cell=cell,
+            pbc=pbc,
+            cutoff=0.4,
+            max_total_cells=16,
+        )
+
+        for default_value, explicit_value in zip(default_out, explicit_out):
+            np.testing.assert_allclose(
+                np.asarray(default_value),
+                np.asarray(explicit_value),
+            )
+
+    def test_batch_query_cell_list_target_indices_matches_combined_wrapper(self):
+        """Low-level batch_query_cell_list supports target_indices and distances."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [10.0, 0.0, 0.0],
+                [10.5, 0.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+        cells = jnp.array(
+            [
+                [[6.0, 0.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 6.0]],
+                [[6.0, 0.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 6.0]],
+            ],
+            dtype=jnp.float32,
+        )
+        pbcs = jnp.array([[True, True, True], [True, True, True]])
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+        target_indices = jnp.array([2, 0], dtype=jnp.int32)
+        (
+            cells_per_dimension,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            neighbor_search_radius,
+            _cell_origin,
+        ) = batch_build_cell_list(
+            positions,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cell=cells,
+            pbc=pbcs,
+            cutoff=0.75,
+        )
+
+        query_out = batch_query_cell_list(
+            positions,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cutoff=0.75,
+            cell=cells,
+            pbc=pbcs,
+            cells_per_dimension=cells_per_dimension,
+            atom_periodic_shifts=atom_periodic_shifts,
+            atom_to_cell_mapping=atom_to_cell_mapping,
+            atoms_per_cell_count=atoms_per_cell_count,
+            cell_atom_start_indices=cell_atom_start_indices,
+            cell_atom_list=cell_atom_list,
+            neighbor_search_radius=neighbor_search_radius,
+            max_neighbors=4,
+            target_indices=target_indices,
+            return_distances=True,
+            strategy="atom_centric",
+        )
+        combined_out = batch_cell_list(
+            positions,
+            0.75,
+            cells,
+            pbcs,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=4,
+            target_indices=target_indices,
+            return_distances=True,
+            strategy="atom_centric",
+        )
+
+        assert query_out[0].shape == (2, 4)
+        for actual, expected in zip(query_out, combined_out, strict=True):
+            np.testing.assert_array_equal(np.asarray(actual), np.asarray(expected))
+
+    def test_topology_only_grad_pbc_is_zero(self):
+        """Topology-only batch cell-list outputs do not differentiate Warp FFI."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+        cells = jnp.array(
+            [
+                [[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+                [[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+            ],
+            dtype=jnp.float32,
+        )
+        pbcs = jnp.array([[True, True, True], [True, True, True]])
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+
+        def loss(pos):
+            neighbor_matrix, num_neighbors, shifts = batch_cell_list(
+                pos,
+                2.0,
+                cell=cells,
+                pbc=pbcs,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=8,
+                strategy="auto",
+            )
+            return (
+                neighbor_matrix.astype(pos.dtype).sum()
+                + num_neighbors.astype(pos.dtype).sum()
+                + shifts.astype(pos.dtype).sum()
+            )
+
+        grad = jax.grad(loss)(positions)
+        assert jnp.isfinite(grad).all().item()
+        np.testing.assert_allclose(np.asarray(grad), 0.0)
 
 
 class TestBatchCellListEdgeCases:
@@ -234,6 +438,118 @@ class TestBatchCellListJIT:
         assert nn.shape == (4,)
         assert shifts.shape[0] == 4
         assert shifts.shape[2] == 3
+
+    def test_jit_auto_falls_back_when_pair_centric_sizing_is_traced(self):
+        """``strategy='auto'`` must not expose pair-centric host reads to JIT."""
+        atoms_per_system = 200
+        total_atoms = atoms_per_system * 2
+        max_neighbors = 128
+        box_size = 15.0
+        positions = jnp.vstack(
+            [
+                jax.random.uniform(
+                    jax.random.PRNGKey(1),
+                    (atoms_per_system, 3),
+                    dtype=jnp.float32,
+                )
+                * box_size,
+                jax.random.uniform(
+                    jax.random.PRNGKey(2),
+                    (atoms_per_system, 3),
+                    dtype=jnp.float32,
+                )
+                * box_size,
+            ]
+        )
+        cells = jnp.stack(
+            [
+                jnp.eye(3, dtype=jnp.float32) * box_size,
+                jnp.eye(3, dtype=jnp.float32) * box_size,
+            ]
+        )
+        pbcs = jnp.array([[True, True, True], [True, True, True]])
+        batch_idx = jnp.concatenate(
+            [
+                jnp.zeros(atoms_per_system, dtype=jnp.int32),
+                jnp.ones(atoms_per_system, dtype=jnp.int32),
+            ]
+        )
+        batch_ptr = jnp.array([0, atoms_per_system, total_atoms], dtype=jnp.int32)
+
+        @jax.jit
+        def jitted_batch_cell_list(positions, cells, pbcs, batch_idx, batch_ptr):
+            return batch_cell_list(
+                positions,
+                cutoff=6.0,
+                cell=cells * 1.5,
+                pbc=pbcs,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=max_neighbors,
+                max_total_cells=32,
+            )
+
+        nm, nn, shifts = jitted_batch_cell_list(
+            positions, cells, pbcs, batch_idx, batch_ptr
+        )
+
+        assert nm.shape == (total_atoms, max_neighbors)
+        assert nm.dtype == jnp.int32
+        assert nn.shape == (total_atoms,)
+        assert shifts.shape == (total_atoms, max_neighbors, 3)
+
+    def test_jit_explicit_pair_centric_still_requires_concrete_sizing(self):
+        """Explicit pair-centric keeps the concrete launch-sizing contract."""
+        atoms_per_system = 200
+        total_atoms = atoms_per_system * 2
+        box_size = 15.0
+        positions = jnp.vstack(
+            [
+                jax.random.uniform(
+                    jax.random.PRNGKey(3),
+                    (atoms_per_system, 3),
+                    dtype=jnp.float32,
+                )
+                * box_size,
+                jax.random.uniform(
+                    jax.random.PRNGKey(4),
+                    (atoms_per_system, 3),
+                    dtype=jnp.float32,
+                )
+                * box_size,
+            ]
+        )
+        cells = jnp.stack(
+            [
+                jnp.eye(3, dtype=jnp.float32) * box_size,
+                jnp.eye(3, dtype=jnp.float32) * box_size,
+            ]
+        )
+        pbcs = jnp.array([[True, True, True], [True, True, True]])
+        batch_idx = jnp.concatenate(
+            [
+                jnp.zeros(atoms_per_system, dtype=jnp.int32),
+                jnp.ones(atoms_per_system, dtype=jnp.int32),
+            ]
+        )
+        batch_ptr = jnp.array([0, atoms_per_system, total_atoms], dtype=jnp.int32)
+
+        @jax.jit
+        def jitted_batch_cell_list(positions, cells, pbcs, batch_idx, batch_ptr):
+            return batch_cell_list(
+                positions,
+                cutoff=6.0,
+                cell=cells * 1.5,
+                pbc=pbcs,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=128,
+                max_total_cells=32,
+                strategy="pair_centric",
+            )
+
+        with pytest.raises(ValueError, match="needs a concrete neighbor_search_radius"):
+            jitted_batch_cell_list(positions, cells, pbcs, batch_idx, batch_ptr)
 
 
 class TestBatchCellListReturnNeighborList:
@@ -845,3 +1161,116 @@ class TestJaxBatchCellListAutograd:
         nl = np.asarray(nl)
         if nl.shape[1] > 0:
             assert int(nl[0].max()) < nt
+
+    def test_target_indices_rejects_full_size_user_buffers(self):
+        """Partial batch cell-list buffers must use compact target rows."""
+        pos, cell, pbc, batch_idx = self._make_two_systems(n_per=4)
+        n = pos.shape[0]
+        targets = jnp.array([0, 5], dtype=jnp.int32)
+        mn = 16
+
+        with pytest.raises(ValueError, match="compact target rows"):
+            batch_cell_list(
+                pos,
+                1.5,
+                cell=cell,
+                pbc=pbc,
+                batch_idx=batch_idx,
+                max_neighbors=mn,
+                target_indices=targets,
+                neighbor_matrix_shifts=jnp.zeros((n, mn, 3), dtype=jnp.int32),
+            )
+
+        with pytest.raises(ValueError, match="compact target rows"):
+            batch_cell_list(
+                pos,
+                1.5,
+                cell=cell,
+                pbc=pbc,
+                batch_idx=batch_idx,
+                max_neighbors=mn,
+                target_indices=targets,
+                return_vectors=True,
+                neighbor_vectors=jnp.zeros((n, mn, 3), dtype=pos.dtype),
+            )
+
+    def test_batch_query_target_indices_rejects_full_size_user_buffers(self):
+        """Low-level batch query buffers must use compact target rows."""
+        pos, cell, pbc, batch_idx = self._make_two_systems(n_per=4)
+        batch_ptr = jnp.array([0, 4, 8], dtype=jnp.int32)
+        n = pos.shape[0]
+        targets = jnp.array([0, 5], dtype=jnp.int32)
+        mn = 16
+        build_out = batch_build_cell_list(
+            pos,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cell=cell,
+            pbc=pbc,
+            cutoff=1.5,
+        )
+
+        with pytest.raises(ValueError, match="compact target rows"):
+            batch_query_cell_list(
+                pos,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                cutoff=1.5,
+                cell=cell,
+                pbc=pbc,
+                cells_per_dimension=build_out[0],
+                atom_periodic_shifts=build_out[1],
+                atom_to_cell_mapping=build_out[2],
+                atoms_per_cell_count=build_out[3],
+                cell_atom_start_indices=build_out[4],
+                cell_atom_list=build_out[5],
+                neighbor_search_radius=build_out[6],
+                max_neighbors=mn,
+                target_indices=targets,
+                neighbor_matrix=jnp.full((n, mn), n, dtype=jnp.int32),
+                neighbor_matrix_shifts=jnp.zeros((n, mn, 3), dtype=jnp.int32),
+                num_neighbors=jnp.zeros((n,), dtype=jnp.int32),
+            )
+
+    def test_pair_buffers_without_pair_fn_raise(self):
+        """Pair-only kwargs should not be silently ignored."""
+        pos, cell, pbc, batch_idx = self._make_two_systems(n_per=4)
+        batch_ptr = jnp.array([0, 4, 8], dtype=jnp.int32)
+
+        with pytest.raises(ValueError, match="pair_forces requires pair_fn"):
+            batch_cell_list(
+                pos,
+                1.5,
+                cell=cell,
+                pbc=pbc,
+                batch_idx=batch_idx,
+                max_neighbors=8,
+                pair_forces=jnp.zeros((pos.shape[0], 8, 3), dtype=pos.dtype),
+            )
+
+        build_out = batch_build_cell_list(
+            pos,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cell=cell,
+            pbc=pbc,
+            cutoff=1.5,
+        )
+        with pytest.raises(ValueError, match="pair_params requires pair_fn"):
+            batch_query_cell_list(
+                pos,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                cutoff=1.5,
+                cell=cell,
+                pbc=pbc,
+                cells_per_dimension=build_out[0],
+                atom_periodic_shifts=build_out[1],
+                atom_to_cell_mapping=build_out[2],
+                atoms_per_cell_count=build_out[3],
+                cell_atom_start_indices=build_out[4],
+                cell_atom_list=build_out[5],
+                neighbor_search_radius=build_out[6],
+                max_neighbors=8,
+                pair_params=jnp.ones((pos.shape[0], 1), dtype=pos.dtype),
+            )

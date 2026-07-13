@@ -74,7 +74,7 @@ jobs:
           echo "merge-base=$MERGE_BASE" >> $GITHUB_OUTPUT
           echo "Merge-base commit: $MERGE_BASE"
 
-      - uses: step-security/changed-files@v46
+      - uses: step-security/changed-files@95b56dadb92a30ca9036f16423fd3c088a71ee94 # v46
         id: changed-files
         with:
           base_sha: ${{ steps.merge-base.outputs.merge-base }}
@@ -104,7 +104,7 @@ jobs:
           python-version: "3.12"
 
       - name: Setup UV
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
         with:
           enable-cache: true
 
@@ -163,7 +163,7 @@ jobs:
       - get-pr-labels
       - changed-files
     runs-on: linux-amd64-gpu-h100-latest-1
-    timeout-minutes: 120
+    timeout-minutes: 480
     strategy:
       fail-fast: false
       matrix:
@@ -199,11 +199,11 @@ jobs:
       - name: Setup UV
         env:
           UV_VERSION: "0.9.25"
-          UV_CHECKSUM: "1e1aea6cead1a07a7cee24f6eaec415b"
+          UV_CHECKSUM: "10fb1f54d56f3eb60622006797339d4ea0bfda9b358d07db635f73cf89f7094c"
         run: |
           UV_INSTALLER=$(mktemp)
-          curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" -o "$UV_INSTALLER"
-          echo "${UV_CHECKSUM}  ${UV_INSTALLER}" | md5sum -c -
+          curl --proto '=https' --tlsv1.2 -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" -o "$UV_INSTALLER"
+          echo "${UV_CHECKSUM}  ${UV_INSTALLER}" | sha256sum -c -
           sh "$UV_INSTALLER"
           rm "$UV_INSTALLER"
           echo "$HOME/.local/bin" >> $GITHUB_PATH
@@ -224,6 +224,19 @@ jobs:
       # dependency database by the interpreter version and installed packages.
       # Coverage baselines are cached separately so stale coverage files do not
       # replace or mask the testmon dependency database.
+      #
+      # The testmon and warp caches are branch-scoped (sanitized ref name) so a
+      # long-lived branch / PR maintains its OWN cache line across successive
+      # commits, with main as a restore-keys fallback for the first run. GitHub
+      # scopes caches to the ref that created them, so successive pushes to the
+      # same pull-request/<N> mirror ref reuse the cache; main remains the only
+      # globally-readable fallback.
+      - name: Compute cache scope key
+        id: scope
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: echo "key=${REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+
       - name: Restore testmon cache (for PRs and merge queue)
         if: startsWith(github.ref, 'refs/heads/pull-request/') || github.event_name == 'merge_group'
         uses: actions/cache/restore@v4
@@ -232,9 +245,24 @@ jobs:
             .testmondata
             .testmondata-shm
             .testmondata-wal
-          key: testmon-cache-main-py${{ matrix.python-version }}-cuda13-${{ github.run_id }}
+          key: testmon-cache-${{ steps.scope.outputs.key }}-py${{ matrix.python-version }}-cuda13-${{ github.run_id }}
           restore-keys: |
+            testmon-cache-${{ steps.scope.outputs.key }}-py${{ matrix.python-version }}-cuda13-
             testmon-cache-main-py${{ matrix.python-version }}-cuda13-
+
+      # Warp compiles every kernel from scratch on a cold cache, and conftest keys
+      # the cache per checkout (not per pid) so all per-module pytest runs share it.
+      # Persisting it across CI runs skips recompilation on cache hit. Kernels are
+      # content-hashed, so a stale entry is simply unused (Warp recompiles changed
+      # kernels) -> safe to restore on every trigger, including main/schedule.
+      - name: Restore warp kernel cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .warp-cache
+          key: warp-cache-${{ steps.scope.outputs.key }}-py${{ matrix.python-version }}-cuda13-${{ github.run_id }}
+          restore-keys: |
+            warp-cache-${{ steps.scope.outputs.key }}-py${{ matrix.python-version }}-cuda13-
+            warp-cache-main-py${{ matrix.python-version }}-cuda13-
 
       - name: Restore coverage baseline (for PRs and merge queue)
         if: startsWith(github.ref, 'refs/heads/pull-request/') || github.event_name == 'merge_group'
@@ -258,6 +286,10 @@ jobs:
       - name: Run tests with testmon and coverage
         run: |
           export PATH="$HOME/.local/bin:$PATH"
+          # Share one warp kernel cache across all per-module pytest runs (conftest
+          # honors WARP_CACHE_PATH via setdefault) and persist it via actions/cache.
+          export WARP_CACHE_PATH="$GITHUB_WORKSPACE/.warp-cache"
+          mkdir -p "$WARP_CACHE_PATH"
           USE_TESTMON_SELECTION=${{ startsWith(github.ref, 'refs/heads/pull-request/') || github.event_name == 'merge_group' }}
           if [[ "$USE_TESTMON_SELECTION" == "true" ]]; then
             # PR/Merge queue: testmon selects affected tests, coverage traces them
@@ -269,18 +301,36 @@ jobs:
             make testmon-coverage PYTEST_TESTMON_FLAGS="--testmon"
           fi
 
-      # Save one testmon DB and one coverage baseline per Python/CUDA version
-      # from main/schedule runs. PR and merge queue runs restore the newest
-      # matching pair.
+      # Save the testmon DB and warp cache on main/schedule AND on PR / merge-queue
+      # runs, each under its branch-scoped key. This lets successive commits on the
+      # same pull-request/<N> ref reuse the cache they just built (same cache scope),
+      # instead of recompiling/reselecting cold every commit on a long-lived branch.
+      # The coverage baseline below stays main-scoped so PR coverage still diffs
+      # against main, not against the PR's own prior coverage.
       - name: Save testmon cache
-        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'schedule')
+        if: >-
+          (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+          (github.event_name == 'schedule') ||
+          startsWith(github.ref, 'refs/heads/pull-request/') ||
+          (github.event_name == 'merge_group')
         uses: actions/cache/save@v4
         with:
           path: |
             .testmondata
             .testmondata-shm
             .testmondata-wal
-          key: testmon-cache-main-py${{ matrix.python-version }}-cuda13-${{ github.run_id }}
+          key: testmon-cache-${{ steps.scope.outputs.key }}-py${{ matrix.python-version }}-cuda13-${{ github.run_id }}
+
+      - name: Save warp kernel cache
+        if: >-
+          (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+          (github.event_name == 'schedule') ||
+          startsWith(github.ref, 'refs/heads/pull-request/') ||
+          (github.event_name == 'merge_group')
+        uses: actions/cache/save@v4
+        with:
+          path: .warp-cache
+          key: warp-cache-${{ steps.scope.outputs.key }}-py${{ matrix.python-version }}-cuda13-${{ github.run_id }}
 
       - name: Prepare coverage baseline
         if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'schedule')
@@ -296,7 +346,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         if: github.event_name != 'merge_group' && github.event_name != 'schedule'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@04b047e8bb82a0c002c8312c1c880fbc6a999d45 # v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./nvalchemiops.coverage.xml
@@ -314,7 +364,7 @@ jobs:
     needs:
       - lint
     runs-on: linux-amd64-gpu-h100-latest-1
-    timeout-minutes: 120
+    timeout-minutes: 480
     if: github.event_name == 'schedule'
     strategy:
       fail-fast: false
@@ -340,11 +390,11 @@ jobs:
       - name: Setup UV
         env:
           UV_VERSION: "0.9.25"
-          UV_CHECKSUM: "1e1aea6cead1a07a7cee24f6eaec415b"
+          UV_CHECKSUM: "10fb1f54d56f3eb60622006797339d4ea0bfda9b358d07db635f73cf89f7094c"
         run: |
           UV_INSTALLER=$(mktemp)
-          curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" -o "$UV_INSTALLER"
-          echo "${UV_CHECKSUM}  ${UV_INSTALLER}" | md5sum -c -
+          curl --proto '=https' --tlsv1.2 -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" -o "$UV_INSTALLER"
+          echo "${UV_CHECKSUM}  ${UV_INSTALLER}" | sha256sum -c -
           sh "$UV_INSTALLER"
           rm "$UV_INSTALLER"
           echo "$HOME/.local/bin" >> $GITHUB_PATH
@@ -356,9 +406,19 @@ jobs:
           uv sync --extra torch-cu12 --extra jax-cu12
           uv pip install -r test/test-requires.txt
 
+      - name: Restore warp kernel cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .warp-cache
+          key: warp-cache-main-py${{ matrix.python-version }}-cuda12-${{ github.run_id }}
+          restore-keys: |
+            warp-cache-main-py${{ matrix.python-version }}-cuda12-
+
       - name: Run tests with testmon and coverage
         run: |
           export PATH="$HOME/.local/bin:$PATH"
+          export WARP_CACHE_PATH="$GITHUB_WORKSPACE/.warp-cache"
+          mkdir -p "$WARP_CACHE_PATH"
           rm -f .testmondata .testmondata-shm .testmondata-wal
           rm -f .coverage .coverage.* coverage_main.dat
           make testmon-coverage PYTEST_TESTMON_FLAGS="--testmon"
@@ -371,6 +431,12 @@ jobs:
             .testmondata-shm
             .testmondata-wal
           key: testmon-cache-main-py${{ matrix.python-version }}-cuda12-${{ github.run_id }}
+
+      - name: Save warp kernel cache
+        uses: actions/cache/save@v4
+        with:
+          path: .warp-cache
+          key: warp-cache-main-py${{ matrix.python-version }}-cuda12-${{ github.run_id }}
 
       - name: Prepare coverage baseline
         run: |

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
+r"""
 Velocity Rescaling Thermostat
 =============================
 
@@ -29,14 +29,14 @@ Simple velocity rescaling:
 
 .. math::
 
-    \\mathbf{v}_i \\leftarrow \\mathbf{v}_i \\cdot \\sqrt{\\frac{T_{\\text{target}}}{T_{\\text{current}}}}
+    \mathbf{v}_i \leftarrow \mathbf{v}_i \cdot \sqrt{\frac{T_{\text{target}}}{T_{\text{current}}}}
 
 where the instantaneous temperature is:
 
 .. math::
 
-    T_{\\text{current}} = \\frac{2 \\cdot KE}{N_{\\text{DOF}} \\cdot k_B}
-                        = \\frac{\\sum_i m_i |\\mathbf{v}_i|^2}{N_{\\text{DOF}} \\cdot k_B}
+    T_{\text{current}} = \frac{2 \cdot KE}{N_{\text{DOF}} \cdot k_B}
+                        = \frac{\sum_i m_i |\mathbf{v}_i|^2}{N_{\text{DOF}} \cdot k_B}
 
 USAGE
 =====
@@ -123,8 +123,14 @@ def _compute_rescale_factor(
     current_temperature: Any,
     target_temperature: Any,
 ) -> Any:
-    """
+    r"""
     Compute velocity rescaling factor.
+
+    .. math::
+
+        s = \sqrt{\frac{T_{\text{target}}}{T_{\text{current}}}}
+
+    Returns ``1`` when :math:`T_{\text{current}} \le 0` (undefined ratio guard).
 
     Parameters
     ----------
@@ -136,7 +142,7 @@ def _compute_rescale_factor(
     Returns
     -------
     float
-        Scaling factor sqrt(T_target / T_current).
+        Scaling factor :math:`\sqrt{T_{\text{target}} / T_{\text{current}}}`.
 
     """
     if current_temperature <= type(current_temperature)(0.0):
@@ -151,10 +157,15 @@ def velocity_rescale(
     atom_ptr: wp.array = None,
     device: str = None,
 ) -> None:
-    """
+    r"""
     Rescale velocities to achieve target temperature (in-place).
 
-    Applies ``v_i *= scale_factor`` to all velocities.
+    .. math::
+
+        \mathbf{v}_i \leftarrow s\,\mathbf{v}_i
+
+    where :math:`s` is the scale factor, typically
+    :math:`s = \sqrt{T_{\text{target}} / T_{\text{current}}}`.
 
     Parameters
     ----------
@@ -162,7 +173,7 @@ def velocity_rescale(
         Atomic velocities. Shape (N,). MODIFIED in-place.
     scale_factor : wp.array
         Scaling factor(s). Shape (1,) for single system, (B,) for batched.
-        Typically sqrt(T_target / T_current).
+        Typically :math:`\sqrt{T_{\text{target}} / T_{\text{current}}}`.
     batch_idx : wp.array(dtype=wp.int32), optional
         System index for each atom. For batched mode (atomic operations).
     atom_ptr : wp.array(dtype=wp.int32), optional
@@ -205,8 +216,11 @@ def velocity_rescale_out(
     atom_ptr: wp.array = None,
     device: str = None,
 ) -> wp.array:
-    """
+    r"""
     Rescale velocities to achieve target temperature (non-mutating).
+
+    Writes :math:`s\,\mathbf{v}_i` into ``velocities_out``, where :math:`s` is
+    the scale factor.
 
     Parameters
     ----------

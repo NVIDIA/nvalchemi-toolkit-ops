@@ -53,6 +53,15 @@ def _raise_if_compiling_host_only(name: str, replacement: str) -> None:
         )
 
 
+def _validate_pair_params_present(
+    pair_fn: object,
+    pair_params: torch.Tensor | None,
+) -> None:
+    """Validate the torch pair-function parameter contract."""
+    if pair_fn is not None and pair_params is None:
+        raise ValueError("pair_params is required when pair_fn is provided")
+
+
 def compute_naive_num_shifts(
     cell: torch.Tensor,
     cutoff: float,
@@ -322,6 +331,9 @@ def prepare_batch_idx_ptr(
     if batch_idx is None and batch_ptr is None:
         raise ValueError("Either batch_idx or batch_ptr must be provided.")
 
+    if batch_ptr is not None and batch_ptr.shape[0] < 2:
+        raise ValueError("batch_ptr must have length at least 2")
+
     # Validate batch_idx size in eager mode only to avoid graph breaks
     if not torch.compiler.is_compiling():
         if batch_idx is not None and batch_idx.shape[0] != num_atoms:
@@ -417,7 +429,7 @@ def synthesize_cell_for_batch(
     batch_idx : (total_atoms,) int32
         System index per atom.
     batch_ptr : (num_systems + 1,) int32
-        CSR offsets — used only to derive ``num_systems``.
+        CSR offsets — used only to derive ``num_systems``. Must have length at least 2.
     cutoff : float
         Neighbor cutoff.
     padding_fraction : float, default 0.1
@@ -433,6 +445,8 @@ def synthesize_cell_for_batch(
     pbc : (num_systems, 3) bool
         All False — synthesized cells are non-periodic.
     """
+    if batch_ptr.shape[0] < 2:
+        raise ValueError("batch_ptr must have length at least 2")
     num_systems = int(batch_ptr.shape[0]) - 1
     if positions.shape[0] == 0:
         cell = (
@@ -526,6 +540,11 @@ def allocate_cell_list(
     nvalchemiops.torch.neighbors.cell_list.build_cell_list : High-level PyTorch wrapper
     nvalchemiops.torch.neighbors.batch_cell_list.batch_build_cell_list : Batched version
     """
+    if max_total_cells < 0:
+        raise ValueError(
+            f"allocate_cell_list: max_total_cells={max_total_cells} < 0 "
+            "(cell-count overflow or bad estimate)."
+        )
     # Detect number of systems from neighbor_search_radius shape
     is_batched = neighbor_search_radius.ndim == 2
     num_systems = neighbor_search_radius.shape[0] if is_batched else 1

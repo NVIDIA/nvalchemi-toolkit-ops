@@ -33,6 +33,9 @@ from nvalchemiops.neighbors.neighbor_utils import (
     get_compute_naive_num_shifts_kernel,
 )
 
+_INT32_MAX = 2**31 - 1
+_INT32_HALF_MAX = (_INT32_MAX - 1) // 2
+
 __all__ = [
     "compute_naive_num_shifts",
     "get_neighbor_list_from_neighbor_matrix",
@@ -60,6 +63,35 @@ def build_naive_kernel_tables(
     4. wrap-on-entry PBC selective-rebuild,
     5. prewrapped PBC,
     6. prewrapped PBC selective-rebuild.
+
+    Parameters
+    ----------
+    operation : {"single_cutoff", "dual_cutoff"}
+        Whether to build tables for single-cutoff or dual-cutoff neighbor search.
+    batched : bool
+        If ``True``, build kernels for batched (multi-system) neighbor search.
+    dtypes : tuple of type
+        Floating-point dtypes (e.g. ``(wp.float32,)``) for which to instantiate
+        each kernel variant.
+    half_fill : bool, optional
+        If ``True``, only fill the upper triangle of the neighbor matrix.
+        Default is ``False``.
+
+    Returns
+    -------
+    tuple of six dict
+        Six ``{dtype: kernel}`` lookup dictionaries, one per (PBC mode, selective)
+        combination in the order listed above.
+
+    Raises
+    ------
+    ValueError
+        If ``operation`` is not ``"single_cutoff"`` or ``"dual_cutoff"``.
+
+    See Also
+    --------
+    :func:`nvalchemiops.neighbors.naive.get_naive_neighbor_matrix_kernel` : Single-cutoff kernel factory.
+    :func:`nvalchemiops.neighbors.naive.get_naive_neighbor_matrix_dual_cutoff_kernel` : Dual-cutoff kernel factory.
     """
     from nvalchemiops.neighbors.naive import (
         get_naive_neighbor_matrix_dual_cutoff_kernel,
@@ -139,6 +171,49 @@ _jax_compute_naive_num_shifts_f64 = jax_kernel(
 )
 
 
+def _num_shifts_from_shift_range(
+    shift_range: jax.Array,
+) -> tuple[jax.Array, int]:
+    """Return int32 shift counts after checking the count formula for overflow."""
+    num_systems = shift_range.shape[0]
+    if num_systems == 0:
+        return jnp.zeros((0,), dtype=jnp.int32), 0
+
+    shift_range_i32 = shift_range.astype(jnp.int32)
+    rx = shift_range_i32[:, 0]
+    ry = shift_range_i32[:, 1]
+    rz = shift_range_i32[:, 2]
+
+    int32_max = jnp.array(_INT32_MAX, dtype=jnp.int32)
+    int32_half_max = jnp.array(_INT32_HALF_MAX, dtype=jnp.int32)
+
+    k1_overflows = ry > int32_half_max
+    k2_overflows = rz > int32_half_max
+    k1 = 2 * jnp.minimum(ry, int32_half_max) + 1
+    k2 = 2 * jnp.minimum(rz, int32_half_max) + 1
+
+    tail_limit = int32_max - rz - 1
+    base_limit = tail_limit // k2
+    base_room = jnp.maximum(base_limit - ry, 0)
+    count_overflows = (
+        (base_limit < 0)
+        | (ry > base_limit)
+        | (rx > (base_room // k1))
+        | (k1_overflows & (rx > 0))
+        | (k2_overflows & ((rx > 0) | (ry > 0)))
+    )
+    num_shifts = ((rx * k1 + ry) * k2 + rz + 1).astype(jnp.int32)
+    max_shifts = int(num_shifts.max())
+    if bool(jnp.any(count_overflows)):
+        raise ValueError(
+            "Per-system shift count exceeds int32 max "
+            "(2^31 - 1). Reduce the cutoff, increase cell size, or use a "
+            "cell-list method for very small cells."
+        )
+
+    return num_shifts, max_shifts
+
+
 # ==============================================================================
 # Public API
 # ==============================================================================
@@ -198,7 +273,7 @@ def compute_naive_num_shifts(
     pbc_bool = pbc.astype(jnp.bool_)
 
     # Select the appropriate kernel based on input dtype
-    if cell.dtype == jnp.float64:
+    if cell.dtype == jnp.float64 and jax.config.jax_enable_x64:
         cell_f64 = cell.astype(jnp.float64)
         num_shifts_i32, shift_range = _jax_compute_naive_num_shifts_f64(
             cell_f64,
@@ -219,21 +294,8 @@ def compute_naive_num_shifts(
             launch_dims=(num_systems,),
         )
 
-    s = shift_range.astype(jnp.int64)
-    k1 = 2 * s[:, 1] + 1
-    k2 = 2 * s[:, 2] + 1
-    num_shifts_i64 = s[:, 0] * k1 * k2 + s[:, 1] * k2 + s[:, 2] + 1
-
-    max_shifts_i64 = int(num_shifts_i64.max()) if num_systems > 0 else 0
-    if max_shifts_i64 > 2**31 - 1:
-        raise ValueError(
-            f"Per-system shift count ({max_shifts_i64}) exceeds int32 max "
-            f"(2^31 - 1). Reduce the cutoff, increase cell size, or use a "
-            f"cell-list method for very small cells."
-        )
-
-    num_shifts = num_shifts_i64.astype(jnp.int32)
-    return shift_range, num_shifts, int(max_shifts_i64)
+    num_shifts, max_shifts = _num_shifts_from_shift_range(shift_range)
+    return shift_range, num_shifts, max_shifts
 
 
 def get_neighbor_list_from_neighbor_matrix(
@@ -407,6 +469,9 @@ def prepare_batch_idx_ptr(
     if batch_idx is None and batch_ptr is None:
         raise ValueError("Either batch_idx or batch_ptr must be provided.")
 
+    if batch_ptr is not None and int(batch_ptr.shape[0]) < 2:
+        raise ValueError("batch_ptr must have length at least 2")
+
     if batch_idx is None:
         num_systems = batch_ptr.shape[0] - 1
         num_atoms_per_system = batch_ptr[1:] - batch_ptr[:-1]
@@ -491,6 +556,11 @@ def allocate_cell_list(
     nvalchemiops.jax.neighbors.cell_list.build_cell_list : High-level JAX wrapper
     nvalchemiops.jax.neighbors.batch_cell_list.batch_build_cell_list : Batched version
     """
+    if max_total_cells < 0:
+        raise ValueError(
+            f"allocate_cell_list: max_total_cells={max_total_cells} < 0 "
+            "(cell-count overflow or bad estimate)."
+        )
     # Detect number of systems from neighbor_search_radius shape
     is_batched = neighbor_search_radius.ndim == 2
     num_systems = neighbor_search_radius.shape[0] if is_batched else 1

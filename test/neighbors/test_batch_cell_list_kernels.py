@@ -877,7 +877,7 @@ class TestBatchCellListScalingPureWarp:
         # Query using the cell list
         estimated_density = num_atoms / cell_torch[0].det().abs().item()
         max_neighbors = estimate_max_neighbors(
-            cutoff, atomic_density=estimated_density, safety_factor=5.0
+            cutoff, atomic_density=estimated_density * 5.0
         )
 
         neighbor_matrix_torch = torch.full(

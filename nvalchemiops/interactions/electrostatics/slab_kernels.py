@@ -2991,7 +2991,37 @@ def slab_precompute_geometry(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Fill caller-owned per-system slab geometry for atom-major kernels."""
+    """Fill caller-owned per-system slab geometry for atom-major kernels.
+
+    Launches one thread per system to precompute the slab normal, volume,
+    and non-periodic height squared. Results are consumed by the per-atom
+    slab correction kernels, avoiding redundant geometry recomputation.
+
+    Parameters
+    ----------
+    pbc : wp.array, shape (B, 3), dtype=wp.bool
+        Per-system periodic boundary conditions. True for periodic directions,
+        False for the non-periodic (slab) direction.
+    cell : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
+        Per-system cell matrices. Each element is a 3x3 matrix whose rows
+        are the lattice vectors.
+    slab_axis : wp.array, shape (B,), dtype=wp.int32
+        OUTPUT: Index (0, 1, or 2) of the non-periodic axis, or -1 for
+        non-slab systems. Modified in-place.
+    slab_normal : wp.array, shape (B,), dtype=wp.vec3d
+        OUTPUT: Unit normal to the periodic plane for each system.
+        Modified in-place.
+    slab_volume : wp.array, shape (B,), dtype=wp.float64
+        OUTPUT: Absolute cell volume for each system. Modified in-place.
+    slab_height_sq : wp.array, shape (B,), dtype=wp.float64
+        OUTPUT: Squared projection of the non-periodic cell vector onto the
+        slab normal, :math:`(\\mathbf{h}_k \\cdot \\mathbf{n})^2`.
+        Modified in-place.
+    wp_dtype : type
+        Warp scalar type (wp.float32 or wp.float64).
+    device : str, optional
+        Warp device. If None, inferred from cell.
+    """
     num_systems = cell.shape[0]
     if device is None:
         device = str(cell.device)
@@ -3419,30 +3449,73 @@ def slab_correction_double_backward(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Launch analytic slab energy double-backward kernels.
+    """Launch analytic slab energy double-backward (HVP) kernels.
+
+    Computes the Hessian-vector product of the slab energy with respect to
+    positions, charges, and cell, given a direction vector (h_positions,
+    h_charges, h_cell) and a per-system energy cotangent (grad_system).
 
     Parameters
     ----------
-    positions, charges, cell, batch_idx, pbc
-        Primal slab inputs.
-    h_positions, h_charges, h_cell
-        Direction/cotangent arrays for the first-order gradient outputs.
-    mz, mz2, qtotal
-        Base slab moments from :func:`slab_reduce_moments`.
-    slab_axis, slab_normal, slab_volume, slab_height_sq
-        Caller-owned slab geometry buffers from :func:`slab_precompute_geometry`.
-    grad_system
-        Per-system cotangent for total slab energy.
-    dmz, dmz2, dqtotal, dnormal, dvolume, dheight_sq
-        Scratch arrays, zero-initialized by the caller.
-    grad_normal, h_grad_normal
-        Scratch arrays, zero-initialized by the caller.
-    grad_positions, grad_charges, grad_cell
-        OUTPUT: Literal HVP values for positions, charges, and cell.
-    wp_dtype
+    positions : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+        Primal atomic coordinates.
+    charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Primal atomic charges.
+    h_positions : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+        HVP direction for positions.
+    h_charges : wp.array, shape (N,), dtype=wp.float64
+        HVP direction for charges.
+    h_cell : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
+        HVP direction for cell matrices.
+    batch_idx : wp.array, shape (N,), dtype=wp.int32
+        System index for each atom.
+    pbc : wp.array, shape (B, 3), dtype=wp.bool
+        Per-system periodic boundary conditions.
+    cell : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
+        Primal per-system cell matrices.
+    mz : wp.array, shape (B, 3), dtype=wp.float64
+        Per-system projected dipole moment from :func:`slab_reduce_moments`.
+    mz2 : wp.array, shape (B, 3), dtype=wp.float64
+        Per-system projected second moment from :func:`slab_reduce_moments`.
+    qtotal : wp.array, shape (B,), dtype=wp.float64
+        Per-system total charge from :func:`slab_reduce_moments`.
+    slab_axis : wp.array, shape (B,), dtype=wp.int32
+        Precomputed non-periodic axis index from :func:`slab_precompute_geometry`.
+    slab_normal : wp.array, shape (B,), dtype=wp.vec3d
+        Precomputed slab unit normal from :func:`slab_precompute_geometry`.
+    slab_volume : wp.array, shape (B,), dtype=wp.float64
+        Precomputed cell volume from :func:`slab_precompute_geometry`.
+    slab_height_sq : wp.array, shape (B,), dtype=wp.float64
+        Precomputed squared slab height from :func:`slab_precompute_geometry`.
+    grad_system : wp.array, shape (B,), dtype=wp.float64
+        Per-system cotangent for the total slab energy.
+    dmz : wp.array, shape (B, 3), dtype=wp.float64
+        Scratch: directional derivative of mz. Must be zero-initialized.
+    dmz2 : wp.array, shape (B, 3), dtype=wp.float64
+        Scratch: directional derivative of mz2. Must be zero-initialized.
+    dqtotal : wp.array, shape (B,), dtype=wp.float64
+        Scratch: directional derivative of qtotal. Must be zero-initialized.
+    dnormal : wp.array, shape (B,), dtype=wp.vec3d
+        Scratch: directional derivative of slab normal. Must be zero-initialized.
+    dvolume : wp.array, shape (B,), dtype=wp.float64
+        Scratch: directional derivative of slab volume. Must be zero-initialized.
+    dheight_sq : wp.array, shape (B,), dtype=wp.float64
+        Scratch: directional derivative of slab height squared.
+        Must be zero-initialized.
+    grad_normal : wp.array, shape (B,), dtype=wp.vec3d
+        Scratch: accumulated normal cotangent. Must be zero-initialized.
+    h_grad_normal : wp.array, shape (B,), dtype=wp.vec3d
+        Scratch: HVP of normal cotangent. Must be zero-initialized.
+    grad_positions : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+        OUTPUT: HVP value for positions.
+    grad_charges : wp.array, shape (N,), dtype=wp.float64
+        OUTPUT: HVP value for charges.
+    grad_cell : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
+        OUTPUT: HVP value for cell matrices.
+    wp_dtype : type
         Warp scalar type (wp.float32 or wp.float64).
     device : str, optional
-        Warp device.
+        Warp device. If None, inferred from charges.
     """
     num_atoms = charges.shape[0]
     num_systems = cell.shape[0]

@@ -85,7 +85,7 @@ def _timed_loop(fn, n_iter=10, warmup=10):
 
 
 def _dispatch_report(label, positions, cell, pbc, cutoff, **kwargs):
-    """Print sorted Torch neighbor-list strategy costs and return the cheapest."""
+    """Print sorted Torch neighbor-list method costs and return the cheapest."""
     batch_ptr = torch.tensor(
         [0, positions.shape[0]],
         dtype=torch.int32,
@@ -100,8 +100,8 @@ def _dispatch_report(label, positions, cell, pbc, cutoff, **kwargs):
         **kwargs,
     )
     print(f"\n{label}")
-    for strategy, cost in report:
-        print(f"  {strategy:24s} estimated cost (arbitrary units): {cost:.3g}")
+    for method_name, cost in report:
+        print(f"  {method_name:24s} estimated cost (arbitrary units): {cost:.3g}")
     return report[0][0]
 
 
@@ -274,9 +274,9 @@ print(
 # %%
 # Method 3: Unified neighbor_list Wrapper (Recommended)
 # =====================================================
-# The neighbor_list() wrapper provides a unified API and can choose a strategy
+# The neighbor_list() wrapper provides a unified API and can choose a method
 # from geometry-derived cost estimates. The same estimate can be printed once
-# and reused by passing the selected strategy as ``method=...``.
+# and reused by passing the selected method as ``method=...``.
 
 print("\n" + "=" * 70)
 print("METHOD 3: UNIFIED neighbor_list() WRAPPER (RECOMMENDED)")
@@ -284,7 +284,7 @@ print("=" * 70)
 
 print("\n--- Cost-Model Method Dispatch ---")
 
-small_strategy = _dispatch_report(
+small_method = _dispatch_report(
     "Small system dispatch estimate:",
     small_positions,
     small_cell,
@@ -296,12 +296,12 @@ nm_auto_small, num_auto_small, shifts_auto_small = neighbor_list(
     cutoff,
     cell=small_cell,
     pbc=pbc,
-    method=small_strategy,
+    method=small_method,
 )
 print(f"  Total pairs: {num_auto_small.sum()}")
-print(f"  Selected strategy: {small_strategy}")
+print(f"  Selected method: {small_method}")
 
-large_strategy = _dispatch_report(
+large_method = _dispatch_report(
     "Large system dispatch estimate:",
     large_positions,
     large_cell,
@@ -313,10 +313,10 @@ nm_auto_large, num_auto_large, shifts_auto_large = neighbor_list(
     cutoff,
     cell=large_cell,
     pbc=pbc,
-    method=large_strategy,
+    method=large_method,
 )
 print(f"  Total pairs: {num_auto_large.sum()}")
-print(f"  Selected strategy: {large_strategy}")
+print(f"  Selected method: {large_method}")
 
 print("\n--- Explicit Method Selection ---")
 # You can also explicitly specify the method

@@ -85,6 +85,7 @@ Batched Cluster Tile Algorithm
 .. autofunction:: nvalchemiops.torch.neighbors.batch_cluster_tile.batch_build_cluster_tile_list
 .. autofunction:: nvalchemiops.torch.neighbors.batch_cluster_tile.batch_query_cluster_tile
 .. autofunction:: nvalchemiops.torch.neighbors.batch_cluster_tile.batch_query_cluster_tile_coo
+.. autofunction:: nvalchemiops.torch.neighbors.batch_cluster_tile.estimate_batch_max_tiles_per_group
 .. autofunction:: nvalchemiops.torch.neighbors.batch_cluster_tile.estimate_batch_cluster_tile_list_sizes
 .. autofunction:: nvalchemiops.torch.neighbors.batch_cluster_tile.estimate_batch_cluster_tile_segments
 .. autofunction:: nvalchemiops.torch.neighbors.batch_cluster_tile.allocate_batch_cluster_tile_list

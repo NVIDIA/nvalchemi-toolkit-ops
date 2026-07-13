@@ -20,8 +20,8 @@ Three helper groups:
   * ``register_warp_op_chain(...)`` — the do-everything factory. One call
     per op chain. Builds the forward custom_op + register_fake, the
     backward custom_op + register_fake (optionally), the double-backward
-    custom_op + register_fake (optionally), and wires forward→backward
-    and backward→double_backward via register_autograd. Each launcher
+    custom_op + register_fake (optionally), and wires forward->backward
+    and backward->double_backward via register_autograd. Each launcher
     is supplied as a Python function; by default the forward fake returns
     ``empty_like`` of the first tensor input, while backward and double-backward
     fakes use the configured differentiable input positions. Override with
@@ -165,7 +165,7 @@ def _build_setup_ctx_and_backward_chain(
     forward-precompute path: the forward op emits detached first-order
     derivative caches as extra outputs and the backward op consumes them as
     leading inputs, turning the first backward into a pure scale. Default
-    ``None`` ⇒ behaviour is byte-for-byte identical to the legacy path (no
+    ``None`` => behaviour is byte-for-byte identical to the legacy path (no
     forward outputs threaded), so ops that do not opt in (e.g. PME) are
     unaffected.
     """
@@ -270,7 +270,7 @@ def attach_simple_backward(
         ``(*grad_outputs, *full_inputs)``.
     save_forward_outputs : tuple[int, ...] | None
         Forward *output* indices to stash and **prepend** to the backward call
-        (before cotangents). Default ``None`` ⇒ legacy behaviour. See
+        (before cotangents). Default ``None`` => legacy behaviour. See
         ``_build_setup_ctx_and_backward_chain``.
     """
     setup_ctx, backward_chain = _build_setup_ctx_and_backward_chain(
@@ -330,10 +330,10 @@ def _schema_from_callable(fn: Callable, return_arity: int) -> str:
     """Build a torch.library schema string from a launcher's signature.
 
     Maps Python annotations to torch.library schema types. Supported:
-      ``torch.Tensor`` → ``Tensor``
-      ``bool`` / ``int`` / ``float`` → same
-      ``tuple[int, int, int]`` → ``int[3]`` (any fixed-size int tuple)
-      ``list[int]`` → ``int[]``
+      ``torch.Tensor`` -> ``Tensor``
+      ``bool`` / ``int`` / ``float`` -> same
+      ``tuple[int, int, int]`` -> ``int[3]`` (any fixed-size int tuple)
+      ``list[int]`` -> ``int[]``
       same for ``float``-valued variants
 
     Uses ``typing.get_type_hints`` to resolve string annotations
@@ -489,8 +489,8 @@ def register_warp_op_chain(
                                             ``double_backward`` is provided)
 
     and registers autograd:
-      * forward.autograd  → calls backward (via register_autograd)
-      * backward.autograd → calls double_backward (if double_backward given)
+      * forward.autograd  -> calls backward (via register_autograd)
+      * backward.autograd -> calls double_backward (if double_backward given)
 
     The minimal call for the common case is:
 

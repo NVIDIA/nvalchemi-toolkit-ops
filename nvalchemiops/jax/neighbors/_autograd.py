@@ -97,7 +97,7 @@ class _NeighborForwardOutput(NamedTuple):
     """``(K, M, 3)`` int32: PBC shift per slot."""
 
     batch_idx: jax.Array | None
-    """``(N,)`` int32 mapping atom → system for batched cells; ``None`` for
+    """``(N,)`` int32 mapping atom -> system for batched cells; ``None`` for
     single-system.  Indexed by ``i_idx`` in the backward to route per-system
     cell gradients.
     """

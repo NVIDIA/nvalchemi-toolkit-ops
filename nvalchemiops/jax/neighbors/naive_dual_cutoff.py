@@ -214,13 +214,13 @@ _jax_fill_dual_pbc_prewrapped_selective_f64 = jax_kernel(
 
 # Wrap positions single kernel wrappers
 _jax_wrap_positions_single_f32 = jax_kernel(
-    get_wrap_positions_kernel(wp.float32),
+    get_wrap_positions_kernel(wp.float32, pbc_aware=True),
     num_outputs=2,
     in_out_argnames=["positions_wrapped", "per_atom_cell_offsets"],
     enable_backward=False,
 )
 _jax_wrap_positions_single_f64 = jax_kernel(
-    get_wrap_positions_kernel(wp.float64),
+    get_wrap_positions_kernel(wp.float64, pbc_aware=True),
     num_outputs=2,
     in_out_argnames=["positions_wrapped", "per_atom_cell_offsets"],
     enable_backward=False,
@@ -608,6 +608,7 @@ def naive_neighbor_list_dual_cutoff(
                 positions,
                 cell,
                 inv_cell,
+                pbc,
                 jnp.empty((0,), dtype=jnp.int32),
                 positions_wrapped,
                 per_atom_cell_offsets,

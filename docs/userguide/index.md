@@ -175,4 +175,6 @@ components/segment_ops
 :maxdepth: 1
 :hidden:
 
+about/contributing
+about/kernel-style-guide
 ```

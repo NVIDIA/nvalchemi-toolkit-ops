@@ -759,14 +759,16 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
         )
         atom_blocks = wp.int64(max(n_atoms, wp.int32(1)) + wp.int32(63)) // wp.int64(64)
         pair_blocks = wp.int64(total_cells_i32) * wp.int64(n_outer + wp.int32(1))
-        if (not has_cuda) or pair_launch > max_launch_size or pair_blocks < atom_blocks:
+        if (not has_cuda) or pair_blocks < atom_blocks:
             wp.atomic_max(flags, 7, wp.int32(1))
+        pair_launch_effective = wp.min(pair_launch, max_launch_size)
         # Pair-centric: cheaper per pair (0.55 write, 0.5 scan) but pays a
-        # per-block launch term (0.025 * pair_launch) for its many small blocks.
+        # per-block launch term (0.025 * pair_launch_effective) for its many
+        # small blocks (capped when coarsening is required).
         cell_pair_cost = (
             setup
             + wp.float32(0.55) * expected_pairs
-            + wp.float32(0.025) * wp.float32(pair_launch)
+            + wp.float32(0.025) * wp.float32(pair_launch_effective)
             + wp.float32(0.5) * grid_work
         )
         wp.atomic_add(costs, 2, cell_atom_cost)
@@ -825,7 +827,7 @@ def _validate_selector_inputs(
     if batch_ptr.ndim != 1:
         raise ValueError("batch_ptr must be a 1-D wp.array")
     if batch_ptr.shape[0] < 2:
-        return 0
+        raise ValueError("batch_ptr must have length at least 2")
     num_systems = int(batch_ptr.shape[0] - 1)
     if cell.shape[0] != num_systems:
         raise ValueError("cell must contain one matrix per system")
@@ -935,8 +937,6 @@ def estimate_neighbor_list_costs(
     the chosen name as an explicit ``method=`` to run compiled.
     """
     num_systems = _validate_selector_inputs(batch_ptr, cell, pbc, cutoff, batch_idx)
-    if num_systems == 0:
-        return [("cell_list_atom_centric", 0.0)]
 
     if max_nbins is None:
         max_nbins = (

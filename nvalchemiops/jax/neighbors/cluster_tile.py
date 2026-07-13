@@ -41,6 +41,11 @@ from nvalchemiops.jax.neighbors._autograd import (
     _NeighborForwardOutput,
     _route_pair_outputs,
 )
+from nvalchemiops.jax.neighbors._cluster_tile_preload import (
+    _preload_cluster_tile_build_kernel,
+    _preload_cluster_tile_coo_kernel,
+    _preload_cluster_tile_query_kernel,
+)
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     coo_pack_pair_geometry,
     get_neighbor_list_from_neighbor_matrix,
@@ -168,9 +173,33 @@ def allocate_cluster_tile_list(
 ) -> tuple[jax.Array, ...]:
     """Allocate the state tensors consumed by :func:`build_cluster_tile_list`.
 
-    Returns ``(sorted_atom_index, morton_codes, sorted_pos_x, sorted_pos_y,
-    sorted_pos_z, group_ctr_x, group_ctr_y, group_ctr_z, group_ext_x,
-    group_ext_y, group_ext_z, num_tiles, tile_row_group, tile_col_group)``.
+    Parameters
+    ----------
+    total_atoms : int
+        Real atom count.  Any ``total_atoms >= 0`` is accepted.
+    dtype : jnp.dtype, optional
+        Floating-point dtype for position and bounding-box arrays.
+        Defaults to ``jnp.float32``.
+    max_tiles_per_group : int, optional
+        Upper bound on neighbor groups per row_group; controls the
+        ``tile_row_group`` / ``tile_col_group`` buffer capacity.
+        Defaults to 256.
+
+    Returns
+    -------
+    tuple of jax.Array
+        ``(sorted_atom_index, morton_codes, sorted_pos_x, sorted_pos_y,
+        sorted_pos_z, group_ctr_x, group_ctr_y, group_ctr_z, group_ext_x,
+        group_ext_y, group_ext_z, num_tiles, tile_row_group,
+        tile_col_group)`` — zero-initialised arrays with shapes and dtypes
+        matching what :func:`build_cluster_tile_list` writes in-place.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.neighbors.cluster_tile.build_cluster_tile_list` :
+        Fills the allocated buffers given positions and a cutoff.
+    :func:`nvalchemiops.jax.neighbors.cluster_tile.estimate_cluster_tile_list_sizes` :
+        Returns the scalar sizes used here without allocating.
     """
     n_padded, ngroup, ngroup_padded, max_tiles = estimate_cluster_tile_list_sizes(
         total_atoms,
@@ -330,7 +359,7 @@ def _query_cluster_tile_callback(
     cutoff: wp.float32,
     natom: wp.int32,
 ) -> None:
-    """jax_callable callback for the tile-pair → matrix conversion kernel.
+    """jax_callable callback for the tile-pair -> matrix conversion kernel.
 
     No ``n_tiles`` scalar — the warp launcher launches at the allocated
     ``tile_row_group`` capacity and guards per-tile via the device-side
@@ -373,7 +402,7 @@ def _query_cluster_tile_selective_callback(
     cutoff: wp.float32,
     natom: wp.int32,
 ) -> None:
-    """jax_callable callback for selective tile-pair → matrix conversion."""
+    """jax_callable callback for selective tile-pair -> matrix conversion."""
     _warp_query_cluster_tile(
         sorted_atom_index=sorted_atom_index,
         sorted_pos_x=sorted_pos_x,
@@ -415,7 +444,7 @@ def _query_cluster_tile_dual_callback(
     cutoff2: wp.float32,
     natom: wp.int32,
 ) -> None:
-    """jax_callable callback for dual-cutoff tile-pair → matrix conversion."""
+    """jax_callable callback for dual-cutoff tile-pair -> matrix conversion."""
     _warp_query_cluster_tile(
         sorted_atom_index=sorted_atom_index,
         sorted_pos_x=sorted_pos_x,
@@ -505,7 +534,7 @@ def _query_cluster_tile_pair_callback(
     cutoff: wp.float32,
     natom: wp.int32,
 ) -> None:
-    """jax_callable callback for the pair-output tile-pair → matrix kernel.
+    """jax_callable callback for the pair-output tile-pair -> matrix kernel.
 
     Same as :func:`_query_cluster_tile_callback` but with additional
     ``neighbor_vectors`` / ``neighbor_distances`` in/out arrays that the
@@ -561,7 +590,7 @@ def _query_cluster_tile_coo_callback(
     natom: wp.int32,
     max_pairs: wp.int32,
 ) -> None:
-    """jax_callable callback for the tile-pair → flat COO conversion kernel.
+    """jax_callable callback for the tile-pair -> flat COO conversion kernel.
 
     No ``n_tiles`` scalar — the warp launcher launches at the allocated
     ``tile_row_group`` capacity and guards per-tile via the device-side
@@ -728,7 +757,7 @@ _jax_query_cluster_tile_pair = jax_callable(
 @functools.cache
 def _get_jax_cluster_tile_pair_fn_callable(pair_fn):
     """Build (and cache) a ``jax_callable`` that closes over ``pair_fn`` for the
-    cluster-tile pair-output → matrix kernel.
+    cluster-tile pair-output -> matrix kernel.
 
     Same as ``_jax_query_cluster_tile_pair`` but the callback closes over
     ``pair_fn`` (which cannot cross the JAX trace boundary as data) and adds the
@@ -948,6 +977,11 @@ def build_cluster_tile_list(
         tile_col_group = jnp.zeros(max_tiles, dtype=jnp.int32)
 
     if rebuild_flags is None:
+        _preload_cluster_tile_build_kernel(
+            batched=False,
+            segmented=False,
+            selective=False,
+        )
         (
             group_ctr_x,
             group_ctr_y,
@@ -976,6 +1010,11 @@ def build_cluster_tile_list(
             float(cutoff),
         )
     else:
+        _preload_cluster_tile_build_kernel(
+            batched=False,
+            segmented=False,
+            selective=True,
+        )
         rf = rebuild_flags.flatten()[:1].astype(jnp.bool_)
         (
             group_ctr_x,
@@ -1058,22 +1097,101 @@ def query_cluster_tile(
 ) -> tuple[jax.Array, ...]:
     """Convert the tile pair list to dense neighbor-matrix form.
 
-    Returns ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``.
-    Skip-prefill: the warp kernel only writes the active entries, then a
-    JAX-side ``jnp.where`` fills the unused tail columns with
-    ``fill_value`` (defaults to ``natom``).
+    Skip-prefill: the Warp kernel only writes the active entries, then a
+    JAX-side ``jnp.where`` fills unused tail columns with ``fill_value``
+    (defaults to ``natom``).
 
     Cluster-tile does not support partial neighbor lists; there is no
     ``target_indices`` kwarg.  Pair-output kwargs (``return_vectors`` /
-    ``return_distances`` / ``pair_fn`` and associated buffers) are
-    rejected with ``NotImplementedError`` when set because the JAX
-    ``jax_callable`` pathway here cannot carry a
-    callable ``pair_fn`` across the trace boundary.  Callers needing
-    these axes should use the torch binding
-    (:func:`nvalchemiops.torch.neighbors.cluster_tile.query_cluster_tile`)
-    or call
-    :func:`nvalchemiops.neighbors.cluster_tile.query_cluster_tile` directly
-    on Warp arrays.
+    ``return_distances`` / ``pair_fn`` and associated buffers) are supported
+    on the eager-cutoff fp32 matrix path.  They are rejected when combined
+    with ``cutoff2`` or ``rebuild_flags`` because those JAX cluster-tile paths
+    are topology-only.
+
+    Parameters
+    ----------
+    sorted_atom_index : jax.Array, shape (n_padded,), dtype=int32
+        Morton-sorted atom permutation produced by
+        :func:`build_cluster_tile_list`.
+    sorted_pos_x : jax.Array, shape (n_padded,), dtype=float32
+        Sorted x-coordinates (SoA layout).
+    sorted_pos_y : jax.Array, shape (n_padded,), dtype=float32
+        Sorted y-coordinates (SoA layout).
+    sorted_pos_z : jax.Array, shape (n_padded,), dtype=float32
+        Sorted z-coordinates (SoA layout).
+    num_tiles : jax.Array, shape (1,), dtype=int32
+        Device-side count of active tile pairs.
+    tile_row_group : jax.Array, shape (max_tiles,), dtype=int32
+        Row group index for each tile pair.
+    tile_col_group : jax.Array, shape (max_tiles,), dtype=int32
+        Column group index for each tile pair.
+    cell : jax.Array, shape (3, 3) or (1, 3, 3), dtype=float32
+        Unit cell matrix.
+    cutoff : float
+        Primary neighbor cutoff radius.
+    natom : int
+        Real atom count (excluding padding).
+    max_neighbors : int
+        Maximum number of neighbors per atom; sets the column dimension of
+        the output neighbor matrix.
+    fill_value : int, optional
+        Sentinel value written into unused neighbor slots.  Defaults to
+        ``natom``.
+    cutoff2 : float, optional
+        Second cutoff for dual-matrix output.  Requires
+        ``neighbor_matrix2`` / ``num_neighbors2`` /
+        ``neighbor_matrix_shifts2`` output buffers.
+    neighbor_matrix : jax.Array, shape (natom, max_neighbors), dtype=int32, optional
+        Pre-allocated output buffer for neighbor indices.
+    num_neighbors : jax.Array, shape (natom,), dtype=int32, optional
+        Pre-allocated output buffer for per-atom neighbor counts.
+    neighbor_matrix_shifts : jax.Array, shape (natom, max_neighbors, 3), dtype=int32, optional
+        Pre-allocated output buffer for periodic image shift vectors.
+    neighbor_matrix2 : jax.Array, shape (natom, max_neighbors), dtype=int32, optional
+        Second neighbor-matrix buffer for dual-cutoff mode.
+    num_neighbors2 : jax.Array, shape (natom,), dtype=int32, optional
+        Second per-atom neighbor counts for dual-cutoff mode.
+    neighbor_matrix_shifts2 : jax.Array, shape (natom, max_neighbors, 3), dtype=int32, optional
+        Second shift buffer for dual-cutoff mode.
+    rebuild_flags : jax.Array, shape (1,), dtype=bool, optional
+        When set, skips atoms flagged as unchanged; requires all
+        ``previous_*`` buffers to be passed.
+    return_vectors : bool, optional
+        If True, also fill and return per-pair displacement vectors.
+    return_distances : bool, optional
+        If True, also fill and return per-pair scalar distances.
+    pair_fn : wp.Function, optional
+        Warp kernel for inline pair-potential evaluation.
+    pair_params : jax.Array, shape (natom, K), dtype=float32, optional
+        Per-atom parameters forwarded to ``pair_fn``; required when
+        ``pair_fn`` is set.
+    neighbor_vectors : jax.Array, shape (natom, max_neighbors, 3), dtype=float32, optional
+        Pre-allocated output buffer for displacement vectors.
+    neighbor_distances : jax.Array, shape (natom, max_neighbors), dtype=float32, optional
+        Pre-allocated output buffer for scalar distances.
+    pair_energies : jax.Array, shape (natom, max_neighbors), dtype=float32, optional
+        Pre-allocated output buffer for per-pair energies (``pair_fn`` path).
+    pair_forces : jax.Array, shape (natom, max_neighbors, 3), dtype=float32, optional
+        Pre-allocated output buffer for per-pair forces (``pair_fn`` path).
+
+    Returns
+    -------
+    tuple of jax.Array
+        Base return is ``(neighbor_matrix, num_neighbors,
+        neighbor_matrix_shifts)``.  With ``cutoff2``, six arrays are
+        returned: the base triple followed by
+        ``(neighbor_matrix2, num_neighbors2, neighbor_matrix_shifts2)``.
+        With ``return_vectors`` / ``return_distances`` / ``pair_fn``, the
+        base is extended with the requested per-pair arrays in the order
+        ``(*, neighbor_vectors, neighbor_distances)`` and optionally
+        ``(*, pair_energies, pair_forces)``.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.neighbors.cluster_tile.build_cluster_tile_list` :
+        Builds the tile state consumed by this function.
+    :func:`nvalchemiops.jax.neighbors.cluster_tile.query_cluster_tile_coo` :
+        Alternative COO-format output from the same tile state.
     """
 
     if pair_fn is not None and pair_params is None:
@@ -1091,6 +1209,15 @@ def query_cluster_tile(
             "features in this pass and cannot be combined with "
             "return_distances or return_vectors.",
         )
+    _preload_cluster_tile_query_kernel(
+        batched=False,
+        tile_segmented=False,
+        selective=selective,
+        dual_cutoff=dual_cutoff,
+        return_vectors=has_pair_outputs,
+        return_distances=has_pair_outputs,
+        pair_fn=pair_fn,
+    )
     if fill_value is None:
         fill_value = natom
     cell_n = _normalize_cell(cell, jnp.float32)
@@ -1362,15 +1489,79 @@ def query_cluster_tile_coo(
 ) -> tuple[jax.Array, ...]:
     """Convert the tile pair list to flat COO form.
 
-    Compact mode returns (neighbor_list, neighbor_ptr, neighbor_list_shifts).
-    Segmented mode returns fixed buffers as
-    (neighbor_list, pair_offsets, pair_counts, neighbor_list_shifts).
+    In compact mode the pair count is data-dependent (eager-only).  In
+    segmented mode the output arrays have fixed shapes dictated by
+    ``pair_offsets`` so the call is ``jit``-compatible.
+
+    Parameters
+    ----------
+    sorted_atom_index : jax.Array, shape (n_padded,), dtype=int32
+        Morton-sorted atom permutation from :func:`build_cluster_tile_list`.
+    sorted_pos_x : jax.Array, shape (n_padded,), dtype=float32
+        Sorted x-coordinates (SoA).
+    sorted_pos_y : jax.Array, shape (n_padded,), dtype=float32
+        Sorted y-coordinates (SoA).
+    sorted_pos_z : jax.Array, shape (n_padded,), dtype=float32
+        Sorted z-coordinates (SoA).
+    num_tiles : jax.Array, shape (1,), dtype=int32
+        Device-side count of active tile pairs.
+    tile_row_group : jax.Array, shape (max_tiles,), dtype=int32
+        Row group index for each tile pair.
+    tile_col_group : jax.Array, shape (max_tiles,), dtype=int32
+        Column group index for each tile pair.
+    cell : jax.Array, shape (3, 3) or (1, 3, 3), dtype=float32
+        Unit cell matrix.
+    cutoff : float
+        Neighbor cutoff radius.
+    natom : int
+        Real atom count (excluding padding).
+    max_pairs : int
+        Upper bound on the number of pair entries in compact mode.
+        Ignored in segmented mode (derived from ``pair_offsets[-1]``).
+    rebuild_flags : jax.Array, shape (1,), dtype=bool, optional
+        Selective-rebuild flag.  Requires ``pair_offsets`` and
+        ``pair_counts`` (segmented mode only).
+    pair_offsets : jax.Array, shape (ngroup + 1,), dtype=int32, optional
+        CSR-style offsets into the fixed segmented pair buffer.
+        Pass together with ``pair_counts`` to activate segmented mode.
+    pair_counts : jax.Array, shape (ngroup,), dtype=int32, optional
+        Per-group pair counts for the fixed segmented buffer.
+    neighbor_list : jax.Array, shape (2, max_pairs), dtype=int32, optional
+        Pre-allocated COO list buffer (segmented mode).
+    neighbor_list_shifts : jax.Array, shape (max_pairs, 3), dtype=int32, optional
+        Pre-allocated shift vector buffer (segmented mode).
+
+    Returns
+    -------
+    tuple of jax.Array
+        Compact mode: ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)``
+        where ``neighbor_list`` has shape ``(2, n_pairs)``,
+        ``neighbor_ptr`` is the CSR row pointer of shape ``(natom + 1,)``,
+        and ``neighbor_list_shifts`` has shape ``(n_pairs, 3)``.
+
+        Segmented mode: ``(neighbor_list, pair_offsets, pair_counts,
+        neighbor_list_shifts)`` where ``neighbor_list`` has shape
+        ``(2, max_pairs)`` with fixed buffer size, and ``pair_counts``
+        reports the filled counts per group.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.neighbors.cluster_tile.query_cluster_tile` :
+        Dense neighbor-matrix output from the same tile state.
+    :func:`nvalchemiops.jax.neighbors.cluster_tile.build_cluster_tile_list` :
+        Builds the tile state consumed by this function.
     """
     segmented = pair_offsets is not None or pair_counts is not None
     if (pair_offsets is None) != (pair_counts is None):
         raise ValueError("Pass both 'pair_offsets' and 'pair_counts', or neither.")
     if rebuild_flags is not None and not segmented:
         raise ValueError("rebuild_flags requires pair_offsets and pair_counts")
+    _preload_cluster_tile_coo_kernel(
+        batched=False,
+        tile_segmented=False,
+        coo_segmented=segmented,
+        selective=segmented,
+    )
 
     cell_n = _normalize_cell(cell, jnp.float32)
     inv_cell_n = jnp.linalg.inv(cell_n[0])[jnp.newaxis, :, :]
@@ -1602,10 +1793,9 @@ def cluster_tile_neighbor_list(
         If True, append per-pair displacement vectors / scalar distances
         to the matrix-format return tuple. Matrix format only.
     pair_fn, pair_params, neighbor_vectors, neighbor_distances, pair_energies, pair_forces : optional
-        Reserved for parity with the torch binding. Raise
-        ``NotImplementedError`` on the JAX path because the JAX
-        ``jax_callable`` pathway cannot carry a callable ``pair_fn`` across
-        the trace boundary.
+        Pair-output buffers and inline pair potential. Supported on the
+        eager-cutoff fp32 matrix/COO paths; rejected with ``cutoff2``,
+        ``rebuild_flags``, or ``format="tile"``.
 
     Returns
     -------
@@ -1857,6 +2047,9 @@ def cluster_tile_neighbor_list(
             tail.extend((pe_out, pf_out))
         return (*base, *tail)
 
+    positions_topology = jax.lax.stop_gradient(positions)
+    cell_topology = jax.lax.stop_gradient(cell)
+
     # Tile candidates must cover the larger radius so the cutoff2 matrix cannot
     # miss pairs in the (cutoff, cutoff2] shell; the query filters each matrix
     # by its own cutoff.
@@ -1877,9 +2070,9 @@ def cluster_tile_neighbor_list(
         tile_row_group,
         tile_col_group,
     ) = build_cluster_tile_list(
-        positions,
+        positions_topology,
         build_cutoff,
-        cell,
+        cell_topology,
         rebuild_flags=rebuild_flags,
         num_tiles=previous_num_tiles,
         tile_row_group=previous_tile_row_group,
@@ -1916,7 +2109,7 @@ def cluster_tile_neighbor_list(
                 num_tiles,
                 tile_row_group,
                 tile_col_group,
-                cell,
+                cell_topology,
                 cutoff,
                 N,
                 int(pair_offsets[-1]),
@@ -1937,7 +2130,7 @@ def cluster_tile_neighbor_list(
             num_tiles,
             tile_row_group,
             tile_col_group,
-            cell,
+            cell_topology,
             cutoff,
             N,
             int(max_pairs),
@@ -1952,7 +2145,7 @@ def cluster_tile_neighbor_list(
         num_tiles,
         tile_row_group,
         tile_col_group,
-        cell,
+        cell_topology,
         cutoff,
         N,
         int(max_neighbors),

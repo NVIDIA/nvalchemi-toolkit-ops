@@ -67,12 +67,150 @@ def compute_batch_pair_centric_n_outer(
     return (2 * Rx + 1) * (2 * Ry + 1) * (2 * Rz + 1) - 1
 
 
+def _pair_centric_logical_block_count(total_cells: int, n_outer: int) -> int:
+    """Return the number of logical (source cell, offset) blocks.
+
+    Parameters
+    ----------
+    total_cells : int
+        Number of source cells in the launch.
+    n_outer : int
+        Number of non-self neighbor-cell offsets.
+
+    Returns
+    -------
+    int
+        Total logical block count ``total_cells * (n_outer + 1)``.
+    """
+    return int(total_cells) * (int(n_outer) + 1)
+
+
+def _pair_centric_max_cuda_blocks(
+    block_dim: int = 64,
+    *,
+    max_launch_size: int = PAIR_CENTRIC_MAX_LINEAR_LAUNCH,
+) -> int:
+    """Return the maximum CUDA blocks that fit in one Warp launch.
+
+    Parameters
+    ----------
+    block_dim : int, default=64
+        Threads per CUDA block.
+    max_launch_size : int, default=PAIR_CENTRIC_MAX_LINEAR_LAUNCH
+        Maximum allowed one-dimensional Warp launch size.
+
+    Returns
+    -------
+    int
+        Maximum CUDA blocks ``max_launch_size // block_dim``, at least 1.
+
+    Raises
+    ------
+    ValueError
+        If ``block_dim <= 0`` or ``max_launch_size < block_dim``.
+    """
+    block_dim_int = int(block_dim)
+    max_launch_int = int(max_launch_size)
+    if block_dim_int <= 0:
+        raise ValueError(f"block_dim must be positive, got {block_dim_int}")
+    if max_launch_int < block_dim_int:
+        raise ValueError(
+            f"max_launch_size ({max_launch_int}) must be >= block_dim ({block_dim_int})"
+        )
+    return max(1, max_launch_int // block_dim_int)
+
+
+def _pair_centric_work_per_cuda_block(
+    total_cells: int,
+    n_outer: int,
+    block_dim: int = 64,
+    *,
+    max_launch_size: int = PAIR_CENTRIC_MAX_LINEAR_LAUNCH,
+) -> int:
+    """Return how many logical blocks each CUDA block processes when coarsening.
+
+    Parameters
+    ----------
+    total_cells : int
+        Number of source cells in the launch.
+    n_outer : int
+        Number of non-self neighbor-cell offsets.
+    block_dim : int, default=64
+        Threads per CUDA block.
+    max_launch_size : int, default=PAIR_CENTRIC_MAX_LINEAR_LAUNCH
+        Maximum allowed one-dimensional Warp launch size.
+
+    Returns
+    -------
+    int
+        Logical blocks per CUDA block.  Returns 1 when the uncoarsened
+        fast path fits within ``max_launch_size``.
+
+    Raises
+    ------
+    ValueError
+        If ``block_dim <= 0`` or ``max_launch_size < block_dim``.
+    """
+    logical_blocks = _pair_centric_logical_block_count(total_cells, n_outer)
+    max_cuda_blocks = _pair_centric_max_cuda_blocks(
+        block_dim,
+        max_launch_size=max_launch_size,
+    )
+    return max(1, (logical_blocks + max_cuda_blocks - 1) // max_cuda_blocks)
+
+
+def _pair_centric_coarsened_launch_size(
+    total_cells: int,
+    n_outer: int,
+    block_dim: int = 64,
+    *,
+    max_launch_size: int = PAIR_CENTRIC_MAX_LINEAR_LAUNCH,
+) -> int:
+    """Return the one-dimensional Warp launch size after coarsening.
+
+    Parameters
+    ----------
+    total_cells : int
+        Number of source cells in the launch.
+    n_outer : int
+        Number of non-self neighbor-cell offsets.
+    block_dim : int, default=64
+        Threads per CUDA block.
+    max_launch_size : int, default=PAIR_CENTRIC_MAX_LINEAR_LAUNCH
+        Maximum allowed one-dimensional Warp launch size.
+
+    Returns
+    -------
+    int
+        Total launch dimension ``ceil(logical_blocks / work_per_cuda_block)
+        * block_dim``.
+
+    Raises
+    ------
+    ValueError
+        If ``block_dim <= 0`` or ``max_launch_size < block_dim``.
+    """
+    logical_blocks = _pair_centric_logical_block_count(total_cells, n_outer)
+    work_per_cuda_block = _pair_centric_work_per_cuda_block(
+        total_cells,
+        n_outer,
+        block_dim,
+        max_launch_size=max_launch_size,
+    )
+    cuda_blocks = (logical_blocks + work_per_cuda_block - 1) // work_per_cuda_block
+    return cuda_blocks * int(block_dim)
+
+
 def pair_centric_launch_size(
     total_cells: int,
     n_outer: int,
     block_dim: int = 64,
 ) -> int:
-    """Return the linear launch size for a pair-centric cell-list query.
+    """Return the uncoarsened linear launch size for a pair-centric query.
+
+    This describes the fast-path launch shape (one logical block per CUDA
+    block).  Oversized launches use
+    :func:`_pair_centric_coarsened_launch_size` instead.
 
     Parameters
     ----------
@@ -86,7 +224,7 @@ def pair_centric_launch_size(
     Returns
     -------
     int
-        Total one-dimensional Warp launch size.
+        Total one-dimensional Warp launch size for the uncoarsened fast path.
     """
     return int(total_cells) * (int(n_outer) + 1) * int(block_dim)
 
@@ -98,7 +236,11 @@ def is_pair_centric_launch_safe(
     *,
     max_launch_size: int = PAIR_CENTRIC_MAX_LINEAR_LAUNCH,
 ) -> bool:
-    """Return whether a pair-centric launch fits the safe linear launch limit.
+    """Return whether the uncoarsened pair-centric fast path fits the launch limit.
+
+    A ``False`` result does not mean pair-centric is infeasible; the
+    launcher may transparently coarsen logical blocks into fewer CUDA
+    blocks via :func:`_pair_centric_work_per_cuda_block`.
 
     Parameters
     ----------
@@ -114,7 +256,7 @@ def is_pair_centric_launch_safe(
     Returns
     -------
     bool
-        ``True`` if the pair-centric launch size is safe.
+        ``True`` if the uncoarsened fast-path launch size is safe.
     """
     return pair_centric_launch_size(total_cells, n_outer, block_dim) <= int(
         max_launch_size
@@ -164,8 +306,8 @@ def select_cell_list_strategy(
     Sync-free: takes Python ints / floats, no GPU reads.  Note this applies to
     the strategy *decision* only; once ``"pair_centric"`` is chosen, the Torch
     launcher materializes launch metadata (``n_outer`` per axis, and for the
-    batched path ``R_max`` / ``total_cells``) via ``.item()`` / ``.tolist()``,
-    which do synchronize to host.  ``"atom_centric"`` avoids those reads.
+    batched path ``R_max`` / ``total_cells``) via scalar tensor readbacks, which
+    do synchronize to host.  ``"atom_centric"`` avoids those reads.
 
     Pair-centric wins iff any of:
       1. ``cutoff >= 8  AND N <= 65536``

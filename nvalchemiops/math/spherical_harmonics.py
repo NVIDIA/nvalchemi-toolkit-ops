@@ -691,10 +691,10 @@ def _eval_spherical_harmonics_kernel(
     L_max: int,
     output: wp.array2d(dtype=wp.float64),
 ):
-    """Evaluate real spherical harmonics Y_l^m at multiple positions.
+    r"""Evaluate real spherical harmonics Y_l^m at multiple positions.
 
     Computes orthonormalized real spherical harmonics up to angular momentum L_max.
-    For each position r, evaluates Y_l^m(r̂) where r̂ = r/|r| is the unit direction.
+    For each position r, evaluates :math:`Y_l^m(\hat{r})` where :math:`\hat{r} = r/|r|` is the unit direction.
 
     Launch Grid
     -----------
@@ -719,9 +719,9 @@ def _eval_spherical_harmonics_kernel(
     -----
     - Uses orthonormal real spherical harmonics with integral normalization.
     - At the origin (r=0), returns 0 for L>0 harmonics (singularity handled via EPSILON).
-    - L=0 (monopole) is constant: Y_0^0 = 1/√(4π).
-    - L=1 (dipole) scales as r̂ components.
-    - L=2 (quadrupole) scales as products of r̂ components.
+    - L=0 (monopole) is constant: :math:`Y_0^0 = 1/\sqrt{4\pi}`.
+    - L=1 (dipole) scales as :math:`\hat{r}` components.
+    - L=2 (quadrupole) scales as products of :math:`\hat{r}` components.
     """
     i = wp.tid()
     r = positions[i]
@@ -750,9 +750,9 @@ def _eval_spherical_harmonics_gradient_kernel(
     L_max: int,
     output: wp.array(dtype=wp.vec3d, ndim=2),
 ):
-    """Evaluate gradients of real spherical harmonics with respect to position.
+    r"""Evaluate gradients of real spherical harmonics with respect to position.
 
-    Computes ∇_r Y_l^m(r) for all harmonics up to L_max at each position.
+    Computes :math:`\nabla_r Y_l^m(r)` for all harmonics up to L_max at each position.
     These gradients are useful for force calculations and sensitivity analysis.
 
     Launch Grid
@@ -768,14 +768,14 @@ def _eval_spherical_harmonics_gradient_kernel(
     L_max : int
         Maximum angular momentum quantum number (0, 1, or 2).
     output : wp.array(dtype=wp.vec3d, ndim=2), shape (N, num_components)
-        Output gradient vectors where each entry is a 3D gradient ∇Y_l^m.
+        Output gradient vectors where each entry is a 3D gradient :math:`\nabla Y_l^m`.
         Number of components follows same convention as _eval_spherical_harmonics_kernel.
 
     Notes
     -----
     - Gradient of Y_0^0 is always zero (constant function).
     - Gradients computed analytically using chain rule on r/|r| terms.
-    - Near origin (r→0), gradients may have numerical issues but are regularized.
+    - Near origin (:math:`r \to 0`), gradients may have numerical issues but are regularized.
     - Output shape: (N, num_components, 3) when viewed as torch tensor.
     """
     i = wp.tid()

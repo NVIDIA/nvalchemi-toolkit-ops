@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-from jax.custom_transpose import custom_transpose
 from jax.interpreters import ad as jax_ad
 
 from nvalchemiops.interactions.electrostatics.slab_kernels import (
@@ -677,50 +676,36 @@ def _slab_energy_hvp(
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Linear slab HVP wrapper with an explicit transpose rule."""
 
-    @custom_transpose
-    def _linear_hvp(res_arg, lin_arg):
-        lin_positions, lin_charges, lin_cell = lin_arg
-        res_positions, res_charges, res_cell, res_pbc, res_batch_idx = res_arg
+    # The HVP is a symmetric linear map in (v_positions, v_charges, v_cell);
+    # custom_vjp supplies its transpose (== itself) so reverse-mode over this
+    # JVP yields the Hessian.
+    @jax.custom_vjp
+    def _linear_hvp(lin_positions, lin_charges, lin_cell):
         return _slab_energy_hvp_raw(
             lin_positions,
             lin_charges,
             lin_cell,
-            res_positions,
-            res_charges,
-            res_cell,
-            res_pbc,
-            res_batch_idx,
+            positions,
+            charges,
+            cell,
+            pbc,
+            batch_idx,
         )
 
-    @_linear_hvp.def_transpose
-    def _linear_hvp_transpose(res_arg, ct_out):
-        res_positions, res_charges, res_cell, *_rest = res_arg
+    def _linear_hvp_fwd(lin_positions, lin_charges, lin_cell):
+        return _linear_hvp(lin_positions, lin_charges, lin_cell), None
+
+    def _linear_hvp_bwd(_res, ct_out):
         ct_positions, ct_charges, ct_cell = ct_out
         return _linear_hvp(
-            (
-                jax.core.ShapedArray(res_positions.shape, res_positions.dtype),
-                jax.core.ShapedArray(res_charges.shape, res_charges.dtype),
-                jax.core.ShapedArray(res_cell.shape, res_cell.dtype),
-            ),
-            res_arg,
-            (
-                _tangent_or_zeros(
-                    ct_positions, res_positions, dtype=res_positions.dtype
-                ),
-                _tangent_or_zeros(ct_charges, res_charges, dtype=res_charges.dtype),
-                _tangent_or_zeros(ct_cell, res_cell, dtype=res_cell.dtype),
-            ),
+            _tangent_or_zeros(ct_positions, positions, dtype=positions.dtype),
+            _tangent_or_zeros(ct_charges, charges, dtype=charges.dtype),
+            _tangent_or_zeros(ct_cell, cell, dtype=cell.dtype),
         )
 
-    return _linear_hvp(
-        (
-            jax.core.ShapedArray(positions.shape, positions.dtype),
-            jax.core.ShapedArray(charges.shape, charges.dtype),
-            jax.core.ShapedArray(cell.shape, cell.dtype),
-        ),
-        (positions, charges, cell, pbc, batch_idx),
-        (v_positions, v_charges, v_cell),
-    )
+    _linear_hvp.defvjp(_linear_hvp_fwd, _linear_hvp_bwd)
+
+    return _linear_hvp(v_positions, v_charges, v_cell)
 
 
 _slab_energy_derivatives.defjvp(_slab_energy_derivatives_jvp, symbolic_zeros=True)

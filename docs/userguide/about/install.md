@@ -186,8 +186,6 @@ $ uv add nvalchemi-toolkit-ops
 
 </details>
 
-(cuda-13-installation)=
-
 ## CUDA 13 Installation
 
 Blackwell GPUs require packages/dependencies that are built for CUDA 13, which
@@ -196,7 +194,7 @@ provide CUDA 13 wheels from the default PyPI index on Linux x86_64 and aarch64.
 
 ### Warp
 
-The PyPI `warp-lang` package ships with CUDA 12, and as of writing CUDA 13
+The PyPI `warp-lang` package ships with CUDA 12. CUDA 13
 wheels can be obtained from the [Warp GitHub Releases](https://github.com/NVIDIA/warp/releases)
 page. Copy the URL of the appropriate `+cu13` wheel for your platform and pass it to
 `pip install`. Select the wheel matching your architecture:

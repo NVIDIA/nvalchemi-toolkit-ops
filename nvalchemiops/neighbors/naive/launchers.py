@@ -101,6 +101,7 @@ def _wrap_pbc_positions(
     positions: wp.array,
     cell: wp.array,
     inv_cell: wp.array,
+    pbc: wp.array | None,
     positions_wrapped: wp.array,
     per_atom_cell_offsets: wp.array,
     wp_dtype: type,
@@ -122,6 +123,7 @@ def _wrap_pbc_positions(
             per_atom_cell_offsets,
             wp_dtype,
             device,
+            pbc=pbc,
         )
         return
     wrap_positions_single(
@@ -132,12 +134,14 @@ def _wrap_pbc_positions(
         per_atom_cell_offsets,
         wp_dtype,
         device,
+        pbc=pbc,
     )
 
 
 def _prepare_pbc_positions(
     positions: wp.array,
     cell: wp.array,
+    pbc: wp.array | None,
     batch_idx: wp.array | None,
     wp_dtype: type,
     device: str,
@@ -173,6 +177,7 @@ def _prepare_pbc_positions(
         positions,
         cell,
         inv_cell_buffer,
+        pbc,
         positions_wrapped_buffer,
         per_atom_cell_offsets_buffer,
         wp_dtype,
@@ -228,7 +233,7 @@ def _launch_naive_neighbor_matrix_no_pbc(
     neighbor_distances: wp.array | None = None,
     pair_energies: wp.array | None = None,
     pair_forces: wp.array | None = None,
-    native_strategy: str = "auto",
+    strategy: str = "auto",
 ) -> None:
     """Launch the single-cutoff no-PBC naive neighbor-matrix path."""
     if batched and (batch_idx is None or batch_ptr is None):
@@ -253,17 +258,16 @@ def _launch_naive_neighbor_matrix_no_pbc(
     # ``use_tiled`` heuristic: the tile-cooperative kernel wins for
     # few-large-systems but the scalar thread-local-counter kernel wins for
     # many-small-systems, so dispatch on the atoms-per-system density.
-    if native_strategy not in {"auto", "scalar", "tile"}:
+    if strategy not in {"auto", "scalar", "tile"}:
         raise ValueError(
-            "native_strategy must be 'auto' | 'scalar' | 'tile', "
-            f"got {native_strategy!r}",
+            f"strategy must be 'auto' | 'scalar' | 'tile', got {strategy!r}",
         )
-    if native_strategy == "scalar":
+    if strategy == "scalar":
         strategy = "scalar"
-    elif native_strategy == "tile":
+    elif strategy == "tile":
         if has_pair_outputs or _is_cpu_device(device):
             raise ValueError(
-                "native_strategy='tile' requires CUDA and no pair-output or "
+                "strategy='tile' requires CUDA and no pair-output or "
                 "target_indices path",
             )
         strategy = "tile"
@@ -417,6 +421,7 @@ def _launch_naive_neighbor_matrix_pbc(
     positions: wp.array,
     cutoff: float,
     cell: wp.array,
+    pbc: wp.array | None,
     shift_range: wp.array,
     neighbor_matrix: wp.array,
     neighbor_matrix_shifts: wp.array,
@@ -446,7 +451,7 @@ def _launch_naive_neighbor_matrix_pbc(
     positions_wrapped_buffer: wp.array | None = None,
     per_atom_cell_offsets_buffer: wp.array | None = None,
     inv_cell_buffer: wp.array | None = None,
-    native_strategy: str = "auto",
+    strategy: str = "auto",
 ) -> None:
     """Launch the single-cutoff PBC naive neighbor-matrix path."""
     if batched:
@@ -474,24 +479,23 @@ def _launch_naive_neighbor_matrix_pbc(
     )
     partial = target_indices is not None
     pbc_mode = _pbc_mode_from_wrap(wrap_positions)
-    if native_strategy not in {"auto", "scalar", "tile"}:
+    if strategy not in {"auto", "scalar", "tile"}:
         raise ValueError(
-            "native_strategy must be 'auto' | 'scalar' | 'tile', "
-            f"got {native_strategy!r}",
+            f"strategy must be 'auto' | 'scalar' | 'tile', got {strategy!r}",
         )
     can_tile = (
         not has_pair_outputs
         and not _is_cpu_device(device)
         and (not batched or wrap_positions)
     )
-    if native_strategy == "tile":
+    if strategy == "tile":
         if not can_tile:
             raise ValueError(
-                "native_strategy='tile' requires CUDA, no pair-output or "
+                "strategy='tile' requires CUDA, no pair-output or "
                 "target_indices path, and wrap_positions=True for batched PBC",
             )
         strategy = "tile"
-    elif native_strategy == "scalar":
+    elif strategy == "scalar":
         strategy = "scalar"
     elif can_tile:
         strategy = "tile"
@@ -501,6 +505,7 @@ def _launch_naive_neighbor_matrix_pbc(
     positions_work, per_atom_cell_offsets = _prepare_pbc_positions(
         positions,
         cell,
+        pbc,
         batch_idx,
         wp_dtype,
         device,
@@ -746,6 +751,7 @@ def _launch_naive_neighbor_matrix_pbc_dual_cutoff(
     cutoff1: float,
     cutoff2: float,
     cell: wp.array,
+    pbc: wp.array | None,
     shift_range: wp.array,
     neighbor_matrix1: wp.array,
     neighbor_matrix2: wp.array,
@@ -775,6 +781,7 @@ def _launch_naive_neighbor_matrix_pbc_dual_cutoff(
     positions_work, per_atom_cell_offsets = _prepare_pbc_positions(
         positions,
         cell,
+        pbc,
         batch_idx,
         wp_dtype,
         device,
@@ -880,7 +887,7 @@ def naive_neighbor_matrix(
     neighbor_distances: wp.array | None = None,
     pair_energies: wp.array | None = None,
     pair_forces: wp.array | None = None,
-    native_strategy: str = "auto",
+    strategy: str = "auto",
 ) -> None:
     """Core warp launcher for naive neighbor matrix construction (no PBC).
 
@@ -1011,7 +1018,7 @@ def naive_neighbor_matrix(
         neighbor_distances=neighbor_distances,
         pair_energies=pair_energies,
         pair_forces=pair_forces,
-        native_strategy=native_strategy,
+        strategy=strategy,
     )
 
 
@@ -1035,7 +1042,7 @@ def batch_naive_neighbor_matrix(
     neighbor_distances: wp.array | None = None,
     pair_energies: wp.array | None = None,
     pair_forces: wp.array | None = None,
-    native_strategy: str = "auto",
+    strategy: str = "auto",
 ) -> None:
     """Core warp launcher for batched naive neighbor matrix construction (no PBC).
 
@@ -1171,7 +1178,7 @@ def batch_naive_neighbor_matrix(
         neighbor_distances=neighbor_distances,
         pair_energies=pair_energies,
         pair_forces=pair_forces,
-        native_strategy=native_strategy,
+        strategy=strategy,
     )
 
 
@@ -1201,11 +1208,12 @@ def naive_neighbor_matrix_pbc(
     positions_wrapped_buffer: wp.array | None = None,
     per_atom_cell_offsets_buffer: wp.array | None = None,
     inv_cell_buffer: wp.array | None = None,
-    native_strategy: str = "auto",
+    strategy: str = "auto",
     # Deprecated kwarg aliases:
     positions_wrapped: wp.array | None = None,
     per_atom_cell_offsets: wp.array | None = None,
     inv_cell: wp.array | None = None,
+    pbc: wp.array | None = None,
 ) -> None:
     """Core warp launcher for naive neighbor matrix construction with PBC.
 
@@ -1285,6 +1293,10 @@ def naive_neighbor_matrix_pbc(
     inv_cell_buffer : wp.array, shape (num_systems,), dtype=wp.mat33*, optional
         Caller-supplied scratch buffer for inverse cell matrices
         (only used when ``wrap_positions=True``).
+    pbc : wp.array, shape (1, 3), dtype=wp.bool, optional
+        Per-axis periodic boundary flags.  When supplied, axes marked False
+        are left unwrapped during position wrapping.  When omitted, wrapping
+        uses the existing all-axis behavior.
     positions_wrapped, per_atom_cell_offsets, inv_cell : deprecated
         Deprecated aliases of the ``*_buffer`` kwargs above.
 
@@ -1343,6 +1355,7 @@ def naive_neighbor_matrix_pbc(
             positions,
             cutoff,
             cell,
+            pbc,
             shift_range,
             neighbor_matrix,
             neighbor_matrix_shifts,
@@ -1363,6 +1376,7 @@ def naive_neighbor_matrix_pbc(
         positions,
         cutoff,
         cell,
+        pbc,
         shift_range,
         neighbor_matrix,
         neighbor_matrix_shifts,
@@ -1386,7 +1400,7 @@ def naive_neighbor_matrix_pbc(
         positions_wrapped_buffer=positions_wrapped_buffer,
         per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
         inv_cell_buffer=inv_cell_buffer,
-        native_strategy=native_strategy,
+        strategy=strategy,
     )
 
 
@@ -1420,11 +1434,12 @@ def batch_naive_neighbor_matrix_pbc(
     positions_wrapped_buffer: wp.array | None = None,
     per_atom_cell_offsets_buffer: wp.array | None = None,
     inv_cell_buffer: wp.array | None = None,
-    native_strategy: str = "auto",
+    strategy: str = "auto",
     # Deprecated kwarg aliases:
     positions_wrapped: wp.array | None = None,
     per_atom_cell_offsets: wp.array | None = None,
     inv_cell: wp.array | None = None,
+    pbc: wp.array | None = None,
 ) -> None:
     """Core warp launcher for batched naive neighbor matrix construction with PBC.
 
@@ -1504,6 +1519,10 @@ def batch_naive_neighbor_matrix_pbc(
         Caller-supplied scratch for per-atom cell offsets.
     inv_cell_buffer : wp.array, shape (num_systems,), dtype=wp.mat33*, optional
         Caller-supplied scratch for inverse cell matrices.
+    pbc : wp.array, shape (num_systems, 3), dtype=wp.bool, optional
+        Per-system, per-axis periodic boundary flags.  When supplied, axes
+        marked False are left unwrapped during position wrapping.  When
+        omitted, wrapping uses the existing all-axis behavior.
     positions_wrapped, per_atom_cell_offsets, inv_cell : deprecated
         Deprecated aliases of the ``*_buffer`` kwargs above.
 
@@ -1574,6 +1593,7 @@ def batch_naive_neighbor_matrix_pbc(
             positions,
             cutoff,
             cell,
+            pbc,
             shift_range,
             neighbor_matrix,
             neighbor_matrix_shifts,
@@ -1600,6 +1620,7 @@ def batch_naive_neighbor_matrix_pbc(
         positions,
         cutoff,
         cell,
+        pbc,
         shift_range,
         neighbor_matrix,
         neighbor_matrix_shifts,
@@ -1740,6 +1761,7 @@ def naive_neighbor_matrix_pbc_dual_cutoff(
     positions_wrapped: wp.array | None = None,
     per_atom_cell_offsets: wp.array | None = None,
     inv_cell: wp.array | None = None,
+    pbc: wp.array | None = None,
 ) -> None:
     """Core warp launcher for naive dual cutoff neighbor matrix construction with PBC.
 
@@ -1798,6 +1820,10 @@ def naive_neighbor_matrix_pbc_dual_cutoff(
         Caller-supplied scratch for per-atom cell offsets.
     inv_cell_buffer : wp.array, shape (num_systems,), dtype=wp.mat33*, optional
         Caller-supplied scratch for inverse cell matrices.
+    pbc : wp.array, shape (1, 3), dtype=wp.bool, optional
+        Per-axis periodic boundary flags.  When supplied, axes marked False
+        are left unwrapped during position wrapping.  When omitted, wrapping
+        uses the existing all-axis behavior.
     positions_wrapped, per_atom_cell_offsets, inv_cell : deprecated
         Deprecated aliases of the ``*_buffer`` kwargs above.
 
@@ -1846,6 +1872,7 @@ def naive_neighbor_matrix_pbc_dual_cutoff(
         cutoff1,
         cutoff2,
         cell,
+        pbc,
         shift_range,
         neighbor_matrix1,
         neighbor_matrix2,
@@ -1925,6 +1952,10 @@ def batch_naive_neighbor_matrix_dual_cutoff(
         Not supported in dual-cutoff mode; raises ``ValueError`` if provided.
     pair_params : wp.array, optional
         Not supported in dual-cutoff mode; raises ``ValueError`` if provided.
+    pbc : wp.array, shape (num_systems, 3), dtype=wp.bool, optional
+        Per-system, per-axis periodic boundary flags.  When supplied, axes
+        marked False are left unwrapped during position wrapping.  When
+        omitted, wrapping uses the existing all-axis behavior.
 
     Notes
     -----
@@ -1993,6 +2024,7 @@ def batch_naive_neighbor_matrix_pbc_dual_cutoff(
     positions_wrapped: wp.array | None = None,
     per_atom_cell_offsets: wp.array | None = None,
     inv_cell: wp.array | None = None,
+    pbc: wp.array | None = None,
 ) -> None:
     """Core warp launcher for batched naive dual cutoff neighbor matrix construction with PBC.
 
@@ -2099,6 +2131,7 @@ def batch_naive_neighbor_matrix_pbc_dual_cutoff(
         cutoff1,
         cutoff2,
         cell,
+        pbc,
         shift_range,
         neighbor_matrix1,
         neighbor_matrix2,

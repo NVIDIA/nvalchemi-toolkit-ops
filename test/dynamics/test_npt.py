@@ -28,6 +28,7 @@ from nvalchemiops.dynamics.integrators.npt import (
     compute_barostat_mass,
     compute_barostat_potential_energy,
     compute_cell_kinetic_energy,
+    compute_kinetic_tensor,
     compute_pressure_tensor,
     compute_scalar_pressure,
     nph_barostat_half_step,
@@ -4050,3 +4051,207 @@ class TestCellKineticEnergyConvention:
             kinetic_energy.numpy()[0], expected, rtol=1e-12, atol=1e-12
         )
         np.testing.assert_allclose(kinetic_energy.numpy()[0], 0.01515, rtol=1e-12)
+
+
+# ==============================================================================
+# compute_kinetic flag + compute_kinetic_tensor helper
+# ==============================================================================
+
+
+# Cell shapes used to confirm the finalize kernel (P = (K + virial)/V) is
+# unaffected by the compute_kinetic gate — the kinetic tensor itself is
+# pressure-coupling-mode independent.
+_PRESSURE_CELLS = {
+    "isotropic": np.diag([10.0, 10.0, 10.0]),
+    "anisotropic": np.diag([8.0, 11.0, 13.0]),
+    "triclinic": np.array([[10.0, 0.0, 0.0], [1.5, 9.0, 0.0], [0.7, 1.1, 11.0]]),
+}
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("dtype", ["float32", "float64"])
+class TestComputeKineticFlag:
+    """Tests for the compute_kinetic flag and compute_kinetic_tensor helper."""
+
+    @staticmethod
+    def _rtol(dtype):
+        return 1e-5 if dtype == "float32" else 1e-11
+
+    def test_compute_kinetic_tensor_matches_manual_single(self, dtype, device):
+        """compute_kinetic_tensor fills K = sum m (v ⊗ v) (vec9 row-major)."""
+        vec_dtype = wp.vec3f if dtype == "float32" else wp.vec3d
+        scalar_dtype = wp.float32 if dtype == "float32" else wp.float64
+        np_dtype = np.float32 if dtype == "float32" else np.float64
+
+        num_atoms = 64
+        np.random.seed(3)
+        vel_np = np.random.randn(num_atoms, 3).astype(np_dtype)
+        mass_np = (np.random.rand(num_atoms) + 0.5).astype(np_dtype)
+
+        velocities = wp.array(vel_np, dtype=vec_dtype, device=device)
+        masses = wp.array(mass_np, dtype=scalar_dtype, device=device)
+        kinetic_tensors = wp.empty((1, 9), dtype=scalar_dtype, device=device)
+
+        compute_kinetic_tensor(velocities, masses, kinetic_tensors, device=device)
+        wp.synchronize_device(device)
+
+        # K[i,j] = sum_k m_k v_k[i] v_k[j], flattened row-major.
+        expected = np.einsum("k,ki,kj->ij", mass_np, vel_np, vel_np).reshape(9)
+        np.testing.assert_allclose(
+            kinetic_tensors.numpy()[0], expected, rtol=self._rtol(dtype)
+        )
+
+    def test_compute_kinetic_tensor_matches_manual_batched(self, dtype, device):
+        """Batched compute_kinetic_tensor fills K per system."""
+        vec_dtype = wp.vec3f if dtype == "float32" else wp.vec3d
+        scalar_dtype = wp.float32 if dtype == "float32" else wp.float64
+        np_dtype = np.float32 if dtype == "float32" else np.float64
+
+        sizes = [40, 24]
+        num_systems = len(sizes)
+        num_atoms = sum(sizes)
+        batch_np = np.concatenate(
+            [np.full(n, s, dtype=np.int32) for s, n in enumerate(sizes)]
+        )
+        np.random.seed(4)
+        vel_np = np.random.randn(num_atoms, 3).astype(np_dtype)
+        mass_np = (np.random.rand(num_atoms) + 0.5).astype(np_dtype)
+
+        velocities = wp.array(vel_np, dtype=vec_dtype, device=device)
+        masses = wp.array(mass_np, dtype=scalar_dtype, device=device)
+        batch_idx = wp.array(batch_np, dtype=wp.int32, device=device)
+        kinetic_tensors = wp.empty((num_systems, 9), dtype=scalar_dtype, device=device)
+
+        compute_kinetic_tensor(
+            velocities, masses, kinetic_tensors, batch_idx=batch_idx, device=device
+        )
+        wp.synchronize_device(device)
+
+        result = kinetic_tensors.numpy()
+        for s in range(num_systems):
+            m = batch_np == s
+            expected = np.einsum(
+                "k,ki,kj->ij", mass_np[m], vel_np[m], vel_np[m]
+            ).reshape(9)
+            np.testing.assert_allclose(result[s], expected, rtol=self._rtol(dtype))
+
+    @pytest.mark.parametrize("mode", list(_PRESSURE_CELLS))
+    def test_compute_kinetic_parity(self, dtype, device, mode):
+        """compute_kinetic=True must match compute_kinetic=False with
+        kinetic_tensors pre-filled over the same atoms, for every cell shape."""
+        vec_dtype = wp.vec3f if dtype == "float32" else wp.vec3d
+        scalar_dtype = wp.float32 if dtype == "float32" else wp.float64
+        tensor_dtype = vec9f if dtype == "float32" else vec9d
+        np_dtype = np.float32 if dtype == "float32" else np.float64
+
+        num_atoms = 50
+        np.random.seed(8)
+        vel_np = np.random.randn(num_atoms, 3).astype(np_dtype)
+        mass_np = (np.random.rand(num_atoms) + 0.5).astype(np_dtype)
+        # Non-symmetric, non-trivial virial to exercise the finalize fully.
+        virial_np = np.random.randn(9).astype(np_dtype)
+
+        velocities = wp.array(vel_np, dtype=vec_dtype, device=device)
+        masses = wp.array(mass_np, dtype=scalar_dtype, device=device)
+        virial_tensors = wp.array(
+            [tensor_dtype(*virial_np)], dtype=tensor_dtype, device=device
+        )
+        cells = make_cell(_PRESSURE_CELLS[mode], dtype, device)
+        volumes = wp.empty(1, dtype=scalar_dtype, device=device)
+        compute_cell_volume(cells, volumes, device=device)
+
+        # Reference: recompute the kinetic tensor internally.
+        kt_ref = wp.zeros((1, 9), dtype=scalar_dtype, device=device)
+        p_ref = compute_pressure_tensor(
+            velocities,
+            masses,
+            virial_tensors,
+            cells,
+            kt_ref,
+            wp.empty(1, dtype=tensor_dtype, device=device),
+            volumes,
+            device=device,
+        )
+
+        # Supplied path: pre-fill the kinetic tensor, skip the recompute.
+        kt_supplied = wp.empty((1, 9), dtype=scalar_dtype, device=device)
+        compute_kinetic_tensor(velocities, masses, kt_supplied, device=device)
+        p_supplied = compute_pressure_tensor(
+            velocities,
+            masses,
+            virial_tensors,
+            cells,
+            kt_supplied,
+            wp.empty(1, dtype=tensor_dtype, device=device),
+            volumes,
+            device=device,
+            compute_kinetic=False,
+        )
+        wp.synchronize_device(device)
+
+        np.testing.assert_allclose(
+            p_supplied.numpy(), p_ref.numpy(), rtol=self._rtol(dtype)
+        )
+
+    def test_compute_kinetic_global_vs_split(self, dtype, device):
+        """One N-atom system's pressure (compute_kinetic=True) must match a run
+        that computes the kinetic tensor over two disjoint halves of the atoms,
+        sums them, and feeds the result with compute_kinetic=False."""
+        vec_dtype = wp.vec3f if dtype == "float32" else wp.vec3d
+        scalar_dtype = wp.float32 if dtype == "float32" else wp.float64
+        tensor_dtype = vec9f if dtype == "float32" else vec9d
+        np_dtype = np.float32 if dtype == "float32" else np.float64
+
+        num_atoms = 80
+        half = num_atoms // 2
+        np.random.seed(9)
+        vel_np = np.random.randn(num_atoms, 3).astype(np_dtype)
+        mass_np = (np.random.rand(num_atoms) + 0.5).astype(np_dtype)
+        virial_np = np.random.randn(9).astype(np_dtype)
+
+        velocities = wp.array(vel_np, dtype=vec_dtype, device=device)
+        masses = wp.array(mass_np, dtype=scalar_dtype, device=device)
+        virial_tensors = wp.array(
+            [tensor_dtype(*virial_np)], dtype=tensor_dtype, device=device
+        )
+        cells = make_cell(_PRESSURE_CELLS["triclinic"], dtype, device)
+        volumes = wp.empty(1, dtype=scalar_dtype, device=device)
+        compute_cell_volume(cells, volumes, device=device)
+
+        # Whole system.
+        kt_whole = wp.zeros((1, 9), dtype=scalar_dtype, device=device)
+        p_whole = compute_pressure_tensor(
+            velocities,
+            masses,
+            virial_tensors,
+            cells,
+            kt_whole,
+            wp.empty(1, dtype=tensor_dtype, device=device),
+            volumes,
+            device=device,
+        )
+
+        # Split: reduce each half separately, then sum to the full kinetic tensor.
+        kt_a = wp.empty((1, 9), dtype=scalar_dtype, device=device)
+        kt_b = wp.empty((1, 9), dtype=scalar_dtype, device=device)
+        compute_kinetic_tensor(velocities[:half], masses[:half], kt_a, device=device)
+        compute_kinetic_tensor(velocities[half:], masses[half:], kt_b, device=device)
+        kt_summed = wp.array(
+            kt_a.numpy() + kt_b.numpy(), dtype=scalar_dtype, device=device
+        )
+        p_split = compute_pressure_tensor(
+            velocities,
+            masses,
+            virial_tensors,
+            cells,
+            kt_summed,
+            wp.empty(1, dtype=tensor_dtype, device=device),
+            volumes,
+            device=device,
+            compute_kinetic=False,
+        )
+        wp.synchronize_device(device)
+
+        np.testing.assert_allclose(
+            p_split.numpy(), p_whole.numpy(), rtol=self._rtol(dtype)
+        )

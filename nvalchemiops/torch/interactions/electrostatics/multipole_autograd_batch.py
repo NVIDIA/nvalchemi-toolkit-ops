@@ -93,12 +93,12 @@ _TWO_PI_SIXTH = (2.0 * math.pi) ** 6
 
 
 def _wp_scalar(dtype: torch.dtype):
-    """Map torch float dtype → Warp scalar dtype."""
+    """Map torch float dtype -> Warp scalar dtype."""
     return wp.float64 if dtype == torch.float64 else wp.float32
 
 
 def _wp_vec(dtype: torch.dtype):
-    """Map torch float dtype → Warp vec3 dtype."""
+    """Map torch float dtype -> Warp vec3 dtype."""
     return wp.vec3d if dtype == torch.float64 else wp.vec3f
 
 
@@ -489,7 +489,7 @@ def _batch_rho_phihat_grad_forward(
     volume: torch.Tensor,
     batch_idx: torch.Tensor,
 ) -> torch.Tensor:
-    r"""``∂L/∂source_phi_hat`` ``(B, K_max, 4, 2)`` via ``batch_rho_phihat_grad``.
+    r""":math:`\partial L/\partial \hat{\phi}_\text{src}` ``(B, K_max, 4, 2)`` via ``batch_rho_phihat_grad``.
 
     ``positions`` / ``k_vectors`` are unused by the forward kernel (the cos/sin
     dependence is carried by the detached tables) but are explicit diff-input
@@ -557,7 +557,7 @@ def _batch_rho_phihat_grad_backward(
 
     Per-system mirror of the single-system
     :func:`~...multipole_autograd._rho_phihat_grad_backward`; ``scale =
-    (2π)³/volume[b]`` is folded inside the kernel.
+    (2*pi)^3/volume[b]`` is folded inside the kernel.
     """
     device = charges.device
     wp_device = wp.device_from_torch(device)
@@ -634,7 +634,7 @@ def _batch_rho_kphase_grad_forward(
     volume: torch.Tensor,
     batch_idx: torch.Tensor,
 ) -> torch.Tensor:
-    r"""``∂L/∂k_vectors`` ``(B, K_max, 3)`` (phase channel) via ``batch_rho_kphase_grad``.
+    r""":math:`\partial L/\partial k` ``(B, K_max, 3)`` (phase channel) via ``batch_rho_kphase_grad``.
 
     ``k_vectors`` is an explicit diff slot (kernel-unused in forward; the cos/sin
     dependence is carried by the detached tables) so the Warp second-order
@@ -798,7 +798,7 @@ def _batch_feature_v_grad_forward(
     positions: torch.Tensor,
     batch_idx: torch.Tensor,
 ) -> torch.Tensor:
-    r""":func:`batch_v_gradient_from_feature_grad` — ``∂L/∂V(k)`` ``(B, K_max, 2)``."""
+    r""":func:`batch_v_gradient_from_feature_grad` -- :math:`\partial L/\partial V(k)` ``(B, K_max, 2)``."""
     device = grad_raw.device
     wp_device = wp.device_from_torch(device)
     batch_size = receiver_phi_hat.shape[0]
@@ -938,7 +938,7 @@ def _batch_feature_position_grad_forward(
     positions: torch.Tensor,
     batch_idx: torch.Tensor,
 ) -> torch.Tensor:
-    r""":func:`batch_position_gradient_from_feature_grad` — ``∂L/∂r`` ``(N_total, 3)``."""
+    r""":func:`batch_position_gradient_from_feature_grad` -- :math:`\partial L/\partial r` ``(N_total, 3)``."""
     device = grad_raw.device
     wp_device = wp.device_from_torch(device)
     n_total = cosines.shape[1]
@@ -1071,7 +1071,7 @@ def _batch_feature_v_grad_quadrupole_forward(
     positions: torch.Tensor,
     batch_idx: torch.Tensor,
 ) -> torch.Tensor:
-    r""":func:`batch_v_gradient_from_feature_grad_quadrupole` — ``∂L/∂V(k)`` ``(B, K_max, 2)``."""
+    r""":func:`batch_v_gradient_from_feature_grad_quadrupole` -- :math:`\partial L/\partial V(k)` ``(B, K_max, 2)``."""
     device = grad_raw.device
     wp_device = wp.device_from_torch(device)
     batch_size = receiver_phi_hat.shape[0]
@@ -1180,7 +1180,7 @@ def _batch_feature_position_grad_quadrupole_forward(
     positions: torch.Tensor,
     batch_idx: torch.Tensor,
 ) -> torch.Tensor:
-    r""":func:`batch_position_gradient_from_feature_grad_quadrupole` — ``∂L/∂r`` ``(N_total, 3)``."""
+    r""":func:`batch_position_gradient_from_feature_grad_quadrupole` -- :math:`\partial L/\partial r` ``(N_total, 3)``."""
     device = grad_raw.device
     wp_device = wp.device_from_torch(device)
     n_total = cosines.shape[1]
@@ -1502,7 +1502,31 @@ class BatchMultipoleRhoFunction:
         batch_idx: torch.Tensor,
         cache: MultipoleSCFCache,
     ) -> torch.Tensor:
-        """Dispatch to ``torch.ops.nvalchemiops.batch_multipole_rho``."""
+        """Dispatch to ``torch.ops.nvalchemiops.batch_multipole_rho``.
+
+        Parameters
+        ----------
+        charges : torch.Tensor, shape (N_total,)
+            Per-atom monopole charges.
+        dipoles : torch.Tensor, shape (N_total, 3)
+            Per-atom dipole moments in Cartesian coordinates.
+        positions : torch.Tensor, shape (N_total, 3)
+            Atomic coordinates.
+        source_phi_hat : torch.Tensor, shape (B, K_max, 4, 2)
+            Differentiable per-system source envelope table; equals
+            ``cache.source_phi_hat``.
+        k_vectors : torch.Tensor, shape (B, K_max, 3)
+            Reciprocal-lattice vectors; equals ``cache.k_vectors``.
+        batch_idx : torch.Tensor, shape (N_total,), dtype=int32
+            Per-atom system index (sorted, contiguous within each system).
+        cache : MultipoleSCFCache
+            Per-system direct-k-space state; supplies ``cache.volume``.
+
+        Returns
+        -------
+        torch.Tensor, shape (B, K_max, 2), dtype=float64
+            Batched :math:`\\rho(k)` structure factor (real, imaginary channels).
+        """
         return torch.ops.nvalchemiops.batch_multipole_rho(
             charges,
             dipoles,
@@ -1805,7 +1829,7 @@ def _batch_rho_q_coeff2_grad_forward(
     volume: torch.Tensor,
     batch_idx: torch.Tensor,
 ) -> torch.Tensor:
-    r"""``∂L/∂source_coeff2`` ``(B, K_max)`` via ``batch_rho_q_coeff2_grad`` (l=2 stress).
+    r""":math:`\partial L/\partial c_2` ``(B, K_max)`` via ``batch_rho_q_coeff2_grad`` (l=2 stress).
 
     ``positions`` is an explicit diff slot (kernel-unused in forward) so the
     Warp second-order backward can place its Hessian grad. Mirrors the
@@ -1937,7 +1961,7 @@ def _batch_rho_q_kvec_grad_forward(
     volume: torch.Tensor,
     batch_idx: torch.Tensor,
 ) -> torch.Tensor:
-    """``∂L/∂k_vectors`` ``(B, K_max, 3)`` via the (k·Q·k) form + phase (l=2 stress)."""
+    """:math:`\\partial L/\\partial k` ``(B, K_max, 3)`` via the :math:`k \\cdot Q \\cdot k` form + phase (l=2 stress)."""
     device = quadrupoles.device
     wp_device = wp.device_from_torch(device)
     wp_scalar = _wp_scalar(quadrupoles.dtype)
@@ -2234,7 +2258,7 @@ def _batch_multipole_rho_gather_t_op(
     volume: torch.Tensor,
     batch_idx: torch.Tensor,
 ) -> torch.Tensor:
-    r"""Opaque forward: ``g = Sᵀ·grad_rho`` per-atom moment gradient ``(N_total, 4)``."""
+    r"""Opaque forward: :math:`g = S^\top \cdot \nabla_\rho` per-atom moment gradient ``(N_total, 4)``."""
     cosines, sines = torch.ops.nvalchemiops.batch_multipole_structure_factor(
         positions, k_vectors, batch_idx
     )
@@ -2265,7 +2289,7 @@ def _batch_multipole_rho_gather_t_setup_context(ctx, inputs, output) -> None:
 
 
 def _batch_multipole_rho_gather_t_backward(ctx, g_cot: torch.Tensor):
-    r"""Adjoint of ``g = Sᵀ·grad_rho`` (batched): ``<cg, Sᵀ grad_rho> = <S·cg, grad_rho>``."""
+    r"""Adjoint of :math:`g = S^\top \cdot \nabla_\rho` (batched): :math:`\langle cg,\, S^\top \nabla_\rho \rangle = \langle S \cdot cg,\, \nabla_\rho \rangle`."""
     grad_rho, positions, source_phi_hat, k_vectors, volume, batch_idx = (
         ctx.saved_tensors
     )
@@ -2335,7 +2359,7 @@ def _batch_multipole_rho_q_gather_t_op(
     volume: torch.Tensor,
     batch_idx: torch.Tensor,
 ) -> torch.Tensor:
-    r"""Opaque forward: ``g_Q = Sᵀ_Q·grad_rho`` per-atom quad gradient ``(N_total, 3, 3)``."""
+    r"""Opaque forward: :math:`g_Q = S_Q^\top \cdot \nabla_\rho` per-atom quad gradient ``(N_total, 3, 3)``."""
     cosines, sines = torch.ops.nvalchemiops.batch_multipole_structure_factor(
         positions, k_vectors, batch_idx
     )
@@ -2366,7 +2390,7 @@ def _batch_multipole_rho_q_gather_t_setup_context(ctx, inputs, output) -> None:
 
 
 def _batch_multipole_rho_q_gather_t_backward(ctx, g_cot: torch.Tensor):
-    r"""Adjoint of ``g_Q = Sᵀ_Q·grad_rho`` (batched)."""
+    r"""Adjoint of :math:`g_Q = S_Q^\top \cdot \nabla_\rho` (batched)."""
     grad_rho, positions, source_coeff2, k_vectors, volume, batch_idx = ctx.saved_tensors
     cg_q = g_cot.contiguous()
     cosines, sines = torch.ops.nvalchemiops.batch_multipole_structure_factor(
@@ -2455,7 +2479,30 @@ class BatchMultipoleRhoQFunction:
         batch_idx: torch.Tensor,
         cache: MultipoleSCFCache,
     ) -> torch.Tensor:
-        """Dispatch to ``torch.ops.nvalchemiops.batch_multipole_rho_q``."""
+        """Dispatch to ``torch.ops.nvalchemiops.batch_multipole_rho_q``.
+
+        Parameters
+        ----------
+        quadrupoles : torch.Tensor, shape (N_total, 3, 3)
+            Per-atom Cartesian quadrupole tensors (symmetric).
+        positions : torch.Tensor, shape (N_total, 3)
+            Atomic coordinates.
+        source_coeff2 : torch.Tensor, shape (B, K_max)
+            Per-k l=2 source coefficient :math:`c_2(k)`; equals
+            ``cache.source_coeff2``.
+        k_vectors : torch.Tensor, shape (B, K_max, 3)
+            Reciprocal-lattice vectors; equals ``cache.k_vectors``.
+        batch_idx : torch.Tensor, shape (N_total,), dtype=int32
+            Per-atom system index (sorted, contiguous within each system).
+        cache : MultipoleSCFCache
+            Per-system direct-k-space state; must be built with ``l_max>=2``.
+
+        Returns
+        -------
+        torch.Tensor, shape (B, K_max, 2), dtype=float64
+            Additive Cartesian-quadrupole :math:`\\rho_Q(k)` (real, imaginary
+            channels).
+        """
         if cache.source_coeff2 is None:
             raise ValueError(
                 "BatchMultipoleRhoQFunction requires a cache built with "
@@ -2521,7 +2568,7 @@ def _batch_project_raw_features_launch(
     k_factor_proj: torch.Tensor,
     batch_idx: torch.Tensor,
 ) -> torch.Tensor:
-    r"""Run :func:`batch_project_features_dipole` (no self-subtract). ``(N_total, N_σ, 4)``."""
+    r"""Run :func:`batch_project_features_dipole` (no self-subtract). ``(N_total, N_sigma, 4)``."""
     device = potential.device
     wp_device = wp.device_from_torch(device)
     n_total = cosines.shape[1]
@@ -2561,7 +2608,7 @@ def _batch_project_raw_features_quadrupole_launch(
     k_factor_proj: torch.Tensor,
     batch_idx: torch.Tensor,
 ) -> torch.Tensor:
-    r"""Run :func:`batch_project_features_quadrupole` (no self-subtract). ``(N_total, N_σ, 5)``."""
+    r"""Run :func:`batch_project_features_quadrupole` (no self-subtract). ``(N_total, N_sigma, 5)``."""
     device = potential.device
     wp_device = wp.device_from_torch(device)
     n_total = cosines.shape[1]
@@ -2593,7 +2640,7 @@ def _batch_feature_phihat_grad_launch(
     batch_idx: torch.Tensor,
     n_lm: int,
 ) -> torch.Tensor:
-    """``dL/dreceiver_phi_hat`` ``(B, K_max, N_σ, n_lm, 2)`` via ``batch_project_phihat_grad``."""
+    """``dL/dreceiver_phi_hat`` ``(B, K_max, N_sigma, n_lm, 2)`` via ``batch_project_phihat_grad``."""
     device = grad_raw.device
     wp_device = wp.device_from_torch(device)
     b_dim, k_max = k_factor_proj.shape
@@ -2661,7 +2708,7 @@ def _batch_feature_phihat_grad_op(
     batch_idx: torch.Tensor,
     n_lm: int,
 ) -> torch.Tensor:
-    """Opaque ``dL/dreceiver_phi_hat`` ``(B, K_max, N_σ, n_lm, 2)``."""
+    """Opaque ``dL/dreceiver_phi_hat`` ``(B, K_max, N_sigma, n_lm, 2)``."""
     return _batch_feature_phihat_grad_launch(
         grad_raw, cosines, sines, k_factor_proj, potential, batch_idx, n_lm
     )
@@ -2677,7 +2724,7 @@ def _batch_feature_phihat_grad_fake(
     batch_idx: torch.Tensor,
     n_lm: int,
 ) -> torch.Tensor:
-    """Shape/dtype metadata: ``(B, K_max, N_σ, n_lm, 2)`` float64."""
+    """Shape/dtype metadata: ``(B, K_max, N_sigma, n_lm, 2)`` float64."""
     b_dim, k_max = k_factor_proj.shape
     return k_factor_proj.new_empty(
         (b_dim, k_max, grad_raw.shape[1], n_lm, 2), dtype=torch.float64
@@ -2771,7 +2818,7 @@ def _batch_multipole_project_raw_features_fake(
     k_factor_proj: torch.Tensor,
     batch_idx: torch.Tensor,
 ) -> torch.Tensor:
-    """Shape/dtype metadata: raw features ``(N_total, N_σ, 4)`` float64."""
+    """Shape/dtype metadata: raw features ``(N_total, N_sigma, 4)`` float64."""
     n_total = positions.shape[0]
     n_sigma = receiver_phi_hat.shape[2]
     return positions.new_empty((n_total, n_sigma, 4), dtype=torch.float64)
@@ -2871,10 +2918,25 @@ class BatchMultipoleProjectRawFeaturesFunction:
     cache)`` call signature (``cache`` supplies ``k_factor_proj``); new code
     should call the op directly.
 
+    Parameters
+    ----------
+    potential : torch.Tensor, shape (B, K_max, 2)
+        Batched per-k reciprocal potential :math:`V(k)` (real, imaginary channels).
+    positions : torch.Tensor, shape (N_total, 3)
+        Atomic coordinates.
+    receiver_phi_hat_l1 : torch.Tensor, shape (B, K_max, N_sigma, 4, 2)
+        Per-system l<=1 receiver envelope table; equals ``cache.receiver_phi_hat``.
+    k_vectors : torch.Tensor, shape (B, K_max, 3)
+        Reciprocal-lattice vectors; equals ``cache.k_vectors``.
+    batch_idx : torch.Tensor, shape (N_total,), dtype=int32
+        Per-atom system index (sorted, contiguous within each system).
+    cache : MultipoleSCFCache
+        Per-system direct-k-space state; supplies ``cache.k_factor_proj``.
+
     Returns
     -------
     torch.Tensor
-        Raw (un-self-subtracted) features ``(N_total, N_σ, 4)`` float64.
+        Raw (un-self-subtracted) features ``(N_total, N_sigma, 4)`` float64.
     """
 
     @staticmethod
@@ -2886,7 +2948,30 @@ class BatchMultipoleProjectRawFeaturesFunction:
         batch_idx: torch.Tensor,
         cache: MultipoleSCFCache,
     ) -> torch.Tensor:
-        """Dispatch to ``batch_multipole_project_raw_features``."""
+        """Dispatch to ``batch_multipole_project_raw_features``.
+
+        Parameters
+        ----------
+        potential : torch.Tensor, shape (B, K_max, 2)
+            Batched per-k reciprocal potential :math:`V(k)` (real, imaginary
+            channels).
+        positions : torch.Tensor, shape (N_total, 3)
+            Atomic coordinates.
+        receiver_phi_hat_l1 : torch.Tensor, shape (B, K_max, N_sigma, 4, 2)
+            Per-system l<=1 receiver envelope table; equals
+            ``cache.receiver_phi_hat``.
+        k_vectors : torch.Tensor, shape (B, K_max, 3)
+            Reciprocal-lattice vectors; equals ``cache.k_vectors``.
+        batch_idx : torch.Tensor, shape (N_total,), dtype=int32
+            Per-atom system index (sorted, contiguous within each system).
+        cache : MultipoleSCFCache
+            Per-system direct-k-space state; supplies ``cache.k_factor_proj``.
+
+        Returns
+        -------
+        torch.Tensor, shape (N_total, N_sigma, 4), dtype=float64
+            Raw (un-self-subtracted) l<=1 projected features.
+        """
         return torch.ops.nvalchemiops.batch_multipole_project_raw_features(
             potential,
             positions,
@@ -2938,7 +3023,7 @@ def _batch_multipole_project_raw_features_quadrupole_fake(
     k_factor_proj: torch.Tensor,
     batch_idx: torch.Tensor,
 ) -> torch.Tensor:
-    """Shape/dtype metadata: raw l=2 features ``(N_total, N_σ, 5)`` float64."""
+    """Shape/dtype metadata: raw l=2 features ``(N_total, N_sigma, 5)`` float64."""
     n_total = positions.shape[0]
     n_sigma = receiver_phi_hat.shape[2]
     return positions.new_empty((n_total, n_sigma, 5), dtype=torch.float64)
@@ -3036,10 +3121,25 @@ class BatchMultipoleProjectRawFeaturesQuadrupoleFunction:
     ``.apply(potential, positions, receiver_phi_hat_l2, k_vectors, batch_idx,
     cache)`` call signature (``cache`` supplies ``k_factor_proj``).
 
+    Parameters
+    ----------
+    potential : torch.Tensor, shape (B, K_max, 2)
+        Batched per-k reciprocal potential :math:`V(k)` (real, imaginary channels).
+    positions : torch.Tensor, shape (N_total, 3)
+        Atomic coordinates.
+    receiver_phi_hat_l2 : torch.Tensor, shape (B, K_max, N_sigma, 5, 2)
+        Per-system l=2 receiver envelope table; equals ``cache.receiver_phi_hat_l2``.
+    k_vectors : torch.Tensor, shape (B, K_max, 3)
+        Reciprocal-lattice vectors; equals ``cache.k_vectors``.
+    batch_idx : torch.Tensor, shape (N_total,), dtype=int32
+        Per-atom system index (sorted, contiguous within each system).
+    cache : MultipoleSCFCache
+        Per-system direct-k-space state; supplies ``cache.k_factor_proj``.
+
     Returns
     -------
     torch.Tensor
-        Raw l=2 features ``(N_total, N_σ, 5)`` float64 in natural layout.
+        Raw l=2 features ``(N_total, N_sigma, 5)`` float64 in natural layout.
     """
 
     @staticmethod
@@ -3051,7 +3151,30 @@ class BatchMultipoleProjectRawFeaturesQuadrupoleFunction:
         batch_idx: torch.Tensor,
         cache: MultipoleSCFCache,
     ) -> torch.Tensor:
-        """Dispatch to ``batch_multipole_project_raw_features_quadrupole``."""
+        """Dispatch to ``batch_multipole_project_raw_features_quadrupole``.
+
+        Parameters
+        ----------
+        potential : torch.Tensor, shape (B, K_max, 2)
+            Batched per-k reciprocal potential :math:`V(k)` (real, imaginary
+            channels).
+        positions : torch.Tensor, shape (N_total, 3)
+            Atomic coordinates.
+        receiver_phi_hat_l2 : torch.Tensor, shape (B, K_max, N_sigma, 5, 2)
+            Per-system l=2 receiver envelope table; equals
+            ``cache.receiver_phi_hat_l2``.
+        k_vectors : torch.Tensor, shape (B, K_max, 3)
+            Reciprocal-lattice vectors; equals ``cache.k_vectors``.
+        batch_idx : torch.Tensor, shape (N_total,), dtype=int32
+            Per-atom system index (sorted, contiguous within each system).
+        cache : MultipoleSCFCache
+            Per-system direct-k-space state; supplies ``cache.k_factor_proj``.
+
+        Returns
+        -------
+        torch.Tensor, shape (N_total, N_sigma, 5), dtype=float64
+            Raw l=2 projected features in natural (Cartesian quadrupole) layout.
+        """
         return torch.ops.nvalchemiops.batch_multipole_project_raw_features_quadrupole(
             potential,
             positions,

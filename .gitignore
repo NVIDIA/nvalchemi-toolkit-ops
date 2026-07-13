@@ -41,6 +41,7 @@ htmlcov/
 .coverage
 .coverage.*
 .cache
+.tmp/
 nosetests.xml
 coverage.xml
 *.cover
@@ -80,9 +81,15 @@ venv.bak/
 *.npz
 *.tar.gz
 *.png
+docs/benchmarks/_static/nl-*.svg
 *.csv
+!docs/benchmarks/benchmark_results/nl-*.csv
+!docs/benchmarks/benchmark_results/d3-*.csv
+!docs/benchmarks/benchmark_results/el-*.csv
 *.log
 *.cif
+benchmarks/nh3/ammonia_pbc_*.inp
+benchmarks/nh3/ammonia_pbc_*.pdb
 
 # GPU profiling
 nsight-systems*
@@ -97,9 +104,11 @@ checkpoints/
 # Sphinx documentation
 _build
 docs/_build
+docs/_build*/
 docs/modules/generated
 docs/modules/backreferences
 docs/examples
+docs/sg_execution_times.rst
 
 # Lightning and training logs
 lightning_logs/
@@ -111,3 +120,6 @@ slurm-*.out
 
 # Exclude version file from VCS
 nvalchemiops/_version.py
+
+# Warp kernel cache (CI persists this via actions/cache at $GITHUB_WORKSPACE/.warp-cache)
+.warp-cache/

@@ -16,8 +16,8 @@
 """JAX Particle Mesh Ewald (PME) implementation.
 
 This module provides JAX bindings for PME long-range electrostatics calculations.
-PME achieves O(N log N) scaling through FFT-based reciprocal space computation
-combined with real-space Ewald summation.
+PME achieves :math:`O(N \\log N)` scaling through FFT-based reciprocal space
+computation combined with real-space Ewald summation.
 
 The implementation uses:
 - JAX FFT operations (jnp.fft.rfftn/irfftn)
@@ -280,10 +280,25 @@ def compute_bspline_moduli_1d(
     Returns ``b[i] = sinc(m_i / N)^spline_order`` for each Miller index
     ``m_i`` (with ``sinc(x) = sin(pi*x)/(pi*x)``, ``sinc(0) = 1``). The
     three-axis product ``b_x[i] * b_y[j] * b_z[k]`` is the B-spline
-    structure factor consumed by ``pme_fused_convolve``. Precomputing the
+    structure factor consumed by :func:`pme_fused_convolve`. Precomputing the
     LUT lets the convolve kernel replace three sinc transcendentals + an
     order-dependent power loop per (i, j, k) thread with three reads + two
     multiplies.
+
+    Parameters
+    ----------
+    miller_indices : jax.Array, shape (N,)
+        Integer Miller indices for one mesh axis, e.g. from
+        ``jnp.fft.fftfreq(N, d=1.0/N)`` or ``jnp.fft.rfftfreq(N, d=1.0/N)``.
+    mesh_N : int
+        Number of mesh points along this axis.
+    spline_order : int
+        B-spline interpolation order (e.g. 4 for cubic B-splines).
+
+    Returns
+    -------
+    jax.Array, shape (N,)
+        Per-Miller-index B-spline modulus ``sinc(m/N)^spline_order``.
     """
     # sinc(x) for x in [-0.5, 0.5] is bounded in [2/pi, 1], so s^spline_order
     # (for orders 2-6) stays well within fp32 range. Stay in the input dtype
@@ -403,23 +418,30 @@ def pme_green_structure_factor(
     spline_order: int = 4,
     batch_idx: jax.Array | None = None,
 ) -> tuple[jax.Array, jax.Array]:
-    """Compute Green's function and B-spline structure factor correction.
+    r"""Compute Green's function and B-spline structure factor correction.
 
     Computes the Coulomb Green's function with volume normalization and the
     B-spline aliasing correction factor for PME.
 
     Green's function (volume-normalized):
-        G(k) = (2π/V) * exp(-k²/(4α²)) / k²
+
+    .. math::
+
+        G(\mathbf{k}) = \frac{2\pi}{V} \frac{\exp(-k^2 / (4\alpha^2))}{k^2}
 
     Structure factor correction (for B-spline deconvolution):
-        C²(k) = [sinc(m_x/N_x) · sinc(m_y/N_y) · sinc(m_z/N_z)]^(2p)
 
-    where p is the spline order.
+    .. math::
+
+        C^2(\mathbf{k}) = \left[\operatorname{sinc}(m_x/N_x) \cdot
+        \operatorname{sinc}(m_y/N_y) \cdot \operatorname{sinc}(m_z/N_z)\right]^{2p}
+
+    where :math:`p` is the spline order.
 
     Parameters
     ----------
     k_squared : jax.Array
-        |k|² values at each FFT grid point.
+        :math:`|k|^2` values at each FFT grid point.
         - Single-system: shape (Nx, Ny, Nz_rfft)
         - Batch: shape (B, Nx, Ny, Nz_rfft)
     mesh_dimensions : tuple[int, int, int]
@@ -444,7 +466,7 @@ def pme_green_structure_factor(
         - Single-system: shape (Nx, Ny, Nz_rfft)
         - Batch: shape (B, Nx, Ny, Nz_rfft)
     structure_factor_sq : jax.Array
-        Squared structure factor C²(k) for B-spline deconvolution.
+        Squared structure factor :math:`C^2(k)` for B-spline deconvolution.
         Shape (Nx, Ny, Nz_rfft), shared across batch.
 
     Notes
@@ -551,11 +573,11 @@ def pme_virial_bg_correction(
     batch_idx: jax.Array | None = None,
     volume: jax.Array | None = None,
 ) -> jax.Array:
-    """Apply non-neutral background virial correction in a single Warp launch.
+    r"""Apply non-neutral background virial correction in a single Warp launch.
 
     Two-pass fused kernel:
       1. Reduce per-atom ``charges`` into per-system totals (atomic_add).
-      2. Compute ``E_bg = π Q² / (2 α² V)`` per system and subtract it from
+      2. Compute :math:`E_\text{bg} = \pi Q^2 / (2 \alpha^2 V)` per system and subtract it from
          the three diagonal entries of ``virial`` (off-diagonal unchanged).
 
     Single-system inputs are fanned out via ``batch_idx`` filled with zeros.
@@ -647,22 +669,30 @@ def pme_energy_corrections(
     batch_idx: jax.Array | None = None,
     volume: jax.Array | None = None,
 ) -> jax.Array:
-    """Apply self-energy and background corrections to PME energies.
+    r"""Apply self-energy and background corrections to PME energies.
 
     Converts raw interpolated potential to energy and subtracts corrections:
 
-        E_i = q_i φ_i - E_self,i - E_background,i
+    .. math::
+
+        E_i = q_i \varphi_i - E_{\text{self},i} - E_{\text{bg},i}
 
     Self-energy correction (removes Gaussian self-interaction):
-        E_self,i = (α/√π) q_i²
+
+    .. math::
+
+        E_{\text{self},i} = \frac{\alpha}{\sqrt{\pi}} q_i^2
 
     Background correction (for non-neutral systems):
-        E_background,i = (π/(2α²V)) q_i Q_total
+
+    .. math::
+
+        E_{\text{bg},i} = \frac{\pi}{2\alpha^2 V} q_i Q_\text{total}
 
     Parameters
     ----------
     raw_energies : jax.Array, shape (N,) or (N_total,)
-        Raw potential values φ_i from mesh interpolation.
+        Raw potential values :math:`\varphi_i` from mesh interpolation.
     charges : jax.Array, shape (N,) or (N_total,)
         Atomic charges.
     cell : jax.Array
@@ -779,14 +809,15 @@ def pme_energy_corrections_with_charge_grad(
     batch_idx: jax.Array | None = None,
     volume: jax.Array | None = None,
 ) -> tuple[jax.Array, jax.Array]:
-    """Apply energy corrections and compute charge gradients.
+    r"""Apply energy corrections and compute charge gradients.
 
-    Same as pme_energy_corrections but also returns dE/dq for each atom.
+    Same as pme_energy_corrections but also returns :math:`\partial E/\partial q`
+    for each atom.
 
     Parameters
     ----------
     raw_energies : jax.Array, shape (N,) or (N_total,)
-        Raw potential values φ_i from mesh interpolation.
+        Raw potential values :math:`\varphi_i` from mesh interpolation.
     charges : jax.Array, shape (N,) or (N_total,)
         Atomic charges.
     cell : jax.Array
@@ -810,7 +841,7 @@ def pme_energy_corrections_with_charge_grad(
     corrected_energies : jax.Array, shape (N,) or (N_total,)
         Final per-atom reciprocal-space energy with corrections applied.
     charge_gradients : jax.Array, shape (N,) or (N_total,)
-        Per-atom charge gradients dE/dq.
+        Per-atom charge gradients :math:`\partial E/\partial q`.
 
     Notes
     -----
@@ -906,7 +937,7 @@ def _compute_pme_reciprocal_virial(
     mesh_dimensions: tuple[int, int, int],
     is_batch: bool,
 ) -> jax.Array:
-    """Compute PME reciprocal-space virial tensor in k-space.
+    r"""Compute PME reciprocal-space virial tensor in k-space.
 
     Uses the exact spectral pair from the pipeline (mesh_fft_raw before
     deconvolution, and convolved_mesh after Green's function multiplication)
@@ -915,7 +946,7 @@ def _compute_pme_reciprocal_virial(
     The virial per k-point is W_ab(k) = E_k * sigma_ab(k) where:
     - E_k = prefactor * weight(k) * Re(mesh_fft_raw(k) * convolved_mesh(k)*)
     - sigma_ab(k) = delta_ab - 2*k_a*k_b/k^2 * (1 + k^2/(4*alpha^2))
-    (sign reflects W = -dE/dε convention)
+    (sign reflects :math:`W = -dE/d\varepsilon` convention)
 
     Parameters
     ----------
@@ -1058,17 +1089,17 @@ def _pme_reciprocal_space_impl(
     | tuple[jax.Array, jax.Array, jax.Array]
     | tuple[jax.Array, jax.Array, jax.Array, jax.Array]
 ):
-    """Compute PME reciprocal-space contribution implementation.
+    r"""Compute PME reciprocal-space contribution implementation.
 
     Implements the FFT-based long-range component of PME using B-spline
     interpolation and convolution with the Green's function.
 
     Pipeline:
         1. Spread charges to mesh (spline_spread)
-        2. FFT → frequency space
+        2. FFT -> frequency space
         3. Compute Green's function and structure factor
-        4. Convolve: mesh_fft * G(k) / C²(k)
-        5. IFFT → potential mesh
+        4. Convolve: mesh_fft * G(k) / C^2(k)
+        5. IFFT -> potential mesh
         6. Gather potential at atoms (spline_gather)
         7. Apply self-energy and background corrections
         8. (Optional) Compute forces via Fourier gradient
@@ -1098,11 +1129,11 @@ def _pme_reciprocal_space_impl(
     k_vectors : jax.Array, optional
         Precomputed k-vectors from generate_k_vectors_pme.
     k_squared : jax.Array, optional
-        Precomputed k² values from generate_k_vectors_pme.
+        Precomputed :math:`k^2` values from generate_k_vectors_pme.
     compute_forces : bool, default=False
         If True, compute forces via Fourier gradient.
     compute_charge_gradients : bool, default=False
-        If True, compute charge gradients dE/dq.
+        If True, compute charge gradients :math:`\partial E/\partial q`.
     compute_virial : bool, default=False
         If True, compute the virial tensor ``W = -dE/d(displacement)`` for the
         row-vector displacement recipe.
@@ -1110,7 +1141,7 @@ def _pme_reciprocal_space_impl(
     hybrid_forces : bool, default=False
         If True, detach ``positions``/``charges``/``cell`` from the autograd
         graph through the spline/FFT chain (forces and virial become
-        forward-only), and inject analytical ∂E/∂q via a custom-VJP straight-
+        forward-only), and inject analytical :math:`\partial E/\partial q` via a custom-VJP straight-
         through trick so ``jax.grad`` w.r.t. charges propagates correctly.
         Forces ``compute_charge_gradients=True``.
 
@@ -2671,9 +2702,16 @@ def pme_reciprocal_space(
 
     Returns
     -------
-    jax.Array or tuple[jax.Array, ...]
-        Per-atom reciprocal energies, plus direct outputs when
-        requested.
+    energies : jax.Array, shape (N,)
+        Per-atom reciprocal-space energies.
+    forces : jax.Array, shape (N, 3), optional
+        Per-atom forces. Only present when ``compute_forces=True``.
+    charge_gradients : jax.Array, shape (N,), optional
+        Per-atom charge gradients :math:`\\partial E/\\partial q`. Only present when
+        ``compute_charge_gradients=True`` (deprecated direct-output flag).
+    virial : jax.Array, shape (1, 3, 3) or (B, 3, 3), optional
+        Virial tensor. Only present when ``compute_virial=True`` (deprecated
+        direct-output flag). Always last in the return tuple.
 
     Notes
     -----
@@ -2790,16 +2828,33 @@ def _particle_mesh_ewald_impl(
     | tuple[jax.Array, jax.Array, jax.Array]
     | tuple[jax.Array, jax.Array, jax.Array, jax.Array]
 ):
-    """Complete Particle Mesh Ewald (PME) calculation for long-range electrostatics.
+    r"""Complete Particle Mesh Ewald (PME) calculation for long-range electrostatics.
 
-    Computes total Coulomb energy using the PME method, which achieves O(N log N)
-    scaling through FFT-based reciprocal space calculations. Combines:
+    Computes total Coulomb energy using the PME method, which achieves
+    :math:`O(N \log N)` scaling through FFT-based reciprocal space calculations.
+    Combines:
     1. Real-space contribution (short-range, erfc-damped)
     2. Reciprocal-space contribution (long-range, FFT + B-spline interpolation)
     3. Self-energy and background corrections
 
     Total Energy Formula:
-        E_total = E_real + E_reciprocal - E_self - E_background
+
+    .. math::
+
+        E_{\text{total}} = E_{\text{real}} + E_{\text{reciprocal}}
+        - E_{\text{self}} - E_{\text{background}}
+
+    where:
+
+    .. math::
+
+        \begin{aligned}
+        E_{\text{real}} &= \frac{1}{2} \sum_{i \neq j} q_i q_j
+            \frac{\operatorname{erfc}(\alpha r_{ij})}{r_{ij}} \\
+        E_{\text{reciprocal}} &= \text{FFT-based smooth long-range contribution} \\
+        E_{\text{self}} &= \sum_i \frac{\alpha}{\sqrt{\pi}} q_i^2 \\
+        E_{\text{background}} &= \frac{\pi}{2\alpha^2 V} Q_{\text{total}}^2
+        \end{aligned}
 
     Parameters
     ----------
@@ -2812,8 +2867,8 @@ def _particle_mesh_ewald_impl(
         automatically promoted to (1, 3, 3) for single-system mode.
     alpha : float, jax.Array, or None, default=None
         Ewald splitting parameter controlling real/reciprocal space balance.
-        - float: Same α for all systems
-        - Array shape (B,): Per-system α values
+        - float: Same :math:`\alpha` for all systems
+        - Array shape (B,): Per-system :math:`\alpha` values
         - None: Automatically estimated using Kolafa-Perram formula
     mesh_spacing : float, optional
         Target mesh spacing. Mesh dimensions computed as ceil(cell_length / mesh_spacing).
@@ -2831,7 +2886,7 @@ def _particle_mesh_ewald_impl(
         Precomputed k-vectors from generate_k_vectors_pme. Providing this
         along with k_squared skips k-vector generation.
     k_squared : jax.Array, optional
-        Precomputed k² values from generate_k_vectors_pme.
+        Precomputed :math:`k^2` values from generate_k_vectors_pme.
     neighbor_list : jax.Array, optional
         CSR-format neighbor list indices. See ewald_real_space.
     neighbor_ptr : jax.Array, optional
@@ -2847,7 +2902,7 @@ def _particle_mesh_ewald_impl(
     compute_forces : bool, default=False
         If True, compute per-atom forces.
     compute_charge_gradients : bool, default=False
-        If True, compute per-atom charge gradients dE/dq.
+        If True, compute per-atom charge gradients :math:`\partial E/\partial q`.
     compute_virial : bool, default=False
         If True, compute the virial tensor ``W = -dE/d(displacement)`` for the
         row-vector displacement recipe.
@@ -2876,7 +2931,7 @@ def _particle_mesh_ewald_impl(
     Notes
     -----
     Automatic Parameter Estimation (when alpha is None):
-        Uses Kolafa-Perram formula for optimal α and mesh dimensions based on
+        Uses Kolafa-Perram formula for optimal :math:`\alpha` and mesh dimensions based on
         requested accuracy.
 
     Energy-derived first-order gradients are supported. Higher-order PME
@@ -3179,6 +3234,14 @@ def particle_mesh_ewald(
 ):
     """Complete Particle Mesh Ewald calculation for long-range electrostatics.
 
+    Computes the total Coulomb energy via the PME method, which achieves
+    :math:`O(N \\log N)` scaling through FFT-based reciprocal-space calculations:
+
+    .. math::
+
+        E_{\\text{total}} = E_{\\text{real}} + E_{\\text{reciprocal}}
+        - E_{\\text{self}} - E_{\\text{background}}
+
     Parameters
     ----------
     positions : jax.Array, shape (N, 3)
@@ -3225,8 +3288,16 @@ def particle_mesh_ewald(
 
     Returns
     -------
-    jax.Array or tuple[jax.Array, ...]
-        Per-atom energy, plus deprecated direct outputs when requested.
+    energies : jax.Array, shape (N,)
+        Per-atom total electrostatic energies (real + reciprocal + slab).
+    forces : jax.Array, shape (N, 3), optional
+        Per-atom forces. Only present when ``compute_forces=True`` (deprecated).
+    charge_gradients : jax.Array, shape (N,), optional
+        Per-atom charge gradients :math:`\\partial E/\\partial q`. Only present when
+        ``compute_charge_gradients=True`` (deprecated).
+    virial : jax.Array, shape (1, 3, 3) or (B, 3, 3), optional
+        Virial tensor. Only present when ``compute_virial=True`` (deprecated).
+        Always last in the return tuple.
 
     Notes
     -----

@@ -108,7 +108,7 @@ def _overlap_radial_integral(
 ) -> float:
     r"""Trapezoidal evaluation of the radial overlap integral :math:`I_L`.
 
-    Grid: linear from ``1e-4`` to ``r_max_factor * max(σ_s, σ_r)`` with
+    Grid: linear from ``1e-4`` to ``r_max_factor * max(sigma_s, sigma_r)`` with
     ``grid_size`` samples — same discretization as the customer reference.
     """
     r_max = r_max_factor * max(sigma_receive, sigma_source)
@@ -147,11 +147,11 @@ def compute_overlap_constants(
     normalize_source, normalize_receive
         Normalization conventions. See :class:`nvalchemiops.torch.math.gto.NormMode`.
     field_constant
-        Electrostatic prefactor (``1/ε₀`` in the chosen unit system). Defaults
+        Electrostatic prefactor (``1/epsilon_0`` in the chosen unit system). Defaults
         to :data:`FIELD_CONSTANT` (``e``, ``V``, ``Å`` units).
     grid_size, r_max_factor
         Numerical quadrature parameters. The integrand is evaluated on a linear
-        grid from ``1e-4`` to ``r_max_factor * max(σ_s, σ_r)`` with
+        grid from ``1e-4`` to ``r_max_factor * max(sigma_s, sigma_r)`` with
         ``grid_size`` points, then integrated via the trapezoidal rule.
         Defaults match the reference implementation.
 
@@ -161,7 +161,7 @@ def compute_overlap_constants(
         Entry ``[i, L]`` is the overlap constant for receiver width
         ``sigmas_receive[i]`` and angular momentum ``L``. The same constant
         applies to every :math:`m \in \{-L, \ldots, L\}` for that
-        ``(L, σ_r)``.
+        ``(L, sigma_r)``.
 
     Raises
     ------
@@ -210,6 +210,28 @@ def flatten_to_reference_layout(
     does not depend on ``m``). Useful only for parity testing against the
     reference implementation — production code should index the clean
     ``(N_sigma, L+1)`` tensor directly.
+
+    Parameters
+    ----------
+    constants_by_sigma_L : torch.Tensor, shape (N_sigma, max_L + 1)
+        Per-``(sigma_receive, L)`` overlap constants as returned by
+        :func:`compute_overlap_constants`.
+    max_L : int
+        Maximum angular momentum (inclusive). Must satisfy
+        ``constants_by_sigma_L.shape[1] == max_L + 1``.
+
+    Returns
+    -------
+    torch.Tensor, shape (N_sigma * (max_L + 1) ** 2,), dtype=float64
+        Flat overlap constant array in the customer reference index layout.
+        Each ``(L, sigma_receive)`` constant is repeated ``2L + 1`` times for
+        the ``m``-slots.
+
+    Raises
+    ------
+    ValueError
+        If ``max_L`` is negative or ``constants_by_sigma_L`` does not have
+        shape ``(N_sigma, max_L + 1)``.
     """
     if max_L < 0:
         raise ValueError(f"max_L must be non-negative, got {max_L}")

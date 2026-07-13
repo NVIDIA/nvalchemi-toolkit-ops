@@ -258,7 +258,23 @@ def _normalize_outputs(result: Any) -> tuple[torch.Tensor, ...]:
 
 @contextmanager
 def warp_stream_from_torch(*values: Any):
-    """Bind Warp launches to PyTorch's current CUDA stream when tensors are CUDA."""
+    """Bind Warp launches to PyTorch's current CUDA stream when tensors are CUDA.
+
+    Finds the first CUDA tensor in ``values`` and switches Warp to its stream
+    for the duration of the context.  Falls back to a no-op context when no
+    CUDA tensor is found (e.g., CPU-only runs).
+
+    Parameters
+    ----------
+    *values : Any
+        Arbitrary arguments; only ``torch.Tensor`` instances on CUDA are
+        inspected for stream information.
+
+    Yields
+    ------
+    torch.cuda.Stream or None
+        The active PyTorch CUDA stream, or ``None`` when running on CPU.
+    """
     stream_tensor = next(
         (
             value
@@ -359,10 +375,8 @@ def warp_custom_op(
 
     This decorator eliminates boilerplate by automatically generating:
     - A ``torch.library.custom_op`` forward registered with fake/meta support
-    - A hidden token input for runtime state handoff while the public wrapper
-      still exposes only the user-visible signature
-    - A traceable ``register_autograd`` wrapper that replays Warp tapes through
-      an opaque backward custom op
+    - A hidden token input for runtime state handoff while the public wrapper still exposes only the user-visible signature
+    - A traceable ``register_autograd`` wrapper that replays Warp tapes through an opaque backward custom op
     - Stream binding so Warp launches execute on PyTorch's current CUDA stream
 
     Parameters
@@ -741,22 +755,22 @@ def warp_from_torch(
     warp_dtype: type,
     requires_grad: bool | None = None,
 ) -> wp.array:
-    """
-    Convert a PyTorch tensor to a Warp array with proper gradient tracking.
+    """Convert a PyTorch tensor to a Warp array with proper gradient tracking.
 
     Parameters
     ----------
     tensor : torch.Tensor
-        Input PyTorch tensor
+        Input PyTorch tensor.
     warp_dtype : wp.dtype
-        Warp data type for the array
-    requires_grad : bool | None, optional
-        Override gradient tracking. If None, inherits from tensor.requires_grad
+        Warp data type for the resulting array (e.g., ``wp.vec3f``, ``wp.float64``).
+    requires_grad : bool, optional
+        Override gradient tracking. If ``None``, inherits from ``tensor.requires_grad``.
 
     Returns
     -------
     wp.array
-        Warp array with gradient tracking if needed
+        Warp array backed by the same storage as ``tensor``, with gradient
+        tracking enabled when ``requires_grad`` is ``True``.
     """
     # Determine if we need gradient tracking
     needs_grad = requires_grad if requires_grad is not None else tensor.requires_grad
@@ -773,21 +787,20 @@ def warp_from_torch(
 
 
 def needs_grad(*tensors: torch.Tensor) -> bool:
-    """
-    Check if any of the provided tensors requires gradients.
+    """Check if any of the provided tensors requires gradients.
 
-    This is useful for conditionally enabling Warp gradient tracking
-    and tape recording only when needed for backpropagation.
+    Useful for conditionally enabling Warp gradient tracking and tape recording
+    only when needed for backpropagation.
 
     Parameters
     ----------
     *tensors : torch.Tensor
-        Variable number of PyTorch tensors to check
+        Tensors to inspect; non-tensor values in ``tensors`` are silently skipped.
 
     Returns
     -------
     bool
-        True if any tensor requires gradients, False otherwise
+        ``True`` if at least one tensor has ``requires_grad=True``, ``False`` otherwise.
 
     Examples
     --------
@@ -803,21 +816,21 @@ def needs_grad(*tensors: torch.Tensor) -> bool:
 
 @contextmanager
 def WarpAutogradContextManager(enable: bool):
-    """
-    Conditionally create a Warp tape as a context manager.
+    """Conditionally create a Warp tape as a context manager.
 
-    Returns a Warp Tape if enable=True for gradient recording,
-    otherwise returns a nullcontext (no-op) for zero overhead.
+    Yields a :class:`wp.Tape` when ``enable=True`` so Warp kernel launches are
+    recorded for differentiation.  When ``enable=False`` a no-op context is used,
+    incurring zero overhead.
 
     Parameters
     ----------
     enable : bool
-        Whether to create a tape for gradient recording
+        Whether to create a tape for gradient recording.
 
     Yields
     ------
-    wp.Tape or nullcontext
-        Active tape for recording if enabled, otherwise nullcontext
+    wp.Tape or None
+        Active tape for recording when ``enable=True``; ``None`` otherwise.
 
     Examples
     --------
@@ -840,20 +853,22 @@ def WarpAutogradContextManager(enable: bool):
 def attach_for_backward(
     output: torch.Tensor, tape: wp.Tape | None = None, **warp_arrays: wp.array
 ) -> None:
-    """
-    Attach Warp tape and arrays to a PyTorch tensor for later retrieval in backward.
+    """Attach Warp tape and arrays to a PyTorch tensor for later retrieval in backward.
 
-    This stores the tape and warp arrays as attributes on the output tensor,
-    allowing them to be retrieved in the backward pass of a custom operator.
+    Stores ``tape`` and each entry in ``warp_arrays`` as attributes on ``output``,
+    so that :func:`retrieve_for_backward` can recover them inside a custom-op
+    backward pass.
 
     Parameters
     ----------
     output : torch.Tensor
-        PyTorch tensor to attach attributes to (usually the output of forward)
+        PyTorch tensor to attach attributes to (typically the first output of the
+        forward function).
     tape : wp.Tape, optional
-        Warp tape containing recorded operations for backward pass
+        Warp tape containing recorded operations for the backward pass.
     **warp_arrays : wp.array
-        Named warp arrays to store (e.g., positions=wp_positions, charges=wp_charges)
+        Named Warp arrays to store (e.g., ``positions=wp_positions``,
+        ``charges=wp_charges``).
 
     Examples
     --------
@@ -877,22 +892,26 @@ def attach_for_backward(
 def retrieve_for_backward(
     output: torch.Tensor, *array_names: str
 ) -> tuple[wp.Tape, dict[str, wp.array]]:
-    """
-    Retrieve Warp tape and arrays from a PyTorch tensor in backward pass.
+    """Retrieve Warp tape and arrays from a PyTorch tensor in backward pass.
+
+    Companion to :func:`attach_for_backward`.  Arrays not present on ``output``
+    are silently omitted from the returned dict so optional attachments do not
+    need special handling.
 
     Parameters
     ----------
     output : torch.Tensor
-        PyTorch tensor that has attached Warp objects (from attach_for_backward)
+        PyTorch tensor that has attached Warp objects via
+        :func:`attach_for_backward`.
     *array_names : str
-        Names of warp arrays to retrieve (without '_wp_' prefix)
+        Names of Warp arrays to retrieve (without the ``_wp_`` attribute prefix).
 
     Returns
     -------
-    tape : wp.Tape
-        The stored Warp tape
-    arrays : dict[str, wp.array]
-        Dictionary mapping names to warp arrays
+    wp.Tape
+        The stored Warp tape attached to ``output``.
+    dict[str, wp.array]
+        Mapping from each requested name to its stored Warp array.
 
     Examples
     --------
@@ -919,27 +938,29 @@ def extract_gradients(
     warp_arrays: dict[str, wp.array],
     input_names: list[str] | tuple[str],
 ) -> tuple[torch.Tensor | None, ...]:
-    """
-    Extract gradients from warp arrays and return in correct order for PyTorch.
+    """Extract gradients from Warp arrays and return them in PyTorch autograd order.
 
-    This helper extracts gradients from warp arrays and returns them in the
-    same order as the forward pass inputs, with None for inputs that don't
-    require gradients.
+    Returns gradients aligned to the forward function's input signature: each
+    position receives a ``torch.Tensor`` when the corresponding input required
+    gradients, or ``None`` otherwise.
 
     Parameters
     ----------
     ctx : Any
-        PyTorch autograd context with saved tensors (must have attributes
-        matching input_names)
+        PyTorch autograd context.  Must expose each name in ``input_names`` as
+        an attribute holding the saved input tensor.
     warp_arrays : dict[str, wp.array]
-        Dictionary mapping input names to warp arrays with computed gradients
-    input_names : Sequence[str]
-        Names of inputs in the order they appear in forward function signature
+        Mapping from input names to Warp arrays whose ``.grad`` fields have been
+        populated by ``tape.backward()``.
+    input_names : list[str] or tuple[str]
+        Names of inputs in the same order they appear in the forward function
+        signature.
 
     Returns
     -------
-    tuple[Optional[torch.Tensor], ...]
-        Gradients in order, with None for inputs without requires_grad
+    tuple[torch.Tensor or None, ...]
+        Gradients in ``input_names`` order; ``None`` for inputs that did not
+        require gradients or for which no Warp array was provided.
 
     Examples
     --------
@@ -975,15 +996,12 @@ def standard_backward(
     input_names: list[str] | tuple[str],
     output_dtypes: Any | list[Any] | tuple[Any] | None = None,
 ) -> tuple[torch.Tensor | None, ...]:
-    """
-    Standard backward implementation for Warp-PyTorch custom operators.
+    """Run the standard Warp tape backward pass for a PyTorch custom operator.
 
-    This function handles both single-output and multiple-output operators.
-    It encapsulates the common backward pattern:
-    1. Retrieve tape and warp arrays from context
-    2. Set gradient(s) on output(s)
-    3. Run tape backward
-    4. Extract and return gradients
+    Handles both single-output and multi-output operators by encapsulating the
+    common backward pattern: retrieve tape and Warp arrays from context, copy
+    upstream gradients into the output arrays, call ``tape.backward()``, then
+    return input gradients via :func:`extract_gradients`.
 
     Parameters
     ----------

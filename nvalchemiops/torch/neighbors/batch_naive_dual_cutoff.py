@@ -124,6 +124,7 @@ def _batch_naive_neighbor_matrix_no_pbc_dual_cutoff(
 def _batch_naive_neighbor_matrix_pbc_dual_cutoff(
     positions: torch.Tensor,
     cell: torch.Tensor,
+    pbc: torch.Tensor,
     cutoff1: float,
     cutoff2: float,
     batch_idx: torch.Tensor,
@@ -164,6 +165,7 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff(
     wp_cell = wp.from_torch(
         cell, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
     )
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, requires_grad=False, return_ctype=True)
     wp_shift_range = wp.from_torch(
         shift_range_per_dimension,
         dtype=wp.vec3i,
@@ -232,6 +234,7 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff(
     batch_naive_neighbor_matrix_pbc_dual_cutoff(
         positions=wp_positions,
         cell=wp_cell,
+        pbc=wp_pbc,
         cutoff1=cutoff1,
         cutoff2=cutoff2,
         batch_ptr=wp_batch_ptr,
@@ -349,6 +352,7 @@ def _batch_naive_neighbor_matrix_no_pbc_dual_cutoff_selective(
 def _batch_naive_neighbor_matrix_pbc_dual_cutoff_selective(
     positions: torch.Tensor,
     cell: torch.Tensor,
+    pbc: torch.Tensor,
     cutoff1: float,
     cutoff2: float,
     batch_idx: torch.Tensor,
@@ -392,6 +396,7 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff_selective(
     wp_cell = wp.from_torch(
         cell, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
     )
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, requires_grad=False, return_ctype=True)
     wp_shift_range = wp.from_torch(
         shift_range_per_dimension,
         dtype=wp.vec3i,
@@ -462,6 +467,7 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff_selective(
     batch_naive_neighbor_matrix_pbc_dual_cutoff(
         positions=wp_positions,
         cell=wp_cell,
+        pbc=wp_pbc,
         cutoff1=cutoff1,
         cutoff2=cutoff2,
         batch_ptr=wp_batch_ptr,
@@ -544,11 +550,159 @@ def batch_naive_neighbor_list_dual_cutoff(
 ):
     """Compute batch neighbor matrices using naive O(N^2) algorithm with dual cutoffs.
 
+    Allocates or accepts pre-allocated neighbor matrices for two independent cutoff
+    radii and fills them in a single GPU pass. Supports free-space and periodic
+    boundary conditions, selective per-system rebuilds via ``rebuild_flags``, and
+    optional conversion to COO neighbor-list format.
+
+    Parameters
+    ----------
+    positions : torch.Tensor, shape (N, 3)
+        Atomic positions in Cartesian space, where N is the total number of atoms
+        across all systems in the batch.
+    cutoff1 : float
+        Neighbour search cutoff radius for the first neighbour list.
+    cutoff2 : float
+        Neighbour search cutoff radius for the second neighbour list. Must satisfy
+        ``cutoff2 >= cutoff1`` for correct shift-range pre-computation.
+    batch_idx : torch.Tensor, shape (N,), dtype=int32, optional
+        System index per atom. Pass ``None`` for a single-system batch (all atoms
+        belong to system 0).
+    batch_ptr : torch.Tensor, shape (num_systems + 1,), dtype=int32, optional
+        CSR-style row pointer for the batch; ``batch_ptr[i]:batch_ptr[i+1]`` gives
+        the atom range for system ``i``. Derived from ``batch_idx`` when ``None``.
+    pbc : torch.Tensor, shape (num_systems, 3) or (3,), dtype=bool, optional
+        Periodic boundary flags per system and dimension. Pass ``None`` for
+        free-space (no PBC). Must be provided together with ``cell``.
+    cell : torch.Tensor, shape (num_systems, 3, 3) or (1, 3, 3), optional
+        Unit-cell matrices; each row is a lattice vector in Cartesian coordinates.
+        Must be provided together with ``pbc``.
+    max_neighbors1 : int, optional
+        Column width of ``neighbor_matrix1``. Estimated automatically when ``None``
+        and no pre-allocated matrix is supplied.
+    max_neighbors2 : int, optional
+        Column width of ``neighbor_matrix2``. Defaults to ``max_neighbors1`` when
+        ``None``.
+    half_fill : bool, optional
+        If ``True``, only the lower-triangular half of each neighbor matrix is
+        filled (each pair recorded once). Default is ``False``.
+    fill_value : int, optional
+        Padding sentinel for unused slots in the neighbor matrices. Defaults to N
+        (total atom count).
+    return_neighbor_list : bool, optional
+        If ``True``, convert the neighbor matrices to COO edge-list format
+        ``(neighbor_list, neighbor_ptr)`` before returning. Default is ``False``.
+    neighbor_matrix1 : torch.Tensor, shape (N, max_neighbors1), dtype=int32, optional
+        Pre-allocated output buffer for cutoff1 neighbour indices. Modified in-place.
+        Allocated internally when ``None``.
+    neighbor_matrix2 : torch.Tensor, shape (N, max_neighbors2), dtype=int32, optional
+        Pre-allocated output buffer for cutoff2 neighbour indices. Modified in-place.
+        Allocated internally when ``None``.
+    neighbor_matrix_shifts1 : torch.Tensor, shape (N, max_neighbors1, 3), dtype=int32, optional
+        Pre-allocated PBC image shift vectors for cutoff1 neighbours. Modified in-place.
+        Only used when ``pbc`` is not ``None``. Allocated internally when ``None``.
+    neighbor_matrix_shifts2 : torch.Tensor, shape (N, max_neighbors2, 3), dtype=int32, optional
+        Pre-allocated PBC image shift vectors for cutoff2 neighbours. Modified in-place.
+        Only used when ``pbc`` is not ``None``. Allocated internally when ``None``.
+    num_neighbors1 : torch.Tensor, shape (N,), dtype=int32, optional
+        Pre-allocated atom-wise neighbour count for cutoff1. Modified in-place.
+        Allocated internally when ``None``.
+    num_neighbors2 : torch.Tensor, shape (N,), dtype=int32, optional
+        Pre-allocated atom-wise neighbour count for cutoff2. Modified in-place.
+        Allocated internally when ``None``.
+    shift_range_per_dimension : torch.Tensor, shape (num_systems, 3), dtype=int32, optional
+        Half-range of image shifts per system and dimension. Computed from ``cell``
+        and ``cutoff2`` when ``None``.
+    num_shifts_per_system : torch.Tensor, shape (num_systems,), dtype=int32, optional
+        Total number of image shifts per system. Computed when ``None``.
+    max_shifts_per_system : int, optional
+        Maximum value across ``num_shifts_per_system``; used as a kernel launch
+        bound. Computed when ``None``.
+    max_atoms_per_system : int, optional
+        Maximum number of atoms in any single system; used as a kernel launch
+        bound. Computed from ``batch_ptr`` when ``None``.
+    rebuild_flags : torch.Tensor, shape (num_systems,), dtype=bool, optional
+        Per-system boolean flags. When provided, only systems with ``True`` are
+        rebuilt; other systems retain their existing neighbour data. No CPU-GPU
+        synchronisation occurs.
+    wrap_positions : bool, optional
+        If ``True`` (default), positions are wrapped into the primary unit cell
+        before distance evaluation. Only relevant when ``pbc`` is not ``None``.
+    positions_wrapped_buffer : torch.Tensor, shape (N, 3), optional
+        Pre-allocated buffer for wrapped positions. Allocated internally when
+        ``None`` and ``wrap_positions`` is ``True``.
+    per_atom_cell_offsets_buffer : torch.Tensor, shape (N, 3), dtype=int32, optional
+        Pre-allocated buffer for per-atom cell offsets used during wrapping.
+        Allocated internally when ``None``.
+    inv_cell_buffer : torch.Tensor, shape (num_systems, 3, 3), optional
+        Pre-allocated buffer for inverse cell matrices. Allocated internally when
+        ``None``.
+
+    Returns
+    -------
+    No PBC, ``return_neighbor_list=False`` :
+        tuple of (neighbor_matrix1, num_neighbors1, neighbor_matrix2, num_neighbors2)
+
+        neighbor_matrix1 : torch.Tensor, shape (N, max_neighbors1), dtype=int32
+            Neighbour indices for cutoff1; unused slots filled with ``fill_value``.
+        num_neighbors1 : torch.Tensor, shape (N,), dtype=int32
+            Number of valid neighbours per atom for cutoff1.
+        neighbor_matrix2 : torch.Tensor, shape (N, max_neighbors2), dtype=int32
+            Neighbour indices for cutoff2; unused slots filled with ``fill_value``.
+        num_neighbors2 : torch.Tensor, shape (N,), dtype=int32
+            Number of valid neighbours per atom for cutoff2.
+
+    No PBC, ``return_neighbor_list=True`` :
+        tuple of (neighbor_list1, neighbor_ptr1, neighbor_list2, neighbor_ptr2)
+
+        neighbor_list1 : torch.Tensor, shape (E1,), dtype=int32
+            COO target-atom indices for cutoff1 edges.
+        neighbor_ptr1 : torch.Tensor, shape (N + 1,), dtype=int32
+            CSR row pointer for cutoff1 edges.
+        neighbor_list2 : torch.Tensor, shape (E2,), dtype=int32
+            COO target-atom indices for cutoff2 edges.
+        neighbor_ptr2 : torch.Tensor, shape (N + 1,), dtype=int32
+            CSR row pointer for cutoff2 edges.
+
+    With PBC, ``return_neighbor_list=False`` :
+        tuple of (neighbor_matrix1, num_neighbors1, neighbor_matrix_shifts1,
+        neighbor_matrix2, num_neighbors2, neighbor_matrix_shifts2)
+
+        neighbor_matrix1 : torch.Tensor, shape (N, max_neighbors1), dtype=int32
+            Neighbour indices for cutoff1.
+        num_neighbors1 : torch.Tensor, shape (N,), dtype=int32
+            Neighbour counts for cutoff1.
+        neighbor_matrix_shifts1 : torch.Tensor, shape (N, max_neighbors1, 3), dtype=int32
+            PBC image shift vectors for cutoff1 neighbours.
+        neighbor_matrix2 : torch.Tensor, shape (N, max_neighbors2), dtype=int32
+            Neighbour indices for cutoff2.
+        num_neighbors2 : torch.Tensor, shape (N,), dtype=int32
+            Neighbour counts for cutoff2.
+        neighbor_matrix_shifts2 : torch.Tensor, shape (N, max_neighbors2, 3), dtype=int32
+            PBC image shift vectors for cutoff2 neighbours.
+
+    With PBC, ``return_neighbor_list=True`` :
+        tuple of (neighbor_list1, neighbor_ptr1, unit_shifts1,
+        neighbor_list2, neighbor_ptr2, unit_shifts2)
+
+        neighbor_list1 : torch.Tensor, shape (E1,), dtype=int32
+            COO target-atom indices for cutoff1 edges.
+        neighbor_ptr1 : torch.Tensor, shape (N + 1,), dtype=int32
+            CSR row pointer for cutoff1 edges.
+        unit_shifts1 : torch.Tensor, shape (E1, 3), dtype=int32
+            PBC image shift vectors for cutoff1 edges.
+        neighbor_list2 : torch.Tensor, shape (E2,), dtype=int32
+            COO target-atom indices for cutoff2 edges.
+        neighbor_ptr2 : torch.Tensor, shape (N + 1,), dtype=int32
+            CSR row pointer for cutoff2 edges.
+        unit_shifts2 : torch.Tensor, shape (E2, 3), dtype=int32
+            PBC image shift vectors for cutoff2 edges.
+
     See Also
     --------
-    nvalchemiops.neighbors.batch_naive_dual_cutoff.batch_naive_neighbor_matrix_dual_cutoff : Core warp launcher (no PBC)
-    nvalchemiops.neighbors.batch_naive_dual_cutoff.batch_naive_neighbor_matrix_pbc_dual_cutoff : Core warp launcher (with PBC)
-    batch_naive_neighbor_list : Single cutoff version
+    :func:`nvalchemiops.neighbors.batch_naive_dual_cutoff.batch_naive_neighbor_matrix_dual_cutoff` : Core warp launcher (no PBC).
+    :func:`nvalchemiops.neighbors.batch_naive_dual_cutoff.batch_naive_neighbor_matrix_pbc_dual_cutoff` : Core warp launcher (with PBC).
+    :func:`nvalchemiops.torch.neighbors.batch_naive.batch_naive_neighbor_list` : Single-cutoff variant.
     """
     if pbc is None and cell is not None:
         raise ValueError("If cell is provided, pbc must also be provided")
@@ -707,6 +861,7 @@ def batch_naive_neighbor_list_dual_cutoff(
             _batch_naive_neighbor_matrix_pbc_dual_cutoff_selective(
                 positions=positions,
                 cell=cell,
+                pbc=pbc,
                 cutoff1=cutoff1,
                 cutoff2=cutoff2,
                 batch_idx=batch_idx,
@@ -732,6 +887,7 @@ def batch_naive_neighbor_list_dual_cutoff(
             _batch_naive_neighbor_matrix_pbc_dual_cutoff(
                 positions=positions,
                 cell=cell,
+                pbc=pbc,
                 cutoff1=cutoff1,
                 cutoff2=cutoff2,
                 batch_idx=batch_idx,

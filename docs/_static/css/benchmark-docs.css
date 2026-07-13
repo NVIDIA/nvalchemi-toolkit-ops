@@ -1,0 +1,146 @@
+/* SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/* Benchmark result tabs and controls. Keep these rules page-scoped. */
+
+#performance-results .sd-tab-content {
+  box-shadow: 0 -0.0625rem var(--sd-color-tabs-overline);
+  padding-bottom: 0;
+}
+
+#performance-results > .sd-tab-set {
+  margin-bottom: 2rem;
+}
+
+#performance-results figure {
+  margin-bottom: 1.75rem;
+}
+
+#performance-results a.nl-cutoff-plot-link {
+  display: block;
+  text-align: center;
+}
+
+#performance-results svg.nl-cutoff-plot {
+  border: 0;
+  display: block;
+  height: auto;
+  margin: 0 auto;
+  max-width: 100%;
+  width: 90%;
+}
+
+#performance-results svg.nl-cutoff-plot [data-nl-cutoff] {
+  opacity: 0;
+  transition: opacity 180ms ease-in-out;
+}
+
+#performance-results svg.nl-cutoff-plot [data-nl-cutoff="15A"] {
+  opacity: 1;
+}
+
+#nl-cutoff-switch {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.625rem;
+  margin: 0.75rem 0 1rem;
+}
+
+#nl-cutoff-switch .nl-cutoff-switch__label {
+  color: var(--pst-color-text-muted);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+#nl-cutoff-switch .nl-cutoff-switch__controls {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+#nl-cutoff-switch .nl-cutoff-toggle {
+  align-items: center;
+  color: var(--pst-color-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 0.875rem;
+  font-weight: 600;
+  gap: 0.4rem;
+  line-height: 1.2;
+  margin: 0;
+  position: relative;
+}
+
+#nl-cutoff-switch .nl-cutoff-toggle:hover {
+  color: var(--pst-color-primary);
+}
+
+#nl-cutoff-switch .nl-cutoff-toggle input {
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  position: absolute;
+  width: 1px;
+}
+
+#nl-cutoff-switch .nl-cutoff-toggle__control {
+  background: var(--pst-color-surface);
+  border: 1px solid var(--pst-color-border);
+  border-radius: 999px;
+  box-sizing: border-box;
+  display: inline-block;
+  height: 1.25rem;
+  position: relative;
+  transition: background-color 140ms ease-in-out, border-color 140ms ease-in-out;
+  width: 2.25rem;
+}
+
+#nl-cutoff-switch .nl-cutoff-toggle__control::after {
+  background: var(--pst-color-text-muted);
+  border-radius: 50%;
+  content: "";
+  height: 0.8rem;
+  left: 0.18rem;
+  position: absolute;
+  top: 0.16rem;
+  transition: background-color 140ms ease-in-out, transform 140ms ease-in-out;
+  width: 0.8rem;
+}
+
+#nl-cutoff-switch .nl-cutoff-toggle input:focus-visible + .nl-cutoff-toggle__control {
+  outline: 2px solid var(--pst-color-primary);
+  outline-offset: 2px;
+}
+
+#nl-cutoff-switch .nl-cutoff-toggle input:checked + .nl-cutoff-toggle__control {
+  background: var(--pst-color-primary);
+  border-color: var(--pst-color-primary);
+}
+
+#nl-cutoff-switch .nl-cutoff-toggle input:checked + .nl-cutoff-toggle__control::after {
+  background: var(--pst-color-primary-text);
+  transform: translateX(0.99rem);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #nl-cutoff-switch .nl-cutoff-toggle__control,
+  #nl-cutoff-switch .nl-cutoff-toggle__control::after,
+  #performance-results svg.nl-cutoff-plot [data-nl-cutoff] {
+    transition: none;
+  }
+}
+
+@media (max-width: 959.98px) {
+  .bd-main .bd-content .bd-article-container {
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 576px) {
+  #nl-cutoff-switch {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

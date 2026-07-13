@@ -44,7 +44,7 @@ The full ``ewald_summation`` API treats energy autograd as the differentiable
 contract; its direct-output flags warn and are deprecated. The component APIs
 (``ewald_real_space`` and ``ewald_reciprocal_space``) intentionally retain direct
 forces as no-autograd MD/inference escape hatches. Component charge-gradient,
-virial, and hybrid direct outputs are legacy training-style outputs and warn.
+virial, and hybrid direct outputs are deprecated training-style outputs and warn.
 
 Examples
 --------
@@ -109,6 +109,7 @@ from nvalchemiops.torch.interactions.electrostatics._util import (
     _component_direct_output_deprecation_msg,
     _detach_setup_tensor,
     _direct_output_deprecation_msg,
+    _has_potentially_geometry_dependent_charges,
     _InjectCachedEvalGrad,
     _InjectCachedEvalGradWithFallback,
     _InjectChargeGrad,
@@ -213,7 +214,7 @@ def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, int]:
 #     the reciprocal ``cell`` gradient through Torch.
 #
 # When nothing requires grad, the forward-only ``_DerivState.E`` kernel runs with no
-# derivative state (inference performance preserved). The legacy direct flags
+# derivative state (inference performance preserved). The deprecated direct flags
 # (``compute_forces`` / ``compute_charge_gradients`` / ``compute_virial`` /
 # ``hybrid_forces``) are served by :mod:`_ewald_direct` (tape-free forward kernels).
 
@@ -254,9 +255,9 @@ def _attach_virial_charge_grad(
 ) -> torch.Tensor:
     """Give the direct (kernel) ``virial`` a charge gradient via strain autograd.
 
-    The legacy ``compute_virial`` output is differentiable w.r.t. ``charges``
-    (the historical tape connected it). The direct factory kernel output is
-    forward-only, so this re-attaches the charge gradient with a straight-through:
+    The deprecated ``compute_virial`` output remains differentiable w.r.t.
+    ``charges``. The direct factory kernel output is forward-only, so this
+    re-attaches the charge gradient with a straight-through:
     the value stays the kernel ``virial_value`` while the gradient comes from the
     row-vector displacement virial ``W = -dE/dstrain`` of the autograd-connected
     energy, recomputed with ``positions`` / ``cell`` detached so only the
@@ -321,12 +322,12 @@ def _real_space_energy_outputs(
     want_charge_grad: bool = False,
     want_virial: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
-    """Per-atom real-space Ewald energy plus optional legacy direct outputs.
+    """Per-atom real-space Ewald energy plus optional deprecated direct outputs.
 
     Differentiable in ``positions`` / ``charges`` through the explicit chain and in ``cell``
     through :func:`real_space_cell_connect` (literal ``dE/dcell``). When no input
     requires grad, the plain forward-only chain op runs (no derivative state).
-    Legacy direct outputs reuse the same forward launch and remain forward-only.
+    Deprecated direct outputs reuse the same forward launch and remain forward-only.
     """
     num_atoms = positions.shape[0]
     device = positions.device
@@ -548,6 +549,7 @@ def _reciprocal_space_energy(
     alpha: torch.Tensor,
     *,
     batch_idx: torch.Tensor | None,
+    max_atoms_per_system: int | None = None,
 ) -> torch.Tensor:
     """Per-atom reciprocal-space Ewald energy, connected to autograd via the chain.
 
@@ -603,6 +605,20 @@ def _reciprocal_space_energy(
         )
         volume = torch.abs(torch.linalg.det(cell)).to(torch.float64)
         atom_start, atom_end = _atom_ranges(batch_idx, num_systems)
+        max_atoms_bound = 0
+        if max_atoms_per_system is not None:
+            max_atoms_bound = int(max_atoms_per_system)
+            if positions.shape[0] == 0:
+                if max_atoms_bound < 0:
+                    raise ValueError("max_atoms_per_system must be non-negative")
+            elif max_atoms_bound <= 0:
+                raise ValueError(
+                    "max_atoms_per_system must be positive for non-empty batches"
+                )
+            elif max_atoms_bound > positions.shape[0]:
+                raise ValueError(
+                    "max_atoms_per_system cannot exceed the total number of atoms"
+                )
         e_ksum, _, _, _ = torch.ops.nvalchemiops.ewald_recip_energy_batch(
             positions,
             charges,
@@ -616,6 +632,7 @@ def _reciprocal_space_energy(
             need_pos,
             need_charge,
             need_cell,
+            max_atoms_bound,
         )
 
     return _apply_reciprocal_corrections(e_ksum, charges, volume, alpha, batch_idx)
@@ -643,7 +660,7 @@ def ewald_real_space(
     compute_virial: bool = False,
     hybrid_forces: bool = False,
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
-    """Compute real-space Ewald energy and optionally forces, charge gradients, and virial.
+    r"""Compute real-space Ewald energy and optionally forces, charge gradients, and virial.
 
     Computes the damped Coulomb interactions for atom pairs within the real-space
     cutoff. The complementary error function (erfc) damping ensures rapid
@@ -683,16 +700,18 @@ def ewald_real_space(
         Whether to compute explicit component charge gradients. This direct
         output follows the same no-autograd contract as ``compute_forces``.
     compute_virial : bool, default=False
-        Whether to compute the component virial tensor W = -dE/d(epsilon).
+        Whether to compute the component virial tensor
+        :math:`W = -\partial E / \partial \varepsilon`.
         Stress = -virial / volume.
     hybrid_forces : bool, default=False
         When True, positions and cell are detached from the autograd graph and
         charge gradients are attached to the energy via a straight-through
         trick.  Forces and virial are forward-only (not differentiable).
         This is intended for efficient inference with geometry-dependent
-        charges ``q(R)``, where explicit forces provide ``dE/dR|_q`` and
-        autograd through the energy provides the charge chain-rule term
-        ``(dE/dq)(dq/dR)``.
+        charges :math:`q = q(R)`, where explicit forces provide
+        :math:`\partial E/\partial R|_q` and autograd through the energy
+        provides the charge chain-rule term
+        :math:`\partial E/\partial q \cdot \mathrm{d}q/\mathrm{d}R`.
 
     Returns
     -------
@@ -709,6 +728,16 @@ def ewald_real_space(
     ----
     Energies are always float64 for numerical stability during accumulation.
     Forces, virial, and charge gradients match the input dtype (float32 or float64).
+
+    When ``charges`` is a non-leaf tensor that may depend on ``positions``
+    (:math:`q = q(R)`), ordinary first-order losses may use cached partial
+    derivatives and let PyTorch apply
+    :math:`\partial E/\partial q \cdot \mathrm{d}q/\mathrm{d}R` once. Weighted
+    losses and higher-order derivatives recompute safe partials or connected
+    gradients as needed to avoid double-counting that chain term (issue #115).
+    Hybrid direct-output mode uses the same cached fallback connector so
+    weighted :math:`q = q(R)` losses can recover a valid energy gradient when
+    the forward energy was detached.
 
     """
     component_deprecated_flags = tuple(
@@ -824,6 +853,7 @@ def ewald_real_space(
         and not cell.requires_grad
         and not alpha.requires_grad
         and (positions.requires_grad or charges.requires_grad)
+        and not _has_potentially_geometry_dependent_charges(positions, charges)
     ):
         # Ordinary scalar first-derivative evaluations can use detached direct
         # caches. Weighted losses and create_graph=True rebuild the true energy
@@ -873,7 +903,7 @@ def ewald_real_space(
         )
         return energies
 
-    # Differentiable energy plus optional legacy direct outputs from one chain
+    # Differentiable energy plus optional deprecated direct outputs from one chain
     # forward launch. Autograd still propagates only from the energy output.
     energies, forces, charge_grads, virial = _real_space_energy_outputs(
         positions,
@@ -895,7 +925,7 @@ def ewald_real_space(
     if not want_direct:
         return energies
 
-    # The legacy direct virial is differentiable w.r.t. charges; re-attach that
+    # The deprecated direct virial is differentiable w.r.t. charges; re-attach that
     # gradient (value stays the kernel output) via the strain virial of the
     # autograd-connected real-space energy.
     if compute_virial and charges.requires_grad:
@@ -955,6 +985,8 @@ def ewald_reciprocal_space(
     compute_charge_gradients: bool = False,
     compute_virial: bool = False,
     hybrid_forces: bool = False,
+    *,
+    max_atoms_per_system: int | None = None,
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
     r"""Compute reciprocal-space Ewald energy and optionally forces, charge gradients, virial.
 
@@ -985,13 +1017,21 @@ def ewald_reciprocal_space(
         Whether to compute explicit component charge gradients. This direct
         output follows the same no-autograd contract as ``compute_forces``.
     compute_virial : bool, default=False
-        Whether to compute the component virial tensor W = -dE/d(epsilon).
+        Whether to compute the component virial tensor
+        :math:`W = -\partial E / \partial \varepsilon`.
         Stress = -virial / volume.
     hybrid_forces : bool, default=False
         When True, positions and cell are detached from the autograd graph and
         charge gradients are attached to the energy via a straight-through
         trick.  Forces and virial are forward-only (not differentiable).
         See :func:`ewald_real_space` for details.
+    max_atoms_per_system : int, optional, keyword-only
+        Maximum number of atoms in any single system when ``batch_idx`` is
+        provided. Passing this host-known upper bound avoids CUDA host
+        synchronization from launch-size inference in the reciprocal kernel.
+        Overestimates are safe but may launch extra blocks. When omitted, the
+        bound is inferred from ``atom_start`` / ``atom_end`` and may
+        synchronize on CUDA.
 
     Returns
     -------
@@ -1010,6 +1050,13 @@ def ewald_reciprocal_space(
     Forces, virial, and charge gradients match the input dtype (float32 or float64).
     ``k_vectors`` are setup metadata. Caller-supplied vectors are treated as
     static values that correspond to the current ``cell``.
+
+    When ``charges`` is a non-leaf tensor that may depend on ``positions``
+    (:math:`q = q(R)`), ordinary first-order losses may use cached partial
+    derivatives and let PyTorch apply
+    :math:`\partial E/\partial q \cdot \mathrm{d}q/\mathrm{d}R` once. Weighted
+    losses and higher-order derivatives recompute safe partials or connected
+    gradients as needed to avoid double-counting that chain term (issue #115).
     """
     return _ewald_reciprocal_space(
         positions=positions,
@@ -1023,6 +1070,7 @@ def ewald_reciprocal_space(
         compute_virial=compute_virial,
         hybrid_forces=hybrid_forces,
         allow_cell_grad_with_k_vectors=False,
+        max_atoms_per_system=max_atoms_per_system,
     )
 
 
@@ -1038,6 +1086,7 @@ def _ewald_reciprocal_space(
     compute_virial: bool = False,
     hybrid_forces: bool = False,
     allow_cell_grad_with_k_vectors: bool = False,
+    max_atoms_per_system: int | None = None,
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
     """Private reciprocal-space implementation with an internal cell-gradient path."""
     component_deprecated_flags = tuple(
@@ -1161,6 +1210,7 @@ def _ewald_reciprocal_space(
                     k_vectors_hybrid,
                     alpha,
                     batch_idx=batch_idx,
+                    max_atoms_per_system=max_atoms_per_system,
                 )
 
             energies = _InjectCachedEvalGradWithFallback.apply(
@@ -1208,7 +1258,13 @@ def _ewald_reciprocal_space(
         return _build_result(energies, forces, charge_grads_out, virial)
 
     energies = _reciprocal_space_energy(
-        positions, charges, cell, k_vectors_2d, alpha, batch_idx=batch_idx
+        positions,
+        charges,
+        cell,
+        k_vectors_2d,
+        alpha,
+        batch_idx=batch_idx,
+        max_atoms_per_system=max_atoms_per_system,
     )
 
     if not want_direct:
@@ -1234,7 +1290,15 @@ def _ewald_reciprocal_space(
     if compute_virial and charges.requires_grad:
 
         def _rec_energy_fn(p, q, c, k):
-            return _reciprocal_space_energy(p, q, c, k, alpha, batch_idx=batch_idx)
+            return _reciprocal_space_energy(
+                p,
+                q,
+                c,
+                k,
+                alpha,
+                batch_idx=batch_idx,
+                max_atoms_per_system=max_atoms_per_system,
+            )
 
         virial = _attach_virial_charge_grad(
             virial,
@@ -1295,8 +1359,9 @@ def ewald_summation(
     slab_correction: bool = False,
     *,
     miller_bounds: tuple[int, int, int] | torch.Tensor | None = None,
+    max_atoms_per_system: int | None = None,
 ) -> tuple[torch.Tensor, ...] | torch.Tensor:
-    """Complete Ewald summation for long-range electrostatics.
+    r"""Complete Ewald summation for long-range electrostatics.
 
     Computes total Coulomb energy by combining real-space and reciprocal-space
     contributions with self-energy and background corrections.
@@ -1319,6 +1384,10 @@ def ewald_summation(
         Precomputed Miller-index half-bounds used when ``k_vectors`` is not
         supplied. Passing Python integer bounds avoids deriving range sizes from
         device tensors inside regenerated-k-vector loops.
+    max_atoms_per_system : int, optional, keyword-only
+        Maximum number of atoms in any single system when ``batch_idx`` is
+        provided. See :func:`ewald_reciprocal_space` for the sync-free launch
+        contract.
     batch_idx : torch.Tensor, shape (N,), optional
         System index for each atom. When provided, atoms must be grouped by
         system: ``batch_idx`` must be contiguous, nondecreasing, and use system
@@ -1336,14 +1405,18 @@ def ewald_summation(
     mask_value : int, optional
         Value indicating invalid entries. Defaults to N.
     compute_forces : bool, default=False
-        Deprecated direct-output flag. Compute energy and use
-        ``torch.autograd.grad`` for differentiable forces.
+        .. deprecated:: 0.4.0
+            Deprecated direct-output flag. Compute energy and use
+            ``torch.autograd.grad`` for differentiable forces.
     compute_charge_gradients : bool, default=False
-        Deprecated direct-output flag. Compute energy and use
-        ``torch.autograd.grad`` for ``dE/dq_i``.
+        .. deprecated:: 0.4.0
+            Deprecated direct-output flag. Compute energy and use
+            ``torch.autograd.grad`` for :math:`\partial E / \partial q_i`.
     compute_virial : bool, default=False
-        Deprecated direct-output flag for the virial tensor W = -dE/d(epsilon).
-        Stress = -virial / volume.
+        .. deprecated:: 0.4.0
+            Deprecated direct-output flag for the virial tensor
+            :math:`W = -\partial E / \partial \varepsilon`.
+            Stress = -virial / volume.
     accuracy : float, default=1e-6
         Target accuracy for parameter estimation.
     hybrid_forces : bool, default=False
@@ -1370,9 +1443,11 @@ def ewald_summation(
     energies : torch.Tensor, shape (N,)
         Per-atom total Ewald energy.
     forces : torch.Tensor, shape (N, 3), optional
-        Deprecated direct forces (if compute_forces=True).
+        .. deprecated:: 0.4.0
+            Deprecated direct forces (if compute_forces=True).
     charge_gradients : torch.Tensor, shape (N,), optional
-        Deprecated direct charge gradients (if compute_charge_gradients=True).
+        .. deprecated:: 0.4.0
+            Deprecated direct charge gradients (if compute_charge_gradients=True).
     virial : torch.Tensor, shape (1, 3, 3) or (B, 3, 3), optional
         Virial tensor (if compute_virial=True). Always last in the tuple.
 
@@ -1381,6 +1456,13 @@ def ewald_summation(
     Energies are accumulated in float64 for numerical stability. Deprecated
     direct forces, charge gradients, and virials match the input dtype where the
     underlying component path returns typed outputs.
+
+    When ``charges`` is a non-leaf tensor that may depend on ``positions``
+    (:math:`q = q(R)`), ordinary first-order losses may use cached partial
+    derivatives and let PyTorch apply
+    :math:`\partial E/\partial q \cdot \mathrm{d}q/\mathrm{d}R` once. Weighted
+    losses and higher-order derivatives recompute safe partials or connected
+    gradients as needed to avoid double-counting that chain term (issue #115).
 
     Enabled output flags are appended in order: energies, [forces],
     [charge_gradients], [virial]. A single output is returned unwrapped;
@@ -1486,6 +1568,7 @@ def ewald_summation(
             compute_virial=compute_virial,
             hybrid_forces=hybrid_forces,
             allow_cell_grad_with_k_vectors=generated_k_vectors,
+            max_atoms_per_system=max_atoms_per_system,
         )
         return real, reciprocal
 

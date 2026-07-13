@@ -134,7 +134,7 @@ def _launch_sum(x: wp.array, idx: wp.array, out: wp.array) -> None:
 
     See Also
     --------
-    _launch_broadcast : Inverse op (per-segment scalar → per-element gather).
+    _launch_broadcast : Inverse op (per-segment scalar -> per-element gather).
     """
     out.zero_()
     N = x.shape[0]
@@ -180,7 +180,7 @@ def _launch_broadcast(values: wp.array, idx: wp.array, out: wp.array) -> None:
     """Run the forward ``segmented_broadcast`` overloads (pure gather).
 
     Gathers per-segment ``values`` into per-element ``out`` via ``idx``.  Shared
-    dispatcher for any backward path that needs a scatter→gather (e.g.
+    dispatcher for any backward path that needs a scatter->gather (e.g.
     ``segmented_sum`` backward, ``segmented_broadcast`` double-backward).
 
     Parameters
@@ -201,7 +201,7 @@ def _launch_broadcast(values: wp.array, idx: wp.array, out: wp.array) -> None:
 
     See Also
     --------
-    _launch_sum : Inverse op (per-element scatter-sum → per-segment).
+    _launch_sum : Inverse op (per-element scatter-sum -> per-segment).
     """
     N = out.shape[0]
     if N == 0:
@@ -2273,7 +2273,7 @@ def segmented_mean_double_backward(
     """Double-backward of segmented_mean.
 
     ``grad_g_out[s] = sum_i gg_x[i] / count[s]`` — the per-segment mean of
-    ``gg_x``.  Symmetric with the forward (mean → mean).
+    ``gg_x``.  Symmetric with the forward (mean -> mean).
 
     Parameters
     ----------

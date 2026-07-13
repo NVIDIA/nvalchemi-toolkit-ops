@@ -33,7 +33,6 @@ import warp as wp
 
 from nvalchemiops.neighbors.cluster_tile import (
     TILE_GROUP_SIZE,
-    estimate_max_tiles_per_group,
 )
 from nvalchemiops.neighbors.cluster_tile import (
     batch_build_cluster_tile_list as wp_batch_build_cluster_tile_list,
@@ -46,6 +45,9 @@ from nvalchemiops.neighbors.cluster_tile import (
 )
 from nvalchemiops.neighbors.cluster_tile import (
     estimate_batch_cluster_tile_segments as wp_estimate_batch_cluster_tile_segments,
+)
+from nvalchemiops.neighbors.cluster_tile import (
+    estimate_batch_max_tiles_per_group as wp_estimate_batch_max_tiles_per_group,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
     NeighborOverflowError,
@@ -65,6 +67,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "TILE_GROUP_SIZE",
+    "estimate_batch_max_tiles_per_group",
     "estimate_batch_cluster_tile_list_sizes",
     "estimate_batch_cluster_tile_segments",
     "allocate_batch_cluster_tile_list",
@@ -116,28 +119,44 @@ def _(
 # =============================================================================
 # Sizing + allocation helpers
 # =============================================================================
-def _batch_max_tiles_per_group(
+def estimate_batch_max_tiles_per_group(
     batch_ptr: torch.Tensor,
     cutoff: float,
     cell_batch: torch.Tensor,
+    *,
+    safety: float = 2.0,
+    floor: int = 256,
 ) -> int:
-    """Geometry-aware ``max_tiles_per_group`` for the batched compact buffer.
+    """Estimate batched ``max_tiles_per_group`` from per-system cells.
 
-    The compact buffer is ``ngroup_total * min(ngroup_total, mtpg)``, so the
-    cross-system ``mtpg`` must cover the densest system's neighbor-group count.
-    Returns the max of the per-system estimates (floored at the old default).
+    Parameters
+    ----------
+    batch_ptr : torch.Tensor, shape (num_systems + 1,)
+        Cumulative atom counts.
+    cutoff : float
+        Cartesian cutoff used for cluster-tile construction.
+    cell_batch : torch.Tensor, shape (num_systems, 3, 3)
+        Per-system cell matrices.
+    safety : float, default 2.0
+        Multiplier on the volumetric estimate.
+    floor : int, default 256
+        Minimum returned value for batched compact buffers.
+
+    Returns
+    -------
+    int
+        Shared ``max_tiles_per_group`` for the batched compact tile buffer.
     """
-    counts = (batch_ptr[1:] - batch_ptr[:-1]).tolist()
-    vols = torch.linalg.det(cell_batch.to(torch.float64)).abs().tolist()
-    if not isinstance(vols, list):
-        vols = [vols]
-    best = 256
-    for natom, vol in zip(counts, vols):
-        best = max(
-            best,
-            estimate_max_tiles_per_group(int(natom), float(cutoff), float(vol)),
-        )
-    return best
+    if batch_ptr.shape[0] < 2:
+        raise ValueError("batch_ptr must have length at least 2")
+    volumes = torch.linalg.det(cell_batch.to(torch.float64)).abs().view(-1)
+    return wp_estimate_batch_max_tiles_per_group(
+        batch_ptr,
+        cutoff,
+        volumes,
+        safety=safety,
+        floor=floor,
+    )
 
 
 def estimate_batch_cluster_tile_list_sizes(
@@ -150,7 +169,7 @@ def estimate_batch_cluster_tile_list_sizes(
     ----------
     batch_ptr : torch.Tensor, shape (num_systems + 1,), dtype=int32
         Cumulative atom counts defining per-system ranges.
-    max_tiles_per_group : int, default 512
+    max_tiles_per_group : int, default 256
         Upper bound on neighbor groups per row_group (dense-cutoff cap).
 
     Returns
@@ -166,6 +185,8 @@ def estimate_batch_cluster_tile_list_sizes(
         Upper bound on the tile pair list size.
     num_systems : int
     """
+    if batch_ptr.shape[0] < 2:
+        raise ValueError("batch_ptr must have length at least 2")
     num_systems = int(batch_ptr.shape[0]) - 1
     natom_per_system = (batch_ptr[1:] - batch_ptr[:-1]).to(torch.int64)
     natom_padded_per_system = (
@@ -192,7 +213,29 @@ def estimate_batch_cluster_tile_segments(
     ``pair_offsets`` are caller-owned fixed inputs for segmented cluster-tile
     build / COO query paths; ``tile_counts`` and ``pair_counts`` are separate
     output counters with length ``num_systems``.
+
+    Parameters
+    ----------
+    batch_ptr : torch.Tensor, shape (num_systems + 1,), dtype=int32
+        Cumulative atom counts defining per-system ranges.
+    max_neighbors : int
+        Upper bound on neighbors per atom used to size per-system COO segments.
+    max_tiles_per_group : int, default 256
+        Upper bound on neighbor groups per row_group (dense-cutoff cap).
+
+    Returns
+    -------
+    tile_capacities : torch.Tensor, shape (num_systems,), dtype=int32
+        Per-system tile buffer capacities.
+    tile_offsets : torch.Tensor, shape (num_systems + 1,), dtype=int32
+        CSR-style offsets into the segmented tile buffer (fixed input to build).
+    pair_capacities : torch.Tensor, shape (num_systems,), dtype=int32
+        Per-system pair buffer capacities.
+    pair_offsets : torch.Tensor, shape (num_systems + 1,), dtype=int32
+        CSR-style offsets into the segmented COO pair buffer (fixed input to query).
     """
+    if batch_ptr.shape[0] < 2:
+        raise ValueError("batch_ptr must have length at least 2")
     tile_caps, tile_offsets, pair_caps, pair_offsets = (
         wp_estimate_batch_cluster_tile_segments(
             batch_ptr,
@@ -235,11 +278,59 @@ def allocate_batch_cluster_tile_list(
 ]:
     """Allocate all state tensors consumed by ``batch_build_cluster_tile_list``.
 
-    Returns ``(sorted_atom_index, sort_inv_real, sorted_pos_x, sorted_pos_y,
-    sorted_pos_z, batch_idx_sorted, batch_ptr_padded, group_system,
-    group_ptr, group_ctr_x, group_ctr_y, group_ctr_z, group_ext_x,
-    group_ext_y, group_ext_z, num_tiles, tile_row_group, tile_col_group,
-    tile_system)``.
+    Parameters
+    ----------
+    batch_ptr : torch.Tensor, shape (num_systems + 1,), dtype=int32
+        Cumulative atom counts defining per-system ranges.
+    device : torch.device
+        Target device for all allocated tensors.
+    dtype : torch.dtype, default torch.float32
+        Floating-point dtype for position and group-centroid tensors.
+    max_tiles_per_group : int, default 256
+        Upper bound on neighbor groups per row_group; controls the tile buffer
+        size via :func:`estimate_batch_cluster_tile_list_sizes`.
+
+    Returns
+    -------
+    sorted_atom_index : torch.Tensor, shape (n_padded,), dtype=int32
+        Permutation mapping padded slot to original atom index; sentinel value
+        ``N`` (total real atoms) marks padding slots.
+    sort_inv : torch.Tensor, shape (N,), dtype=int32
+        Inverse permutation over the real (un-padded) atoms.
+    sorted_pos_x : torch.Tensor, shape (n_padded,), dtype=dtype
+        Morton-sorted x-coordinates in the padded SoA layout.
+    sorted_pos_y : torch.Tensor, shape (n_padded,), dtype=dtype
+        Morton-sorted y-coordinates in the padded SoA layout.
+    sorted_pos_z : torch.Tensor, shape (n_padded,), dtype=dtype
+        Morton-sorted z-coordinates in the padded SoA layout.
+    batch_idx_sorted : torch.Tensor, shape (n_padded,), dtype=int32
+        System index for every padded slot after Morton sort.
+    batch_ptr_padded : torch.Tensor, shape (num_systems + 1,), dtype=int32
+        Cumulative padded atom counts (multiples of ``TILE_GROUP_SIZE``).
+    group_system : torch.Tensor, shape (ngroup,), dtype=int32
+        System index for each 32-atom group.
+    group_ptr : torch.Tensor, shape (num_systems + 1,), dtype=int32
+        CSR group-level pointer derived from ``batch_ptr_padded``.
+    group_ctr_x : torch.Tensor, shape (ngroup_padded,), dtype=dtype
+        Group bounding-box centre x-coordinate (zeroed; written by build).
+    group_ctr_y : torch.Tensor, shape (ngroup_padded,), dtype=dtype
+        Group bounding-box centre y-coordinate (zeroed; written by build).
+    group_ctr_z : torch.Tensor, shape (ngroup_padded,), dtype=dtype
+        Group bounding-box centre z-coordinate (zeroed; written by build).
+    group_ext_x : torch.Tensor, shape (ngroup_padded,), dtype=dtype
+        Group bounding-box half-extent x (zeroed; written by build).
+    group_ext_y : torch.Tensor, shape (ngroup_padded,), dtype=dtype
+        Group bounding-box half-extent y (zeroed; written by build).
+    group_ext_z : torch.Tensor, shape (ngroup_padded,), dtype=dtype
+        Group bounding-box half-extent z (zeroed; written by build).
+    num_tiles : torch.Tensor, shape (1,), dtype=int32
+        Scalar tile-pair count; written by build, read by query.
+    tile_row_group : torch.Tensor, shape (max_tiles,), dtype=int32
+        Row group index for each tile pair (zeroed; written by build).
+    tile_col_group : torch.Tensor, shape (max_tiles,), dtype=int32
+        Column group index for each tile pair (zeroed; written by build).
+    tile_system : torch.Tensor, shape (max_tiles,), dtype=int32
+        System index for each tile pair (zeroed; written by build).
     """
     n_padded, ngroup, ngroup_padded, max_tiles, num_systems = (
         estimate_batch_cluster_tile_list_sizes(
@@ -628,7 +719,68 @@ def batch_build_cluster_tile_list(
     """Build batched tile neighbor list state into pre-allocated outputs.
 
     Runs the per-system Morton sort + padded SoA gather in torch, then
-    the bbox reduction + tile-pair enumeration in warp.
+    the bbox reduction + tile-pair enumeration in warp.  All output tensors
+    are modified in-place.
+
+    Parameters
+    ----------
+    positions : torch.Tensor, shape (N, 3), dtype=float32
+        Concatenated atomic coordinates across all systems.
+    cutoff : float
+        Cartesian cutoff radius used for tile-pair enumeration.
+    cell_batch : torch.Tensor, shape (num_systems, 3, 3), dtype=float32
+        Per-system unit cell matrices.
+    batch_ptr : torch.Tensor, shape (num_systems + 1,), dtype=int32
+        CSR pointer giving atom ranges per system.
+    sorted_atom_index : torch.Tensor, shape (n_padded,), dtype=int32
+        Output permutation array; modified in-place.
+    sort_inv : torch.Tensor, shape (N,), dtype=int32
+        Output inverse permutation; modified in-place.
+    sorted_pos_x : torch.Tensor, shape (n_padded,), dtype=float32
+        Output SoA x-positions; modified in-place.
+    sorted_pos_y : torch.Tensor, shape (n_padded,), dtype=float32
+        Output SoA y-positions; modified in-place.
+    sorted_pos_z : torch.Tensor, shape (n_padded,), dtype=float32
+        Output SoA z-positions; modified in-place.
+    batch_idx_sorted : torch.Tensor, shape (n_padded,), dtype=int32
+        Output system index per padded slot; modified in-place.
+    batch_ptr_padded : torch.Tensor, shape (num_systems + 1,), dtype=int32
+        Output padded CSR pointer; modified in-place.
+    group_system : torch.Tensor, shape (ngroup,), dtype=int32
+        Output system index per group; modified in-place.
+    group_ptr : torch.Tensor, shape (num_systems + 1,), dtype=int32
+        Output group-level CSR pointer; modified in-place.
+    group_ctr_x : torch.Tensor, shape (ngroup_padded,), dtype=float32
+        Output group bounding-box centre x; modified in-place.
+    group_ctr_y : torch.Tensor, shape (ngroup_padded,), dtype=float32
+        Output group bounding-box centre y; modified in-place.
+    group_ctr_z : torch.Tensor, shape (ngroup_padded,), dtype=float32
+        Output group bounding-box centre z; modified in-place.
+    group_ext_x : torch.Tensor, shape (ngroup_padded,), dtype=float32
+        Output group bounding-box half-extent x; modified in-place.
+    group_ext_y : torch.Tensor, shape (ngroup_padded,), dtype=float32
+        Output group bounding-box half-extent y; modified in-place.
+    group_ext_z : torch.Tensor, shape (ngroup_padded,), dtype=float32
+        Output group bounding-box half-extent z; modified in-place.
+    num_tiles : torch.Tensor, shape (1,), dtype=int32
+        Output tile-pair count (scalar); modified in-place.
+    tile_row_group : torch.Tensor, shape (max_tiles,), dtype=int32
+        Output row group per tile pair; modified in-place.
+    tile_col_group : torch.Tensor, shape (max_tiles,), dtype=int32
+        Output column group per tile pair; modified in-place.
+    tile_system : torch.Tensor, shape (max_tiles,), dtype=int32
+        Output system index per tile pair; modified in-place.
+    inv_cell_batch : torch.Tensor, shape (num_systems, 3, 3), dtype=float32, optional
+        Pre-computed inverse of ``cell_batch``.  Computed internally when None.
+    rebuild_flags : torch.Tensor, shape (num_systems,), dtype=bool, optional
+        Per-system selective rebuild flags.  Requires ``tile_offsets`` and
+        ``tile_counts`` (segmented path).
+    tile_offsets : torch.Tensor, shape (num_systems + 1,), dtype=int32, optional
+        Fixed per-system tile segment offsets for the segmented build path.
+        Must be provided together with ``tile_counts``.
+    tile_counts : torch.Tensor, shape (num_systems,), dtype=int32, optional
+        Output per-system tile counts for the segmented build path; modified
+        in-place.  Must be provided together with ``tile_offsets``.
     """
     if positions.dtype != torch.float32:
         raise TypeError("positions must be float32")
@@ -642,6 +794,8 @@ def batch_build_cluster_tile_list(
         )
     if batch_ptr.dtype != torch.int32 or batch_ptr.ndim != 1:
         raise ValueError("batch_ptr must be 1D int32")
+    if batch_ptr.shape[0] < 2:
+        raise ValueError("batch_ptr must have length at least 2")
 
     num_systems = cell_batch.shape[0]
     if batch_ptr.shape[0] != num_systems + 1:
@@ -846,6 +1000,73 @@ def batch_query_cluster_tile(
     binding: when any pair-output kwarg is set the call bypasses the torch
     custom op and forwards directly to the warp launcher (custom ops
     cannot carry callable ``pair_fn`` across their schema boundary).
+
+    Parameters
+    ----------
+    sorted_atom_index : torch.Tensor, shape (n_padded,), dtype=int32
+        Permutation from padded slot to original atom index (sentinel ``N``
+        marks padding slots).
+    sorted_pos_x : torch.Tensor, shape (n_padded,), dtype=float32
+        Morton-sorted x-coordinates in the padded SoA layout.
+    sorted_pos_y : torch.Tensor, shape (n_padded,), dtype=float32
+        Morton-sorted y-coordinates in the padded SoA layout.
+    sorted_pos_z : torch.Tensor, shape (n_padded,), dtype=float32
+        Morton-sorted z-coordinates in the padded SoA layout.
+    cell_batch : torch.Tensor, shape (num_systems, 3, 3), dtype=float32
+        Per-system unit cell matrices.
+    num_tiles : torch.Tensor, shape (1,), dtype=int32
+        Scalar tile-pair count produced by ``batch_build_cluster_tile_list``.
+    tile_row_group : torch.Tensor, shape (max_tiles,), dtype=int32
+        Row group index per tile pair.
+    tile_col_group : torch.Tensor, shape (max_tiles,), dtype=int32
+        Column group index per tile pair.
+    tile_system : torch.Tensor, shape (max_tiles,), dtype=int32
+        System index per tile pair.
+    cutoff : float
+        Cartesian cutoff radius for pair filtering.
+    natom : int
+        Total number of real atoms across all systems.
+    neighbor_matrix : torch.Tensor, shape (natom, max_neighbors), dtype=int32
+        Output neighbor indices; modified in-place.
+    num_neighbors : torch.Tensor, shape (natom,), dtype=int32
+        Output per-atom neighbor counts; modified in-place.
+    neighbor_matrix_shifts : torch.Tensor, shape (natom, max_neighbors, 3), dtype=int32
+        Output periodic image shift vectors; modified in-place.
+    inv_cell_batch : torch.Tensor, shape (num_systems, 3, 3), dtype=float32, optional
+        Pre-computed inverse of ``cell_batch``.  Computed internally when None.
+    cutoff2 : float, optional
+        Secondary cutoff for a second neighbor matrix.  Matrix-format only.
+    neighbor_matrix2 : torch.Tensor, shape (natom, max_neighbors), dtype=int32, optional
+        Output neighbor indices for the secondary cutoff; modified in-place.
+    num_neighbors2 : torch.Tensor, shape (natom,), dtype=int32, optional
+        Output per-atom counts for the secondary cutoff; modified in-place.
+    neighbor_matrix_shifts2 : torch.Tensor, shape (natom, max_neighbors, 3), dtype=int32, optional
+        Output shift vectors for the secondary cutoff; modified in-place.
+    rebuild_flags : torch.Tensor, shape (num_systems,), dtype=bool, optional
+        Per-system selective rebuild flags.  Requires ``batch_idx``,
+        ``tile_offsets``, and ``tile_counts``.
+    tile_offsets : torch.Tensor, shape (num_systems + 1,), dtype=int32, optional
+        Fixed per-system tile segment offsets for the segmented path.
+    tile_counts : torch.Tensor, shape (num_systems,), dtype=int32, optional
+        Per-system tile counts for the segmented path.
+    batch_idx : torch.Tensor, shape (natom,), dtype=int32, optional
+        System index per atom; required when ``rebuild_flags`` is provided.
+    return_vectors : bool, default False
+        Write per-pair displacement vectors to ``neighbor_vectors``.
+    return_distances : bool, default False
+        Write per-pair scalar distances to ``neighbor_distances``.
+    pair_fn : wp.Function, optional
+        Module-scope Warp function evaluated for each pair.
+    pair_params : torch.Tensor, optional
+        Per-atom parameters forwarded to ``pair_fn``.
+    neighbor_vectors : torch.Tensor, shape (natom, max_neighbors, 3), optional
+        Output displacement vectors; modified in-place when ``return_vectors``.
+    neighbor_distances : torch.Tensor, shape (natom, max_neighbors), optional
+        Output scalar distances; modified in-place when ``return_distances``.
+    pair_energies : torch.Tensor, shape (natom, max_neighbors), optional
+        Output pair energies; modified in-place when ``pair_fn`` is set.
+    pair_forces : torch.Tensor, shape (natom, max_neighbors, 3), optional
+        Output pair forces; modified in-place when ``pair_fn`` is set.
     """
 
     if inv_cell_batch is None:
@@ -1339,6 +1560,68 @@ def batch_query_cluster_tile_coo(
     ``target_indices`` kwarg.  Optional pair outputs use flat COO
     buffers with length ``max_pairs``; they are written in the same
     order as ``coo_list``.
+
+    Parameters
+    ----------
+    sorted_atom_index : torch.Tensor, shape (n_padded,), dtype=int32
+        Permutation from padded slot to original atom index.
+    sorted_pos_x : torch.Tensor, shape (n_padded,), dtype=float32
+        Morton-sorted x-coordinates in the padded SoA layout.
+    sorted_pos_y : torch.Tensor, shape (n_padded,), dtype=float32
+        Morton-sorted y-coordinates in the padded SoA layout.
+    sorted_pos_z : torch.Tensor, shape (n_padded,), dtype=float32
+        Morton-sorted z-coordinates in the padded SoA layout.
+    cell_batch : torch.Tensor, shape (num_systems, 3, 3), dtype=float32
+        Per-system unit cell matrices.
+    num_tiles : torch.Tensor, shape (1,), dtype=int32
+        Scalar tile-pair count from ``batch_build_cluster_tile_list``.
+    tile_row_group : torch.Tensor, shape (max_tiles,), dtype=int32
+        Row group index per tile pair.
+    tile_col_group : torch.Tensor, shape (max_tiles,), dtype=int32
+        Column group index per tile pair.
+    tile_system : torch.Tensor, shape (max_tiles,), dtype=int32
+        System index per tile pair.
+    cutoff : float
+        Cartesian cutoff radius for pair filtering.
+    natom : int
+        Total number of real atoms across all systems.
+    max_pairs : int
+        Upper bound on the total number of pairs written to ``coo_list``.
+    pair_counter : torch.Tensor, shape (1,), dtype=int32
+        Output scalar pair count; zeroed then modified in-place.
+    coo_list : torch.Tensor, shape (max_pairs, 2), dtype=int32
+        Output COO pair list ``[i, j]``; modified in-place.
+    coo_shifts : torch.Tensor, shape (max_pairs, 3), dtype=int32
+        Output periodic image shift vectors per pair; modified in-place.
+    inv_cell_batch : torch.Tensor, shape (num_systems, 3, 3), dtype=float32, optional
+        Pre-computed inverse of ``cell_batch``.  Computed internally when None.
+    rebuild_flags : torch.Tensor, shape (num_systems,), dtype=bool, optional
+        Per-system selective rebuild flags.  Requires ``tile_offsets``,
+        ``tile_counts``, ``pair_offsets``, and ``pair_counts``.
+    tile_offsets : torch.Tensor, shape (num_systems + 1,), dtype=int32, optional
+        Fixed per-system tile segment offsets for the segmented path.
+    tile_counts : torch.Tensor, shape (num_systems,), dtype=int32, optional
+        Per-system tile counts for the segmented path.
+    pair_offsets : torch.Tensor, shape (num_systems + 1,), dtype=int32, optional
+        Fixed per-system COO segment offsets for the segmented path.
+    pair_counts : torch.Tensor, shape (num_systems,), dtype=int32, optional
+        Output per-system pair counts for the segmented path; modified in-place.
+    return_vectors : bool, default False
+        Write per-pair displacement vectors to ``neighbor_vectors``.
+    return_distances : bool, default False
+        Write per-pair scalar distances to ``neighbor_distances``.
+    pair_fn : wp.Function, optional
+        Module-scope Warp function evaluated for each pair.
+    pair_params : torch.Tensor, optional
+        Per-atom parameters forwarded to ``pair_fn``.
+    neighbor_vectors : torch.Tensor, shape (max_pairs, 3), optional
+        Output displacement vectors; modified in-place when ``return_vectors``.
+    neighbor_distances : torch.Tensor, shape (max_pairs,), optional
+        Output scalar distances; modified in-place when ``return_distances``.
+    pair_energies : torch.Tensor, shape (max_pairs,), optional
+        Output pair energies; modified in-place when ``pair_fn`` is set.
+    pair_forces : torch.Tensor, shape (max_pairs, 3), optional
+        Output pair forces; modified in-place when ``pair_fn`` is set.
     """
 
     if inv_cell_batch is None:
@@ -1791,6 +2074,8 @@ def batch_cluster_tile_neighbor_list(
         raise ValueError("Pass both 'pair_offsets' and 'pair_counts', or neither.")
     if (tile_offsets is None) != (tile_counts is None):
         raise ValueError("Pass both 'tile_offsets' and 'tile_counts', or neither.")
+    if batch_ptr.shape[0] < 2:
+        raise ValueError("batch_ptr must have length at least 2")
     device = positions.device
     N = int(batch_ptr[-1].item())
 
@@ -1863,7 +2148,7 @@ def batch_cluster_tile_neighbor_list(
 
     if sorted_atom_index is None:
         if max_tiles_per_group is None:
-            max_tiles_per_group = _batch_max_tiles_per_group(
+            max_tiles_per_group = estimate_batch_max_tiles_per_group(
                 batch_ptr, build_cutoff, cell_batch
             )
         (

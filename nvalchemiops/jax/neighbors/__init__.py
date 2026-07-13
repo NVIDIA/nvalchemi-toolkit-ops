@@ -49,6 +49,7 @@ from nvalchemiops.jax.neighbors.batch_cluster_tile import (
     batch_query_cluster_tile_coo,
     estimate_batch_cluster_tile_list_sizes,
     estimate_batch_cluster_tile_segments,
+    estimate_batch_max_tiles_per_group,
 )
 
 # Batch naive functions
@@ -133,7 +134,7 @@ def neighbor_list(
     """Compute neighbor list using the appropriate method based on the provided parameters.
 
     This is the main entry point for JAX users of the neighbor list API. It automatically
-    selects the most appropriate algorithm (naive O(N²) or cell list O(N)) based on system
+    selects the most appropriate algorithm (naive :math:`O(N^2)` or cell list :math:`O(N)`) based on system
     size and parameters.
 
     Parameters
@@ -203,13 +204,15 @@ def neighbor_list(
             Maximum number of neighbors per atom within cutoff2.
             Can be provided to aid in allocation for naive dual cutoff method.
         neighbor_matrix : jax.Array, optional
-            Pre-shaped array of shape (total_atoms, max_neighbors) for neighbor indices.
+            Pre-shaped array of shape (num_rows, max_neighbors) for neighbor indices,
+            where ``num_rows`` is ``total_atoms`` normally and
+            ``len(target_indices)`` for partial lists.
             Can be provided to hint buffer reuse to XLA for both naive and cell list methods.
         neighbor_matrix_shifts : jax.Array, optional
-            Pre-shaped array of shape (total_atoms, max_neighbors, 3) for shift vectors.
+            Pre-shaped array of shape (num_rows, max_neighbors, 3) for shift vectors.
             Can be provided to hint buffer reuse to XLA for both naive and cell list methods.
         num_neighbors : jax.Array, optional
-            Pre-shaped array of shape (total_atoms,) for neighbor counts.
+            Pre-shaped array of shape (num_rows,) for neighbor counts.
             Can be provided to hint buffer reuse to XLA for both naive and cell list methods.
         shift_range_per_dimension : jax.Array, optional
             Pre-computed array of shape (1, 3) for shift range in each dimension.
@@ -249,22 +252,29 @@ def neighbor_list(
             Can be provided to avoid CUDA synchronization.
         return_distances : bool, default=False
             Also return per-pair distances ``|r_ij|``, differentiable w.r.t.
-            positions (and cell). Matrix layout ``(total_atoms, max_neighbors)``,
-            or flat COO ``(num_pairs,)`` when ``return_neighbor_list=True``
-            (``naive`` / ``cell_list``).
+            positions (and cell). Matrix layout is
+            ``(num_rows, max_neighbors)``, where ``num_rows`` is
+            ``total_atoms`` normally and ``len(target_indices)`` for partial
+            lists; flat COO layout is ``(num_pairs,)``.
         return_vectors : bool, default=False
             Also return per-pair displacement vectors ``r_ij``, differentiable
-            w.r.t. positions (and cell). Matrix layout
-            ``(total_atoms, max_neighbors, 3)`` or flat COO ``(num_pairs, 3)``.
+            w.r.t. positions (and cell). Matrix layout is
+            ``(num_rows, max_neighbors, 3)`` or flat COO ``(num_pairs, 3)``.
         rebuild_flags : jax.Array, optional
             Boolean flags selecting which systems to re-enumerate; systems whose
             flag is ``False`` keep their previous output.
 
     Note
     ----
-    ``pair_fn`` and ``target_indices`` are not supported by the JAX bindings and
-    raise ``NotImplementedError`` (a Python ``pair_fn`` callable cannot cross the
-    ``jax_callable`` trace boundary); use the PyTorch binding for those.
+    ``pair_fn`` is supported by the JAX bindings for single-cutoff neighbor
+    lists. The naive and atom-centric cell-list paths use JAX kernel wrappers,
+    while tiled paths use ``jax_callable``. Cluster-tile pair outputs are
+    limited to CUDA float32 eligible systems; COO pair outputs on that path are
+    eager-only. ``target_indices`` is supported by naive and cell-list paths,
+    including batched naive/cell-list and low-level cell-list query wrappers,
+    with compact target rows. The ``pair_centric`` strategy and cluster-tile
+    methods reject ``target_indices``; use ``atom_centric`` for equivalent
+    filtered cell-list results.
 
     Returns
     -------
@@ -288,25 +298,28 @@ def neighbor_list(
         - **neighbor_data** (array): Neighbor indices, format depends on ``return_neighbor_list``:
 
             - If ``return_neighbor_list=False`` (default): Returns ``neighbor_matrix``
-              with shape (total_atoms, max_neighbors), dtype int32. Each row i contains
-              indices of atom i's neighbors.
+              with shape (num_rows, max_neighbors), dtype int32, where
+              ``num_rows`` is ``total_atoms`` normally and ``len(target_indices)``
+              for partial lists. Row ``r`` contains neighbors for atom ``r`` or
+              ``target_indices[r]`` respectively.
             - If ``return_neighbor_list=True``: Returns ``neighbor_list`` with shape
-              (2, num_pairs), dtype int32, in COO format [source_atoms, target_atoms].
+              (2, num_pairs), dtype int32, in COO format [source_rows, target_atoms].
+              With ``target_indices``, source rows are compact row ids.
 
         - **num_neighbor_data** (array): Information about the number of neighbors for each atom,
           format depends on ``return_neighbor_list``:
 
-            - If ``return_neighbor_list=False`` (default): Returns ``num_neighbors`` with shape (total_atoms,), dtype int32.
+            - If ``return_neighbor_list=False`` (default): Returns ``num_neighbors`` with shape (num_rows,), dtype int32.
               Count of neighbors found for each atom.
-            - If ``return_neighbor_list=True``: Returns ``neighbor_ptr`` with shape (total_atoms + 1,), dtype int32.
+            - If ``return_neighbor_list=True``: Returns ``neighbor_ptr`` with shape (num_rows + 1,), dtype int32.
               CSR-style pointer arrays where ``neighbor_ptr_data[i]`` to ``neighbor_ptr_data[i+1]`` gives the range of
-              neighbors for atom i in the flattened neighbor list.
+              neighbors for row i in the flattened neighbor list.
 
         - **neighbor_shift_data** (array, optional): Periodic shift vectors, only when ``pbc`` is provided:
           format depends on ``return_neighbor_list``:
 
             - If ``return_neighbor_list=False`` (default): Returns ``neighbor_matrix_shifts`` with
-              shape (total_atoms, max_neighbors, 3), dtype int32.
+              shape (num_rows, max_neighbors, 3), dtype int32.
             - If ``return_neighbor_list=True``: Returns ``unit_shifts`` with shape
               (num_pairs, 3), dtype int32.
 
@@ -331,17 +344,18 @@ def neighbor_list(
 
     See Also
     --------
-    naive_neighbor_list : Direct access to naive O(N²) algorithm
-    cell_list : Direct access to cell list O(N) algorithm
+    naive_neighbor_list : Direct access to naive :math:`O(N^2)` algorithm
+    cell_list : Direct access to cell list :math:`O(N)` algorithm
     cluster_tile_neighbor_list : Direct access to cluster-pair tile algorithm
     batch_naive_neighbor_list : Batched naive algorithm
     batch_cell_list : Batched cell list algorithm
     batch_cluster_tile_neighbor_list : Batched cluster-pair tile algorithm
     """
+    if batch_ptr is not None and batch_ptr.shape[0] < 2:
+        raise ValueError("batch_ptr must have length at least 2")
+
     use_pair_fn_option = bool(kwargs.pop("use_pair_fn", False))
-    explicit_cell_strategy = str(kwargs.pop("strategy", "auto"))
-    explicit_atom_centric_path = str(kwargs.pop("atom_centric_path", "auto"))
-    explicit_native_strategy = str(kwargs.pop("native_strategy", "auto"))
+    selected_atom_centric_path = str(kwargs.pop("atom_centric_path", "auto"))
     target_indices = kwargs.get("target_indices")
     return_vectors = bool(kwargs.get("return_vectors", False))
     return_distances = bool(kwargs.get("return_distances", False))
@@ -353,18 +367,17 @@ def neighbor_list(
         or kwargs.get("pair_forces") is not None
     )
     rebuild_flags = kwargs.get("rebuild_flags")
-    selected_native_strategy = explicit_native_strategy
-    selected_cell_strategy = explicit_cell_strategy
-    selected_atom_centric_path = explicit_atom_centric_path
-    explicit_pair_centric = explicit_cell_strategy == "pair_centric"
+    selected_naive_strategy = "auto"
+    selected_cell_strategy = "auto"
+    explicit_pair_centric = False
 
     def _apply_auto_suboptions(
-        native_strategy: str, cell_strategy: str, path: str
+        naive_strategy: str, cell_strategy: str, path: str
     ) -> None:
-        nonlocal selected_native_strategy, selected_cell_strategy
+        nonlocal selected_naive_strategy, selected_cell_strategy
         nonlocal selected_atom_centric_path
-        if selected_native_strategy == "auto" and native_strategy != "auto":
-            selected_native_strategy = native_strategy
+        if selected_naive_strategy == "auto" and naive_strategy != "auto":
+            selected_naive_strategy = naive_strategy
         if selected_cell_strategy == "auto" and cell_strategy != "auto":
             selected_cell_strategy = cell_strategy
         if selected_atom_centric_path == "auto" and path != "auto":
@@ -457,7 +470,7 @@ def neighbor_list(
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
                 wrap_positions=wrap_positions,
-                native_strategy=selected_native_strategy,
+                strategy=selected_naive_strategy,
                 **kwargs,
             )
         case "cell_list":
@@ -489,7 +502,7 @@ def neighbor_list(
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
                 wrap_positions=wrap_positions,
-                native_strategy=selected_native_strategy,
+                strategy=selected_naive_strategy,
                 **kwargs,
             )
         case "batch_cell_list":
@@ -617,6 +630,7 @@ __all__ = [
     "batch_query_cell_list",
     "batch_cell_list",
     "estimate_batch_cluster_tile_list_sizes",
+    "estimate_batch_max_tiles_per_group",
     "estimate_batch_cluster_tile_segments",
     "allocate_batch_cluster_tile_list",
     "batch_build_cluster_tile_list",

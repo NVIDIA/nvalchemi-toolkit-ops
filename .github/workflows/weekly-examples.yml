@@ -80,11 +80,11 @@ jobs:
       - name: Setup UV
         env:
           UV_VERSION: "0.9.25"
-          UV_CHECKSUM: "1e1aea6cead1a07a7cee24f6eaec415b"
+          UV_CHECKSUM: "10fb1f54d56f3eb60622006797339d4ea0bfda9b358d07db635f73cf89f7094c"
         run: |
           UV_INSTALLER=$(mktemp)
-          curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" -o "$UV_INSTALLER"
-          echo "${UV_CHECKSUM}  ${UV_INSTALLER}" | md5sum -c -
+          curl --proto '=https' --tlsv1.2 -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" -o "$UV_INSTALLER"
+          echo "${UV_CHECKSUM}  ${UV_INSTALLER}" | sha256sum -c -
           sh "$UV_INSTALLER"
           rm "$UV_INSTALLER"
           echo "$HOME/.local/bin" >> $GITHUB_PATH

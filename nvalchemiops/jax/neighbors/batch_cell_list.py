@@ -33,6 +33,8 @@ from nvalchemiops.jax.neighbors.cell_list import (
     _is_cpu_array,
     _resolve_cell_strategy,
     _validate_atom_centric_path,
+    _validate_compact_target_buffers,
+    _validate_pair_kwargs,
 )
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     allocate_cell_list,
@@ -49,11 +51,7 @@ from nvalchemiops.neighbors.cell_list import (
     get_cell_list_cells_per_system_kernel,
     get_cell_list_gather_kernel,
     get_query_cell_list_kernel,
-    is_pair_centric_launch_safe,
     is_pair_centric_parallelism_sufficient,
-)
-from nvalchemiops.neighbors.cell_list.launchers import (
-    _raise_unsafe_pair_centric_launch,
 )
 from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
 from nvalchemiops.neighbors.output_args import (
@@ -346,6 +344,47 @@ __all__ = [
     "batch_query_cell_list",
     "estimate_batch_cell_list_sizes",
 ]
+
+
+def _normalize_batch_cell_pbc(
+    cell: jax.Array | None,
+    pbc: jax.Array | None,
+    *,
+    num_systems: int,
+    dtype,
+) -> tuple[jax.Array, jax.Array]:
+    """Return batched cell/PBC arrays for JAX batch cell-list kernels."""
+    if cell is None:
+        cell_out = jnp.broadcast_to(
+            jnp.eye(3, dtype=dtype),
+            (num_systems, 3, 3),
+        )
+    else:
+        cell_out = jnp.asarray(cell)
+        if cell_out.ndim == 2:
+            cell_out = jnp.broadcast_to(cell_out, (num_systems, 3, 3))
+        elif cell_out.ndim != 3:
+            raise ValueError(
+                "cell must have shape (3, 3) or (num_systems, 3, 3) for "
+                "batch cell-list operations.",
+            )
+        if cell_out.dtype != dtype:
+            cell_out = cell_out.astype(dtype)
+
+    if pbc is None:
+        pbc_out = jnp.ones((num_systems, 3), dtype=jnp.bool_)
+    else:
+        pbc_out = jnp.asarray(pbc)
+        if pbc_out.ndim == 1:
+            pbc_out = jnp.broadcast_to(pbc_out, (num_systems, 3))
+        elif pbc_out.ndim != 2:
+            raise ValueError(
+                "pbc must have shape (3,) or (num_systems, 3) for batch "
+                "cell-list operations.",
+            )
+        pbc_out = pbc_out.astype(jnp.bool_)
+
+    return cell_out, pbc_out
 
 
 # ==============================================================================
@@ -930,6 +969,13 @@ def estimate_batch_cell_list_sizes(
         batch_idx, batch_ptr, positions.shape[0]
     )
     num_systems = batch_ptr.shape[0] - 1
+    cell_dtype = positions.dtype if positions.dtype == jnp.float64 else jnp.float32
+    cell, _pbc_bool = _normalize_batch_cell_pbc(
+        cell,
+        pbc,
+        num_systems=num_systems,
+        dtype=cell_dtype,
+    )
 
     # Simple estimation per system
     max_total_cells = 0
@@ -947,11 +993,8 @@ def estimate_batch_cell_list_sizes(
             continue
 
         # Volume estimation
-        if cell is not None:
-            det = jnp.linalg.det(cell[sys_idx])
-            volume = jnp.abs(det)
-        else:
-            volume = 1000.0  # Default assumption
+        det = jnp.linalg.det(cell[sys_idx])
+        volume = jnp.abs(det)
 
         cell_volume = cutoff**3
         # TODO: This estimation derives array sizes from traced input data (cell
@@ -1056,9 +1099,8 @@ def batch_build_cell_list(
         raise NotImplementedError(
             "batch_build_cell_list does not accept return_distances / "
             "return_vectors / target_indices / pair_fn-related kwargs.  "
-            "Use the top-level batch_cell_list() wrapper, which routes "
-            "pair outputs through the JAX autograd path, or call the "
-            "warp factory directly for low-level access.",
+            "Use batch_query_cell_list() or the top-level batch_cell_list() "
+            "wrapper.",
         )
 
     # Prepare batch info
@@ -1066,6 +1108,13 @@ def batch_build_cell_list(
         batch_idx, batch_ptr, positions.shape[0]
     )
     num_systems = batch_ptr.shape[0] - 1
+    cell_dtype = positions.dtype if positions.dtype == jnp.float64 else jnp.float32
+    cell, pbc_bool = _normalize_batch_cell_pbc(
+        cell,
+        pbc,
+        num_systems=num_systems,
+        dtype=cell_dtype,
+    )
 
     if max_total_cells is None:
         max_total_cells, cells_per_dim_est, neighbor_search_radius = (
@@ -1104,15 +1153,9 @@ def batch_build_cell_list(
         _bin = _jax_batch_bin_atoms_f32
         positions = positions.astype(jnp.float32)
 
-    # Ensure cell dtype matches positions
-    if cell is not None and cell.dtype != positions.dtype:
+    if cell.dtype != positions.dtype:
         cell = cell.astype(positions.dtype)
 
-    # Ensure pbc is bool with shape (num_systems, 3)
-    if pbc is not None:
-        pbc_bool = pbc.astype(jnp.bool_)
-    else:
-        pbc_bool = jnp.ones((num_systems, 3), dtype=jnp.bool_)
     empty_bool1d = jnp.zeros((0,), dtype=jnp.bool_)
     empty_i32 = jnp.zeros((0,), dtype=jnp.int32)
 
@@ -1232,7 +1275,7 @@ def batch_query_cell_list(
     neighbor_distances: jax.Array | None = None,
     pair_energies: jax.Array | None = None,
     pair_forces: jax.Array | None = None,
-) -> tuple[jax.Array, jax.Array, jax.Array]:
+) -> tuple[jax.Array, ...]:
     """Query batch cell lists to find neighbors.
 
     Parameters
@@ -1265,11 +1308,12 @@ def batch_query_cell_list(
         Search radius.
     max_neighbors : int, optional
         Maximum neighbors per atom.
-    neighbor_matrix : jax.Array, shape (total_atoms, max_neighbors), dtype=int32, optional
-        Pre-allocated neighbor matrix.
-    num_neighbors : jax.Array, shape (total_atoms,), dtype=int32, optional
-        Pre-allocated neighbors count array.
-    neighbor_matrix_shifts : jax.Array, shape (total_atoms, max_neighbors, 3), dtype=int32, optional
+    neighbor_matrix : jax.Array, shape (num_rows, max_neighbors), dtype=int32, optional
+        Pre-shaped neighbor matrix. ``num_rows`` is ``total_atoms`` normally and
+        ``len(target_indices)`` for partial rows.
+    num_neighbors : jax.Array, shape (num_rows,), dtype=int32, optional
+        Pre-shaped neighbors count array.
+    neighbor_matrix_shifts : jax.Array, shape (num_rows, max_neighbors, 3), dtype=int32, optional
         Pre-allocated shift vectors array. Pass in a pre-shaped array to hint buffer
         reuse to XLA; note that JAX returns a new array rather than mutating the input.
     half_fill : bool, optional
@@ -1285,27 +1329,32 @@ def batch_query_cell_list(
         requires a **concrete** ``neighbor_search_radius`` (its launch grid is
         sized by host-read ``total_cells`` / ``n_outer`` / ``R_max`` scalars
         baked at launch-build time): it works eagerly / outside ``jax.jit`` but
-        raises a clear error under ``jax.jit`` with a traced radius.  It is
-        full-fill only (``half_fill=True`` + explicit ``pair_centric`` raises)
-        and is registered with ``GraphMode.NONE``.
+        raises a clear error under ``jax.jit`` with a traced radius.  ``"auto"``
+        falls back to ``"atom_centric"`` when pair-centric launch sizing is
+        traced.  It is full-fill only (``half_fill=True`` + explicit
+        ``pair_centric`` raises) and is registered with ``GraphMode.NONE``.
     atom_centric_path : {"auto", "direct", "sorted"}, default "auto"
         Accepted for signature parity with the Torch binding.  JAX registers
         only the *sorted* atom-centric query kernel, so this option never
         branches: every JAX atom-centric query runs the sorted kernel
         regardless of this value (a documented divergence from Torch, whose
         ``"auto"`` maps to a distinct ``"direct"`` kernel).
+    target_indices : jax.Array, shape (num_targets,), dtype=int32, optional
+        Compact partial-list source rows. Output row ``r`` maps to atom
+        ``target_indices[r]``; COO source rows remain compact row ids.
 
     Returns
     -------
-    neighbor_matrix : jax.Array, shape (total_atoms, max_neighbors), dtype=int32
-        Neighbor matrix.
-    num_neighbors : jax.Array, shape (total_atoms,), dtype=int32
-        Neighbors count.
-    neighbor_matrix_shifts : jax.Array, shape (total_atoms, max_neighbors, 3), dtype=int32
-        Periodic shifts for each neighbor relationship.
+    results : tuple of jax.Array
+        Variable-length tuple depending on requested outputs. Matrix outputs use
+        ``num_rows`` rows, where ``num_rows`` is ``total_atoms`` normally and
+        ``len(target_indices)`` for partial lists. The base return is
+        ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``; optional
+        distance/vector arrays and ``pair_fn`` energy/force arrays are appended
+        in the same order as ``batch_cell_list``.
     """
 
-    if _has_partial_or_pair_outputs(
+    has_pair_outputs = _has_partial_or_pair_outputs(
         target_indices=target_indices,
         return_vectors=return_vectors,
         return_distances=return_distances,
@@ -1315,13 +1364,23 @@ def batch_query_cell_list(
         neighbor_distances=neighbor_distances,
         pair_energies=pair_energies,
         pair_forces=pair_forces,
-    ):
+    )
+    _validate_pair_kwargs(
+        pair_fn=pair_fn,
+        pair_params=pair_params,
+        pair_energies=pair_energies,
+        pair_forces=pair_forces,
+    )
+    if has_pair_outputs and rebuild_flags is not None:
         raise NotImplementedError(
-            "batch_query_cell_list does not accept return_distances / "
-            "return_vectors / target_indices / pair_fn-related kwargs.  "
-            "Use the top-level batch_cell_list() wrapper, which routes "
-            "pair outputs through the JAX autograd path, or call the "
-            "warp factory directly for low-level access.",
+            "return_distances / return_vectors / target_indices / pair_fn "
+            "are not supported with rebuild_flags in batch_query_cell_list.",
+        )
+    if strategy == "pair_centric" and target_indices is not None:
+        raise NotImplementedError(
+            "strategy='pair_centric' with target_indices (partial neighbor "
+            "lists) is not wired through the JAX batch_cell_list binding. Use "
+            "strategy='atom_centric' (or 'auto') for identical results.",
         )
 
     # Validate the sub-strategy options.  ``atom_centric_path`` is accepted for
@@ -1340,6 +1399,8 @@ def batch_query_cell_list(
             "pair-centric.",
         )
 
+    if max_neighbors is None and neighbor_matrix is not None:
+        max_neighbors = int(neighbor_matrix.shape[1])
     if max_neighbors is None:
         max_neighbors = estimate_max_neighbors(cutoff)
 
@@ -1348,10 +1409,34 @@ def batch_query_cell_list(
         batch_idx, batch_ptr, positions.shape[0]
     )
     num_systems = batch_ptr.shape[0] - 1
+    cell_dtype = positions.dtype if positions.dtype == jnp.float64 else jnp.float32
+    cell, pbc_bool = _normalize_batch_cell_pbc(
+        cell,
+        pbc,
+        num_systems=num_systems,
+        dtype=cell_dtype,
+    )
+    if target_indices is not None:
+        target_indices = jnp.asarray(target_indices, dtype=jnp.int32)
+        num_rows = int(target_indices.shape[0])
+    else:
+        num_rows = positions.shape[0]
+    _validate_compact_target_buffers(
+        target_indices=target_indices,
+        num_rows=int(num_rows),
+        max_neighbors=int(max_neighbors),
+        neighbor_matrix=neighbor_matrix,
+        neighbor_matrix_shifts=neighbor_matrix_shifts,
+        num_neighbors=num_neighbors,
+        neighbor_distances=neighbor_distances,
+        neighbor_vectors=neighbor_vectors,
+        pair_energies=pair_energies,
+        pair_forces=pair_forces,
+    )
 
     if neighbor_matrix is None:
         neighbor_matrix = jnp.full(
-            (positions.shape[0], max_neighbors),
+            (num_rows, max_neighbors),
             positions.shape[0],
             dtype=jnp.int32,
         )
@@ -1359,7 +1444,7 @@ def batch_query_cell_list(
         neighbor_matrix = neighbor_matrix.at[:].set(jnp.int32(positions.shape[0]))
 
     if num_neighbors is None:
-        num_neighbors = jnp.zeros(positions.shape[0], dtype=jnp.int32)
+        num_neighbors = jnp.zeros(num_rows, dtype=jnp.int32)
     elif rebuild_flags is None:
         num_neighbors = num_neighbors.at[:].set(jnp.int32(0))
 
@@ -1381,15 +1466,9 @@ def batch_query_cell_list(
         )
         positions = positions.astype(jnp.float32)
 
-    # Ensure cell dtype matches positions
-    if cell is not None and cell.dtype != positions.dtype:
+    if cell.dtype != positions.dtype:
         cell = cell.astype(positions.dtype)
 
-    # Ensure pbc is bool with shape (num_systems, 3)
-    if pbc is not None:
-        pbc_bool = pbc.astype(jnp.bool_)
-    else:
-        pbc_bool = jnp.ones((num_systems, 3), dtype=jnp.bool_)
     empty_bool1d = jnp.zeros((0,), dtype=jnp.bool_)
     empty_i32 = jnp.zeros((0,), dtype=jnp.int32)
     empty_scalar2d = jnp.zeros((0, 0), dtype=positions.dtype)
@@ -1399,7 +1478,7 @@ def batch_query_cell_list(
 
     if neighbor_matrix_shifts is None:
         neighbor_matrix_shifts = jnp.zeros(
-            (total_atoms, max_neighbors, 3),
+            (num_rows, max_neighbors, 3),
             dtype=jnp.int32,
         )
     elif rebuild_flags is None:
@@ -1467,23 +1546,84 @@ def batch_query_cell_list(
             jax.errors.ConcretizationTypeError,
             jax.errors.TracerIntegerConversionError,
         ) as exc:
-            raise ValueError(
-                "strategy='pair_centric' needs a concrete "
-                "neighbor_search_radius to size its launch grid (total_cells / "
-                "n_outer / R_max are host-read).  Compute the cell-list sizing "
-                "outside jax.jit and pass a concrete neighbor_search_radius, or "
-                "use strategy='atom_centric'.",
-            ) from exc
-        # JAX batch cell_list is full-fill (half_fill+pair_centric raised above).
-        n_outer = compute_batch_pair_centric_n_outer(R_max, False)
-        if not is_pair_centric_launch_safe(total_cells, n_outer):
-            if strategy == "pair_centric":
-                _raise_unsafe_pair_centric_launch(total_cells, n_outer, 64)
-            chosen = "atom_centric"
-        elif strategy == "auto" and not is_pair_centric_parallelism_sufficient(
-            total_atoms, total_cells, n_outer
-        ):
-            chosen = "atom_centric"
+            if strategy == "auto":
+                chosen = "atom_centric"
+            else:
+                raise ValueError(
+                    "strategy='pair_centric' needs a concrete "
+                    "neighbor_search_radius to size its launch grid (total_cells / "
+                    "n_outer / R_max are host-read).  Compute the cell-list sizing "
+                    "outside jax.jit and pass a concrete neighbor_search_radius, or "
+                    "use strategy='atom_centric'.",
+                ) from exc
+        else:
+            # JAX batch cell_list is full-fill (half_fill+pair_centric raised above).
+            n_outer = compute_batch_pair_centric_n_outer(R_max, False)
+            if strategy == "auto" and not is_pair_centric_parallelism_sufficient(
+                total_atoms, total_cells, n_outer
+            ):
+                chosen = "atom_centric"
+
+    if has_pair_outputs:
+        if neighbor_distances is None:
+            neighbor_distances = jnp.zeros(
+                (num_rows, max_neighbors),
+                dtype=positions.dtype,
+            )
+        if neighbor_vectors is None:
+            neighbor_vectors = jnp.zeros(
+                (num_rows, max_neighbors, 3),
+                dtype=positions.dtype,
+            )
+        pc_strategy = "pair_centric" if chosen == "pair_centric" else "atom_centric"
+        forward_kwargs = {
+            "pbc_bool": pbc_bool,
+            "batch_idx_i32": batch_idx_i32,
+            "cells_per_dimension": cells_per_dimension,
+            "atom_periodic_shifts": atom_periodic_shifts,
+            "atom_to_cell_mapping": atom_to_cell_mapping,
+            "atoms_per_cell_count": atoms_per_cell_count,
+            "cell_atom_start_indices": cell_atom_start_indices,
+            "cell_atom_list": cell_atom_list,
+            "cell_offsets": cell_offsets,
+            "neighbor_search_radius": neighbor_search_radius,
+            "neighbor_matrix": neighbor_matrix,
+            "neighbor_matrix_shifts": neighbor_matrix_shifts,
+            "num_neighbors": num_neighbors,
+            "neighbor_vectors": neighbor_vectors,
+            "neighbor_distances": neighbor_distances,
+            "cutoff": cutoff,
+            "pair_fn": pair_fn,
+            "pair_params": pair_params,
+            "target_indices": target_indices,
+            "strategy": pc_strategy,
+            "n_outer": n_outer if pc_strategy == "pair_centric" else 0,
+            "total_cells": total_cells if pc_strategy == "pair_centric" else 0,
+            "r_max": R_max if pc_strategy == "pair_centric" else (0, 0, 0),
+            "half_fill": bool(half_fill),
+        }
+        route_out = _route_pair_outputs(
+            positions,
+            cell,
+            _batch_cell_list_pair_outputs_forward,
+            forward_kwargs,
+        )
+        if pair_fn is not None:
+            distances_out, vectors_out, nm_out, nn_out, shifts_out, pe_out, pf_out = (
+                route_out
+            )
+        else:
+            distances_out, vectors_out, nm_out, nn_out, shifts_out = route_out
+            pe_out = pf_out = None
+        base = (nm_out, nn_out, shifts_out)
+        tail: list = []
+        if return_distances:
+            tail.append(distances_out)
+        if return_vectors:
+            tail.append(vectors_out)
+        if pair_fn is not None:
+            tail.extend((pe_out, pf_out))
+        return (*base, *tail)
 
     if chosen == "pair_centric":
         pair_query = (
@@ -1919,9 +2059,11 @@ def batch_cell_list(
         ``neighbor_matrix`` differs.  ``"pair_centric"`` is CUDA-only, requires
         a concrete ``neighbor_search_radius`` (host-read ``total_cells`` /
         ``n_outer`` / ``R_max``), runs full-fill only, and raises a clear error
-        under ``jax.jit`` with a traced radius.  Explicit ``"pair_centric"`` on
-        CPU raises; ``"auto"`` resolves to ``"atom_centric"`` on CPU.  Not yet
-        wired through the pair-output (return_distances / return_vectors) path.
+        under ``jax.jit`` with a traced radius when requested explicitly.
+        ``"auto"`` falls back to ``"atom_centric"`` when pair-centric launch
+        sizing is traced.  Explicit ``"pair_centric"`` on CPU raises; ``"auto"``
+        resolves to ``"atom_centric"`` on CPU.  Not yet wired through the
+        pair-output (return_distances / return_vectors) path.
     atom_centric_path : {"auto", "direct", "sorted"}, default "auto"
         Accepted for signature parity with Torch; forwarded to
         :func:`batch_query_cell_list`.  JAX always runs the sorted atom-centric
@@ -1964,10 +2106,12 @@ def batch_cell_list(
         pair_energies=pair_energies,
         pair_forces=pair_forces,
     )
-    if pair_fn is not None and pair_params is None:
-        raise ValueError(
-            "pair_fn requires pair_params (a per-atom (n_atoms, K) parameter array).",
-        )
+    _validate_pair_kwargs(
+        pair_fn=pair_fn,
+        pair_params=pair_params,
+        pair_energies=pair_energies,
+        pair_forces=pair_forces,
+    )
 
     # Validate the sub-strategy options up front.  ``atom_centric_path`` is
     # accepted for parity but never branches (JAX always runs the sorted
@@ -2001,18 +2145,43 @@ def batch_cell_list(
             "strategy='atom_centric' (or 'auto') for identical results.",
         )
 
-    # Preserve LIVE positions/cell for the autograd primitive; the warp
-    # kernels are non-differentiable across the JAX boundary so we detach
-    # them for the cell-list build.
+    # Preserve LIVE positions/cell for the pair-output autograd primitive; the
+    # Warp kernels are non-differentiable across the JAX boundary, so detach
+    # topology-side inputs for both pair-output and topology-only paths.
     positions_for_grad = positions
-    cell_for_grad = cell
-    if has_pair_outputs:
-        positions = jax.lax.stop_gradient(positions)
+    cell_input_for_grad = cell
+    positions = jax.lax.stop_gradient(positions)
+    if cell is not None:
         cell = jax.lax.stop_gradient(cell)
 
     # Prepare batch info
     batch_idx, batch_ptr = prepare_batch_idx_ptr(
         batch_idx, batch_ptr, positions.shape[0]
+    )
+    num_systems = batch_ptr.shape[0] - 1
+    grad_cell_dtype = (
+        positions_for_grad.dtype
+        if positions_for_grad.dtype == jnp.float64
+        else jnp.float32
+    )
+    cell_for_grad, _ = _normalize_batch_cell_pbc(
+        cell_input_for_grad,
+        pbc,
+        num_systems=num_systems,
+        dtype=grad_cell_dtype,
+    )
+    if positions_for_grad.dtype != jnp.float64:
+        positions_for_grad = positions_for_grad.astype(jnp.float32)
+    if cell_for_grad.dtype != positions_for_grad.dtype:
+        cell_for_grad = cell_for_grad.astype(positions_for_grad.dtype)
+    topology_cell_dtype = (
+        positions.dtype if positions.dtype == jnp.float64 else jnp.float32
+    )
+    cell, pbc = _normalize_batch_cell_pbc(
+        cell,
+        pbc,
+        num_systems=num_systems,
+        dtype=topology_cell_dtype,
     )
 
     # Build cell list
@@ -2037,10 +2206,9 @@ def batch_cell_list(
 
     if has_pair_outputs:
         num_systems = batch_ptr.shape[0] - 1
-        if pbc is not None:
-            pbc_bool = pbc.astype(jnp.bool_)
-        else:
-            pbc_bool = jnp.ones((num_systems, 3), dtype=jnp.bool_)
+        pbc_bool = pbc.astype(jnp.bool_)
+        if max_neighbors is None and neighbor_matrix_shifts is not None:
+            max_neighbors = int(neighbor_matrix_shifts.shape[1])
         if max_neighbors is None:
             max_neighbors = estimate_max_neighbors(cutoff)
         total_atoms = positions.shape[0]
@@ -2053,6 +2221,16 @@ def batch_cell_list(
             num_rows = int(target_indices.shape[0])
         else:
             num_rows = total_atoms
+        _validate_compact_target_buffers(
+            target_indices=target_indices,
+            num_rows=int(num_rows),
+            max_neighbors=int(max_neighbors),
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            neighbor_distances=neighbor_distances,
+            neighbor_vectors=neighbor_vectors,
+            pair_energies=pair_energies,
+            pair_forces=pair_forces,
+        )
         if neighbor_matrix_shifts is None:
             neighbor_matrix_shifts = jnp.zeros(
                 (num_rows, max_neighbors, 3), dtype=jnp.int32
@@ -2116,8 +2294,6 @@ def batch_cell_list(
                 ) from exc
             # JAX batch cell_list is full-fill (half_fill+pair_centric raised).
             pc_n_outer = compute_batch_pair_centric_n_outer(pc_r_max, False)
-            if not is_pair_centric_launch_safe(pc_total_cells, pc_n_outer):
-                _raise_unsafe_pair_centric_launch(pc_total_cells, pc_n_outer, 64)
             pc_strategy = "pair_centric"
 
         forward_kwargs = {

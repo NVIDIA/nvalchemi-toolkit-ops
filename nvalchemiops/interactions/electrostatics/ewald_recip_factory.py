@@ -106,6 +106,7 @@ from nvalchemiops.interactions.electrostatics._factory_common import (
 )
 from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     EIGHTPI,
+    RECIP_TILED_BLOCK_DIM,
     _batch_ewald_energy_corrections_backward_kernel,
     _batch_ewald_energy_corrections_double_backward_kernel,
     _batch_ewald_energy_corrections_kernel,
@@ -113,6 +114,7 @@ from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     _batch_ewald_reciprocal_space_energy_forces_kernel,
     _batch_ewald_reciprocal_space_energy_kernel_compute_energy,
     _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors,
+    _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_tiled,
     _batch_ewald_reciprocal_space_virial_kernel,
     _batch_ewald_subtract_self_energy_kernel,
     _ewald_energy_corrections_backward_kernel,
@@ -122,6 +124,7 @@ from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     _ewald_reciprocal_space_energy_forces_kernel,
     _ewald_reciprocal_space_energy_kernel_compute_energy,
     _ewald_reciprocal_space_energy_kernel_fill_structure_factors,
+    _ewald_reciprocal_space_energy_kernel_fill_structure_factors_tiled,
     _ewald_reciprocal_space_virial_kernel,
     _ewald_subtract_self_energy_kernel,
 )
@@ -204,6 +207,14 @@ def alloc_ewald_recip_sentinels(wp_dtype: type, device: str) -> dict[str, wp.arr
     specialization; the kernel's compile-time branches never index them. Memoized
     per ``(wp_dtype, device)`` (the sentinels are zero-size and read-only) so the
     backward, launched every training step, does not re-allocate them per call.
+
+    Parameters
+    ----------
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64``; determines the vector/matrix element dtype
+        of the sentinel arrays.
+    device : str
+        Warp device string (e.g. ``"cuda:0"``).
 
     Returns
     -------
@@ -306,6 +317,7 @@ def make_ewald_recip_kernel(
     deriv_state: _DerivState = _DerivState.E,
     cell_grad: bool = False,
     order: str = "forward",
+    tiled: bool = False,
 ) -> _RecipKernels:
     """Return a cached, specialized ``ewald_recip`` kernel bundle.
 
@@ -332,11 +344,24 @@ def make_ewald_recip_kernel(
         ``deriv_state`` in ``{E_F, E_F_dQ}``.
     order : {"forward", "backward", "double_backward"}
         Forward output, first-derivative autograd node, or second-derivative node.
+    tiled : bool
+        When ``True``, selects the cooperative tiled fill kernel
+        (``_ewald_recip_dbwd_reduce_tiled``); only effective for
+        ``order="double_backward"``.
+
+    Returns
+    -------
+    _RecipKernels
+        Named tuple with fields ``fill``, ``compute``, ``virial``, ``kspace``;
+        ``virial`` is ``None`` unless ``cell_grad=True``, and ``kspace`` is ``None``
+        unless ``cell_grad=True`` and ``order="backward"``.
     """
     _validate_axes(wp_dtype, batched, neighbor_input, deriv_state, cell_grad, order)
 
     if order == "double_backward":
-        return _make_double_backward_kernels(wp_dtype, batched, deriv_state, cell_grad)
+        return _make_double_backward_kernels(
+            wp_dtype, batched, deriv_state, cell_grad, tiled=tiled
+        )
 
     fill = get_ewald_recip_component_kernel(wp_dtype, component="fill", batched=batched)
     compute = _make_compute_kernel(wp_dtype, batched, deriv_state, order)
@@ -369,6 +394,7 @@ def get_ewald_recip_kernel(
     cell_grad: bool = False,
     order: str = "forward",
     component: str = "ewald_recip",
+    tiled: bool = False,
 ) -> _RecipKernels:
     """Return a cached ``ewald_recip`` kernel bundle, validating dtype + component.
 
@@ -377,6 +403,39 @@ def get_ewald_recip_kernel(
     Memoization is the ``@lru_cache`` on ``make_*``; every argument is forwarded **by
     keyword** so a positional vs keyword call can never produce a duplicate cache
     entry.
+
+    Parameters
+    ----------
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64``.
+    batched : bool
+        Single-system (``False``) vs batched (``True``).
+    neighbor_input : {"none"}
+        Reciprocal kernels are k-vector based; must be ``"none"``.
+    deriv_state : _DerivState
+        ``E`` (forward only), ``E_F`` (+forces), ``E_F_dQ`` (+charge gradient).
+    cell_grad : bool
+        When ``True``, the bundle includes the optional virial / cell-input
+        gradient kernel. Valid only with ``deriv_state`` in ``{E_F, E_F_dQ}``.
+    order : {"forward", "backward", "double_backward"}
+        Forward output, first-derivative autograd node, or second-derivative node.
+    component : str
+        Specialization component tag; for ``ewald_recip`` this must be
+        ``"ewald_recip"`` (the default).
+    tiled : bool
+        When ``True``, selects the cooperative tiled fill kernel for
+        ``order="double_backward"``.
+
+    Returns
+    -------
+    _RecipKernels
+        Named tuple with fields ``fill``, ``compute``, ``virial``, ``kspace``;
+        ``virial`` is ``None`` unless ``cell_grad=True``, and ``kspace`` is ``None``
+        unless ``cell_grad=True`` and ``order="backward"``.
+
+    See Also
+    --------
+    :func:`nvalchemiops.interactions.electrostatics.ewald_recip_factory.make_ewald_recip_kernel` : Underlying cached factory.
     """
     _require_supported_dtype(wp_dtype)
     _require_component(component, "ewald_recip")
@@ -387,6 +446,7 @@ def get_ewald_recip_kernel(
         deriv_state=deriv_state,
         cell_grad=cell_grad,
         order=order,
+        tiled=tiled,
     )
 
 
@@ -396,12 +456,35 @@ def get_ewald_recip_component_kernel(
     *,
     component: str,
     batched: bool = False,
+    tiled: bool = False,
 ) -> wp.Kernel:
     """Return a typed low-level Ewald reciprocal kernel.
 
     This accessor covers legacy public-launcher signatures that are not the
     bundled atom-major factory shape, notably single-system 1D ``k_vectors`` /
     structure-factor arrays and the self/background correction kernels.
+
+    Parameters
+    ----------
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64``; selects the floating-point and
+        vector/matrix dtypes for the returned kernel overload.
+    component : str
+        Kernel component name. Valid values are ``"fill"``, ``"compute_energy"``,
+        ``"compute_energy_forces"``, ``"compute_energy_forces_charge_grad"``,
+        ``"subtract_self"``, ``"corrections"``, ``"corrections_backward"``,
+        ``"corrections_double_backward"``, and ``"virial"``.
+    batched : bool
+        Single-system (``False``) vs batched (``True``).
+    tiled : bool
+        When ``True`` and ``component="fill"``, selects the cooperative tiled
+        fill kernel variant.
+
+    Returns
+    -------
+    wp.Kernel
+        The requested type-specialized Warp kernel overload, ready to pass to
+        ``wp.launch``.
     """
     _require_supported_dtype(wp_dtype)
     info = _DTYPE_INFO[wp_dtype]
@@ -414,13 +497,22 @@ def get_ewald_recip_component_kernel(
         "f64_2d": wp.array2d(dtype=wp.float64),
         "v_2d": wp.array2d(dtype=info.vec),
     }
+    fill_kernel = (
+        _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_tiled
+        if batched and tiled
+        else _ewald_reciprocal_space_energy_kernel_fill_structure_factors_tiled
+        if tiled
+        else _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors
+        if batched
+        else _ewald_reciprocal_space_energy_kernel_fill_structure_factors
+    )
     specs = {
         ("fill", False): (
-            _ewald_reciprocal_space_energy_kernel_fill_structure_factors,
+            fill_kernel,
             ("v", "f", "v", "m", "f", "f64", "f64_2d", "f64_2d", "f64", "f64"),
         ),
         ("fill", True): (
-            _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors,
+            fill_kernel,
             (
                 "v",
                 "f",
@@ -1036,6 +1128,7 @@ def _make_double_backward_kernels(
     batched: bool,
     deriv_state: _DerivState,
     cell_grad: bool = False,
+    tiled: bool = False,
 ) -> _RecipKernels:
     """Build the second-derivative node (recompute mode).
 
@@ -1422,6 +1515,129 @@ def _make_double_backward_kernels(
         # grad_grad_energy[isys] += Phi_k (= dL/d(grad_energy), NOT scaled by ge).
         wp.atomic_add(grad_grad_energy, isys, g_k * phi_k)
 
+    @wp.kernel(module=reduce_module)
+    def _ewald_recip_dbwd_reduce_tiled(
+        positions: wp.array(dtype=vec_dtype),
+        charges: wp.array(dtype=wp_dtype),
+        k_vectors: wp.array2d(dtype=vec_dtype),
+        cell: wp.array(dtype=info.mat),
+        alpha: wp.array(dtype=wp_dtype),
+        batch_id: wp.array(dtype=wp.int32),
+        atom_start: wp.array(dtype=wp.int32),
+        atom_end: wp.array(dtype=wp.int32),
+        v_pos: wp.array(dtype=vec_dtype),
+        v_charge: wp.array(dtype=wp.float64),
+        grad_energy: wp.array(dtype=wp.float64),
+        deriv_dq: wp.int32,
+        gA: wp.array2d(dtype=wp.float64),
+        gB: wp.array2d(dtype=wp.float64),
+        gC: wp.array2d(dtype=wp.float64),
+        gD: wp.array2d(dtype=wp.float64),
+        gP: wp.array2d(dtype=wp.float64),
+        gQ: wp.array2d(dtype=wp.float64),
+        grad_grad_energy: wp.array(dtype=wp.float64),
+        cell_grad: wp.int32,
+        volume: wp.array(dtype=wp.float64),
+        v_kvectors: wp.array2d(dtype=vec_dtype),
+        v_volume: wp.array(dtype=wp.float64),
+        gPu: wp.array2d(dtype=wp.float64),
+        gQu: wp.array2d(dtype=wp.float64),
+        grad_kvectors: wp.array2d(dtype=vec_dtype),
+        grad_volume: wp.array(dtype=wp.float64),
+    ) -> None:
+        """Cooperative tiled k-major reduce for non-cell reciprocal HVP."""
+        if BATCHED:
+            k_idx, isys, lane = wp.tid()
+        else:
+            k_idx, lane = wp.tid()
+            isys = wp.int32(0)
+
+        alpha_ = wp.float64(alpha[isys])
+        exp_factor = wp.float64(0.25) / (alpha_ * alpha_)
+        vol = wp.float64(wp.abs(wp.determinant(cell[isys])))
+
+        k_vector = k_vectors[isys, k_idx]
+        kx = wp.float64(k_vector[0])
+        ky = wp.float64(k_vector[1])
+        kz = wp.float64(k_vector[2])
+        k_squared = kx * kx + ky * ky + kz * kz
+        if k_squared < wp.float64(_K_SQUARED_EPSILON):
+            return
+
+        g_k = wp_exp_kernel(k_squared, exp_factor) * wp.float64(EIGHTPI) / vol
+
+        a_start = wp.int32(0)
+        a_end = positions.shape[0]
+        if BATCHED:
+            a_start = atom_start[isys]
+            a_end = atom_end[isys]
+
+        a_sum = wp.float64(0.0)
+        b_sum = wp.float64(0.0)
+        c_sum = wp.float64(0.0)
+        d_sum = wp.float64(0.0)
+        p_sum = wp.float64(0.0)
+        q_sum = wp.float64(0.0)
+
+        for atom_tile_start in range(a_start, a_end, RECIP_TILED_BLOCK_DIM):
+            atom_idx = atom_tile_start + lane
+            if atom_idx < a_end:
+                position = positions[atom_idx]
+                rx = wp.float64(position[0])
+                ry = wp.float64(position[1])
+                rz = wp.float64(position[2])
+                qi = wp.float64(charges[atom_idx])
+                k_dot_r = kx * rx + ky * ry + kz * rz
+                cos_kr = wp.cos(k_dot_r)
+                sin_kr = wp.sin(k_dot_r)
+                qc = qi * cos_kr
+                qs = qi * sin_kr
+
+                a_sum += qc
+                b_sum += qs
+
+                vp = v_pos[atom_idx]
+                w_i = (
+                    wp.float64(vp[0]) * kx
+                    + wp.float64(vp[1]) * ky
+                    + wp.float64(vp[2]) * kz
+                )
+                p_sum += w_i * qc
+                q_sum += w_i * qs
+
+                if DERIV_DQ:
+                    vq = v_charge[atom_idx]
+                    c_sum += vq * cos_kr
+                    d_sum += vq * sin_kr
+
+        a_red = wp.tile_reduce(wp.add, wp.tile(a_sum))
+        b_red = wp.tile_reduce(wp.add, wp.tile(b_sum))
+        c_red = wp.tile_reduce(wp.add, wp.tile(c_sum))
+        d_red = wp.tile_reduce(wp.add, wp.tile(d_sum))
+        p_red = wp.tile_reduce(wp.add, wp.tile(p_sum))
+        q_red = wp.tile_reduce(wp.add, wp.tile(q_sum))
+
+        if lane == 0:
+            a_val = wp.tile_extract(a_red, 0)
+            b_val = wp.tile_extract(b_red, 0)
+            c_val = wp.tile_extract(c_red, 0)
+            d_val = wp.tile_extract(d_red, 0)
+            p_val = wp.tile_extract(p_red, 0)
+            q_val = wp.tile_extract(q_red, 0)
+
+            gA[isys, k_idx] = g_k * a_val
+            gB[isys, k_idx] = g_k * b_val
+            gP[isys, k_idx] = g_k * p_val
+            gQ[isys, k_idx] = g_k * q_val
+            if DERIV_DQ:
+                gC[isys, k_idx] = g_k * c_val
+                gD[isys, k_idx] = g_k * d_val
+
+            phi_k = b_val * p_val - a_val * q_val
+            if DERIV_DQ:
+                phi_k += a_val * c_val + b_val * d_val
+            wp.atomic_add(grad_grad_energy, isys, g_k * phi_k)
+
     @wp.kernel(module=compute_module)
     def _ewald_recip_dbwd_compute(
         positions: wp.array(dtype=vec_dtype),
@@ -1582,6 +1798,10 @@ def _make_double_backward_kernels(
     for kernel, base in (
         (_ewald_recip_dbwd_reduce, "ewald_recip_double_backward_reduce"),
         (
+            _ewald_recip_dbwd_reduce_tiled,
+            "ewald_recip_double_backward_reduce_tiled",
+        ),
+        (
             _ewald_recip_dbwd_compute,
             "ewald_recip_double_backward_compute",
         ),
@@ -1596,5 +1816,7 @@ def _make_double_backward_kernels(
             order="double_backward",
         )
     return _RecipKernels(
-        fill=_ewald_recip_dbwd_reduce, compute=_ewald_recip_dbwd_compute, virial=None
+        fill=_ewald_recip_dbwd_reduce_tiled if tiled else _ewald_recip_dbwd_reduce,
+        compute=_ewald_recip_dbwd_compute,
+        virial=None,
     )

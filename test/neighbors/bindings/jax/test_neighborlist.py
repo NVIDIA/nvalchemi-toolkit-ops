@@ -451,12 +451,12 @@ class TestNeighborListExplicitMethod:
     @pytest.mark.parametrize(
         ("method", "expected_route", "expected_options"),
         [
-            ("naive", "batch_naive", {"native_strategy": "auto"}),
+            ("naive", "batch_naive", {"strategy": "auto"}),
             ("cell_list", "batch_cell_list", {"strategy": "auto"}),
             ("cluster_tile", "batch_cluster_tile", {}),
             ("naive_dual_cutoff", "batch_naive_dual_cutoff", {}),
-            ("naive_scalar", "batch_naive", {"native_strategy": "scalar"}),
-            ("naive_tile", "batch_naive", {"native_strategy": "tile"}),
+            ("naive_scalar", "batch_naive", {"strategy": "scalar"}),
+            ("naive_tile", "batch_naive", {"strategy": "tile"}),
             (
                 "cell_list_atom_centric",
                 "batch_cell_list",
@@ -1430,3 +1430,10 @@ class TestNeighborListEdgeCases:
         assert neighbor_list_coo.shape[1] == 0  # No pairs
         assert neighbor_ptr.shape[0] == 2  # 1 atom + 1
         assert int(neighbor_ptr[0]) == 0
+
+    def test_neighbor_list_rejects_short_batch_ptr_length(self):
+        """Top-level neighbor_list rejects one-entry batch_ptr."""
+        positions = jnp.zeros((0, 3), dtype=jnp.float32)
+        batch_ptr = jnp.array([0], dtype=jnp.int32)
+        with pytest.raises(ValueError, match="batch_ptr.*length at least 2"):
+            neighbor_list(positions, 3.0, batch_ptr=batch_ptr)

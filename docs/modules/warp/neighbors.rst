@@ -133,6 +133,8 @@ Cluster Tile Algorithm
 .. autofunction:: nvalchemiops.neighbors.cluster_tile.build_cluster_tile_list
 .. autofunction:: nvalchemiops.neighbors.cluster_tile.query_cluster_tile
 .. autofunction:: nvalchemiops.neighbors.cluster_tile.query_cluster_tile_coo
+.. autofunction:: nvalchemiops.neighbors.cluster_tile.estimate_max_tiles_per_group
+.. autofunction:: nvalchemiops.neighbors.cluster_tile.estimate_batch_max_tiles_per_group
 
 Batched Cluster Tile Algorithm
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

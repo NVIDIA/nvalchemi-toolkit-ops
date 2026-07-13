@@ -180,7 +180,47 @@ def synthesize_cell_for_cell_list(
     batch_ptr: jax.Array | None = None,
     num_systems: int = 1,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
-    """Build shifted non-PBC bounding-box cells for JAX cell-list dispatch."""
+    """Build shifted non-PBC bounding-box cells for JAX cell-list dispatch.
+
+    Translates each system's atoms so their bounding box starts at the origin,
+    then returns an axis-aligned cell sized to that bounding box plus a small
+    ``cutoff``-proportional padding. All PBC flags are set to ``False``.
+
+    Parameters
+    ----------
+    positions : jax.Array, shape (N, 3)
+        Atomic positions in Cartesian space.
+    cutoff : float
+        Neighbour cutoff radius; used to compute the bounding-box padding
+        (``cutoff * 0.1``).
+    batch_idx : jax.Array, shape (N,), dtype=int32, optional
+        System index per atom. Pass ``None`` for single-system mode or when
+        ``batch_ptr`` is provided instead.
+    batch_ptr : jax.Array, shape (num_systems + 1,), dtype=int32, optional
+        CSR-style cumulative atom counts. Must satisfy
+        ``batch_ptr.shape[0] >= 2``. When both ``batch_idx`` and ``batch_ptr``
+        are ``None`` all atoms are treated as one system.
+    num_systems : int, optional
+        Number of systems. Ignored when ``batch_ptr`` is provided (inferred
+        from its length). Default is ``1``.
+
+    Returns
+    -------
+    shifted : jax.Array, shape (N, 3)
+        Positions shifted so each system's bounding box starts at the origin.
+    cell : jax.Array, shape (3, 3) or (num_systems, 3, 3)
+        Axis-aligned bounding-box cell matrix per system. Shape is ``(3, 3)``
+        for a single system without ``batch_idx``/``batch_ptr``, otherwise
+        ``(num_systems, 3, 3)``.
+    pbc : jax.Array, shape (3,) or (num_systems, 3), dtype=bool
+        All-``False`` PBC flags. Shape mirrors ``cell``.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.neighbors._dispatch.estimate_neighbor_list_costs` : Estimate strategy costs using a cell and PBC array.
+    """
+    if batch_ptr is not None and int(batch_ptr.shape[0]) < 2:
+        raise ValueError("batch_ptr must have length at least 2")
     num_systems = int(num_systems)
     if positions.shape[0] == 0:
         cell = jnp.tile(jnp.eye(3, dtype=positions.dtype), (num_systems, 1, 1))
@@ -291,14 +331,14 @@ def estimate_neighbor_list_costs(
     """
     if batch_ptr.ndim != 1:
         raise ValueError("batch_ptr must be a 1-D array")
-    num_systems = max(int(batch_ptr.shape[0]) - 1, 0)
+    if int(batch_ptr.shape[0]) < 2:
+        raise ValueError("batch_ptr must have length at least 2")
+    num_systems = int(batch_ptr.shape[0]) - 1
     cell, pbc = _normalize_selector_cell_pbc(cell, pbc, num_systems)
     batch_ptr = batch_ptr.astype(jnp.int32)
     batch_idx_is_provided = batch_idx is not None
     if batch_idx is not None:
         batch_idx = batch_idx.astype(jnp.int32)
-    if num_systems == 0:
-        return [("cell_list_atom_centric", 0.0)]
 
     if max_nbins is None:
         max_nbins = (
@@ -403,8 +443,30 @@ def estimate_neighbor_list_costs(
 def suggest_neighbor_list_method(*args, **kwargs) -> str:
     """Return the cheapest feasible JAX neighbor-list strategy name.
 
-    Thin wrapper over :func:`estimate_neighbor_list_costs` returning only the
-    top-ranked strategy.  Same arguments and same host-only sync caveat.
+    Thin wrapper over
+    :func:`nvalchemiops.jax.neighbors._dispatch.estimate_neighbor_list_costs`
+    returning only the top-ranked strategy name.  Accepts the same arguments
+    and carries the same host-only sync caveat: call outside ``jax.jit`` and
+    pass the result as an explicit ``method=`` argument.
+
+    Parameters
+    ----------
+    *args
+        Positional arguments forwarded to
+        :func:`nvalchemiops.jax.neighbors._dispatch.estimate_neighbor_list_costs`.
+    **kwargs
+        Keyword arguments forwarded to
+        :func:`nvalchemiops.jax.neighbors._dispatch.estimate_neighbor_list_costs`.
+
+    Returns
+    -------
+    str
+        Name of the cheapest feasible strategy, e.g. ``"cell_list_atom_centric"``
+        or ``"batch_naive_tile"``.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.neighbors._dispatch.estimate_neighbor_list_costs` : Full ranked list of feasible strategies with costs.
     """
     return estimate_neighbor_list_costs(*args, **kwargs)[0][0]
 

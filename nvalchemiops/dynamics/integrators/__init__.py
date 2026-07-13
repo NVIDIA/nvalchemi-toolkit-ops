@@ -140,6 +140,7 @@ from nvalchemiops.dynamics.integrators.langevin import (
     langevin_baoab_half_step_out,
 )
 from nvalchemiops.dynamics.integrators.nose_hoover import (
+    nhc_compute_2ke,
     nhc_compute_chain_energy,
     # Utilities
     nhc_compute_masses,
@@ -157,6 +158,7 @@ from nvalchemiops.dynamics.integrators.npt import (
     compute_barostat_mass,
     compute_barostat_potential_energy,
     compute_cell_kinetic_energy,
+    compute_kinetic_tensor,
     # Pressure calculations
     compute_pressure_tensor,
     compute_scalar_pressure,
@@ -235,6 +237,7 @@ __all__ = [
     "nhc_position_update_out",
     # Nosé-Hoover Chain - Utilities
     "nhc_compute_masses",
+    "nhc_compute_2ke",
     # NPT/NPH - Virial conversion
     "flat_virial_to_vec9",
     # NPT/NPH - Tensor types
@@ -245,6 +248,7 @@ __all__ = [
     # NPT/NPH - Pressure calculations
     "compute_pressure_tensor",
     "compute_scalar_pressure",
+    "compute_kinetic_tensor",
     # NPT/NPH - Barostat utilities
     "compute_barostat_mass",
     "compute_cell_kinetic_energy",

@@ -1567,27 +1567,33 @@ def lj_energy(
         LJ length parameter (zero-crossing distance).
     cutoff : float
         Cutoff distance for interactions.
-    neighbor_matrix : wp.array | None, shape (N, max_neighbors)
-        Neighbor indices in matrix format.
-    neighbor_matrix_shifts : wp.array | None, shape (N, max_neighbors)
-        Periodic shifts for neighbor matrix format.
-    num_neighbors : wp.array | None, shape (N,)
-        Number of neighbors per atom (for matrix format).
-    fill_value : int | None
-        Fill value for neighbor matrix padding.
-    neighbor_list : wp.array | None, shape (2, num_pairs)
-        Neighbor pairs in COO format (alternative to matrix).
-    neighbor_ptr : wp.array | None, shape (N+1,)
-        CSR row pointers for neighbor list format.
-    neighbor_shifts : wp.array | None, shape (num_pairs,)
-        Periodic shifts for neighbor list format.
-    device : str | None
+    neighbor_matrix : wp.array, shape (N, max_neighbors), dtype=wp.int32, optional
+        Neighbor indices in matrix format. Provide either this or `neighbor_list`.
+    neighbor_matrix_shifts : wp.array, shape (N, max_neighbors), dtype=wp.vec3i, optional
+        Periodic shifts for each entry in `neighbor_matrix`.
+    num_neighbors : wp.array, shape (N,), dtype=wp.int32, optional
+        Valid neighbor count per atom; required when using matrix format.
+    fill_value : int, optional
+        Sentinel value used to pad `neighbor_matrix` rows.
+    neighbor_list : wp.array, shape (2, M) or (M,), dtype=wp.int32, optional
+        Neighbor target indices in COO/CSR adjacency form; alternative to matrix format.
+    neighbor_ptr : wp.array, shape (N+1,), dtype=wp.int32, optional
+        CSR row pointers; required when `neighbor_list` is provided.
+    neighbor_shifts : wp.array, shape (M,), dtype=wp.vec3i, optional
+        Periodic shifts for each edge in neighbor list format.
+    switch_width : float, optional
+        Width of the C2 switching region applied before cutoff. A value of 0.0
+        (default) disables switching.
+    half_neighbor_list : bool, optional
+        True (default) if the neighbor structure contains each pair once.
+        Set to False for full neighbor lists where each pair appears twice.
+    device : str, optional
         Warp device. If None, inferred from positions.
 
     Returns
     -------
-    energies : wp.array, shape (N,), dtype=wp.float32 or wp.float64
-        Per-atom energies (matches input positions dtype). Sum to get total energy.
+    wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Per-atom LJ energies (matches input positions dtype). Sum to get total energy.
     """
     if device is None:
         device = positions.device
@@ -1684,12 +1690,45 @@ def lj_forces(
 ) -> wp.array:
     """Compute Lennard-Jones forces.
 
-    Convenience wrapper that returns only forces (no energies).
-    See lj_energy_forces for parameter descriptions.
+    Convenience wrapper around :func:`nvalchemiops.interactions.lj.lj_energy_forces`
+    that discards the energies and returns only forces.
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+        Atomic coordinates.
+    cell : wp.array, shape (1,), dtype=wp.mat33f or wp.mat33d
+        Unit cell matrix.
+    epsilon : float
+        LJ energy parameter (well depth).
+    sigma : float
+        LJ length parameter (zero-crossing distance).
+    cutoff : float
+        Cutoff distance for interactions.
+    neighbor_matrix : wp.array, shape (N, max_neighbors), dtype=wp.int32, optional
+        Neighbor indices in matrix format.
+    neighbor_matrix_shifts : wp.array, shape (N, max_neighbors), dtype=wp.vec3i, optional
+        Periodic shifts for neighbor matrix format.
+    num_neighbors : wp.array, shape (N,), dtype=wp.int32, optional
+        Valid neighbor count per atom (for matrix format).
+    fill_value : int, optional
+        Sentinel value used to pad `neighbor_matrix`.
+    neighbor_list : wp.array, shape (2, M) or (M,), dtype=wp.int32, optional
+        Neighbor pairs or target indices in COO/CSR adjacency form.
+    neighbor_ptr : wp.array, shape (N+1,), dtype=wp.int32, optional
+        CSR row pointers; required when `neighbor_list` is provided.
+    neighbor_shifts : wp.array, shape (M,), dtype=wp.vec3i, optional
+        Periodic shifts for neighbor list format.
+    switch_width : float, optional
+        Width of the C2 switching region. A value of 0.0 (default) disables switching.
+    half_neighbor_list : bool, optional
+        True (default) if the neighbor structure contains each pair once.
+    device : str, optional
+        Warp device. If None, inferred from positions.
 
     Returns
     -------
-    forces : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+    wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
         Forces on each atom (matches positions dtype).
     """
     _, forces = lj_energy_forces(
@@ -1736,48 +1775,53 @@ def lj_energy_forces(
 
     Parameters
     ----------
-    positions : wp.array, dtype=wp.vec3f or wp.vec3d
-        Atomic coordinates. Shape (N,).
-    cell : wp.array, dtype=wp.mat33f or wp.mat33d
-        Unit cell matrix. Shape (1,) or (B,) for batched.
+    positions : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+        Atomic coordinates.
+    cell : wp.array, shape (1,) or (B,), dtype=wp.mat33f or wp.mat33d
+        Unit cell matrix. Use shape ``(B,)`` for batched mode.
     epsilon : float
         LJ energy parameter (well depth).
     sigma : float
         LJ length parameter (zero-crossing distance).
     cutoff : float
         Cutoff distance for interactions.
-    neighbor_matrix : wp.array | None, shape (N, max_neighbors)
-        Neighbor indices in matrix format.
-    neighbor_matrix_shifts : wp.array | None, shape (N, max_neighbors)
-        Periodic shifts for neighbor matrix format.
-    num_neighbors : wp.array | None, shape (N,)
-        Number of neighbors per atom (for matrix format).
-    fill_value : int | None
-        Fill value for neighbor matrix padding.
-    neighbor_list : wp.array | None, shape (2, num_pairs)
-        Neighbor pairs in COO format (alternative to matrix).
-    neighbor_ptr : wp.array | None, shape (N+1,)
-        CSR row pointers for neighbor list format.
-    neighbor_shifts : wp.array | None, shape (num_pairs,)
-        Periodic shifts for neighbor list format.
-    batch_idx : wp.array | None, shape (N,)
-        Batch indices for each atom. Required for batched mode.
-    device : str | None
+    neighbor_matrix : wp.array, shape (N, max_neighbors), dtype=wp.int32, optional
+        Neighbor indices in matrix format. Provide either this or `neighbor_list`.
+    neighbor_matrix_shifts : wp.array, shape (N, max_neighbors), dtype=wp.vec3i, optional
+        Periodic shifts for each entry in `neighbor_matrix`.
+    num_neighbors : wp.array, shape (N,), dtype=wp.int32, optional
+        Valid neighbor count per atom; required when using matrix format.
+    fill_value : int, optional
+        Sentinel value used to pad `neighbor_matrix` rows.
+    neighbor_list : wp.array, shape (2, M) or (M,), dtype=wp.int32, optional
+        Neighbor target indices in COO/CSR adjacency form; alternative to matrix format.
+    neighbor_ptr : wp.array, shape (N+1,), dtype=wp.int32, optional
+        CSR row pointers; required when `neighbor_list` is provided.
+    neighbor_shifts : wp.array, shape (M,), dtype=wp.vec3i, optional
+        Periodic shifts for each edge in neighbor list format.
+    batch_idx : wp.array, shape (N,), dtype=wp.int32, optional
+        System index per atom (0..B-1). Pass None for single-system mode.
+    switch_width : float, optional
+        Width of the C2 switching region applied before cutoff. A value of
+        0.0 (default) disables switching.
+    half_neighbor_list : bool, optional
+        True (default) if the neighbor structure contains each pair once.
+        Set to False for full neighbor lists where each pair appears twice.
+    device : str, optional
         Warp device. If None, inferred from positions.
-    energies_out : wp.array | None, shape (N,)
-        Optional pre-allocated output buffer for per-atom energies.
-        When provided, it is zeroed and reused instead of allocating a
-        new array.
-    forces_out : wp.array | None, shape (N,)
-        Optional pre-allocated output buffer for forces. When provided,
-        it is zeroed and reused instead of allocating a new array.
+    energies_out : wp.array, shape (N,), dtype=wp.float32 or wp.float64, optional
+        Pre-allocated output buffer for per-atom energies. Modified in-place
+        (zeroed before use). If None, a new array is allocated.
+    forces_out : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d, optional
+        Pre-allocated output buffer for forces. Modified in-place (zeroed
+        before use). If None, a new array is allocated.
 
     Returns
     -------
-    energies : wp.array, shape (N,), dtype=wp.float32 or wp.float64
-        Per-atom energies (matches input positions dtype).
-    forces : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
-        Forces on each atom.
+    wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Per-atom LJ energies (matches input positions dtype).
+    wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+        Forces on each atom (matches positions dtype).
     """
     if device is None:
         device = positions.device
@@ -1917,57 +1961,59 @@ def lj_energy_forces_virial(
 
     Parameters
     ----------
-    positions : wp.array, dtype=wp.vec3f or wp.vec3d
-        Atomic coordinates. Shape (N,).
-    cell : wp.array, dtype=wp.mat33f or wp.mat33d
-        Unit cell matrix. Shape (1,) or (B,) for batched.
+    positions : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+        Atomic coordinates.
+    cell : wp.array, shape (1,) or (B,), dtype=wp.mat33f or wp.mat33d
+        Unit cell matrix. Use shape ``(B,)`` for batched mode.
     epsilon : float
         LJ energy parameter (well depth).
     sigma : float
         LJ length parameter (zero-crossing distance).
     cutoff : float
         Cutoff distance for interactions.
-    neighbor_matrix : wp.array | None, shape (N, max_neighbors)
-        Neighbor indices in matrix format.
-    neighbor_matrix_shifts : wp.array | None, shape (N, max_neighbors)
-        Periodic shifts for neighbor matrix format.
-    num_neighbors : wp.array | None, shape (N,)
-        Number of neighbors per atom (for matrix format).
-    fill_value : int | None
-        Fill value for neighbor matrix padding.
-    neighbor_list : wp.array | None, shape (2, num_pairs)
-        Neighbor pairs in COO format (alternative to matrix).
-    neighbor_ptr : wp.array | None, shape (N+1,)
-        CSR row pointers for neighbor list format.
-    neighbor_shifts : wp.array | None, shape (num_pairs,)
-        Periodic shifts for neighbor list format.
-    batch_idx : wp.array | None, shape (N,)
-        Batch indices for each atom. Required for batched mode.
-    num_systems : int
-        Number of systems (for batched virial allocation).
-    device : str | None
+    neighbor_matrix : wp.array, shape (N, max_neighbors), dtype=wp.int32, optional
+        Neighbor indices in matrix format. Provide either this or `neighbor_list`.
+    neighbor_matrix_shifts : wp.array, shape (N, max_neighbors), dtype=wp.vec3i, optional
+        Periodic shifts for each entry in `neighbor_matrix`.
+    num_neighbors : wp.array, shape (N,), dtype=wp.int32, optional
+        Valid neighbor count per atom; required when using matrix format.
+    fill_value : int, optional
+        Sentinel value used to pad `neighbor_matrix` rows.
+    neighbor_list : wp.array, shape (2, M) or (M,), dtype=wp.int32, optional
+        Neighbor target indices in COO/CSR adjacency form; alternative to matrix format.
+    neighbor_ptr : wp.array, shape (N+1,), dtype=wp.int32, optional
+        CSR row pointers; required when `neighbor_list` is provided.
+    neighbor_shifts : wp.array, shape (M,), dtype=wp.vec3i, optional
+        Periodic shifts for each edge in neighbor list format.
+    batch_idx : wp.array, shape (N,), dtype=wp.int32, optional
+        System index per atom (0..B-1). Pass None for single-system mode.
+    switch_width : float, optional
+        Width of the C2 switching region applied before cutoff. A value of
+        0.0 (default) disables switching.
+    half_neighbor_list : bool, optional
+        True (default) if the neighbor structure contains each pair once.
+        Set to False for full neighbor lists where each pair appears twice.
+    device : str, optional
         Warp device. If None, inferred from positions.
-    energies_out : wp.array | None, shape (N,)
-        Optional pre-allocated output buffer for per-atom energies.
-        When provided, it is zeroed and reused instead of allocating a
-        new array.
-    forces_out : wp.array | None, shape (N,)
-        Optional pre-allocated output buffer for forces. When provided,
-        it is zeroed and reused instead of allocating a new array.
-    virial_out : wp.array | None, shape (9,) or (B, 9)
-        Optional pre-allocated output buffer for the virial tensor.
-        When provided, it is zeroed and reused instead of allocating a
-        new array.
+    energies_out : wp.array, shape (N,), dtype=wp.float32 or wp.float64, optional
+        Pre-allocated output buffer for per-atom energies. Modified in-place
+        (zeroed before use). If None, a new array is allocated.
+    forces_out : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d, optional
+        Pre-allocated output buffer for forces. Modified in-place (zeroed
+        before use). If None, a new array is allocated.
+    virial_out : wp.array, shape (9,) or (B, 9), dtype=wp.float32 or wp.float64, optional
+        Pre-allocated output buffer for the virial tensor. Modified in-place
+        (zeroed before use). If None, a new array is allocated.
 
     Returns
     -------
-    energies : wp.array, shape (N,), dtype=wp.float32 or wp.float64
-        Per-atom energies (matches input positions dtype).
-    forces : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
-        Forces on each atom.
-    virial : wp.array, shape (9,) or (B, 9), dtype=wp.float32 or wp.float64
-        Virial tensor [xx, xy, xz, yx, yy, yz, zx, zy, zz] (matches input dtype).
-        For batched, shape is (num_systems, 9).
+    wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Per-atom LJ energies (matches input positions dtype).
+    wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+        Forces on each atom (matches positions dtype).
+    wp.array, shape (9,) or (B, 9), dtype=wp.float32 or wp.float64
+        Global virial tensor flattened as ``[xx, xy, xz, yx, yy, yz, zx, zy, zz]``
+        (matches input dtype). Shape is ``(B, 9)`` in batched mode.
     """
     if device is None:
         device = positions.device

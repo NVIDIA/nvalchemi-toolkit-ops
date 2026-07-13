@@ -173,7 +173,7 @@ class TestCellListCorrectness:
 
             estimated_density = num_atoms / cell.det().abs().item()
             max_neighbors = estimate_max_neighbors(
-                cutoff, atomic_density=estimated_density, safety_factor=5.0
+                cutoff, atomic_density=estimated_density * 5.0
             )
             neighbor_list, _, u = cell_list(
                 positions,
@@ -216,7 +216,7 @@ class TestCellListCorrectness:
 
         estimated_density = num_atoms / cell.det().abs().item()
         max_neighbors = estimate_max_neighbors(
-            cutoff, atomic_density=estimated_density, safety_factor=5.0
+            cutoff, atomic_density=estimated_density * 5.0
         )
         neighbor_list, _, u = cell_list(
             positions,
@@ -489,7 +489,7 @@ class TestLeftHandedCells:
 
         estimated_density = positions.shape[0] / cell.det().abs().item()
         max_neighbors = estimate_max_neighbors(
-            cutoff, atomic_density=estimated_density, safety_factor=5.0
+            cutoff, atomic_density=estimated_density * 5.0
         )
         neighbor_list, _, u = cell_list(
             positions,
@@ -682,9 +682,7 @@ class TestCellListOutputFormats:
             pbc = pbc.reshape(1, 3)
 
         if preallocate:
-            max_neighbors = estimate_max_neighbors(
-                cutoff, atomic_density=0.35, safety_factor=5.0
-            )
+            max_neighbors = estimate_max_neighbors(cutoff, atomic_density=0.35 * 5.0)
             max_cells, neighbor_search_radius = estimate_cell_list_sizes(
                 cell, pbc, cutoff
             )
@@ -724,9 +722,7 @@ class TestCellListOutputFormats:
                 num_neighbors=num_neighbors,
             )
         else:
-            max_neighbors = estimate_max_neighbors(
-                cutoff, atomic_density=0.35, safety_factor=5.0
-            )
+            max_neighbors = estimate_max_neighbors(cutoff, atomic_density=0.35 * 5.0)
             results = cell_list(
                 positions,
                 cutoff,
@@ -757,9 +753,7 @@ class TestCellListOutputFormats:
         cutoff = 3.0
 
         if preallocate:
-            max_neighbors = estimate_max_neighbors(
-                cutoff, atomic_density=0.35, safety_factor=5.0
-            )
+            max_neighbors = estimate_max_neighbors(cutoff, atomic_density=0.35 * 5.0)
             max_cells, neighbor_search_radius = estimate_cell_list_sizes(
                 cell, pbc, cutoff
             )
@@ -799,9 +793,7 @@ class TestCellListOutputFormats:
                 num_neighbors=num_neighbors,
             )
         else:
-            max_neighbors = estimate_max_neighbors(
-                cutoff, atomic_density=0.35, safety_factor=5.0
-            )
+            max_neighbors = estimate_max_neighbors(cutoff, atomic_density=0.35 * 5.0)
             results = cell_list(
                 positions,
                 cutoff,
@@ -1006,9 +998,7 @@ class TestCellListCompile:
             cutoff,
         )
         density = positions.shape[0] / cell.det()
-        max_neighbors = estimate_max_neighbors(
-            cutoff, atomic_density=density, safety_factor=2.0
-        )
+        max_neighbors = estimate_max_neighbors(cutoff, atomic_density=density * 2.0)
         cell_list_cache_uncompiled = allocate_cell_list(
             positions.shape[0],
             max_cells,
@@ -1336,9 +1326,7 @@ class TestCellListComponentsAPI:
         positions, cell, _ = create_simple_cubic_system(dtype=dtype, device=device)
         cutoff = 1.1
         density = positions.shape[0] / cell.det().abs().item()
-        max_neighbors = estimate_max_neighbors(
-            cutoff, atomic_density=density, safety_factor=5.0
-        )
+        max_neighbors = estimate_max_neighbors(cutoff, atomic_density=density * 5.0)
         assert max_neighbors > 0
         assert isinstance(max_neighbors, int)
 
@@ -1904,3 +1892,63 @@ class TestCellListAutograd:
                 for col in range(int(count))
             ]
             assert sorted(active_a) == sorted(active_b)
+
+
+class TestEstimateMaxNeighborsDefaults:
+    """Defaults for estimate_max_neighbors (pure Python, framework-agnostic)."""
+
+    def test_nonpositive_cutoff_returns_zero(self):
+        assert estimate_max_neighbors(0.0) == 0
+        assert estimate_max_neighbors(-1.0) == 0
+
+    @pytest.mark.parametrize("cutoff", [0.5, 1.5, 2.67])
+    def test_short_cutoff_respects_default_lower_bound(self, cutoff):
+        """Short cutoffs are floored at the default lower bound (16)."""
+        assert estimate_max_neighbors(cutoff) >= 16
+
+    @pytest.mark.parametrize("cutoff", [0.5, 1.5, 2.67])
+    def test_lower_bound_kwarg_raises_floor(self, cutoff):
+        """max_neighbors_lower_bound raises the floor for short cutoffs where the
+        density estimate would otherwise fall below it."""
+        assert estimate_max_neighbors(cutoff, max_neighbors_lower_bound=64) == 64
+
+    def test_lower_bound_does_not_cap_estimate(self):
+        """A lower bound below the density estimate leaves the estimate
+        unchanged (it is a floor, not a cap)."""
+        cutoff = 8.5
+        assert estimate_max_neighbors(
+            cutoff, max_neighbors_lower_bound=16
+        ) == estimate_max_neighbors(cutoff, max_neighbors_lower_bound=1)
+
+    def test_density_scales_estimate(self):
+        """A higher atomic_density must raise the estimate (the sole knob for
+        denser / clustered systems)."""
+        cutoff = 5.0
+        assert estimate_max_neighbors(
+            cutoff, atomic_density=0.8
+        ) > estimate_max_neighbors(cutoff, atomic_density=0.2)
+
+    @pytest.mark.parametrize("cutoff", [1.0, 3.0, 5.0, 8.5])
+    def test_result_is_positive_multiple_of_16(self, cutoff):
+        result = estimate_max_neighbors(cutoff)
+        assert result > 0
+        assert result % 16 == 0
+        assert isinstance(result, int)
+
+    def test_safety_factor_deprecated_and_folded(self):
+        """safety_factor is deprecated: it must warn and fold into atomic_density
+        (identical result to scaling the density directly)."""
+        cutoff = 5.0
+        with pytest.warns(DeprecationWarning, match="safety_factor"):
+            result = estimate_max_neighbors(
+                cutoff, atomic_density=0.2, safety_factor=3.0
+            )
+        assert result == estimate_max_neighbors(cutoff, atomic_density=0.2 * 3.0)
+
+    def test_no_warning_without_safety_factor(self):
+        """The default path must not emit a deprecation warning."""
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            estimate_max_neighbors(5.0, atomic_density=0.3)

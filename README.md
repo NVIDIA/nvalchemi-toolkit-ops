@@ -167,6 +167,7 @@ atomic_numbers = ...  # [num_atoms]
 cell = ...  # [num_systems, 3, 3]
 pbc = ...  # [num_systems, 3]
 atomic_charges = ... # [num_atoms]
+positions = positions.requires_grad_(True)
 # construct neighbor matrix
 neighbor_matrix, num_neighbors, shift_matrix = neighbor_list(
     positions,
@@ -175,7 +176,7 @@ neighbor_matrix, num_neighbors, shift_matrix = neighbor_list(
     pbc=pbc,
 )
 # call PME, using automatic parameter tuning
-atom_energies, atom_forces = particle_mesh_ewald(
+atom_energies = particle_mesh_ewald(
     positions=positions,
     charges=atomic_charges,
     cell=cell,
@@ -184,6 +185,7 @@ atom_energies, atom_forces = particle_mesh_ewald(
     accuracy=1e-6
 )
 system_energy = atom_energies.sum()
+atom_forces = -torch.autograd.grad(system_energy, positions)[0]
 ```
 
 </details>
@@ -220,12 +222,7 @@ Features planned for upcoming releases:
 
 - Performance improvements for neighbor lists, DFT-D3, and
   electrostatics
-- Explicit 2nd-derivative electrostatics kernels for more
-  efficient MLIP training
-- Multipole Ewald summation
 - Batched Nudged Elastic Band (NEB)
-- Support for custom pair potentials in neighbor list functions
-- Slab corrections for pseudo-2D periodic systems
 - Ewald dispersion
 - Improved pair potential coverage (e.g. ZBL, OQDO, Born-Mayer)
 - Basis functions and descriptors for MLIPs (e.g. spherical

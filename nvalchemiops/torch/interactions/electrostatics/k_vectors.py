@@ -150,7 +150,7 @@ def generate_k_vectors_ewald_summation(
       transformed using each system's reciprocal cell. If ``k_cutoff`` is given
       per system, the maximum cutoff across the batch determines the shared
       Miller bounds.
-    - The number of k-vectors K scales as O(k_cutoff³ · V) where V is the cell volume.
+    - The number of k-vectors K scales as O(k_cutoff^3 * V) where V is the cell volume.
 
     See Also
     --------

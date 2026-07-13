@@ -473,6 +473,7 @@ all_charges = []
 all_cells = []
 all_pbc = []
 batch_idx_list = []
+atom_counts = []
 
 print(f"\nBatch Evaluation: Creating {n_systems} systems...")
 
@@ -480,6 +481,7 @@ for i in range(n_systems):
     n_cells = i + 2  # 2×2×2, 3×3×3, 4×4×4
     pos, chrg, cell_i, pbc_i = create_nacl_system(n_cells=n_cells)
     batch_idx_list.extend([i] * len(pos))
+    atom_counts.append(len(pos))
     all_positions.append(pos)
     all_charges.append(chrg)
     all_cells.append(cell_i)
@@ -494,6 +496,8 @@ charges_batch = torch.cat(all_charges, dim=0)
 cells_batch = torch.cat(all_cells, dim=0)
 pbc_batch = torch.cat(all_pbc, dim=0)
 batch_idx = torch.tensor(batch_idx_list, dtype=torch.int32, device=device)
+# Host-known launch bound from the systems constructed above.
+max_atoms_per_system = max(atom_counts)
 
 # Estimate parameters for the batch with desired accuracy
 params_batch = estimate_ewald_parameters(
@@ -542,6 +546,7 @@ for i in range(n_systems):
 
 # %%
 # Preferred training recipe: derive batched forces from the scalar energy.
+# Passing max_atoms_per_system avoids reciprocal-kernel launch-bound inference.
 
 positions_batch_ag = positions_batch.detach().clone().requires_grad_(True)
 energies_batch_ag = ewald_summation(
@@ -552,6 +557,7 @@ energies_batch_ag = ewald_summation(
     neighbor_matrix=neighbor_matrix_batch,
     neighbor_matrix_shifts=neighbor_matrix_shifts_batch,
     accuracy=1e-5,
+    max_atoms_per_system=max_atoms_per_system,
 )
 forces_batch_ag = -torch.autograd.grad(energies_batch_ag.sum(), positions_batch_ag)[0]
 

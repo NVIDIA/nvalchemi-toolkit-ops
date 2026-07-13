@@ -30,6 +30,7 @@ import pytest
 import warp as wp
 
 from nvalchemiops.dynamics.integrators import (
+    nhc_compute_2ke,
     nhc_compute_chain_energy,
     nhc_compute_masses,
     nhc_position_update,
@@ -1704,6 +1705,393 @@ class TestNHCAtomPtr:
                 f"System {sys_id} (size={n}) velocities not updated"
             )
             offset += n
+
+
+# ==============================================================================
+# compute_ke flag + nhc_compute_2ke helper
+# ==============================================================================
+
+
+def _tol(np_dtype):
+    """Relative tolerance for fp comparisons that differ only by reduction order.
+
+    The internal 2*KE reduction uses atomic adds whose ordering is not
+    deterministic across launches, so byte-identity is not guaranteed even over
+    the same atoms. A tight rtol confirms the values are physically the same.
+    """
+    return 1e-6 if np_dtype == np.float32 else 1e-12
+
+
+class TestNHCComputeKE:
+    """Tests for the compute_ke flag and the nhc_compute_2ke reduction helper."""
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("dtype_vec,dtype_scalar,np_dtype", DTYPE_CONFIGS)
+    def test_nhc_compute_2ke_matches_manual_single(
+        self, device, dtype_vec, dtype_scalar, np_dtype
+    ):
+        """nhc_compute_2ke fills ke2 = sum(m * |v|^2) for a single system."""
+        num_atoms = 64
+        np.random.seed(0)
+        vel_np = np.random.randn(num_atoms, 3).astype(np_dtype)
+        mass_np = (np.random.rand(num_atoms) + 0.5).astype(np_dtype)
+
+        velocities = wp.array(vel_np, dtype=dtype_vec, device=device)
+        masses = wp.array(mass_np, dtype=dtype_scalar, device=device)
+        ke2 = wp.empty(1, dtype=dtype_scalar, device=device)
+
+        nhc_compute_2ke(velocities, masses, ke2, device=device)
+        wp.synchronize_device(device)
+
+        expected = float(np.sum(mass_np * (vel_np * vel_np).sum(axis=1)))
+        np.testing.assert_allclose(ke2.numpy()[0], expected, rtol=_tol(np_dtype))
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("dtype_vec,dtype_scalar,np_dtype", DTYPE_CONFIGS)
+    def test_nhc_compute_2ke_matches_manual_batched(
+        self, device, dtype_vec, dtype_scalar, np_dtype
+    ):
+        """nhc_compute_2ke fills ke2[s] = sum_{i in s} m_i |v_i|^2 per system."""
+        sizes = [40, 24]
+        num_systems = len(sizes)
+        num_atoms = sum(sizes)
+        batch_np = np.concatenate(
+            [np.full(n, s, dtype=np.int32) for s, n in enumerate(sizes)]
+        )
+        np.random.seed(1)
+        vel_np = np.random.randn(num_atoms, 3).astype(np_dtype)
+        mass_np = (np.random.rand(num_atoms) + 0.5).astype(np_dtype)
+
+        velocities = wp.array(vel_np, dtype=dtype_vec, device=device)
+        masses = wp.array(mass_np, dtype=dtype_scalar, device=device)
+        batch_idx = wp.array(batch_np, dtype=wp.int32, device=device)
+        ke2 = wp.empty(num_systems, dtype=dtype_scalar, device=device)
+
+        nhc_compute_2ke(
+            velocities,
+            masses,
+            ke2,
+            batch_idx=batch_idx,
+            device=device,
+        )
+        wp.synchronize_device(device)
+
+        per_atom = mass_np * (vel_np * vel_np).sum(axis=1)
+        expected = np.array([per_atom[batch_np == s].sum() for s in range(num_systems)])
+        np.testing.assert_allclose(ke2.numpy(), expected, rtol=_tol(np_dtype))
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("dtype_vec,dtype_scalar,np_dtype", DTYPE_CONFIGS)
+    @pytest.mark.parametrize("nloops", [1, 3])
+    def test_compute_ke_parity_single(
+        self, device, dtype_vec, dtype_scalar, np_dtype, nloops
+    ):
+        """compute_ke=True must match compute_ke=False with ke2 pre-filled
+        (by nhc_compute_2ke) over the SAME atoms — single system."""
+        num_atoms = 50
+        chain_length = 3
+        target_temp = 1.5
+        tau = 0.1
+        ndof = 3 * num_atoms - 3
+        np.random.seed(7)
+
+        vel_np = np.random.randn(num_atoms, 3).astype(np_dtype)
+        mass_np = (np.random.rand(num_atoms) + 0.5).astype(np_dtype)
+
+        chain_masses = wp.empty(chain_length, dtype=wp.float64, device=device)
+        nhc_compute_masses(
+            wp.array([ndof], dtype=wp.int32, device=device),
+            wp.array([target_temp], dtype=wp.float64, device=device),
+            wp.array([tau], dtype=wp.float64, device=device),
+            chain_length,
+            chain_masses,
+            device=device,
+        )
+
+        def make_state():
+            return {
+                "velocities": wp.array(vel_np.copy(), dtype=dtype_vec, device=device),
+                "masses": wp.array(mass_np, dtype=dtype_scalar, device=device),
+                "eta": wp.zeros(chain_length, dtype=dtype_scalar, device=device),
+                "eta_dot": wp.zeros(chain_length, dtype=dtype_scalar, device=device),
+                "eta_mass": wp.array(chain_masses, dtype=dtype_scalar, device=device),
+                "target_temp": wp.array(
+                    [target_temp], dtype=dtype_scalar, device=device
+                ),
+                "dt": wp.array([0.005], dtype=dtype_scalar, device=device),
+                "ndof": wp.array([float(ndof)], dtype=dtype_scalar, device=device),
+            }
+
+        def run(state, ke2, compute_ke):
+            nhc_thermostat_chain_update(
+                state["velocities"],
+                state["masses"],
+                state["eta"],
+                state["eta_dot"],
+                state["eta_mass"],
+                state["target_temp"],
+                state["dt"],
+                state["ndof"],
+                ke2=ke2,
+                total_scale=wp.ones(1, dtype=dtype_scalar, device=device),
+                step_scale=wp.empty(1, dtype=dtype_scalar, device=device),
+                dt_chain=wp.empty(1, dtype=dtype_scalar, device=device),
+                nloops=nloops,
+                device=device,
+                compute_ke=compute_ke,
+            )
+
+        # Reference: recompute KE internally.
+        ref = make_state()
+        run(ref, wp.empty(1, dtype=dtype_scalar, device=device), compute_ke=True)
+
+        # Supplied path: pre-fill ke2 from the same atoms, then skip the recompute.
+        supplied = make_state()
+        ke2_in = wp.empty(1, dtype=dtype_scalar, device=device)
+        nhc_compute_2ke(
+            supplied["velocities"], supplied["masses"], ke2_in, device=device
+        )
+        run(supplied, ke2_in, compute_ke=False)
+
+        wp.synchronize_device(device)
+        rtol = _tol(np_dtype)
+        np.testing.assert_allclose(
+            supplied["velocities"].numpy(), ref["velocities"].numpy(), rtol=rtol
+        )
+        np.testing.assert_allclose(
+            supplied["eta"].numpy(), ref["eta"].numpy(), rtol=rtol
+        )
+        np.testing.assert_allclose(
+            supplied["eta_dot"].numpy(), ref["eta_dot"].numpy(), rtol=rtol
+        )
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("dtype_vec,dtype_scalar,np_dtype", DTYPE_CONFIGS)
+    @pytest.mark.parametrize("nloops", [1, 3])
+    def test_compute_ke_parity_batched(
+        self, device, dtype_vec, dtype_scalar, np_dtype, nloops
+    ):
+        """compute_ke parity for a batched (multi-system) chain update."""
+        sizes = [30, 18]
+        num_systems = len(sizes)
+        num_atoms = sum(sizes)
+        chain_length = 3
+        tau = 0.1
+        target_temps = [1.0, 2.0]
+        ndofs = [3 * n - 3 for n in sizes]
+        batch_np = np.concatenate(
+            [np.full(n, s, dtype=np.int32) for s, n in enumerate(sizes)]
+        )
+        np.random.seed(11)
+        vel_np = np.random.randn(num_atoms, 3).astype(np_dtype)
+        mass_np = (np.random.rand(num_atoms) + 0.5).astype(np_dtype)
+
+        chain_masses = wp.empty(
+            (num_systems, chain_length), dtype=wp.float64, device=device
+        )
+        nhc_compute_masses(
+            wp.array(ndofs, dtype=wp.int32, device=device),
+            wp.array(target_temps, dtype=wp.float64, device=device),
+            wp.array([tau, tau], dtype=wp.float64, device=device),
+            chain_length,
+            chain_masses,
+            num_systems=num_systems,
+            device=device,
+        )
+
+        batch_idx = wp.array(batch_np, dtype=wp.int32, device=device)
+
+        def make_state():
+            return {
+                "velocities": wp.array(vel_np.copy(), dtype=dtype_vec, device=device),
+                "masses": wp.array(mass_np, dtype=dtype_scalar, device=device),
+                "eta": wp.zeros(
+                    (num_systems, chain_length), dtype=dtype_scalar, device=device
+                ),
+                "eta_dot": wp.zeros(
+                    (num_systems, chain_length), dtype=dtype_scalar, device=device
+                ),
+                "eta_mass": wp.array(chain_masses, dtype=dtype_scalar, device=device),
+                "target_temp": wp.array(
+                    target_temps, dtype=dtype_scalar, device=device
+                ),
+                "dt": wp.array([0.005, 0.005], dtype=dtype_scalar, device=device),
+                "ndof": wp.array(
+                    [float(d) for d in ndofs], dtype=dtype_scalar, device=device
+                ),
+            }
+
+        def run(state, ke2, compute_ke):
+            nhc_thermostat_chain_update(
+                state["velocities"],
+                state["masses"],
+                state["eta"],
+                state["eta_dot"],
+                state["eta_mass"],
+                state["target_temp"],
+                state["dt"],
+                state["ndof"],
+                ke2=ke2,
+                total_scale=wp.ones(num_systems, dtype=dtype_scalar, device=device),
+                step_scale=wp.empty(num_systems, dtype=dtype_scalar, device=device),
+                dt_chain=wp.empty(num_systems, dtype=dtype_scalar, device=device),
+                nloops=nloops,
+                batch_idx=batch_idx,
+                num_systems=num_systems,
+                device=device,
+                compute_ke=compute_ke,
+            )
+
+        ref = make_state()
+        run(ref, wp.empty(num_systems, dtype=dtype_scalar, device=device), True)
+
+        supplied = make_state()
+        ke2_in = wp.empty(num_systems, dtype=dtype_scalar, device=device)
+        nhc_compute_2ke(
+            supplied["velocities"],
+            supplied["masses"],
+            ke2_in,
+            batch_idx=batch_idx,
+            device=device,
+        )
+        run(supplied, ke2_in, False)
+
+        wp.synchronize_device(device)
+        rtol = _tol(np_dtype)
+        np.testing.assert_allclose(
+            supplied["velocities"].numpy(), ref["velocities"].numpy(), rtol=rtol
+        )
+        np.testing.assert_allclose(
+            supplied["eta"].numpy(), ref["eta"].numpy(), rtol=rtol
+        )
+        np.testing.assert_allclose(
+            supplied["eta_dot"].numpy(), ref["eta_dot"].numpy(), rtol=rtol
+        )
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("dtype_vec,dtype_scalar,np_dtype", DTYPE_CONFIGS)
+    def test_global_vs_split_trajectory(
+        self, device, dtype_vec, dtype_scalar, np_dtype
+    ):
+        """A whole N-atom system run with compute_ke=True must match a run that
+        computes 2*KE over two disjoint halves of the atoms, sums them, and
+        feeds the result back with compute_ke=False, over many integration
+        steps."""
+        num_atoms = 80
+        half = num_atoms // 2
+        chain_length = 3
+        target_temp = 1.0
+        tau = 0.1
+        spring_k = 1.0
+        dt_val = 0.005
+        ndof = 3 * num_atoms - 3
+        num_steps = 200
+        nloops = 3
+
+        np.random.seed(123)
+        pos_np = (np.random.randn(num_atoms, 3) * 0.5).astype(np_dtype)
+        vel_np = (np.random.randn(num_atoms, 3) * 0.1).astype(np_dtype)
+        mass_np = np.ones(num_atoms, dtype=np_dtype)
+
+        chain_masses = wp.empty(chain_length, dtype=wp.float64, device=device)
+        nhc_compute_masses(
+            wp.array([ndof], dtype=wp.int32, device=device),
+            wp.array([target_temp], dtype=wp.float64, device=device),
+            wp.array([tau], dtype=wp.float64, device=device),
+            chain_length,
+            chain_masses,
+            device=device,
+        )
+
+        def make_run():
+            return {
+                "positions": wp.array(pos_np.copy(), dtype=dtype_vec, device=device),
+                "velocities": wp.array(vel_np.copy(), dtype=dtype_vec, device=device),
+                "forces": wp.zeros(num_atoms, dtype=dtype_vec, device=device),
+                "masses": wp.array(mass_np, dtype=dtype_scalar, device=device),
+                "eta": wp.zeros(chain_length, dtype=dtype_scalar, device=device),
+                "eta_dot": wp.zeros(chain_length, dtype=dtype_scalar, device=device),
+                "eta_mass": wp.array(chain_masses, dtype=dtype_scalar, device=device),
+                "target_temp": wp.array(
+                    [target_temp], dtype=dtype_scalar, device=device
+                ),
+                "dt": wp.array([dt_val], dtype=dtype_scalar, device=device),
+                "ndof": wp.array([float(ndof)], dtype=dtype_scalar, device=device),
+            }
+
+        def chain_update(st, split):
+            if split:
+                # Reduce each half separately, then sum to the full 2*KE.
+                ke2_a = wp.empty(1, dtype=dtype_scalar, device=device)
+                ke2_b = wp.empty(1, dtype=dtype_scalar, device=device)
+                nhc_compute_2ke(
+                    st["velocities"][:half], st["masses"][:half], ke2_a, device=device
+                )
+                nhc_compute_2ke(
+                    st["velocities"][half:], st["masses"][half:], ke2_b, device=device
+                )
+                ke2_in = wp.array(
+                    ke2_a.numpy() + ke2_b.numpy(), dtype=dtype_scalar, device=device
+                )
+                compute_ke = False
+            else:
+                ke2_in = wp.empty(1, dtype=dtype_scalar, device=device)
+                compute_ke = True
+            nhc_thermostat_chain_update(
+                st["velocities"],
+                st["masses"],
+                st["eta"],
+                st["eta_dot"],
+                st["eta_mass"],
+                st["target_temp"],
+                st["dt"],
+                st["ndof"],
+                ke2=ke2_in,
+                total_scale=wp.ones(1, dtype=dtype_scalar, device=device),
+                step_scale=wp.empty(1, dtype=dtype_scalar, device=device),
+                dt_chain=wp.empty(1, dtype=dtype_scalar, device=device),
+                nloops=nloops,
+                device=device,
+                compute_ke=compute_ke,
+            )
+
+        def step(st, split):
+            chain_update(st, split)
+            nhc_velocity_half_step(
+                st["velocities"], st["forces"], st["masses"], st["dt"], device=device
+            )
+            nhc_position_update(
+                st["positions"], st["velocities"], st["dt"], device=device
+            )
+            compute_harmonic_forces(st["positions"], st["forces"], spring_k)
+            nhc_velocity_half_step(
+                st["velocities"], st["forces"], st["masses"], st["dt"], device=device
+            )
+            chain_update(st, split)
+
+        whole = make_run()
+        split = make_run()
+        compute_harmonic_forces(whole["positions"], whole["forces"], spring_k)
+        compute_harmonic_forces(split["positions"], split["forces"], spring_k)
+
+        for _ in range(num_steps):
+            step(whole, split=False)
+            step(split, split=True)
+
+        wp.synchronize_device(device)
+        rtol = 1e-4 if np_dtype == np.float32 else 1e-9
+        np.testing.assert_allclose(
+            split["positions"].numpy(),
+            whole["positions"].numpy(),
+            rtol=rtol,
+            atol=rtol,
+        )
+        np.testing.assert_allclose(
+            split["velocities"].numpy(),
+            whole["velocities"].numpy(),
+            rtol=rtol,
+            atol=rtol,
+        )
 
 
 if __name__ == "__main__":

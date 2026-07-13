@@ -17,10 +17,14 @@
 
 from __future__ import annotations
 
+import warnings
+
+import jax
 import jax.numpy as jnp
 import pytest
 
 from nvalchemiops.jax.neighbors.neighbor_utils import (
+    allocate_cell_list,
     compute_naive_num_shifts,
     get_neighbor_list_from_neighbor_matrix,
     prepare_batch_idx_ptr,
@@ -30,6 +34,22 @@ from nvalchemiops.neighbors.neighbor_utils import NeighborOverflowError
 from .conftest import requires_gpu
 
 pytestmark = requires_gpu
+
+# ==============================================================================
+# Tests: allocate_cell_list
+# ==============================================================================
+
+
+class TestAllocateCellList:
+    """Test allocate_cell_list guards."""
+
+    def test_rejects_negative_max_total_cells(self):
+        """A negative cell count must raise a clear error rather than crashing
+        inside the array allocation."""
+        neighbor_search_radius = jnp.ones((3,), dtype=jnp.int32)
+        with pytest.raises(ValueError, match="max_total_cells=-1 < 0"):
+            allocate_cell_list(4, -1, neighbor_search_radius)
+
 
 # ==============================================================================
 # Tests: compute_naive_num_shifts
@@ -115,6 +135,37 @@ class TestComputeNaiveNumShifts:
         # Large cutoff should result in many shifts
         assert max_shifts > 1
         assert shift_range.shape == (1, 3)
+
+    def test_does_not_request_jax_int64_when_x64_disabled(self):
+        """Host-side shift counting should not emit JAX int64 truncation warnings."""
+        cell = jnp.array([[[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]]])
+        pbc = jnp.array([[True, True, True]])
+
+        old_x64 = jax.config.jax_enable_x64
+        try:
+            jax.config.update("jax_enable_x64", False)
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                compute_naive_num_shifts(cell, 5.0, pbc)
+        finally:
+            jax.config.update("jax_enable_x64", old_x64)
+
+        assert not any(
+            "Explicitly requested dtype int64" in str(item.message) for item in caught
+        )
+
+    def test_overflow_guard_when_x64_disabled(self):
+        """Shift count overflow should raise even when JAX int64 is unavailable."""
+        cell = jnp.array([[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]])
+        pbc = jnp.array([[True, True, False]])
+
+        old_x64 = jax.config.jax_enable_x64
+        try:
+            jax.config.update("jax_enable_x64", False)
+            with pytest.raises(ValueError, match="exceeds int32 max"):
+                compute_naive_num_shifts(cell, 50_000.0, pbc)
+        finally:
+            jax.config.update("jax_enable_x64", old_x64)
 
 
 # ==============================================================================
@@ -258,6 +309,12 @@ class TestPrepareBatchIdxPtr:
         """Test that error is raised when both are None."""
         with pytest.raises(ValueError):
             prepare_batch_idx_ptr(batch_idx=None, batch_ptr=None, num_atoms=6)
+
+    def test_prepare_batch_idx_ptr_rejects_short_batch_ptr_length(self):
+        """Exported prepare_batch_idx_ptr rejects one-entry batch_ptr."""
+        batch_ptr = jnp.array([0], dtype=jnp.int32)
+        with pytest.raises(ValueError, match="batch_ptr.*length at least 2"):
+            prepare_batch_idx_ptr(None, batch_ptr, 0)
 
     def test_single_system(self):
         """Test with single system."""

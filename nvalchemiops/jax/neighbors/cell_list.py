@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""JAX bindings for unbatched cell list O(N) neighbor list construction."""
+"""JAX bindings for unbatched cell list :math:`O(N)` neighbor list construction."""
 
 from __future__ import annotations
 
@@ -42,15 +42,11 @@ from nvalchemiops.neighbors.cell_list import (
     compute_batch_pair_centric_n_outer,
     get_build_cell_list_kernel,
     get_query_cell_list_kernel,
-    is_pair_centric_launch_safe,
     is_pair_centric_parallelism_sufficient,
     select_cell_list_strategy,
 )
 from nvalchemiops.neighbors.cell_list import (
     query_cell_list as _warp_query_cell_list,
-)
-from nvalchemiops.neighbors.cell_list.launchers import (
-    _raise_unsafe_pair_centric_launch,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
     estimate_max_neighbors,
@@ -424,6 +420,87 @@ def _validate_atom_centric_path(atom_centric_path: str) -> str:
     return atom_centric_path
 
 
+def _validate_pair_kwargs(
+    *,
+    pair_fn: wp.Function | None,
+    pair_params: jax.Array | None,
+    pair_energies: jax.Array | None,
+    pair_forces: jax.Array | None,
+) -> None:
+    """Validate pair-function-only kwargs."""
+    if pair_fn is not None and pair_params is None:
+        raise ValueError(
+            "pair_fn requires pair_params (a per-atom (n_atoms, K) parameter array).",
+        )
+    if pair_fn is None:
+        if pair_params is not None:
+            raise ValueError("pair_params requires pair_fn.")
+        if pair_energies is not None:
+            raise ValueError("pair_energies requires pair_fn.")
+        if pair_forces is not None:
+            raise ValueError("pair_forces requires pair_fn.")
+
+
+def _validate_output_shape(
+    name: str,
+    array: jax.Array | None,
+    expected_shape: tuple[int, ...],
+) -> None:
+    """Validate an optional caller-provided output shape."""
+    if array is None:
+        return
+    actual_shape = tuple(int(dim) for dim in array.shape)
+    if actual_shape != expected_shape:
+        raise ValueError(
+            f"{name} must have shape {expected_shape} when target_indices is "
+            f"provided; got {actual_shape}. Partial neighbor-list buffers use "
+            "compact target rows, not full atom rows.",
+        )
+
+
+def _validate_compact_target_buffers(
+    *,
+    target_indices: jax.Array | None,
+    num_rows: int,
+    max_neighbors: int,
+    neighbor_matrix: jax.Array | None = None,
+    neighbor_matrix_shifts: jax.Array | None = None,
+    num_neighbors: jax.Array | None = None,
+    neighbor_distances: jax.Array | None = None,
+    neighbor_vectors: jax.Array | None = None,
+    pair_energies: jax.Array | None = None,
+    pair_forces: jax.Array | None = None,
+) -> None:
+    """Require compact-row user buffers on the ``target_indices`` path."""
+    if target_indices is None:
+        return
+    _validate_output_shape(
+        "neighbor_matrix", neighbor_matrix, (num_rows, max_neighbors)
+    )
+    _validate_output_shape(
+        "neighbor_matrix_shifts",
+        neighbor_matrix_shifts,
+        (num_rows, max_neighbors, 3),
+    )
+    _validate_output_shape("num_neighbors", num_neighbors, (num_rows,))
+    _validate_output_shape(
+        "neighbor_distances",
+        neighbor_distances,
+        (num_rows, max_neighbors),
+    )
+    _validate_output_shape(
+        "neighbor_vectors",
+        neighbor_vectors,
+        (num_rows, max_neighbors, 3),
+    )
+    _validate_output_shape("pair_energies", pair_energies, (num_rows, max_neighbors))
+    _validate_output_shape(
+        "pair_forces",
+        pair_forces,
+        (num_rows, max_neighbors, 3),
+    )
+
+
 def _resolve_cell_strategy(
     strategy: str,
     *,
@@ -444,9 +521,10 @@ def _resolve_cell_strategy(
     - ``"atom_centric"`` -> ``"atom_centric"``.
     - ``"pair_centric"`` -> ``"pair_centric"`` on GPU; raises on CPU.
 
-    This is the strategy *decision* only.  The pair-centric launch-safety /
-    parallelism guards and the ``n_outer`` host read live in ``query_cell_list``
-    where the concrete ``neighbor_search_radius`` is available.
+    This is the strategy *decision* only.  Pair-centric parallelism guards,
+    transparent launch coarsening, and the ``n_outer`` host read live in
+    ``query_cell_list`` where the concrete ``neighbor_search_radius`` is
+    available.
     """
     if strategy == "auto":
         if device_is_cpu or half_fill:
@@ -546,9 +624,11 @@ def _run_graph_query_cell_list(
     ``strategy`` / ``n_outer`` thread the cell-list query sub-strategy through
     to ``_warp_query_cell_list``.  For ``strategy="pair_centric"`` the launcher
     runs the internal ``gather_fused`` into ``sorted_positions`` /
-    ``sorted_atom_periodic_shifts`` and the pair-centric linear launch sized by
-    the host-computed ``n_outer``.  ``n_outer`` is a static scalar baked at
-    launch-build time (see :func:`compute_batch_pair_centric_n_outer`).
+    ``sorted_atom_periodic_shifts`` and the pair-centric launch sized by
+    the host-computed ``n_outer``, coarsening logical blocks when the
+    uncoarsened grid would exceed the Warp one-dimensional launch limit.
+    ``n_outer`` is a static scalar baked at launch-build time (see
+    :func:`compute_batch_pair_centric_n_outer`).
 
     The optional ``return_vectors`` / ``return_distances`` / ``pair_fn`` (+
     ``pair_params`` and the ``neighbor_vectors`` / ``neighbor_distances`` /
@@ -2036,9 +2116,7 @@ def build_cell_list(
         raise NotImplementedError(
             "build_cell_list does not accept return_distances / "
             "return_vectors / target_indices / pair_fn-related kwargs.  "
-            "Use the top-level cell_list() wrapper, which routes pair "
-            "outputs through the JAX autograd path, or call the warp "
-            "factory directly for low-level access.",
+            "Use query_cell_list() or the top-level cell_list() wrapper.",
         )
 
     graph_mode = _validate_graph_mode(graph_mode)
@@ -2222,7 +2300,7 @@ def query_cell_list(
     neighbor_distances: jax.Array | None = None,
     pair_energies: jax.Array | None = None,
     pair_forces: jax.Array | None = None,
-) -> tuple[jax.Array, jax.Array, jax.Array]:
+) -> tuple[jax.Array, ...]:
     """Query cell list to find neighbors within cutoff.
 
     Parameters
@@ -2251,10 +2329,14 @@ def query_cell_list(
         Search radius in neighboring cells.
     max_neighbors : int, optional
         Maximum number of neighbors per atom.
-    neighbor_matrix : jax.Array, optional
-        Pre-allocated neighbor matrix.
-    num_neighbors : jax.Array, optional
-        Pre-allocated neighbors count array.
+    neighbor_matrix : jax.Array, shape (num_rows, max_neighbors), optional
+        Pre-shaped neighbor matrix. ``num_rows`` is ``total_atoms`` normally and
+        ``len(target_indices)`` for partial rows.
+    num_neighbors : jax.Array, shape (num_rows,), optional
+        Pre-shaped neighbors count array.
+    target_indices : jax.Array, shape (num_targets,), dtype=int32, optional
+        Compact partial-list source rows. Output row ``r`` maps to atom
+        ``target_indices[r]``; COO source rows remain compact row ids.
     strategy : {"auto", "atom_centric", "pair_centric"}, default "auto"
         Cell-list query sub-strategy.  Both strategies produce identical pair
         SETS; only the per-row ordering inside ``neighbor_matrix`` differs
@@ -2265,9 +2347,10 @@ def query_cell_list(
         ``neighbor_search_radius``: its launch grid is sized by a host-read
         ``n_outer`` baked at launch-build time, so it works eagerly / outside
         ``jax.jit`` but raises a clear error under ``jax.jit`` with a traced
-        radius.  ``"pair_centric"`` is registered with ``graph_mode="none"``;
-        ``graph_mode="warp"`` + explicit pair-centric raises
-        ``NotImplementedError``.
+        radius.  ``"auto"`` falls back to ``"atom_centric"`` when pair-centric
+        launch sizing is traced.  ``"pair_centric"`` is registered with
+        ``graph_mode="none"``; ``graph_mode="warp"`` + explicit pair-centric
+        raises ``NotImplementedError``.
     atom_centric_path : {"auto", "direct", "sorted"}, default "auto"
         ``"direct"`` reads positions in original order and skips the sorted
         gather (the symmetric-full-fill kernel), on the plain full-fill,
@@ -2284,12 +2367,13 @@ def query_cell_list(
 
     Returns
     -------
-    neighbor_matrix : jax.Array, shape (total_atoms, max_neighbors), dtype=int32
-        Neighbor matrix with neighbor atom indices.
-    num_neighbors : jax.Array, shape (total_atoms,), dtype=int32
-        Number of neighbors found for each atom.
-    neighbor_matrix_shifts : jax.Array, shape (total_atoms, max_neighbors, 3), dtype=int32
-        Periodic shift vectors for each neighbor relationship.
+    results : tuple of jax.Array
+        Variable-length tuple depending on requested outputs. Matrix outputs use
+        ``num_rows`` rows, where ``num_rows`` is ``total_atoms`` normally and
+        ``len(target_indices)`` for partial lists. The base return is
+        ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``; optional
+        distance/vector arrays and ``pair_fn`` energy/force arrays are appended
+        in the same order as ``cell_list``.
 
     See Also
     --------
@@ -2297,8 +2381,12 @@ def query_cell_list(
     cell_list : Combined build and query operation
     """
     _validate_atom_centric_path(atom_centric_path)
+    if strategy not in {"auto", "atom_centric", "pair_centric"}:
+        raise ValueError(
+            f"strategy must be 'auto' | 'atom_centric' | 'pair_centric', got {strategy!r}",
+        )
 
-    if _has_partial_or_pair_outputs(
+    has_pair_outputs = _has_partial_or_pair_outputs(
         target_indices=target_indices,
         return_vectors=return_vectors,
         return_distances=return_distances,
@@ -2308,23 +2396,170 @@ def query_cell_list(
         neighbor_distances=neighbor_distances,
         pair_energies=pair_energies,
         pair_forces=pair_forces,
-    ):
-        raise NotImplementedError(
-            "Pair-output kernels (target_indices, return_vectors, "
-            "return_distances, pair_fn, pair_params, neighbor_vectors, "
-            "neighbor_distances, pair_energies, "
-            "pair_forces) are not yet wired through the JAX cell-list "
-            "bindings.  Use the torch bindings or call the warp factory "
-            "directly.",
-        )
+    )
+    _validate_pair_kwargs(
+        pair_fn=pair_fn,
+        pair_params=pair_params,
+        pair_energies=pair_energies,
+        pair_forces=pair_forces,
+    )
 
     graph_mode = _validate_graph_mode(graph_mode)
+    if has_pair_outputs and graph_mode != "none":
+        raise NotImplementedError(
+            "return_distances / return_vectors / target_indices / pair_fn "
+            "are only supported with graph_mode='none' in query_cell_list.",
+        )
+    if has_pair_outputs and rebuild_flags is not None:
+        raise NotImplementedError(
+            "return_distances / return_vectors / target_indices / pair_fn "
+            "are not supported with rebuild_flags in query_cell_list.",
+        )
     if half_fill and graph_mode != "none":
         raise NotImplementedError(
             "half_fill=True is only supported with graph_mode='none' in the "
             "JAX cell-list binding; CUDA-graph capture of the half-fill kernel "
             "is a follow-up.",
         )
+    if strategy == "pair_centric" and target_indices is not None:
+        raise NotImplementedError(
+            "strategy='pair_centric' with target_indices (partial neighbor "
+            "lists) is not wired through the JAX cell_list binding. Use "
+            "strategy='atom_centric' (or 'auto') for identical results.",
+        )
+
+    if has_pair_outputs:
+        if cell.ndim == 2:
+            cell = cell[jnp.newaxis, :, :]
+        if pbc.ndim == 1:
+            pbc = pbc[jnp.newaxis, :]
+        if positions.dtype != jnp.float64:
+            positions = positions.astype(jnp.float32)
+        if cell.dtype != positions.dtype:
+            cell = cell.astype(positions.dtype)
+        pbc_bool = (pbc.squeeze() if pbc.ndim == 2 else pbc).astype(jnp.bool_)
+
+        if target_indices is not None:
+            target_indices = jnp.asarray(target_indices, dtype=jnp.int32)
+            num_rows = int(target_indices.shape[0])
+        else:
+            num_rows = positions.shape[0]
+        if max_neighbors is None and neighbor_matrix is not None:
+            max_neighbors = int(neighbor_matrix.shape[1])
+        if max_neighbors is None:
+            max_neighbors = estimate_max_neighbors(cutoff)
+        _validate_compact_target_buffers(
+            target_indices=target_indices,
+            num_rows=int(num_rows),
+            max_neighbors=int(max_neighbors),
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            num_neighbors=num_neighbors,
+            neighbor_distances=neighbor_distances,
+            neighbor_vectors=neighbor_vectors,
+            pair_energies=pair_energies,
+            pair_forces=pair_forces,
+        )
+        if neighbor_matrix is None:
+            neighbor_matrix = jnp.full(
+                (num_rows, max_neighbors),
+                positions.shape[0],
+                dtype=jnp.int32,
+            )
+        else:
+            neighbor_matrix = neighbor_matrix.at[:].set(jnp.int32(positions.shape[0]))
+        if neighbor_matrix_shifts is None:
+            neighbor_matrix_shifts = jnp.zeros(
+                (num_rows, max_neighbors, 3),
+                dtype=jnp.int32,
+            )
+        else:
+            neighbor_matrix_shifts = neighbor_matrix_shifts.at[:].set(jnp.int32(0))
+        if num_neighbors is None:
+            num_neighbors = jnp.zeros(num_rows, dtype=jnp.int32)
+        else:
+            num_neighbors = num_neighbors.at[:].set(jnp.int32(0))
+        if neighbor_distances is None:
+            neighbor_distances = jnp.zeros(
+                (num_rows, max_neighbors),
+                dtype=positions.dtype,
+            )
+        if neighbor_vectors is None:
+            neighbor_vectors = jnp.zeros(
+                (num_rows, max_neighbors, 3),
+                dtype=positions.dtype,
+            )
+
+        pc_strategy = "atom_centric"
+        pc_n_outer = 0
+        if strategy == "pair_centric":
+            if _is_cpu_array(positions):
+                raise ValueError(
+                    "strategy='pair_centric' is not supported on CPU "
+                    "(kernels use CUDA block scheduling). Pass 'auto' or "
+                    "'atom_centric' instead.",
+                )
+            try:
+                rx = int(neighbor_search_radius[0])
+                ry = int(neighbor_search_radius[1])
+                rz = int(neighbor_search_radius[2])
+            except (
+                jax.errors.ConcretizationTypeError,
+                jax.errors.TracerIntegerConversionError,
+            ) as exc:
+                raise ValueError(
+                    "strategy='pair_centric' needs a concrete "
+                    "neighbor_search_radius to size its launch grid. Use "
+                    "strategy='atom_centric' for traced query_cell_list calls.",
+                ) from exc
+            pc_n_outer = compute_batch_pair_centric_n_outer((rx, ry, rz), False)
+            total_cells = int(atoms_per_cell_count.shape[0])
+            pc_strategy = "pair_centric"
+
+        forward_kwargs = {
+            "pbc_bool": pbc_bool,
+            "cells_per_dimension": cells_per_dimension,
+            "atom_periodic_shifts": atom_periodic_shifts,
+            "atom_to_cell_mapping": atom_to_cell_mapping,
+            "atoms_per_cell_count": atoms_per_cell_count,
+            "cell_atom_start_indices": cell_atom_start_indices,
+            "cell_atom_list": cell_atom_list,
+            "neighbor_search_radius": neighbor_search_radius,
+            "neighbor_matrix": neighbor_matrix,
+            "neighbor_matrix_shifts": neighbor_matrix_shifts,
+            "num_neighbors": num_neighbors,
+            "neighbor_vectors": neighbor_vectors,
+            "neighbor_distances": neighbor_distances,
+            "cutoff": cutoff,
+            "pair_fn": pair_fn,
+            "pair_params": pair_params,
+            "target_indices": target_indices,
+            "strategy": pc_strategy,
+            "n_outer": pc_n_outer,
+            "half_fill": bool(half_fill),
+        }
+        route_out = _route_pair_outputs(
+            positions,
+            cell,
+            _cell_list_pair_outputs_forward,
+            forward_kwargs,
+        )
+        if pair_fn is not None:
+            distances_out, vectors_out, nm_out, nn_out, shifts_out, pe_out, pf_out = (
+                route_out
+            )
+        else:
+            distances_out, vectors_out, nm_out, nn_out, shifts_out = route_out
+            pe_out = pf_out = None
+        base = (nm_out, nn_out, shifts_out)
+        tail: list = []
+        if return_distances:
+            tail.append(distances_out)
+        if return_vectors:
+            tail.append(vectors_out)
+        if pair_fn is not None:
+            tail.extend((pe_out, pf_out))
+        return (*base, *tail)
 
     # Resolve the cell-list query sub-strategy.  Pair-centric needs CUDA, a
     # concrete radius (host-read ``n_outer``), graph_mode="none", and full-fill.
@@ -2467,24 +2702,24 @@ def query_cell_list(
             jax.errors.ConcretizationTypeError,
             jax.errors.TracerIntegerConversionError,
         ) as exc:
-            raise ValueError(
-                "strategy='pair_centric' needs a concrete "
-                "neighbor_search_radius to size its launch grid (n_outer is "
-                "host-read).  Compute the cell-list sizing outside jax.jit and "
-                "pass a concrete neighbor_search_radius, or use "
-                "strategy='atom_centric'.",
-            ) from exc
-        # JAX cell_list is full-fill (half_fill+pair_centric raised above).
-        n_outer = compute_batch_pair_centric_n_outer((Rx, Ry, Rz), False)
-        total_cells = int(atoms_per_cell_count.shape[0])
-        if not is_pair_centric_launch_safe(total_cells, n_outer):
-            if strategy == "pair_centric":
-                _raise_unsafe_pair_centric_launch(total_cells, n_outer)
-            chosen = "atom_centric"
-        elif strategy == "auto" and not is_pair_centric_parallelism_sufficient(
-            total_atoms, total_cells, n_outer
-        ):
-            chosen = "atom_centric"
+            if strategy == "auto":
+                chosen = "atom_centric"
+            else:
+                raise ValueError(
+                    "strategy='pair_centric' needs a concrete "
+                    "neighbor_search_radius to size its launch grid (n_outer is "
+                    "host-read).  Compute the cell-list sizing outside jax.jit and "
+                    "pass a concrete neighbor_search_radius, or use "
+                    "strategy='atom_centric'.",
+                ) from exc
+        else:
+            # JAX cell_list is full-fill (half_fill+pair_centric raised above).
+            n_outer = compute_batch_pair_centric_n_outer((Rx, Ry, Rz), False)
+            total_cells = int(atoms_per_cell_count.shape[0])
+            if strategy == "auto" and not is_pair_centric_parallelism_sufficient(
+                total_atoms, total_cells, n_outer
+            ):
+                chosen = "atom_centric"
 
     if chosen == "pair_centric":
         fill_value = int(positions.shape[0])
@@ -2684,8 +2919,10 @@ def cell_list(
         ``neighbor_matrix`` differs.  ``"pair_centric"`` is CUDA-only, requires
         a concrete ``neighbor_search_radius`` (host-read ``n_outer``), runs only
         with ``graph_mode="none"`` and full-fill, and raises a clear error
-        under ``jax.jit`` with a traced radius.  ``graph_mode="warp"`` +
-        explicit ``strategy="pair_centric"`` raises ``NotImplementedError``.
+        under ``jax.jit`` with a traced radius when requested explicitly.
+        ``"auto"`` falls back to ``"atom_centric"`` when pair-centric launch
+        sizing is traced.  ``graph_mode="warp"`` + explicit
+        ``strategy="pair_centric"`` raises ``NotImplementedError``.
     atom_centric_path : {"auto", "direct", "sorted"}, default "auto"
         Forwarded to :func:`query_cell_list`.  Explicit ``"direct"`` uses the
         direct-reads (gather-skipping) kernel on the plain full-fill,
@@ -2718,7 +2955,7 @@ def cell_list(
     --------
     build_cell_list : Build cell list separately
     query_cell_list : Query cell list separately
-    naive_neighbor_list : Naive O(N^2) method
+    naive_neighbor_list : Naive :math:`O(N^2)` method
     """
 
     has_pair_outputs = _has_partial_or_pair_outputs(
@@ -2732,10 +2969,12 @@ def cell_list(
         pair_energies=pair_energies,
         pair_forces=pair_forces,
     )
-    if pair_fn is not None and pair_params is None:
-        raise ValueError(
-            "pair_fn requires pair_params (a per-atom (n_atoms, K) parameter array).",
-        )
+    _validate_pair_kwargs(
+        pair_fn=pair_fn,
+        pair_params=pair_params,
+        pair_energies=pair_energies,
+        pair_forces=pair_forces,
+    )
 
     graph_mode = _validate_graph_mode(graph_mode)
     if has_pair_outputs and graph_mode != "none":
@@ -2789,16 +3028,31 @@ def cell_list(
             "strategy='atom_centric' (or 'auto') for identical results.",
         )
 
-    # When pair outputs are requested, keep the LIVE positions and cell for
-    # the autograd primitive's backward (reconstruction needs live tensors),
-    # and use stop_gradient'd copies for the warp-kernel side of the
-    # forward.  The warp ``jax_kernel`` callables are registered with
-    # ``enable_backward=False``; calling them inside ``jax.grad`` requires
-    # detached inputs.
+    # Keep the LIVE positions and cell for the pair-output autograd primitive
+    # (reconstruction needs live tensors), and use stop_gradient'd copies for
+    # all topology-side Warp launches.  The Warp ``jax_kernel`` callables are
+    # registered with ``enable_backward=False``; calling them inside
+    # ``jax.grad`` requires detached inputs even when only integer topology is
+    # returned.
     positions_for_grad = positions
-    cell_for_grad = cell
-    if has_pair_outputs:
-        positions = jax.lax.stop_gradient(positions)
+    cell_for_grad = (
+        jnp.eye(
+            3,
+            dtype=positions_for_grad.dtype
+            if positions_for_grad.dtype == jnp.float64
+            else jnp.float32,
+        )[jnp.newaxis, :, :]
+        if cell is None
+        else cell
+    )
+    if cell_for_grad.ndim == 2:
+        cell_for_grad = cell_for_grad[jnp.newaxis, :, :]
+    if positions_for_grad.dtype != jnp.float64:
+        positions_for_grad = positions_for_grad.astype(jnp.float32)
+    if cell_for_grad.dtype != positions_for_grad.dtype:
+        cell_for_grad = cell_for_grad.astype(positions_for_grad.dtype)
+    positions = jax.lax.stop_gradient(positions)
+    if cell is not None:
         cell = jax.lax.stop_gradient(cell)
 
     if cell is None:
@@ -2878,6 +3132,25 @@ def cell_list(
         cell = cell.astype(positions.dtype)
     pbc_1d = pbc.squeeze() if pbc.ndim == 2 else pbc
     pbc_bool = pbc_1d.astype(jnp.bool_)
+
+    if max_neighbors is None and neighbor_matrix is not None:
+        max_neighbors = int(neighbor_matrix.shape[1])
+    if max_neighbors is None and neighbor_matrix_shifts is not None:
+        max_neighbors = int(neighbor_matrix_shifts.shape[1])
+    if max_neighbors is None:
+        max_neighbors = estimate_max_neighbors(cutoff)
+    _validate_compact_target_buffers(
+        target_indices=target_indices,
+        num_rows=int(num_rows),
+        max_neighbors=int(max_neighbors),
+        neighbor_matrix=neighbor_matrix,
+        neighbor_matrix_shifts=neighbor_matrix_shifts,
+        num_neighbors=num_neighbors,
+        neighbor_distances=neighbor_distances,
+        neighbor_vectors=neighbor_vectors,
+        pair_energies=pair_energies,
+        pair_forces=pair_forces,
+    )
 
     if graph_mode == "warp":
         graph_cell_list = (
@@ -3005,9 +3278,6 @@ def cell_list(
                     ) from exc
                 # JAX cell_list is full-fill (half_fill+pair_centric raised above).
                 pc_n_outer = compute_batch_pair_centric_n_outer((Rx, Ry, Rz), False)
-                total_cells = int(atoms_per_cell_count.shape[0])
-                if not is_pair_centric_launch_safe(total_cells, pc_n_outer):
-                    _raise_unsafe_pair_centric_launch(total_cells, pc_n_outer)
                 pc_strategy = "pair_centric"
 
             forward_kwargs = {

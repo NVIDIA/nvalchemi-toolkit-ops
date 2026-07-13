@@ -187,9 +187,61 @@ def allocate_cluster_tile_list(
 ]:
     """Allocate all state tensors consumed by ``build_cluster_tile_list``.
 
-    Returns ``(sorted_atom_index, morton_codes, sorted_pos_x, sorted_pos_y,
-    sorted_pos_z, group_ctr_x, group_ctr_y, group_ctr_z, group_ext_x,
-    group_ext_y, group_ext_z, num_tiles, tile_row_group, tile_col_group)``.
+    Sizes each buffer according to the padded atom count and group count
+    returned by
+    :func:`nvalchemiops.torch.neighbors.cluster_tile.estimate_cluster_tile_list_sizes`.
+
+    Parameters
+    ----------
+    total_atoms : int
+        Real atom count. Any value ``>= 0`` is accepted.
+    device : torch.device
+        Target device for all allocated tensors.
+    dtype : torch.dtype, optional
+        Floating-point dtype for position and bounding-box arrays.
+        Default is ``torch.float32``.
+    max_tiles_per_group : int, optional
+        Upper bound on neighbor groups per row_group used to size the tile
+        pair buffer. Default is 256.
+
+    Returns
+    -------
+    sorted_atom_index : torch.Tensor, shape (n_padded,), dtype=int32
+        Permutation that maps sorted rank to original atom index.
+    morton_codes : torch.Tensor, shape (n_padded,), dtype=int32
+        30-bit Morton codes for each atom in sorted order; padding slots
+        carry a sentinel value ``0x40000000``.
+    sorted_pos_x : torch.Tensor, shape (n_padded,), dtype=dtype
+        x-coordinates in Morton-sorted order.
+    sorted_pos_y : torch.Tensor, shape (n_padded,), dtype=dtype
+        y-coordinates in Morton-sorted order.
+    sorted_pos_z : torch.Tensor, shape (n_padded,), dtype=dtype
+        z-coordinates in Morton-sorted order.
+    group_ctr_x : torch.Tensor, shape (ngroup_padded,), dtype=dtype
+        x-component of each group bounding-box centre.
+    group_ctr_y : torch.Tensor, shape (ngroup_padded,), dtype=dtype
+        y-component of each group bounding-box centre.
+    group_ctr_z : torch.Tensor, shape (ngroup_padded,), dtype=dtype
+        z-component of each group bounding-box centre.
+    group_ext_x : torch.Tensor, shape (ngroup_padded,), dtype=dtype
+        x half-extent of each group bounding box.
+    group_ext_y : torch.Tensor, shape (ngroup_padded,), dtype=dtype
+        y half-extent of each group bounding box.
+    group_ext_z : torch.Tensor, shape (ngroup_padded,), dtype=dtype
+        z half-extent of each group bounding box.
+    num_tiles : torch.Tensor, shape (1,), dtype=int32
+        Atomic counter holding the number of emitted tile pairs.
+    tile_row_group : torch.Tensor, shape (max_tiles,), dtype=int32
+        Row group index for each emitted tile pair.
+    tile_col_group : torch.Tensor, shape (max_tiles,), dtype=int32
+        Column group index for each emitted tile pair.
+
+    See Also
+    --------
+    :func:`nvalchemiops.torch.neighbors.cluster_tile.estimate_cluster_tile_list_sizes` :
+        Returns the sizing integers used here.
+    :func:`nvalchemiops.torch.neighbors.cluster_tile.build_cluster_tile_list` :
+        Fills the allocated buffers.
     """
     n_padded, ngroup, ngroup_padded, max_tiles = estimate_cluster_tile_list_sizes(
         total_atoms,
@@ -501,28 +553,57 @@ def build_cluster_tile_list(
 ) -> None:
     """Build cluster-tile neighbor list state into pre-allocated tensors.
 
-    Normalizes ``cell`` to a ``(3, 3)`` matrix + computes ``inv_cell``,
-    then runs Morton sort (torch) + warp bbox reduction + warp
-    tile-pair enumeration.  Triclinic cells supported.  All output
+    Normalizes ``cell`` to a ``(3, 3)`` matrix and computes ``inv_cell``,
+    then runs Morton sort (torch) + Warp bounding-box reduction + Warp
+    tile-pair enumeration.  Triclinic cells are supported.  All output
     tensors are filled in place.
 
     Parameters
     ----------
-    positions : (N, 3) float
-        Atomic coordinates, ``N % 32 == 0``, wrapped to the primary cell.
+    positions : torch.Tensor, shape (N, 3), dtype=float32
+        Atomic coordinates wrapped to the primary cell. Non-32-aligned ``N``
+        is padded internally to ``ceil(N / TILE_GROUP_SIZE) * TILE_GROUP_SIZE``.
     cutoff : float
-    cell : (1, 3, 3) or (3, 3) float
+        Cutoff distance in Cartesian units used for tile-pair pruning.
+    cell : torch.Tensor, shape (1, 3, 3) or (3, 3), dtype=float32
         Any non-degenerate cell (orthorhombic or triclinic).
-    sorted_atom_index : (N,) int32 OUT
-    morton_codes : (N,) int32 OUT (scratch used by the op)
-    sorted_pos_x/y/z : (N,) float OUT
-    group_ctr_x/y/z, group_ext_x/y/z : (ngroup_padded,) float OUT
-    num_tiles : (1,) int32 OUT (atomic counter; reset internally)
-    tile_row_group, tile_col_group : (max_tiles,) int32 OUT
+    sorted_atom_index : torch.Tensor, shape (n_padded,), dtype=int32
+        Output permutation mapping sorted rank to original atom index.
+        Modified in-place.
+    morton_codes : torch.Tensor, shape (n_padded,), dtype=int32
+        Output scratch buffer for 30-bit Morton codes. Modified in-place.
+    sorted_pos_x : torch.Tensor, shape (n_padded,), dtype=float32
+        Output x-coordinates in Morton-sorted order. Modified in-place.
+    sorted_pos_y : torch.Tensor, shape (n_padded,), dtype=float32
+        Output y-coordinates in Morton-sorted order. Modified in-place.
+    sorted_pos_z : torch.Tensor, shape (n_padded,), dtype=float32
+        Output z-coordinates in Morton-sorted order. Modified in-place.
+    group_ctr_x : torch.Tensor, shape (ngroup_padded,), dtype=float32
+        Output x-component of group bounding-box centres. Modified in-place.
+    group_ctr_y : torch.Tensor, shape (ngroup_padded,), dtype=float32
+        Output y-component of group bounding-box centres. Modified in-place.
+    group_ctr_z : torch.Tensor, shape (ngroup_padded,), dtype=float32
+        Output z-component of group bounding-box centres. Modified in-place.
+    group_ext_x : torch.Tensor, shape (ngroup_padded,), dtype=float32
+        Output x half-extents of group bounding boxes. Modified in-place.
+    group_ext_y : torch.Tensor, shape (ngroup_padded,), dtype=float32
+        Output y half-extents of group bounding boxes. Modified in-place.
+    group_ext_z : torch.Tensor, shape (ngroup_padded,), dtype=float32
+        Output z half-extents of group bounding boxes. Modified in-place.
+    num_tiles : torch.Tensor, shape (1,), dtype=int32
+        Output atomic counter holding the number of emitted tile pairs.
+        Reset to zero internally before use. Modified in-place.
+    tile_row_group : torch.Tensor, shape (max_tiles,), dtype=int32
+        Output row group index for each emitted tile pair. Modified in-place.
+    tile_col_group : torch.Tensor, shape (max_tiles,), dtype=int32
+        Output column group index for each emitted tile pair. Modified in-place.
 
     See Also
     --------
-    nvalchemiops.neighbors.cluster_tile.build_cluster_tile_list : warp launcher
+    :func:`nvalchemiops.torch.neighbors.cluster_tile.allocate_cluster_tile_list` :
+        Allocates all buffers consumed by this function.
+    :func:`nvalchemiops.neighbors.cluster_tile.build_cluster_tile_list` :
+        Warp-level launcher called internally.
     """
     if positions.dtype != torch.float32:
         raise TypeError("positions must be float32")
@@ -672,24 +753,81 @@ def query_cluster_tile(
     """Convert the tile pair list to neighbor_matrix form in place.
 
     Cluster-tile does not support partial neighbor lists; there is no
-    ``target_indices`` kwarg.  Use :func:`naive_neighbor_list` or
-    :func:`cell_list` for partial neighbor lists.
+    ``target_indices`` kwarg.  Use
+    :func:`nvalchemiops.torch.neighbors.cell_list.cell_list` or
+    :func:`nvalchemiops.torch.neighbors.naive.naive_neighbor_list` for
+    partial neighbor lists.
 
     Parameters
     ----------
-    return_vectors, return_distances : bool, default ``False``
-        Write per-pair displacements / distances to
-        ``neighbor_vectors`` / ``neighbor_distances``.
-    pair_fn : callable, optional
+    sorted_atom_index : torch.Tensor, shape (n_padded,), dtype=int32
+        Permutation mapping sorted rank to original atom index; output of
+        :func:`nvalchemiops.torch.neighbors.cluster_tile.build_cluster_tile_list`.
+    sorted_pos_x : torch.Tensor, shape (n_padded,), dtype=float32
+        x-coordinates in Morton-sorted order.
+    sorted_pos_y : torch.Tensor, shape (n_padded,), dtype=float32
+        y-coordinates in Morton-sorted order.
+    sorted_pos_z : torch.Tensor, shape (n_padded,), dtype=float32
+        z-coordinates in Morton-sorted order.
+    num_tiles : torch.Tensor, shape (1,), dtype=int32
+        Device-side tile counter written by
+        :func:`nvalchemiops.torch.neighbors.cluster_tile.build_cluster_tile_list`.
+    tile_row_group : torch.Tensor, shape (max_tiles,), dtype=int32
+        Row group indices of emitted tile pairs.
+    tile_col_group : torch.Tensor, shape (max_tiles,), dtype=int32
+        Column group indices of emitted tile pairs.
+    cell : torch.Tensor, shape (1, 3, 3) or (3, 3), dtype=float32
+        Simulation cell matrix (orthorhombic or triclinic).
+    cutoff : float
+        Neighbor search cutoff radius in Cartesian units.
+    natom : int
+        True atom count (before padding).
+    neighbor_matrix : torch.Tensor, shape (natom, max_neighbors), dtype=int32
+        Output neighbor indices. Modified in-place.
+    num_neighbors : torch.Tensor, shape (natom,), dtype=int32
+        Output per-atom neighbor counts. Modified in-place.
+    neighbor_matrix_shifts : torch.Tensor, shape (natom, max_neighbors, 3), dtype=int32
+        Output per-pair periodic image shift vectors. Modified in-place.
+    cutoff2 : float, optional
+        Second cutoff for a dual-cutoff query; fills ``neighbor_matrix2`` /
+        ``num_neighbors2`` / ``neighbor_matrix_shifts2`` when provided.
+    neighbor_matrix2 : torch.Tensor, shape (natom, max_neighbors), dtype=int32, optional
+        Second-cutoff output neighbor indices. Modified in-place.
+    num_neighbors2 : torch.Tensor, shape (natom,), dtype=int32, optional
+        Second-cutoff per-atom neighbor counts. Modified in-place.
+    neighbor_matrix_shifts2 : torch.Tensor, shape (natom, max_neighbors, 3), dtype=int32, optional
+        Second-cutoff per-pair shift vectors. Modified in-place.
+    rebuild_flags : torch.Tensor, shape (1,), dtype=bool, optional
+        When ``False``, all output buffers are left unchanged and the call
+        returns early.
+    return_vectors : bool, optional
+        Write per-pair Cartesian displacement vectors to ``neighbor_vectors``.
+        Default is ``False``.
+    return_distances : bool, optional
+        Write per-pair scalar distances to ``neighbor_distances``.
+        Default is ``False``.
+    pair_fn : wp.Function, optional
         Module-scope Warp ``@wp.func`` of signature
         ``(r_ij, distance, pair_params, i, j) -> (energy, force)``.
-    pair_params : torch.Tensor, shape ``(num_atoms, num_parameters)``, optional
+    pair_params : torch.Tensor, shape (natom, num_parameters), optional
         Per-atom pair-function parameters; required with ``pair_fn``.
-    neighbor_vectors, neighbor_distances : torch.Tensor, optional
-        OUTPUT buffers for per-pair displacements / distances.
-    pair_energies, pair_forces : torch.Tensor, optional
-        OUTPUT buffers for per-pair energies / forces; required with
-        ``pair_fn``.
+    neighbor_vectors : torch.Tensor, shape (natom, max_neighbors, 3), optional
+        Output buffer for per-pair displacement vectors. Modified in-place.
+    neighbor_distances : torch.Tensor, shape (natom, max_neighbors), optional
+        Output buffer for per-pair scalar distances. Modified in-place.
+    pair_energies : torch.Tensor, shape (natom, max_neighbors), optional
+        Output buffer for per-pair energies; required with ``pair_fn``.
+        Modified in-place.
+    pair_forces : torch.Tensor, shape (natom, max_neighbors, 3), optional
+        Output buffer for per-pair forces; required with ``pair_fn``.
+        Modified in-place.
+
+    See Also
+    --------
+    :func:`nvalchemiops.torch.neighbors.cluster_tile.build_cluster_tile_list` :
+        Produces the tile state consumed by this function.
+    :func:`nvalchemiops.torch.neighbors.cluster_tile.query_cluster_tile_coo` :
+        COO-format alternative that emits a flat pair list instead.
     """
 
     cell_mat, inv_cell_mat = _cell_invcell_from_cell(cell)
@@ -1338,9 +1476,70 @@ def query_cluster_tile_coo(
     """Convert the tile pair list to flat COO format in place.
 
     Cluster-tile does not support partial neighbor lists; there is no
-    ``target_indices`` kwarg.  Optional pair outputs use flat COO
-    buffers with length ``max_pairs``; they are written in the same
-    order as ``coo_list``.
+    ``target_indices`` kwarg.  Optional pair outputs use flat COO buffers of
+    length ``max_pairs`` and are written in the same order as ``coo_list``.
+
+    Parameters
+    ----------
+    sorted_atom_index : torch.Tensor, shape (n_padded,), dtype=int32
+        Permutation mapping sorted rank to original atom index; output of
+        :func:`nvalchemiops.torch.neighbors.cluster_tile.build_cluster_tile_list`.
+    sorted_pos_x : torch.Tensor, shape (n_padded,), dtype=float32
+        x-coordinates in Morton-sorted order.
+    sorted_pos_y : torch.Tensor, shape (n_padded,), dtype=float32
+        y-coordinates in Morton-sorted order.
+    sorted_pos_z : torch.Tensor, shape (n_padded,), dtype=float32
+        z-coordinates in Morton-sorted order.
+    num_tiles : torch.Tensor, shape (1,), dtype=int32
+        Device-side tile counter written by
+        :func:`nvalchemiops.torch.neighbors.cluster_tile.build_cluster_tile_list`.
+    tile_row_group : torch.Tensor, shape (max_tiles,), dtype=int32
+        Row group indices of emitted tile pairs.
+    tile_col_group : torch.Tensor, shape (max_tiles,), dtype=int32
+        Column group indices of emitted tile pairs.
+    cell : torch.Tensor, shape (1, 3, 3) or (3, 3), dtype=float32
+        Simulation cell matrix (orthorhombic or triclinic).
+    cutoff : float
+        Neighbor search cutoff radius in Cartesian units.
+    natom : int
+        True atom count (before padding).
+    max_pairs : int
+        Allocated capacity of the COO output buffers.
+    pair_counter : torch.Tensor, shape (1,), dtype=int32
+        Atomic counter that accumulates the number of written pairs.
+        Reset to zero internally before use. Modified in-place.
+    coo_list : torch.Tensor, shape (max_pairs, 2), dtype=int32
+        Output flat pair list; each row is ``(i, j)``. Modified in-place.
+    coo_shifts : torch.Tensor, shape (max_pairs, 3), dtype=int32
+        Output periodic image shift vectors for each pair. Modified in-place.
+    return_vectors : bool, optional
+        Write per-pair Cartesian displacement vectors to ``neighbor_vectors``.
+        Default is ``False``.
+    return_distances : bool, optional
+        Write per-pair scalar distances to ``neighbor_distances``.
+        Default is ``False``.
+    pair_fn : wp.Function, optional
+        Module-scope Warp ``@wp.func`` of signature
+        ``(r_ij, distance, pair_params, i, j) -> (energy, force)``.
+    pair_params : torch.Tensor, shape (natom, num_parameters), optional
+        Per-atom pair-function parameters; required with ``pair_fn``.
+    neighbor_vectors : torch.Tensor, shape (max_pairs, 3), optional
+        Output buffer for per-pair displacement vectors. Modified in-place.
+    neighbor_distances : torch.Tensor, shape (max_pairs,), optional
+        Output buffer for per-pair scalar distances. Modified in-place.
+    pair_energies : torch.Tensor, shape (max_pairs,), optional
+        Output buffer for per-pair energies; required with ``pair_fn``.
+        Modified in-place.
+    pair_forces : torch.Tensor, shape (max_pairs, 3), optional
+        Output buffer for per-pair forces; required with ``pair_fn``.
+        Modified in-place.
+
+    See Also
+    --------
+    :func:`nvalchemiops.torch.neighbors.cluster_tile.build_cluster_tile_list` :
+        Produces the tile state consumed by this function.
+    :func:`nvalchemiops.torch.neighbors.cluster_tile.query_cluster_tile` :
+        Row-padded matrix-format alternative.
     """
 
     cell_mat, inv_cell_mat = _cell_invcell_from_cell(cell)
