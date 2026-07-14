@@ -11,7 +11,7 @@
     data-bs-toggle="dropdown"
     aria-haspopup="listbox"
     aria-controls="{{ dropdown_id }}"
-    aria-label="Version switcher list">
+    aria-label="Select documentation version; current version is {{ current_version.name }}">
     {{ current_version.name }}
     <span class="caret"></span>
   </button>
@@ -20,14 +20,16 @@
     role="listbox"
     aria-labelledby="{{ button_id }}">
     {% for item in versions.branches %}
-    <a class="dropdown-item list-group-item list-group-item-action py-1"
-      href="{{ item.url }}" role="option">
+    {%- set is_current = item.name == current_version.name -%}
+    <a class="dropdown-item list-group-item list-group-item-action py-1{% if is_current %} active{% endif %}"
+      href="{{ item.url }}" role="option" aria-selected="{{ 'true' if is_current else 'false' }}"{% if is_current %} aria-current="page"{% endif %}>
       {{ item.name }}{% if item.name == "main" %} (development){% else %} (preview){% endif %}
     </a>
     {% endfor %}
     {% for item in versions.tags | reverse %}
-    <a class="dropdown-item list-group-item list-group-item-action py-1"
-      href="{{ item.url }}" role="option">
+    {%- set is_current = item.name == current_version.name -%}
+    <a class="dropdown-item list-group-item list-group-item-action py-1{% if is_current %} active{% endif %}"
+      href="{{ item.url }}" role="option" aria-selected="{{ 'true' if is_current else 'false' }}"{% if is_current %} aria-current="page"{% endif %}>
       {{ item.name }}
     </a>
     {% endfor %}
