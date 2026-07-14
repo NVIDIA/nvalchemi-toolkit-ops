@@ -83,7 +83,9 @@ jobs:
         run: uv run --no-sync sphinx-multiversion docs site -j=1
 
       - name: Add site entry point
-        run: cp docs/pages-index.html site/index.html
+        run: |
+          cp docs/pages-index.html site/index.html
+          uv run --no-sync python docs/generate_pages_redirects.py site
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
