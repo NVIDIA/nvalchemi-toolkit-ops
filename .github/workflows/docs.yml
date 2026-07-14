@@ -30,13 +30,13 @@ defaults:
 
 concurrency:
   group: github-pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   UV_CACHE_DIR: /tmp/uv-cache
   WARP_CACHE_PATH: /tmp/warp-cache
   MPLCONFIGDIR: /tmp/matplotlib
-  RUN_EXAMPLES: "False"
+  RUN_EXAMPLES: "True"
   BENCHMARK_ALLOW_MIXED_SNAPSHOT: "1"
   BENCHMARK_PLOT_JOBS: auto
 
@@ -44,7 +44,7 @@ jobs:
   build:
     name: Build versioned documentation
     runs-on: linux-amd64-gpu-h100-latest-1
-    timeout-minutes: 120
+    timeout-minutes: 480
     permissions:
       contents: read
       pages: read
@@ -60,6 +60,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # Site-wide tooling always comes from main. The fetched tags and RC
+          # branches remain available to sphinx-multiversion as content refs.
+          ref: main
 
       - uses: actions/setup-python@v5
         with:
