@@ -1,0 +1,114 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: "Docs"
+
+on:
+  push:
+    branches:
+      - main
+      - "*.*.*-rc*"
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash -x -e -u -o pipefail {0}
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+env:
+  UV_CACHE_DIR: /tmp/uv-cache
+  WARP_CACHE_PATH: /tmp/warp-cache
+  MPLCONFIGDIR: /tmp/matplotlib
+  RUN_EXAMPLES: "True"
+  BENCHMARK_ALLOW_MIXED_SNAPSHOT: "1"
+  BENCHMARK_PLOT_JOBS: auto
+
+jobs:
+  build:
+    name: Build versioned documentation
+    runs-on: linux-amd64-gpu-h100-latest-1
+    timeout-minutes: 480
+    permissions:
+      contents: read
+      pages: read
+    env:
+      SMV_SITE_PACKAGES_V0_1_0: /tmp/docs-deps/warp-1.9.0
+      SMV_SITE_PACKAGES_V0_2_0: /tmp/docs-deps/warp-1.10.1
+      SMV_SITE_PACKAGES_V0_3_0: /tmp/docs-deps/warp-1.11.0
+      SMV_SITE_PACKAGES_V0_3_1: /tmp/docs-deps/warp-1.11.0
+      SMV_SITE_PACKAGES_0_3_0_RC: /tmp/docs-deps/warp-1.11.0
+      SMV_SITE_PACKAGES_0_3_1_RC: /tmp/docs-deps/warp-1.11.0
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Site-wide tooling always comes from main. The fetched tags and RC
+          # branches remain available to sphinx-multiversion as content refs.
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup UV
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install documentation dependencies
+        run: uv sync --extra torch --extra jax
+
+      - name: Install historical Warp versions
+        run: |
+          uv pip install --target "$SMV_SITE_PACKAGES_V0_1_0" --no-deps "warp-lang==1.9.0"
+          uv pip install --target "$SMV_SITE_PACKAGES_V0_2_0" --no-deps "warp-lang==1.10.1"
+          uv pip install --target "$SMV_SITE_PACKAGES_V0_3_0" --no-deps "warp-lang==1.11.0"
+
+      - name: Build versioned documentation
+        run: uv run --no-sync sphinx-multiversion docs site -j=1
+
+      - name: Add site entry point
+        run: |
+          cp docs/pages-index.html site/index.html
+          uv run --no-sync python docs/generate_pages_redirects.py site
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    name: Deploy GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

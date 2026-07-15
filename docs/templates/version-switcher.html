@@ -1,0 +1,38 @@
+{# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. #}
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Render sphinx-multiversion refs using the PyData theme's dropdown styling. #}
+{% if versions %}
+{%- set button_id = unique_html_id("pst-version-switcher-button") -%}
+{%- set dropdown_id = unique_html_id("pst-version-switcher-list") -%}
+<div class="version-switcher__container dropdown">
+  <button id="{{ button_id }}"
+    type="button"
+    class="version-switcher__button btn btn-sm navbar-btn dropdown-toggle"
+    data-bs-toggle="dropdown"
+    aria-haspopup="listbox"
+    aria-controls="{{ dropdown_id }}"
+    aria-label="Select documentation version; current version is {{ current_version.name }}">
+    {{ current_version.name }}
+    <span class="caret"></span>
+  </button>
+  <div id="{{ dropdown_id }}"
+    class="version-switcher__menu dropdown-menu list-group-flush py-0"
+    role="listbox"
+    aria-labelledby="{{ button_id }}">
+    {% for item in versions.branches %}
+    {%- set is_current = item.name == current_version.name -%}
+    <a class="dropdown-item list-group-item list-group-item-action py-1{% if is_current %} active{% endif %}"
+      href="{{ item.url }}" role="option" aria-selected="{{ 'true' if is_current else 'false' }}"{% if is_current %} aria-current="page"{% endif %}>
+      {{ item.name }}{% if item.name == "main" %} (development){% else %} (preview){% endif %}
+    </a>
+    {% endfor %}
+    {% for item in versions.tags | reverse %}
+    {%- set is_current = item.name == current_version.name -%}
+    <a class="dropdown-item list-group-item list-group-item-action py-1{% if is_current %} active{% endif %}"
+      href="{{ item.url }}" role="option" aria-selected="{{ 'true' if is_current else 'false' }}"{% if is_current %} aria-current="page"{% endif %}>
+      {{ item.name }}
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}

@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Legacy HTML path Current main HTML path
+_modules/nvalchemiops/interactions/dispersion/dftd3.html _modules/nvalchemiops/interactions/dispersion/_dftd3.html
+_modules/nvalchemiops/interactions/electrostatics/ewald.html modules/warp/electrostatics.html
+_modules/nvalchemiops/interactions/electrostatics/k_vectors.html modules/warp/electrostatics.html
+_modules/nvalchemiops/interactions/electrostatics/parameters.html modules/warp/electrostatics.html
+_modules/nvalchemiops/interactions/electrostatics/pme.html modules/warp/electrostatics.html
+_modules/nvalchemiops/jax/interactions/electrostatics/coulomb.html modules/jax/electrostatics.html
+_modules/nvalchemiops/jax/interactions/electrostatics/ewald.html modules/jax/electrostatics.html
+_modules/nvalchemiops/jax/interactions/electrostatics/k_vectors.html modules/jax/electrostatics.html
+_modules/nvalchemiops/jax/interactions/electrostatics/parameters.html modules/jax/electrostatics.html
+_modules/nvalchemiops/jax/interactions/electrostatics/pme.html modules/jax/electrostatics.html
+_modules/nvalchemiops/math.html _modules/nvalchemiops/math/math.html
+_modules/nvalchemiops/math/gto.html modules/utilities.html
+_modules/nvalchemiops/neighborlist/batch_cell_list.html modules/warp/neighbors.html
+_modules/nvalchemiops/neighborlist/batch_naive.html modules/warp/neighbors.html
+_modules/nvalchemiops/neighborlist/batch_naive_dual_cutoff.html modules/warp/neighbors.html
+_modules/nvalchemiops/neighborlist/cell_list.html modules/warp/neighbors.html
+_modules/nvalchemiops/neighborlist/naive.html modules/warp/neighbors.html
+_modules/nvalchemiops/neighborlist/naive_dual_cutoff.html modules/warp/neighbors.html
+_modules/nvalchemiops/neighborlist/neighbor_utils.html modules/warp/neighbors.html
+_modules/nvalchemiops/neighborlist/neighborlist.html modules/warp/neighbors.html
+_modules/nvalchemiops/neighborlist/rebuild_detection.html modules/warp/neighbors.html
+_modules/nvalchemiops/neighbors/batch_cell_list.html modules/warp/neighbors.html
+_modules/nvalchemiops/neighbors/batch_naive.html modules/warp/neighbors.html
+_modules/nvalchemiops/neighbors/batch_naive_dual_cutoff.html modules/warp/neighbors.html
+_modules/nvalchemiops/neighbors/cell_list.html modules/warp/neighbors.html
+_modules/nvalchemiops/neighbors/naive.html modules/warp/neighbors.html
+_modules/nvalchemiops/neighbors/naive_dual_cutoff.html modules/warp/neighbors.html
+_modules/nvalchemiops/neighbors/rebuild_detection.html modules/warp/neighbors.html
+_modules/nvalchemiops/spline.html _modules/nvalchemiops/math/spline.html
+_modules/nvalchemiops/types.html modules/utilities.html
+benchmarks/benchmark_results/README.html benchmarks/index.html
+examples/interactions/01_dftd3_molecule.html examples/dispersion/01_dftd3_molecule.html
+examples/interactions/02_dftd3_batch_crystals.html examples/dispersion/02_dftd3_batch_crystals.html
+examples/interactions/index.html examples/dispersion/index.html
+examples/interactions/sg_execution_times.html examples/dispersion/sg_execution_times.html
+examples/neighborlist/01_simple_neighbor_list.html examples/neighbors/01_simple_neighbor_list.html
+examples/neighborlist/02_batch_neighbor_list.html examples/neighbors/02_batch_neighbor_list.html
+examples/neighborlist/03_rebuild_neighborlist_detection.html examples/neighbors/03_rebuild_neighborlist_detection.html
+examples/neighborlist/04_neighbors_list_torch_compile_performance.html examples/neighbors/04_neighbors_list_torch_compile_performance.html
+examples/neighborlist/index.html examples/neighbors/index.html
+examples/neighborlist/sg_execution_times.html examples/neighbors/sg_execution_times.html
+modules/dispersion.html modules/warp/dispersion.html
+modules/electrostatics.html modules/warp/electrostatics.html
+modules/neighborlist.html modules/warp/neighbors.html
