@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 (Unreleased)
+## 0.4.0 - 2026-07-13
 
 ### Added
 
@@ -199,7 +199,7 @@
 - Updated the CUDA backend extras (`torch-cu12`/`jax-cu12` and related
   optional dependencies).
 
-## 0.3.0 - 2026-XX-XX
+## 0.3.0 - 2026-03-16
 
 ### Breaking Changes
 

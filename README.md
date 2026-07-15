@@ -19,12 +19,17 @@ kernels are written in [NVIDIA `warp-lang`](https://github.com/NVIDIA/warp).
   Nosé-Hoover Chain (NVT), NPT/NPH ensembles, velocity rescaling
 - Geometry optimization: FIRE and FIRE2 with optional unit cell
   optimization
-- Neighbor lists: naive $O(N^2)$ and cell list $O(N)$ algorithms
+- Neighbor lists: naive $O(N^2)$ (scalar and tiled), cell list $O(N)$
+  (atom- and pair-centric), and cluster-pair tile algorithms with
+  geometry-aware automatic selection
 - Dispersion corrections via Becke-Johnson damped DFT-D3
 - Electrostatic interactions: Ewald, particle mesh Ewald (PME), and
-  damped shifted force (DSF) algorithms
-- Differentiable physics: analytical stress tensor (virial) support
-  for Ewald and PME, enabling stress-based MLIP training
+  damped shifted force (DSF), with 2D slab corrections (Yeh-Berkowitz) for Ewald and PME
+- Multipole electrostatics (Warp and PyTorch): Ewald and PME for charges,
+  dipoles, and quadrupoles
+- Differentiable physics: energy-derived forces, charge gradients, virials,
+  and stress for Ewald and PME, including second-order PyTorch training
+- Differentiable segment operations with PyTorch and JAX bindings
 - NVIDIA Warp core with optional, JIT-compatible PyTorch and JAX
   bindings, including autograd support
 
