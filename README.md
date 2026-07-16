@@ -29,7 +29,7 @@ kernels are written in [NVIDIA `warp-lang`](https://github.com/NVIDIA/warp).
 - **Interatomic interactions**
   - DFT-D3(BJ) dispersion
   - DSF, Ewald, and PME electrostatics
-  - Multipoles through quadrupoles (Warp/PyTorch)
+  - Ewald and PME for charges and multipoles (Warp/PyTorch)
 - **Differentiable training**
   - Forces and charge gradients
   - Virials and stress
