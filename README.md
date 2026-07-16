@@ -23,19 +23,15 @@ kernels are written in [NVIDIA `warp-lang`](https://github.com/NVIDIA/warp).
 - **Molecular dynamics**
   - NVE, NVT, NPT, and NPH ensembles
   - Langevin, Nosé-Hoover Chain, and velocity-rescaling thermostats
-- **Geometry optimization**
-  - FIRE and FIRE2
-  - Position and optional cell optimization
+- **Geometry optimization with FIRE and FIRE2**, supporting coordinate and
+  lattice relaxation
 - **Interatomic interactions**
   - DFT-D3(BJ) dispersion
   - DSF, Ewald, and PME electrostatics
   - Ewald and PME for charges and multipoles (Warp/PyTorch)
-- **Differentiable training**
-  - Forces and charge gradients
-  - Virials and stress
-- **Framework support**
-  - NVIDIA Warp kernels
-  - PyTorch and JAX bindings
+- **Differentiable electrostatics for PyTorch training**, with automatic
+  differentiation for forces, charge gradients, virials, and stress
+- **Core kernels written in `warp-lang`** with PyTorch and JAX bindings
 
 Kernels are naturally intended to be highly scalable (>100,000 atoms) and generally
 optimized for high throughput operations (on the order of several microseconds per
