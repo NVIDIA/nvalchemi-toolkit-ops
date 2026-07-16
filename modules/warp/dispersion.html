@@ -2,18 +2,18 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../" >
+<html lang="en" data-content_root="../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>nvalchemiops.interactions.dispersion: Dispersion Corrections &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>nvalchemiops.interactions.dispersion: Dispersion Corrections &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -35,33 +35,36 @@
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
     <script src="../../_static/togglebutton.js?v=4a39c7ea"></script>
     <script src="../../_static/design-tabs.js?v=f930bc37"></script>
     <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'modules/warp/dispersion';</script>
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
     <link rel="next" title="nvalchemiops.interactions.electrostatics: Electrostatic Interactions (Warp)" href="electrostatics.html" />
-    <link rel="prev" title="nvalchemiops.neighbors: Neighbor Lists" href="neighbors.html" />
+    <link rel="prev" title="nvalchemiops.segment_ops: Segment Operations" href="segment_ops.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -128,8 +131,6 @@
   
   
     
-    
-      
     
     
     <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -364,6 +365,7 @@ document.write(`
   <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
   <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../torch/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../torch/segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.segment_ops</span></code>: Segment Operations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../torch/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../torch/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.electrostatics</span></code>: Electrostatics</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../torch/dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch</span></code>: Dynamics Optimizers</a></li>
@@ -371,11 +373,13 @@ document.write(`
 </ul>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../jax/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../jax/segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.segment_ops</span></code>: Segment Operations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../jax/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../jax/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.electrostatics</span></code>: Electrostatics</a></li>
 </ul>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.segment_ops</span></code>: Segment Operations</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.electrostatics</span></code>: Electrostatic Interactions (Warp)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.dynamics</span></code>: Molecular Dynamics</a></li>
@@ -474,7 +478,7 @@ call this function.</p>
 <h5>Multi-Pass Algorithm<a class="headerlink" href="#multi-pass-algorithm" title="Link to this heading">#</a></h5>
 <ol class="arabic simple">
 <li><p><strong>Pass 1</strong>: Compute coordination numbers using geometric counting function</p></li>
-<li><p><strong>Pass 2</strong>: Compute direct forces, energy, and accumulate dE/dCN</p></li>
+<li><p><strong>Pass 2</strong>: Compute direct forces, energy, and accumulate <span class="math notranslate nohighlight">\(\partial E/\partial \text{CN}\)</span></p></li>
 <li><p><strong>Pass 3</strong>: Add CN-dependent force contribution using chain rule</p></li>
 </ol>
 <dl class="field-list simple">
@@ -504,13 +508,13 @@ both float32 (vec3f) and float64 (vec3d) precision.</p>
 <dd class="field-even"><p>wp.array(dtype=float32), shape [max_Z+1]</p>
 </dd>
 <dt class="field-odd">param r4r2<span class="colon">:</span></dt>
-<dd class="field-odd"><p>&lt;r⁴&gt;/&lt;r²&gt; expectation values for C8 computation (dimensionless)</p>
+<dd class="field-odd"><p><span class="math notranslate nohighlight">\(\langle r^4 \rangle / \langle r^2 \rangle\)</span> expectation values for <span class="math notranslate nohighlight">\(C_8\)</span> computation (dimensionless)</p>
 </dd>
 <dt class="field-even">type r4r2<span class="colon">:</span></dt>
 <dd class="field-even"><p>wp.array(dtype=float32), shape [max_Z+1]</p>
 </dd>
 <dt class="field-odd">param c6_reference<span class="colon">:</span></dt>
-<dd class="field-odd"><p>C6 reference values in energy x distance^6 units</p>
+<dd class="field-odd"><p><span class="math notranslate nohighlight">\(C_6\)</span> reference values in energy <span class="math notranslate nohighlight">\(\times\)</span> distance<span class="math notranslate nohighlight">\(^6\)</span> units</p>
 </dd>
 <dt class="field-even">type c6_reference<span class="colon">:</span></dt>
 <dd class="field-even"><p>wp.array4d(dtype=float32), shape [max_Z+1, max_Z+1, 5, 5]</p>
@@ -534,7 +538,7 @@ both float32 (vec3f) and float64 (vec3d) precision.</p>
 <dd class="field-even"><p>float</p>
 </dd>
 <dt class="field-odd">param s8<span class="colon">:</span></dt>
-<dd class="field-odd"><p>C8 term scaling factor (functional-dependent, dimensionless)</p>
+<dd class="field-odd"><p><span class="math notranslate nohighlight">\(C_8\)</span> term scaling factor (functional-dependent, dimensionless)</p>
 </dd>
 <dt class="field-even">type s8<span class="colon">:</span></dt>
 <dd class="field-even"><p>float</p>
@@ -580,7 +584,7 @@ Must be pre-allocated by caller.</p>
 <dd class="field-even"><p>wp.array(dtype=vec3f or vec3d), shape [num_atoms, max_neighbors]</p>
 </dd>
 <dt class="field-odd">param dE_dCN<span class="colon">:</span></dt>
-<dd class="field-odd"><p>SCRATCH: Pre-allocated buffer for chain rule dE/dCN intermediate.
+<dd class="field-odd"><p>SCRATCH: Pre-allocated buffer for chain rule <span class="math notranslate nohighlight">\(\partial E/\partial \text{CN}\)</span> intermediate.
 Must be pre-allocated and zeroed by caller.</p>
 </dd>
 <dt class="field-even">type dE_dCN<span class="colon">:</span></dt>
@@ -613,7 +617,7 @@ Default: -4.0</p>
 <dd class="field-even"><p>float, optional</p>
 </dd>
 <dt class="field-odd">param s6<span class="colon">:</span></dt>
-<dd class="field-odd"><p>C6 term scaling factor (typically 1.0, dimensionless). Default: 1.0</p>
+<dd class="field-odd"><p><span class="math notranslate nohighlight">\(C_6\)</span> term scaling factor (typically 1.0, dimensionless). Default: 1.0</p>
 </dd>
 <dt class="field-even">type s6<span class="colon">:</span></dt>
 <dd class="field-even"><p>float, optional</p>
@@ -647,8 +651,8 @@ Default: -4.0</p>
 <ul class="simple">
 <li><p>All output arrays must be pre-allocated and zeroed by the caller</p></li>
 <li><p>Supports float32 and float64 positions; outputs always float32</p></li>
-<li><p>Padding atoms indicated by numbers[i] == 0 are skipped</p></li>
-<li><p><strong>Two-body only</strong>: Three-body Axilrod-Teller-Muto terms not included</p></li>
+<li><p>Padding atoms indicated by <code class="docutils literal notranslate"><span class="pre">numbers[i]</span> <span class="pre">==</span> <span class="pre">0</span></code> are skipped</p></li>
+<li><p><strong>Two-body only</strong>: Three-body Axilrod-Teller-Muto (<span class="math notranslate nohighlight">\(C_9\)</span>) terms not included</p></li>
 <li><p>Unit consistency required: standard D3 parameters use atomic units
 (Bohr for distances, Hartree for energy)</p></li>
 <li><p>Virial is NOT computed for non-periodic systems (use dftd3_matrix_pbc for PBC)</p></li>
@@ -668,23 +672,23 @@ Default: -4.0</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>positions</strong> (<em>array</em>)</p></li>
-<li><p><strong>numbers</strong> (<em>array</em>)</p></li>
-<li><p><strong>neighbor_matrix</strong> (<em>array</em>)</p></li>
-<li><p><strong>covalent_radii</strong> (<em>array</em>)</p></li>
-<li><p><strong>r4r2</strong> (<em>array</em>)</p></li>
-<li><p><strong>c6_reference</strong> (<em>array</em>)</p></li>
-<li><p><strong>coord_num_ref</strong> (<em>array</em>)</p></li>
+<li><p><strong>positions</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>numbers</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>neighbor_matrix</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>covalent_radii</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>r4r2</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>c6_reference</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>coord_num_ref</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
 <li><p><strong>a1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>)</p></li>
 <li><p><strong>a2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>)</p></li>
 <li><p><strong>s8</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>)</p></li>
-<li><p><strong>coord_num</strong> (<em>array</em>)</p></li>
-<li><p><strong>forces</strong> (<em>array</em>)</p></li>
-<li><p><strong>energy</strong> (<em>array</em>)</p></li>
-<li><p><strong>virial</strong> (<em>array</em>)</p></li>
-<li><p><strong>batch_idx</strong> (<em>array</em>)</p></li>
-<li><p><strong>cartesian_shifts</strong> (<em>array</em>)</p></li>
-<li><p><strong>dE_dCN</strong> (<em>array</em>)</p></li>
+<li><p><strong>coord_num</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>forces</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>energy</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>virial</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>batch_idx</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>cartesian_shifts</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>dE_dCN</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
 <li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>)</p></li>
 <li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>)</p></li>
 <li><p><strong>k1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>)</p></li>
@@ -715,7 +719,7 @@ wrappers (PyTorch, JAX) handle tensor-to-warp conversion and call this function.
 <h5>Multi-Pass Algorithm<a class="headerlink" href="#id1" title="Link to this heading">#</a></h5>
 <ol class="arabic simple">
 <li><p><strong>Pass 1</strong>: Compute coordination numbers using geometric counting function</p></li>
-<li><p><strong>Pass 2</strong>: Compute direct forces, energy, and accumulate dE/dCN</p></li>
+<li><p><strong>Pass 2</strong>: Compute direct forces, energy, and accumulate <span class="math notranslate nohighlight">\(\partial E/\partial \text{CN}\)</span></p></li>
 <li><p><strong>Pass 3</strong>: Add CN-dependent force contribution using chain rule</p></li>
 </ol>
 <dl class="field-list simple">
@@ -752,13 +756,13 @@ gives the range of neighbors for atom i</p>
 <dd class="field-even"><p>wp.array(dtype=float32), shape [max_Z+1]</p>
 </dd>
 <dt class="field-odd">param r4r2<span class="colon">:</span></dt>
-<dd class="field-odd"><p>&lt;r⁴&gt;/&lt;r²&gt; expectation values for C8 computation (dimensionless)</p>
+<dd class="field-odd"><p><span class="math notranslate nohighlight">\(\langle r^4 \rangle / \langle r^2 \rangle\)</span> expectation values for <span class="math notranslate nohighlight">\(C_8\)</span> computation (dimensionless)</p>
 </dd>
 <dt class="field-even">type r4r2<span class="colon">:</span></dt>
 <dd class="field-even"><p>wp.array(dtype=float32), shape [max_Z+1]</p>
 </dd>
 <dt class="field-odd">param c6_reference<span class="colon">:</span></dt>
-<dd class="field-odd"><p>C6 reference values in energy x distance^6 units</p>
+<dd class="field-odd"><p><span class="math notranslate nohighlight">\(C_6\)</span> reference values in energy <span class="math notranslate nohighlight">\(\times\)</span> distance<span class="math notranslate nohighlight">\(^6\)</span> units</p>
 </dd>
 <dt class="field-even">type c6_reference<span class="colon">:</span></dt>
 <dd class="field-even"><p>wp.array4d(dtype=float32), shape [max_Z+1, max_Z+1, 5, 5]</p>
@@ -782,7 +786,7 @@ gives the range of neighbors for atom i</p>
 <dd class="field-even"><p>float</p>
 </dd>
 <dt class="field-odd">param s8<span class="colon">:</span></dt>
-<dd class="field-odd"><p>C8 term scaling factor (functional-dependent, dimensionless)</p>
+<dd class="field-odd"><p><span class="math notranslate nohighlight">\(C_8\)</span> term scaling factor (functional-dependent, dimensionless)</p>
 </dd>
 <dt class="field-even">type s8<span class="colon">:</span></dt>
 <dd class="field-even"><p>float</p>
@@ -828,7 +832,7 @@ Must be pre-allocated by caller.</p>
 <dd class="field-even"><p>wp.array(dtype=vec3f or vec3d), shape [num_edges]</p>
 </dd>
 <dt class="field-odd">param dE_dCN<span class="colon">:</span></dt>
-<dd class="field-odd"><p>SCRATCH: Pre-allocated buffer for chain rule dE/dCN intermediate.
+<dd class="field-odd"><p>SCRATCH: Pre-allocated buffer for chain rule <span class="math notranslate nohighlight">\(\partial E/\partial \text{CN}\)</span> intermediate.
 Must be pre-allocated and zeroed by caller.</p>
 </dd>
 <dt class="field-even">type dE_dCN<span class="colon">:</span></dt>
@@ -861,7 +865,7 @@ Default: -4.0</p>
 <dd class="field-even"><p>float, optional</p>
 </dd>
 <dt class="field-odd">param s6<span class="colon">:</span></dt>
-<dd class="field-odd"><p>C6 term scaling factor (typically 1.0, dimensionless). Default: 1.0</p>
+<dd class="field-odd"><p><span class="math notranslate nohighlight">\(C_6\)</span> term scaling factor (typically 1.0, dimensionless). Default: 1.0</p>
 </dd>
 <dt class="field-even">type s6<span class="colon">:</span></dt>
 <dd class="field-even"><p>float, optional</p>
@@ -890,8 +894,8 @@ Virial is not computed for non-periodic systems.</p>
 <ul class="simple">
 <li><p>All output arrays must be pre-allocated and zeroed by the caller</p></li>
 <li><p>Supports float32 and float64 positions; outputs always float32</p></li>
-<li><p>Padding atoms indicated by numbers[i] == 0 are skipped</p></li>
-<li><p><strong>Two-body only</strong>: Three-body Axilrod-Teller-Muto terms not included</p></li>
+<li><p>Padding atoms indicated by <code class="docutils literal notranslate"><span class="pre">numbers[i]</span> <span class="pre">==</span> <span class="pre">0</span></code> are skipped</p></li>
+<li><p><strong>Two-body only</strong>: Three-body Axilrod-Teller-Muto (<span class="math notranslate nohighlight">\(C_9\)</span>) terms not included</p></li>
 <li><p>Unit consistency required: standard D3 parameters use atomic units
 (Bohr for distances, Hartree for energy)</p></li>
 <li><p>CSR format is more memory-efficient for sparse neighbor lists</p></li>
@@ -912,24 +916,24 @@ Virial is not computed for non-periodic systems.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>positions</strong> (<em>array</em>)</p></li>
-<li><p><strong>numbers</strong> (<em>array</em>)</p></li>
-<li><p><strong>idx_j</strong> (<em>array</em>)</p></li>
-<li><p><strong>neighbor_ptr</strong> (<em>array</em>)</p></li>
-<li><p><strong>covalent_radii</strong> (<em>array</em>)</p></li>
-<li><p><strong>r4r2</strong> (<em>array</em>)</p></li>
-<li><p><strong>c6_reference</strong> (<em>array</em>)</p></li>
-<li><p><strong>coord_num_ref</strong> (<em>array</em>)</p></li>
+<li><p><strong>positions</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>numbers</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>idx_j</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>neighbor_ptr</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>covalent_radii</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>r4r2</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>c6_reference</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>coord_num_ref</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
 <li><p><strong>a1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>)</p></li>
 <li><p><strong>a2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>)</p></li>
 <li><p><strong>s8</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>)</p></li>
-<li><p><strong>coord_num</strong> (<em>array</em>)</p></li>
-<li><p><strong>forces</strong> (<em>array</em>)</p></li>
-<li><p><strong>energy</strong> (<em>array</em>)</p></li>
-<li><p><strong>virial</strong> (<em>array</em>)</p></li>
-<li><p><strong>batch_idx</strong> (<em>array</em>)</p></li>
-<li><p><strong>cartesian_shifts</strong> (<em>array</em>)</p></li>
-<li><p><strong>dE_dCN</strong> (<em>array</em>)</p></li>
+<li><p><strong>coord_num</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>forces</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>energy</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>virial</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>batch_idx</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>cartesian_shifts</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>dE_dCN</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
 <li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>)</p></li>
 <li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>)</p></li>
 <li><p><strong>k1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>)</p></li>
@@ -963,7 +967,7 @@ tensor-to-warp conversion and call this function.</p>
 <ol class="arabic simple">
 <li><p><strong>Pass 0</strong>: Convert unit cell shifts to Cartesian coordinates</p></li>
 <li><p><strong>Pass 1</strong>: Compute coordination numbers using geometric counting function</p></li>
-<li><p><strong>Pass 2</strong>: Compute direct forces, energy, and accumulate dE/dCN</p></li>
+<li><p><strong>Pass 2</strong>: Compute direct forces, energy, and accumulate <span class="math notranslate nohighlight">\(\partial E/\partial \text{CN}\)</span></p></li>
 <li><p><strong>Pass 3</strong>: Add CN-dependent force contribution using chain rule</p></li>
 </ol>
 <dl class="field-list simple">
@@ -1007,13 +1011,13 @@ neighbor of atom i.</p>
 <dd class="field-even"><p>wp.array(dtype=float32), shape [max_Z+1]</p>
 </dd>
 <dt class="field-odd">param r4r2<span class="colon">:</span></dt>
-<dd class="field-odd"><p>&lt;r⁴&gt;/&lt;r²&gt; expectation values for C8 computation (dimensionless)</p>
+<dd class="field-odd"><p><span class="math notranslate nohighlight">\(\langle r^4 \rangle / \langle r^2 \rangle\)</span> expectation values for <span class="math notranslate nohighlight">\(C_8\)</span> computation (dimensionless)</p>
 </dd>
 <dt class="field-even">type r4r2<span class="colon">:</span></dt>
 <dd class="field-even"><p>wp.array(dtype=float32), shape [max_Z+1]</p>
 </dd>
 <dt class="field-odd">param c6_reference<span class="colon">:</span></dt>
-<dd class="field-odd"><p>C6 reference values in energy x distance^6 units</p>
+<dd class="field-odd"><p><span class="math notranslate nohighlight">\(C_6\)</span> reference values in energy <span class="math notranslate nohighlight">\(\times\)</span> distance<span class="math notranslate nohighlight">\(^6\)</span> units</p>
 </dd>
 <dt class="field-even">type c6_reference<span class="colon">:</span></dt>
 <dd class="field-even"><p>wp.array4d(dtype=float32), shape [max_Z+1, max_Z+1, 5, 5]</p>
@@ -1037,7 +1041,7 @@ neighbor of atom i.</p>
 <dd class="field-even"><p>float</p>
 </dd>
 <dt class="field-odd">param s8<span class="colon">:</span></dt>
-<dd class="field-odd"><p>C8 term scaling factor (functional-dependent, dimensionless)</p>
+<dd class="field-odd"><p><span class="math notranslate nohighlight">\(C_8\)</span> term scaling factor (functional-dependent, dimensionless)</p>
 </dd>
 <dt class="field-even">type s8<span class="colon">:</span></dt>
 <dd class="field-even"><p>float</p>
@@ -1082,7 +1086,7 @@ with shape matching neighbor_matrix.</p>
 <dd class="field-even"><p>wp.array(dtype=vec3f or vec3d), shape [num_atoms, max_neighbors]</p>
 </dd>
 <dt class="field-odd">param dE_dCN<span class="colon">:</span></dt>
-<dd class="field-odd"><p>SCRATCH: Pre-allocated buffer for chain rule dE/dCN intermediate.
+<dd class="field-odd"><p>SCRATCH: Pre-allocated buffer for chain rule <span class="math notranslate nohighlight">\(\partial E/\partial \text{CN}\)</span> intermediate.
 Must be pre-allocated and zeroed by caller.</p>
 </dd>
 <dt class="field-even">type dE_dCN<span class="colon">:</span></dt>
@@ -1115,7 +1119,7 @@ Default: -4.0</p>
 <dd class="field-even"><p>float, optional</p>
 </dd>
 <dt class="field-odd">param s6<span class="colon">:</span></dt>
-<dd class="field-odd"><p>C6 term scaling factor (typically 1.0, dimensionless). Default: 1.0</p>
+<dd class="field-odd"><p><span class="math notranslate nohighlight">\(C_6\)</span> term scaling factor (typically 1.0, dimensionless). Default: 1.0</p>
 </dd>
 <dt class="field-even">type s6<span class="colon">:</span></dt>
 <dd class="field-even"><p>float, optional</p>
@@ -1155,8 +1159,8 @@ Default: -4.0</p>
 <ul class="simple">
 <li><p>All output arrays must be pre-allocated and zeroed by the caller</p></li>
 <li><p>Supports float32 and float64 positions/cell; outputs always float32</p></li>
-<li><p>Padding atoms indicated by numbers[i] == 0 are skipped</p></li>
-<li><p><strong>Two-body only</strong>: Three-body Axilrod-Teller-Muto terms not included</p></li>
+<li><p>Padding atoms indicated by <code class="docutils literal notranslate"><span class="pre">numbers[i]</span> <span class="pre">==</span> <span class="pre">0</span></code> are skipped</p></li>
+<li><p><strong>Two-body only</strong>: Three-body Axilrod-Teller-Muto (<span class="math notranslate nohighlight">\(C_9\)</span>) terms not included</p></li>
 <li><p>Unit consistency required: standard D3 parameters use atomic units
 (Bohr for distances, Hartree for energy)</p></li>
 <li><p>Virial tensor is computed when compute_virial=True</p></li>
@@ -1176,25 +1180,25 @@ Default: -4.0</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>positions</strong> (<em>array</em>)</p></li>
-<li><p><strong>numbers</strong> (<em>array</em>)</p></li>
-<li><p><strong>neighbor_matrix</strong> (<em>array</em>)</p></li>
-<li><p><strong>cell</strong> (<em>array</em>)</p></li>
-<li><p><strong>neighbor_matrix_shifts</strong> (<em>array</em>)</p></li>
-<li><p><strong>covalent_radii</strong> (<em>array</em>)</p></li>
-<li><p><strong>r4r2</strong> (<em>array</em>)</p></li>
-<li><p><strong>c6_reference</strong> (<em>array</em>)</p></li>
-<li><p><strong>coord_num_ref</strong> (<em>array</em>)</p></li>
+<li><p><strong>positions</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>numbers</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>neighbor_matrix</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>cell</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>neighbor_matrix_shifts</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>covalent_radii</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>r4r2</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>c6_reference</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>coord_num_ref</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
 <li><p><strong>a1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>)</p></li>
 <li><p><strong>a2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>)</p></li>
 <li><p><strong>s8</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>)</p></li>
-<li><p><strong>coord_num</strong> (<em>array</em>)</p></li>
-<li><p><strong>forces</strong> (<em>array</em>)</p></li>
-<li><p><strong>energy</strong> (<em>array</em>)</p></li>
-<li><p><strong>virial</strong> (<em>array</em>)</p></li>
-<li><p><strong>batch_idx</strong> (<em>array</em>)</p></li>
-<li><p><strong>cartesian_shifts</strong> (<em>array</em>)</p></li>
-<li><p><strong>dE_dCN</strong> (<em>array</em>)</p></li>
+<li><p><strong>coord_num</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>forces</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>energy</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>virial</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>batch_idx</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>cartesian_shifts</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>dE_dCN</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
 <li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>)</p></li>
 <li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>)</p></li>
 <li><p><strong>k1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>)</p></li>
@@ -1228,7 +1232,7 @@ and call this function.</p>
 <ol class="arabic simple">
 <li><p><strong>Pass 0</strong>: Convert unit cell shifts to Cartesian coordinates</p></li>
 <li><p><strong>Pass 1</strong>: Compute coordination numbers using geometric counting function</p></li>
-<li><p><strong>Pass 2</strong>: Compute direct forces, energy, and accumulate dE/dCN</p></li>
+<li><p><strong>Pass 2</strong>: Compute direct forces, energy, and accumulate <span class="math notranslate nohighlight">\(\partial E/\partial \text{CN}\)</span></p></li>
 <li><p><strong>Pass 3</strong>: Add CN-dependent force contribution using chain rule</p></li>
 </ol>
 <dl class="field-list simple">
@@ -1278,13 +1282,13 @@ Convention: cell[s, i, :] is the i-th lattice vector for system s (row vectors).
 <dd class="field-even"><p>wp.array(dtype=float32), shape [max_Z+1]</p>
 </dd>
 <dt class="field-odd">param r4r2<span class="colon">:</span></dt>
-<dd class="field-odd"><p>&lt;r⁴&gt;/&lt;r²&gt; expectation values for C8 computation (dimensionless)</p>
+<dd class="field-odd"><p><span class="math notranslate nohighlight">\(\langle r^4 \rangle / \langle r^2 \rangle\)</span> expectation values for <span class="math notranslate nohighlight">\(C_8\)</span> computation (dimensionless)</p>
 </dd>
 <dt class="field-even">type r4r2<span class="colon">:</span></dt>
 <dd class="field-even"><p>wp.array(dtype=float32), shape [max_Z+1]</p>
 </dd>
 <dt class="field-odd">param c6_reference<span class="colon">:</span></dt>
-<dd class="field-odd"><p>C6 reference values in energy x distance^6 units</p>
+<dd class="field-odd"><p><span class="math notranslate nohighlight">\(C_6\)</span> reference values in energy <span class="math notranslate nohighlight">\(\times\)</span> distance<span class="math notranslate nohighlight">\(^6\)</span> units</p>
 </dd>
 <dt class="field-even">type c6_reference<span class="colon">:</span></dt>
 <dd class="field-even"><p>wp.array4d(dtype=float32), shape [max_Z+1, max_Z+1, 5, 5]</p>
@@ -1308,7 +1312,7 @@ Convention: cell[s, i, :] is the i-th lattice vector for system s (row vectors).
 <dd class="field-even"><p>float</p>
 </dd>
 <dt class="field-odd">param s8<span class="colon">:</span></dt>
-<dd class="field-odd"><p>C8 term scaling factor (functional-dependent, dimensionless)</p>
+<dd class="field-odd"><p><span class="math notranslate nohighlight">\(C_8\)</span> term scaling factor (functional-dependent, dimensionless)</p>
 </dd>
 <dt class="field-even">type s8<span class="colon">:</span></dt>
 <dd class="field-even"><p>float</p>
@@ -1353,7 +1357,7 @@ with length matching idx_j.</p>
 <dd class="field-even"><p>wp.array(dtype=vec3f or vec3d), shape [num_edges]</p>
 </dd>
 <dt class="field-odd">param dE_dCN<span class="colon">:</span></dt>
-<dd class="field-odd"><p>SCRATCH: Pre-allocated buffer for chain rule dE/dCN intermediate.
+<dd class="field-odd"><p>SCRATCH: Pre-allocated buffer for chain rule <span class="math notranslate nohighlight">\(\partial E/\partial \text{CN}\)</span> intermediate.
 Must be pre-allocated and zeroed by caller.</p>
 </dd>
 <dt class="field-even">type dE_dCN<span class="colon">:</span></dt>
@@ -1386,7 +1390,7 @@ Default: -4.0</p>
 <dd class="field-even"><p>float, optional</p>
 </dd>
 <dt class="field-odd">param s6<span class="colon">:</span></dt>
-<dd class="field-odd"><p>C6 term scaling factor (typically 1.0, dimensionless). Default: 1.0</p>
+<dd class="field-odd"><p><span class="math notranslate nohighlight">\(C_6\)</span> term scaling factor (typically 1.0, dimensionless). Default: 1.0</p>
 </dd>
 <dt class="field-even">type s6<span class="colon">:</span></dt>
 <dd class="field-even"><p>float, optional</p>
@@ -1420,8 +1424,8 @@ Default: -4.0</p>
 <ul class="simple">
 <li><p>All output arrays must be pre-allocated and zeroed by the caller</p></li>
 <li><p>Supports float32 and float64 positions/cell; outputs always float32</p></li>
-<li><p>Padding atoms indicated by numbers[i] == 0 are skipped</p></li>
-<li><p><strong>Two-body only</strong>: Three-body Axilrod-Teller-Muto terms not included</p></li>
+<li><p>Padding atoms indicated by <code class="docutils literal notranslate"><span class="pre">numbers[i]</span> <span class="pre">==</span> <span class="pre">0</span></code> are skipped</p></li>
+<li><p><strong>Two-body only</strong>: Three-body Axilrod-Teller-Muto (<span class="math notranslate nohighlight">\(C_9\)</span>) terms not included</p></li>
 <li><p>Unit consistency required: standard D3 parameters use atomic units
 (Bohr for distances, Hartree for energy)</p></li>
 <li><p>Virial tensor is computed when compute_virial=True</p></li>
@@ -1441,26 +1445,26 @@ Default: -4.0</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>positions</strong> (<em>array</em>)</p></li>
-<li><p><strong>numbers</strong> (<em>array</em>)</p></li>
-<li><p><strong>idx_j</strong> (<em>array</em>)</p></li>
-<li><p><strong>neighbor_ptr</strong> (<em>array</em>)</p></li>
-<li><p><strong>cell</strong> (<em>array</em>)</p></li>
-<li><p><strong>unit_shifts</strong> (<em>array</em>)</p></li>
-<li><p><strong>covalent_radii</strong> (<em>array</em>)</p></li>
-<li><p><strong>r4r2</strong> (<em>array</em>)</p></li>
-<li><p><strong>c6_reference</strong> (<em>array</em>)</p></li>
-<li><p><strong>coord_num_ref</strong> (<em>array</em>)</p></li>
+<li><p><strong>positions</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>numbers</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>idx_j</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>neighbor_ptr</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>cell</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>unit_shifts</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>covalent_radii</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>r4r2</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>c6_reference</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>coord_num_ref</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
 <li><p><strong>a1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>)</p></li>
 <li><p><strong>a2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>)</p></li>
 <li><p><strong>s8</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>)</p></li>
-<li><p><strong>coord_num</strong> (<em>array</em>)</p></li>
-<li><p><strong>forces</strong> (<em>array</em>)</p></li>
-<li><p><strong>energy</strong> (<em>array</em>)</p></li>
-<li><p><strong>virial</strong> (<em>array</em>)</p></li>
-<li><p><strong>batch_idx</strong> (<em>array</em>)</p></li>
-<li><p><strong>cartesian_shifts</strong> (<em>array</em>)</p></li>
-<li><p><strong>dE_dCN</strong> (<em>array</em>)</p></li>
+<li><p><strong>coord_num</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>forces</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>energy</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>virial</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>batch_idx</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>cartesian_shifts</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>dE_dCN</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
 <li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>)</p></li>
 <li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>)</p></li>
 <li><p><strong>k1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>)</p></li>
@@ -1493,12 +1497,12 @@ Default: -4.0</p>
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="neighbors.html"
+       href="segment_ops.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighbors</span></code>: Neighbor Lists</p>
+        <p class="prev-next-title"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.segment_ops</span></code>: Segment Operations</p>
       </div>
     </a>
     <a class="right-next"
@@ -1568,9 +1572,22 @@ Default: -4.0</p>
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -1590,7 +1607,7 @@ Default: -4.0</p>
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

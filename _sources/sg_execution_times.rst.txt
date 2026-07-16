@@ -6,7 +6,7 @@
 
 Computation times
 =================
-**01:02.439** total execution time for 24 files **from all galleries**:
+**02:26.483** total execution time for 33 files **from all galleries**:
 
 .. container::
 
@@ -33,74 +33,101 @@ Computation times
      - Time
      - Mem (MB)
    * - :ref:`sphx_glr_examples_electrostatics_04_jax_pme_example.py` (``../examples/electrostatics/04_jax_pme_example.py``)
-     - 00:19.223
+     - 00:46.968
+     - 0.0
+   * - :ref:`sphx_glr_examples_electrostatics_06_jax_slab_correction_example.py` (``../examples/electrostatics/06_jax_slab_correction_example.py``)
+     - 00:45.272
      - 0.0
    * - :ref:`sphx_glr_examples_neighbors_05_jax_neighbor_list.py` (``../examples/neighbors/05_jax_neighbor_list.py``)
-     - 00:08.262
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_04_npt_integration.py` (``../examples/dynamics/04_npt_integration.py``)
-     - 00:04.189
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_03_nph_integration.py` (``../examples/dynamics/03_nph_integration.py``)
-     - 00:04.157
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_02_velocity_verlet_integration.py` (``../examples/dynamics/02_velocity_verlet_integration.py``)
-     - 00:03.666
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_01_langevin_integration.py` (``../examples/dynamics/01_langevin_integration.py``)
-     - 00:03.133
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_08_fire_batched.py` (``../examples/dynamics/08_fire_batched.py``)
-     - 00:02.913
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_09_fire2_optimization.py` (``../examples/dynamics/09_fire2_optimization.py``)
-     - 00:02.123
-     - 0.0
-   * - :ref:`sphx_glr_examples_01_bspline_visualization.py` (``../examples/01_bspline_visualization.py``)
-     - 00:01.778
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_06_fire_optimization.py` (``../examples/dynamics/06_fire_optimization.py``)
-     - 00:01.706
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_10_fire2_batched.py` (``../examples/dynamics/10_fire2_batched.py``)
-     - 00:01.570
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_05_batched_langevin_dynamics.py` (``../examples/dynamics/05_batched_langevin_dynamics.py``)
-     - 00:01.492
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_07_fire_variable_cell.py` (``../examples/dynamics/07_fire_variable_cell.py``)
-     - 00:01.319
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_11_fire2_variable_cell.py` (``../examples/dynamics/11_fire2_variable_cell.py``)
-     - 00:01.237
-     - 0.0
-   * - :ref:`sphx_glr_examples_electrostatics_02_ewald_summation_example.py` (``../examples/electrostatics/02_ewald_summation_example.py``)
-     - 00:01.169
-     - 0.0
-   * - :ref:`sphx_glr_examples_neighbors_04_neighbors_list_torch_compile_performance.py` (``../examples/neighbors/04_neighbors_list_torch_compile_performance.py``)
-     - 00:01.090
+     - 00:16.345
      - 0.0
    * - :ref:`sphx_glr_examples_dispersion_03_jax_dftd3_molecule.py` (``../examples/dispersion/03_jax_dftd3_molecule.py``)
-     - 00:00.908
+     - 00:05.759
      - 0.0
-   * - :ref:`sphx_glr_examples_neighbors_01_simple_neighbor_list.py` (``../examples/neighbors/01_simple_neighbor_list.py``)
-     - 00:00.841
+   * - :ref:`sphx_glr_examples_02_segment_ops_autograd.py` (``../examples/02_segment_ops_autograd.py``)
+     - 00:05.007
      - 0.0
-   * - :ref:`sphx_glr_examples_neighbors_02_batch_neighbor_list.py` (``../examples/neighbors/02_batch_neighbor_list.py``)
-     - 00:00.813
+   * - :ref:`sphx_glr_examples_dynamics_04_npt_integration.py` (``../examples/dynamics/04_npt_integration.py``)
+     - 00:02.560
      - 0.0
-   * - :ref:`sphx_glr_examples_dispersion_01_dftd3_molecule.py` (``../examples/dispersion/01_dftd3_molecule.py``)
-     - 00:00.308
+   * - :ref:`sphx_glr_examples_electrostatics_07_multipole_ewald_summation_example.py` (``../examples/electrostatics/07_multipole_ewald_summation_example.py``)
+     - 00:02.497
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_03_nph_integration.py` (``../examples/dynamics/03_nph_integration.py``)
+     - 00:02.434
+     - 0.0
+   * - :ref:`sphx_glr_examples_neighbors_04_neighbors_list_torch_compile_performance.py` (``../examples/neighbors/04_neighbors_list_torch_compile_performance.py``)
+     - 00:02.212
+     - 0.0
+   * - :ref:`sphx_glr_examples_electrostatics_02_ewald_summation_example.py` (``../examples/electrostatics/02_ewald_summation_example.py``)
+     - 00:01.910
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_08_fire_batched.py` (``../examples/dynamics/08_fire_batched.py``)
+     - 00:01.770
+     - 0.0
+   * - :ref:`sphx_glr_examples_01_bspline_visualization.py` (``../examples/01_bspline_visualization.py``)
+     - 00:01.678
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_09_fire2_optimization.py` (``../examples/dynamics/09_fire2_optimization.py``)
+     - 00:01.401
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_01_langevin_integration.py` (``../examples/dynamics/01_langevin_integration.py``)
+     - 00:01.269
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_02_velocity_verlet_integration.py` (``../examples/dynamics/02_velocity_verlet_integration.py``)
+     - 00:01.188
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_06_fire_optimization.py` (``../examples/dynamics/06_fire_optimization.py``)
+     - 00:01.091
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_10_fire2_batched.py` (``../examples/dynamics/10_fire2_batched.py``)
+     - 00:01.039
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_05_batched_langevin_dynamics.py` (``../examples/dynamics/05_batched_langevin_dynamics.py``)
+     - 00:01.008
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_07_fire_variable_cell.py` (``../examples/dynamics/07_fire_variable_cell.py``)
+     - 00:00.835
+     - 0.0
+   * - :ref:`sphx_glr_examples_neighbors_06_pair_outputs_lj.py` (``../examples/neighbors/06_pair_outputs_lj.py``)
+     - 00:00.822
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_11_fire2_variable_cell.py` (``../examples/dynamics/11_fire2_variable_cell.py``)
+     - 00:00.762
      - 0.0
    * - :ref:`sphx_glr_examples_electrostatics_03_pme_example.py` (``../examples/electrostatics/03_pme_example.py``)
-     - 00:00.243
+     - 00:00.489
+     - 0.0
+   * - :ref:`sphx_glr_examples_dispersion_01_dftd3_molecule.py` (``../examples/dispersion/01_dftd3_molecule.py``)
+     - 00:00.408
+     - 0.0
+   * - :ref:`sphx_glr_examples_electrostatics_08_multipole_pme_example.py` (``../examples/electrostatics/08_multipole_pme_example.py``)
+     - 00:00.369
      - 0.0
    * - :ref:`sphx_glr_examples_dispersion_02_dftd3_batch_crystals.py` (``../examples/dispersion/02_dftd3_batch_crystals.py``)
-     - 00:00.155
+     - 00:00.336
+     - 0.0
+   * - :ref:`sphx_glr_examples_neighbors_02_batch_neighbor_list.py` (``../examples/neighbors/02_batch_neighbor_list.py``)
+     - 00:00.246
+     - 0.0
+   * - :ref:`sphx_glr_examples_electrostatics_11_pme_energy_derivative_training.py` (``../examples/electrostatics/11_pme_energy_derivative_training.py``)
+     - 00:00.233
+     - 0.0
+   * - :ref:`sphx_glr_examples_neighbors_01_simple_neighbor_list.py` (``../examples/neighbors/01_simple_neighbor_list.py``)
+     - 00:00.204
+     - 0.0
+   * - :ref:`sphx_glr_examples_electrostatics_05_slab_correction_example.py` (``../examples/electrostatics/05_slab_correction_example.py``)
+     - 00:00.121
      - 0.0
    * - :ref:`sphx_glr_examples_neighbors_03_rebuild_neighborlist_detection.py` (``../examples/neighbors/03_rebuild_neighborlist_detection.py``)
-     - 00:00.104
+     - 00:00.113
+     - 0.0
+   * - :ref:`sphx_glr_examples_electrostatics_09_multipole_features_example.py` (``../examples/electrostatics/09_multipole_features_example.py``)
+     - 00:00.065
      - 0.0
    * - :ref:`sphx_glr_examples_electrostatics_01_coulomb_example.py` (``../examples/electrostatics/01_coulomb_example.py``)
-     - 00:00.039
+     - 00:00.037
+     - 0.0
+   * - :ref:`sphx_glr_examples_electrostatics_10_multipole_scf_cache_example.py` (``../examples/electrostatics/10_multipole_scf_cache_example.py``)
+     - 00:00.034
      - 0.0

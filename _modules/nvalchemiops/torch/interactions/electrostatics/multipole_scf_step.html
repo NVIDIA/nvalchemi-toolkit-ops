@@ -1,0 +1,1466 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../../../" data-theme="light">
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nvalchemiops.torch.interactions.electrostatics.multipole_scf_step &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../../../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/css/benchmark-docs.css?v=30688d9f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../../../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../../../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../../../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/nvalchemiops/torch/interactions/electrostatics/multipole_scf_step';</script>
+    <link rel="index" title="Index" href="../../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../../../../index.html">
+  
+  
+  
+  
+  
+    
+    
+    
+    <img src="../../../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../../../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <div class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">nvalchemiops...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for nvalchemiops.torch.interactions.electrostatics.multipole_scf_step</h1><div class="highlight"><pre>
+<span></span><span class="c1"># SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.</span>
+<span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="c1"># you may not use this file except in compliance with the License.</span>
+<span class="c1"># You may obtain a copy of the License at</span>
+<span class="c1">#</span>
+<span class="c1"># http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Unless required by applicable law or agreed to in writing, software</span>
+<span class="c1"># distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="c1"># WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="c1"># See the License for the specific language governing permissions and</span>
+<span class="c1"># limitations under the License.</span>
+
+<span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">SCF step entry points for direct-k-space multipole electrostatics.</span>
+
+<span class="sd">Exposes user-facing functions that consume a prebuilt</span>
+<span class="sd">:class:`MultipoleSCFCache` and run one autograd-connected pipeline per</span>
+<span class="sd">call:</span>
+
+<span class="sd">* :func:`multipole_scf_step_energy` — per-atom periodic electrostatic</span>
+<span class="sd">  energies :math:`(N,)` :math:`\text{float64}`.</span>
+<span class="sd">* :func:`multipole_scf_step_features` — atom-centered features in</span>
+<span class="sd">  the reference permuted flat :math:`(N_\text{atoms}, N_\sigma \cdot 4)`</span>
+<span class="sd">  layout.</span>
+
+<span class="sd">The wrapper validates, unpacks, and dispatches; the underlying autograd</span>
+<span class="sd">Functions own the device work. Cache tensors and per-step moments cross</span>
+<span class="sd">the boundary as typed torch tensors. A batched :class:`MultipoleSCFCache`</span>
+<span class="sd">(built from a ``(B, 3, 3)`` cell) is selected with ``batch_idx``, and Ewald</span>
+<span class="sd">variants reuse an Ewald cache for the reciprocal-space term.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics._multipole_moments</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">split_packed_for_kernels</span><span class="p">,</span>
+    <span class="n">split_source_feats</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics.multipole_scf_cache</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">MultipoleSCFCache</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.math</span><span class="w"> </span><span class="kn">import</span> <span class="n">FIELD_CONSTANT</span>
+
+<span class="n">_TWO_PI_6</span> <span class="o">=</span> <span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">)</span> <span class="o">**</span> <span class="mi">6</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_resolve_step_moments</span><span class="p">(</span>
+    <span class="n">source_feats</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">quadrupoles</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Normalize step inputs to ``(l&lt;=1 block, quadrupoles)``.</span>
+
+<span class="sd">    Accepts either the e3nn l&lt;=1 block (``(N, 1)`` / ``(N, 4)``) with the l=2</span>
+<span class="sd">    moment passed via ``quadrupoles``, or a fully packed ``(N, 9)`` tensor,</span>
+<span class="sd">    which is split here so the packed form never silently drops the l=2 block.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">source_feats</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span> <span class="ow">and</span> <span class="n">source_feats</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="mi">9</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">quadrupoles</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="s2">&quot;pass either a packed (N, 9) source_feats or the l&lt;=1 block plus &quot;</span>
+                <span class="s2">&quot;quadrupoles=, not both.&quot;</span>
+            <span class="p">)</span>
+        <span class="n">l1</span><span class="p">,</span> <span class="n">quadrupoles</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">split_packed_for_kernels</span><span class="p">(</span><span class="n">source_feats</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">l1</span><span class="p">,</span> <span class="n">quadrupoles</span>
+    <span class="k">return</span> <span class="n">source_feats</span><span class="p">,</span> <span class="n">quadrupoles</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_self_energy_op</span><span class="p">(</span>
+    <span class="n">cache</span><span class="p">:</span> <span class="n">MultipoleSCFCache</span><span class="p">,</span>
+    <span class="n">charges</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">dipoles_cart</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">quadrupoles</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Per-atom self-energy :math:`\sum_l c_l \, \text{moment}_l^2` via the shared Warp op.</span>
+
+<span class="sd">    Wraps :func:`multipole_self_energy`, feeding the cache&#39;s overlap-constant</span>
+<span class="sd">    coefficients and gating the l=1 / l=2 channels by presence. Returns the</span>
+<span class="sd">    per-atom ``(N,)`` density; the caller reduces.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Delayed import keeps the kernels module out of the import-time graph.</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics.pme_multipole</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+        <span class="n">multipole_self_energy</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">oc</span> <span class="o">=</span> <span class="n">cache</span><span class="o">.</span><span class="n">source_overlap_constants</span>
+    <span class="k">return</span> <span class="n">multipole_self_energy</span><span class="p">(</span>
+        <span class="n">charges</span><span class="p">,</span>
+        <span class="n">dipoles_cart</span><span class="p">,</span>
+        <span class="n">quadrupoles</span><span class="p">,</span>
+        <span class="n">oc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span>
+        <span class="n">oc</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span>
+        <span class="n">oc</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_per_k_energy_op</span><span class="p">(</span>
+    <span class="n">cache</span><span class="p">:</span> <span class="n">MultipoleSCFCache</span><span class="p">,</span>
+    <span class="n">rho</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Per-k energy ``2 f_k |rho_k|^2`` via the shared Warp op.</span>
+
+<span class="sd">    ``rho`` is ``(K, 2)`` single / ``(B, K, 2)`` batched; returns ``(K,)`` /</span>
+<span class="sd">    ``(B, K)``. The caller applies the ``0.5 V / (2pi)^6`` scale + reduction.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics.pme_multipole</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+        <span class="n">multipole_reciprocal_rho_energy</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">multipole_reciprocal_rho_energy</span><span class="p">(</span><span class="n">rho</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">per_k_factor</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_check_batch_dispatch</span><span class="p">(</span>
+    <span class="n">cache</span><span class="p">:</span> <span class="n">MultipoleSCFCache</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate the ``batch_idx`` / cache batched-ness pairing.</span>
+
+<span class="sd">    Mirrors :func:`multipole_ewald_summation`: ``batch_idx`` is required iff</span>
+<span class="sd">    the cache is batched (``(B, 3, 3)`` cell), and must be ``None`` for a</span>
+<span class="sd">    single-system cache.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">cache</span><span class="o">.</span><span class="n">is_batched</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s2">&quot;batch_idx was provided but the cache is single-system; build the &quot;</span>
+            <span class="s2">&quot;cache from a (B, 3, 3) cell for batched runs.&quot;</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">cache</span><span class="o">.</span><span class="n">is_batched</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s2">&quot;cache is batched (built from a (B, 3, 3) cell) but batch_idx was &quot;</span>
+            <span class="s2">&quot;not provided; pass batch_idx=... for batched runs.&quot;</span>
+        <span class="p">)</span>
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># Energy step</span>
+<span class="c1"># =============================================================================</span>
+
+
+<div class="viewcode-block" id="multipole_scf_step_energy">
+<a class="viewcode-back" href="../../../../../modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.multipole_scf_step_energy">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">multipole_scf_step_energy</span><span class="p">(</span>
+    <span class="n">cache</span><span class="p">:</span> <span class="n">MultipoleSCFCache</span><span class="p">,</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">source_feats</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">include_self_interaction</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">quadrupoles</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Per-atom PBC electrostatic energies for a single or batched SCF step.</span>
+
+<span class="sd">    Consumes the position-independent tensors in ``cache`` and the</span>
+<span class="sd">    per-step ``(positions, source_feats)``. Returns per-atom</span>
+<span class="sd">    :math:`(N,)` :math:`\text{float64}` (single) or</span>
+<span class="sd">    :math:`(N_\text{total},)` (batched, flat across all systems).</span>
+<span class="sd">    The result is autograd-connected to both inputs.</span>
+
+<span class="sd">    The caller owns the reduction: ``.sum()`` for the total energy, or</span>
+<span class="sd">    ``torch.zeros(B).scatter_add(0, batch_idx, E)`` for per-system totals.</span>
+<span class="sd">    Forces, stress, and charge-grads are obtained via</span>
+<span class="sd">    ``grad(E.sum(), ...)``. The per-atom energies sum to the same total</span>
+<span class="sd">    bit-for-bit as the old scalar / ``(B,)`` convention.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    cache : MultipoleSCFCache</span>
+<span class="sd">        Prebuilt cache from :func:`prepare_multipole_scf_cache`. Holds</span>
+<span class="sd">        the position-independent state (k-vectors, :math:`\hat\phi`,</span>
+<span class="sd">        per-k factors, overlap constants, LUTs). Single or batched.</span>
+<span class="sd">    positions : torch.Tensor, shape (N_atoms, 3) or (N_total, 3)</span>
+<span class="sd">        Atomic positions (flat across systems in the batched case).</span>
+<span class="sd">    source_feats : torch.Tensor, shape (N, (l_max + 1)**2)</span>
+<span class="sd">        Packed per-atom moments in e3nn spherical layout. :math:`(N, 1)`</span>
+<span class="sd">        for ``l_max=0``, :math:`(N, 4)` for ``l_max=1``</span>
+<span class="sd">        (``[q, mu_y, mu_z, mu_x]``). Must match ``cache.l_max``.</span>
+<span class="sd">    batch_idx : torch.Tensor, optional, shape (N_total,), int32</span>
+<span class="sd">        Per-atom system index (expected sorted so atoms group by system).</span>
+<span class="sd">        Required when ``cache`` is batched; must be ``None`` for a single</span>
+<span class="sd">        system. Mirrors :func:`multipole_ewald_summation`&#39;s convention.</span>
+<span class="sd">    include_self_interaction : bool</span>
+<span class="sd">        If ``False`` (default), subtract :math:`0.5 \cdot E_\text{self}` using</span>
+<span class="sd">        ``cache.source_overlap_constants``. ``True`` returns the raw</span>
+<span class="sd">        reciprocal sum (the Ewald path subtracts the self term itself).</span>
+<span class="sd">    quadrupoles : torch.Tensor, optional, shape (N, 3, 3)</span>
+<span class="sd">        Cartesian symmetric source quadrupole. When supplied, the additive</span>
+<span class="sd">        :math:`\rho_Q(k)` channel and its :math:`l=2` self term are included</span>
+<span class="sd">        (requires a cache built with source ``l_max&gt;=2``). ``None`` (default)</span>
+<span class="sd">        is the :math:`l_{max} \le 1` path.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    torch.Tensor</span>
+<span class="sd">        Per-atom :math:`(N,)` :math:`\text{float64}` (single) or</span>
+<span class="sd">        :math:`(N_\text{total},)` (batched, flat across systems) on</span>
+<span class="sd">        ``cache.device``. Autograd-connected to positions and source_feats.</span>
+<span class="sd">        Call ``.sum()`` for the total energy or</span>
+<span class="sd">        ``torch.zeros(B).scatter_add(0, batch_idx, E)`` for per-system totals;</span>
+<span class="sd">        forces/stress/charge-grads flow from ``grad(E.sum(), ...)``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">_check_batch_dispatch</span><span class="p">(</span><span class="n">cache</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">_multipole_scf_step_energy_batch</span><span class="p">(</span>
+            <span class="n">cache</span><span class="p">,</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">source_feats</span><span class="p">,</span>
+            <span class="n">batch_idx</span><span class="p">,</span>
+            <span class="n">include_self_interaction</span><span class="o">=</span><span class="n">include_self_interaction</span><span class="p">,</span>
+            <span class="n">quadrupoles</span><span class="o">=</span><span class="n">quadrupoles</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">positions</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">2</span> <span class="ow">or</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">!=</span> <span class="mi">3</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;positions must be (N, 3), got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">n_atoms</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">source_feats</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">2</span> <span class="ow">or</span> <span class="n">source_feats</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">n_atoms</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s2">&quot;source_feats must be (N_atoms, (l_max+1)^2) matching positions[0]; &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">source_feats</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span> <span class="o">!=</span> <span class="n">cache</span><span class="o">.</span><span class="n">device</span> <span class="ow">or</span> <span class="n">source_feats</span><span class="o">.</span><span class="n">device</span> <span class="o">!=</span> <span class="n">cache</span><span class="o">.</span><span class="n">device</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;positions/source_feats must live on cache.device=</span><span class="si">{</span><span class="n">cache</span><span class="o">.</span><span class="n">device</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+
+    <span class="n">source_feats</span><span class="p">,</span> <span class="n">quadrupoles</span> <span class="o">=</span> <span class="n">_resolve_step_moments</span><span class="p">(</span><span class="n">source_feats</span><span class="p">,</span> <span class="n">quadrupoles</span><span class="p">)</span>
+    <span class="n">charges</span><span class="p">,</span> <span class="n">dipoles_cart</span><span class="p">,</span> <span class="n">l_max</span> <span class="o">=</span> <span class="n">split_source_feats</span><span class="p">(</span><span class="n">source_feats</span><span class="p">)</span>
+    <span class="n">dip</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">dipoles_cart</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">dipoles_cart</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="k">else</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_atoms</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">source_feats</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">cache</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Delayed import registers the multipole_rho op chain and breaks the</span>
+    <span class="c1"># multipole_autograd &lt;-&gt; multipole_scf_step import cycle. Forward and</span>
+    <span class="c1"># (AOT-traced) backward are opaque custom ops -&gt; 0 torch.compile breaks.</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics.multipole_autograd</span>  <span class="c1"># noqa: F401</span>
+
+    <span class="n">rho</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">nvalchemiops</span><span class="o">.</span><span class="n">multipole_rho</span><span class="p">(</span>
+        <span class="n">charges</span><span class="p">,</span> <span class="n">dip</span><span class="p">,</span> <span class="n">positions</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">source_phi_hat</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">k_vectors</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">volume</span>
+    <span class="p">)</span>
+    <span class="c1"># The Cartesian-quadrupole channel is additive in rho(k); the cross terms</span>
+    <span class="c1"># then fall out of |rho|^2 automatically.</span>
+    <span class="k">if</span> <span class="n">quadrupoles</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics.multipole_autograd</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+            <span class="n">MultipoleRhoQFunction</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">cache</span><span class="o">.</span><span class="n">source_coeff2</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="s2">&quot;quadrupoles requires a cache built with l_max&gt;=2 &quot;</span>
+                <span class="s2">&quot;(cache.source_coeff2 is None).&quot;</span>
+            <span class="p">)</span>
+        <span class="k">if</span> <span class="n">quadrupoles</span><span class="o">.</span><span class="n">shape</span> <span class="o">!=</span> <span class="p">(</span><span class="n">n_atoms</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;quadrupoles must be (N, 3, 3); got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">quadrupoles</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
+        <span class="n">rho</span> <span class="o">=</span> <span class="n">rho</span> <span class="o">+</span> <span class="n">MultipoleRhoQFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
+            <span class="n">quadrupoles</span><span class="p">,</span> <span class="n">positions</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">source_coeff2</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">k_vectors</span><span class="p">,</span> <span class="n">cache</span>
+        <span class="p">)</span>
+    <span class="c1"># The rho-assembly kernels bake the (2pi)^3/V scale with V detached.</span>
+    <span class="c1"># Reintroduce its volume-grad via a value-preserving factor (== 1) so</span>
+    <span class="c1"># dE/dcell captures rho&#39;s 1/V dependence.</span>
+    <span class="n">vol_ratio</span> <span class="o">=</span> <span class="n">cache</span><span class="o">.</span><span class="n">volume</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span> <span class="o">/</span> <span class="n">cache</span><span class="o">.</span><span class="n">volume</span>
+    <span class="n">rho</span> <span class="o">=</span> <span class="n">rho</span> <span class="o">*</span> <span class="n">vol_ratio</span>
+    <span class="c1"># Per-atom reciprocal energy via the spread-transpose gather: with the</span>
+    <span class="c1"># per-k potential phi_hat = 2 f_k rho, ``E_i = scale * m_i · (Sᵀ phi_hat)_i``</span>
+    <span class="c1"># and ``Σ_i E_i`` equals the collective ``scale · Σ_k 2 f_k |rho|²``</span>
+    <span class="c1"># bit-for-bit. The gather restores the moment-grad&#39;s detached 1/V via the</span>
+    <span class="c1"># value-preserving ``vol_ratio`` (== 1) so dE/dcell stays exact.</span>
+    <span class="n">phi_hat</span> <span class="o">=</span> <span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">cache</span><span class="o">.</span><span class="n">per_k_factor</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">rho</span>
+    <span class="n">g</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">nvalchemiops</span><span class="o">.</span><span class="n">multipole_rho_gather_t</span><span class="p">(</span>
+            <span class="n">phi_hat</span><span class="p">,</span> <span class="n">positions</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">source_phi_hat</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">k_vectors</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">volume</span>
+        <span class="p">)</span>
+        <span class="o">*</span> <span class="n">vol_ratio</span>
+    <span class="p">)</span>
+    <span class="n">scale_const</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">cache</span><span class="o">.</span><span class="n">volume</span> <span class="o">/</span> <span class="n">_TWO_PI_6</span>
+    <span class="n">raw_per_atom</span> <span class="o">=</span> <span class="n">scale_const</span> <span class="o">*</span> <span class="p">(</span><span class="n">charges</span> <span class="o">*</span> <span class="n">g</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="p">(</span><span class="n">dip</span> <span class="o">*</span> <span class="n">g</span><span class="p">[:,</span> <span class="p">[</span><span class="mi">3</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]])</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">quadrupoles</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">g_q</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">nvalchemiops</span><span class="o">.</span><span class="n">multipole_rho_q_gather_t</span><span class="p">(</span>
+                <span class="n">phi_hat</span><span class="p">,</span> <span class="n">positions</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">source_coeff2</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">k_vectors</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">volume</span>
+            <span class="p">)</span>
+            <span class="o">*</span> <span class="n">vol_ratio</span>
+        <span class="p">)</span>
+        <span class="n">raw_per_atom</span> <span class="o">=</span> <span class="n">raw_per_atom</span> <span class="o">+</span> <span class="n">scale_const</span> <span class="o">*</span> <span class="p">(</span><span class="n">quadrupoles</span> <span class="o">*</span> <span class="n">g_q</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">((</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">2</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">include_self_interaction</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">raw_per_atom</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+
+    <span class="c1"># Per-atom Σ_l c_l moment_l^2 via the shared self-energy op (per-atom, no</span>
+    <span class="c1"># reduction — caller owns it). dipoles only when l_max&gt;=1.</span>
+    <span class="n">dip_self</span> <span class="o">=</span> <span class="n">dipoles_cart</span> <span class="k">if</span> <span class="n">l_max</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">else</span> <span class="kc">None</span>
+    <span class="n">atom_self</span> <span class="o">=</span> <span class="n">_self_energy_op</span><span class="p">(</span><span class="n">cache</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">dip_self</span><span class="p">,</span> <span class="n">quadrupoles</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">raw_per_atom</span> <span class="o">-</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">atom_self</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span></div>
+
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># Feature step</span>
+<span class="c1"># =============================================================================</span>
+
+
+<div class="viewcode-block" id="multipole_scf_step_features">
+<a class="viewcode-back" href="../../../../../modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.multipole_scf_step_features">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">multipole_scf_step_features</span><span class="p">(</span>
+    <span class="n">cache</span><span class="p">:</span> <span class="n">MultipoleSCFCache</span><span class="p">,</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">source_feats</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">include_self_interaction</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">quadrupoles</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Atom-centered multipole features for a single or batched SCF step.</span>
+
+<span class="sd">    Consumes the position-independent ``cache`` plus the per-step</span>
+<span class="sd">    ``(positions, source_feats)`` and returns a</span>
+<span class="sd">    :math:`(N, N_\sigma \cdot (\text{feature\_max\_l}+1)^2)` features tensor</span>
+<span class="sd">    in the reference permuted flat layout (grouped by l-block). With a batched</span>
+<span class="sd">    cache (``cache.is_batched`` and ``batch_idx`` supplied) the rows span all</span>
+<span class="sd">    systems flat-packed.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    cache : MultipoleSCFCache</span>
+<span class="sd">        Single or batched.</span>
+<span class="sd">    positions : torch.Tensor, shape (N_atoms, 3) or (N_total, 3)</span>
+<span class="sd">    source_feats : torch.Tensor, shape (N, (l_max + 1)**2)</span>
+<span class="sd">        Packed per-atom moments in e3nn spherical layout.</span>
+<span class="sd">    batch_idx : torch.Tensor, optional, shape (N_total,), int32</span>
+<span class="sd">        Per-atom system index (expected sorted). Required when ``cache`` is</span>
+<span class="sd">        batched; must be ``None`` for a single system.</span>
+<span class="sd">    include_self_interaction : bool</span>
+<span class="sd">        If ``False`` (default), subtract the self-interaction correction</span>
+<span class="sd">        using ``cache.feature_overlap_constants``.</span>
+<span class="sd">    quadrupoles : torch.Tensor, optional, shape (N, 3, 3)</span>
+<span class="sd">        Cartesian-quadrupole source moments. When supplied, the additive</span>
+<span class="sd">        :math:`\rho_Q(k)` channel enriches the projected potential.</span>
+<span class="sd">        Requires a cache built with source ``l_max&gt;=2``. This is the</span>
+<span class="sd">        source l=2 contribution, decoupled from the receiver</span>
+<span class="sd">        ``feature_max_l`` (which lives on the cache and controls how many</span>
+<span class="sd">        l-blocks are projected out).</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    torch.Tensor</span>
+<span class="sd">        :math:`\text{float64}` on ``cache.device``, shape</span>
+<span class="sd">        :math:`(N, N_\sigma \cdot (\text{feature\_max\_l}+1)^2)`</span>
+<span class="sd">        in the reference permuted flat layout (grouped by l-block).</span>
+<span class="sd">        Autograd-connected to ``positions`` and ``source_feats``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">_check_batch_dispatch</span><span class="p">(</span><span class="n">cache</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">_multipole_scf_step_features_batch</span><span class="p">(</span>
+            <span class="n">cache</span><span class="p">,</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">source_feats</span><span class="p">,</span>
+            <span class="n">batch_idx</span><span class="p">,</span>
+            <span class="n">include_self_interaction</span><span class="o">=</span><span class="n">include_self_interaction</span><span class="p">,</span>
+            <span class="n">quadrupoles</span><span class="o">=</span><span class="n">quadrupoles</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">positions</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">2</span> <span class="ow">or</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">!=</span> <span class="mi">3</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;positions must be (N, 3), got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">n_atoms</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">source_feats</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">2</span> <span class="ow">or</span> <span class="n">source_feats</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">n_atoms</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s2">&quot;source_feats must be (N_atoms, (l_max+1)^2) matching positions[0]; &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">source_feats</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span> <span class="o">!=</span> <span class="n">cache</span><span class="o">.</span><span class="n">device</span> <span class="ow">or</span> <span class="n">source_feats</span><span class="o">.</span><span class="n">device</span> <span class="o">!=</span> <span class="n">cache</span><span class="o">.</span><span class="n">device</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;positions/source_feats must live on cache.device=</span><span class="si">{</span><span class="n">cache</span><span class="o">.</span><span class="n">device</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+
+    <span class="n">source_feats</span><span class="p">,</span> <span class="n">quadrupoles</span> <span class="o">=</span> <span class="n">_resolve_step_moments</span><span class="p">(</span><span class="n">source_feats</span><span class="p">,</span> <span class="n">quadrupoles</span><span class="p">)</span>
+    <span class="n">charges</span><span class="p">,</span> <span class="n">dipoles_cart</span><span class="p">,</span> <span class="n">l_max</span> <span class="o">=</span> <span class="n">split_source_feats</span><span class="p">(</span><span class="n">source_feats</span><span class="p">)</span>
+    <span class="n">dip</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">dipoles_cart</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">dipoles_cart</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="k">else</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_atoms</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">source_feats</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">cache</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Delayed import registers the multipole_rho + feature-projection op chains.</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics.multipole_autograd</span>  <span class="c1"># noqa: F401</span>
+
+    <span class="n">rho</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">nvalchemiops</span><span class="o">.</span><span class="n">multipole_rho</span><span class="p">(</span>
+        <span class="n">charges</span><span class="p">,</span> <span class="n">dip</span><span class="p">,</span> <span class="n">positions</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">source_phi_hat</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">k_vectors</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">volume</span>
+    <span class="p">)</span>
+    <span class="c1"># Additive Cartesian-quadrupole source channel; mirrors the energy step.</span>
+    <span class="k">if</span> <span class="n">quadrupoles</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics.multipole_autograd</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+            <span class="n">MultipoleRhoQFunction</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">cache</span><span class="o">.</span><span class="n">source_coeff2</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="s2">&quot;quadrupoles requires a cache built with l_max&gt;=2 &quot;</span>
+                <span class="s2">&quot;(cache.source_coeff2 is None).&quot;</span>
+            <span class="p">)</span>
+        <span class="k">if</span> <span class="n">quadrupoles</span><span class="o">.</span><span class="n">shape</span> <span class="o">!=</span> <span class="p">(</span><span class="n">n_atoms</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;quadrupoles must be (N, 3, 3); got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">quadrupoles</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
+        <span class="n">rho</span> <span class="o">=</span> <span class="n">rho</span> <span class="o">+</span> <span class="n">MultipoleRhoQFunction</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
+            <span class="n">quadrupoles</span><span class="p">,</span> <span class="n">positions</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">source_coeff2</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">k_vectors</span><span class="p">,</span> <span class="n">cache</span>
+        <span class="p">)</span>
+    <span class="c1"># The rho assembly bakes a detached (2pi)^3/V scale; the feature</span>
+    <span class="c1"># projection cancels the (2pi)^3 but leaves an explicit 1/V whose</span>
+    <span class="c1"># volume-grad would otherwise be dropped. The value-preserving ratio (== 1)</span>
+    <span class="c1"># restores it so dfeatures/dcell is complete. cache.volume == det(cell).</span>
+    <span class="n">vol_ratio</span> <span class="o">=</span> <span class="n">cache</span><span class="o">.</span><span class="n">volume</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span> <span class="o">/</span> <span class="n">cache</span><span class="o">.</span><span class="n">volume</span>
+    <span class="n">potential</span> <span class="o">=</span> <span class="n">cache</span><span class="o">.</span><span class="n">per_k_factor</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">rho</span> <span class="o">*</span> <span class="n">vol_ratio</span>  <span class="c1"># (N_k, 2)</span>
+
+    <span class="c1"># Raw features (N_atoms, N_sigma, 4), natural layout. Thread the</span>
+    <span class="c1"># cell-differentiable receiver_phi_hat (l&lt;=1 block) + k_vectors so</span>
+    <span class="c1"># dfeatures/dcell flows.</span>
+    <span class="n">raw_features</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">nvalchemiops</span><span class="o">.</span><span class="n">multipole_project_raw_features</span><span class="p">(</span>
+        <span class="n">potential</span><span class="p">,</span>
+        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">cache</span><span class="o">.</span><span class="n">receiver_phi_hat</span><span class="p">[:,</span> <span class="p">:,</span> <span class="p">:</span><span class="mi">4</span><span class="p">,</span> <span class="p">:],</span>
+        <span class="n">cache</span><span class="o">.</span><span class="n">k_vectors</span><span class="p">,</span>
+        <span class="n">cache</span><span class="o">.</span><span class="n">k_factor_proj</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Self-interaction subtract. source_feats is already in the e3nn</span>
+    <span class="c1"># [q, mu_y, mu_z, mu_x] layout; zero-pad when l_max=0 so the (N_sigma, 4)</span>
+    <span class="c1"># broadcast works without a separate branch.</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">include_self_interaction</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">l_max</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">src_lm</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span>
+                <span class="p">[</span>
+                    <span class="n">source_feats</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+                    <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_atoms</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">cache</span><span class="o">.</span><span class="n">device</span><span class="p">),</span>
+                <span class="p">],</span>
+                <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">src_lm</span> <span class="o">=</span> <span class="n">source_feats</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="c1"># Broadcast the overlap constant across the 3 l=1 components.</span>
+        <span class="n">oc</span> <span class="o">=</span> <span class="n">cache</span><span class="o">.</span><span class="n">feature_overlap_constants</span>  <span class="c1"># (N_sigma, 2)</span>
+        <span class="n">oc_per_lm</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span>
+            <span class="p">[</span><span class="n">oc</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">:</span><span class="mi">1</span><span class="p">],</span> <span class="n">oc</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span>
+        <span class="p">)</span>  <span class="c1"># (N_sigma, 4)</span>
+        <span class="n">self_corr</span> <span class="o">=</span> <span class="n">src_lm</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">oc_per_lm</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">features_natural</span> <span class="o">=</span> <span class="n">raw_features</span> <span class="o">-</span> <span class="n">self_corr</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">features_natural</span> <span class="o">=</span> <span class="n">raw_features</span>
+
+    <span class="c1"># l=2 receiver block (decoupled from source l_max). The l=2 self-subtract</span>
+    <span class="c1"># uses the e3nn 5-channel source l=2 derived from the Cartesian quadrupoles,</span>
+    <span class="c1"># which is zero when the source has no l=2 moment.</span>
+    <span class="k">if</span> <span class="n">cache</span><span class="o">.</span><span class="n">feature_max_l</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">features_natural</span> <span class="o">=</span> <span class="n">features_natural</span><span class="p">[:,</span> <span class="p">:,</span> <span class="p">:</span><span class="mi">1</span><span class="p">]</span>  <span class="c1"># l=0-only receiver</span>
+    <span class="k">elif</span> <span class="n">cache</span><span class="o">.</span><span class="n">feature_max_l</span> <span class="o">&gt;=</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="n">raw_l2</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">nvalchemiops</span><span class="o">.</span><span class="n">multipole_project_raw_features_quadrupole</span><span class="p">(</span>
+            <span class="n">potential</span><span class="p">,</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">cache</span><span class="o">.</span><span class="n">receiver_phi_hat</span><span class="p">[:,</span> <span class="p">:,</span> <span class="mi">4</span><span class="p">:</span><span class="mi">9</span><span class="p">,</span> <span class="p">:],</span>
+            <span class="n">cache</span><span class="o">.</span><span class="n">k_vectors</span><span class="p">,</span>
+            <span class="n">cache</span><span class="o">.</span><span class="n">k_factor_proj</span><span class="p">,</span>
+        <span class="p">)</span>  <span class="c1"># (N_atoms, N_σ, 5)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">include_self_interaction</span> <span class="ow">and</span> <span class="n">quadrupoles</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics._multipole_moments</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+                <span class="n">cartesian_quadrupole_to_e3nn</span><span class="p">,</span>
+            <span class="p">)</span>
+
+            <span class="n">src_e3nn_l2</span> <span class="o">=</span> <span class="n">cartesian_quadrupole_to_e3nn</span><span class="p">(</span>
+                <span class="n">quadrupoles</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+            <span class="p">)</span>  <span class="c1"># (N_atoms, 5)</span>
+            <span class="n">self_corr_l2</span> <span class="o">=</span> <span class="n">src_e3nn_l2</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">cache</span><span class="o">.</span><span class="n">feature_overlap_l2</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span>
+                <span class="mi">1</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">n_sigma</span><span class="p">,</span> <span class="mi">1</span>
+            <span class="p">)</span>
+            <span class="n">features_l2</span> <span class="o">=</span> <span class="n">raw_l2</span> <span class="o">-</span> <span class="n">self_corr_l2</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">features_l2</span> <span class="o">=</span> <span class="n">raw_l2</span>
+        <span class="n">features_natural</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span>
+            <span class="p">[</span><span class="n">features_natural</span><span class="p">,</span> <span class="n">features_l2</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span>
+        <span class="p">)</span>  <span class="c1"># (N_atoms, N_sigma, 9)</span>
+
+    <span class="c1"># Reference-format output: permuted flat, grouped by l-block.</span>
+    <span class="c1"># Inverse-permute using the cached LUT.</span>
+    <span class="n">n_lm</span> <span class="o">=</span> <span class="p">(</span><span class="n">cache</span><span class="o">.</span><span class="n">feature_max_l</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span>
+    <span class="n">flat_natural</span> <span class="o">=</span> <span class="n">features_natural</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">n_atoms</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">n_sigma</span> <span class="o">*</span> <span class="n">n_lm</span><span class="p">)</span>
+    <span class="c1"># Inverse-permute to the reference flat layout via the cache&#39;s precomputed</span>
+    <span class="c1"># argsort (position-independent — no per-call sort).</span>
+    <span class="k">return</span> <span class="n">flat_natural</span><span class="o">.</span><span class="n">index_select</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">out_col_inv_perm</span><span class="p">)</span></div>
+
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># Batched SCF step entry points</span>
+<span class="c1"># =============================================================================</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_validate_batch_inputs</span><span class="p">(</span>
+    <span class="n">cache</span><span class="p">:</span> <span class="n">MultipoleSCFCache</span><span class="p">,</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">source_feats</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Shared input validation for batched step entries.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">positions</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">2</span> <span class="ow">or</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">!=</span> <span class="mi">3</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;positions must be (N_total, 3), got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+    <span class="n">n_total</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">source_feats</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">2</span> <span class="ow">or</span> <span class="n">source_feats</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">n_total</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s2">&quot;source_feats must be (N_total, (l_max+1)^2) matching positions[0]; &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">source_feats</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="n">batch_idx</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">1</span> <span class="ow">or</span> <span class="n">batch_idx</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">n_total</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;batch_idx must be (N_total=</span><span class="si">{</span><span class="n">n_total</span><span class="si">}</span><span class="s2">,), got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">batch_idx</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span> <span class="o">!=</span> <span class="n">cache</span><span class="o">.</span><span class="n">device</span> <span class="ow">or</span> <span class="n">source_feats</span><span class="o">.</span><span class="n">device</span> <span class="o">!=</span> <span class="n">cache</span><span class="o">.</span><span class="n">device</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;positions/source_feats must live on cache.device=</span><span class="si">{</span><span class="n">cache</span><span class="o">.</span><span class="n">device</span><span class="si">}</span><span class="s2">, &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;got </span><span class="si">{</span><span class="n">positions</span><span class="o">.</span><span class="n">device</span><span class="si">}</span><span class="s2"> / </span><span class="si">{</span><span class="n">source_feats</span><span class="o">.</span><span class="n">device</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_multipole_scf_step_energy_batch</span><span class="p">(</span>
+    <span class="n">cache</span><span class="p">:</span> <span class="n">MultipoleSCFCache</span><span class="p">,</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">source_feats</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">include_self_interaction</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">quadrupoles</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Batched branch of :func:`multipole_scf_step_energy`.</span>
+
+<span class="sd">    Consumes a batched :class:`MultipoleSCFCache` and a flat</span>
+<span class="sd">    :math:`(N_\text{total}, \dots)` set of per-atom inputs with a ``batch_idx``</span>
+<span class="sd">    mapping atoms to systems. Returns per-atom</span>
+<span class="sd">    :math:`(N_\text{total},)` :math:`\text{float64}` (flat across all systems),</span>
+<span class="sd">    autograd-connected to ``positions`` and ``source_feats``.</span>
+<span class="sd">    Call ``.sum()`` for the total energy or</span>
+<span class="sd">    ``torch.zeros(B).scatter_add(0, batch_idx, E)`` for per-system totals.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    cache : MultipoleSCFCache</span>
+<span class="sd">        Batched cache (``cache.is_batched``).</span>
+<span class="sd">    positions : torch.Tensor, shape (N_total, 3)</span>
+<span class="sd">    source_feats : torch.Tensor, shape (N_total, (l_max+1)**2)</span>
+<span class="sd">        Packed per-atom moments in e3nn spherical layout.</span>
+<span class="sd">    batch_idx : torch.Tensor, shape (N_total,), int32</span>
+<span class="sd">        System index per atom (expected sorted so atoms group by system).</span>
+<span class="sd">    include_self_interaction : bool</span>
+<span class="sd">        ``False`` (default): subtract per-system :math:`0.5 \cdot E_\text{self}`.</span>
+<span class="sd">    quadrupoles : torch.Tensor, optional, shape (N_total, 3, 3)</span>
+<span class="sd">        Cartesian symmetric source quadrupole. When supplied, the additive</span>
+<span class="sd">        batched :math:`\rho_Q(k)` channel and its per-system :math:`l=2` self</span>
+<span class="sd">        term are included (requires a cache built with source ``l_max&gt;=2``).</span>
+<span class="sd">        ``None`` (default) is the :math:`l_{max} \le 1` path.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    torch.Tensor</span>
+<span class="sd">        Per-atom energies, shape :math:`(N_\text{total},)`,</span>
+<span class="sd">        :math:`\text{float64}` on ``cache.device``. Flat across all systems;</span>
+<span class="sd">        forces/stress/charge-grads flow from ``grad(E.sum(), ...)``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">_validate_batch_inputs</span><span class="p">(</span><span class="n">cache</span><span class="p">,</span> <span class="n">positions</span><span class="p">,</span> <span class="n">source_feats</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">)</span>
+    <span class="n">n_total</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">source_feats</span><span class="p">,</span> <span class="n">quadrupoles</span> <span class="o">=</span> <span class="n">_resolve_step_moments</span><span class="p">(</span><span class="n">source_feats</span><span class="p">,</span> <span class="n">quadrupoles</span><span class="p">)</span>
+    <span class="n">charges</span><span class="p">,</span> <span class="n">dipoles_cart</span><span class="p">,</span> <span class="n">l_max</span> <span class="o">=</span> <span class="n">split_source_feats</span><span class="p">(</span><span class="n">source_feats</span><span class="p">)</span>
+    <span class="n">dip</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">dipoles_cart</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">dipoles_cart</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="k">else</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_total</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">source_feats</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">cache</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Delayed import registers the batch_multipole_rho op chain and breaks the</span>
+    <span class="c1"># multipole_autograd_batch &lt;-&gt; multipole_scf_step cycle. Forward and</span>
+    <span class="c1"># (AOT-traced) backward are opaque custom ops -&gt; 0 torch.compile breaks.</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics.multipole_autograd_batch</span>  <span class="c1"># noqa: F401</span>
+
+    <span class="n">rho</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">nvalchemiops</span><span class="o">.</span><span class="n">batch_multipole_rho</span><span class="p">(</span>
+        <span class="n">charges</span><span class="p">,</span>
+        <span class="n">dip</span><span class="p">,</span>
+        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">cache</span><span class="o">.</span><span class="n">source_phi_hat</span><span class="p">,</span>
+        <span class="n">cache</span><span class="o">.</span><span class="n">k_vectors</span><span class="p">,</span>
+        <span class="n">cache</span><span class="o">.</span><span class="n">volume</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="c1"># Additive Cartesian-quadrupole channel (batched).</span>
+    <span class="k">if</span> <span class="n">quadrupoles</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">cache</span><span class="o">.</span><span class="n">source_coeff2</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="s2">&quot;quadrupoles requires a cache built with l_max&gt;=2 &quot;</span>
+                <span class="s2">&quot;(cache.source_coeff2 is None).&quot;</span>
+            <span class="p">)</span>
+        <span class="k">if</span> <span class="n">quadrupoles</span><span class="o">.</span><span class="n">shape</span> <span class="o">!=</span> <span class="p">(</span><span class="n">n_total</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;quadrupoles must be (N_total, 3, 3); got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">quadrupoles</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
+        <span class="n">rho</span> <span class="o">=</span> <span class="n">rho</span> <span class="o">+</span> <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">nvalchemiops</span><span class="o">.</span><span class="n">batch_multipole_rho_q</span><span class="p">(</span>
+            <span class="n">quadrupoles</span><span class="p">,</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">cache</span><span class="o">.</span><span class="n">source_coeff2</span><span class="p">,</span>
+            <span class="n">cache</span><span class="o">.</span><span class="n">k_vectors</span><span class="p">,</span>
+            <span class="n">cache</span><span class="o">.</span><span class="n">volume</span><span class="p">,</span>
+            <span class="n">batch_idx</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="c1"># Per-system value-preserving volume ratio (== 1) so dE/dcell captures</span>
+    <span class="c1"># rho&#39;s 1/V_b dependence. rho is (B, K, 2).</span>
+    <span class="n">vol_ratio</span> <span class="o">=</span> <span class="n">cache</span><span class="o">.</span><span class="n">volume</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span> <span class="o">/</span> <span class="n">cache</span><span class="o">.</span><span class="n">volume</span>  <span class="c1"># (B,)</span>
+    <span class="n">rho</span> <span class="o">=</span> <span class="n">rho</span> <span class="o">*</span> <span class="n">vol_ratio</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="c1"># Per-atom reciprocal energy via the batched spread-transpose gathers</span>
+    <span class="c1"># (phi_hat = 2 f_k rho, (B, K, 2)); ``Σ_i over a system`` equals the</span>
+    <span class="c1"># collective per-system raw reciprocal bit-for-bit. The gathers map the</span>
+    <span class="c1"># (B, K, 2) field to per-atom (N_total, ...) via batch_idx; the detached</span>
+    <span class="c1"># 1/V_b is restored per atom via vol_ratio[batch_idx].</span>
+    <span class="n">bl</span> <span class="o">=</span> <span class="n">batch_idx</span><span class="o">.</span><span class="n">long</span><span class="p">()</span>
+    <span class="n">phi_hat</span> <span class="o">=</span> <span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">cache</span><span class="o">.</span><span class="n">per_k_factor</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">rho</span>  <span class="c1"># (B, K, 2)</span>
+    <span class="n">vr_atom</span> <span class="o">=</span> <span class="n">vol_ratio</span><span class="o">.</span><span class="n">index_select</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">bl</span><span class="p">)</span>
+    <span class="n">g</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">nvalchemiops</span><span class="o">.</span><span class="n">batch_multipole_rho_gather_t</span><span class="p">(</span>
+        <span class="n">phi_hat</span><span class="p">,</span>
+        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">cache</span><span class="o">.</span><span class="n">source_phi_hat</span><span class="p">,</span>
+        <span class="n">cache</span><span class="o">.</span><span class="n">k_vectors</span><span class="p">,</span>
+        <span class="n">cache</span><span class="o">.</span><span class="n">volume</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">*</span> <span class="n">vr_atom</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">scale_atom</span> <span class="o">=</span> <span class="p">(</span><span class="mf">0.5</span> <span class="o">*</span> <span class="n">cache</span><span class="o">.</span><span class="n">volume</span> <span class="o">/</span> <span class="n">_TWO_PI_6</span><span class="p">)</span><span class="o">.</span><span class="n">index_select</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">bl</span><span class="p">)</span>
+    <span class="n">raw_per_atom</span> <span class="o">=</span> <span class="n">scale_atom</span> <span class="o">*</span> <span class="p">(</span><span class="n">charges</span> <span class="o">*</span> <span class="n">g</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="p">(</span><span class="n">dip</span> <span class="o">*</span> <span class="n">g</span><span class="p">[:,</span> <span class="p">[</span><span class="mi">3</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]])</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">quadrupoles</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">g_q</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">nvalchemiops</span><span class="o">.</span><span class="n">batch_multipole_rho_q_gather_t</span><span class="p">(</span>
+            <span class="n">phi_hat</span><span class="p">,</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">cache</span><span class="o">.</span><span class="n">source_coeff2</span><span class="p">,</span>
+            <span class="n">cache</span><span class="o">.</span><span class="n">k_vectors</span><span class="p">,</span>
+            <span class="n">cache</span><span class="o">.</span><span class="n">volume</span><span class="p">,</span>
+            <span class="n">batch_idx</span><span class="p">,</span>
+        <span class="p">)</span> <span class="o">*</span> <span class="n">vr_atom</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="n">raw_per_atom</span> <span class="o">=</span> <span class="n">raw_per_atom</span> <span class="o">+</span> <span class="n">scale_atom</span> <span class="o">*</span> <span class="p">(</span><span class="n">quadrupoles</span> <span class="o">*</span> <span class="n">g_q</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">((</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">2</span><span class="p">))</span>
+
+    <span class="k">if</span> <span class="n">include_self_interaction</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">raw_per_atom</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+
+    <span class="c1"># Per-atom Σ_l c_l moment_l^2 via the shared self-energy op (per-atom, no</span>
+    <span class="c1"># reduction — caller owns it). dipoles only when l_max&gt;=1.</span>
+    <span class="n">dip_self</span> <span class="o">=</span> <span class="n">dipoles_cart</span> <span class="k">if</span> <span class="n">l_max</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">else</span> <span class="kc">None</span>
+    <span class="n">atom_self</span> <span class="o">=</span> <span class="n">_self_energy_op</span><span class="p">(</span><span class="n">cache</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">dip_self</span><span class="p">,</span> <span class="n">quadrupoles</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">raw_per_atom</span> <span class="o">-</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">atom_self</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_multipole_scf_step_features_batch</span><span class="p">(</span>
+    <span class="n">cache</span><span class="p">:</span> <span class="n">MultipoleSCFCache</span><span class="p">,</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">source_feats</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">include_self_interaction</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">quadrupoles</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Batched branch of :func:`multipole_scf_step_features`.</span>
+
+<span class="sd">    Consumes a batched :class:`MultipoleSCFCache`. Returns</span>
+<span class="sd">    :math:`(N_\text{total}, N_\sigma \cdot (\text{feature\_max\_l}+1)^2)` in</span>
+<span class="sd">    the reference permuted flat layout, autograd-connected to ``positions`` and</span>
+<span class="sd">    ``source_feats``.</span>
+
+<span class="sd">    ``quadrupoles`` : optional :math:`(N_\text{total}, 3, 3)` Cartesian-Q</span>
+<span class="sd">    source moments. Adds the batched :math:`\rho_Q` channel so an l=2 source</span>
+<span class="sd">    enriches the projected potential. Requires a cache built with source</span>
+<span class="sd">    ``l_max&gt;=2``. Decoupled from the receiver ``feature_max_l``.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    cache : MultipoleSCFCache</span>
+<span class="sd">        Prebuilt batched cache (``cache.is_batched``).</span>
+<span class="sd">    positions : torch.Tensor, shape (N_total, 3)</span>
+<span class="sd">    source_feats : torch.Tensor, shape (N_total, (l_max+1)**2)</span>
+<span class="sd">        Packed per-atom moments in e3nn spherical layout.</span>
+<span class="sd">    batch_idx : torch.Tensor, shape (N_total,), int32</span>
+<span class="sd">        System index per atom (expected sorted so atoms group by system).</span>
+<span class="sd">    include_self_interaction : bool</span>
+<span class="sd">        If ``False`` (default), subtract the per-system self-interaction</span>
+<span class="sd">        correction using ``cache.feature_overlap_constants``.</span>
+<span class="sd">    quadrupoles : torch.Tensor, optional, shape (N_total, 3, 3)</span>
+<span class="sd">        Cartesian symmetric source quadrupole; see the prose above.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    torch.Tensor</span>
+<span class="sd">        :math:`\text{float64}` on ``cache.device``, shape</span>
+<span class="sd">        :math:`(N_\text{total}, N_\sigma \cdot (\text{feature\_max\_l}+1)^2)`</span>
+<span class="sd">        in the reference permuted flat layout. Autograd-connected to</span>
+<span class="sd">        ``positions`` and ``source_feats``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">_validate_batch_inputs</span><span class="p">(</span><span class="n">cache</span><span class="p">,</span> <span class="n">positions</span><span class="p">,</span> <span class="n">source_feats</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">)</span>
+    <span class="n">n_total</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">source_feats</span><span class="p">,</span> <span class="n">quadrupoles</span> <span class="o">=</span> <span class="n">_resolve_step_moments</span><span class="p">(</span><span class="n">source_feats</span><span class="p">,</span> <span class="n">quadrupoles</span><span class="p">)</span>
+    <span class="n">charges</span><span class="p">,</span> <span class="n">dipoles_cart</span><span class="p">,</span> <span class="n">l_max</span> <span class="o">=</span> <span class="n">split_source_feats</span><span class="p">(</span><span class="n">source_feats</span><span class="p">)</span>
+    <span class="n">dip</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">dipoles_cart</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">dipoles_cart</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="k">else</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_total</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">source_feats</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">cache</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Delayed import registers the batch_multipole_rho + feature-projection op</span>
+    <span class="c1"># chains while breaking the module cycle.</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics.multipole_autograd_batch</span>  <span class="c1"># noqa: F401, E501</span>
+
+    <span class="n">rho</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">nvalchemiops</span><span class="o">.</span><span class="n">batch_multipole_rho</span><span class="p">(</span>
+        <span class="n">charges</span><span class="p">,</span>
+        <span class="n">dip</span><span class="p">,</span>
+        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">cache</span><span class="o">.</span><span class="n">source_phi_hat</span><span class="p">,</span>
+        <span class="n">cache</span><span class="o">.</span><span class="n">k_vectors</span><span class="p">,</span>
+        <span class="n">cache</span><span class="o">.</span><span class="n">volume</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="c1"># Additive batched Cartesian-quadrupole source channel.</span>
+    <span class="k">if</span> <span class="n">quadrupoles</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">cache</span><span class="o">.</span><span class="n">source_coeff2</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="s2">&quot;quadrupoles requires a cache built with l_max&gt;=2 &quot;</span>
+                <span class="s2">&quot;(cache.source_coeff2 is None).&quot;</span>
+            <span class="p">)</span>
+        <span class="k">if</span> <span class="n">quadrupoles</span><span class="o">.</span><span class="n">shape</span> <span class="o">!=</span> <span class="p">(</span><span class="n">n_total</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;quadrupoles must be (N_total, 3, 3); got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">quadrupoles</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
+        <span class="n">rho</span> <span class="o">=</span> <span class="n">rho</span> <span class="o">+</span> <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">nvalchemiops</span><span class="o">.</span><span class="n">batch_multipole_rho_q</span><span class="p">(</span>
+            <span class="n">quadrupoles</span><span class="p">,</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">cache</span><span class="o">.</span><span class="n">source_coeff2</span><span class="p">,</span>
+            <span class="n">cache</span><span class="o">.</span><span class="n">k_vectors</span><span class="p">,</span>
+            <span class="n">cache</span><span class="o">.</span><span class="n">volume</span><span class="p">,</span>
+            <span class="n">batch_idx</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="c1"># Per-system value-preserving volume ratio so the explicit 1/V in the</span>
+    <span class="c1"># feature carries its (diagonal) volume-grad. cache.volume is per-system</span>
+    <span class="c1"># det(cell).</span>
+    <span class="n">vol_ratio</span> <span class="o">=</span> <span class="p">(</span><span class="n">cache</span><span class="o">.</span><span class="n">volume</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span> <span class="o">/</span> <span class="n">cache</span><span class="o">.</span><span class="n">volume</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">potential</span> <span class="o">=</span> <span class="n">cache</span><span class="o">.</span><span class="n">per_k_factor</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">rho</span> <span class="o">*</span> <span class="n">vol_ratio</span>
+
+    <span class="c1"># Raw features (N_total, N_sigma, 4), natural layout. Thread the</span>
+    <span class="c1"># cell-differentiable receiver_phi_hat (l&lt;=1 block) + k_vectors so</span>
+    <span class="c1"># dfeatures/dcell flows.</span>
+    <span class="n">raw_features</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">nvalchemiops</span><span class="o">.</span><span class="n">batch_multipole_project_raw_features</span><span class="p">(</span>
+        <span class="n">potential</span><span class="p">,</span>
+        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">cache</span><span class="o">.</span><span class="n">receiver_phi_hat</span><span class="p">[:,</span> <span class="p">:,</span> <span class="p">:,</span> <span class="p">:</span><span class="mi">4</span><span class="p">],</span>
+        <span class="n">cache</span><span class="o">.</span><span class="n">k_vectors</span><span class="p">,</span>
+        <span class="n">cache</span><span class="o">.</span><span class="n">k_factor_proj</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Self-interaction subtract. source_feats is already in the</span>
+    <span class="c1"># [q, mu_y, mu_z, mu_x] layout; zero-pad when l_max=0 so the (N_sigma, 4)</span>
+    <span class="c1"># broadcast works without a branch.</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">include_self_interaction</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">l_max</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">src_lm</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span>
+                <span class="p">[</span>
+                    <span class="n">source_feats</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+                    <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_total</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">cache</span><span class="o">.</span><span class="n">device</span><span class="p">),</span>
+                <span class="p">],</span>
+                <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">src_lm</span> <span class="o">=</span> <span class="n">source_feats</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="n">oc</span> <span class="o">=</span> <span class="n">cache</span><span class="o">.</span><span class="n">feature_overlap_constants</span>  <span class="c1"># (N_sigma, 2)</span>
+        <span class="n">oc_per_lm</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span>
+            <span class="p">[</span><span class="n">oc</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">:</span><span class="mi">1</span><span class="p">],</span> <span class="n">oc</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span>
+        <span class="p">)</span>  <span class="c1"># (N_sigma, 4)</span>
+        <span class="n">self_corr</span> <span class="o">=</span> <span class="n">src_lm</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">oc_per_lm</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">features_natural</span> <span class="o">=</span> <span class="n">raw_features</span> <span class="o">-</span> <span class="n">self_corr</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">features_natural</span> <span class="o">=</span> <span class="n">raw_features</span>
+
+    <span class="c1"># Batched l=2 receiver block (decoupled from source l_max).</span>
+    <span class="k">if</span> <span class="n">cache</span><span class="o">.</span><span class="n">feature_max_l</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">features_natural</span> <span class="o">=</span> <span class="n">features_natural</span><span class="p">[:,</span> <span class="p">:,</span> <span class="p">:</span><span class="mi">1</span><span class="p">]</span>  <span class="c1"># l=0-only receiver</span>
+    <span class="k">elif</span> <span class="n">cache</span><span class="o">.</span><span class="n">feature_max_l</span> <span class="o">&gt;=</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="n">raw_l2</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">nvalchemiops</span><span class="o">.</span><span class="n">batch_multipole_project_raw_features_quadrupole</span><span class="p">(</span>
+            <span class="n">potential</span><span class="p">,</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">cache</span><span class="o">.</span><span class="n">receiver_phi_hat</span><span class="p">[:,</span> <span class="p">:,</span> <span class="p">:,</span> <span class="mi">4</span><span class="p">:</span><span class="mi">9</span><span class="p">],</span>
+            <span class="n">cache</span><span class="o">.</span><span class="n">k_vectors</span><span class="p">,</span>
+            <span class="n">cache</span><span class="o">.</span><span class="n">k_factor_proj</span><span class="p">,</span>
+            <span class="n">batch_idx</span><span class="p">,</span>
+        <span class="p">)</span>  <span class="c1"># (N_total, N_σ, 5)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">include_self_interaction</span> <span class="ow">and</span> <span class="n">quadrupoles</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics._multipole_moments</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+                <span class="n">cartesian_quadrupole_to_e3nn</span><span class="p">,</span>
+            <span class="p">)</span>
+
+            <span class="n">src_e3nn_l2</span> <span class="o">=</span> <span class="n">cartesian_quadrupole_to_e3nn</span><span class="p">(</span><span class="n">quadrupoles</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">))</span>
+            <span class="n">self_corr_l2</span> <span class="o">=</span> <span class="n">src_e3nn_l2</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">cache</span><span class="o">.</span><span class="n">feature_overlap_l2</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span>
+                <span class="mi">1</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">n_sigma</span><span class="p">,</span> <span class="mi">1</span>
+            <span class="p">)</span>
+            <span class="n">features_l2</span> <span class="o">=</span> <span class="n">raw_l2</span> <span class="o">-</span> <span class="n">self_corr_l2</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">features_l2</span> <span class="o">=</span> <span class="n">raw_l2</span>
+        <span class="n">features_natural</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">features_natural</span><span class="p">,</span> <span class="n">features_l2</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="n">n_lm</span> <span class="o">=</span> <span class="p">(</span><span class="n">cache</span><span class="o">.</span><span class="n">feature_max_l</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span>
+    <span class="n">flat_natural</span> <span class="o">=</span> <span class="n">features_natural</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">n_total</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">n_sigma</span> <span class="o">*</span> <span class="n">n_lm</span><span class="p">)</span>
+    <span class="c1"># Inverse-permute to the reference flat layout via the cache&#39;s precomputed</span>
+    <span class="c1"># argsort (position-independent — no per-call sort).</span>
+    <span class="k">return</span> <span class="n">flat_natural</span><span class="o">.</span><span class="n">index_select</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">cache</span><span class="o">.</span><span class="n">out_col_inv_perm</span><span class="p">)</span>
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># Ewald SCF step — cache-aware multipole_ewald_summation</span>
+<span class="c1"># =============================================================================</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">multipole_ewald_scf_step_energy</span><span class="p">(</span>
+    <span class="n">cache</span><span class="p">:</span> <span class="n">MultipoleSCFCache</span><span class="p">,</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">multipole_moments</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">idx_j</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">neighbor_ptr</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">unit_shifts</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;GTO-Ewald total energy using a pre-built SCF cache.</span>
+
+<span class="sd">    SCF-loop friendly analog of :func:`multipole_ewald_summation`: the</span>
+<span class="sd">    position-independent k-space state (k-vectors, :math:`\hat\phi` tables,</span>
+<span class="sd">    damped ``per_k_factor``, overlap constants) lives in ``cache``, so each</span>
+<span class="sd">    step only recomputes the moment-dependent arithmetic and the</span>
+<span class="sd">    neighbor-list pair sum, saving the per-iteration k-vector and</span>
+<span class="sd">    :math:`\exp(-\sigma_c^2 k^2)` generation.</span>
+
+<span class="sd">    Cache requirements</span>
+<span class="sd">    ------------------</span>
+<span class="sd">    ``cache`` must have been built with ``alpha`` (non-None):</span>
+
+<span class="sd">        cache = prepare_multipole_scf_cache(</span>
+<span class="sd">            cell, sigma=sigma, alpha=alpha, k_cutoff=kcut</span>
+<span class="sd">        )</span>
+
+<span class="sd">    A direct-k-space cache (``alpha=None``) would give the wrong reciprocal</span>
+<span class="sd">    kernel (:math:`F/k^2` instead of</span>
+<span class="sd">    :math:`F \exp(-k^2 / (4 \alpha^2)) / k^2`) and is rejected. Use</span>
+<span class="sd">    :func:`multipole_scf_step_energy` for the direct-k-space path.</span>
+
+<span class="sd">    Single-system vs batched dispatch</span>
+<span class="sd">    ---------------------------------</span>
+<span class="sd">    Same convention as :func:`multipole_ewald_summation`:</span>
+
+<span class="sd">    * ``batch_idx=None`` — single system; cache must be single-system</span>
+<span class="sd">      (built from a ``(3, 3)`` cell); returns per-atom ``(N,)`` float64.</span>
+<span class="sd">    * ``batch_idx`` provided — B systems flat-packed; cache must be batched</span>
+<span class="sd">      (built from a ``(B, 3, 3)`` cell); returns per-atom</span>
+<span class="sd">      ``(N_total,)`` (flat across systems).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    cache :</span>
+<span class="sd">        Prebuilt Ewald cache. Must be built with source ``l_max&gt;=2`` for the</span>
+<span class="sd">        :math:`(N, 9)` (quadrupole) path.</span>
+<span class="sd">    positions : torch.Tensor, shape (N, 3) or (N_total, 3)</span>
+<span class="sd">    multipole_moments : torch.Tensor, shape (N, (l_max + 1)**2)</span>
+<span class="sd">        Packed e3nn moments: :math:`(N, 1)` / :math:`(N, 4)` / :math:`(N, 9)`</span>
+<span class="sd">        for :math:`l_{max} = 0/1/2`.</span>
+<span class="sd">    idx_j, neighbor_ptr, unit_shifts : torch.Tensor</span>
+<span class="sd">        Flat CSR neighbor list; same convention as</span>
+<span class="sd">        :func:`multipole_ewald_summation`.</span>
+<span class="sd">    batch_idx : torch.Tensor, optional</span>
+<span class="sd">        ``(N_total,)`` int32. ``None`` selects single-system mode.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    torch.Tensor</span>
+<span class="sd">        Per-atom :math:`(N,)` :math:`\text{float64}` (single) or</span>
+<span class="sd">        :math:`(N_\text{total},)` (batched, flat across systems).</span>
+<span class="sd">        Call ``.sum()`` for the total energy or</span>
+<span class="sd">        ``torch.zeros(B).scatter_add(0, batch_idx, E)`` for per-system totals;</span>
+<span class="sd">        forces/stress/charge-grads flow from ``grad(E.sum(), ...)``.</span>
+<span class="sd">        Autograd-connected to ``positions`` and ``multipole_moments``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">cache</span><span class="o">.</span><span class="n">alpha</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s2">&quot;multipole_ewald_scf_step_energy requires an Ewald cache &quot;</span>
+            <span class="s2">&quot;built with alpha=α (non-None). Got alpha=None (direct-k-space cache); &quot;</span>
+            <span class="s2">&quot;use multipole_scf_step_energy for the direct-k-space path.&quot;</span>
+        <span class="p">)</span>
+    <span class="n">sigma</span> <span class="o">=</span> <span class="n">cache</span><span class="o">.</span><span class="n">sigma</span>
+    <span class="n">alpha</span> <span class="o">=</span> <span class="n">cache</span><span class="o">.</span><span class="n">alpha</span>
+
+    <span class="n">_check_batch_dispatch</span><span class="p">(</span><span class="n">cache</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">)</span>
+    <span class="n">is_batch</span> <span class="o">=</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+
+    <span class="c1"># Delayed imports to avoid circular module graph.</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics.multipole_ewald</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+        <span class="n">_multipole_ewald_self_energy_per_atom</span><span class="p">,</span>
+        <span class="n">multipole_real_space_energy</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Split the packed moments: the l&lt;=1 block (+ separate Cartesian quadrupole)</span>
+    <span class="c1"># is what the reciprocal step and self-energy consume; the real-space term</span>
+    <span class="c1"># takes the full packed tensor.</span>
+    <span class="n">source_feats_l1</span><span class="p">,</span> <span class="n">quadrupoles</span><span class="p">,</span> <span class="n">l_max</span> <span class="o">=</span> <span class="n">split_packed_for_kernels</span><span class="p">(</span><span class="n">multipole_moments</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">quadrupoles</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">cache</span><span class="o">.</span><span class="n">source_coeff2</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s2">&quot;an (N, 9) multipole_moments requires a cache built with l_max&gt;=2 &quot;</span>
+            <span class="s2">&quot;(cache.source_coeff2 is None).&quot;</span>
+        <span class="p">)</span>
+
+    <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+    <span class="n">input_dtype</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="n">coulomb_scale</span> <span class="o">=</span> <span class="n">FIELD_CONSTANT</span> <span class="o">/</span> <span class="p">(</span><span class="mf">4.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">is_batch</span><span class="p">:</span>
+        <span class="n">B</span> <span class="o">=</span> <span class="n">cache</span><span class="o">.</span><span class="n">batch_size</span>
+        <span class="n">sigmas</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">B</span><span class="p">,),</span> <span class="n">sigma</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">input_dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">alphas</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">B</span><span class="p">,),</span> <span class="n">alpha</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">input_dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">real</span> <span class="o">=</span> <span class="n">multipole_real_space_energy</span><span class="p">(</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">multipole_moments</span><span class="p">,</span>
+            <span class="n">cache</span><span class="o">.</span><span class="n">cell</span><span class="p">,</span>
+            <span class="n">idx_j</span><span class="p">,</span>
+            <span class="n">neighbor_ptr</span><span class="p">,</span>
+            <span class="n">unit_shifts</span><span class="p">,</span>
+            <span class="n">sigmas</span><span class="p">,</span>
+            <span class="n">alphas</span><span class="p">,</span>
+            <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">sigma_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="n">sigma</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">input_dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">alpha_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="n">alpha</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">input_dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">real</span> <span class="o">=</span> <span class="n">multipole_real_space_energy</span><span class="p">(</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">multipole_moments</span><span class="p">,</span>
+            <span class="n">cache</span><span class="o">.</span><span class="n">cell</span><span class="p">,</span>
+            <span class="n">idx_j</span><span class="p">,</span>
+            <span class="n">neighbor_ptr</span><span class="p">,</span>
+            <span class="n">unit_shifts</span><span class="p">,</span>
+            <span class="n">sigma_t</span><span class="p">,</span>
+            <span class="n">alpha_t</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="c1"># multipole_real_space_energy returns per-atom (N,)/(N_total,) for all l_max.</span>
+    <span class="n">e_real_per_atom</span> <span class="o">=</span> <span class="n">coulomb_scale</span> <span class="o">*</span> <span class="n">real</span>
+
+    <span class="c1"># Reciprocal via cache (no per-step k-space rebuild).</span>
+    <span class="c1"># include_self_interaction=True returns the raw reciprocal; the Ewald self</span>
+    <span class="c1"># term is handled analytically below.</span>
+    <span class="c1"># multipole_scf_step_energy returns per-atom (N,)/(N_total,).</span>
+    <span class="n">e_recip_per_atom</span> <span class="o">=</span> <span class="n">multipole_scf_step_energy</span><span class="p">(</span>
+        <span class="n">cache</span><span class="p">,</span>
+        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">source_feats_l1</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">include_self_interaction</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">quadrupoles</span><span class="o">=</span><span class="n">quadrupoles</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">atom_self</span> <span class="o">=</span> <span class="n">_multipole_ewald_self_energy_per_atom</span><span class="p">(</span>
+        <span class="n">source_feats_l1</span><span class="p">,</span> <span class="n">sigma</span><span class="p">,</span> <span class="n">alpha</span><span class="p">,</span> <span class="n">quadrupoles</span><span class="o">=</span><span class="n">quadrupoles</span>
+    <span class="p">)</span>
+    <span class="c1"># Return per-atom (N,)/(N_total,) — caller owns the reduction.</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">e_real_per_atom</span> <span class="o">+</span> <span class="n">e_recip_per_atom</span> <span class="o">-</span> <span class="n">atom_self</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

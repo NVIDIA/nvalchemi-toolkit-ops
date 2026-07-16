@@ -13,10 +13,33 @@ These examples show how to:
 
 * Compute direct Coulomb interactions (damped and undamped)
 * Use Ewald summation for periodic systems with automatic parameter estimation
+* Apply two-dimensional slab corrections for Ewald and PME interfacial systems
 * Apply Particle Mesh Ewald (PME) for O(N log N) scaling
 * Work with neighbor list and neighbor matrix formats
 * Perform batch evaluation for multiple systems
 * Leverage autograd for computing forces and gradients
+* Compute multipole Ewald and PME totals with charges, dipoles, and
+  quadrupoles (l_max = 0 / 1 / 2), including stress tensors via the
+  cell gradient and force-loss-style training via the second-order
+  backward Warp kernel
+* Extract atom-centered multipole features by projecting the periodic
+  potential onto receiver GTOs
+* Amortize the position-independent reciprocal-space state with the
+  multipole SCF cache and reuse it across many step evaluations
+* Train on forces, stress, and charge gradients via the energy-derivative
+  contract (the recommended replacement for the deprecated direct-output flags)
+
+The full Torch Ewald/PME APIs support first- and second-order energy-derived
+training workflows. The full JAX Ewald/PME APIs support first-order
+energy-derived gradients for positions, charges, and row-vector displacement
+virials. Higher-order JAX support is limited to tested position and charge
+scalar losses; PME cell/stress/strain higher-order derivatives are unsupported.
+Electrostatics does not expose public Hessian or Jacobian APIs.
+
+Point-charge Ewald/PME examples use ``float64`` for accuracy-sensitive
+reciprocal-space calculations and gradient checks. The APIs also support
+``float32`` when throughput is the priority; keep all floating inputs and
+precomputed metadata in a call on a consistent dtype.
 
 
 
@@ -94,6 +117,125 @@ These examples show how to:
     </div>
 
 
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to apply the Yeh-Berkowitz / Ballenegger two-dimensional slab correction to Ewald and Particle Mesh Ewald (PME) electrostatics. The correction is used for slab-like systems with two periodic directions and one non-periodic direction, such as interfaces with vacuum padding.">
+
+.. only:: html
+
+  .. image:: /examples/electrostatics/images/thumb/sphx_glr_05_slab_correction_example_thumb.png
+    :alt:
+
+  :doc:`/examples/electrostatics/05_slab_correction_example`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">2D Slab Correction for Ewald and PME</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to apply the Yeh-Berkowitz / Ballenegger two-dimensional slab correction to JAX Ewald and Particle Mesh Ewald (PME) electrostatics. The correction is used for slab-like systems with two periodic directions and one non-periodic direction, such as interfaces with vacuum padding.">
+
+.. only:: html
+
+  .. image:: /examples/electrostatics/images/thumb/sphx_glr_06_jax_slab_correction_example_thumb.png
+    :alt:
+
+  :doc:`/examples/electrostatics/06_jax_slab_correction_example`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">2D Slab Correction for Ewald and PME with JAX</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates the GTO-Ewald multipole electrostatics path for periodic systems with charges (l_max=0), dipoles (l_max=1), and quadrupoles (l_max=2). The Ewald path uses a direct k-space sum for the reciprocal piece.">
+
+.. only:: html
+
+  .. image:: /examples/electrostatics/images/thumb/sphx_glr_07_multipole_ewald_summation_example_thumb.png
+    :alt:
+
+  :doc:`/examples/electrostatics/07_multipole_ewald_summation_example`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Multipole Ewald Summation (charges + dipoles + quadrupoles)</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates the GTO-PME multipole electrostatics path for periodic systems with charges (l_max=0), dipoles (l_max=1), and quadrupoles (l_max=2). PME accelerates the reciprocal-space piece via B-spline interpolation + FFT, dropping the asymptotic cost from O(N · N_k) (Ewald direct k-space) to O(M log M + N · p³).">
+
+.. only:: html
+
+  .. image:: /examples/electrostatics/images/thumb/sphx_glr_08_multipole_pme_example_thumb.png
+    :alt:
+
+  :doc:`/examples/electrostatics/08_multipole_pme_example`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Multipole Particle Mesh Ewald (charges + dipoles + quadrupoles)</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates multipole_electrostatic_features — a reciprocal-space projection that turns the periodic electrostatic potential of a set of source multipoles into LODE/ACE-style per-atom feature vectors. Unlike the energy paths (Ewald / PME), this entry point needs no neighbor list: every atom&#x27;s descriptor is computed directly from the k-space potential, projected onto a multi-σ basis of receiver Gaussian-type orbitals (GTOs).">
+
+.. only:: html
+
+  .. image:: /examples/electrostatics/images/thumb/sphx_glr_09_multipole_features_example_thumb.png
+    :alt:
+
+  :doc:`/examples/electrostatics/09_multipole_features_example`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Atom-Centered Multipole Electrostatic Features</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates the two-phase prepare_cache + scf_step pattern for the reciprocal-space (&quot;k-space&quot;) formulation of periodic multipole electrostatics. Rather than the real-space + reciprocal split of multipole_ewald_summation, this path evaluates the periodic Coulomb interaction directly in reciprocal space — the GTO smearing of each multipole makes the k-sum converge — so its whole geometry setup is cell-only and can be built once and reused.">
+
+.. only:: html
+
+  .. image:: /examples/electrostatics/images/thumb/sphx_glr_10_multipole_scf_cache_example_thumb.png
+    :alt:
+
+  :doc:`/examples/electrostatics/10_multipole_scf_cache_example`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Multipole SCF Cache + Step (amortized fixed-cell workflow)</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates the recommended way to obtain forces, virial/stress, and charge gradients from PME (and Ewald) for machine-learning interatomic potential (MLIP) training: energy is the only differentiable output, and all derivatives are taken from it with torch.autograd.grad.">
+
+.. only:: html
+
+  .. image:: /examples/electrostatics/images/thumb/sphx_glr_11_pme_energy_derivative_training_thumb.png
+    :alt:
+
+  :doc:`/examples/electrostatics/11_pme_energy_derivative_training`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Energy-Derivative Training Contract (Forces, Stress, Charge Gradients)</div>
+    </div>
+
+
 .. thumbnail-parent-div-close
 
 .. raw:: html
@@ -108,4 +250,11 @@ These examples show how to:
    /examples/electrostatics/02_ewald_summation_example
    /examples/electrostatics/03_pme_example
    /examples/electrostatics/04_jax_pme_example
+   /examples/electrostatics/05_slab_correction_example
+   /examples/electrostatics/06_jax_slab_correction_example
+   /examples/electrostatics/07_multipole_ewald_summation_example
+   /examples/electrostatics/08_multipole_pme_example
+   /examples/electrostatics/09_multipole_features_example
+   /examples/electrostatics/10_multipole_scf_cache_example
+   /examples/electrostatics/11_pme_energy_derivative_training
 

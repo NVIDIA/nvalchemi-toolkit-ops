@@ -2,18 +2,18 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../" >
+<html lang="en" data-content_root="../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>Examples Gallery &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>Examples Gallery &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -35,16 +35,17 @@
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -55,13 +56,13 @@
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
     <link rel="next" title="B-Spline Interpolation for Particle Mesh Methods" href="01_bspline_visualization.html" />
-    <link rel="prev" title="Molecular Dynamics Integrators" href="../userguide/components/dynamics.html" />
+    <link rel="prev" title="Kernel Style Guide" href="../userguide/about/kernel-style-guide.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -128,8 +129,6 @@
   
   
     
-    
-      
     
     
     <img src="../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -364,12 +363,13 @@ document.write(`
   <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
   <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="01_bspline_visualization.html">B-Spline Interpolation for Particle Mesh Methods</a></li>
+<li class="toctree-l1"><a class="reference internal" href="02_segment_ops_autograd.html">Segment Ops: Pooling, Autograd, and <code class="docutils literal notranslate"><span class="pre">torch.compile</span></code></a></li>
 </ul>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1 has-children"><a class="reference internal" href="dispersion/index.html">Dispersion Interactions</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-1"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="dispersion/03_jax_dftd3_molecule.html">JAX DFT-D3 Dispersion Correction for a Molecule</a></li>
 <li class="toctree-l2"><a class="reference internal" href="dispersion/01_dftd3_molecule.html">DFT-D3 Dispersion Correction for a Molecule</a></li>
 <li class="toctree-l2"><a class="reference internal" href="dispersion/02_dftd3_batch_crystals.html">DFT-D3 Dispersion Correction for Batched Crystals</a></li>
-<li class="toctree-l2"><a class="reference internal" href="dispersion/03_jax_dftd3_molecule.html">JAX DFT-D3 Dispersion Correction for a Molecule</a></li>
 </ul>
 </li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="dynamics/index.html">Dynamics Examples</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-2"><i class="fa-solid fa-chevron-down"></i></label><ul>
@@ -391,10 +391,18 @@ document.write(`
 <li class="toctree-l2"><a class="reference internal" href="electrostatics/02_ewald_summation_example.html">Ewald Summation for Long-Range Electrostatics</a></li>
 <li class="toctree-l2"><a class="reference internal" href="electrostatics/03_pme_example.html">Particle Mesh Ewald (PME) for Long-Range Electrostatics</a></li>
 <li class="toctree-l2"><a class="reference internal" href="electrostatics/04_jax_pme_example.html">Particle Mesh Ewald (PME) with JAX</a></li>
+<li class="toctree-l2"><a class="reference internal" href="electrostatics/05_slab_correction_example.html">2D Slab Correction for Ewald and PME</a></li>
+<li class="toctree-l2"><a class="reference internal" href="electrostatics/06_jax_slab_correction_example.html">2D Slab Correction for Ewald and PME with JAX</a></li>
+<li class="toctree-l2"><a class="reference internal" href="electrostatics/07_multipole_ewald_summation_example.html">Multipole Ewald Summation (charges + dipoles + quadrupoles)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="electrostatics/08_multipole_pme_example.html">Multipole Particle Mesh Ewald (charges + dipoles + quadrupoles)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="electrostatics/09_multipole_features_example.html">Atom-Centered Multipole Electrostatic Features</a></li>
+<li class="toctree-l2"><a class="reference internal" href="electrostatics/10_multipole_scf_cache_example.html">Multipole SCF Cache + Step (amortized fixed-cell workflow)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="electrostatics/11_pme_energy_derivative_training.html">Energy-Derivative Training Contract (Forces, Stress, Charge Gradients)</a></li>
 </ul>
 </li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="neighbors/index.html">Neighbor Lists</a><input class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-4"><i class="fa-solid fa-chevron-down"></i></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="neighbors/01_simple_neighbor_list.html">Simple Neighbor List Example</a></li>
+
 
 
 
@@ -433,6 +441,15 @@ document.write(`
 <li class="toctree-l2"><a class="reference internal" href="neighbors/05_jax_neighbor_list.html">JAX Neighbor List Example</a></li>
 
 
+
+
+
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="neighbors/06_pair_outputs_lj.html">Targeted Lennard-Jones Pair Outputs</a></li>
 
 
 
@@ -504,6 +521,9 @@ hardware. The code can be downloaded as Python scripts or Jupyter notebooks.</p>
 <div class="sphx-glr-thumbnails"><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates B-spline charge spreading and gathering operations used in Particle Mesh Ewald (PME) and related methods. B-splines provide smooth interpolation between particle positions and mesh grid points."><img alt="" src="../_images/sphx_glr_01_bspline_visualization_thumb.png" />
 <p><a class="reference internal" href="01_bspline_visualization.html"><span class="doc">B-Spline Interpolation for Particle Mesh Methods</span></a></p>
   <div class="sphx-glr-thumbnail-title">B-Spline Interpolation for Particle Mesh Methods</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="Segment operations are the scatter/gather primitives behind graph pooling and message passing. Each one reduces or broadcasts a per-element array over variable-length segments defined by a sorted index — exactly the operation you need to pool per-atom quantities up to per-molecule ones (and to push per-molecule quantities back down to atoms)."><img alt="" src="../_images/sphx_glr_02_segment_ops_autograd_thumb.png" />
+<p><a class="reference internal" href="02_segment_ops_autograd.html"><span class="doc">Segment Ops: Pooling, Autograd, and torch.compile</span></a></p>
+  <div class="sphx-glr-thumbnail-title">Segment Ops: Pooling, Autograd, and torch.compile</div>
 </div></div><div class="toctree-wrapper compound">
 </div>
 </section>
@@ -517,15 +537,15 @@ dispersion corrections with environment-dependent C6 coefficients.</p>
 <li><p>Process batches of crystal structures</p></li>
 <li><p>Integrate with PyTorch for differentiable workflows</p></li>
 </ul>
-<div class="sphx-glr-thumbnails"><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute the DFT-D3 dispersion energy and forces for a single molecular system using GPU-accelerated kernels."><img alt="" src="../_images/sphx_glr_01_dftd3_molecule_thumb.png" />
+<div class="sphx-glr-thumbnails"><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute the DFT-D3 dispersion energy and forces for a single molecular system using the JAX API with GPU-accelerated Warp kernels."><img alt="" src="../_images/sphx_glr_03_jax_dftd3_molecule_thumb.png" />
+<p><a class="reference internal" href="dispersion/03_jax_dftd3_molecule.html"><span class="doc">JAX DFT-D3 Dispersion Correction for a Molecule</span></a></p>
+  <div class="sphx-glr-thumbnail-title">JAX DFT-D3 Dispersion Correction for a Molecule</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute the DFT-D3 dispersion energy and forces for a single molecular system using GPU-accelerated kernels."><img alt="" src="../_images/sphx_glr_01_dftd3_molecule_thumb.png" />
 <p><a class="reference internal" href="dispersion/01_dftd3_molecule.html"><span class="doc">DFT-D3 Dispersion Correction for a Molecule</span></a></p>
   <div class="sphx-glr-thumbnail-title">DFT-D3 Dispersion Correction for a Molecule</div>
 </div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates GPU-accelerated DFT-D3 calculations for batches of periodic crystal structures. Batch processing is essential for high-throughput computational materials screening and allows efficient parallelization across multiple structures simultaneously."><img alt="" src="../_images/sphx_glr_02_dftd3_batch_crystals_thumb.png" />
 <p><a class="reference internal" href="dispersion/02_dftd3_batch_crystals.html"><span class="doc">DFT-D3 Dispersion Correction for Batched Crystals</span></a></p>
   <div class="sphx-glr-thumbnail-title">DFT-D3 Dispersion Correction for Batched Crystals</div>
-</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute the DFT-D3 dispersion energy and forces for a single molecular system using the JAX API with GPU-accelerated Warp kernels."><img alt="" src="../_images/sphx_glr_03_jax_dftd3_molecule_thumb.png" />
-<p><a class="reference internal" href="dispersion/03_jax_dftd3_molecule.html"><span class="doc">JAX DFT-D3 Dispersion Correction for a Molecule</span></a></p>
-  <div class="sphx-glr-thumbnail-title">JAX DFT-D3 Dispersion Correction for a Molecule</div>
 </div></div></section>
 <section id="dynamics-examples">
 <h1>Dynamics Examples<a class="headerlink" href="#dynamics-examples" title="Link to this heading">#</a></h1>
@@ -616,8 +636,8 @@ practical workflows with neighbor list management and periodic boundaries.</p>
 </dd>
 <dt>11_fire2_variable_cell.py</dt><dd><p>Variable-cell FIRE2 optimization for joint atom + cell relaxation.</p>
 <ul class="simple">
-<li><p>Same pack/unpack workflow as <code class="docutils literal notranslate"><span class="pre">07_fire_variable_cell.py</span></code></p></li>
-<li><p>Uses <code class="docutils literal notranslate"><span class="pre">fire2_step</span></code> on extended DOF arrays</p></li>
+<li><p>Uses <code class="docutils literal notranslate"><span class="pre">fire2_step_coord_cell</span></code> for coupled coordinate/cell updates</p></li>
+<li><p>Preserves fractional coordinates during cell-only motion</p></li>
 <li><p>Simpler state than FIRE (no masses, fewer per-system arrays)</p></li>
 </ul>
 </dd>
@@ -664,7 +684,11 @@ heterogeneous systems but requires atomic accumulation.</p></li>
 </section>
 <section id="variable-cell-optimization">
 <h3>Variable-Cell Optimization<a class="headerlink" href="#variable-cell-optimization" title="Link to this heading">#</a></h3>
-<p>The <code class="docutils literal notranslate"><span class="pre">cell_filter</span></code> utilities enable joint optimization of positions and cell:</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">cell_filter</span></code> utilities enable joint optimization of positions and cell
+with FIRE. FIRE2 variable-cell optimization should use the coupled
+<code class="docutils literal notranslate"><span class="pre">fire2_step_coord_cell</span></code> adapter, which applies the affine coordinate remap
+implied by cell motion.</p>
+<p>Generic cell-filter workflow for optimizers such as FIRE:</p>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="c1"># 1. Align cell to upper-triangular form</span>
 <span class="n">positions</span><span class="p">,</span> <span class="n">cell</span> <span class="o">=</span> <span class="n">align_cell</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">cell</span><span class="p">)</span>
 
@@ -725,7 +749,7 @@ heterogeneous systems but requires atomic accumulation.</p></li>
 </div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates batched geometry optimization using the FIRE2 optimizer (Guenole et al., 2020) with batch_idx batching."><img alt="" src="../_images/sphx_glr_10_fire2_batched_thumb.png" />
 <p><a class="reference internal" href="dynamics/10_fire2_batched.html"><span class="doc">Batched FIRE2 Optimization with LJ Clusters</span></a></p>
   <div class="sphx-glr-thumbnail-title">Batched FIRE2 Optimization with LJ Clusters</div>
-</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates joint optimization of atomic positions and cell parameters using the FIRE2 optimizer (Guenole et al., 2020) with manual pack/unpack of extended arrays."><img alt="" src="../_images/sphx_glr_11_fire2_variable_cell_thumb.png" />
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates joint optimization of atomic positions and cell parameters using the coupled FIRE2 PyTorch adapter (Guenole et al., 2020)."><img alt="" src="../_images/sphx_glr_11_fire2_variable_cell_thumb.png" />
 <p><a class="reference internal" href="dynamics/11_fire2_variable_cell.html"><span class="doc">Variable-Cell FIRE2 Optimization with LJ Potential</span></a></p>
   <div class="sphx-glr-thumbnail-title">Variable-Cell FIRE2 Optimization with LJ Potential</div>
 </div></div></section>
@@ -739,11 +763,32 @@ Mesh Ewald (PME).</p>
 <ul class="simple">
 <li><p>Compute direct Coulomb interactions (damped and undamped)</p></li>
 <li><p>Use Ewald summation for periodic systems with automatic parameter estimation</p></li>
+<li><p>Apply two-dimensional slab corrections for Ewald and PME interfacial systems</p></li>
 <li><p>Apply Particle Mesh Ewald (PME) for O(N log N) scaling</p></li>
 <li><p>Work with neighbor list and neighbor matrix formats</p></li>
 <li><p>Perform batch evaluation for multiple systems</p></li>
 <li><p>Leverage autograd for computing forces and gradients</p></li>
+<li><p>Compute multipole Ewald and PME totals with charges, dipoles, and
+quadrupoles (l_max = 0 / 1 / 2), including stress tensors via the
+cell gradient and force-loss-style training via the second-order
+backward Warp kernel</p></li>
+<li><p>Extract atom-centered multipole features by projecting the periodic
+potential onto receiver GTOs</p></li>
+<li><p>Amortize the position-independent reciprocal-space state with the
+multipole SCF cache and reuse it across many step evaluations</p></li>
+<li><p>Train on forces, stress, and charge gradients via the energy-derivative
+contract (the recommended replacement for the deprecated direct-output flags)</p></li>
 </ul>
+<p>The full Torch Ewald/PME APIs support first- and second-order energy-derived
+training workflows. The full JAX Ewald/PME APIs support first-order
+energy-derived gradients for positions, charges, and row-vector displacement
+virials. Higher-order JAX support is limited to tested position and charge
+scalar losses; PME cell/stress/strain higher-order derivatives are unsupported.
+Electrostatics does not expose public Hessian or Jacobian APIs.</p>
+<p>Point-charge Ewald/PME examples use <code class="docutils literal notranslate"><span class="pre">float64</span></code> for accuracy-sensitive
+reciprocal-space calculations and gradient checks. The APIs also support
+<code class="docutils literal notranslate"><span class="pre">float32</span></code> when throughput is the priority; keep all floating inputs and
+precomputed metadata in a call on a consistent dtype.</p>
 <div class="sphx-glr-thumbnails"><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute Coulomb electrostatic interactions using GPU-accelerated kernels. The implementation supports both direct (undamped) Coulomb interactions and damped interactions used as the real-space component in Ewald/PME methods."><img alt="" src="../_images/sphx_glr_01_coulomb_example_thumb.png" />
 <p><a class="reference internal" href="electrostatics/01_coulomb_example.html"><span class="doc">Coulomb Electrostatic Interactions</span></a></p>
   <div class="sphx-glr-thumbnail-title">Coulomb Electrostatic Interactions</div>
@@ -756,6 +801,27 @@ Mesh Ewald (PME).</p>
 </div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute long-range electrostatic interactions using the Particle Mesh Ewald (PME) method with the JAX backend. PME achieves O(N log N) scaling through FFT-based mesh interpolation."><img alt="" src="../_images/sphx_glr_04_jax_pme_example_thumb.png" />
 <p><a class="reference internal" href="electrostatics/04_jax_pme_example.html"><span class="doc">Particle Mesh Ewald (PME) with JAX</span></a></p>
   <div class="sphx-glr-thumbnail-title">Particle Mesh Ewald (PME) with JAX</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to apply the Yeh-Berkowitz / Ballenegger two-dimensional slab correction to Ewald and Particle Mesh Ewald (PME) electrostatics. The correction is used for slab-like systems with two periodic directions and one non-periodic direction, such as interfaces with vacuum padding."><img alt="" src="../_images/sphx_glr_05_slab_correction_example_thumb.png" />
+<p><a class="reference internal" href="electrostatics/05_slab_correction_example.html"><span class="doc">2D Slab Correction for Ewald and PME</span></a></p>
+  <div class="sphx-glr-thumbnail-title">2D Slab Correction for Ewald and PME</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to apply the Yeh-Berkowitz / Ballenegger two-dimensional slab correction to JAX Ewald and Particle Mesh Ewald (PME) electrostatics. The correction is used for slab-like systems with two periodic directions and one non-periodic direction, such as interfaces with vacuum padding."><img alt="" src="../_images/sphx_glr_06_jax_slab_correction_example_thumb.png" />
+<p><a class="reference internal" href="electrostatics/06_jax_slab_correction_example.html"><span class="doc">2D Slab Correction for Ewald and PME with JAX</span></a></p>
+  <div class="sphx-glr-thumbnail-title">2D Slab Correction for Ewald and PME with JAX</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates the GTO-Ewald multipole electrostatics path for periodic systems with charges (l_max=0), dipoles (l_max=1), and quadrupoles (l_max=2). The Ewald path uses a direct k-space sum for the reciprocal piece."><img alt="" src="../_images/sphx_glr_07_multipole_ewald_summation_example_thumb.png" />
+<p><a class="reference internal" href="electrostatics/07_multipole_ewald_summation_example.html"><span class="doc">Multipole Ewald Summation (charges + dipoles + quadrupoles)</span></a></p>
+  <div class="sphx-glr-thumbnail-title">Multipole Ewald Summation (charges + dipoles + quadrupoles)</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates the GTO-PME multipole electrostatics path for periodic systems with charges (l_max=0), dipoles (l_max=1), and quadrupoles (l_max=2). PME accelerates the reciprocal-space piece via B-spline interpolation + FFT, dropping the asymptotic cost from O(N · N_k) (Ewald direct k-space) to O(M log M + N · p³)."><img alt="" src="../_images/sphx_glr_08_multipole_pme_example_thumb.png" />
+<p><a class="reference internal" href="electrostatics/08_multipole_pme_example.html"><span class="doc">Multipole Particle Mesh Ewald (charges + dipoles + quadrupoles)</span></a></p>
+  <div class="sphx-glr-thumbnail-title">Multipole Particle Mesh Ewald (charges + dipoles + quadrupoles)</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates multipole_electrostatic_features — a reciprocal-space projection that turns the periodic electrostatic potential of a set of source multipoles into LODE/ACE-style per-atom feature vectors. Unlike the energy paths (Ewald / PME), this entry point needs no neighbor list: every atom&#x27;s descriptor is computed directly from the k-space potential, projected onto a multi-σ basis of receiver Gaussian-type orbitals (GTOs)."><img alt="" src="../_images/sphx_glr_09_multipole_features_example_thumb.png" />
+<p><a class="reference internal" href="electrostatics/09_multipole_features_example.html"><span class="doc">Atom-Centered Multipole Electrostatic Features</span></a></p>
+  <div class="sphx-glr-thumbnail-title">Atom-Centered Multipole Electrostatic Features</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates the two-phase prepare_cache + scf_step pattern for the reciprocal-space (&quot;k-space&quot;) formulation of periodic multipole electrostatics. Rather than the real-space + reciprocal split of multipole_ewald_summation, this path evaluates the periodic Coulomb interaction directly in reciprocal space — the GTO smearing of each multipole makes the k-sum converge — so its whole geometry setup is cell-only and can be built once and reused."><img alt="" src="../_images/sphx_glr_10_multipole_scf_cache_example_thumb.png" />
+<p><a class="reference internal" href="electrostatics/10_multipole_scf_cache_example.html"><span class="doc">Multipole SCF Cache + Step (amortized fixed-cell workflow)</span></a></p>
+  <div class="sphx-glr-thumbnail-title">Multipole SCF Cache + Step (amortized fixed-cell workflow)</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates the recommended way to obtain forces, virial/stress, and charge gradients from PME (and Ewald) for machine-learning interatomic potential (MLIP) training: energy is the only differentiable output, and all derivatives are taken from it with torch.autograd.grad."><img alt="" src="../_images/sphx_glr_11_pme_energy_derivative_training_thumb.png" />
+<p><a class="reference internal" href="electrostatics/11_pme_energy_derivative_training.html"><span class="doc">Energy-Derivative Training Contract (Forces, Stress, Charge Gradients)</span></a></p>
+  <div class="sphx-glr-thumbnail-title">Energy-Derivative Training Contract (Forces, Stress, Charge Gradients)</div>
 </div></div></section>
 <section id="neighbor-lists">
 <h1>Neighbor Lists<a class="headerlink" href="#neighbor-lists" title="Link to this heading">#</a></h1>
@@ -765,6 +831,10 @@ cell list algorithms.</p>
 <ul class="simple">
 <li><p>Build neighbor lists for single and batched systems</p></li>
 <li><p>Use dense or sparse COO output formats</p></li>
+<li><p>Inspect Torch cost-model dispatch estimates</p></li>
+<li><p>Request compact source rows with <code class="docutils literal notranslate"><span class="pre">target_indices</span></code></p></li>
+<li><p>Return per-neighbor vectors and distances, including differentiable geometry</p></li>
+<li><p>Compute inline Lennard-Jones pair energies and forces with <code class="docutils literal notranslate"><span class="pre">pair_fn</span></code></p></li>
 <li><p>Detect when neighbor lists need rebuilding</p></li>
 <li><p>Optimize performance with <code class="docutils literal notranslate"><span class="pre">torch.compile</span></code></p></li>
 <li><p>Integrate with molecular dynamics workflows</p></li>
@@ -784,6 +854,9 @@ cell list algorithms.</p>
 </div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to use the JAX neighbor list API in nvalchemiops for computing neighbor lists in periodic systems."><img alt="" src="../_images/sphx_glr_05_jax_neighbor_list_thumb.png" />
 <p><a class="reference internal" href="neighbors/05_jax_neighbor_list.html"><span class="doc">JAX Neighbor List Example</span></a></p>
   <div class="sphx-glr-thumbnail-title">JAX Neighbor List Example</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates four neighbor-list features used together:"><img alt="" src="../_images/sphx_glr_06_pair_outputs_lj_thumb.png" />
+<p><a class="reference internal" href="neighbors/06_pair_outputs_lj.html"><span class="doc">Targeted Lennard-Jones Pair Outputs</span></a></p>
+  <div class="sphx-glr-thumbnail-title">Targeted Lennard-Jones Pair Outputs</div>
 </div></div><div class="toctree-wrapper compound">
 </div>
 <div class="sphx-glr-footer sphx-glr-footer-gallery docutils container">
@@ -808,12 +881,12 @@ cell list algorithms.</p>
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="../userguide/components/dynamics.html"
+       href="../userguide/about/kernel-style-guide.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Molecular Dynamics Integrators</p>
+        <p class="prev-next-title">Kernel Style Guide</p>
       </div>
     </a>
     <a class="right-next"
@@ -885,9 +958,22 @@ cell list algorithms.</p>
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -907,7 +993,7 @@ cell list algorithms.</p>
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

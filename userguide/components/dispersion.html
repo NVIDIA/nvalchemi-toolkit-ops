@@ -2,18 +2,18 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../" >
+<html lang="en" data-content_root="../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>DFT-D3(BJ) Dispersion Correction &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>DFT-D3(BJ) Dispersion Correction &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -35,16 +35,17 @@
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -52,7 +53,7 @@
     <script src="../../_static/design-tabs.js?v=f930bc37"></script>
     <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
     <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
-    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'userguide/components/dispersion';</script>
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
@@ -63,7 +64,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -130,8 +131,6 @@
   
   
     
-    
-      
     
     
     <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -369,7 +368,7 @@ document.write(`
 <li class="toctree-l1"><a class="reference internal" href="../about/install.html">Installation Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../about/intro.html">Introduction to ALCHEMI Toolkit-Ops</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../about/conventions.html">Conventions</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../about/migration.html">Migration Guide (v0.3.0)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../about/migration.html">Migration Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../about/faq.html">Frequently Asked Questions</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Core Components</span></p>
@@ -378,6 +377,12 @@ document.write(`
 <li class="toctree-l1"><a class="reference internal" href="electrostatics.html">Electrostatic Interactions</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">DFT-D3(BJ) Dispersion Correction</a></li>
 <li class="toctree-l1"><a class="reference internal" href="dynamics.html">Molecular Dynamics Integrators</a></li>
+<li class="toctree-l1"><a class="reference internal" href="segment_ops.html">Segment Operations</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Advanced Usage</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../about/contributing.html">Contribution Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../about/kernel-style-guide.html">Kernel Style Guide</a></li>
 </ul>
 </div>
 </nav></div>
@@ -468,7 +473,7 @@ variant provides improved short-range behavior for molecular geometries.</p>
 <p class="admonition-title">Important</p>
 <p><strong>DFT-D3 parameters must be explicitly provided</strong> via <code class="docutils literal notranslate"><span class="pre">d3_params</span></code> (a
 <a class="reference internal" href="../../modules/torch/dispersion.html#nvalchemiops.torch.interactions.dispersion.D3Parameters" title="nvalchemiops.torch.interactions.dispersion.D3Parameters"><code class="xref py py-class docutils literal notranslate"><span class="pre">D3Parameters</span></code></a> instance or
-dictionary). See <a class="reference internal" href="#parameter-setup"><span class="xref myst">Parameter Setup</span></a> for details.</p>
+dictionary). See <a class="reference internal" href="#parameter-setup">Parameter Setup</a> for details.</p>
 <p><strong>Unit consistency is required</strong>: Standard D3 parameters use atomic units—
 Bohr for lengths, Hartree for energies. Unit mismatches may cause the neighbor list
 calculation to run out of memory (e.g. cutoff in Bohr, but positions are in
@@ -1274,7 +1279,7 @@ while providing improved accuracy for equilibrium geometries:</p>
 \left(\sum_k \frac{\partial E_{ik}}{\partial \text{CN}_i}\right)
 \frac{\partial \text{CN}_i}{\partial \mathbf{r}_i}\right]\]</div>
 <p>This decomposition into direct and chain-rule terms is central to the multi-pass
-kernel architecture described in <a class="reference internal" href="#implementation-details"><span class="xref myst">Implementation Details</span></a>.</p>
+kernel architecture described in <a class="reference internal" href="#implementation-details">Implementation Details</a>.</p>
 </section>
 </section>
 <section id="implementation-details">
@@ -1491,9 +1496,22 @@ function in dispersion corrected density functional theory.”
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -1513,7 +1531,7 @@ function in dispersion corrected density functional theory.”
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

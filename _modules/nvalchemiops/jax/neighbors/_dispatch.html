@@ -1,0 +1,1083 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../../" data-theme="light">
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nvalchemiops.jax.neighbors._dispatch &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/benchmark-docs.css?v=30688d9f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/nvalchemiops/jax/neighbors/_dispatch';</script>
+    <link rel="index" title="Index" href="../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../../../index.html">
+  
+  
+  
+  
+  
+    
+    
+    
+    <img src="../../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <div class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../../index.html" class="nav-link">Module code</a></li>
+    
+    
+    <li class="breadcrumb-item"><a href="../neighbors.html" class="nav-link">nvalchemiops.jax.neighbors</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">nvalchemiops...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for nvalchemiops.jax.neighbors._dispatch</h1><div class="highlight"><pre>
+<span></span><span class="c1"># SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.</span>
+<span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="c1"># you may not use this file except in compliance with the License.</span>
+<span class="c1"># You may obtain a copy of the License at</span>
+<span class="c1">#</span>
+<span class="c1"># http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Unless required by applicable law or agreed to in writing, software</span>
+<span class="c1"># distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="c1"># WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="c1"># See the License for the specific language governing permissions and</span>
+<span class="c1"># limitations under the License.</span>
+
+
+<span class="sd">&quot;&quot;&quot;Private JAX neighbor-list dispatch helpers.&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Iterable</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">jax</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">jax.numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">jnp</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">warp</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">wp</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">warp.jax_experimental</span><span class="w"> </span><span class="kn">import</span> <span class="n">jax_kernel</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighbors.base_dispatch</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">_FLAG_NAMES</span><span class="p">,</span>
+    <span class="n">_OPTION_TARGET_INDICES</span><span class="p">,</span>
+    <span class="n">DEFAULT_BATCH_MAX_NBINS</span><span class="p">,</span>
+    <span class="n">DEFAULT_SINGLE_MAX_NBINS</span><span class="p">,</span>
+    <span class="n">FEATURE_BATCHED</span><span class="p">,</span>
+    <span class="n">FEATURE_CUDA</span><span class="p">,</span>
+    <span class="n">FEATURE_POSITIONS_FLOAT32</span><span class="p">,</span>
+    <span class="n">auto_base_constants</span><span class="p">,</span>
+    <span class="n">finalize_neighbor_list_method</span><span class="p">,</span>
+    <span class="n">get_select_neighbor_list_method_cost_kernel</span><span class="p">,</span>
+    <span class="n">neighbor_list_strategy_run_args</span><span class="p">,</span>
+    <span class="n">optional_outputs_mask</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighbors.base_dispatch</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">estimate_neighbor_list_costs</span> <span class="k">as</span> <span class="n">_estimate_neighbor_list_costs_wp</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;_auto_base_method_from_geometry&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;_auto_method_from_geometry&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;_reject_unsupported_cluster_tile_combo&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;estimate_neighbor_list_costs&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;suggest_neighbor_list_method&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;synthesize_cell_for_cell_list&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+<span class="n">_jax_select_method_f32</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">get_select_neighbor_list_method_cost_kernel</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">),</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;costs&quot;</span><span class="p">,</span> <span class="s2">&quot;flags&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">_jax_select_method_f64</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">get_select_neighbor_list_method_cost_kernel</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;costs&quot;</span><span class="p">,</span> <span class="s2">&quot;flags&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_is_jax_cpu_array</span><span class="p">(</span><span class="n">array</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return whether ``array`` is backed by a CPU device.&quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">all</span><span class="p">(</span><span class="n">device</span><span class="o">.</span><span class="n">platform</span> <span class="o">==</span> <span class="s2">&quot;cpu&quot;</span> <span class="k">for</span> <span class="n">device</span> <span class="ow">in</span> <span class="n">array</span><span class="o">.</span><span class="n">devices</span><span class="p">())</span>
+    <span class="k">except</span> <span class="ne">AttributeError</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">True</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_jax_selector_cpu_fallback</span><span class="p">(</span>
+    <span class="n">batch_ptr</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">cutoff</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">max_nbins</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">option_mask</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">feature_mask</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">target_count</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Run the shared Warp selector directly on CPU for host-backed JAX arrays.&quot;&quot;&quot;</span>
+    <span class="n">wp_batch_ptr</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">device_get</span><span class="p">(</span><span class="n">batch_ptr</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>
+        <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cpu&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">wp_batch_idx</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span>
+            <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">device_get</span><span class="p">(</span><span class="n">batch_idx</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>
+            <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cpu&quot;</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="k">else</span> <span class="kc">None</span>
+    <span class="p">)</span>
+    <span class="n">cell_np</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">device_get</span><span class="p">(</span><span class="n">cell</span><span class="p">))</span>
+    <span class="n">wp_cell_dtype</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mat33d</span> <span class="k">if</span> <span class="n">cell_np</span><span class="o">.</span><span class="n">dtype</span> <span class="o">==</span> <span class="n">np</span><span class="o">.</span><span class="n">float64</span> <span class="k">else</span> <span class="n">wp</span><span class="o">.</span><span class="n">mat33f</span>
+    <span class="n">wp_cell</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">cell_np</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_cell_dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cpu&quot;</span><span class="p">)</span>
+    <span class="n">wp_pbc</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">device_get</span><span class="p">(</span><span class="n">pbc</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">bool_</span><span class="p">),</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span>
+        <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cpu&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">_estimate_neighbor_list_costs_wp</span><span class="p">(</span>
+        <span class="n">wp_batch_ptr</span><span class="p">,</span>
+        <span class="n">wp_cell</span><span class="p">,</span>
+        <span class="n">wp_pbc</span><span class="p">,</span>
+        <span class="n">cutoff</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="o">=</span><span class="n">wp_batch_idx</span><span class="p">,</span>
+        <span class="n">max_nbins</span><span class="o">=</span><span class="n">max_nbins</span><span class="p">,</span>
+        <span class="n">option_mask</span><span class="o">=</span><span class="n">option_mask</span><span class="p">,</span>
+        <span class="n">feature_mask</span><span class="o">=</span><span class="n">feature_mask</span><span class="p">,</span>
+        <span class="n">target_count</span><span class="o">=</span><span class="n">target_count</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_selector_batch_ptr_from_geometry</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">batch_ptr</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">num_systems</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return an int32 batch pointer for selector metadata.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">batch_ptr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">batch_ptr</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">counts</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">bincount</span><span class="p">(</span><span class="n">batch_idx</span><span class="p">,</span> <span class="n">length</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="n">num_systems</span><span class="p">))</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">concatenate</span><span class="p">([</span><span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span> <span class="n">jnp</span><span class="o">.</span><span class="n">cumsum</span><span class="p">(</span><span class="n">counts</span><span class="p">)])</span>
+
+    <span class="n">base</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">//</span> <span class="nb">max</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">num_systems</span><span class="p">),</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">counts</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="nb">int</span><span class="p">(</span><span class="n">num_systems</span><span class="p">),),</span> <span class="n">base</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">num_systems</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">counts</span> <span class="o">=</span> <span class="n">counts</span><span class="o">.</span><span class="n">at</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="n">base</span> <span class="o">*</span> <span class="nb">int</span><span class="p">(</span><span class="n">num_systems</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">concatenate</span><span class="p">([</span><span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span> <span class="n">jnp</span><span class="o">.</span><span class="n">cumsum</span><span class="p">(</span><span class="n">counts</span><span class="p">)])</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_synthesize_cell_for_geometry</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">batch_ptr</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">cutoff</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Build non-PBC bounding-box cells for selector metadata.&quot;&quot;&quot;</span>
+    <span class="n">num_systems</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">batch_ptr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="o">-</span> <span class="mi">1</span>
+    <span class="n">padding</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">cutoff</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">num_systems</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">pos_min</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">shifted</span> <span class="o">=</span> <span class="n">positions</span> <span class="o">-</span> <span class="n">pos_min</span>
+        <span class="n">lengths</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">shifted</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="n">padding</span>
+        <span class="n">cell</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">diag</span><span class="p">(</span><span class="n">lengths</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">num_systems</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">cell</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">broadcast_to</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="p">(</span><span class="n">num_systems</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+        <span class="n">pbc</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">num_systems</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span>
+
+    <span class="n">pos_min</span> <span class="o">=</span> <span class="n">jax</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">segment_min</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="o">=</span><span class="n">num_systems</span><span class="p">)</span>
+    <span class="n">pos_max</span> <span class="o">=</span> <span class="n">jax</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">segment_max</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="o">=</span><span class="n">num_systems</span><span class="p">)</span>
+    <span class="n">counts</span> <span class="o">=</span> <span class="n">batch_ptr</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span> <span class="o">-</span> <span class="n">batch_ptr</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">lengths</span> <span class="o">=</span> <span class="n">pos_max</span> <span class="o">-</span> <span class="n">pos_min</span> <span class="o">+</span> <span class="n">padding</span>
+    <span class="n">lengths</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">counts</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">,</span> <span class="n">lengths</span><span class="p">,</span> <span class="n">padding</span><span class="p">)</span>
+    <span class="n">cell</span> <span class="o">=</span> <span class="n">lengths</span><span class="p">[:,</span> <span class="p">:,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">*</span> <span class="n">jnp</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+    <span class="n">pbc</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">num_systems</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">synthesize_cell_for_cell_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">cutoff</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">batch_ptr</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">num_systems</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Build shifted non-PBC bounding-box cells for JAX cell-list dispatch.</span>
+
+<span class="sd">    Translates each system&#39;s atoms so their bounding box starts at the origin,</span>
+<span class="sd">    then returns an axis-aligned cell sized to that bounding box plus a small</span>
+<span class="sd">    ``cutoff``-proportional padding. All PBC flags are set to ``False``.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : jax.Array, shape (N, 3)</span>
+<span class="sd">        Atomic positions in Cartesian space.</span>
+<span class="sd">    cutoff : float</span>
+<span class="sd">        Neighbour cutoff radius; used to compute the bounding-box padding</span>
+<span class="sd">        (``cutoff * 0.1``).</span>
+<span class="sd">    batch_idx : jax.Array, shape (N,), dtype=int32, optional</span>
+<span class="sd">        System index per atom. Pass ``None`` for single-system mode or when</span>
+<span class="sd">        ``batch_ptr`` is provided instead.</span>
+<span class="sd">    batch_ptr : jax.Array, shape (num_systems + 1,), dtype=int32, optional</span>
+<span class="sd">        CSR-style cumulative atom counts. Must satisfy</span>
+<span class="sd">        ``batch_ptr.shape[0] &gt;= 2``. When both ``batch_idx`` and ``batch_ptr``</span>
+<span class="sd">        are ``None`` all atoms are treated as one system.</span>
+<span class="sd">    num_systems : int, optional</span>
+<span class="sd">        Number of systems. Ignored when ``batch_ptr`` is provided (inferred</span>
+<span class="sd">        from its length). Default is ``1``.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    shifted : jax.Array, shape (N, 3)</span>
+<span class="sd">        Positions shifted so each system&#39;s bounding box starts at the origin.</span>
+<span class="sd">    cell : jax.Array, shape (3, 3) or (num_systems, 3, 3)</span>
+<span class="sd">        Axis-aligned bounding-box cell matrix per system. Shape is ``(3, 3)``</span>
+<span class="sd">        for a single system without ``batch_idx``/``batch_ptr``, otherwise</span>
+<span class="sd">        ``(num_systems, 3, 3)``.</span>
+<span class="sd">    pbc : jax.Array, shape (3,) or (num_systems, 3), dtype=bool</span>
+<span class="sd">        All-``False`` PBC flags. Shape mirrors ``cell``.</span>
+
+<span class="sd">    See Also</span>
+<span class="sd">    --------</span>
+<span class="sd">    :func:`nvalchemiops.jax.neighbors._dispatch.estimate_neighbor_list_costs` : Estimate strategy costs using a cell and PBC array.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">batch_ptr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="nb">int</span><span class="p">(</span><span class="n">batch_ptr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;batch_ptr must have length at least 2&quot;</span><span class="p">)</span>
+    <span class="n">num_systems</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">num_systems</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">cell</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">tile</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">),</span> <span class="p">(</span><span class="n">num_systems</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+        <span class="n">pbc</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">num_systems</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">positions</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span>
+
+    <span class="n">padding</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">cutoff</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">batch_ptr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">counts</span> <span class="o">=</span> <span class="n">batch_ptr</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span> <span class="o">-</span> <span class="n">batch_ptr</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+        <span class="n">batch_idx</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">num_systems</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span> <span class="n">counts</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">num_systems</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">pos_min</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">shifted</span> <span class="o">=</span> <span class="n">positions</span> <span class="o">-</span> <span class="n">pos_min</span>
+        <span class="n">lengths</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">shifted</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="n">padding</span>
+        <span class="n">cell</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">diag</span><span class="p">(</span><span class="n">lengths</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">num_systems</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">cell</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">broadcast_to</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="p">(</span><span class="n">num_systems</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+            <span class="n">pbc</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">num_systems</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">pbc</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">3</span><span class="p">,),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">shifted</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span>
+
+    <span class="n">pos_min</span> <span class="o">=</span> <span class="n">jax</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">segment_min</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="o">=</span><span class="n">num_systems</span><span class="p">)</span>
+    <span class="n">pos_max</span> <span class="o">=</span> <span class="n">jax</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">segment_max</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="o">=</span><span class="n">num_systems</span><span class="p">)</span>
+    <span class="n">counts</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">batch_ptr</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span> <span class="o">-</span> <span class="n">batch_ptr</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">batch_ptr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="k">else</span> <span class="n">jnp</span><span class="o">.</span><span class="n">bincount</span><span class="p">(</span><span class="n">batch_idx</span><span class="p">,</span> <span class="n">length</span><span class="o">=</span><span class="n">num_systems</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="n">lengths</span> <span class="o">=</span> <span class="n">pos_max</span> <span class="o">-</span> <span class="n">pos_min</span> <span class="o">+</span> <span class="n">padding</span>
+    <span class="n">lengths</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">counts</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">,</span> <span class="n">lengths</span><span class="p">,</span> <span class="n">padding</span><span class="p">)</span>
+    <span class="n">shifted</span> <span class="o">=</span> <span class="n">positions</span> <span class="o">-</span> <span class="n">pos_min</span><span class="p">[</span><span class="n">batch_idx</span><span class="p">]</span>
+    <span class="n">cell</span> <span class="o">=</span> <span class="n">lengths</span><span class="p">[:,</span> <span class="p">:,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">*</span> <span class="n">jnp</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+    <span class="n">pbc</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">num_systems</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">shifted</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_normalize_selector_cell_pbc</span><span class="p">(</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">num_systems</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return selector metadata with one cell per system.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">cell</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="n">cell</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="n">jnp</span><span class="o">.</span><span class="n">newaxis</span><span class="p">,</span> <span class="p">:,</span> <span class="p">:]</span>
+    <span class="k">if</span> <span class="n">cell</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">3</span> <span class="ow">or</span> <span class="n">cell</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">:]</span> <span class="o">!=</span> <span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;cell must have shape (3, 3) or (num_systems, 3, 3)&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">cell</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1</span> <span class="ow">and</span> <span class="n">num_systems</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">cell</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">broadcast_to</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="p">(</span><span class="n">num_systems</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">cell</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">num_systems</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;cell must contain one matrix per system&quot;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">pbc</span><span class="o">.</span><span class="n">ndim</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;pbc must have shape (3,) or (num_systems, 3)&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">pbc</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">1</span> <span class="ow">and</span> <span class="n">pbc</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="mi">3</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;pbc must have shape (3,) or (num_systems, 3)&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">pbc</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span> <span class="ow">and</span> <span class="n">pbc</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1</span> <span class="ow">and</span> <span class="n">num_systems</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">pbc</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">broadcast_to</span><span class="p">(</span><span class="n">pbc</span><span class="p">,</span> <span class="p">(</span><span class="n">num_systems</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">pbc</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span> <span class="ow">and</span> <span class="p">(</span><span class="n">pbc</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">num_systems</span> <span class="ow">or</span> <span class="n">pbc</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">!=</span> <span class="mi">3</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;pbc must have shape (3,) or (num_systems, 3)&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="estimate_neighbor_list_costs">
+<a class="viewcode-back" href="../../../../modules/jax/neighbors.html#nvalchemiops.jax.neighbors.estimate_neighbor_list_costs">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">estimate_neighbor_list_costs</span><span class="p">(</span>
+    <span class="n">batch_ptr</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">cutoff</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">max_nbins</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">optional_outputs</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">cutoff2</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">half_fill</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">return_neighbor_list</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">target_indices</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">return_vectors</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">return_distances</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">use_pair_fn</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">rebuild_flags</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">wrap_positions</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">positions_dtype</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Report feasible JAX neighbor-list strategies and their estimated cost.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    batch_ptr : jax.Array, shape (num_systems + 1,), dtype=jnp.int32</span>
+<span class="sd">        Cumulative atom counts. ``batch_ptr[-1]`` is the total atom count.</span>
+<span class="sd">    cell : jax.Array, shape (3, 3) or (num_systems, 3, 3)</span>
+<span class="sd">        Per-system cells, or one shared cell to broadcast.</span>
+<span class="sd">    pbc : jax.Array, shape (3,) or (num_systems, 3), dtype=bool</span>
+<span class="sd">        Shared or per-system PBC flags.</span>
+<span class="sd">    cutoff : float</span>
+<span class="sd">        Neighbor cutoff.</span>
+<span class="sd">    max_nbins : int, optional</span>
+<span class="sd">        Per-system cell-list cell cap. Defaults to the same cap used by the</span>
+<span class="sd">        active single-system or batched frontend.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    list of (str, float)</span>
+<span class="sd">        Feasible strategies and their relative estimated cost (lower is</span>
+<span class="sd">        faster), sorted cheapest-first.  Host-only: this syncs a tiny selector</span>
+<span class="sd">        result, so call it outside ``jax.jit`` and pass the chosen name as an</span>
+<span class="sd">        explicit ``method=``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">batch_ptr</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;batch_ptr must be a 1-D array&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="nb">int</span><span class="p">(</span><span class="n">batch_ptr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;batch_ptr must have length at least 2&quot;</span><span class="p">)</span>
+    <span class="n">num_systems</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">batch_ptr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="o">-</span> <span class="mi">1</span>
+    <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span> <span class="o">=</span> <span class="n">_normalize_selector_cell_pbc</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="n">num_systems</span><span class="p">)</span>
+    <span class="n">batch_ptr</span> <span class="o">=</span> <span class="n">batch_ptr</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+    <span class="n">batch_idx_is_provided</span> <span class="o">=</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">batch_idx</span> <span class="o">=</span> <span class="n">batch_idx</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">max_nbins</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">max_nbins</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">DEFAULT_SINGLE_MAX_NBINS</span> <span class="k">if</span> <span class="n">num_systems</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">else</span> <span class="n">DEFAULT_BATCH_MAX_NBINS</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="nb">int</span><span class="p">(</span><span class="n">max_nbins</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;max_nbins must be positive&quot;</span><span class="p">)</span>
+
+    <span class="n">costs</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">5</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="n">flags</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">_FLAG_NAMES</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+    <span class="n">shell</span><span class="p">,</span> <span class="n">setup</span> <span class="o">=</span> <span class="n">auto_base_constants</span><span class="p">()</span>
+    <span class="n">pbc_is_batched</span> <span class="o">=</span> <span class="n">pbc</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span>
+    <span class="n">pbc_single</span> <span class="o">=</span> <span class="n">pbc</span> <span class="k">if</span> <span class="ow">not</span> <span class="n">pbc_is_batched</span> <span class="k">else</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">0</span><span class="p">,),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+    <span class="n">pbc_batch</span> <span class="o">=</span> <span class="n">pbc</span> <span class="k">if</span> <span class="n">pbc_is_batched</span> <span class="k">else</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+    <span class="n">batch_idx_arg</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">batch_idx</span> <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">0</span><span class="p">,),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="n">feature_mask</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">if</span> <span class="p">(</span>
+            <span class="s2">&quot;gpu&quot;</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">cell</span><span class="o">.</span><span class="n">devices</span><span class="p">())</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+            <span class="ow">or</span> <span class="s2">&quot;cuda&quot;</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">cell</span><span class="o">.</span><span class="n">devices</span><span class="p">())</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+        <span class="p">):</span>
+            <span class="n">feature_mask</span> <span class="o">|=</span> <span class="n">FEATURE_CUDA</span>
+    <span class="k">except</span> <span class="p">(</span><span class="ne">AttributeError</span><span class="p">,</span> <span class="ne">TypeError</span><span class="p">):</span>
+        <span class="k">pass</span>
+    <span class="n">position_dtype</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">dtype</span> <span class="k">if</span> <span class="n">positions_dtype</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">positions_dtype</span>
+    <span class="k">if</span> <span class="n">position_dtype</span> <span class="o">==</span> <span class="n">jnp</span><span class="o">.</span><span class="n">float32</span><span class="p">:</span>
+        <span class="n">feature_mask</span> <span class="o">|=</span> <span class="n">FEATURE_POSITIONS_FLOAT32</span>
+    <span class="k">if</span> <span class="n">num_systems</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">feature_mask</span> <span class="o">|=</span> <span class="n">FEATURE_BATCHED</span>
+    <span class="n">options</span> <span class="o">=</span> <span class="n">optional_outputs_mask</span><span class="p">(</span>
+        <span class="n">optional_outputs</span><span class="p">,</span>
+        <span class="n">cutoff2</span><span class="o">=</span><span class="n">cutoff2</span><span class="p">,</span>
+        <span class="n">half_fill</span><span class="o">=</span><span class="n">half_fill</span><span class="p">,</span>
+        <span class="n">return_neighbor_list</span><span class="o">=</span><span class="n">return_neighbor_list</span><span class="p">,</span>
+        <span class="n">target_indices</span><span class="o">=</span><span class="n">target_indices</span><span class="p">,</span>
+        <span class="n">return_vectors</span><span class="o">=</span><span class="n">return_vectors</span><span class="p">,</span>
+        <span class="n">return_distances</span><span class="o">=</span><span class="n">return_distances</span><span class="p">,</span>
+        <span class="n">use_pair_fn</span><span class="o">=</span><span class="n">use_pair_fn</span><span class="p">,</span>
+        <span class="n">rebuild_flags</span><span class="o">=</span><span class="n">rebuild_flags</span><span class="p">,</span>
+        <span class="n">wrap_positions</span><span class="o">=</span><span class="n">wrap_positions</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">target_count</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">target_indices</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="k">if</span> <span class="n">target_indices</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="mi">0</span>
+    <span class="n">target_count_arg</span> <span class="o">=</span> <span class="n">target_count</span> <span class="k">if</span> <span class="n">target_indices</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="n">options</span> <span class="o">&amp;</span> <span class="n">_OPTION_TARGET_INDICES</span> <span class="ow">and</span> <span class="n">target_indices</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s2">&quot;target_count is required when target_indices is included in &quot;</span>
+            <span class="s2">&quot;optional_outputs&quot;</span>
+        <span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">_is_jax_cpu_array</span><span class="p">(</span><span class="n">cell</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">_jax_selector_cpu_fallback</span><span class="p">(</span>
+            <span class="n">batch_ptr</span><span class="p">,</span>
+            <span class="n">batch_idx</span><span class="p">,</span>
+            <span class="n">cell</span><span class="p">,</span>
+            <span class="n">pbc</span><span class="p">,</span>
+            <span class="n">cutoff</span><span class="p">,</span>
+            <span class="n">max_nbins</span><span class="o">=</span><span class="n">max_nbins</span><span class="p">,</span>
+            <span class="n">option_mask</span><span class="o">=</span><span class="n">options</span><span class="p">,</span>
+            <span class="n">feature_mask</span><span class="o">=</span><span class="n">feature_mask</span><span class="p">,</span>
+            <span class="n">target_count</span><span class="o">=</span><span class="n">target_count_arg</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">cell</span><span class="o">.</span><span class="n">dtype</span> <span class="o">==</span> <span class="n">jnp</span><span class="o">.</span><span class="n">float64</span><span class="p">:</span>
+        <span class="n">kernel</span> <span class="o">=</span> <span class="n">_jax_select_method_f64</span>
+        <span class="n">cell</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">kernel</span> <span class="o">=</span> <span class="n">_jax_select_method_f32</span>
+        <span class="n">cell</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+    <span class="n">costs</span><span class="p">,</span> <span class="n">flags</span> <span class="o">=</span> <span class="n">kernel</span><span class="p">(</span>
+        <span class="n">batch_ptr</span><span class="p">,</span>
+        <span class="n">batch_idx_arg</span><span class="p">,</span>
+        <span class="n">batch_idx_is_provided</span><span class="p">,</span>
+        <span class="n">cell</span><span class="p">,</span>
+        <span class="n">pbc_single</span><span class="p">,</span>
+        <span class="n">pbc_batch</span><span class="p">,</span>
+        <span class="n">pbc_is_batched</span><span class="p">,</span>
+        <span class="nb">float</span><span class="p">(</span><span class="n">cutoff</span><span class="p">),</span>
+        <span class="nb">float</span><span class="p">(</span><span class="n">shell</span><span class="p">),</span>
+        <span class="nb">float</span><span class="p">(</span><span class="n">setup</span><span class="p">),</span>
+        <span class="nb">int</span><span class="p">(</span><span class="n">max_nbins</span><span class="p">),</span>
+        <span class="nb">int</span><span class="p">(</span><span class="mi">2</span><span class="o">**</span><span class="mi">31</span> <span class="o">-</span> <span class="mi">1</span><span class="p">),</span>
+        <span class="nb">int</span><span class="p">(</span><span class="n">options</span><span class="p">),</span>
+        <span class="nb">int</span><span class="p">(</span><span class="n">feature_mask</span><span class="p">),</span>
+        <span class="nb">int</span><span class="p">(</span><span class="n">target_count</span><span class="p">),</span>
+        <span class="n">costs</span><span class="p">,</span>
+        <span class="n">flags</span><span class="p">,</span>
+        <span class="n">launch_dims</span><span class="o">=</span><span class="p">(</span>
+            <span class="nb">max</span><span class="p">(</span><span class="n">num_systems</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="n">batch_idx</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="mi">0</span><span class="p">),</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">strategies</span> <span class="o">=</span> <span class="n">finalize_neighbor_list_method</span><span class="p">(</span>
+        <span class="n">jax</span><span class="o">.</span><span class="n">device_get</span><span class="p">(</span><span class="n">costs</span><span class="p">),</span> <span class="n">jax</span><span class="o">.</span><span class="n">device_get</span><span class="p">(</span><span class="n">flags</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="n">num_systems</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">strategies</span> <span class="o">=</span> <span class="p">[(</span><span class="s2">&quot;batch_&quot;</span> <span class="o">+</span> <span class="n">name</span><span class="p">,</span> <span class="n">cost</span><span class="p">)</span> <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">cost</span> <span class="ow">in</span> <span class="n">strategies</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">strategies</span></div>
+
+
+
+<div class="viewcode-block" id="suggest_neighbor_list_method">
+<a class="viewcode-back" href="../../../../modules/jax/neighbors.html#nvalchemiops.jax.neighbors.suggest_neighbor_list_method">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">suggest_neighbor_list_method</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the cheapest feasible JAX neighbor-list strategy name.</span>
+
+<span class="sd">    Thin wrapper over</span>
+<span class="sd">    :func:`nvalchemiops.jax.neighbors._dispatch.estimate_neighbor_list_costs`</span>
+<span class="sd">    returning only the top-ranked strategy name.  Accepts the same arguments</span>
+<span class="sd">    and carries the same host-only sync caveat: call outside ``jax.jit`` and</span>
+<span class="sd">    pass the result as an explicit ``method=`` argument.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    *args</span>
+<span class="sd">        Positional arguments forwarded to</span>
+<span class="sd">        :func:`nvalchemiops.jax.neighbors._dispatch.estimate_neighbor_list_costs`.</span>
+<span class="sd">    **kwargs</span>
+<span class="sd">        Keyword arguments forwarded to</span>
+<span class="sd">        :func:`nvalchemiops.jax.neighbors._dispatch.estimate_neighbor_list_costs`.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    str</span>
+<span class="sd">        Name of the cheapest feasible strategy, e.g. ``&quot;cell_list_atom_centric&quot;``</span>
+<span class="sd">        or ``&quot;batch_naive_tile&quot;``.</span>
+
+<span class="sd">    See Also</span>
+<span class="sd">    --------</span>
+<span class="sd">    :func:`nvalchemiops.jax.neighbors._dispatch.estimate_neighbor_list_costs` : Full ranked list of feasible strategies with costs.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">estimate_neighbor_list_costs</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)[</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_reject_unsupported_cluster_tile_combo</span><span class="p">(</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">half_fill</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Raise ``NotImplementedError`` for unsupported explicit cluster-tile combos.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">pbc</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
+            <span class="s2">&quot;method=&#39;cluster_tile&#39; / &#39;batch_cluster_tile&#39; is &quot;</span>
+            <span class="s2">&quot;fundamentally PBC-implicit; non-periodic systems (pbc=None) &quot;</span>
+            <span class="s2">&quot;are not supported.  Use method=&#39;naive&#39; or &#39;cell_list&#39;, &quot;</span>
+            <span class="s2">&quot;or pass a cell with fully periodic pbc.&quot;</span>
+        <span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">all_periodic</span> <span class="o">=</span> <span class="nb">bool</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">device_get</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">all</span><span class="p">(</span><span class="n">pbc</span><span class="p">)))</span>
+    <span class="k">except</span> <span class="ne">RuntimeError</span><span class="p">:</span>
+        <span class="n">all_periodic</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">all_periodic</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
+            <span class="s2">&quot;method=&#39;cluster_tile&#39; / &#39;batch_cluster_tile&#39; is &quot;</span>
+            <span class="s2">&quot;fundamentally PBC-implicit; pbc with any False entry &quot;</span>
+            <span class="s2">&quot;is not supported.  Use method=&#39;naive&#39; or &#39;cell_list&#39;.&quot;</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="n">half_fill</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
+            <span class="s2">&quot;method=&#39;cluster_tile&#39; / &#39;batch_cluster_tile&#39; uses &quot;</span>
+            <span class="s2">&quot;tile-level upper-triangular iteration; atom-level &quot;</span>
+            <span class="s2">&quot;half_fill=True is not supported.  Use method=&#39;naive&#39; or &quot;</span>
+            <span class="s2">&quot;&#39;cell_list&#39; for half-fill output.&quot;</span>
+        <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_auto_method_from_geometry</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">cutoff</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">batch_ptr</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">num_systems</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">optional_outputs</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">cutoff2</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">half_fill</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">return_neighbor_list</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">target_indices</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">return_vectors</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">return_distances</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">use_pair_fn</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">rebuild_flags</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">wrap_positions</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the cheapest base strategy name for the geometry (no ``batch_``).</span>
+
+<span class="sd">    The ``batch_`` prefix is added by the caller from ``num_systems``; this</span>
+<span class="sd">    returns the unbatched fine-grained name, e.g. ``&quot;naive_tile&quot;``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">&quot;cell_list_atom_centric&quot;</span>
+
+    <span class="n">selector_batch_ptr</span> <span class="o">=</span> <span class="n">_selector_batch_ptr_from_geometry</span><span class="p">(</span>
+        <span class="n">positions</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">batch_ptr</span><span class="p">,</span> <span class="n">num_systems</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="n">cell</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">selector_cell</span><span class="p">,</span> <span class="n">selector_pbc</span> <span class="o">=</span> <span class="n">_synthesize_cell_for_geometry</span><span class="p">(</span>
+            <span class="n">positions</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">selector_batch_ptr</span><span class="p">,</span> <span class="n">cutoff</span>
+        <span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">pbc</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;pbc is required when cell is provided&quot;</span><span class="p">)</span>
+        <span class="n">selector_cell</span> <span class="o">=</span> <span class="n">cell</span>
+        <span class="n">selector_pbc</span> <span class="o">=</span> <span class="n">pbc</span>
+
+    <span class="n">name</span> <span class="o">=</span> <span class="n">suggest_neighbor_list_method</span><span class="p">(</span>
+        <span class="n">selector_batch_ptr</span><span class="p">,</span>
+        <span class="n">selector_cell</span><span class="p">,</span>
+        <span class="n">selector_pbc</span><span class="p">,</span>
+        <span class="n">cutoff</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">optional_outputs</span><span class="o">=</span><span class="n">optional_outputs</span><span class="p">,</span>
+        <span class="n">cutoff2</span><span class="o">=</span><span class="n">cutoff2</span><span class="p">,</span>
+        <span class="n">half_fill</span><span class="o">=</span><span class="n">half_fill</span><span class="p">,</span>
+        <span class="n">return_neighbor_list</span><span class="o">=</span><span class="n">return_neighbor_list</span><span class="p">,</span>
+        <span class="n">target_indices</span><span class="o">=</span><span class="n">target_indices</span><span class="p">,</span>
+        <span class="n">return_vectors</span><span class="o">=</span><span class="n">return_vectors</span><span class="p">,</span>
+        <span class="n">return_distances</span><span class="o">=</span><span class="n">return_distances</span><span class="p">,</span>
+        <span class="n">use_pair_fn</span><span class="o">=</span><span class="n">use_pair_fn</span><span class="p">,</span>
+        <span class="n">rebuild_flags</span><span class="o">=</span><span class="n">rebuild_flags</span><span class="p">,</span>
+        <span class="n">wrap_positions</span><span class="o">=</span><span class="n">wrap_positions</span><span class="p">,</span>
+        <span class="n">positions_dtype</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">name</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="s2">&quot;batch_&quot;</span><span class="p">)</span> <span class="p">:]</span> <span class="k">if</span> <span class="n">name</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;batch_&quot;</span><span class="p">)</span> <span class="k">else</span> <span class="n">name</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_auto_base_method_from_geometry</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">cutoff</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">batch_ptr</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">num_systems</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Pick the base method (``naive`` / ``cell_list`` / ``cluster_tile``).&quot;&quot;&quot;</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">_auto_method_from_geometry</span><span class="p">(</span>
+        <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">batch_ptr</span><span class="p">,</span> <span class="n">num_systems</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">neighbor_list_strategy_run_args</span><span class="p">(</span><span class="n">name</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

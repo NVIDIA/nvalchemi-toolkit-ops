@@ -2,18 +2,18 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../" >
+<html lang="en" data-content_root="../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>nvalchemiops.torch.interactions.dispersion: Dispersion Corrections &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>nvalchemiops.torch.interactions.dispersion: Dispersion Corrections &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -35,33 +35,36 @@
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
     <script src="../../_static/togglebutton.js?v=4a39c7ea"></script>
     <script src="../../_static/design-tabs.js?v=f930bc37"></script>
     <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'modules/torch/dispersion';</script>
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
     <link rel="next" title="nvalchemiops.torch.interactions.electrostatics: Electrostatics" href="electrostatics.html" />
-    <link rel="prev" title="nvalchemiops.torch.neighbors: Neighbor Lists" href="neighbors.html" />
+    <link rel="prev" title="nvalchemiops.torch.segment_ops: Segment Operations" href="segment_ops.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -128,8 +131,6 @@
   
   
     
-    
-      
     
     
     <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -364,6 +365,7 @@ document.write(`
   <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
   <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.segment_ops</span></code>: Segment Operations</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.electrostatics</span></code>: Electrostatics</a></li>
 <li class="toctree-l1"><a class="reference internal" href="dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch</span></code>: Dynamics Optimizers</a></li>
@@ -371,11 +373,13 @@ document.write(`
 </ul>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../jax/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../jax/segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.segment_ops</span></code>: Segment Operations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../jax/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../jax/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.electrostatics</span></code>: Electrostatics</a></li>
 </ul>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../warp/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../warp/segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.segment_ops</span></code>: Segment Operations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../warp/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../warp/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.electrostatics</span></code>: Electrostatic Interactions (Warp)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../warp/dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.dynamics</span></code>: Molecular Dynamics</a></li>
@@ -479,60 +483,62 @@ neighbor list, both of which can be generated by the <a class="reference interna
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>positions</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a>) – Atomic coordinates [num_atoms, 3] as float32 or float64, in consistent distance
+<li><p><strong>positions</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a>) – Atomic coordinates [num_atoms, 3] as float32 or float64, in consistent distance
 units (conventionally Bohr when using standard D3 parameters)</p></li>
-<li><p><strong>numbers</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a>) – Atomic numbers [num_atoms] as int32</p></li>
+<li><p><strong>numbers</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a>) – Atomic numbers [num_atoms] as int32</p></li>
 <li><p><strong>a1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Becke-Johnson damping parameter 1 (functional-dependent, dimensionless)</p></li>
 <li><p><strong>a2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Becke-Johnson damping parameter 2 (functional-dependent), in same units as positions</p></li>
-<li><p><strong>s8</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – C8 term scaling factor (functional-dependent, dimensionless)</p></li>
+<li><p><strong>s8</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – <span class="math notranslate nohighlight">\(C_8\)</span> term scaling factor (functional-dependent, dimensionless)</p></li>
 <li><p><strong>k1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>optional</em>) – CN counting function steepness parameter, in inverse distance units
 (typically 16.0 1/Bohr for atomic units)</p></li>
 <li><p><strong>k3</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>optional</em>) – CN interpolation Gaussian width parameter (typically -4.0, dimensionless)</p></li>
-<li><p><strong>s6</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>optional</em>) – C6 term scaling factor (typically 1.0, dimensionless)</p></li>
+<li><p><strong>s6</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>optional</em>) – <span class="math notranslate nohighlight">\(C_6\)</span> term scaling factor (typically 1.0, dimensionless)</p></li>
 <li><p><strong>s5_smoothing_on</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>optional</em>) – Distance where S5 switching begins, in same units as positions. Set greater or
 equal to s5_smoothing_off to disable smoothing. Default: 1e10</p></li>
 <li><p><strong>s5_smoothing_off</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>optional</em>) – Distance where S5 switching completes, in same units as positions.
 Default: 1e10 (effectively no cutoff)</p></li>
 <li><p><strong>fill_value</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em> | </em><em>None</em><em>, </em><em>optional</em>) – Value indicating padding in neighbor_matrix. If None, defaults to num_atoms.
 Entries with neighbor_matrix[i, k] &gt;= fill_value are treated as padding. Default: None</p></li>
-<li><p><strong>d3_params</strong> (<a class="reference internal" href="#nvalchemiops.torch.interactions.dispersion.D3Parameters" title="nvalchemiops.torch.interactions.dispersion.D3Parameters"><em>D3Parameters</em></a><em> | </em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#dict" title="(in Python v3.14)"><em>dict</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em>] </em><em>| </em><em>None</em><em>, </em><em>optional</em>) – DFT-D3 parameters provided as either:
+<li><p><strong>d3_params</strong> (<a class="reference internal" href="#nvalchemiops.torch.interactions.dispersion.D3Parameters" title="nvalchemiops.torch.interactions.dispersion.D3Parameters"><em>D3Parameters</em></a><em> | </em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#dict" title="(in Python v3.14)"><em>dict</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em>] </em><em>| </em><em>None</em><em>, </em><em>optional</em>) – DFT-D3 parameters provided as either:
 - <a class="reference internal" href="#nvalchemiops.torch.interactions.dispersion.D3Parameters" title="nvalchemiops.torch.interactions.dispersion.D3Parameters"><code class="xref py py-class docutils literal notranslate"><span class="pre">D3Parameters</span></code></a> dataclass instance (recommended)
 - Dictionary with keys: “rcov”, “r4r2”, “c6ab”, “cn_ref”
 Individual parameters below can override values from d3_params.</p></li>
-<li><p><strong>covalent_radii</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em> | </em><em>None</em><em>, </em><em>optional</em>) – Covalent radii [max_Z+1] as float32, indexed by atomic number, in same units
+<li><p><strong>covalent_radii</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em> | </em><em>None</em><em>, </em><em>optional</em>) – Covalent radii [max_Z+1] as float32, indexed by atomic number, in same units
 as positions. If provided, overrides the value in d3_params.</p></li>
-<li><p><strong>r4r2</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em> | </em><em>None</em><em>, </em><em>optional</em>) – &lt;r4&gt;/&lt;r2&gt; expectation values [max_Z+1] as float32 for C8 computation (dimensionless).
+<li><p><strong>r4r2</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em> | </em><em>None</em><em>, </em><em>optional</em>) – <span class="math notranslate nohighlight">\(\langle r^4 \rangle / \langle r^2 \rangle\)</span> expectation values [max_Z+1] as float32
+for <span class="math notranslate nohighlight">\(C_8\)</span> computation (dimensionless).
 If provided, overrides the value in d3_params.</p></li>
-<li><p><strong>c6_reference</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em> | </em><em>None</em><em>, </em><em>optional</em>) – C6 reference values [max_Z+1, max_Z+1, 5, 5] as float32 in energy × distance^6 units.
+<li><p><strong>c6_reference</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em> | </em><em>None</em><em>, </em><em>optional</em>) – <span class="math notranslate nohighlight">\(C_6\)</span> reference values [max_Z+1, max_Z+1, 5, 5] as float32
+in energy <span class="math notranslate nohighlight">\(\times\)</span> distance<span class="math notranslate nohighlight">\(^6\)</span> units.
 If provided, overrides the value in d3_params.</p></li>
-<li><p><strong>coord_num_ref</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em> | </em><em>None</em><em>, </em><em>optional</em>) – CN reference grid [max_Z+1, max_Z+1, 5, 5] as float32 (dimensionless).
+<li><p><strong>coord_num_ref</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em> | </em><em>None</em><em>, </em><em>optional</em>) – CN reference grid [max_Z+1, max_Z+1, 5, 5] as float32 (dimensionless).
 If provided, overrides the value in d3_params.</p></li>
-<li><p><strong>batch_idx</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em> or </em><em>None</em><em>, </em><em>optional</em>) – Batch indices [num_atoms] as int32. If None, all atoms are assumed
+<li><p><strong>batch_idx</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em> or </em><em>None</em><em>, </em><em>optional</em>) – Batch indices [num_atoms] as int32. If None, all atoms are assumed
 to be in a single system (batch 0). For batched calculations, atoms with
 the same batch index belong to the same system. Default: None</p></li>
-<li><p><strong>cell</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em> or </em><em>None</em><em>, </em><em>optional</em><em>, </em><em>as float32</em><em> or </em><em>float64</em>) – Unit cell lattice vectors [num_systems, 3, 3] for PBC, in same dtype and units as positions.
+<li><p><strong>cell</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em> or </em><em>None</em><em>, </em><em>optional</em><em>, </em><em>as float32</em><em> or </em><em>float64</em>) – Unit cell lattice vectors [num_systems, 3, 3] for PBC, in same dtype and units as positions.
 Convention: cell[s, i, :] is i-th lattice vector for system s.
 If None, non-periodic calculation. Default: None</p></li>
-<li><p><strong>neighbor_matrix</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em> | </em><em>None</em><em>, </em><em>optional</em>) – Neighbor indices [num_atoms, max_neighbors] as int32. See module docstring for
+<li><p><strong>neighbor_matrix</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em> | </em><em>None</em><em>, </em><em>optional</em>) – Neighbor indices [num_atoms, max_neighbors] as int32. See module docstring for
 details on the format. Padding entries have values &gt;= fill_value.
 Mutually exclusive with neighbor_list. Default: None</p></li>
-<li><p><strong>neighbor_matrix_shifts</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em> or </em><em>None</em><em>, </em><em>optional</em>) – Integer unit cell shifts [num_atoms, max_neighbors, 3] as int32 for PBC with
+<li><p><strong>neighbor_matrix_shifts</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em> or </em><em>None</em><em>, </em><em>optional</em>) – Integer unit cell shifts [num_atoms, max_neighbors, 3] as int32 for PBC with
 neighbor_matrix format. If None, non-periodic calculation. If provided along
 with cell, Cartesian shifts are computed. Mutually exclusive with unit_shifts.
 Default: None</p></li>
-<li><p><strong>neighbor_list</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em> or </em><em>None</em><em>, </em><em>optional</em>) – Neighbor pairs [2, num_pairs] as int32 in COO format, where row 0 contains
+<li><p><strong>neighbor_list</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em> or </em><em>None</em><em>, </em><em>optional</em>) – Neighbor pairs [2, num_pairs] as int32 in COO format, where row 0 contains
 source atom indices and row 1 contains target atom indices. Alternative to
 neighbor_matrix for sparse neighbor representations. Mutually exclusive with
 neighbor_matrix. Must be used together with <cite>neighbor_ptr</cite> (both are returned
 by the neighbor list API when <cite>return_neighbor_list=True</cite>).
 Default: None</p></li>
-<li><p><strong>neighbor_ptr</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em> or </em><em>None</em><em>, </em><em>optional</em>) – CSR row pointers [num_atoms+1] as int32. Required when using <cite>neighbor_list</cite>.
+<li><p><strong>neighbor_ptr</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em> or </em><em>None</em><em>, </em><em>optional</em>) – CSR row pointers [num_atoms+1] as int32. Required when using <cite>neighbor_list</cite>.
 Indicates that <cite>neighbor_list[1, :]</cite> contains destination atoms in CSR
 format where
 <cite>neighbor_ptr[i]:neighbor_ptr[i+1]</cite> gives the range of neighbors for atom i.
 Returned by the neighbor list API when <cite>return_neighbor_list=True</cite>.
 Default: None</p></li>
-<li><p><strong>unit_shifts</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em> or </em><em>None</em><em>, </em><em>optional</em>) – Integer unit cell shifts [num_pairs, 3] as int32 for PBC with neighbor_list
+<li><p><strong>unit_shifts</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em> or </em><em>None</em><em>, </em><em>optional</em>) – Integer unit cell shifts [num_pairs, 3] as int32 for PBC with neighbor_list
 format. If None, non-periodic calculation. If provided along with cell,
 Cartesian shifts are computed. Mutually exclusive with neighbor_matrix_shifts.
 Default: None</p></li>
@@ -558,7 +564,7 @@ if compute_virial=True.</p></li>
 </p>
 </dd>
 <dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>Tensor</em></a>, <a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>Tensor</em></a>, <a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>Tensor</em></a>] | <a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>Tensor</em></a>, <a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>Tensor</em></a>, <a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>Tensor</em></a>, <a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>Tensor</em></a>]</p>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>Tensor</em></a>, <a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>Tensor</em></a>, <a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>Tensor</em></a>] | <a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>Tensor</em></a>, <a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>Tensor</em></a>, <a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>Tensor</em></a>, <a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>Tensor</em></a>]</p>
 </dd>
 </dl>
 <p class="rubric">Notes</p>
@@ -569,10 +575,10 @@ so using atomic units throughout is recommended and conventional.</p></li>
 <li><p>Float32 or float64 precision for positions and cell; outputs always float32</p></li>
 <li><p><strong>Neighbor formats</strong>: Supports both neighbor_matrix (dense) and neighbor_list (sparse COO)
 formats. Choose neighbor_list for sparse systems or when memory efficiency is important.</p></li>
-<li><p>Padding atoms indicated by numbers[i] == 0</p></li>
+<li><p>Padding atoms indicated by <code class="docutils literal notranslate"><span class="pre">numbers[i]</span> <span class="pre">==</span> <span class="pre">0</span></code></p></li>
 <li><p>Requires symmetric neighbor representation (each pair appears twice)</p></li>
-<li><p><strong>Two-body only</strong>: Computes pairwise C6 and C8 dispersion terms; three-body
-Axilrod-Teller-Muto (ATM/C9) terms are not included</p></li>
+<li><p><strong>Two-body only</strong>: Computes pairwise <span class="math notranslate nohighlight">\(C_6\)</span> and <span class="math notranslate nohighlight">\(C_8\)</span> dispersion terms;
+three-body Axilrod-Teller-Muto (ATM/<span class="math notranslate nohighlight">\(C_9\)</span>) terms are not included</p></li>
 <li><p>Virial computation requires periodic boundary conditions.</p></li>
 <li><p>Bulk stress tensor can be obtained by dividing virial by system volume.</p></li>
 </ul>
@@ -580,7 +586,8 @@ Axilrod-Teller-Muto (ATM/C9) terms are not included</p></li>
 <ul class="simple">
 <li><p>Use neighbor_matrix for dense systems or when max_neighbors is small</p></li>
 <li><p>Use neighbor_list for sparse systems, large cutoffs, or memory-constrained scenarios</p></li>
-<li><p>Both formats produce identical results and support PBC</p></li>
+<li><p>Both formats compute the same model and support PBC; results may differ
+by floating-point roundoff due to traversal order</p></li>
 </ul>
 <p><strong>PBC Handling</strong>:</p>
 <ul class="simple">
@@ -614,7 +621,7 @@ for convenience—the <code class="docutils literal notranslate"><span class="pr
 required by the kernels.</p>
 <dl class="py class">
 <dt class="sig sig-object py" id="nvalchemiops.torch.interactions.dispersion.D3Parameters">
-<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.interactions.dispersion.</span></span><span class="sig-name descname"><span class="pre">D3Parameters</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rcov</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">r4r2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">c6ab</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cn_ref</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">interp_mesh</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/torch/interactions/dispersion/_dftd3.html#D3Parameters"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.torch.interactions.dispersion.D3Parameters" title="Link to this definition">#</a></dt>
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.interactions.dispersion.</span></span><span class="sig-name descname"><span class="pre">D3Parameters</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rcov</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">r4r2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">c6ab</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cn_ref</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">interp_mesh</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/torch/interactions/dispersion/_dftd3.html#D3Parameters"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.torch.interactions.dispersion.D3Parameters" title="Link to this definition">#</a></dt>
 <dd><p>DFT-D3 reference parameters for dispersion correction calculations.</p>
 <p>This dataclass encapsulates all element-specific parameters required for
 DFT-D3 dispersion corrections. The main purpose for this structure is to
@@ -623,17 +630,17 @@ present and complete. These parameters are used by <a class="reference internal"
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>rcov</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a>) – Covalent radii [max_Z+1] as float32 or float64. Units should be consistent
+<li><p><strong>rcov</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a>) – Covalent radii [max_Z+1] as float32 or float64. Units should be consistent
 with position coordinates. Index 0 is reserved for
 padding; valid atomic numbers are 1 to max_Z.</p></li>
-<li><p><strong>r4r2</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a>) – &lt;r⁴&gt;/&lt;r²&gt; expectation values [max_Z+1] as float32 or float64.
-Dimensionless ratio used for computing C8 coefficients from C6 values.</p></li>
-<li><p><strong>c6ab</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a>) – C6 reference coefficients [max_Z+1, max_Z+1, interp_mesh, interp_mesh]
-as float32 or float64. Units are energy x distance^6. Indexed by atomic numbers and coordination number reference indices.</p></li>
-<li><p><strong>cn_ref</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a>) – Coordination number reference grid [max_Z+1, max_Z+1, interp_mesh, interp_mesh]
+<li><p><strong>r4r2</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a>) – <span class="math notranslate nohighlight">\(\langle r^4 \rangle / \langle r^2 \rangle\)</span> expectation values [max_Z+1] as float32 or float64.
+Dimensionless ratio used for computing <span class="math notranslate nohighlight">\(C_8\)</span> coefficients from <span class="math notranslate nohighlight">\(C_6\)</span> values.</p></li>
+<li><p><strong>c6ab</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a>) – <span class="math notranslate nohighlight">\(C_6\)</span> reference coefficients [max_Z+1, max_Z+1, interp_mesh, interp_mesh]
+as float32 or float64. Units are energy <span class="math notranslate nohighlight">\(\times\)</span> distance<span class="math notranslate nohighlight">\(^6\)</span>. Indexed by atomic numbers and coordination number reference indices.</p></li>
+<li><p><strong>cn_ref</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a>) – Coordination number reference grid [max_Z+1, max_Z+1, interp_mesh, interp_mesh]
 as float32 or float64. Dimensionless CN values for Gaussian interpolation.</p></li>
 <li><p><strong>interp_mesh</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>optional</em>) – Size of the coordination number interpolation mesh. Default: 5
-(standard DFT-D3 uses a 5x5 grid)</p></li>
+(standard DFT-D3 uses a <span class="math notranslate nohighlight">\(5 \times 5\)</span> grid)</p></li>
 </ul>
 </dd>
 <dt class="field-even">Raises<span class="colon">:</span></dt>
@@ -647,7 +654,7 @@ as float32 or float64. Dimensionless CN values for Gaussian interpolation.</p></
 <ul class="simple">
 <li><p>Parameters should use consistent units matching your coordinate system.
 Standard D3 parameters from the Grimme group use atomic units (Bohr for
-distances, Hartree x Bohr^6 for C6 coefficients).</p></li>
+distances, Hartree <span class="math notranslate nohighlight">\(\times\)</span> Bohr<span class="math notranslate nohighlight">\(^6\)</span> for <span class="math notranslate nohighlight">\(C_6\)</span> coefficients).</p></li>
 <li><p>Index 0 in all arrays is reserved for padding atoms (atomic number 0)</p></li>
 <li><p>Valid atomic numbers range from 1 to max_z</p></li>
 <li><p>The standard DFT-D3 implementation supports elements 1-94 (H to Pu)</p></li>
@@ -676,39 +683,39 @@ during computation for efficiency</p></li>
 </div>
 <dl class="py attribute">
 <dt class="sig sig-object py" id="nvalchemiops.torch.interactions.dispersion.D3Parameters.c6ab">
-<span class="sig-name descname"><span class="pre">c6ab</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><span class="pre">Tensor</span></a></span><a class="headerlink" href="#nvalchemiops.torch.interactions.dispersion.D3Parameters.c6ab" title="Link to this definition">#</a></dt>
+<span class="sig-name descname"><span class="pre">c6ab</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><span class="pre">Tensor</span></a></em><a class="headerlink" href="#nvalchemiops.torch.interactions.dispersion.D3Parameters.c6ab" title="Link to this definition">#</a></dt>
 <dd></dd></dl>
 
 <dl class="py attribute">
 <dt class="sig sig-object py" id="nvalchemiops.torch.interactions.dispersion.D3Parameters.cn_ref">
-<span class="sig-name descname"><span class="pre">cn_ref</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><span class="pre">Tensor</span></a></span><a class="headerlink" href="#nvalchemiops.torch.interactions.dispersion.D3Parameters.cn_ref" title="Link to this definition">#</a></dt>
+<span class="sig-name descname"><span class="pre">cn_ref</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><span class="pre">Tensor</span></a></em><a class="headerlink" href="#nvalchemiops.torch.interactions.dispersion.D3Parameters.cn_ref" title="Link to this definition">#</a></dt>
 <dd></dd></dl>
 
 <dl class="py property">
 <dt class="sig sig-object py" id="nvalchemiops.torch.interactions.dispersion.D3Parameters.device">
-<span class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">device</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.device" title="(in PyTorch v2.11)"><span class="pre">device</span></a></span><a class="headerlink" href="#nvalchemiops.torch.interactions.dispersion.D3Parameters.device" title="Link to this definition">#</a></dt>
+<em class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">device</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.device" title="(in PyTorch v2.13)"><span class="pre">device</span></a></em><a class="headerlink" href="#nvalchemiops.torch.interactions.dispersion.D3Parameters.device" title="Link to this definition">#</a></dt>
 <dd><p>Device where parameters are stored.</p>
 </dd></dl>
 
 <dl class="py attribute">
 <dt class="sig sig-object py" id="nvalchemiops.torch.interactions.dispersion.D3Parameters.interp_mesh">
-<span class="sig-name descname"><span class="pre">interp_mesh</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><span class="pre">int</span></a></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">5</span></span><a class="headerlink" href="#nvalchemiops.torch.interactions.dispersion.D3Parameters.interp_mesh" title="Link to this definition">#</a></dt>
+<span class="sig-name descname"><span class="pre">interp_mesh</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><span class="pre">int</span></a></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">5</span></em><a class="headerlink" href="#nvalchemiops.torch.interactions.dispersion.D3Parameters.interp_mesh" title="Link to this definition">#</a></dt>
 <dd></dd></dl>
 
 <dl class="py property">
 <dt class="sig sig-object py" id="nvalchemiops.torch.interactions.dispersion.D3Parameters.max_z">
-<span class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">max_z</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><span class="pre">int</span></a></span><a class="headerlink" href="#nvalchemiops.torch.interactions.dispersion.D3Parameters.max_z" title="Link to this definition">#</a></dt>
+<em class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">max_z</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><span class="pre">int</span></a></em><a class="headerlink" href="#nvalchemiops.torch.interactions.dispersion.D3Parameters.max_z" title="Link to this definition">#</a></dt>
 <dd><p>Maximum atomic number supported by these parameters.</p>
 </dd></dl>
 
 <dl class="py attribute">
 <dt class="sig sig-object py" id="nvalchemiops.torch.interactions.dispersion.D3Parameters.r4r2">
-<span class="sig-name descname"><span class="pre">r4r2</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><span class="pre">Tensor</span></a></span><a class="headerlink" href="#nvalchemiops.torch.interactions.dispersion.D3Parameters.r4r2" title="Link to this definition">#</a></dt>
+<span class="sig-name descname"><span class="pre">r4r2</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><span class="pre">Tensor</span></a></em><a class="headerlink" href="#nvalchemiops.torch.interactions.dispersion.D3Parameters.r4r2" title="Link to this definition">#</a></dt>
 <dd></dd></dl>
 
 <dl class="py attribute">
 <dt class="sig sig-object py" id="nvalchemiops.torch.interactions.dispersion.D3Parameters.rcov">
-<span class="sig-name descname"><span class="pre">rcov</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><span class="pre">Tensor</span></a></span><a class="headerlink" href="#nvalchemiops.torch.interactions.dispersion.D3Parameters.rcov" title="Link to this definition">#</a></dt>
+<span class="sig-name descname"><span class="pre">rcov</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><span class="pre">Tensor</span></a></em><a class="headerlink" href="#nvalchemiops.torch.interactions.dispersion.D3Parameters.rcov" title="Link to this definition">#</a></dt>
 <dd></dd></dl>
 
 <dl class="py method">
@@ -718,8 +725,8 @@ during computation for efficiency</p></li>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em> or </em><a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.device" title="(in PyTorch v2.11)"><em>torch.device</em></a><em> or </em><em>None</em><em>, </em><em>optional</em>) – Target device (e.g., ‘cpu’, ‘cuda’, ‘cuda:0’). If None, keeps current device.</p></li>
-<li><p><strong>dtype</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.11)"><em>torch.dtype</em></a><em> or </em><em>None</em><em>, </em><em>optional</em>) – Target dtype (e.g., torch.float32, torch.float64). If None, keeps current dtype.</p></li>
+<li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em> or </em><a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.device" title="(in PyTorch v2.13)"><em>torch.device</em></a><em> or </em><em>None</em><em>, </em><em>optional</em>) – Target device (e.g., ‘cpu’, ‘cuda’, ‘cuda:0’). If None, keeps current device.</p></li>
+<li><p><strong>dtype</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.13)"><em>torch.dtype</em></a><em> or </em><em>None</em><em>, </em><em>optional</em>) – Target dtype (e.g., torch.float32, torch.float64). If None, keeps current dtype.</p></li>
 </ul>
 </dd>
 <dt class="field-even">Returns<span class="colon">:</span></dt>
@@ -752,6 +759,8 @@ during computation for efficiency</p></li>
 <p>These are low-level custom operators that wrap the Warp kernels. For most use cases,
 prefer the high-level <a class="reference internal" href="#nvalchemiops.torch.interactions.dispersion.dftd3" title="nvalchemiops.torch.interactions.dispersion.dftd3"><code class="xref py py-func docutils literal notranslate"><span class="pre">dftd3()</span></code></a> wrapper above. These operators are exposed for
 advanced users who need fine-grained control or <code class="docutils literal notranslate"><span class="pre">torch.compile</span></code> compatibility.</p>
+<section id="non-periodic-systems">
+<h3>Non-Periodic Systems<a class="headerlink" href="#non-periodic-systems" title="Link to this heading">#</a></h3>
 <dl class="py function">
 <dt class="sig sig-object py" id="nvalchemiops.torch.interactions.dispersion._dftd3._dftd3_matrix_op">
 <span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.interactions.dispersion._dftd3.</span></span><span class="sig-name descname"><span class="pre">_dftd3_matrix_op</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#nvalchemiops.torch.interactions.dispersion._dftd3._dftd3_matrix_op" title="Link to this definition">#</a></dt>
@@ -759,7 +768,7 @@ advanced users who need fine-grained control or <code class="docutils literal no
 <p>It has various methods for registering additional behavior for this
 custom op.</p>
 <p>You should not instantiate CustomOpDef directly; instead, use the
-<a class="reference external" href="https://docs.pytorch.org/docs/stable/library.html#torch.library.custom_op" title="(in PyTorch v2.11)"><code class="xref py py-func docutils literal notranslate"><span class="pre">torch.library.custom_op()</span></code></a> API.</p>
+<a class="reference external" href="https://docs.pytorch.org/docs/stable/library.html#torch.library.custom_op" title="(in PyTorch v2.13)"><code class="xref py py-func docutils literal notranslate"><span class="pre">torch.library.custom_op()</span></code></a> API.</p>
 </dd></dl>
 
 <dl class="py function">
@@ -769,9 +778,12 @@ custom op.</p>
 <p>It has various methods for registering additional behavior for this
 custom op.</p>
 <p>You should not instantiate CustomOpDef directly; instead, use the
-<a class="reference external" href="https://docs.pytorch.org/docs/stable/library.html#torch.library.custom_op" title="(in PyTorch v2.11)"><code class="xref py py-func docutils literal notranslate"><span class="pre">torch.library.custom_op()</span></code></a> API.</p>
+<a class="reference external" href="https://docs.pytorch.org/docs/stable/library.html#torch.library.custom_op" title="(in PyTorch v2.13)"><code class="xref py py-func docutils literal notranslate"><span class="pre">torch.library.custom_op()</span></code></a> API.</p>
 </dd></dl>
 
+</section>
+<section id="periodic-boundary-conditions-pbc">
+<h3>Periodic Boundary Conditions (PBC)<a class="headerlink" href="#periodic-boundary-conditions-pbc" title="Link to this heading">#</a></h3>
 <dl class="py function">
 <dt class="sig sig-object py" id="nvalchemiops.torch.interactions.dispersion._dftd3._dftd3_matrix_pbc_op">
 <span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.interactions.dispersion._dftd3.</span></span><span class="sig-name descname"><span class="pre">_dftd3_matrix_pbc_op</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#nvalchemiops.torch.interactions.dispersion._dftd3._dftd3_matrix_pbc_op" title="Link to this definition">#</a></dt>
@@ -779,7 +791,7 @@ custom op.</p>
 <p>It has various methods for registering additional behavior for this
 custom op.</p>
 <p>You should not instantiate CustomOpDef directly; instead, use the
-<a class="reference external" href="https://docs.pytorch.org/docs/stable/library.html#torch.library.custom_op" title="(in PyTorch v2.11)"><code class="xref py py-func docutils literal notranslate"><span class="pre">torch.library.custom_op()</span></code></a> API.</p>
+<a class="reference external" href="https://docs.pytorch.org/docs/stable/library.html#torch.library.custom_op" title="(in PyTorch v2.13)"><code class="xref py py-func docutils literal notranslate"><span class="pre">torch.library.custom_op()</span></code></a> API.</p>
 </dd></dl>
 
 <dl class="py function">
@@ -789,9 +801,10 @@ custom op.</p>
 <p>It has various methods for registering additional behavior for this
 custom op.</p>
 <p>You should not instantiate CustomOpDef directly; instead, use the
-<a class="reference external" href="https://docs.pytorch.org/docs/stable/library.html#torch.library.custom_op" title="(in PyTorch v2.11)"><code class="xref py py-func docutils literal notranslate"><span class="pre">torch.library.custom_op()</span></code></a> API.</p>
+<a class="reference external" href="https://docs.pytorch.org/docs/stable/library.html#torch.library.custom_op" title="(in PyTorch v2.13)"><code class="xref py py-func docutils literal notranslate"><span class="pre">torch.library.custom_op()</span></code></a> API.</p>
 </dd></dl>
 
+</section>
 </section>
 </section>
 
@@ -806,12 +819,12 @@ custom op.</p>
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="neighbors.html"
+       href="segment_ops.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.neighbors</span></code>: Neighbor Lists</p>
+        <p class="prev-next-title"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.segment_ops</span></code>: Segment Operations</p>
       </div>
     </a>
     <a class="right-next"
@@ -863,10 +876,16 @@ custom op.</p>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#internal-custom-operators">Internal Custom Operators</a><ul class="visible nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.torch.interactions.dispersion._dftd3._dftd3_matrix_op"><code class="docutils literal notranslate"><span class="pre">_dftd3_matrix_op()</span></code></a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.torch.interactions.dispersion._dftd3._dftd3_op"><code class="docutils literal notranslate"><span class="pre">_dftd3_op()</span></code></a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.torch.interactions.dispersion._dftd3._dftd3_matrix_pbc_op"><code class="docutils literal notranslate"><span class="pre">_dftd3_matrix_pbc_op()</span></code></a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.torch.interactions.dispersion._dftd3._dftd3_pbc_op"><code class="docutils literal notranslate"><span class="pre">_dftd3_pbc_op()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#non-periodic-systems">Non-Periodic Systems</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.torch.interactions.dispersion._dftd3._dftd3_matrix_op"><code class="docutils literal notranslate"><span class="pre">_dftd3_matrix_op()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.torch.interactions.dispersion._dftd3._dftd3_op"><code class="docutils literal notranslate"><span class="pre">_dftd3_op()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#periodic-boundary-conditions-pbc">Periodic Boundary Conditions (PBC)</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.torch.interactions.dispersion._dftd3._dftd3_matrix_pbc_op"><code class="docutils literal notranslate"><span class="pre">_dftd3_matrix_pbc_op()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.torch.interactions.dispersion._dftd3._dftd3_pbc_op"><code class="docutils literal notranslate"><span class="pre">_dftd3_pbc_op()</span></code></a></li>
+</ul>
+</li>
 </ul>
 </li>
 </ul>
@@ -893,9 +912,22 @@ custom op.</p>
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -915,7 +947,7 @@ custom op.</p>
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

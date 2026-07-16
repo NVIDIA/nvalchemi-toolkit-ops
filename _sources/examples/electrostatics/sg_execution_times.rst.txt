@@ -6,7 +6,7 @@
 
 Computation times
 =================
-**00:20.674** total execution time for 4 files **from examples/electrostatics**:
+**01:37.994** total execution time for 11 files **from examples/electrostatics**:
 
 .. container::
 
@@ -33,14 +33,35 @@ Computation times
      - Time
      - Mem (MB)
    * - :ref:`sphx_glr_examples_electrostatics_04_jax_pme_example.py` (``04_jax_pme_example.py``)
-     - 00:19.223
+     - 00:46.968
+     - 0.0
+   * - :ref:`sphx_glr_examples_electrostatics_06_jax_slab_correction_example.py` (``06_jax_slab_correction_example.py``)
+     - 00:45.272
+     - 0.0
+   * - :ref:`sphx_glr_examples_electrostatics_07_multipole_ewald_summation_example.py` (``07_multipole_ewald_summation_example.py``)
+     - 00:02.497
      - 0.0
    * - :ref:`sphx_glr_examples_electrostatics_02_ewald_summation_example.py` (``02_ewald_summation_example.py``)
-     - 00:01.169
+     - 00:01.910
      - 0.0
    * - :ref:`sphx_glr_examples_electrostatics_03_pme_example.py` (``03_pme_example.py``)
-     - 00:00.243
+     - 00:00.489
+     - 0.0
+   * - :ref:`sphx_glr_examples_electrostatics_08_multipole_pme_example.py` (``08_multipole_pme_example.py``)
+     - 00:00.369
+     - 0.0
+   * - :ref:`sphx_glr_examples_electrostatics_11_pme_energy_derivative_training.py` (``11_pme_energy_derivative_training.py``)
+     - 00:00.233
+     - 0.0
+   * - :ref:`sphx_glr_examples_electrostatics_05_slab_correction_example.py` (``05_slab_correction_example.py``)
+     - 00:00.121
+     - 0.0
+   * - :ref:`sphx_glr_examples_electrostatics_09_multipole_features_example.py` (``09_multipole_features_example.py``)
+     - 00:00.065
      - 0.0
    * - :ref:`sphx_glr_examples_electrostatics_01_coulomb_example.py` (``01_coulomb_example.py``)
-     - 00:00.039
+     - 00:00.037
+     - 0.0
+   * - :ref:`sphx_glr_examples_electrostatics_10_multipole_scf_cache_example.py` (``10_multipole_scf_cache_example.py``)
+     - 00:00.034
      - 0.0

@@ -6,7 +6,7 @@
 
 Computation times
 =================
-**00:01.778** total execution time for 1 file **from examples**:
+**00:06.685** total execution time for 2 files **from examples**:
 
 .. container::
 
@@ -32,6 +32,9 @@ Computation times
    * - Example
      - Time
      - Mem (MB)
+   * - :ref:`sphx_glr_examples_02_segment_ops_autograd.py` (``02_segment_ops_autograd.py``)
+     - 00:05.007
+     - 0.0
    * - :ref:`sphx_glr_examples_01_bspline_visualization.py` (``01_bspline_visualization.py``)
-     - 00:01.778
+     - 00:01.678
      - 0.0

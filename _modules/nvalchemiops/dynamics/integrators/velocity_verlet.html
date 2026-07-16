@@ -2,17 +2,17 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../../../" >
+<html lang="en" data-content_root="../../../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>nvalchemiops.dynamics.integrators.velocity_verlet &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>nvalchemiops.dynamics.integrators.velocity_verlet &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -34,16 +34,17 @@
     <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -58,7 +59,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -125,8 +126,6 @@
   
   
     
-    
-      
     
     
     <img src="../../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -420,7 +419,7 @@ document.write(`
 <span class="c1"># See the License for the specific language governing permissions and</span>
 <span class="c1"># limitations under the License.</span>
 
-<span class="sd">&quot;&quot;&quot;</span>
+<span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">Velocity Verlet Integrator Kernels</span>
 <span class="sd">==================================</span>
 
@@ -439,29 +438,31 @@ document.write(`
 
 <span class="sd">.. math::</span>
 
-<span class="sd">    \\mathbf{r}(t + \\Delta t) = \\mathbf{r}(t) + \\mathbf{v}(t) \\Delta t</span>
-<span class="sd">                                + \\frac{1}{2} \\mathbf{a}(t) \\Delta t^2</span>
+<span class="sd">    \mathbf{r}(t + \Delta t) = \mathbf{r}(t) + \mathbf{v}(t) \Delta t</span>
+<span class="sd">                                + \frac{1}{2} \mathbf{a}(t) \Delta t^2</span>
 
 <span class="sd">Velocity update:</span>
 
 <span class="sd">.. math::</span>
 
-<span class="sd">    \\mathbf{v}(t + \\Delta t) = \\mathbf{v}(t) + \\frac{1}{2}[\\mathbf{a}(t)</span>
-<span class="sd">                                + \\mathbf{a}(t + \\Delta t)] \\Delta t</span>
+<span class="sd">    \mathbf{v}(t + \Delta t) = \mathbf{v}(t) + \frac{1}{2}[\mathbf{a}(t)</span>
+<span class="sd">                                + \mathbf{a}(t + \Delta t)] \Delta t</span>
 
-<span class="sd">where :math:`\\mathbf{a} = \\mathbf{F}/m` is the acceleration.</span>
+<span class="sd">where :math:`\mathbf{a} = \mathbf{F}/m` is the acceleration.</span>
 
 <span class="sd">TWO-PASS ALGORITHM</span>
 <span class="sd">==================</span>
 
 <span class="sd">**Pass 1 (position_update):**</span>
-<span class="sd">    - Update positions to r(t+dt)</span>
-<span class="sd">    - Update velocities to half-step v(t+dt/2) = v(t) + 0.5*a(t)*dt</span>
+<span class="sd">    - Update positions to :math:`\mathbf{r}(t + \Delta t)`</span>
+<span class="sd">    - Update velocities to the half step</span>
+<span class="sd">      :math:`\mathbf{v}(t + \Delta t/2) = \mathbf{v}(t) + \frac{1}{2} \mathbf{a}(t) \Delta t`</span>
 
 <span class="sd">**[User recalculates forces at new positions]**</span>
 
 <span class="sd">**Pass 2 (velocity_finalize):**</span>
-<span class="sd">    - Complete velocity update: v(t+dt) = v(t+dt/2) + 0.5*a(t+dt)*dt</span>
+<span class="sd">    - Complete velocity update:</span>
+<span class="sd">      :math:`\mathbf{v}(t + \Delta t) = \mathbf{v}(t + \Delta t/2) + \frac{1}{2} \mathbf{a}(t + \Delta t) \Delta t`</span>
 
 <span class="sd">USAGE EXAMPLE</span>
 <span class="sd">=============</span>
@@ -1057,12 +1058,23 @@ document.write(`
     <span class="n">atom_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Perform velocity Verlet position update step (in-place).</span>
 
-<span class="sd">    Updates positions to r(t+dt) and velocities to half-step v(t+dt/2).</span>
-<span class="sd">    After calling this function, recalculate forces at the new positions,</span>
-<span class="sd">    then call velocity_verlet_velocity_finalize().</span>
+<span class="sd">    Updates positions to :math:`\mathbf{r}(t + \Delta t)` and velocities to</span>
+<span class="sd">    the half step :math:`\mathbf{v}(t + \Delta t/2)`. After calling this</span>
+<span class="sd">    function, recalculate forces at the new positions, then call</span>
+<span class="sd">    velocity_verlet_velocity_finalize().</span>
+
+<span class="sd">    The kernel evaluates, with :math:`\mathbf{a}(t) = \mathbf{F}(t)/m`:</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        \mathbf{r}(t + \Delta t) = \mathbf{r}(t) + \mathbf{v}(t)\,\Delta t</span>
+<span class="sd">                                   + \tfrac{1}{2}\mathbf{a}(t)\,\Delta t^2</span>
+
+<span class="sd">        \mathbf{v}(t + \tfrac{\Delta t}{2}) = \mathbf{v}(t)</span>
+<span class="sd">                                   + \tfrac{1}{2}\mathbf{a}(t)\,\Delta t</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
@@ -1111,18 +1123,23 @@ document.write(`
     <span class="n">atom_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Finalize velocity Verlet velocity update (in-place).</span>
 
-<span class="sd">    Completes the velocity update using forces evaluated at the new positions:</span>
-<span class="sd">    v(t+dt) = v(t+dt/2) + 0.5*a(t+dt)*dt</span>
+<span class="sd">    Completes the velocity update using forces evaluated at the new positions,</span>
+<span class="sd">    with :math:`\mathbf{a}(t + \Delta t) = \mathbf{F}_\text{new}/m`:</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        \mathbf{v}(t + \Delta t) = \mathbf{v}(t + \tfrac{\Delta t}{2})</span>
+<span class="sd">                                   + \tfrac{1}{2}\mathbf{a}(t + \Delta t)\,\Delta t</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
 <span class="sd">    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
 <span class="sd">        Half-step velocities. Shape (N,). MODIFIED in-place to full-step.</span>
 <span class="sd">    forces_new : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
-<span class="sd">        Forces evaluated at new positions r(t+dt). Shape (N,).</span>
+<span class="sd">        Forces evaluated at new positions :math:`\mathbf{r}(t + \Delta t)`. Shape (N,).</span>
 <span class="sd">    masses : wp.array(dtype=wp.float32 or wp.float64)</span>
 <span class="sd">        Atomic masses. Shape (N,).</span>
 <span class="sd">    dt : wp.array(dtype=wp.float32 or wp.float64)</span>
@@ -1170,11 +1187,22 @@ document.write(`
     <span class="n">atom_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Perform velocity Verlet position update step (non-mutating).</span>
 
-<span class="sd">    Writes new positions r(t+dt) and half-step velocities v(t+dt/2) to</span>
-<span class="sd">    output arrays. Input arrays are NOT modified.</span>
+<span class="sd">    Writes new positions :math:`\mathbf{r}(t + \Delta t)` and half-step</span>
+<span class="sd">    velocities :math:`\mathbf{v}(t + \Delta t/2)` to output arrays. Input</span>
+<span class="sd">    arrays are NOT modified.</span>
+
+<span class="sd">    The kernel evaluates, with :math:`\mathbf{a}(t) = \mathbf{F}(t)/m`:</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        \mathbf{r}(t + \Delta t) = \mathbf{r}(t) + \mathbf{v}(t)\,\Delta t</span>
+<span class="sd">                                   + \tfrac{1}{2}\mathbf{a}(t)\,\Delta t^2</span>
+
+<span class="sd">        \mathbf{v}(t + \tfrac{\Delta t}{2}) = \mathbf{v}(t)</span>
+<span class="sd">                                   + \tfrac{1}{2}\mathbf{a}(t)\,\Delta t</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
@@ -1183,7 +1211,7 @@ document.write(`
 <span class="sd">    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
 <span class="sd">        Atomic velocities at time t. Shape (N,).</span>
 <span class="sd">    forces : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
-<span class="sd">        Forces on atoms at time t. Shape (N,).</span>
+<span class="sd">        Forces on atoms at time :math:`t`. Shape (N,).</span>
 <span class="sd">    masses : wp.array(dtype=wp.float32 or wp.float64)</span>
 <span class="sd">        Atomic masses. Shape (N,).</span>
 <span class="sd">    dt : wp.array(dtype=wp.float32 or wp.float64)</span>
@@ -1262,18 +1290,25 @@ document.write(`
     <span class="n">atom_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Finalize velocity Verlet velocity update (non-mutating).</span>
 
-<span class="sd">    Writes full-step velocities v(t+dt) to output array.</span>
-<span class="sd">    Input arrays are NOT modified.</span>
+<span class="sd">    Writes full-step velocities :math:`\mathbf{v}(t + \Delta t)` to output</span>
+<span class="sd">    array. Input arrays are NOT modified.</span>
+
+<span class="sd">    The kernel evaluates, with :math:`\mathbf{a}(t + \Delta t) = \mathbf{F}_\text{new}/m`:</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        \mathbf{v}(t + \Delta t) = \mathbf{v}(t + \tfrac{\Delta t}{2})</span>
+<span class="sd">                                   + \tfrac{1}{2}\mathbf{a}(t + \Delta t)\,\Delta t</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
 <span class="sd">    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
-<span class="sd">        Half-step velocities v(t+dt/2). Shape (N,).</span>
+<span class="sd">        Half-step velocities :math:`\mathbf{v}(t + \Delta t/2)`. Shape (N,).</span>
 <span class="sd">    forces_new : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
-<span class="sd">        Forces at new positions r(t+dt). Shape (N,).</span>
+<span class="sd">        Forces at new positions :math:`\mathbf{r}(t + \Delta t)`. Shape (N,).</span>
 <span class="sd">    masses : wp.array(dtype=wp.float32 or wp.float64)</span>
 <span class="sd">        Atomic masses. Shape (N,).</span>
 <span class="sd">    dt : wp.array(dtype=wp.float32 or wp.float64)</span>
@@ -1291,7 +1326,7 @@ document.write(`
 <span class="sd">    Returns</span>
 <span class="sd">    -------</span>
 <span class="sd">    wp.array</span>
-<span class="sd">        Full-step velocities v(t+dt).</span>
+<span class="sd">        Full-step velocities :math:`\mathbf{v}(t + \Delta t)`.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">validate_out_array</span><span class="p">(</span><span class="n">velocities_out</span><span class="p">,</span> <span class="n">velocities</span><span class="p">,</span> <span class="s2">&quot;velocities_out&quot;</span><span class="p">)</span>
 
@@ -1338,9 +1373,22 @@ document.write(`
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -1360,7 +1408,7 @@ document.write(`
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

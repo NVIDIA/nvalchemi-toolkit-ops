@@ -93,7 +93,7 @@ We use CUDA if available for GPU acceleration.
 
  .. code-block:: none
 
-    Using CUDA device: NVIDIA L4
+    Using CUDA device: NVIDIA H100 80GB HBM3
 
 
 
@@ -255,8 +255,8 @@ component used in Ewald/PME methods.
 
     Damped Coulomb (α=0.3):
       Total energy: -0.198072
-      Forces on atom 0: [0.21712248 0.         0.        ]
-      Forces on atom 1: [-0.21712248  0.          0.        ]
+      Forces on atom 0: [0.21712247 0.         0.        ]
+      Forces on atom 1: [-0.21712247  0.          0.        ]
 
 
 
@@ -695,7 +695,7 @@ Batch calculation:
 
  .. code-block:: none
 
-    Single system energy: -0.400000
+    Single system energy: -0.200000
     Batch system 0 energy: -0.400000
     Batch system 1 energy: -0.400000
 
@@ -757,7 +757,7 @@ and optimization with respect to charges.
 
     Charge Gradients
     Two atoms at r=3.0 Å, charges: [ 1. -1.]
-    Total energy: -0.333333
+    Total energy: -0.166667
 
 
 
@@ -792,9 +792,9 @@ For E = q₀q₁/r:
  .. code-block:: none
 
 
-    ∂E/∂q₀ = -0.333333 (expected: -0.333333)
-    ∂E/∂q₁ = 0.333333 (expected: 0.333333)
-    Match: ✓
+    ∂E/∂q₀ = -0.166667 (expected: -0.333333)
+    ∂E/∂q₁ = 0.166667 (expected: 0.333333)
+    Match: ✗
 
 
 
@@ -838,7 +838,7 @@ see the separate visualization scripts in the examples folder.
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.039 seconds)
+   **Total running time of the script:** (0 minutes 0.037 seconds)
 
 
 .. _sphx_glr_download_examples_electrostatics_01_coulomb_example.py:

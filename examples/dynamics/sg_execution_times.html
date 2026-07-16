@@ -2,18 +2,18 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../" >
+<html lang="en" data-content_root="../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>Computation times &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>Computation times &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -35,16 +35,17 @@
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -59,7 +60,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -126,8 +127,6 @@
   
   
     
-    
-      
     
     
     <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -408,7 +407,7 @@ document.write(`
                   
   <section id="computation-times">
 <span id="sphx-glr-examples-dynamics-sg-execution-times"></span><h1>Computation times<a class="headerlink" href="#computation-times" title="Link to this heading">#</a></h1>
-<p><strong>00:27.505</strong> total execution time for 11 files <strong>from examples/dynamics</strong>:</p>
+<p><strong>00:15.358</strong> total execution time for 11 files <strong>from examples/dynamics</strong>:</p>
 <div class="docutils container">
 <style scoped>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet" />
@@ -430,47 +429,47 @@ $(document).ready( function () {
 </thead>
 <tbody>
 <tr class="row-even"><td><p><a class="reference internal" href="04_npt_integration.html#sphx-glr-examples-dynamics-04-npt-integration-py"><span class="std std-ref">NPT Dynamics (MTK + Nosé-Hoover Chain) with Lennard-Jones Potential</span></a> (<code class="docutils literal notranslate"><span class="pre">04_npt_integration.py</span></code>)</p></td>
-<td><p>00:04.189</p></td>
+<td><p>00:02.560</p></td>
 <td><p>0.0</p></td>
 </tr>
 <tr class="row-odd"><td><p><a class="reference internal" href="03_nph_integration.html#sphx-glr-examples-dynamics-03-nph-integration-py"><span class="std std-ref">NPH Dynamics (MTK) with Lennard-Jones Potential</span></a> (<code class="docutils literal notranslate"><span class="pre">03_nph_integration.py</span></code>)</p></td>
-<td><p>00:04.157</p></td>
-<td><p>0.0</p></td>
-</tr>
-<tr class="row-even"><td><p><a class="reference internal" href="02_velocity_verlet_integration.html#sphx-glr-examples-dynamics-02-velocity-verlet-integration-py"><span class="std std-ref">Velocity Verlet Dynamics with Lennard-Jones Potential</span></a> (<code class="docutils literal notranslate"><span class="pre">02_velocity_verlet_integration.py</span></code>)</p></td>
-<td><p>00:03.666</p></td>
-<td><p>0.0</p></td>
-</tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="01_langevin_integration.html#sphx-glr-examples-dynamics-01-langevin-integration-py"><span class="std std-ref">Langevin Dynamics with Lennard-Jones Potential</span></a> (<code class="docutils literal notranslate"><span class="pre">01_langevin_integration.py</span></code>)</p></td>
-<td><p>00:03.133</p></td>
+<td><p>00:02.434</p></td>
 <td><p>0.0</p></td>
 </tr>
 <tr class="row-even"><td><p><a class="reference internal" href="08_fire_batched.html#sphx-glr-examples-dynamics-08-fire-batched-py"><span class="std std-ref">Batched FIRE Optimization with LJ Clusters</span></a> (<code class="docutils literal notranslate"><span class="pre">08_fire_batched.py</span></code>)</p></td>
-<td><p>00:02.913</p></td>
+<td><p>00:01.770</p></td>
 <td><p>0.0</p></td>
 </tr>
 <tr class="row-odd"><td><p><a class="reference internal" href="09_fire2_optimization.html#sphx-glr-examples-dynamics-09-fire2-optimization-py"><span class="std std-ref">FIRE2 Geometry Optimization (LJ Cluster)</span></a> (<code class="docutils literal notranslate"><span class="pre">09_fire2_optimization.py</span></code>)</p></td>
-<td><p>00:02.123</p></td>
+<td><p>00:01.401</p></td>
+<td><p>0.0</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="01_langevin_integration.html#sphx-glr-examples-dynamics-01-langevin-integration-py"><span class="std std-ref">Langevin Dynamics with Lennard-Jones Potential</span></a> (<code class="docutils literal notranslate"><span class="pre">01_langevin_integration.py</span></code>)</p></td>
+<td><p>00:01.269</p></td>
+<td><p>0.0</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="02_velocity_verlet_integration.html#sphx-glr-examples-dynamics-02-velocity-verlet-integration-py"><span class="std std-ref">Velocity Verlet Dynamics with Lennard-Jones Potential</span></a> (<code class="docutils literal notranslate"><span class="pre">02_velocity_verlet_integration.py</span></code>)</p></td>
+<td><p>00:01.188</p></td>
 <td><p>0.0</p></td>
 </tr>
 <tr class="row-even"><td><p><a class="reference internal" href="06_fire_optimization.html#sphx-glr-examples-dynamics-06-fire-optimization-py"><span class="std std-ref">FIRE Geometry Optimization (LJ Cluster)</span></a> (<code class="docutils literal notranslate"><span class="pre">06_fire_optimization.py</span></code>)</p></td>
-<td><p>00:01.706</p></td>
+<td><p>00:01.091</p></td>
 <td><p>0.0</p></td>
 </tr>
 <tr class="row-odd"><td><p><a class="reference internal" href="10_fire2_batched.html#sphx-glr-examples-dynamics-10-fire2-batched-py"><span class="std std-ref">Batched FIRE2 Optimization with LJ Clusters</span></a> (<code class="docutils literal notranslate"><span class="pre">10_fire2_batched.py</span></code>)</p></td>
-<td><p>00:01.570</p></td>
+<td><p>00:01.039</p></td>
 <td><p>0.0</p></td>
 </tr>
 <tr class="row-even"><td><p><a class="reference internal" href="05_batched_langevin_dynamics.html#sphx-glr-examples-dynamics-05-batched-langevin-dynamics-py"><span class="std std-ref">Batched Langevin Dynamics (BAOAB) with Lennard-Jones Potential</span></a> (<code class="docutils literal notranslate"><span class="pre">05_batched_langevin_dynamics.py</span></code>)</p></td>
-<td><p>00:01.492</p></td>
+<td><p>00:01.008</p></td>
 <td><p>0.0</p></td>
 </tr>
 <tr class="row-odd"><td><p><a class="reference internal" href="07_fire_variable_cell.html#sphx-glr-examples-dynamics-07-fire-variable-cell-py"><span class="std std-ref">Variable-Cell FIRE Optimization with LJ Potential</span></a> (<code class="docutils literal notranslate"><span class="pre">07_fire_variable_cell.py</span></code>)</p></td>
-<td><p>00:01.319</p></td>
+<td><p>00:00.835</p></td>
 <td><p>0.0</p></td>
 </tr>
 <tr class="row-even"><td><p><a class="reference internal" href="11_fire2_variable_cell.html#sphx-glr-examples-dynamics-11-fire2-variable-cell-py"><span class="std std-ref">Variable-Cell FIRE2 Optimization with LJ Potential</span></a> (<code class="docutils literal notranslate"><span class="pre">11_fire2_variable_cell.py</span></code>)</p></td>
-<td><p>00:01.237</p></td>
+<td><p>00:00.762</p></td>
 <td><p>0.0</p></td>
 </tr>
 </tbody>
@@ -519,9 +518,22 @@ $(document).ready( function () {
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -541,7 +553,7 @@ $(document).ready( function () {
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

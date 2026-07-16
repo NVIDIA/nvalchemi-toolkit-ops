@@ -2,18 +2,18 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../" >
+<html lang="en" data-content_root="../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>Installation Guide &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>Installation Guide &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -35,16 +35,17 @@
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -61,7 +62,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -128,8 +129,6 @@
   
   
     
-    
-      
     
     
     <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -367,7 +366,7 @@ document.write(`
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Installation Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="intro.html">Introduction to ALCHEMI Toolkit-Ops</a></li>
 <li class="toctree-l1"><a class="reference internal" href="conventions.html">Conventions</a></li>
-<li class="toctree-l1"><a class="reference internal" href="migration.html">Migration Guide (v0.3.0)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migration Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="faq.html">Frequently Asked Questions</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Core Components</span></p>
@@ -376,6 +375,12 @@ document.write(`
 <li class="toctree-l1"><a class="reference internal" href="../components/electrostatics.html">Electrostatic Interactions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../components/dispersion.html">DFT-D3(BJ) Dispersion Correction</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../components/dynamics.html">Molecular Dynamics Integrators</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../components/segment_ops.html">Segment Operations</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Advanced Usage</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="contributing.html">Contribution Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="kernel-style-guide.html">Kernel Style Guide</a></li>
 </ul>
 </div>
 </nav></div>
@@ -462,9 +467,8 @@ and Linux kernels</p></li>
 <h3>CUDA 13<a class="headerlink" href="#cuda-13" title="Link to this heading">#</a></h3>
 <p>Blackwell GPUs require <strong>CUDA 13</strong>. The default PyPI <code class="docutils literal notranslate"><span class="pre">warp-lang</span></code> package ships
 with CUDA 12 and needs a CUDA 13 variant. <code class="docutils literal notranslate"><span class="pre">torch&gt;=2.11.0</span></code> and <code class="docutils literal notranslate"><span class="pre">jax[cuda13]</span></code>
-publish CUDA 13 wheels on the default PyPI index for x86; on Arm platforms
-(e.g. NVIDIA DGX Spark), an extra index URL is required for PyTorch. See
-<a class="reference internal" href="#cuda-13-installation">CUDA 13 Installation</a> below for detailed steps.</p>
+publish CUDA 13 wheels on the default PyPI index for Linux x86_64 and aarch64.
+See <a class="reference internal" href="#cuda-13-installation">CUDA 13 Installation</a> below for detailed steps.</p>
 </section>
 </section>
 <section id="installation-methods">
@@ -485,7 +489,9 @@ page found <a class="reference external" href="https://docs.astral.sh/uv/getting
 <section id="backend-extras">
 <h3>Backend Extras<a class="headerlink" href="#backend-extras" title="Link to this heading">#</a></h3>
 <p>ALCHEMI Toolkit-Ops provides optional extras for framework-specific bindings.
-Install the extra matching your deep learning backend:</p>
+Install the extra matching your deep learning backend. The plain <code class="docutils literal notranslate"><span class="pre">torch</span></code> and
+<code class="docutils literal notranslate"><span class="pre">jax</span></code> extras use CUDA 13 by default; use <code class="docutils literal notranslate"><span class="pre">torch-cu12</span></code> or <code class="docutils literal notranslate"><span class="pre">jax-cu12</span></code> when a
+CUDA 12 environment is required.</p>
 <div class="sd-tab-set docutils">
 <input checked="checked" id="sd-tab-item-0" name="sd-tab-set-0" type="radio">
 <label class="sd-tab-label" data-sync-group="tab" data-sync-id="torch" for="sd-tab-item-0">
@@ -504,7 +510,7 @@ JAX</label><div class="sd-tab-content docutils">
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;nvalchemi-toolkit-ops[jax]&#39;</span>
 </pre></div>
 </div>
-<p>This installs JAX with CUDA 12 support. Verify the JAX bindings are available:</p>
+<p>This installs JAX with CUDA 13 support. Verify the JAX bindings are available:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;from nvalchemiops.jax import neighbors; print(&#39;JAX bindings available&#39;)&quot;</span>
 </pre></div>
 </div>
@@ -540,12 +546,16 @@ $<span class="w"> </span>uv<span class="w"> </span>pip<span class="w"> </span>in
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>git<span class="w"> </span>clone<span class="w"> </span>git@github.com/NVIDIA/nvalchemi-toolkit-ops.git
 $<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>nvalchemi-toolkit-ops
 $<span class="w"> </span>uv<span class="w"> </span>sync
-<span class="c1"># include torch backend</span>
+<span class="c1"># include torch backend with the default CUDA 13 version</span>
 $<span class="w"> </span>uv<span class="w"> </span>sync<span class="w"> </span>--extra<span class="w"> </span>torch
-<span class="c1"># include jax backend</span>
+<span class="c1"># include jax backend with the default CUDA 13 version</span>
 $<span class="w"> </span>uv<span class="w"> </span>sync<span class="w"> </span>--extra<span class="w"> </span>jax
-<span class="c1"># include both backends</span>
-$<span class="w"> </span>uv<span class="w"> </span>sync<span class="w"> </span>--all-extras
+<span class="c1"># include both backends with the default CUDA 13 version</span>
+$<span class="w"> </span>uv<span class="w"> </span>sync<span class="w"> </span>--extra<span class="w"> </span>torch<span class="w"> </span>--extra<span class="w"> </span>jax
+<span class="c1"># include both backends with CUDA 12</span>
+$<span class="w"> </span>uv<span class="w"> </span>sync<span class="w"> </span>--extra<span class="w"> </span>torch-cu12<span class="w"> </span>--extra<span class="w"> </span>jax-cu12
+<span class="c1"># equivalently, request CUDA 13 explicitly</span>
+$<span class="w"> </span>uv<span class="w"> </span>sync<span class="w"> </span>--extra<span class="w"> </span>torch-cu13<span class="w"> </span>--extra<span class="w"> </span>jax-cu13
 </pre></div>
 </div>
 </details>
@@ -586,13 +596,13 @@ commit hash.</p>
 </section>
 </section>
 <section id="cuda-13-installation">
-<span id="id1"></span><h2>CUDA 13 Installation<a class="headerlink" href="#cuda-13-installation" title="Link to this heading">#</a></h2>
-<p>Blackwell GPUs require packages/dependencies that are build for CUDA 13, which
-includes <code class="docutils literal notranslate"><span class="pre">warp-lang</span></code>, <code class="docutils literal notranslate"><span class="pre">jax</span></code>, and <code class="docutils literal notranslate"><span class="pre">torch</span></code>; currently only <code class="docutils literal notranslate"><span class="pre">torch&gt;=2.11.0</span></code> provides
-x86 + CUDA 13 wheels without needing to specify via the default PyPI index.</p>
+<h2>CUDA 13 Installation<a class="headerlink" href="#cuda-13-installation" title="Link to this heading">#</a></h2>
+<p>Blackwell GPUs require packages/dependencies that are built for CUDA 13, which
+includes <code class="docutils literal notranslate"><span class="pre">warp-lang</span></code>, <code class="docutils literal notranslate"><span class="pre">jax</span></code>, and <code class="docutils literal notranslate"><span class="pre">torch</span></code>. <code class="docutils literal notranslate"><span class="pre">torch&gt;=2.11.0</span></code> and <code class="docutils literal notranslate"><span class="pre">jax[cuda13]</span></code>
+provide CUDA 13 wheels from the default PyPI index on Linux x86_64 and aarch64.</p>
 <section id="warp">
 <h3>Warp<a class="headerlink" href="#warp" title="Link to this heading">#</a></h3>
-<p>The PyPI <code class="docutils literal notranslate"><span class="pre">warp-lang</span></code> package ships with CUDA 12, and as of writing CUDA 13
+<p>The PyPI <code class="docutils literal notranslate"><span class="pre">warp-lang</span></code> package ships with CUDA 12. CUDA 13
 wheels can be obtained from the <a class="reference external" href="https://github.com/NVIDIA/warp/releases">Warp GitHub Releases</a>
 page. Copy the URL of the appropriate <code class="docutils literal notranslate"><span class="pre">+cu13</span></code> wheel for your platform and pass it to
 <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span></code>. Select the wheel matching your architecture:</p>
@@ -615,13 +625,11 @@ for full details on installing specific versions from GitHub releases. The
 <section id="pytorch">
 <h3>PyTorch<a class="headerlink" href="#pytorch" title="Link to this heading">#</a></h3>
 <p>Starting with version <strong>2.11.0</strong>, PyTorch publishes CUDA 13 (<code class="docutils literal notranslate"><span class="pre">cu130</span></code>) wheels on
-the default PyPI index for <strong>x86</strong> platforms:</p>
+the default PyPI index for Linux x86_64 and aarch64:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="nv">torch</span><span class="o">==</span><span class="m">2</span>.11.0
 </pre></div>
 </div>
-<p>On <strong>Arm</strong> platforms (e.g. DGX Spark), <code class="docutils literal notranslate"><span class="pre">cu130</span></code> wheels are not on the default
-index and must be pulled from the PyTorch wheel repository. PyTorch versions
-<strong>2.9.0</strong>, <strong>2.9.1</strong>, <strong>2.10.0</strong>, and <strong>2.11.0</strong> provide Arm <code class="docutils literal notranslate"><span class="pre">cu130</span></code> wheels:</p>
+<p>Use the PyTorch CUDA index directly when installing an explicit <code class="docutils literal notranslate"><span class="pre">+cu130</span></code> wheel:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="nv">torch</span><span class="o">==</span><span class="m">2</span>.11.0+cu130<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--extra-index-url<span class="w"> </span>https://download.pytorch.org/whl/cu130
 </pre></div>
@@ -629,8 +637,8 @@ index and must be pulled from the PyTorch wheel repository. PyTorch versions
 </section>
 <section id="jax">
 <h3>JAX<a class="headerlink" href="#jax" title="Link to this heading">#</a></h3>
-<p><code class="docutils literal notranslate"><span class="pre">jax[cuda13]</span></code> resolves from the default PyPI index on both x86 and Arm
-platforms:</p>
+<p><code class="docutils literal notranslate"><span class="pre">jax[cuda13]</span></code> resolves from the default PyPI index on Linux x86_64 and
+aarch64:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;jax[cuda13]&#39;</span>
 </pre></div>
 </div>
@@ -644,8 +652,10 @@ platforms:</p>
 <label class="sd-tab-label" for="sd-tab-item-2">
 x86</label><div class="sd-tab-content docutils">
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>uv<span class="w"> </span>venv<span class="w"> </span>--seed<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.12
+$<span class="w"> </span><span class="nv">WARP_CU13_WHEEL</span><span class="o">=</span><span class="s2">&quot;https://github.com/NVIDIA/warp/releases/download/v1.12.1/\</span>
+<span class="s2">warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_x86_64.whl&quot;</span>
 $<span class="w"> </span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>nvalchemi-toolkit-ops<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>https://github.com/NVIDIA/warp/releases/download/v1.12.1/warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_x86_64.whl<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span><span class="s2">&quot;</span><span class="nv">$WARP_CU13_WHEEL</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">    </span><span class="nv">torch</span><span class="o">==</span><span class="m">2</span>.11.0<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span><span class="s1">&#39;jax[cuda13]&#39;</span>
 </pre></div>
@@ -655,11 +665,12 @@ $<span class="w"> </span>uv<span class="w"> </span>pip<span class="w"> </span>in
 <label class="sd-tab-label" for="sd-tab-item-3">
 Arm (e.g. DGX Spark)</label><div class="sd-tab-content docutils">
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>uv<span class="w"> </span>venv<span class="w"> </span>--seed<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.12
+$<span class="w"> </span><span class="nv">WARP_CU13_WHEEL</span><span class="o">=</span><span class="s2">&quot;https://github.com/NVIDIA/warp/releases/download/v1.12.1/\</span>
+<span class="s2">warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_aarch64.whl&quot;</span>
 $<span class="w"> </span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>nvalchemi-toolkit-ops<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>https://github.com/NVIDIA/warp/releases/download/v1.12.1/warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_aarch64.whl<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span><span class="nv">torch</span><span class="o">==</span><span class="m">2</span>.11.0+cu130<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span><span class="s1">&#39;jax[cuda13]&#39;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--extra-index-url<span class="w"> </span>https://download.pytorch.org/whl/cu130
+<span class="w">    </span><span class="s2">&quot;</span><span class="nv">$WARP_CU13_WHEEL</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span><span class="nv">torch</span><span class="o">==</span><span class="m">2</span>.11.0<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span><span class="s1">&#39;jax[cuda13]&#39;</span>
 </pre></div>
 </div>
 </div>
@@ -674,9 +685,10 @@ x86</label><div class="sd-tab-content docutils">
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>git<span class="w"> </span>clone<span class="w"> </span>git@github.com:NVIDIA/nvalchemi-toolkit-ops.git
 $<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>nvalchemi-toolkit-ops
 $<span class="w"> </span>uv<span class="w"> </span>sync<span class="w"> </span>--group<span class="w"> </span>dev
-<span class="c1"># Replace the default CUDA 12 wheels with CUDA 13 builds</span>
+$<span class="w"> </span><span class="nv">WARP_CU13_WHEEL</span><span class="o">=</span><span class="s2">&quot;https://github.com/NVIDIA/warp/releases/download/v1.12.1/\</span>
+<span class="s2">warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_x86_64.whl&quot;</span>
 $<span class="w"> </span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>https://github.com/NVIDIA/warp/releases/download/v1.12.1/warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_x86_64.whl<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span><span class="s2">&quot;</span><span class="nv">$WARP_CU13_WHEEL</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">    </span><span class="nv">torch</span><span class="o">==</span><span class="m">2</span>.11.0<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span><span class="s1">&#39;jax[cuda13]&#39;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--force-reinstall
@@ -689,15 +701,13 @@ Arm (e.g. DGX Spark)</label><div class="sd-tab-content docutils">
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>git<span class="w"> </span>clone<span class="w"> </span>git@github.com:NVIDIA/nvalchemi-toolkit-ops.git
 $<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>nvalchemi-toolkit-ops
 $<span class="w"> </span>uv<span class="w"> </span>sync<span class="w"> </span>--group<span class="w"> </span>dev
-<span class="c1"># Replace the default CUDA 12 wheels with CUDA 13 builds</span>
+$<span class="w"> </span><span class="nv">WARP_CU13_WHEEL</span><span class="o">=</span><span class="s2">&quot;https://github.com/NVIDIA/warp/releases/download/v1.12.1/\</span>
+<span class="s2">warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_aarch64.whl&quot;</span>
 $<span class="w"> </span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>https://github.com/NVIDIA/warp/releases/download/v1.12.1/warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_aarch64.whl<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span><span class="nv">torch</span><span class="o">==</span><span class="m">2</span>.11.0+cu130<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span><span class="s2">&quot;</span><span class="nv">$WARP_CU13_WHEEL</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span><span class="nv">torch</span><span class="o">==</span><span class="m">2</span>.11.0<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span><span class="s1">&#39;jax[cuda13]&#39;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--force-reinstall<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--extra-index-url<span class="w"> </span>https://download.pytorch.org/whl/cu130
-<span class="c1"># Remove the CUDA 12 JAX plugins to avoid a plugin conflict</span>
-$<span class="w"> </span>uv<span class="w"> </span>pip<span class="w"> </span>uninstall<span class="w"> </span>jax-cuda12-pjrt<span class="w"> </span>jax-cuda12-plugin
+<span class="w">    </span>--force-reinstall
 </pre></div>
 </div>
 </div>
@@ -705,15 +715,16 @@ $<span class="w"> </span>uv<span class="w"> </span>pip<span class="w"> </span>un
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 <p>The <code class="docutils literal notranslate"><span class="pre">--force-reinstall</span></code> flag is needed in the developer flow because <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">sync</span></code>
-will have already installed default CUDA 12 wheels. On x86, <code class="docutils literal notranslate"><span class="pre">torch&gt;=2.11.0</span></code> and <code class="docutils literal notranslate"><span class="pre">jax[cuda13]</span></code> resolve from the default PyPI index.
-On Arm, the <code class="docutils literal notranslate"><span class="pre">--extra-index-url</span></code> is required for PyTorch; versions 2.9.0, 2.9.1,
-2.10.0, and 2.11.0 provide Arm <code class="docutils literal notranslate"><span class="pre">cu130</span></code> wheels. <code class="docutils literal notranslate"><span class="pre">jax[cuda13]</span></code> resolves from the
-default index on both architectures.</p>
-<p>The <code class="docutils literal notranslate"><span class="pre">jax</span></code> extra in <code class="docutils literal notranslate"><span class="pre">pyproject.toml</span></code> pulls in <code class="docutils literal notranslate"><span class="pre">jax[cuda12]</span></code>, so <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">sync</span> <span class="pre">--all-extras</span></code> installs the CUDA 12 PJRT plugin and shared library. These must
-be removed after installing <code class="docutils literal notranslate"><span class="pre">jax[cuda13]</span></code>, otherwise JAX will error with
-<code class="docutils literal notranslate"><span class="pre">ALREADY_EXISTS:</span> <span class="pre">PJRT_Api</span> <span class="pre">already</span> <span class="pre">exists</span> <span class="pre">for</span> <span class="pre">device</span> <span class="pre">type</span> <span class="pre">cuda</span></code> at import time.
-This only applies to the developer flow — a clean venv (as in the “without
-cloning” path) does not have the CUDA 12 plugins and does not need this step.</p>
+will have already installed the default PyPI <code class="docutils literal notranslate"><span class="pre">warp-lang</span></code> wheel. <code class="docutils literal notranslate"><span class="pre">torch&gt;=2.11.0</span></code>
+and <code class="docutils literal notranslate"><span class="pre">jax[cuda13]</span></code> resolve from the default PyPI index on Linux x86_64 and
+aarch64.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">jax</span></code> and <code class="docutils literal notranslate"><span class="pre">torch</span></code> extras in <code class="docutils literal notranslate"><span class="pre">pyproject.toml</span></code> target CUDA 13 and are
+equivalent to the explicit <code class="docutils literal notranslate"><span class="pre">jax-cu13</span></code> and <code class="docutils literal notranslate"><span class="pre">torch-cu13</span></code> extras. PyTorch CUDA 13
+uses the <code class="docutils literal notranslate"><span class="pre">cu130</span></code> index; the CUDA 12 fallback uses the <code class="docutils literal notranslate"><span class="pre">cu126</span></code> index. Use
+<code class="docutils literal notranslate"><span class="pre">jax-cu12</span></code>/<code class="docutils literal notranslate"><span class="pre">torch-cu12</span></code> when a CUDA 12 environment is required. Do not sync CUDA
+12 and CUDA 13 extras into the same environment; JAX will error with
+<code class="docutils literal notranslate"><span class="pre">ALREADY_EXISTS:</span> <span class="pre">PJRT_Api</span> <span class="pre">already</span> <span class="pre">exists</span> <span class="pre">for</span> <span class="pre">device</span> <span class="pre">type</span> <span class="pre">cuda</span></code> when both CUDA
+plugins are present.</p>
 </div>
 </section>
 </section>
@@ -872,9 +883,22 @@ integrate ALCHEMI Toolkit-Ops into your application.</p></li>
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -894,7 +918,7 @@ integrate ALCHEMI Toolkit-Ops into your application.</p></li>
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

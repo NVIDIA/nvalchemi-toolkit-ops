@@ -2,18 +2,18 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../" >
+<html lang="en" data-content_root="../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>nvalchemiops.interactions.electrostatics: Electrostatic Interactions (Warp) &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>nvalchemiops.interactions.electrostatics: Electrostatic Interactions (Warp) &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -35,16 +35,17 @@
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -52,7 +53,7 @@
     <script src="../../_static/design-tabs.js?v=f930bc37"></script>
     <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
     <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
-    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'modules/warp/electrostatics';</script>
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
@@ -63,7 +64,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -130,8 +131,6 @@
   
   
     
-    
-      
     
     
     <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -366,6 +365,7 @@ document.write(`
   <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
   <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../torch/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../torch/segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.segment_ops</span></code>: Segment Operations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../torch/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../torch/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.electrostatics</span></code>: Electrostatics</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../torch/dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch</span></code>: Dynamics Optimizers</a></li>
@@ -373,11 +373,13 @@ document.write(`
 </ul>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../jax/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../jax/segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.segment_ops</span></code>: Segment Operations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../jax/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../jax/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.electrostatics</span></code>: Electrostatics</a></li>
 </ul>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.segment_ops</span></code>: Segment Operations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.electrostatics</span></code>: Electrostatic Interactions (Warp)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.dynamics</span></code>: Molecular Dynamics</a></li>
@@ -472,6 +474,11 @@ For PyTorch bindings, see <code class="docutils literal notranslate"><span class
 - Supports geometry-dependent charges (MLIP)
 - Warp launchers: <code class="docutils literal notranslate"><span class="pre">dsf_csr()</span></code>, <code class="docutils literal notranslate"><span class="pre">dsf_matrix()</span></code>
 - PyTorch API: <code class="docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.electrostatics.dsf</span></code></p></li>
+<li><p><strong>Slab Correction</strong> (<cite>slab_kernels</cite>)
+- Yeh-Berkowitz / Ballenegger correction for 2D-periodic slabs
+- Supports orthogonal and triclinic cells via projected slab normals
+- Warp launchers: <code class="docutils literal notranslate"><span class="pre">slab_reduce_moments()</span></code>, <code class="docutils literal notranslate"><span class="pre">slab_precompute_geometry()</span></code>, <code class="docutils literal notranslate"><span class="pre">slab_correction()</span></code>
+- PyTorch API: <code class="docutils literal notranslate"><span class="pre">compute_slab_correction()</span></code> and <code class="docutils literal notranslate"><span class="pre">ewald_summation(...,</span> <span class="pre">slab_correction=True)</span></code></p></li>
 </ol>
 </section>
 </section>
@@ -1415,14 +1422,16 @@ in the same way as the other kernels can be. See the PyTorch bindings instead.</
 <p>Framework-agnostic launcher for single-system Green’s function computation.</p>
 <section id="note-fft-operations-offloaded-to-framework">
 <h4>Note: FFT Operations Offloaded to Framework<a class="headerlink" href="#note-fft-operations-offloaded-to-framework" title="Link to this heading">#</a></h4>
-<p>This kernel computes the Green’s function multipliers for PME.
+<p>This helper computes raw Green’s function multipliers and B-spline
+deconvolution factors for PME. The internal factory-backed convolve helper
+computes the effective folded multiplier <code class="docutils literal notranslate"><span class="pre">G(k)</span> <span class="pre">/</span> <span class="pre">C^2(k)</span></code> internally.
 The complete PME reciprocal-space workflow requires FFT operations
 that are not available in Warp and must be performed by the calling
 framework. The typical workflow is:</p>
 <ol class="arabic simple">
 <li><p>Spread charges to mesh: spline_spread()</p></li>
 <li><p>Forward FFT: framework.fft.rfftn(mesh)      &lt;– Framework-specific</p></li>
-<li><p>Compute Green’s function: pme_green_structure_factor()</p></li>
+<li><p>Compute Green’s function and structure factor: pme_green_structure_factor()</p></li>
 <li><p>Convolution: mesh_fft * green_function / structure_factor_sq</p></li>
 <li><p>Inverse FFT: framework.fft.irfftn(…)     &lt;– Framework-specific</p></li>
 <li><p>Gather potential: spline_gather()</p></li>
@@ -1484,7 +1493,7 @@ framework. The typical workflow is:</p>
 <dd class="field-even"><p>int</p>
 </dd>
 <dt class="field-odd">param spline_order<span class="colon">:</span></dt>
-<dd class="field-odd"><p>B-spline order (1-4). Order 4 (cubic) recommended.</p>
+<dd class="field-odd"><p>B-spline order (1-6). Order 4 (cubic) recommended.</p>
 </dd>
 <dt class="field-even">type spline_order<span class="colon">:</span></dt>
 <dd class="field-even"><p>int</p>
@@ -1525,18 +1534,18 @@ framework. The typical workflow is:</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>k_squared</strong> (<em>array</em>)</p></li>
-<li><p><strong>miller_x</strong> (<em>array</em>)</p></li>
-<li><p><strong>miller_y</strong> (<em>array</em>)</p></li>
-<li><p><strong>miller_z</strong> (<em>array</em>)</p></li>
-<li><p><strong>alpha</strong> (<em>array</em>)</p></li>
-<li><p><strong>volume</strong> (<em>array</em>)</p></li>
+<li><p><strong>k_squared</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>miller_x</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>miller_y</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>miller_z</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>alpha</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>volume</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
 <li><p><strong>mesh_nx</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>)</p></li>
 <li><p><strong>mesh_ny</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>)</p></li>
 <li><p><strong>mesh_nz</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>)</p></li>
 <li><p><strong>spline_order</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>)</p></li>
-<li><p><strong>green_function</strong> (<em>array</em>)</p></li>
-<li><p><strong>structure_factor_sq</strong> (<em>array</em>)</p></li>
+<li><p><strong>green_function</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
+<li><p><strong>structure_factor_sq</strong> (<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>)</p></li>
 <li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>)</p></li>
 <li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em> | </em><em>None</em>)</p></li>
 </ul>
@@ -1566,7 +1575,7 @@ the same mesh dimensions.</p>
 <li><p><strong>mesh_nx</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – Full mesh dimensions (Nz is the full size, not rfft size).</p></li>
 <li><p><strong>mesh_ny</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – Full mesh dimensions (Nz is the full size, not rfft size).</p></li>
 <li><p><strong>mesh_nz</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – Full mesh dimensions (Nz is the full size, not rfft size).</p></li>
-<li><p><strong>spline_order</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – B-spline order (1-4). Order 4 (cubic) recommended.</p></li>
+<li><p><strong>spline_order</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – B-spline order (1-6). Order 4 (cubic) recommended.</p></li>
 <li><p><strong>green_function</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>B</em><em>, </em><em>Nx</em><em>, </em><em>Ny</em><em>, </em><em>Nz_rfft</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – OUTPUT: Per-system Green’s function G_s(k) at each grid point.</p></li>
 <li><p><strong>structure_factor_sq</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>Nx</em><em>, </em><em>Ny</em><em>, </em><em>Nz_rfft</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – OUTPUT: <span class="math notranslate nohighlight">\(|B(k)|^2\)</span> structure factor squared (computed only at batch_idx=0).</p></li>
 <li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp scalar dtype (wp.float32 or wp.float64).</p></li>
@@ -1591,19 +1600,23 @@ the same mesh dimensions.</p>
 <span class="sig-prename descclassname"><span class="pre">nvalchemiops.interactions.electrostatics.</span></span><span class="sig-name descname"><span class="pre">pme_energy_corrections</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">raw_energies</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charges</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">volume</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">total_charge</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">corrected_energies</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wp_dtype</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/interactions/electrostatics/pme_kernels.html#pme_energy_corrections"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.interactions.electrostatics.pme_energy_corrections" title="Link to this definition">#</a></dt>
 <dd><p>Apply self-energy and background corrections to PME energies.</p>
 <p>Framework-agnostic launcher for single-system energy corrections.</p>
-<p>Converts raw potential values (φ_i) to corrected per-atom energies by:
-1. Multiplying potential by charge: E_pot = q_i * φ_i
-2. Subtracting self-energy: E_self = (α/√π) * q_i²
-3. Subtracting background: E_bg = (π/(2α²V)) * q_i * Q_total</p>
-<p>Final: E_i = q_i * φ_i - (α/√π) * q_i² - (π/(2α²V)) * q_i * Q_total</p>
+<p>Converts raw potential values <span class="math notranslate nohighlight">\(\phi_i\)</span> to corrected per-atom energies by:</p>
+<ol class="arabic simple">
+<li><p>Multiplying potential by charge: <span class="math notranslate nohighlight">\(E_{pot} = q_i \cdot \phi_i\)</span></p></li>
+<li><p>Subtracting self-energy: <span class="math notranslate nohighlight">\(E_{self} = (\alpha/\sqrt{\pi}) \cdot q_i^2\)</span></p></li>
+<li><p>Subtracting background: <span class="math notranslate nohighlight">\(E_{bg} = (\pi/(2\alpha^2 V)) \cdot q_i \cdot Q_{total}\)</span></p></li>
+</ol>
+<p>Final:</p>
+<div class="math notranslate nohighlight">
+\[E_i = q_i \cdot \phi_i - \frac{\alpha}{\sqrt{\pi}} q_i^2 - \frac{\pi}{2\alpha^2 V} q_i Q_{total}\]</div>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>raw_energies</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Raw potential values φ_i from mesh interpolation.</p></li>
+<li><p><strong>raw_energies</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Raw potential values <span class="math notranslate nohighlight">\(\phi_i\)</span> from mesh interpolation.</p></li>
 <li><p><strong>charges</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Atomic charges.</p></li>
 <li><p><strong>volume</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Unit cell volume.</p></li>
 <li><p><strong>alpha</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Ewald splitting parameter.</p></li>
-<li><p><strong>total_charge</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Sum of all charges (Q_total = ∑_i q_i).</p></li>
+<li><p><strong>total_charge</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Sum of all charges (<span class="math notranslate nohighlight">\(Q_{total} = \sum_i q_i\)</span>).</p></li>
 <li><p><strong>corrected_energies</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – OUTPUT: Corrected per-atom energies.</p></li>
 <li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp scalar dtype (wp.float32 or wp.float64).</p></li>
 <li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em> | </em><em>None</em>) – Warp device string. If None, inferred from arrays.</p></li>
@@ -1621,19 +1634,21 @@ the same mesh dimensions.</p>
 <dd><p>Apply corrections and compute charge gradients for PME energies.</p>
 <p>Framework-agnostic launcher for single-system energy corrections
 with analytical charge gradient computation.</p>
-<p>Computes both corrected energies and analytical charge gradients:
-- Energy: E_i = q_i * φ_i - (α/√π) * q_i² - (π/(2α²V)) * q_i * Q_total
-- Charge gradient: ∂E_total/∂q_i = 2*φ_i - 2*(α/√π)*q_i - (π/(α²V))*Q_total</p>
+<p>Computes both corrected energies and analytical charge gradients:</p>
+<ul class="simple">
+<li><p>Energy: <span class="math notranslate nohighlight">\(E_i = q_i \phi_i - (\alpha/\sqrt{\pi}) q_i^2 - (\pi/(2\alpha^2 V)) q_i Q_{total}\)</span></p></li>
+<li><p>Charge gradient: <span class="math notranslate nohighlight">\(\partial E_{total}/\partial q_i = 2\phi_i - 2(\alpha/\sqrt{\pi})q_i - (\pi/(\alpha^2 V))Q_{total}\)</span></p></li>
+</ul>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>raw_energies</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Raw potential values φ_i from mesh interpolation.</p></li>
+<li><p><strong>raw_energies</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Raw potential values <span class="math notranslate nohighlight">\(\phi_i\)</span> from mesh interpolation.</p></li>
 <li><p><strong>charges</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Atomic charges.</p></li>
 <li><p><strong>volume</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Unit cell volume.</p></li>
 <li><p><strong>alpha</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Ewald splitting parameter.</p></li>
-<li><p><strong>total_charge</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Sum of all charges (Q_total = ∑_i q_i).</p></li>
+<li><p><strong>total_charge</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Sum of all charges (<span class="math notranslate nohighlight">\(Q_{total} = \sum_i q_i\)</span>).</p></li>
 <li><p><strong>corrected_energies</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – OUTPUT: Corrected per-atom energies.</p></li>
-<li><p><strong>charge_gradients</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – OUTPUT: Analytical charge gradients ∂E_total/∂q_i.</p></li>
+<li><p><strong>charge_gradients</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – OUTPUT: Analytical charge gradients <span class="math notranslate nohighlight">\(\partial E_{total}/\partial q_i\)</span>.</p></li>
 <li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp scalar dtype (wp.float32 or wp.float64).</p></li>
 <li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em> | </em><em>None</em>) – Warp device string. If None, inferred from arrays.</p></li>
 </ul>
@@ -1653,12 +1668,12 @@ Each atom looks up its system’s parameters via batch_idx.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>raw_energies</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Raw potential values φ_i from mesh interpolation.</p></li>
+<li><p><strong>raw_energies</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Raw potential values <span class="math notranslate nohighlight">\(\phi_i\)</span> from mesh interpolation.</p></li>
 <li><p><strong>charges</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Atomic charges for all systems concatenated.</p></li>
 <li><p><strong>batch_idx</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – System index for each atom (0 to B-1).</p></li>
 <li><p><strong>volumes</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>B</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Per-system unit cell volume.</p></li>
 <li><p><strong>alpha</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>B</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Per-system Ewald splitting parameter.</p></li>
-<li><p><strong>total_charges</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>B</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Per-system sum of charges (Q_s = ∑_{i∈s} q_i).</p></li>
+<li><p><strong>total_charges</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>B</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Per-system sum of charges (<span class="math notranslate nohighlight">\(Q_s = \sum_{i \in s} q_i\)</span>).</p></li>
 <li><p><strong>corrected_energies</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – OUTPUT: Corrected per-atom energies.</p></li>
 <li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp scalar dtype (wp.float32 or wp.float64).</p></li>
 <li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em> | </em><em>None</em>) – Warp device string. If None, inferred from arrays.</p></li>
@@ -1679,14 +1694,14 @@ with analytical charge gradient computation.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>raw_energies</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Raw potential values φ_i from mesh interpolation.</p></li>
+<li><p><strong>raw_energies</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Raw potential values <span class="math notranslate nohighlight">\(\phi_i\)</span> from mesh interpolation.</p></li>
 <li><p><strong>charges</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Atomic charges for all systems concatenated.</p></li>
 <li><p><strong>batch_idx</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – System index for each atom (0 to B-1).</p></li>
 <li><p><strong>volumes</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>B</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Per-system unit cell volume.</p></li>
 <li><p><strong>alpha</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>B</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Per-system Ewald splitting parameter.</p></li>
-<li><p><strong>total_charges</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>B</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Per-system sum of charges (Q_s = ∑_{i∈s} q_i).</p></li>
+<li><p><strong>total_charges</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>B</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Per-system sum of charges (<span class="math notranslate nohighlight">\(Q_s = \sum_{i \in s} q_i\)</span>).</p></li>
 <li><p><strong>corrected_energies</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – OUTPUT: Corrected per-atom energies.</p></li>
-<li><p><strong>charge_gradients</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – OUTPUT: Analytical charge gradients ∂E_total/∂q_i.</p></li>
+<li><p><strong>charge_gradients</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – OUTPUT: Analytical charge gradients <span class="math notranslate nohighlight">\(\partial E_{total}/\partial q_i\)</span>.</p></li>
 <li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp scalar dtype (wp.float32 or wp.float64).</p></li>
 <li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em> | </em><em>None</em>) – Warp device string. If None, inferred from arrays.</p></li>
 </ul>
@@ -1829,9 +1844,22 @@ with analytical charge gradient computation.</p>
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -1851,7 +1879,7 @@ with analytical charge gradient computation.</p>
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

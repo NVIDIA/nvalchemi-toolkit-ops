@@ -1,0 +1,1108 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" data-theme="light">
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
+    <title>nvalchemiops.segment_ops: Segment Operations &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/benchmark-docs.css?v=30688d9f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'modules/warp/segment_ops';</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="nvalchemiops.interactions.dispersion: Dispersion Corrections" href="dispersion.html" />
+    <link rel="prev" title="nvalchemiops.neighbors: Neighbor Lists" href="neighbors.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+    
+    <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+    <label class="sidebar-toggle secondary-toggle" for="__secondary" tabindex="0">
+      <span class="fa-solid fa-outdent"></span>
+    </label>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <div class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../torch/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../torch/segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.segment_ops</span></code>: Segment Operations</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../torch/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../torch/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.electrostatics</span></code>: Electrostatics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../torch/dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch</span></code>: Dynamics Optimizers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../torch/autograd.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.autograd</span></code>: Autograd Utilities</a></li>
+</ul>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../jax/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../jax/segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.segment_ops</span></code>: Segment Operations</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../jax/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../jax/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.electrostatics</span></code>: Electrostatics</a></li>
+</ul>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.segment_ops</span></code>: Segment Operations</a></li>
+<li class="toctree-l1"><a class="reference internal" href="dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
+<li class="toctree-l1"><a class="reference internal" href="electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.electrostatics</span></code>: Electrostatic Interactions (Warp)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.dynamics</span></code>: Molecular Dynamics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../utilities.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.math</span></code> and <code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.types</span></code>: Utilities</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">API Reference</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><code...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="nvalchemiops-segment-ops-segment-operations">
+<h1><a class="reference internal" href="#module-nvalchemiops.segment_ops" title="nvalchemiops.segment_ops"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.segment_ops</span></code></a>: Segment Operations<a class="headerlink" href="#nvalchemiops-segment-ops-segment-operations" title="Link to this heading">#</a></h1>
+<p>The segment-ops module provides the framework-agnostic, Warp-level
+implementation of GPU-accelerated segmented reductions and per-segment
+algebra. All operations act on <code class="docutils literal notranslate"><span class="pre">warp.array</span></code> objects and expect the segment
+indices <code class="docutils literal notranslate"><span class="pre">idx</span></code> to be sorted in non-decreasing order.</p>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>This is the low-level Warp interface that operates on <code class="docutils literal notranslate"><span class="pre">warp.array</span></code>
+objects. For tensor bindings see <a class="reference internal" href="../torch/segment_ops.html"><span class="doc">nvalchemiops.torch.segment_ops: Segment Operations</span></a> and
+<a class="reference internal" href="../jax/segment_ops.html"><span class="doc">nvalchemiops.jax.segment_ops: Segment Operations</span></a>. For usage guidance and CUDA graph capture
+patterns, see <a class="reference internal" href="../../userguide/components/segment_ops.html#segment-ops-userguide"><span class="std std-ref">Segment Operations</span></a>.</p>
+</div>
+<p id="module-nvalchemiops.segment_ops">Segmented operations for sorted segment indices.</p>
+<p>Provides segmented reductions (sum, component_sum, dot, max_norm) and
+broadcasts (mul, add, matvec) over arrays grouped by sorted segment
+indices <em>idx</em>.</p>
+<p>Reduction kernels use a run-length approach: each thread processes a
+contiguous chunk of elements, accumulates within runs of identical
+segment ids, and emits one atomic per segment boundary.  The chunk size
+is auto-tuned based on N and the GPU’s SM count.</p>
+<section id="reductions">
+<h2>Reductions<a class="headerlink" href="#reductions" title="Link to this heading">#</a></h2>
+<p>Reduce the elements of each segment to a single per-segment result.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.segment_ops.segmented_sum">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.segment_ops.</span></span><span class="sig-name descname"><span class="pre">segmented_sum</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">out</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/segment_ops.html#segmented_sum"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.segment_ops.segmented_sum" title="Link to this definition">#</a></dt>
+<dd><p>Compute per-segment sum using run-length encoded reduction.</p>
+<p><code class="docutils literal notranslate"><span class="pre">out[s]</span> <span class="pre">=</span> <span class="pre">sum(x[i]</span> <span class="pre">for</span> <span class="pre">i</span> <span class="pre">where</span> <span class="pre">idx[i]</span> <span class="pre">==</span> <span class="pre">s)</span></code></p>
+<p>Requires sorted <code class="docutils literal notranslate"><span class="pre">idx</span></code> in non-decreasing order.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>x</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Input values. Supported dtypes: float32, float64, vec3f, vec3d.</p></li>
+<li><p><strong>idx</strong> (<em>wp.array</em><em>(</em><em>dtype=int32</em><em>)</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Sorted segment indices in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">M)</span></code>.</p></li>
+<li><p><strong>out</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>dtype matches x</em>) – Per-segment sums. Zeroed internally before each use.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.segment_ops.segmented_component_sum">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.segment_ops.</span></span><span class="sig-name descname"><span class="pre">segmented_component_sum</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">out</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/segment_ops.html#segmented_component_sum"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.segment_ops.segmented_component_sum" title="Link to this definition">#</a></dt>
+<dd><p>Sum all vector components to scalar per segment using RLE reduction.</p>
+<p><code class="docutils literal notranslate"><span class="pre">out[s]</span> <span class="pre">=</span> <span class="pre">sum(x[i][0]</span> <span class="pre">+</span> <span class="pre">x[i][1]</span> <span class="pre">+</span> <span class="pre">x[i][2]</span> <span class="pre">for</span> <span class="pre">i</span> <span class="pre">where</span> <span class="pre">idx[i]</span> <span class="pre">==</span> <span class="pre">s)</span></code></p>
+<p>Requires sorted <code class="docutils literal notranslate"><span class="pre">idx</span></code> in non-decreasing order.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>x</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype vec3f / vec3d</em>) – Input 3D vectors.</p></li>
+<li><p><strong>idx</strong> (<em>wp.array</em><em>(</em><em>dtype=int32</em><em>)</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Sorted segment indices in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">M)</span></code>.</p></li>
+<li><p><strong>out</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>dtype float32 / float64</em>) – Per-segment scalar sums. Zeroed internally before each use.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.segment_ops.segmented_sum" title="nvalchemiops.segment_ops.segmented_sum"><code class="xref py py-obj docutils literal notranslate"><span class="pre">segmented_sum</span></code></a></dt><dd><p>Element-wise sum (preserves vector dtype)</p>
+</dd>
+<dt><a class="reference internal" href="#nvalchemiops.segment_ops.segmented_dot" title="nvalchemiops.segment_ops.segmented_dot"><code class="xref py py-obj docutils literal notranslate"><span class="pre">segmented_dot</span></code></a></dt><dd><p>Dot product per segment</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.segment_ops.segmented_dot">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.segment_ops.</span></span><span class="sig-name descname"><span class="pre">segmented_dot</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">y</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">out</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/segment_ops.html#segmented_dot"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.segment_ops.segmented_dot" title="Link to this definition">#</a></dt>
+<dd><p>Compute per-segment dot product reduction using RLE.</p>
+<ul class="simple">
+<li><p>Scalar types: <code class="docutils literal notranslate"><span class="pre">out[s]</span> <span class="pre">=</span> <span class="pre">sum(x[i]</span> <span class="pre">*</span> <span class="pre">y[i]</span> <span class="pre">for</span> <span class="pre">i</span> <span class="pre">where</span> <span class="pre">idx[i]</span> <span class="pre">==</span> <span class="pre">s)</span></code></p></li>
+<li><p>Vector types: <code class="docutils literal notranslate"><span class="pre">out[s]</span> <span class="pre">=</span> <span class="pre">sum(dot(x[i],</span> <span class="pre">y[i])</span> <span class="pre">for</span> <span class="pre">i</span> <span class="pre">where</span> <span class="pre">idx[i]</span> <span class="pre">==</span> <span class="pre">s)</span></code></p></li>
+</ul>
+<p>Requires sorted <code class="docutils literal notranslate"><span class="pre">idx</span></code> in non-decreasing order.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>x</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Input arrays. Must have same dtype.
+Supported: float32, float64, vec3f, vec3d.</p></li>
+<li><p><strong>y</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Input arrays. Must have same dtype.
+Supported: float32, float64, vec3f, vec3d.</p></li>
+<li><p><strong>idx</strong> (<em>wp.array</em><em>(</em><em>dtype=int32</em><em>)</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Sorted segment indices in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">M)</span></code>.</p></li>
+<li><p><strong>out</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>dtype float32 / float64</em>) – Per-segment dot products. Zeroed internally before each use.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.segment_ops.segmented_inner_products" title="nvalchemiops.segment_ops.segmented_inner_products"><code class="xref py py-obj docutils literal notranslate"><span class="pre">segmented_inner_products</span></code></a></dt><dd><p>Compute x*y, x*x, and y*y in one pass</p>
+</dd>
+<dt><a class="reference internal" href="#nvalchemiops.segment_ops.segmented_sum" title="nvalchemiops.segment_ops.segmented_sum"><code class="xref py py-obj docutils literal notranslate"><span class="pre">segmented_sum</span></code></a></dt><dd><p>Element-wise sum per segment</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.segment_ops.segmented_inner_products">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.segment_ops.</span></span><span class="sig-name descname"><span class="pre">segmented_inner_products</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">y</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">out_xy</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">out_xx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">out_yy</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/segment_ops.html#segmented_inner_products"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.segment_ops.segmented_inner_products" title="Link to this definition">#</a></dt>
+<dd><p>Compute three inner products per segment in one fused pass using RLE.</p>
+<p>Computes <code class="docutils literal notranslate"><span class="pre">out_xy[s]</span></code>, <code class="docutils literal notranslate"><span class="pre">out_xx[s]</span></code>, <code class="docutils literal notranslate"><span class="pre">out_yy[s]</span></code> (the x*y, x*x, y*y
+inner products) in a single kernel launch, roughly 3x faster than three
+separate <code class="docutils literal notranslate"><span class="pre">segmented_dot</span></code> calls.</p>
+<p>Requires sorted <code class="docutils literal notranslate"><span class="pre">idx</span></code> in non-decreasing order.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>x</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Input arrays. Must have same dtype.
+Supported: float32, float64, vec3f, vec3d.</p></li>
+<li><p><strong>y</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Input arrays. Must have same dtype.
+Supported: float32, float64, vec3f, vec3d.</p></li>
+<li><p><strong>idx</strong> (<em>wp.array</em><em>(</em><em>dtype=int32</em><em>)</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Sorted segment indices in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">M)</span></code>.</p></li>
+<li><p><strong>out_xy</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>dtype float32 / float64</em>) – Per-segment inner products. Zeroed internally before each use.</p></li>
+<li><p><strong>out_xx</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>dtype float32 / float64</em>) – Per-segment inner products. Zeroed internally before each use.</p></li>
+<li><p><strong>out_yy</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>dtype float32 / float64</em>) – Per-segment inner products. Zeroed internally before each use.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.segment_ops.segmented_dot" title="nvalchemiops.segment_ops.segmented_dot"><code class="xref py py-obj docutils literal notranslate"><span class="pre">segmented_dot</span></code></a></dt><dd><p>Single dot product per segment</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.segment_ops.segmented_max_norm">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.segment_ops.</span></span><span class="sig-name descname"><span class="pre">segmented_max_norm</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">out</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/segment_ops.html#segmented_max_norm"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.segment_ops.segmented_max_norm" title="Link to this definition">#</a></dt>
+<dd><p>Compute maximum vector norm per segment using RLE reduction.</p>
+<p><code class="docutils literal notranslate"><span class="pre">out[s]</span> <span class="pre">=</span> <span class="pre">max(length(x[i])</span> <span class="pre">for</span> <span class="pre">i</span> <span class="pre">where</span> <span class="pre">idx[i]</span> <span class="pre">==</span> <span class="pre">s)</span></code></p>
+<p>Requires sorted <code class="docutils literal notranslate"><span class="pre">idx</span></code> in non-decreasing order.  For single-segment
+cases (M=1) with N &gt;= 8192, an optimized fast path reduces atomic
+contention.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>x</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype vec3f / vec3d</em>) – Input 3D vectors.</p></li>
+<li><p><strong>idx</strong> (<em>wp.array</em><em>(</em><em>dtype=int32</em><em>)</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Sorted segment indices in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">M)</span></code>.</p></li>
+<li><p><strong>out</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>dtype float32 / float64</em>) – Maximum norms per segment. Zeroed internally before each use.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.segment_ops.segmented_dot" title="nvalchemiops.segment_ops.segmented_dot"><code class="xref py py-obj docutils literal notranslate"><span class="pre">segmented_dot</span></code></a></dt><dd><p>Squared norms (v*v) per segment</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.segment_ops.segmented_max">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.segment_ops.</span></span><span class="sig-name descname"><span class="pre">segmented_max</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">out</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/segment_ops.html#segmented_max"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.segment_ops.segmented_max" title="Link to this definition">#</a></dt>
+<dd><p>Compute maximum scalar value per segment using RLE reduction.</p>
+<p><code class="docutils literal notranslate"><span class="pre">out[s]</span> <span class="pre">=</span> <span class="pre">max(x[i]</span> <span class="pre">for</span> <span class="pre">i</span> <span class="pre">where</span> <span class="pre">idx[i]</span> <span class="pre">==</span> <span class="pre">s)</span></code></p>
+<p>Requires sorted <code class="docutils literal notranslate"><span class="pre">idx</span></code> in non-decreasing order.  Caller must
+initialize <code class="docutils literal notranslate"><span class="pre">out</span></code> to <code class="docutils literal notranslate"><span class="pre">-inf</span></code> before calling.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>x</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype float32 / float64</em>) – Input scalar values.</p></li>
+<li><p><strong>idx</strong> (<em>wp.array</em><em>(</em><em>dtype=int32</em><em>)</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Sorted segment indices in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">M)</span></code>.</p></li>
+<li><p><strong>out</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>dtype matches x</em>) – Maximum values per segment. Must be initialized to -inf by caller.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<p>float16 is not supported (Warp atomic_max requires float32/float64).</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.segment_ops.segmented_min">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.segment_ops.</span></span><span class="sig-name descname"><span class="pre">segmented_min</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">out</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/segment_ops.html#segmented_min"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.segment_ops.segmented_min" title="Link to this definition">#</a></dt>
+<dd><p>Compute minimum scalar value per segment using RLE reduction.</p>
+<p><code class="docutils literal notranslate"><span class="pre">out[s]</span> <span class="pre">=</span> <span class="pre">min(x[i]</span> <span class="pre">for</span> <span class="pre">i</span> <span class="pre">where</span> <span class="pre">idx[i]</span> <span class="pre">==</span> <span class="pre">s)</span></code></p>
+<p>Requires sorted <code class="docutils literal notranslate"><span class="pre">idx</span></code> in non-decreasing order.  Caller must
+initialize <code class="docutils literal notranslate"><span class="pre">out</span></code> to <code class="docutils literal notranslate"><span class="pre">+inf</span></code> before calling.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>x</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype float32 / float64</em>) – Input scalar values.</p></li>
+<li><p><strong>idx</strong> (<em>wp.array</em><em>(</em><em>dtype=int32</em><em>)</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Sorted segment indices in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">M)</span></code>.</p></li>
+<li><p><strong>out</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>dtype matches x</em>) – Minimum values per segment. Must be initialized to +inf by caller.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<p>float16 is not supported (Warp atomic_min requires float32/float64).</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.segment_ops.segmented_mean">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.segment_ops.</span></span><span class="sig-name descname"><span class="pre">segmented_mean</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sums</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">counts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">out</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/segment_ops.html#segmented_mean"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.segment_ops.segmented_mean" title="Link to this definition">#</a></dt>
+<dd><p>Compute per-segment mean by composing sum + count + divide.</p>
+<p><code class="docutils literal notranslate"><span class="pre">out[s]</span> <span class="pre">=</span> <span class="pre">sum(x[i]</span> <span class="pre">for</span> <span class="pre">i</span> <span class="pre">where</span> <span class="pre">idx[i]</span> <span class="pre">==</span> <span class="pre">s)</span> <span class="pre">/</span> <span class="pre">count(s)</span></code></p>
+<p>For vector types (vec3f/vec3d), computes the mean vector per segment.
+Requires sorted <code class="docutils literal notranslate"><span class="pre">idx</span></code> in non-decreasing order.</p>
+<p>All scratch arrays must be pre-allocated. This avoids hidden allocations
+and allows reuse across calls.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>x</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype float32 / float64 / vec3f / vec3d</em>) – Input values to average per segment.</p></li>
+<li><p><strong>idx</strong> (<em>wp.array</em><em>(</em><em>dtype=int32</em><em>)</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Sorted segment indices in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">M)</span></code>.</p></li>
+<li><p><strong>sums</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>dtype matches x</em>) – Scratch array for per-segment sums. Zeroed internally before each use.</p></li>
+<li><p><strong>counts</strong> (<em>wp.array</em><em>(</em><em>dtype=int32</em><em>)</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em>) – Scratch array for per-segment element counts. Zeroed internally before each use.</p></li>
+<li><p><strong>out</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>dtype matches x</em>) – Output mean values per segment.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>float16/vec3h not supported (reduction requires atomics).</p></li>
+<li><p>Composes <code class="docutils literal notranslate"><span class="pre">segmented_sum</span></code> + <code class="docutils literal notranslate"><span class="pre">segmented_count</span></code> + divide internally.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sums</span></code> and <code class="docutils literal notranslate"><span class="pre">counts</span></code> are written to as scratch space.</p></li>
+</ul>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.segment_ops.segmented_rms_norm">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.segment_ops.</span></span><span class="sig-name descname"><span class="pre">segmented_rms_norm</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sum_sq</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">counts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">out</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/segment_ops.html#segmented_rms_norm"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.segment_ops.segmented_rms_norm" title="Link to this definition">#</a></dt>
+<dd><p>Compute RMS (root mean square) vector norm per segment.</p>
+<p><code class="docutils literal notranslate"><span class="pre">out[s]</span> <span class="pre">=</span> <span class="pre">sqrt(mean(dot(x[i],</span> <span class="pre">x[i])</span> <span class="pre">for</span> <span class="pre">i</span> <span class="pre">where</span> <span class="pre">idx[i]</span> <span class="pre">==</span> <span class="pre">s))</span></code></p>
+<p>This is <code class="docutils literal notranslate"><span class="pre">sqrt(sum_of_squared_norms</span> <span class="pre">/</span> <span class="pre">count)</span></code> for each segment.
+Requires sorted <code class="docutils literal notranslate"><span class="pre">idx</span></code> in non-decreasing order.</p>
+<p>All scratch arrays must be pre-allocated.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>x</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype vec3f / vec3d</em>) – Input 3D vectors.</p></li>
+<li><p><strong>idx</strong> (<em>wp.array</em><em>(</em><em>dtype=int32</em><em>)</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Sorted segment indices in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">M)</span></code>.</p></li>
+<li><p><strong>sum_sq</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>dtype float32 / float64</em>) – Scratch array for per-segment sum of squared norms.
+Zeroed internally before each use.</p></li>
+<li><p><strong>counts</strong> (<em>wp.array</em><em>(</em><em>dtype=int32</em><em>)</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em>) – Scratch array for per-segment element counts.
+Zeroed internally before each use.</p></li>
+<li><p><strong>out</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>dtype float32 / float64</em>) – Output RMS norms per segment. Precision matches <code class="docutils literal notranslate"><span class="pre">x</span></code>.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>float16/vec3h not supported (reduction requires atomics).</p></li>
+<li><p>Composes <code class="docutils literal notranslate"><span class="pre">segmented_dot</span></code> + <code class="docutils literal notranslate"><span class="pre">segmented_count</span></code> + finalize internally.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sum_sq</span></code> and <code class="docutils literal notranslate"><span class="pre">counts</span></code> are written to as scratch space.</p></li>
+</ul>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.segment_ops.segmented_count">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.segment_ops.</span></span><span class="sig-name descname"><span class="pre">segmented_count</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">out</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/segment_ops.html#segmented_count"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.segment_ops.segmented_count" title="Link to this definition">#</a></dt>
+<dd><p>Count elements per segment using run-length encoding.</p>
+<p><code class="docutils literal notranslate"><span class="pre">out[s]</span> <span class="pre">=</span> <span class="pre">count(i</span> <span class="pre">where</span> <span class="pre">idx[i]</span> <span class="pre">==</span> <span class="pre">s)</span></code></p>
+<p>Requires sorted <code class="docutils literal notranslate"><span class="pre">idx</span></code> in non-decreasing order.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>idx</strong> (<em>wp.array</em><em>(</em><em>dtype=int32</em><em>)</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Sorted segment indices in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">M)</span></code>.</p></li>
+<li><p><strong>out</strong> (<em>wp.array</em><em>(</em><em>dtype=int32</em><em>)</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em>) – Per-segment element counts. Zeroed internally before each use.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="broadcasts-and-element-wise-algebra">
+<h2>Broadcasts and Element-wise Algebra<a class="headerlink" href="#broadcasts-and-element-wise-algebra" title="Link to this heading">#</a></h2>
+<p>Apply a per-segment value across every element of its segment.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.segment_ops.segmented_mul">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.segment_ops.</span></span><span class="sig-name descname"><span class="pre">segmented_mul</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">y</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">out</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/segment_ops.html#segmented_mul"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.segment_ops.segmented_mul" title="Link to this definition">#</a></dt>
+<dd><p>Broadcast multiply: <code class="docutils literal notranslate"><span class="pre">out[i]</span> <span class="pre">=</span> <span class="pre">x[i]</span> <span class="pre">*</span> <span class="pre">y[idx[i]]</span></code>.</p>
+<p>Supports mixed types (vec3 * scalar) as well as same-type (scalar * scalar).
+<code class="docutils literal notranslate"><span class="pre">idx</span></code> need not be sorted.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>x</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Per-atom input values.
+Supported: vec3h, vec3f, vec3d, float16, float32, float64.</p></li>
+<li><p><strong>y</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em>) – Per-segment scalar multipliers (precision matches x).</p></li>
+<li><p><strong>idx</strong> (<em>wp.array</em><em>(</em><em>dtype=int32</em><em>)</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Segment indices in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">M)</span></code>.</p></li>
+<li><p><strong>out</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype matches x</em>) – Scaled output.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.segment_ops.segmented_add" title="nvalchemiops.segment_ops.segmented_add"><code class="xref py py-obj docutils literal notranslate"><span class="pre">segmented_add</span></code></a></dt><dd><p>Broadcast addition</p>
+</dd>
+<dt><a class="reference internal" href="#nvalchemiops.segment_ops.segmented_axpy" title="nvalchemiops.segment_ops.segmented_axpy"><code class="xref py py-obj docutils literal notranslate"><span class="pre">segmented_axpy</span></code></a></dt><dd><p>Fused multiply-add (y += a*x)</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.segment_ops.segmented_add">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.segment_ops.</span></span><span class="sig-name descname"><span class="pre">segmented_add</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">y</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">out</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/segment_ops.html#segmented_add"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.segment_ops.segmented_add" title="Link to this definition">#</a></dt>
+<dd><p>Broadcast add: <code class="docutils literal notranslate"><span class="pre">out[i]</span> <span class="pre">=</span> <span class="pre">x[i]</span> <span class="pre">+</span> <span class="pre">y[idx[i]]</span></code>.</p>
+<p>Supports mixed types (vec3 + scalar, scalar + vec3) as well as same-type.
+<code class="docutils literal notranslate"><span class="pre">idx</span></code> need not be sorted.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>x</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Per-atom input values.
+Supported: vec3h, vec3f, vec3d, float16, float32, float64.</p></li>
+<li><p><strong>y</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em>) – Per-segment values to broadcast and add.</p></li>
+<li><p><strong>idx</strong> (<em>wp.array</em><em>(</em><em>dtype=int32</em><em>)</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Segment indices in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">M)</span></code>.</p></li>
+<li><p><strong>out</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Output array.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.segment_ops.segmented_mul" title="nvalchemiops.segment_ops.segmented_mul"><code class="xref py py-obj docutils literal notranslate"><span class="pre">segmented_mul</span></code></a></dt><dd><p>Broadcast multiplication</p>
+</dd>
+<dt><a class="reference internal" href="#nvalchemiops.segment_ops.segmented_axpy" title="nvalchemiops.segment_ops.segmented_axpy"><code class="xref py py-obj docutils literal notranslate"><span class="pre">segmented_axpy</span></code></a></dt><dd><p>Fused multiply-add</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.segment_ops.segmented_matvec">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.segment_ops.</span></span><span class="sig-name descname"><span class="pre">segmented_matvec</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">v</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">m</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">out</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/segment_ops.html#segmented_matvec"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.segment_ops.segmented_matvec" title="Link to this definition">#</a></dt>
+<dd><p>Per-segment matrix-vector multiply: <code class="docutils literal notranslate"><span class="pre">out[i]</span> <span class="pre">=</span> <span class="pre">M[idx[i]]^T</span> <span class="pre">&#64;</span> <span class="pre">v[i]</span></code>.</p>
+<p>Computes the transpose matrix-vector product for each element using
+its segment’s matrix.  <code class="docutils literal notranslate"><span class="pre">idx</span></code> need not be sorted.</p>
+<p>Dispatches through <code class="xref py py-data docutils literal notranslate"><span class="pre">_segmented_mul_overloads</span></code> since Warp’s native
+<code class="docutils literal notranslate"><span class="pre">mul(vec,</span> <span class="pre">mat)</span></code> computes <code class="docutils literal notranslate"><span class="pre">v^T</span> <span class="pre">&#64;</span> <span class="pre">M</span> <span class="pre">=</span> <span class="pre">M^T</span> <span class="pre">&#64;</span> <span class="pre">v</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>v</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype vec3h / vec3f / vec3d</em>) – Per-atom input vectors.</p></li>
+<li><p><strong>m</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>dtype mat33h / mat33f / mat33d</em>) – Per-segment 3x3 matrices (precision must match v).</p></li>
+<li><p><strong>idx</strong> (<em>wp.array</em><em>(</em><em>dtype=int32</em><em>)</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Segment indices in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">M)</span></code>.</p></li>
+<li><p><strong>out</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype matches v</em>) – Output transformed vectors.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<p>Uses transpose convention: <code class="docutils literal notranslate"><span class="pre">M^T</span> <span class="pre">&#64;</span> <span class="pre">v</span></code>, not <code class="docutils literal notranslate"><span class="pre">M</span> <span class="pre">&#64;</span> <span class="pre">v</span></code>.</p>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.segment_ops.segmented_mul" title="nvalchemiops.segment_ops.segmented_mul"><code class="xref py py-obj docutils literal notranslate"><span class="pre">segmented_mul</span></code></a></dt><dd><p>Broadcast scalar multiplication</p>
+</dd>
+<dt><a class="reference internal" href="#nvalchemiops.segment_ops.segmented_add" title="nvalchemiops.segment_ops.segmented_add"><code class="xref py py-obj docutils literal notranslate"><span class="pre">segmented_add</span></code></a></dt><dd><p>Broadcast vector addition</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.segment_ops.segmented_broadcast">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.segment_ops.</span></span><span class="sig-name descname"><span class="pre">segmented_broadcast</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">values</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">out</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/segment_ops.html#segmented_broadcast"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.segment_ops.segmented_broadcast" title="Link to this definition">#</a></dt>
+<dd><p>Broadcast per-segment values to per-element array: <code class="docutils literal notranslate"><span class="pre">out[i]</span> <span class="pre">=</span> <span class="pre">values[idx[i]]</span></code>.</p>
+<p>Pure gather operation that copies a per-segment value to every element
+belonging to that segment.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>values</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em>) – Per-segment values to broadcast.
+Supported dtypes: <code class="docutils literal notranslate"><span class="pre">float16</span></code>, <code class="docutils literal notranslate"><span class="pre">float32</span></code>, <code class="docutils literal notranslate"><span class="pre">float64</span></code>,
+<code class="docutils literal notranslate"><span class="pre">vec3h</span></code>, <code class="docutils literal notranslate"><span class="pre">vec3f</span></code>, <code class="docutils literal notranslate"><span class="pre">vec3d</span></code>.</p></li>
+<li><p><strong>idx</strong> (<em>wp.array</em><em>(</em><em>dtype=int32</em><em>)</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Segment indices in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">M)</span></code>. Need not be sorted.</p></li>
+<li><p><strong>out</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype matches values</em>) – Output array with broadcast values.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.segment_ops.segment_div">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.segment_ops.</span></span><span class="sig-name descname"><span class="pre">segment_div</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">numerator</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">denominator</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">result</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/segment_ops.html#segment_div"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.segment_ops.segment_div" title="Link to this definition">#</a></dt>
+<dd><p>Element-wise division with zero-denominator guard.</p>
+<p>Computes <code class="docutils literal notranslate"><span class="pre">result[i]</span> <span class="pre">=</span> <span class="pre">numerator[i]</span> <span class="pre">/</span> <span class="pre">denominator[i]</span></code> where zero
+denominators produce zero results instead of NaN/inf.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>numerator</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype float16 / float32 / float64</em>) – Numerator values.</p></li>
+<li><p><strong>denominator</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype int32</em>) – Denominator values (e.g., segment element counts).</p></li>
+<li><p><strong>result</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype matches numerator</em>) – Output division results.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="fused-updates">
+<h2>Fused Updates<a class="headerlink" href="#fused-updates" title="Link to this heading">#</a></h2>
+<p>In-place broadcast linear-combination updates (AXPY / AXPBY).</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.segment_ops.segmented_axpy">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.segment_ops.</span></span><span class="sig-name descname"><span class="pre">segmented_axpy</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">y</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">a</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">idx</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/segment_ops.html#segmented_axpy"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.segment_ops.segmented_axpy" title="Link to this definition">#</a></dt>
+<dd><p>In-place segmented broadcast FMA: <code class="docutils literal notranslate"><span class="pre">y[i]</span> <span class="pre">+=</span> <span class="pre">x[i]</span> <span class="pre">*</span> <span class="pre">a[idx[i]]</span></code>.</p>
+<p>Modifies <code class="docutils literal notranslate"><span class="pre">y</span></code> in-place.  <code class="docutils literal notranslate"><span class="pre">idx</span></code> need not be sorted.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>y</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Accumulator, modified in-place.
+Supported dtypes: vec3f, vec3d, float32, float64
+(also vec3h, float16 for half-precision).</p></li>
+<li><p><strong>x</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype matches y</em>) – Input array to scale and add.</p></li>
+<li><p><strong>a</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em>) – Per-segment scalar multipliers (precision matches y).</p></li>
+<li><p><strong>idx</strong> (<em>wp.array</em><em>(</em><em>dtype=int32</em><em>)</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Segment indices in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">M)</span></code>.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.segment_ops.segmented_axpby" title="nvalchemiops.segment_ops.segmented_axpby"><code class="xref py py-obj docutils literal notranslate"><span class="pre">segmented_axpby</span></code></a></dt><dd><p>Generalized linear combination (a*x + b*y)</p>
+</dd>
+<dt><a class="reference internal" href="#nvalchemiops.segment_ops.segmented_mul" title="nvalchemiops.segment_ops.segmented_mul"><code class="xref py py-obj docutils literal notranslate"><span class="pre">segmented_mul</span></code></a></dt><dd><p>Broadcast multiply (out = x * y[idx])</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.segment_ops.segmented_axpby">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.segment_ops.</span></span><span class="sig-name descname"><span class="pre">segmented_axpby</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">out</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">a</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">b</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">y</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">idx</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/segment_ops.html#segmented_axpby"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.segment_ops.segmented_axpby" title="Link to this definition">#</a></dt>
+<dd><p>Broadcast linear combination: <code class="docutils literal notranslate"><span class="pre">out[i]</span> <span class="pre">=</span> <span class="pre">a[idx[i]]</span> <span class="pre">*</span> <span class="pre">x[i]</span> <span class="pre">+</span> <span class="pre">b[idx[i]]</span> <span class="pre">*</span> <span class="pre">y[i]</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">idx</span></code> need not be sorted.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>out</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Output array.  Supported dtypes: vec3f, vec3d, float32, float64
+(also vec3h, float16).</p></li>
+<li><p><strong>a</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em>) – Per-segment scalar multipliers for <code class="docutils literal notranslate"><span class="pre">x</span></code>.</p></li>
+<li><p><strong>x</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype matches out</em>) – First input array.</p></li>
+<li><p><strong>b</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em>) – Per-segment scalar multipliers for <code class="docutils literal notranslate"><span class="pre">y</span></code>.</p></li>
+<li><p><strong>y</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype matches out</em>) – Second input array.</p></li>
+<li><p><strong>idx</strong> (<em>wp.array</em><em>(</em><em>dtype=int32</em><em>)</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Segment indices in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">M)</span></code>.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.segment_ops.segmented_axpy" title="nvalchemiops.segment_ops.segmented_axpy"><code class="xref py py-obj docutils literal notranslate"><span class="pre">segmented_axpy</span></code></a></dt><dd><p>Simpler one-term version (y += a*x)</p>
+</dd>
+<dt><a class="reference internal" href="#nvalchemiops.segment_ops.segmented_mul" title="nvalchemiops.segment_ops.segmented_mul"><code class="xref py py-obj docutils literal notranslate"><span class="pre">segmented_mul</span></code></a></dt><dd><p>Broadcast multiply only</p>
+</dd>
+<dt><a class="reference internal" href="#nvalchemiops.segment_ops.segmented_add" title="nvalchemiops.segment_ops.segmented_add"><code class="xref py py-obj docutils literal notranslate"><span class="pre">segmented_add</span></code></a></dt><dd><p>Broadcast add only</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="neighbors.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighbors</span></code>: Neighbor Lists</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="dispersion.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.dispersion</span></code>: Dispersion Corrections</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#reductions">Reductions</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.segment_ops.segmented_sum"><code class="docutils literal notranslate"><span class="pre">segmented_sum()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.segment_ops.segmented_component_sum"><code class="docutils literal notranslate"><span class="pre">segmented_component_sum()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.segment_ops.segmented_dot"><code class="docutils literal notranslate"><span class="pre">segmented_dot()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.segment_ops.segmented_inner_products"><code class="docutils literal notranslate"><span class="pre">segmented_inner_products()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.segment_ops.segmented_max_norm"><code class="docutils literal notranslate"><span class="pre">segmented_max_norm()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.segment_ops.segmented_max"><code class="docutils literal notranslate"><span class="pre">segmented_max()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.segment_ops.segmented_min"><code class="docutils literal notranslate"><span class="pre">segmented_min()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.segment_ops.segmented_mean"><code class="docutils literal notranslate"><span class="pre">segmented_mean()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.segment_ops.segmented_rms_norm"><code class="docutils literal notranslate"><span class="pre">segmented_rms_norm()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.segment_ops.segmented_count"><code class="docutils literal notranslate"><span class="pre">segmented_count()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#broadcasts-and-element-wise-algebra">Broadcasts and Element-wise Algebra</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.segment_ops.segmented_mul"><code class="docutils literal notranslate"><span class="pre">segmented_mul()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.segment_ops.segmented_add"><code class="docutils literal notranslate"><span class="pre">segmented_add()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.segment_ops.segmented_matvec"><code class="docutils literal notranslate"><span class="pre">segmented_matvec()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.segment_ops.segmented_broadcast"><code class="docutils literal notranslate"><span class="pre">segmented_broadcast()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.segment_ops.segment_div"><code class="docutils literal notranslate"><span class="pre">segment_div()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#fused-updates">Fused Updates</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.segment_ops.segmented_axpy"><code class="docutils literal notranslate"><span class="pre">segmented_axpy()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.segment_ops.segmented_axpby"><code class="docutils literal notranslate"><span class="pre">segmented_axpby()</span></code></a></li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/modules/warp/segment_ops.rst.txt">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

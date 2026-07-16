@@ -2,18 +2,18 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../" >
+<html lang="en" data-content_root="../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>Introduction to ALCHEMI Toolkit-Ops &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>Introduction to ALCHEMI Toolkit-Ops &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -35,16 +35,17 @@
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -52,7 +53,7 @@
     <script src="../../_static/design-tabs.js?v=f930bc37"></script>
     <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
     <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
-    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'userguide/about/intro';</script>
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
@@ -63,7 +64,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -130,8 +131,6 @@
   
   
     
-    
-      
     
     
     <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -369,7 +368,7 @@ document.write(`
 <li class="toctree-l1"><a class="reference internal" href="install.html">Installation Guide</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Introduction to ALCHEMI Toolkit-Ops</a></li>
 <li class="toctree-l1"><a class="reference internal" href="conventions.html">Conventions</a></li>
-<li class="toctree-l1"><a class="reference internal" href="migration.html">Migration Guide (v0.3.0)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migration Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="faq.html">Frequently Asked Questions</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Core Components</span></p>
@@ -378,6 +377,12 @@ document.write(`
 <li class="toctree-l1"><a class="reference internal" href="../components/electrostatics.html">Electrostatic Interactions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../components/dispersion.html">DFT-D3(BJ) Dispersion Correction</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../components/dynamics.html">Molecular Dynamics Integrators</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../components/segment_ops.html">Segment Operations</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Advanced Usage</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="contributing.html">Contribution Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="kernel-style-guide.html">Kernel Style Guide</a></li>
 </ul>
 </div>
 </nav></div>
@@ -511,7 +516,7 @@ Single + Large</label><div class="sd-tab-content docutils">
 <span class="p">)</span>
 </pre></div>
 </div>
-<p>Dispatches to <a class="reference internal" href="../../modules/torch/neighbors.html#nvalchemiops.torch.neighbors.cell_list" title="nvalchemiops.torch.neighbors.cell_list"><code class="xref py py-func docutils literal notranslate"><span class="pre">cell_list()</span></code></a> — O(N) algorithm
+<p>Dispatches to <a class="reference internal" href="../../modules/torch/neighbors.html#nvalchemiops.torch.neighbors.cell_list" title="nvalchemiops.torch.neighbors.cell_list"><code class="xref py py-func docutils literal notranslate"><span class="pre">cell_list()</span></code></a> — <span class="math notranslate nohighlight">\(O(N)\)</span> algorithm
 using spatial decomposition.</p>
 </div>
 <input id="sd-tab-item-1" name="sd-tab-set-0" type="radio">
@@ -525,7 +530,7 @@ Single + Small</label><div class="sd-tab-content docutils">
 <span class="p">)</span>
 </pre></div>
 </div>
-<p>Dispatches to <a class="reference internal" href="../../modules/torch/neighbors.html#nvalchemiops.torch.neighbors.naive_neighbor_list" title="nvalchemiops.torch.neighbors.naive_neighbor_list"><code class="xref py py-func docutils literal notranslate"><span class="pre">naive_neighbor_list()</span></code></a> — O(N²)
+<p>Dispatches to <a class="reference internal" href="../../modules/torch/neighbors.html#nvalchemiops.torch.neighbors.naive_neighbor_list" title="nvalchemiops.torch.neighbors.naive_neighbor_list"><code class="xref py py-func docutils literal notranslate"><span class="pre">naive_neighbor_list()</span></code></a> — <span class="math notranslate nohighlight">\(O(N^2)\)</span>
 algorithm with lower overhead.</p>
 </div>
 <input id="sd-tab-item-2" name="sd-tab-set-0" type="radio">
@@ -540,7 +545,7 @@ Batch + Large</label><div class="sd-tab-content docutils">
 <span class="p">)</span>
 </pre></div>
 </div>
-<p>Dispatches to <a class="reference internal" href="../../modules/torch/neighbors.html#nvalchemiops.torch.neighbors.batch_cell_list" title="nvalchemiops.torch.neighbors.batch_cell_list"><code class="xref py py-func docutils literal notranslate"><span class="pre">batch_cell_list()</span></code></a> — O(N)
+<p>Dispatches to <a class="reference internal" href="../../modules/torch/neighbors.html#nvalchemiops.torch.neighbors.batch_cell_list" title="nvalchemiops.torch.neighbors.batch_cell_list"><code class="xref py py-func docutils literal notranslate"><span class="pre">batch_cell_list()</span></code></a> — <span class="math notranslate nohighlight">\(O(N)\)</span>
 algorithm for heterogeneous batches.</p>
 </div>
 <input id="sd-tab-item-3" name="sd-tab-set-0" type="radio">
@@ -556,13 +561,14 @@ Batch + Small</label><div class="sd-tab-content docutils">
 </pre></div>
 </div>
 <p>Dispatches to <a class="reference internal" href="../../modules/torch/neighbors.html#nvalchemiops.torch.neighbors.batch_naive_neighbor_list" title="nvalchemiops.torch.neighbors.batch_naive_neighbor_list"><code class="xref py py-func docutils literal notranslate"><span class="pre">batch_naive_neighbor_list()</span></code></a> —
-O(N²) algorithm for batched small systems.</p>
+<span class="math notranslate nohighlight">\(O(N^2)\)</span> algorithm for batched small systems.</p>
 </div>
 </div>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 <p>When <code class="docutils literal notranslate"><span class="pre">method</span></code> is not specified, <code class="docutils literal notranslate"><span class="pre">neighbor_list</span></code> automatically selects based on
-average system size (≥2000 atoms per system → cell list) and whether <code class="docutils literal notranslate"><span class="pre">batch_idx</span></code> is provided.</p>
+average system size (<span class="math notranslate nohighlight">\(\geq 2000\)</span> atoms per system → cell list) and whether
+<code class="docutils literal notranslate"><span class="pre">batch_idx</span></code> is provided.</p>
 </div>
 <p>For advanced workflows, <code class="xref py py-func docutils literal notranslate"><span class="pre">build_cell_list()</span></code> and
 <code class="xref py py-func docutils literal notranslate"><span class="pre">query_cell_list()</span></code> allow caching spatial data
@@ -682,7 +688,9 @@ slowly-converging <span class="math notranslate nohighlight">\(1/r\)</span> pote
 <label class="sd-tab-label" data-sync-group="tab" data-sync-id="ewald" for="sd-tab-item-7">
 Ewald</label><div class="sd-tab-content docutils">
 <p>Small to medium systems (&lt;5000 atoms)</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">ewald_summation</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">ewald_summation</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.neighbors</span><span class="w"> </span><span class="kn">import</span> <span class="n">neighbor_list</span>
 
 <span class="c1"># Build neighbor list</span>
@@ -691,11 +699,13 @@ Ewald</label><div class="sd-tab-content docutils">
 <span class="p">)</span>
 
 <span class="c1"># Compute electrostatics (parameters estimated automatically)</span>
-<span class="n">energies</span><span class="p">,</span> <span class="n">forces</span> <span class="o">=</span> <span class="n">ewald_summation</span><span class="p">(</span>
+<span class="n">positions</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">energies</span> <span class="o">=</span> <span class="n">ewald_summation</span><span class="p">(</span>
     <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbors</span><span class="p">,</span>
     <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">neighbor_ptr</span><span class="p">,</span> <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">shifts</span><span class="p">,</span>
-    <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">,</span> <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span>
+    <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-6</span>
 <span class="p">)</span>
+<span class="n">forces</span> <span class="o">=</span> <span class="o">-</span><span class="n">torch</span><span class="o">.</span><span class="n">autograd</span><span class="o">.</span><span class="n">grad</span><span class="p">(</span><span class="n">energies</span><span class="o">.</span><span class="n">sum</span><span class="p">(),</span> <span class="n">positions</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
 </pre></div>
 </div>
 <p>Uses explicit k-vector summation in reciprocal space — <span class="math notranslate nohighlight">\(O(N^2)\)</span> scaling.</p>
@@ -704,7 +714,9 @@ Ewald</label><div class="sd-tab-content docutils">
 <label class="sd-tab-label" data-sync-group="tab" data-sync-id="pme" for="sd-tab-item-8">
 PME</label><div class="sd-tab-content docutils">
 <p>Large systems (&gt;5000 atoms)</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">particle_mesh_ewald</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">particle_mesh_ewald</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.neighbors</span><span class="w"> </span><span class="kn">import</span> <span class="n">neighbor_list</span>
 
 <span class="c1"># Build neighbor list</span>
@@ -713,11 +725,13 @@ PME</label><div class="sd-tab-content docutils">
 <span class="p">)</span>
 
 <span class="c1"># Compute electrostatics with FFT acceleration</span>
-<span class="n">energies</span><span class="p">,</span> <span class="n">forces</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
+<span class="n">positions</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">energies</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
     <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbors</span><span class="p">,</span>
     <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">neighbor_ptr</span><span class="p">,</span> <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">shifts</span><span class="p">,</span>
-    <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">,</span> <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span>
+    <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-6</span>
 <span class="p">)</span>
+<span class="n">forces</span> <span class="o">=</span> <span class="o">-</span><span class="n">torch</span><span class="o">.</span><span class="n">autograd</span><span class="o">.</span><span class="n">grad</span><span class="p">(</span><span class="n">energies</span><span class="o">.</span><span class="n">sum</span><span class="p">(),</span> <span class="n">positions</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
 </pre></div>
 </div>
 <p>Uses FFT-based reciprocal-space calculation — <span class="math notranslate nohighlight">\(O(N \log N)\)</span> scaling.</p>
@@ -726,7 +740,9 @@ PME</label><div class="sd-tab-content docutils">
 <label class="sd-tab-label" data-sync-group="tab" data-sync-id="batch" for="sd-tab-item-9">
 Batch</label><div class="sd-tab-content docutils">
 <p>Multiple systems processed simultaneously</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">ewald_summation</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">ewald_summation</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.neighbors</span><span class="w"> </span><span class="kn">import</span> <span class="n">neighbor_list</span>
 
 <span class="c1"># Build batched neighbor list</span>
@@ -736,11 +752,13 @@ Batch</label><div class="sd-tab-content docutils">
 <span class="p">)</span>
 
 <span class="c1"># Batched electrostatics</span>
-<span class="n">energies</span><span class="p">,</span> <span class="n">forces</span> <span class="o">=</span> <span class="n">ewald_summation</span><span class="p">(</span>
+<span class="n">positions</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">energies</span> <span class="o">=</span> <span class="n">ewald_summation</span><span class="p">(</span>
     <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cells</span><span class="p">,</span> <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbors</span><span class="p">,</span>
     <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">neighbor_ptr</span><span class="p">,</span> <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">shifts</span><span class="p">,</span>
-    <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span> <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">,</span> <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span>
+    <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span> <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-6</span>
 <span class="p">)</span>
+<span class="n">forces</span> <span class="o">=</span> <span class="o">-</span><span class="n">torch</span><span class="o">.</span><span class="n">autograd</span><span class="o">.</span><span class="n">grad</span><span class="p">(</span><span class="n">energies</span><span class="o">.</span><span class="n">sum</span><span class="p">(),</span> <span class="n">positions</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
 </pre></div>
 </div>
 <p>Returns per-atom energies; sum by system using <code class="docutils literal notranslate"><span class="pre">batch_idx</span></code>.</p>
@@ -881,9 +899,22 @@ Ewald summation and PME calculations</p></li>
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -903,7 +934,7 @@ Ewald summation and PME calculations</p></li>
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

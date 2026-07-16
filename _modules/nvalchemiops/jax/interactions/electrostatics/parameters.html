@@ -2,17 +2,17 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../../../../" >
+<html lang="en" data-content_root="../../../../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>nvalchemiops.jax.interactions.electrostatics.parameters &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>nvalchemiops.jax.interactions.electrostatics.parameters &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -34,16 +34,17 @@
     <link rel="stylesheet" type="text/css" href="../../../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../../../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../../../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../../../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../../../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -58,7 +59,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -125,8 +126,6 @@
   
   
     
-    
-      
     
     
     <img src="../../../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -577,8 +576,27 @@ document.write(`
     <span class="n">cell</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
     <span class="n">alpha</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
     <span class="n">accuracy</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-6</span><span class="p">,</span>
+    <span class="n">mesh_safety_factor</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Estimate optimal PME mesh dimensions for a given accuracy.</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Estimate PME mesh dimensions for a given accuracy.</span>
+
+<span class="sd">    The mesh size along each axis is chosen as</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        K_i = \lceil \text{mesh\_safety\_factor} \cdot 2 \alpha L_i / (3 \varepsilon^{1/5}) \rceil</span>
+
+<span class="sd">    rounded up to the next power of 2. The fifth-root scaling</span>
+<span class="sd">    :math:`\varepsilon^{1/5}` is the standard heuristic used by production PME</span>
+<span class="sd">    codes; it grows the safety margin faster than :math:`\sqrt{-\ln \varepsilon}` as</span>
+<span class="sd">    :math:`\varepsilon` tightens, which is empirically necessary to cover both the</span>
+<span class="sd">    Gaussian-decay truncation and the B-spline aliasing error at the</span>
+<span class="sd">    accuracies typically requested (1e-3 to 1e-6) across a wide</span>
+<span class="sd">    :math:`(\alpha, L, \text{spline\_order})` envelope.</span>
+
+<span class="sd">    The canonical Essmann lower bound :math:`2 \alpha L \sqrt{-\ln \varepsilon} / \pi` is the</span>
+<span class="sd">    Gaussian-decay term only; it can under-allocate by 2-4x at low</span>
+<span class="sd">    :math:`\alpha` (large rc), where the B-spline aliasing term dominates.</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
@@ -587,7 +605,15 @@ document.write(`
 <span class="sd">    alpha : jax.Array, shape (B,)</span>
 <span class="sd">        Ewald splitting parameter.</span>
 <span class="sd">    accuracy : float, default=1e-6</span>
-<span class="sd">        Target accuracy.</span>
+<span class="sd">        Target relative accuracy.</span>
+<span class="sd">    mesh_safety_factor : float, default=1.0</span>
+<span class="sd">        Multiplier on the standard heuristic. ``1.0`` is the</span>
+<span class="sd">        well-tested default that meets accuracy across the</span>
+<span class="sd">        configurations covered by the convergence script. Raise for</span>
+<span class="sd">        extra paranoia at tight accuracy. **Lower at your own risk:**</span>
+<span class="sd">        values below 1.0 can fail the accuracy guarantee on</span>
+<span class="sd">        low-:math:`\alpha` / large-L systems (verify with the convergence script</span>
+<span class="sd">        before using).</span>
 
 <span class="sd">    Returns</span>
 <span class="sd">    -------</span>
@@ -597,18 +623,15 @@ document.write(`
     <span class="k">if</span> <span class="n">cell</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span><span class="p">:</span>
         <span class="n">cell</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span>
 
-    <span class="c1"># Cell lengths along each axis</span>
     <span class="n">cell_lengths</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>  <span class="c1"># (B, 3)</span>
 
-    <span class="c1"># Accuracy factor: 3 * epsilon^(1/5)</span>
+    <span class="c1"># K = 2 α L / (3 ε^0.2), with optional safety multiplier + pow-2 snap.</span>
     <span class="n">accuracy_factor</span> <span class="o">=</span> <span class="mf">3.0</span> <span class="o">*</span> <span class="p">(</span><span class="n">accuracy</span><span class="o">**</span><span class="mf">0.2</span><span class="p">)</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">mesh_safety_factor</span> <span class="o">*</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="n">alpha</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">*</span> <span class="n">cell_lengths</span> <span class="o">/</span> <span class="n">accuracy_factor</span>
+    <span class="p">)</span>  <span class="c1"># (B, 3)</span>
 
-    <span class="n">n</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">alpha</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">*</span> <span class="n">cell_lengths</span> <span class="o">/</span> <span class="n">accuracy_factor</span>  <span class="c1"># (B, 3)</span>
-
-    <span class="c1"># Take max across batch dimension</span>
     <span class="n">max_n</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>  <span class="c1"># (3,)</span>
-
-    <span class="c1"># Round up to powers of 2</span>
     <span class="n">mesh_dims</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">power</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">log2</span><span class="p">(</span><span class="n">max_n</span><span class="p">)))</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
     <span class="k">return</span> <span class="p">(</span>
         <span class="nb">int</span><span class="p">(</span><span class="n">mesh_dims</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">()),</span>
@@ -625,8 +648,15 @@ document.write(`
     <span class="n">cell</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
     <span class="n">batch_idx</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">accuracy</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-6</span><span class="p">,</span>
+    <span class="n">real_space_cutoff</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">mesh_safety_factor</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PMEParameters</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Estimate optimal PME parameters for a given accuracy.</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Estimate PME parameters for a given accuracy.</span>
+
+<span class="sd">    Uses the closed-form Essmann/Kolafa-Perram derivation: a single</span>
+<span class="sd">    length scale :math:`\eta = (V^2 / N)^{1/6} / \sqrt{2\pi}` determines both ``rc``</span>
+<span class="sd">    and :math:`\alpha`. Callers who want to pin a specific cutoff (e.g. tied to</span>
+<span class="sd">    neighbor-list update frequency in MD) should pass ``real_space_cutoff``.</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
@@ -638,32 +668,53 @@ document.write(`
 <span class="sd">        System index for each atom.</span>
 <span class="sd">    accuracy : float, default=1e-6</span>
 <span class="sd">        Target accuracy.</span>
+<span class="sd">    real_space_cutoff : float, optional</span>
+<span class="sd">        Caller-supplied cutoff. When given, :math:`\alpha` is derived from it via</span>
+<span class="sd">        :math:`\alpha = \sqrt{-\log \varepsilon} / r_c`; otherwise rc and :math:`\alpha` come from :math:`\eta`.</span>
+<span class="sd">    mesh_safety_factor : float, default=1.0</span>
+<span class="sd">        Multiplier on the standard mesh-size heuristic</span>
+<span class="sd">        :math:`K = 2 \alpha L / (3 \varepsilon^{1/5})`. Raise for extra safety at tight :math:`\varepsilon`.</span>
 
 <span class="sd">    Returns</span>
 <span class="sd">    -------</span>
 <span class="sd">    PMEParameters</span>
 <span class="sd">        Dataclass containing alpha, mesh dimensions, spacing, and cutoffs.</span>
-<span class="sd">        Tensor fields are ``jax.Array`` objects.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">if</span> <span class="n">cell</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span><span class="p">:</span>
         <span class="n">cell</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span>
 
-    <span class="c1"># We need to compute alpha locally first</span>
     <span class="n">num_systems</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
     <span class="n">volume</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">det</span><span class="p">(</span><span class="n">cell</span><span class="p">))</span>
     <span class="n">num_atoms</span> <span class="o">=</span> <span class="n">_count_atoms_per_system</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">num_systems</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span>
         <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span>
     <span class="p">)</span>
-    <span class="n">eta</span> <span class="o">=</span> <span class="p">(</span><span class="n">volume</span><span class="o">**</span><span class="mi">2</span> <span class="o">/</span> <span class="n">num_atoms</span><span class="p">)</span> <span class="o">**</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">/</span> <span class="mf">6.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">)</span>
-    <span class="n">error_factor</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="o">-</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">accuracy</span><span class="p">))</span>
-    <span class="n">real_space_cutoff</span> <span class="o">=</span> <span class="n">error_factor</span> <span class="o">*</span> <span class="n">eta</span>
-    <span class="n">alpha</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span> <span class="o">*</span> <span class="n">eta</span><span class="p">)</span>
-
-    <span class="c1"># Estimate mesh dimensions</span>
-    <span class="n">mesh_dims</span> <span class="o">=</span> <span class="n">estimate_pme_mesh_dimensions</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">alpha</span><span class="p">,</span> <span class="n">accuracy</span><span class="p">)</span>
-
-    <span class="c1"># Compute actual mesh spacing</span>
     <span class="n">cell_lengths</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>  <span class="c1"># (B, 3)</span>
+
+    <span class="c1"># For batched inputs we share a single rc / α across the batch (one</span>
+    <span class="c1"># neighbor cutoff for all systems). Use median-system properties.</span>
+    <span class="k">if</span> <span class="n">real_space_cutoff</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">num_systems</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">n_repr</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">num_atoms</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+            <span class="n">v_repr</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">volume</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">n_repr</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">median</span><span class="p">(</span><span class="n">num_atoms</span><span class="p">))</span>
+            <span class="n">v_repr</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">median</span><span class="p">(</span><span class="n">volume</span><span class="p">))</span>
+        <span class="n">eta</span> <span class="o">=</span> <span class="p">(</span><span class="n">v_repr</span><span class="o">**</span><span class="mi">2</span> <span class="o">/</span> <span class="n">n_repr</span><span class="p">)</span> <span class="o">**</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">/</span> <span class="mf">6.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">)</span>
+        <span class="n">rc_value</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="o">-</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">accuracy</span><span class="p">))</span> <span class="o">*</span> <span class="n">eta</span>
+        <span class="n">alpha_value</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span> <span class="o">*</span> <span class="n">eta</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">rc_value</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">real_space_cutoff</span><span class="p">)</span>
+        <span class="n">alpha_value</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="o">-</span><span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">accuracy</span><span class="p">))</span> <span class="o">/</span> <span class="n">rc_value</span>
+
+    <span class="n">alpha</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">num_systems</span><span class="p">,),</span> <span class="n">alpha_value</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+    <span class="n">rc_array</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">num_systems</span><span class="p">,),</span> <span class="n">rc_value</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+    <span class="n">mesh_dims</span> <span class="o">=</span> <span class="n">estimate_pme_mesh_dimensions</span><span class="p">(</span>
+        <span class="n">cell</span><span class="p">,</span>
+        <span class="n">alpha</span><span class="p">,</span>
+        <span class="n">accuracy</span><span class="p">,</span>
+        <span class="n">mesh_safety_factor</span><span class="o">=</span><span class="n">mesh_safety_factor</span><span class="p">,</span>
+    <span class="p">)</span>
     <span class="n">mesh_dims_tensor</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">mesh_dims</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">cell_lengths</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
     <span class="n">mesh_spacing</span> <span class="o">=</span> <span class="n">cell_lengths</span> <span class="o">/</span> <span class="n">mesh_dims_tensor</span>  <span class="c1"># (B, 3)</span>
 
@@ -671,7 +722,7 @@ document.write(`
         <span class="n">alpha</span><span class="o">=</span><span class="n">alpha</span><span class="p">,</span>
         <span class="n">mesh_dimensions</span><span class="o">=</span><span class="n">mesh_dims</span><span class="p">,</span>
         <span class="n">mesh_spacing</span><span class="o">=</span><span class="n">mesh_spacing</span><span class="p">,</span>
-        <span class="n">real_space_cutoff</span><span class="o">=</span><span class="n">real_space_cutoff</span><span class="p">,</span>
+        <span class="n">real_space_cutoff</span><span class="o">=</span><span class="n">rc_array</span><span class="p">,</span>
     <span class="p">)</span></div>
 
 
@@ -762,9 +813,22 @@ document.write(`
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -784,7 +848,7 @@ document.write(`
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

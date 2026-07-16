@@ -476,13 +476,13 @@ Extract individual system results from batch
       Atoms: 5
       Neighbor pairs: 20
       Avg neighbors per atom: 4.00
-      Sample pairs: (0->1) (0->2) (0->3) 
+      Sample pairs: (0->1) (0->4) (0->3) 
 
     Al-fcc(2x2x2):
       Atoms: 32
       Neighbor pairs: 1344
       Avg neighbors per atom: 42.00
-      Sample pairs: (0->22) (0->28) (0->26) 
+      Sample pairs: (0->25) (0->8) (0->16) 
 
 
 
@@ -633,7 +633,7 @@ Show that each system can have different properties
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.813 seconds)
+   **Total running time of the script:** (0 minutes 0.246 seconds)
 
 
 .. _sphx_glr_download_examples_neighbors_02_batch_neighbor_list.py:

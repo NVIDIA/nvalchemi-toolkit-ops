@@ -52,11 +52,6 @@ import os
 import sys
 from pathlib import Path
 
-# Prevent JAX from pre-allocating 75% of GPU memory at init, which fails
-# when PyTorch has already reserved memory in the same process (e.g. during
-# sphinx-gallery builds that run all examples sequentially).
-os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
-
 try:
     import jax
     import jax.numpy as jnp

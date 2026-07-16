@@ -2,18 +2,18 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../" >
+<html lang="en" data-content_root="../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>Electrostatics Benchmarks &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>Electrostatics Benchmarks &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -35,16 +35,17 @@
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -52,7 +53,7 @@
     <script src="../_static/design-tabs.js?v=f930bc37"></script>
     <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
     <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
-    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'benchmarks/electrostatics';</script>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
@@ -63,7 +64,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -130,8 +131,6 @@
   
   
     
-    
-      
     
     
     <img src="../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -428,264 +427,542 @@ document.write(`
                   
   <section class="tex2jax_ignore mathjax_ignore" id="electrostatics-benchmarks">
 <h1>Electrostatics Benchmarks<a class="headerlink" href="#electrostatics-benchmarks" title="Link to this heading">#</a></h1>
-<p>This page presents benchmark results for electrostatic interaction methods including
-Ewald summation, Particle Mesh Ewald (PME), and Damped Shifted Force (DSF) across
-different GPU hardware. Results show the scaling behavior with increasing system size
-for both single-system and batched computations.</p>
+<p>Performance benchmarks for electrostatic interaction methods in ALCHEMI
+Toolkit-Ops — Ewald summation and Particle Mesh Ewald (PME). Results
+show scaling behaviour across system sizes for both single-system and
+batched computations.</p>
 <div class="admonition warning">
 <p class="admonition-title">Warning</p>
 <p>These results are intended to be indicative <em>only</em>: your actual performance may
 vary depending on the atomic system topology, software and hardware configuration
 and we encourage users to benchmark on their own systems of interest.</p>
 </div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Every PME and Ewald row measures the same complete differentiable workload:
+evaluate energy, then derive forces (<code class="docutils literal notranslate"><span class="pre">-dE/dR</span></code>) and charge gradients
+(<code class="docutils literal notranslate"><span class="pre">dE/dq</span></code>) through framework autodiff. The reportable default times this full
+workload once; real/reciprocal component profiling is opt-in. Missing plotted
+points are retained as <code class="docutils literal notranslate"><span class="pre">success=False</span></code> CSV rows, typically with
+<code class="docutils literal notranslate"><span class="pre">error_type=OutOfMemoryError</span></code> or <code class="docutils literal notranslate"><span class="pre">SkippedAfterOOM</span></code>. Strict-accuracy PME
+rows that exceed XLA autotuning or cuFFT planning capacity use
+<code class="docutils literal notranslate"><span class="pre">error_type=JaxRuntimeError</span></code>.</p>
+</div>
 <section id="how-to-read-these-charts">
 <h2>How to Read These Charts<a class="headerlink" href="#how-to-read-these-charts" title="Link to this heading">#</a></h2>
 <p>Time Scaling
-: Median execution time (ms) vs. system size. Lower is better. Timings include
-both real-space and reciprocal-space contributions when running “full” mode.</p>
+: Mean execution time (µs/atom) vs. system size. Lower is better. Timings
+include both real-space and reciprocal-space contributions when running
+“full” mode.</p>
 <p>Throughput
-: Atoms processed per millisecond. Higher is better. This indicates the scaling
-point where the GPU saturates.</p>
+: Atoms processed per second (plotted as <span class="math notranslate nohighlight">\(10^6\)</span> atoms/s). Higher is better.
+This indicates the scaling point where the GPU saturates.</p>
 <p>Memory
-: Peak GPU memory usage (MB) vs. system size. This is particularly useful
-for estimating/gauging memory requirements for your system.</p>
+: Peak memory reported by the Torch CUDA allocator vs. system size. Units
+switch between MB and GB automatically on the y-axis. JAX memory is not
+measured by this suite.</p>
 </section>
-<section id="ewald-summation">
-<h2>Ewald Summation<a class="headerlink" href="#ewald-summation" title="Link to this heading">#</a></h2>
-<p>The Ewald summation method splits the Coulomb interaction into real-space and
-reciprocal-space components. This is the traditional <span class="math notranslate nohighlight">\(O(N^{3/2})\)</span> to <span class="math notranslate nohighlight">\(O(N^2)\)</span> method
-depending on parameter choices.</p>
+<section id="performance-results">
+<h2>Performance Results<a class="headerlink" href="#performance-results" title="Link to this heading">#</a></h2>
 <div class="sd-tab-set docutils">
 <input checked="checked" id="sd-tab-item-0" name="sd-tab-set-0" type="radio">
 <label class="sd-tab-label" for="sd-tab-item-0">
-Backend Comparison</label><div class="sd-tab-content docutils">
-<p>Simple comparison of single (non-batched) system computations between backends,
-where we scale up the size of the supercell.</p>
-<p class="rubric" id="time-scaling">Time Scaling</p>
-<figure class="align-center" id="id16">
-<a class="reference internal image-reference" href="../_images/electrostatics_scaling_ewald_comparison_h100-80gb-hbm3.png"><img alt="Ewald backend time comparison" src="../_images/electrostatics_scaling_ewald_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
-</a>
-<figcaption>
-<p><span class="caption-text">Median execution time comparison between backends for single systems.</span><a class="headerlink" href="#id16" title="Link to this image">#</a></p>
-</figcaption>
-</figure>
-<p class="rubric" id="throughput">Throughput</p>
-<figure class="align-center" id="id17">
-<a class="reference internal image-reference" href="../_images/electrostatics_throughput_ewald_comparison_h100-80gb-hbm3.png"><img alt="Ewald backend throughput comparison" src="../_images/electrostatics_throughput_ewald_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
-</a>
-<figcaption>
-<p><span class="caption-text">Throughput (atoms/ms) comparison between backends. Higher values indicate better performance.</span><a class="headerlink" href="#id17" title="Link to this image">#</a></p>
-</figcaption>
-</figure>
-<p class="rubric" id="memory-usage">Memory Usage</p>
-<figure class="align-center" id="id18">
-<a class="reference internal image-reference" href="../_images/electrostatics_memory_ewald_comparison_h100-80gb-hbm3.png"><img alt="Ewald backend memory comparison" src="../_images/electrostatics_memory_ewald_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
-</a>
-<figcaption>
-<p><span class="caption-text">Peak GPU memory consumption comparison between backends. Lower is better,
-indicating that the backend has lower memory requirements.</span><a class="headerlink" href="#id18" title="Link to this image">#</a></p>
-</figcaption>
-</figure>
-</div>
-<input id="sd-tab-item-1" name="sd-tab-set-0" type="radio">
-<label class="sd-tab-label" for="sd-tab-item-1">
-nvalchemiops (Torch)</label><div class="sd-tab-content docutils">
-<p>Scaling of single and batched Ewald computation with the <code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> Torch backend.
-Shows how performance scales with different batch sizes.</p>
-<p class="rubric" id="id1">Time Scaling</p>
-<figure class="align-center" id="id19">
-<a class="reference internal image-reference" href="../_images/electrostatics_scaling_ewald_torch_h100-80gb-hbm3.png"><img alt="Ewald nvalchemiops (Torch) time scaling" src="../_images/electrostatics_scaling_ewald_torch_h100-80gb-hbm3.png" style="width: 90%;" />
-</a>
-<figcaption>
-<p><span class="caption-text">Execution time scaling for single and batched systems.</span><a class="headerlink" href="#id19" title="Link to this image">#</a></p>
-</figcaption>
-</figure>
-<p class="rubric" id="id2">Throughput</p>
-<figure class="align-center" id="id20">
-<a class="reference internal image-reference" href="../_images/electrostatics_throughput_ewald_torch_h100-80gb-hbm3.png"><img alt="Ewald nvalchemiops (Torch) throughput" src="../_images/electrostatics_throughput_ewald_torch_h100-80gb-hbm3.png" style="width: 90%;" />
-</a>
-<figcaption>
-<p><span class="caption-text">Throughput (atoms/ms) for single and batched systems.</span><a class="headerlink" href="#id20" title="Link to this image">#</a></p>
-</figcaption>
-</figure>
-<p class="rubric" id="id3">Memory Usage</p>
-<figure class="align-center" id="id21">
-<a class="reference internal image-reference" href="../_images/electrostatics_memory_ewald_torch_h100-80gb-hbm3.png"><img alt="Ewald nvalchemiops (Torch) memory usage" src="../_images/electrostatics_memory_ewald_torch_h100-80gb-hbm3.png" style="width: 90%;" />
-</a>
-<figcaption>
-<p><span class="caption-text">Peak GPU memory consumption for single and batched systems.</span><a class="headerlink" href="#id21" title="Link to this image">#</a></p>
-</figcaption>
-</figure>
-</div>
-<input id="sd-tab-item-2" name="sd-tab-set-0" type="radio">
-<label class="sd-tab-label" for="sd-tab-item-2">
-nvalchemiops (JAX)</label><div class="sd-tab-content docutils">
-<p>Scaling of single and batched Ewald computation with the <code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> JAX backend.
-Shows how performance scales with different batch sizes.</p>
-<p class="rubric" id="id4">Time Scaling</p>
-<figure class="align-center" id="id22">
-<a class="reference internal image-reference" href="../_images/electrostatics_scaling_ewald_jax_h100-80gb-hbm3.png"><img alt="Ewald nvalchemiops (JAX) time scaling" src="../_images/electrostatics_scaling_ewald_jax_h100-80gb-hbm3.png" style="width: 90%;" />
-</a>
-<figcaption>
-<p><span class="caption-text">Execution time scaling for single and batched systems.</span><a class="headerlink" href="#id22" title="Link to this image">#</a></p>
-</figcaption>
-</figure>
-<p class="rubric" id="id5">Throughput</p>
-<figure class="align-center" id="id23">
-<a class="reference internal image-reference" href="../_images/electrostatics_throughput_ewald_jax_h100-80gb-hbm3.png"><img alt="Ewald nvalchemiops (JAX) throughput" src="../_images/electrostatics_throughput_ewald_jax_h100-80gb-hbm3.png" style="width: 90%;" />
-</a>
-<figcaption>
-<p><span class="caption-text">Throughput (atoms/ms) for single and batched systems.</span><a class="headerlink" href="#id23" title="Link to this image">#</a></p>
-</figcaption>
-</figure>
-<p class="rubric" id="id6">Memory Usage</p>
-<figure class="align-center" id="id24">
-<a class="reference internal image-reference" href="../_images/electrostatics_memory_ewald_jax_h100-80gb-hbm3.png"><img alt="Ewald nvalchemiops (JAX) memory usage" src="../_images/electrostatics_memory_ewald_jax_h100-80gb-hbm3.png" style="width: 90%;" />
-</a>
-<figcaption>
-<p><span class="caption-text">Peak GPU memory consumption for single and batched systems.</span><a class="headerlink" href="#id24" title="Link to this image">#</a></p>
-</figcaption>
-</figure>
-</div>
-</div>
-</section>
-<section id="particle-mesh-ewald-pme">
-<h2>Particle Mesh Ewald (PME)<a class="headerlink" href="#particle-mesh-ewald-pme" title="Link to this heading">#</a></h2>
-<p>PME achieves <span class="math notranslate nohighlight">\(O(N \log N)\)</span> scaling by using FFTs for the reciprocal-space contribution.
-This is the recommended method for large systems.</p>
+Torch</label><div class="sd-tab-content docutils">
 <div class="sd-tab-set docutils">
 <input checked="checked" id="sd-tab-item-3" name="sd-tab-set-1" type="radio">
 <label class="sd-tab-label" for="sd-tab-item-3">
-Backend Comparison</label><div class="sd-tab-content docutils">
-<p>Simple comparison of single (non-batched) system computations between backends,
-where we scale up the size of the supercell.</p>
-<p class="rubric" id="id7">Time Scaling</p>
-<figure class="align-center" id="id25">
-<a class="reference internal image-reference" href="../_images/electrostatics_scaling_pme_comparison_h100-80gb-hbm3.png"><img alt="PME backend time comparison" src="../_images/electrostatics_scaling_pme_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
+CsCl</label><div class="sd-tab-content docutils">
+<div class="sd-tab-set docutils">
+<input checked="checked" id="sd-tab-item-5" name="sd-tab-set-2" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-5">
+System Size Scaling</label><div class="sd-tab-content docutils">
+<figure class="align-center" id="id1">
+<a class="reference internal image-reference" href="../_images/el-cscl-system-size-scaling-time.png"><img alt="Mean execution time vs. system size (Torch: PME + Ewald, CsCl)." src="../_images/el-cscl-system-size-scaling-time.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Median execution time comparison between backends for single systems.</span><a class="headerlink" href="#id25" title="Link to this image">#</a></p>
+<p><span class="caption-text">Mean execution time vs. system size (Torch: PME + Ewald, CsCl).</span><a class="headerlink" href="#id1" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
-<p class="rubric" id="id8">Throughput</p>
-<figure class="align-center" id="id26">
-<a class="reference internal image-reference" href="../_images/electrostatics_throughput_pme_comparison_h100-80gb-hbm3.png"><img alt="PME backend throughput comparison" src="../_images/electrostatics_throughput_pme_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
+<figure class="align-center" id="id2">
+<a class="reference internal image-reference" href="../_images/el-cscl-system-size-scaling-throughput.png"><img alt="Throughput (10^6 atoms/s) vs. system size." src="../_images/el-cscl-system-size-scaling-throughput.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Throughput (atoms/ms) comparison between backends. Higher values indicate better performance.</span><a class="headerlink" href="#id26" title="Link to this image">#</a></p>
+<p><span class="caption-text">Throughput (<span class="math notranslate nohighlight">\(10^6\)</span> atoms/s) vs. system size.</span><a class="headerlink" href="#id2" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
-<p class="rubric" id="id9">Memory Usage</p>
-<figure class="align-center" id="id27">
-<a class="reference internal image-reference" href="../_images/electrostatics_memory_pme_comparison_h100-80gb-hbm3.png"><img alt="PME backend memory comparison" src="../_images/electrostatics_memory_pme_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
+<figure class="align-center" id="id3">
+<a class="reference internal image-reference" href="../_images/el-cscl-system-size-scaling-memory.png"><img alt="Peak GPU memory vs. system size." src="../_images/el-cscl-system-size-scaling-memory.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Peak GPU memory consumption comparison between backends. Lower is better,
-indicating that the backend has lower memory requirements.</span><a class="headerlink" href="#id27" title="Link to this image">#</a></p>
+<p><span class="caption-text">Peak GPU memory vs. system size.</span><a class="headerlink" href="#id3" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
+</div>
+<input id="sd-tab-item-6" name="sd-tab-set-2" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-6">
+Constant Workload</label><div class="sd-tab-content docutils">
+<figure class="align-center" id="id4">
+<a class="reference internal image-reference" href="../_images/el-cscl-constant-workload-scaling-time.png"><img alt="Execution time near the configured total-atom target, varying batch size." src="../_images/el-cscl-constant-workload-scaling-time.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Execution time near the configured total-atom target, varying batch size.</span><a class="headerlink" href="#id4" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id5">
+<a class="reference internal image-reference" href="../_images/el-cscl-constant-workload-scaling-throughput.png"><img alt="Throughput near the configured total-atom target." src="../_images/el-cscl-constant-workload-scaling-throughput.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput near the configured total-atom target.</span><a class="headerlink" href="#id5" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id6">
+<a class="reference internal image-reference" href="../_images/el-cscl-constant-workload-scaling-memory.png"><img alt="Peak GPU memory near the configured total-atom target." src="../_images/el-cscl-constant-workload-scaling-memory.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Peak GPU memory near the configured total-atom target.</span><a class="headerlink" href="#id6" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+<input id="sd-tab-item-7" name="sd-tab-set-2" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-7">
+Batch Scaling</label><div class="sd-tab-content docutils">
+<figure class="align-center" id="id7">
+<a class="reference internal image-reference" href="../_images/el-cscl-batch-scaling-time.png"><img alt="Execution time vs. batch size (fixed atoms per system)." src="../_images/el-cscl-batch-scaling-time.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Execution time vs. batch size (fixed atoms per system).</span><a class="headerlink" href="#id7" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id8">
+<a class="reference internal image-reference" href="../_images/el-cscl-batch-scaling-throughput.png"><img alt="Throughput vs. batch size." src="../_images/el-cscl-batch-scaling-throughput.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput vs. batch size.</span><a class="headerlink" href="#id8" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id9">
+<a class="reference internal image-reference" href="../_images/el-cscl-batch-scaling-memory.png"><img alt="Peak GPU memory vs. batch size." src="../_images/el-cscl-batch-scaling-memory.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Peak GPU memory vs. batch size.</span><a class="headerlink" href="#id9" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+</div>
 </div>
 <input id="sd-tab-item-4" name="sd-tab-set-1" type="radio">
 <label class="sd-tab-label" for="sd-tab-item-4">
-nvalchemiops (Torch)</label><div class="sd-tab-content docutils">
-<p>Scaling of single and batched PME computation with the <code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> Torch backend.
-Shows how performance scales with different batch sizes.</p>
-<p class="rubric" id="id10">Time Scaling</p>
-<figure class="align-center" id="id28">
-<a class="reference internal image-reference" href="../_images/electrostatics_scaling_pme_torch_h100-80gb-hbm3.png"><img alt="PME nvalchemiops (Torch) time scaling" src="../_images/electrostatics_scaling_pme_torch_h100-80gb-hbm3.png" style="width: 90%;" />
+NH₃</label><div class="sd-tab-content docutils">
+<div class="sd-tab-set docutils">
+<input checked="checked" id="sd-tab-item-8" name="sd-tab-set-3" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-8">
+System Size Scaling</label><div class="sd-tab-content docutils">
+<figure class="align-center" id="id10">
+<a class="reference internal image-reference" href="../_images/el-nh3-system-size-scaling-time.png"><img alt="Mean execution time vs. system size (Torch, NH₃)." src="../_images/el-nh3-system-size-scaling-time.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Execution time scaling for single and batched systems.</span><a class="headerlink" href="#id28" title="Link to this image">#</a></p>
+<p><span class="caption-text">Mean execution time vs. system size (Torch, NH₃).</span><a class="headerlink" href="#id10" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
-<p class="rubric" id="id11">Throughput</p>
-<figure class="align-center" id="id29">
-<a class="reference internal image-reference" href="../_images/electrostatics_throughput_pme_torch_h100-80gb-hbm3.png"><img alt="PME nvalchemiops (Torch) throughput" src="../_images/electrostatics_throughput_pme_torch_h100-80gb-hbm3.png" style="width: 90%;" />
+<figure class="align-center" id="id11">
+<a class="reference internal image-reference" href="../_images/el-nh3-system-size-scaling-throughput.png"><img alt="Throughput (10^6 atoms/s) vs. system size (NH₃)." src="../_images/el-nh3-system-size-scaling-throughput.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Throughput (atoms/ms) for single and batched systems.</span><a class="headerlink" href="#id29" title="Link to this image">#</a></p>
+<p><span class="caption-text">Throughput (<span class="math notranslate nohighlight">\(10^6\)</span> atoms/s) vs. system size (NH₃).</span><a class="headerlink" href="#id11" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
-<p class="rubric" id="id12">Memory Usage</p>
-<figure class="align-center" id="id30">
-<a class="reference internal image-reference" href="../_images/electrostatics_memory_pme_torch_h100-80gb-hbm3.png"><img alt="PME nvalchemiops (Torch) memory usage" src="../_images/electrostatics_memory_pme_torch_h100-80gb-hbm3.png" style="width: 90%;" />
+<figure class="align-center" id="id12">
+<a class="reference internal image-reference" href="../_images/el-nh3-system-size-scaling-memory.png"><img alt="Peak GPU memory vs. system size (NH₃)." src="../_images/el-nh3-system-size-scaling-memory.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Peak GPU memory consumption for single and batched systems.</span><a class="headerlink" href="#id30" title="Link to this image">#</a></p>
-</figcaption>
-</figure>
-</div>
-<input id="sd-tab-item-5" name="sd-tab-set-1" type="radio">
-<label class="sd-tab-label" for="sd-tab-item-5">
-nvalchemiops (JAX)</label><div class="sd-tab-content docutils">
-<p>Scaling of single and batched PME computation with the <code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> JAX backend.
-Shows how performance scales with different batch sizes.</p>
-<p class="rubric" id="id13">Time Scaling</p>
-<figure class="align-center" id="id31">
-<a class="reference internal image-reference" href="../_images/electrostatics_scaling_pme_jax_h100-80gb-hbm3.png"><img alt="PME nvalchemiops (JAX) time scaling" src="../_images/electrostatics_scaling_pme_jax_h100-80gb-hbm3.png" style="width: 90%;" />
-</a>
-<figcaption>
-<p><span class="caption-text">Execution time scaling for single and batched systems.</span><a class="headerlink" href="#id31" title="Link to this image">#</a></p>
-</figcaption>
-</figure>
-<p class="rubric" id="id14">Throughput</p>
-<figure class="align-center" id="id32">
-<a class="reference internal image-reference" href="../_images/electrostatics_throughput_pme_jax_h100-80gb-hbm3.png"><img alt="PME nvalchemiops (JAX) throughput" src="../_images/electrostatics_throughput_pme_jax_h100-80gb-hbm3.png" style="width: 90%;" />
-</a>
-<figcaption>
-<p><span class="caption-text">Throughput (atoms/ms) for single and batched systems.</span><a class="headerlink" href="#id32" title="Link to this image">#</a></p>
-</figcaption>
-</figure>
-<p class="rubric" id="id15">Memory Usage</p>
-<figure class="align-center" id="id33">
-<a class="reference internal image-reference" href="../_images/electrostatics_memory_pme_jax_h100-80gb-hbm3.png"><img alt="PME nvalchemiops (JAX) memory usage" src="../_images/electrostatics_memory_pme_jax_h100-80gb-hbm3.png" style="width: 90%;" />
-</a>
-<figcaption>
-<p><span class="caption-text">Peak GPU memory consumption for single and batched systems.</span><a class="headerlink" href="#id33" title="Link to this image">#</a></p>
+<p><span class="caption-text">Peak GPU memory vs. system size (NH₃).</span><a class="headerlink" href="#id12" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 </div>
+<input id="sd-tab-item-9" name="sd-tab-set-3" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-9">
+Constant Workload</label><div class="sd-tab-content docutils">
+<figure class="align-center" id="id13">
+<a class="reference internal image-reference" href="../_images/el-nh3-constant-workload-scaling-time.png"><img alt="Execution time near the configured total-atom target (NH₃)." src="../_images/el-nh3-constant-workload-scaling-time.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Execution time near the configured total-atom target (NH₃).</span><a class="headerlink" href="#id13" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id14">
+<a class="reference internal image-reference" href="../_images/el-nh3-constant-workload-scaling-throughput.png"><img alt="Throughput near the configured total-atom target (NH₃)." src="../_images/el-nh3-constant-workload-scaling-throughput.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput near the configured total-atom target (NH₃).</span><a class="headerlink" href="#id14" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id15">
+<a class="reference internal image-reference" href="../_images/el-nh3-constant-workload-scaling-memory.png"><img alt="Peak GPU memory near the configured total-atom target (NH₃)." src="../_images/el-nh3-constant-workload-scaling-memory.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Peak GPU memory near the configured total-atom target (NH₃).</span><a class="headerlink" href="#id15" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
 </div>
-</section>
-<section id="damped-shifted-force-dsf">
-<h2>Damped Shifted Force (DSF)<a class="headerlink" href="#damped-shifted-force-dsf" title="Link to this heading">#</a></h2>
-<p>The DSF method is a purely real-space, pairwise <span class="math notranslate nohighlight">\(O(N)\)</span> electrostatic summation.
-Unlike Ewald and PME, DSF has no reciprocal-space component – benchmarks measure
-the full calculation directly. DSF supports both CSR neighbor list and dense
-neighbor matrix formats, and can be compared against a pure PyTorch reference
-implementation (<code class="docutils literal notranslate"><span class="pre">torch_dsf</span></code> backend).</p>
+<input id="sd-tab-item-10" name="sd-tab-set-3" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-10">
+Batch Scaling</label><div class="sd-tab-content docutils">
+<figure class="align-center" id="id16">
+<a class="reference internal image-reference" href="../_images/el-nh3-batch-scaling-time.png"><img alt="Execution time vs. batch size (NH₃)." src="../_images/el-nh3-batch-scaling-time.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Execution time vs. batch size (NH₃).</span><a class="headerlink" href="#id16" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id17">
+<a class="reference internal image-reference" href="../_images/el-nh3-batch-scaling-throughput.png"><img alt="Throughput vs. batch size (NH₃)." src="../_images/el-nh3-batch-scaling-throughput.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput vs. batch size (NH₃).</span><a class="headerlink" href="#id17" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id18">
+<a class="reference internal image-reference" href="../_images/el-nh3-batch-scaling-memory.png"><img alt="Peak GPU memory vs. batch size (NH₃)." src="../_images/el-nh3-batch-scaling-memory.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Peak GPU memory vs. batch size (NH₃).</span><a class="headerlink" href="#id18" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+</div>
+</div>
+</div>
+</div>
+<input id="sd-tab-item-1" name="sd-tab-set-0" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-1">
+JAX</label><div class="sd-tab-content docutils">
+<div class="sd-tab-set docutils">
+<input checked="checked" id="sd-tab-item-11" name="sd-tab-set-4" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-11">
+CsCl</label><div class="sd-tab-content docutils">
+<div class="sd-tab-set docutils">
+<input checked="checked" id="sd-tab-item-13" name="sd-tab-set-5" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-13">
+System Size Scaling</label><div class="sd-tab-content docutils">
+<figure class="align-center" id="id19">
+<a class="reference internal image-reference" href="../_images/el-cscl-system-size-scaling-jax-time.png"><img alt="Mean execution time vs. system size (JAX, CsCl)." src="../_images/el-cscl-system-size-scaling-jax-time.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Mean execution time vs. system size (JAX, CsCl).</span><a class="headerlink" href="#id19" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id20">
+<a class="reference internal image-reference" href="../_images/el-cscl-system-size-scaling-jax-throughput.png"><img alt="Throughput (10^6 atoms/s) vs. system size (JAX)." src="../_images/el-cscl-system-size-scaling-jax-throughput.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput (<span class="math notranslate nohighlight">\(10^6\)</span> atoms/s) vs. system size (JAX).</span><a class="headerlink" href="#id20" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+<input id="sd-tab-item-14" name="sd-tab-set-5" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-14">
+Constant Workload</label><div class="sd-tab-content docutils">
+<figure class="align-center" id="id21">
+<a class="reference internal image-reference" href="../_images/el-cscl-constant-workload-scaling-jax-time.png"><img alt="Execution time near the configured total-atom target (JAX)." src="../_images/el-cscl-constant-workload-scaling-jax-time.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Execution time near the configured total-atom target (JAX).</span><a class="headerlink" href="#id21" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id22">
+<a class="reference internal image-reference" href="../_images/el-cscl-constant-workload-scaling-jax-throughput.png"><img alt="Throughput near the configured total-atom target (JAX)." src="../_images/el-cscl-constant-workload-scaling-jax-throughput.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput near the configured total-atom target (JAX).</span><a class="headerlink" href="#id22" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+<input id="sd-tab-item-15" name="sd-tab-set-5" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-15">
+Batch Scaling</label><div class="sd-tab-content docutils">
+<figure class="align-center" id="id23">
+<a class="reference internal image-reference" href="../_images/el-cscl-batch-scaling-jax-time.png"><img alt="Execution time vs. batch size (JAX)." src="../_images/el-cscl-batch-scaling-jax-time.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Execution time vs. batch size (JAX).</span><a class="headerlink" href="#id23" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id24">
+<a class="reference internal image-reference" href="../_images/el-cscl-batch-scaling-jax-throughput.png"><img alt="Throughput vs. batch size (JAX)." src="../_images/el-cscl-batch-scaling-jax-throughput.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput vs. batch size (JAX).</span><a class="headerlink" href="#id24" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+</div>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p>DSF benchmark plots will be added in a future update. Performance and accuracy
-benchmark scripts are available in
-<code class="docutils literal notranslate"><span class="pre">benchmarks/interactions/electrostatics/</span></code> and can be run on your hardware
-using the instructions below.</p>
+<p>JAX memory plots are omitted. The suite does not measure JAX memory:
+XLA’s allocator pool and buffer reuse make per-call allocation deltas
+unreliable. The Torch panels report the Torch allocator only; they are not a
+proxy for JAX memory because the framework wrappers, buffer lifetimes, and
+allocators differ.</p>
 </div>
-<section id="dsf-parameters">
-<h3>DSF Parameters<a class="headerlink" href="#dsf-parameters" title="Link to this heading">#</a></h3>
-<table class="table">
-<thead>
-<tr class="row-odd"><th class="head"><p>Parameter</p></th>
-<th class="head"><p>Value</p></th>
-</tr>
-</thead>
-<tbody>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">cutoff</span></code></p></td>
-<td><p>12.0</p></td>
-</tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">alpha</span></code></p></td>
-<td><p>0.2</p></td>
-</tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">component</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">full</span></code> (real-space only, no reciprocal-space split)</p></td>
-</tr>
-</tbody>
-</table>
-</section>
-</section>
-<section id="hardware-information">
-<h2>Hardware Information<a class="headerlink" href="#hardware-information" title="Link to this heading">#</a></h2>
-<p><strong>GPU</strong>: NVIDIA H100 80GB HBM3</p>
+</div>
+<input id="sd-tab-item-12" name="sd-tab-set-4" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-12">
+NH₃</label><div class="sd-tab-content docutils">
+<div class="sd-tab-set docutils">
+<input checked="checked" id="sd-tab-item-16" name="sd-tab-set-6" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-16">
+System Size Scaling</label><div class="sd-tab-content docutils">
+<figure class="align-center" id="id25">
+<a class="reference internal image-reference" href="../_images/el-nh3-system-size-scaling-jax-time.png"><img alt="Mean execution time vs. system size (JAX, NH₃)." src="../_images/el-nh3-system-size-scaling-jax-time.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Mean execution time vs. system size (JAX, NH₃).</span><a class="headerlink" href="#id25" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id26">
+<a class="reference internal image-reference" href="../_images/el-nh3-system-size-scaling-jax-throughput.png"><img alt="Throughput (10^6 atoms/s) vs. system size (JAX, NH₃)." src="../_images/el-nh3-system-size-scaling-jax-throughput.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput (<span class="math notranslate nohighlight">\(10^6\)</span> atoms/s) vs. system size (JAX, NH₃).</span><a class="headerlink" href="#id26" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+<input id="sd-tab-item-17" name="sd-tab-set-6" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-17">
+Constant Workload</label><div class="sd-tab-content docutils">
+<figure class="align-center" id="id27">
+<a class="reference internal image-reference" href="../_images/el-nh3-constant-workload-scaling-jax-time.png"><img alt="Execution time near the configured total-atom target (JAX, NH₃)." src="../_images/el-nh3-constant-workload-scaling-jax-time.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Execution time near the configured total-atom target (JAX, NH₃).</span><a class="headerlink" href="#id27" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id28">
+<a class="reference internal image-reference" href="../_images/el-nh3-constant-workload-scaling-jax-throughput.png"><img alt="Throughput near the configured total-atom target (JAX, NH₃)." src="../_images/el-nh3-constant-workload-scaling-jax-throughput.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput near the configured total-atom target (JAX, NH₃).</span><a class="headerlink" href="#id28" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+<input id="sd-tab-item-18" name="sd-tab-set-6" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-18">
+Batch Scaling</label><div class="sd-tab-content docutils">
+<figure class="align-center" id="id29">
+<a class="reference internal image-reference" href="../_images/el-nh3-batch-scaling-jax-time.png"><img alt="Execution time vs. batch size (JAX, NH₃)." src="../_images/el-nh3-batch-scaling-jax-time.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Execution time vs. batch size (JAX, NH₃).</span><a class="headerlink" href="#id29" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id30">
+<a class="reference internal image-reference" href="../_images/el-nh3-batch-scaling-jax-throughput.png"><img alt="Throughput vs. batch size (JAX, NH₃)." src="../_images/el-nh3-batch-scaling-jax-throughput.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput vs. batch size (JAX, NH₃).</span><a class="headerlink" href="#id30" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>JAX memory plots are omitted. The suite does not measure JAX memory:
+XLA’s allocator pool and buffer reuse make per-call allocation deltas
+unreliable. The Torch panels report the Torch allocator only; they are not a
+proxy for JAX memory because the framework wrappers, buffer lifetimes, and
+allocators differ.</p>
+</div>
+</div>
+</div>
+</div>
+<input id="sd-tab-item-2" name="sd-tab-set-0" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-2">
+Backend Comparison</label><div class="sd-tab-content docutils">
+<p>These comparison plots use matched successful Torch and JAX points for PME and
+Ewald. Each timed call includes the public energy API plus the reverse pass for
+both forces and charge gradients. CSV metadata records
+<code class="docutils literal notranslate"><span class="pre">derivative_contract=energy_autograd</span></code> and
+<code class="docutils literal notranslate"><span class="pre">workload=energy_forces_charge_gradients</span></code>; <code class="docutils literal notranslate"><span class="pre">compute_forces</span></code> and
+<code class="docutils literal notranslate"><span class="pre">compute_charge_gradients</span></code> are both <code class="docutils literal notranslate"><span class="pre">True</span></code>. There is no separate
+energy-plus-forces row.</p>
+<p>PME rows also record <code class="docutils literal notranslate"><span class="pre">pme_cache_mode=full_static</span></code>. Both backends precompute
+fixed-cell volume, inverse-cell, reciprocal-vector, and spline-modulus metadata
+outside the timed region, matching the public API’s steady-state fixed-cell
+workflow. System construction, parameter estimation, neighbor-list setup, and
+this static PME metadata preparation are therefore excluded from per-call
+timings.</p>
+<p>The workload and configured accuracy are aligned, but the timing harnesses are
+not identical: Torch uses CUDA events around the high-level call, while JAX
+uses wall-clock timing around a JIT-compiled call and synchronizes its result.
+Use these panels for steady-state backend comparison, not as evidence that the
+framework or allocator overheads are equivalent.</p>
+<div class="sd-tab-set docutils">
+<input checked="checked" id="sd-tab-item-19" name="sd-tab-set-7" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-19">
+CsCl</label><div class="sd-tab-content docutils">
+<div class="sd-tab-set docutils">
+<input checked="checked" id="sd-tab-item-21" name="sd-tab-set-8" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-21">
+System Size Scaling</label><div class="sd-tab-content docutils">
+<figure class="align-center" id="id31">
+<a class="reference internal image-reference" href="../_images/el-cscl-system-size-comparison-time.png"><img alt="Torch vs. JAX execution time comparison (CsCl)." src="../_images/el-cscl-system-size-comparison-time.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Torch vs. JAX execution time comparison (CsCl).</span><a class="headerlink" href="#id31" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id32">
+<a class="reference internal image-reference" href="../_images/el-cscl-system-size-comparison-throughput.png"><img alt="Torch vs. JAX throughput comparison." src="../_images/el-cscl-system-size-comparison-throughput.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Torch vs. JAX throughput comparison.</span><a class="headerlink" href="#id32" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id33">
+<a class="reference internal image-reference" href="../_images/el-cscl-system-size-comparison-memory.png"><img alt="Memory vs. system size (Torch only — JAX memory not measured)." src="../_images/el-cscl-system-size-comparison-memory.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Memory vs. system size (Torch only — JAX memory not measured).</span><a class="headerlink" href="#id33" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+<input id="sd-tab-item-22" name="sd-tab-set-8" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-22">
+Constant Workload</label><div class="sd-tab-content docutils">
+<figure class="align-center" id="id34">
+<a class="reference internal image-reference" href="../_images/el-cscl-constant-workload-comparison-time.png"><img alt="Torch vs. JAX execution time at constant workload." src="../_images/el-cscl-constant-workload-comparison-time.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Torch vs. JAX execution time at constant workload.</span><a class="headerlink" href="#id34" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id35">
+<a class="reference internal image-reference" href="../_images/el-cscl-constant-workload-comparison-throughput.png"><img alt="Torch vs. JAX throughput at constant workload." src="../_images/el-cscl-constant-workload-comparison-throughput.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Torch vs. JAX throughput at constant workload.</span><a class="headerlink" href="#id35" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id36">
+<a class="reference internal image-reference" href="../_images/el-cscl-constant-workload-comparison-memory.png"><img alt="Memory near the configured total-atom target (Torch only — JAX memory not measured)." src="../_images/el-cscl-constant-workload-comparison-memory.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Memory near the configured total-atom target (Torch only — JAX memory not measured).</span><a class="headerlink" href="#id36" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+<input id="sd-tab-item-23" name="sd-tab-set-8" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-23">
+Batch Scaling</label><div class="sd-tab-content docutils">
+<figure class="align-center" id="id37">
+<a class="reference internal image-reference" href="../_images/el-cscl-batch-comparison-time.png"><img alt="Torch vs. JAX execution time vs. batch size." src="../_images/el-cscl-batch-comparison-time.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Torch vs. JAX execution time vs. batch size.</span><a class="headerlink" href="#id37" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id38">
+<a class="reference internal image-reference" href="../_images/el-cscl-batch-comparison-throughput.png"><img alt="Torch vs. JAX throughput vs. batch size." src="../_images/el-cscl-batch-comparison-throughput.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Torch vs. JAX throughput vs. batch size.</span><a class="headerlink" href="#id38" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id39">
+<a class="reference internal image-reference" href="../_images/el-cscl-batch-comparison-memory.png"><img alt="Memory vs. batch size (Torch only — JAX memory not measured)." src="../_images/el-cscl-batch-comparison-memory.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Memory vs. batch size (Torch only — JAX memory not measured).</span><a class="headerlink" href="#id39" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+</div>
+</div>
+<input id="sd-tab-item-20" name="sd-tab-set-7" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-20">
+NH₃</label><div class="sd-tab-content docutils">
+<div class="sd-tab-set docutils">
+<input checked="checked" id="sd-tab-item-24" name="sd-tab-set-9" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-24">
+System Size Scaling</label><div class="sd-tab-content docutils">
+<figure class="align-center" id="id40">
+<a class="reference internal image-reference" href="../_images/el-nh3-system-size-comparison-time.png"><img alt="Torch vs. JAX execution time comparison (NH₃)." src="../_images/el-nh3-system-size-comparison-time.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Torch vs. JAX execution time comparison (NH₃).</span><a class="headerlink" href="#id40" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id41">
+<a class="reference internal image-reference" href="../_images/el-nh3-system-size-comparison-throughput.png"><img alt="Torch vs. JAX throughput comparison (NH₃)." src="../_images/el-nh3-system-size-comparison-throughput.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Torch vs. JAX throughput comparison (NH₃).</span><a class="headerlink" href="#id41" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id42">
+<a class="reference internal image-reference" href="../_images/el-nh3-system-size-comparison-memory.png"><img alt="Memory vs. system size (NH₃; Torch only — JAX memory not measured)." src="../_images/el-nh3-system-size-comparison-memory.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Memory vs. system size (NH₃; Torch only — JAX memory not measured).</span><a class="headerlink" href="#id42" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+<input id="sd-tab-item-25" name="sd-tab-set-9" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-25">
+Constant Workload</label><div class="sd-tab-content docutils">
+<figure class="align-center" id="id43">
+<a class="reference internal image-reference" href="../_images/el-nh3-constant-workload-comparison-time.png"><img alt="Torch vs. JAX execution time at constant workload (NH₃)." src="../_images/el-nh3-constant-workload-comparison-time.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Torch vs. JAX execution time at constant workload (NH₃).</span><a class="headerlink" href="#id43" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id44">
+<a class="reference internal image-reference" href="../_images/el-nh3-constant-workload-comparison-throughput.png"><img alt="Torch vs. JAX throughput at constant workload (NH₃)." src="../_images/el-nh3-constant-workload-comparison-throughput.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Torch vs. JAX throughput at constant workload (NH₃).</span><a class="headerlink" href="#id44" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id45">
+<a class="reference internal image-reference" href="../_images/el-nh3-constant-workload-comparison-memory.png"><img alt="Memory near the configured total-atom target (NH₃; Torch only — JAX memory not measured)." src="../_images/el-nh3-constant-workload-comparison-memory.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Memory near the configured total-atom target (NH₃; Torch only —
+JAX memory not measured).</span><a class="headerlink" href="#id45" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+<input id="sd-tab-item-26" name="sd-tab-set-9" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-26">
+Batch Scaling</label><div class="sd-tab-content docutils">
+<figure class="align-center" id="id46">
+<a class="reference internal image-reference" href="../_images/el-nh3-batch-comparison-time.png"><img alt="Torch vs. JAX execution time vs. batch size (NH₃)." src="../_images/el-nh3-batch-comparison-time.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Torch vs. JAX execution time vs. batch size (NH₃).</span><a class="headerlink" href="#id46" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id47">
+<a class="reference internal image-reference" href="../_images/el-nh3-batch-comparison-throughput.png"><img alt="Torch vs. JAX throughput vs. batch size (NH₃)." src="../_images/el-nh3-batch-comparison-throughput.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Torch vs. JAX throughput vs. batch size (NH₃).</span><a class="headerlink" href="#id47" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id48">
+<a class="reference internal image-reference" href="../_images/el-nh3-batch-comparison-memory.png"><img alt="Memory vs. batch size (NH₃; Torch only — JAX memory not measured)." src="../_images/el-nh3-batch-comparison-memory.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Memory vs. batch size (NH₃; Torch only — JAX memory not measured).</span><a class="headerlink" href="#id48" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
 </section>
 <section id="benchmark-configuration">
 <h2>Benchmark Configuration<a class="headerlink" href="#benchmark-configuration" title="Link to this heading">#</a></h2>
@@ -696,11 +973,17 @@ using the instructions below.</p>
 </tr>
 </thead>
 <tbody>
+<tr class="row-even"><td><p>Accuracies</p></td>
+<td><p><span class="math notranslate nohighlight">\(10^{-4}\)</span> / <span class="math notranslate nohighlight">\(10^{-6}\)</span></p></td>
+</tr>
+<tr class="row-odd"><td><p>Methods</p></td>
+<td><p>PME, Ewald summation</p></td>
+</tr>
 <tr class="row-even"><td><p>System Type</p></td>
-<td><p>FCC crystal lattice with periodic boundaries</p></td>
+<td><p>CsCl supercells (programmatic), NH₃ (PDB)</p></td>
 </tr>
 <tr class="row-odd"><td><p>Neighbor List</p></td>
-<td><p>Cell list algorithm (<span class="math notranslate nohighlight">\(O(N)\)</span> scaling)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">batch_cell_list</span></code> setup for all configurations, built outside the timed electrostatics region; JAX requests the direct atom-centric strategy</p></td>
 </tr>
 <tr class="row-even"><td><p>Warmup Iterations</p></td>
 <td><p>3</p></td>
@@ -708,15 +991,21 @@ using the instructions below.</p>
 <tr class="row-odd"><td><p>Timing Iterations</p></td>
 <td><p>10</p></td>
 </tr>
-<tr class="row-even"><td><p>Precision</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">float32</span></code></p></td>
+<tr class="row-even"><td><p>Component Profiling</p></td>
+<td><p>Disabled for reportable runs</p></td>
+</tr>
+<tr class="row-odd"><td><p>Precision</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">float64</span></code></p></td>
 </tr>
 </tbody>
 </table>
+<p>CSV rows always report the independently measured full workload in
+<code class="docutils literal notranslate"><span class="pre">time_us_per_atom</span></code>. With <code class="docutils literal notranslate"><span class="pre">--profile-components</span></code>, the runner additionally fills
+<code class="docutils literal notranslate"><span class="pre">time_real_us_per_atom</span></code> and <code class="docutils literal notranslate"><span class="pre">time_reciprocal_us_per_atom</span></code>; otherwise those
+diagnostic fields are NaN and their timing methods are <code class="docutils literal notranslate"><span class="pre">not_measured</span></code>.</p>
 <section id="ewald-pme-parameters">
 <h3>Ewald/PME Parameters<a class="headerlink" href="#ewald-pme-parameters" title="Link to this heading">#</a></h3>
-<p>Parameters are automatically estimated using accuracy-based parameter estimation
-targeting <span class="math notranslate nohighlight">\(10^{-6}\)</span> relative accuracy:</p>
+<p>Parameters are automatically estimated using accuracy-based parameter estimation:</p>
 <table class="table">
 <thead>
 <tr class="row-odd"><th class="head"><p>Parameter</p></th>
@@ -743,94 +1032,110 @@ targeting <span class="math notranslate nohighlight">\(10^{-6}\)</span> relative
 </table>
 </section>
 </section>
-<section id="interpreting-results">
-<h2>Interpreting Results<a class="headerlink" href="#interpreting-results" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">total_atoms</span></code>
-: Total number of atoms in the supercell (or across all batched systems).</p>
-<p><code class="docutils literal notranslate"><span class="pre">batch_size</span></code>
-: Number of systems processed simultaneously (1 for single-system mode).</p>
-<p><code class="docutils literal notranslate"><span class="pre">method</span></code>
-: The electrostatics method used (<code class="docutils literal notranslate"><span class="pre">ewald</span></code>, <code class="docutils literal notranslate"><span class="pre">pme</span></code>, or <code class="docutils literal notranslate"><span class="pre">dsf</span></code>).</p>
-<p><code class="docutils literal notranslate"><span class="pre">backend</span></code>
-: The computational backend (<code class="docutils literal notranslate"><span class="pre">torch</span></code>, <code class="docutils literal notranslate"><span class="pre">jax</span></code>, <code class="docutils literal notranslate"><span class="pre">torchpme</span></code>, or <code class="docutils literal notranslate"><span class="pre">torch_dsf</span></code>).</p>
-<p><code class="docutils literal notranslate"><span class="pre">component</span></code>
-: Which part of the calculation was benchmarked (<code class="docutils literal notranslate"><span class="pre">real</span></code>, <code class="docutils literal notranslate"><span class="pre">reciprocal</span></code>, or <code class="docutils literal notranslate"><span class="pre">full</span></code>).</p>
-<p><code class="docutils literal notranslate"><span class="pre">compute_forces</span></code>
-: Whether forces were computed in addition to energies.</p>
-<p><code class="docutils literal notranslate"><span class="pre">median_time_ms</span></code>
-: Median execution time in milliseconds (lower is better).</p>
-<p><code class="docutils literal notranslate"><span class="pre">peak_memory_mb</span></code>
-: Peak GPU memory usage in megabytes.</p>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p>Timings include the full electrostatics calculation (real-space + reciprocal-space
-for “full” mode). Neighbor list construction is excluded from timings.</p>
-</div>
-</section>
 <section id="running-your-own-benchmarks">
 <h2>Running Your Own Benchmarks<a class="headerlink" href="#running-your-own-benchmarks" title="Link to this heading">#</a></h2>
-<p>To generate benchmark results for your hardware:</p>
+<p>Run from the repository root. The reportable, merge-gate surface is
+<code class="docutils literal notranslate"><span class="pre">benchmark_electrostatics_suite.py</span></code> with <code class="docutils literal notranslate"><span class="pre">benchmark_config.yaml</span></code>. The YAML
+already enables PME and Ewald; pass <code class="docutils literal notranslate"><span class="pre">--methods</span> <span class="pre">pme</span></code> or <code class="docutils literal notranslate"><span class="pre">--methods</span> <span class="pre">ewald</span></code>
+to benchmark only one.</p>
 <section id="torch-backend-default">
-<h3><code class="docutils literal notranslate"><span class="pre">torch</span></code> Backend (default)<a class="headerlink" href="#torch-backend-default" title="Link to this heading">#</a></h3>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>benchmarks/interactions/electrostatics
-python<span class="w"> </span>benchmark_electrostatics.py<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--config<span class="w"> </span>benchmark_config.yaml<span class="w"> </span><span class="se">\</span>
+<h3>Torch Backend (default)<a class="headerlink" href="#torch-backend-default" title="Link to this heading">#</a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">RESULT_DIR</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$BENCHMARK_SCRATCH</span><span class="s2">/results/manual-el-run&quot;</span>
+python<span class="w"> </span>-m<span class="w"> </span>benchmarks.interactions.electrostatics.benchmark_electrostatics_suite<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--config<span class="w"> </span>benchmarks/interactions/electrostatics/benchmark_config.yaml<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--backend<span class="w"> </span>torch<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--method<span class="w"> </span>all<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--output-dir<span class="w"> </span>../../../docs/benchmarks/benchmark_results
+<span class="w">    </span>--output-dir<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$RESULT_DIR</span><span class="s2">&quot;</span>
 </pre></div>
 </div>
 </section>
 <section id="jax-backend">
-<h3><code class="docutils literal notranslate"><span class="pre">jax</span></code> Backend<a class="headerlink" href="#jax-backend" title="Link to this heading">#</a></h3>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>benchmarks/interactions/electrostatics
-python<span class="w"> </span>benchmark_electrostatics.py<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--config<span class="w"> </span>benchmark_config.yaml<span class="w"> </span><span class="se">\</span>
+<h3>JAX Backend<a class="headerlink" href="#jax-backend" title="Link to this heading">#</a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">RESULT_DIR</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$BENCHMARK_SCRATCH</span><span class="s2">/results/manual-el-run&quot;</span>
+python<span class="w"> </span>-m<span class="w"> </span>benchmarks.interactions.electrostatics.benchmark_electrostatics_suite<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--config<span class="w"> </span>benchmarks/interactions/electrostatics/benchmark_config.yaml<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--backend<span class="w"> </span>jax<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--method<span class="w"> </span>both<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--output-dir<span class="w"> </span>../../../docs/benchmarks/benchmark_results
+<span class="w">    </span>--output-dir<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$RESULT_DIR</span><span class="s2">&quot;</span>
 </pre></div>
 </div>
 </section>
-<section id="torchpme-backend">
-<h3><code class="docutils literal notranslate"><span class="pre">torchpme</span></code> Backend<a class="headerlink" href="#torchpme-backend" title="Link to this heading">#</a></h3>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>benchmarks/interactions/electrostatics
-python<span class="w"> </span>benchmark_electrostatics.py<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--config<span class="w"> </span>benchmark_config.yaml<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--backend<span class="w"> </span>torchpme<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--method<span class="w"> </span>both<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--output-dir<span class="w"> </span>../../../docs/benchmarks/benchmark_results
+<section id="extended-optional-runner">
+<h3>Extended / Optional Runner<a class="headerlink" href="#extended-optional-runner" title="Link to this heading">#</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">benchmark_electrostatics.py</span></code> extended runner is separate from the
+reportable suite. It covers slab-corrected Ewald/PME, DSF, optional reference
+backends, and multipoles, and writes a different GPU/dtype-specific CSV schema. It is not
+invoked by <code class="docutils literal notranslate"><span class="pre">benchmarks.benchmark_suite</span></code> or by the reportable merge gate, and
+its outputs are not inputs to the <code class="docutils literal notranslate"><span class="pre">el-*.csv</span></code> plots on this page.</p>
+<p>This runner uses optional helpers imported through <code class="docutils literal notranslate"><span class="pre">benchmarks.utils</span></code> and
+<code class="docutils literal notranslate"><span class="pre">benchmarks.systems</span></code>. Install its additional dependencies, including
+<code class="docutils literal notranslate"><span class="pre">pymatgen</span></code>, <code class="docutils literal notranslate"><span class="pre">rdkit</span></code>, and <code class="docutils literal notranslate"><span class="pre">loguru</span></code>, with <code class="docutils literal notranslate"><span class="pre">make</span> <span class="pre">docs-install-benchmarks</span></code>
+or directly from <code class="docutils literal notranslate"><span class="pre">benchmarks/benchmark-requires.txt</span></code>.</p>
+<p>The shipped optional configurations are distinct protocols:</p>
+<table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Configuration</p></th>
+<th class="head"><p>Backends and methods</p></th>
+<th class="head"><p>Warmups / timings</p></th>
+<th class="head"><p>Precision</p></th>
+<th class="head"><p>Default measured work</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">benchmark_config_extended.yaml</span></code></p></td>
+<td><p>Toolkit-Ops Torch/JAX and optional <code class="docutils literal notranslate"><span class="pre">torchpme</span></code> for Ewald/PME; Toolkit-Ops Torch and <code class="docutils literal notranslate"><span class="pre">torch_dsf</span></code> for DSF</p></td>
+<td><p>5 / 10</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">float32</span></code></p></td>
+<td><p>Full, real, and reciprocal components; forces and virial enabled; 12 Å real-space cutoff</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">benchmark_config_multipole.yaml</span></code></p></td>
+<td><p>Torch multipole Ewald and PME, <code class="docutils literal notranslate"><span class="pre">l_max=1</span></code></p></td>
+<td><p>3 / 10</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">float64</span></code></p></td>
+<td><p>Compiled reciprocal component; forces enabled, virial disabled</p></td>
+</tr>
+</tbody>
+</table>
+<p>These settings describe the optional CSVs only. They must not be compared as
+if they were rows from the reportable energy/forces/charge-gradient protocol.</p>
+<p>Use <code class="docutils literal notranslate"><span class="pre">benchmark_config_extended.yaml</span></code> for point-charge, slab, and DSF runs:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Slab-corrected Ewald and PME (Torch + JAX when both are available)</span>
+python<span class="w"> </span>-m<span class="w"> </span>benchmarks.interactions.electrostatics.benchmark_electrostatics<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--config<span class="w"> </span>benchmarks/interactions/electrostatics/benchmark_config_extended.yaml<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--backend<span class="w"> </span>both<span class="w"> </span>--method<span class="w"> </span>ewald_slab
+python<span class="w"> </span>-m<span class="w"> </span>benchmarks.interactions.electrostatics.benchmark_electrostatics<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--config<span class="w"> </span>benchmarks/interactions/electrostatics/benchmark_config_extended.yaml<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--backend<span class="w"> </span>both<span class="w"> </span>--method<span class="w"> </span>pme_slab
+
+<span class="c1"># DSF (nvalchemiops Torch + the pure-Torch reference)</span>
+python<span class="w"> </span>-m<span class="w"> </span>benchmarks.interactions.electrostatics.benchmark_electrostatics<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--config<span class="w"> </span>benchmarks/interactions/electrostatics/benchmark_config_extended.yaml<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--backend<span class="w"> </span>both<span class="w"> </span>--method<span class="w"> </span>dsf<span class="w"> </span>--neighbor-format<span class="w"> </span>both
+</pre></div>
+</div>
+<p>Use the dedicated config for the Torch-only multipole sweep:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>benchmarks.interactions.electrostatics.benchmark_electrostatics<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--config<span class="w"> </span>benchmarks/interactions/electrostatics/benchmark_config_multipole.yaml<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--backend<span class="w"> </span>torch<span class="w"> </span>--l-max<span class="w"> </span><span class="m">1</span>
 </pre></div>
 </div>
 </section>
-<section id="options">
-<h3>Options<a class="headerlink" href="#options" title="Link to this heading">#</a></h3>
-<p><code class="docutils literal notranslate"><span class="pre">--backend</span> <span class="pre">{torch,jax,torchpme,torch_dsf,both}</span></code>
-: Computational backend (default: <code class="docutils literal notranslate"><span class="pre">torch</span></code>). <code class="docutils literal notranslate"><span class="pre">both</span></code> dispatches per-method:
-<code class="docutils literal notranslate"><span class="pre">torch</span></code> + <code class="docutils literal notranslate"><span class="pre">torchpme</span></code> for Ewald/PME, <code class="docutils literal notranslate"><span class="pre">torch</span></code> + <code class="docutils literal notranslate"><span class="pre">torch_dsf</span></code> for DSF.</p>
-<p><code class="docutils literal notranslate"><span class="pre">--method</span> <span class="pre">{ewald,pme,dsf,both,all}</span></code>
-: Electrostatics method (default: <code class="docutils literal notranslate"><span class="pre">both</span></code>). <code class="docutils literal notranslate"><span class="pre">both</span></code> = Ewald + PME (backward
-compatible). <code class="docutils literal notranslate"><span class="pre">all</span></code> = Ewald + PME + DSF.</p>
-<p><code class="docutils literal notranslate"><span class="pre">--neighbor-format</span> <span class="pre">{list,matrix,both}</span></code>
-: Neighbor format for DSF benchmarks (default: <code class="docutils literal notranslate"><span class="pre">list</span></code>). Ewald/PME always use matrix.</p>
-<p><code class="docutils literal notranslate"><span class="pre">--dtype</span> <span class="pre">{float32,float64}</span></code>
-: Override dtype from config file.</p>
-<p><code class="docutils literal notranslate"><span class="pre">--gpu-sku</span> <span class="pre">&lt;name&gt;</span></code>
-: Override GPU SKU name for output files (default: auto-detect).</p>
-<p><code class="docutils literal notranslate"><span class="pre">--config</span> <span class="pre">&lt;path&gt;</span></code>
-: Path to YAML configuration file.</p>
-<section id="dsf-only-benchmark">
-<h4>DSF-Only Benchmark<a class="headerlink" href="#dsf-only-benchmark" title="Link to this heading">#</a></h4>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>benchmark_electrostatics.py<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--config<span class="w"> </span>benchmark_config.yaml<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--backend<span class="w"> </span>both<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--method<span class="w"> </span>dsf<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--neighbor-format<span class="w"> </span>list
-</pre></div>
-</div>
-<p>Results will be saved as CSV files and plots will be automatically generated
-during the next documentation build.</p>
-</section>
+<section id="reportable-options">
+<h3>Reportable Options<a class="headerlink" href="#reportable-options" title="Link to this heading">#</a></h3>
+<p>See <code class="docutils literal notranslate"><span class="pre">--help</span></code> for the full list; the flags relevant to electrostatics
+runs are:</p>
+<p><code class="docutils literal notranslate"><span class="pre">--backend</span> <span class="pre">{torch,jax}</span></code>
+: Computational backend (default: whatever <code class="docutils literal notranslate"><span class="pre">config['runtime']['backend']</span></code>
+is set to, else <code class="docutils literal notranslate"><span class="pre">torch</span></code>).</p>
+<p><code class="docutils literal notranslate"><span class="pre">--methods</span> <span class="pre">{pme,ewald}</span> <span class="pre">[{pme,ewald}</span> <span class="pre">...]</span></code>
+: Restrict to a subset of methods. Default: run every method marked
+<code class="docutils literal notranslate"><span class="pre">enabled:</span> <span class="pre">true</span></code> in the YAML (PME + Ewald ship enabled).</p>
+<p><code class="docutils literal notranslate"><span class="pre">--accuracies</span> <span class="pre">ACC</span> <span class="pre">[ACC</span> <span class="pre">...]</span></code>
+: Override the list of relative error tolerances to sweep. Default:
+values from <code class="docutils literal notranslate"><span class="pre">config['accuracies']</span></code> (ships as <code class="docutils literal notranslate"><span class="pre">[1e-4,</span> <span class="pre">1e-6]</span></code>).</p>
+<p><code class="docutils literal notranslate"><span class="pre">--profile-components</span></code>
+: Also time real- and reciprocal-space differentiated components. This is a
+diagnostic mode; it is disabled in the reportable configuration.</p>
+<p><code class="docutils literal notranslate"><span class="pre">--system</span></code>, <code class="docutils literal notranslate"><span class="pre">--mode</span></code>, <code class="docutils literal notranslate"><span class="pre">--timing-runs</span></code>, <code class="docutils literal notranslate"><span class="pre">--warmup-runs</span></code>, <code class="docutils literal notranslate"><span class="pre">--output-dir</span></code>
+: Shared flags defined in <code class="docutils literal notranslate"><span class="pre">benchmarks/config.py</span></code>; see <code class="docutils literal notranslate"><span class="pre">--help</span></code> for details.</p>
 </section>
 </section>
 </section>
@@ -882,26 +1187,16 @@ during the next documentation build.</p>
   <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="visible nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-to-read-these-charts">How to Read These Charts</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#ewald-summation">Ewald Summation</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#particle-mesh-ewald-pme">Particle Mesh Ewald (PME)</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#damped-shifted-force-dsf">Damped Shifted Force (DSF)</a><ul class="visible nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#dsf-parameters">DSF Parameters</a></li>
-</ul>
-</li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#hardware-information">Hardware Information</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#performance-results">Performance Results</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#benchmark-configuration">Benchmark Configuration</a><ul class="visible nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ewald-pme-parameters">Ewald/PME Parameters</a></li>
 </ul>
 </li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#interpreting-results">Interpreting Results</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#running-your-own-benchmarks">Running Your Own Benchmarks</a><ul class="visible nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#torch-backend-default"><code class="docutils literal notranslate"><span class="pre">torch</span></code> Backend (default)</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#jax-backend"><code class="docutils literal notranslate"><span class="pre">jax</span></code> Backend</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#torchpme-backend"><code class="docutils literal notranslate"><span class="pre">torchpme</span></code> Backend</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#options">Options</a><ul class="nav section-nav flex-column">
-<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#dsf-only-benchmark">DSF-Only Benchmark</a></li>
-</ul>
-</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#torch-backend-default">Torch Backend (default)</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#jax-backend">JAX Backend</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#extended-optional-runner">Extended / Optional Runner</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#reportable-options">Reportable Options</a></li>
 </ul>
 </li>
 </ul>
@@ -928,9 +1223,22 @@ during the next documentation build.</p>
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -950,7 +1258,7 @@ during the next documentation build.</p>
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

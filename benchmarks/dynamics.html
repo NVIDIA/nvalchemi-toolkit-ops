@@ -2,18 +2,18 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../" >
+<html lang="en" data-content_root="../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>Dynamics Benchmarks &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>Dynamics Benchmarks &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -35,22 +35,25 @@
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
     <script src="../_static/togglebutton.js?v=4a39c7ea"></script>
     <script src="../_static/design-tabs.js?v=f930bc37"></script>
     <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'benchmarks/dynamics';</script>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
@@ -61,7 +64,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -128,8 +131,6 @@
   
   
     
-    
-      
     
     
     <img src="../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -463,47 +464,21 @@ isobaric-isothermal (NPT).</p>
 with system size.</p>
 <section id="time-scaling">
 <h4>Time Scaling<a class="headerlink" href="#time-scaling" title="Link to this heading">#</a></h4>
-<figure class="align-center" id="id11">
+<figure class="align-center" id="id8">
 <a class="reference internal image-reference" href="../_images/dynamics_md_single_nvalchemiops_scaling_h100.png"><img alt="MD single-system time scaling" src="../_images/dynamics_md_single_nvalchemiops_scaling_h100.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Average step time vs. system size for single-system MD integrators.</span><a class="headerlink" href="#id11" title="Link to this image">#</a></p>
+<p><span class="caption-text">Average step time vs. system size for single-system MD integrators.</span><a class="headerlink" href="#id8" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 </section>
 <section id="throughput">
 <h4>Throughput<a class="headerlink" href="#throughput" title="Link to this heading">#</a></h4>
-<figure class="align-center" id="id12">
+<figure class="align-center" id="id9">
 <a class="reference internal image-reference" href="../_images/dynamics_md_single_nvalchemiops_throughput_h100.png"><img alt="MD single-system throughput" src="../_images/dynamics_md_single_nvalchemiops_throughput_h100.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Throughput (atom-steps/s) for single-system MD integrators.</span><a class="headerlink" href="#id12" title="Link to this image">#</a></p>
-</figcaption>
-</figure>
-</section>
-</section>
-<section id="batched-md">
-<h3>Batched MD<a class="headerlink" href="#batched-md" title="Link to this heading">#</a></h3>
-<p>Performance for batched MD simulations showing how throughput scales with both
-system size and batch size. Batching enables efficient parameter sweeps and
-ensemble simulations.</p>
-<section id="id1">
-<h4>Time Scaling<a class="headerlink" href="#id1" title="Link to this heading">#</a></h4>
-<figure class="align-center" id="id13">
-<a class="reference internal image-reference" href="benchmarks/_static/dynamics_md_batch_nvalchemiops_scaling_h100.png"><img alt="MD batched scaling" src="benchmarks/_static/dynamics_md_batch_nvalchemiops_scaling_h100.png" style="width: 90%;" />
-</a>
-<figcaption>
-<p><span class="caption-text">Average step time for batched MD simulations showing batch size scaling.</span><a class="headerlink" href="#id13" title="Link to this image">#</a></p>
-</figcaption>
-</figure>
-</section>
-<section id="id2">
-<h4>Throughput<a class="headerlink" href="#id2" title="Link to this heading">#</a></h4>
-<figure class="align-center" id="id14">
-<a class="reference internal image-reference" href="benchmarks/_static/dynamics_md_batch_nvalchemiops_throughput_h100.png"><img alt="MD batched throughput" src="benchmarks/_static/dynamics_md_batch_nvalchemiops_throughput_h100.png" style="width: 90%;" />
-</a>
-<figcaption>
-<p><span class="caption-text">Total throughput (atom-steps/s) for batched MD systems.</span><a class="headerlink" href="#id14" title="Link to this image">#</a></p>
+<p><span class="caption-text">Throughput (atom-steps/s) for single-system MD integrators.</span><a class="headerlink" href="#id9" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 </section>
@@ -539,23 +514,23 @@ convergence behavior.</p>
 <h3>Single-System Optimization<a class="headerlink" href="#single-system-optimization" title="Link to this heading">#</a></h3>
 <p>Performance for single-system geometry optimization showing convergence speed
 and computational efficiency.</p>
-<section id="id3">
-<h4>Time Scaling<a class="headerlink" href="#id3" title="Link to this heading">#</a></h4>
-<figure class="align-center" id="id15">
+<section id="id1">
+<h4>Time Scaling<a class="headerlink" href="#id1" title="Link to this heading">#</a></h4>
+<figure class="align-center" id="id10">
 <a class="reference internal image-reference" href="../_images/dynamics_opt_single_nvalchemiops_scaling_h100.png"><img alt="Optimization single-system scaling" src="../_images/dynamics_opt_single_nvalchemiops_scaling_h100.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Average step time vs. system size for FIRE optimizer.</span><a class="headerlink" href="#id15" title="Link to this image">#</a></p>
+<p><span class="caption-text">Average step time vs. system size for FIRE optimizer.</span><a class="headerlink" href="#id10" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 </section>
-<section id="id4">
-<h4>Throughput<a class="headerlink" href="#id4" title="Link to this heading">#</a></h4>
-<figure class="align-center" id="id16">
+<section id="id2">
+<h4>Throughput<a class="headerlink" href="#id2" title="Link to this heading">#</a></h4>
+<figure class="align-center" id="id11">
 <a class="reference internal image-reference" href="../_images/dynamics_opt_single_nvalchemiops_throughput_h100.png"><img alt="Optimization single-system throughput" src="../_images/dynamics_opt_single_nvalchemiops_throughput_h100.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Throughput (atom-steps/s) during geometry optimization.</span><a class="headerlink" href="#id16" title="Link to this image">#</a></p>
+<p><span class="caption-text">Throughput (atom-steps/s) during geometry optimization.</span><a class="headerlink" href="#id11" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 </section>
@@ -565,23 +540,23 @@ and computational efficiency.</p>
 <p>Performance for batched optimization showing how multiple structures can be
 relaxed simultaneously for efficient saddle point searches, transition state
 finding, or structural screening.</p>
-<section id="id5">
-<h4>Time Scaling<a class="headerlink" href="#id5" title="Link to this heading">#</a></h4>
-<figure class="align-center" id="id17">
+<section id="id3">
+<h4>Time Scaling<a class="headerlink" href="#id3" title="Link to this heading">#</a></h4>
+<figure class="align-center" id="id12">
 <a class="reference internal image-reference" href="../_images/dynamics_opt_batch_nvalchemiops_scaling_h100.png"><img alt="Optimization batched scaling" src="../_images/dynamics_opt_batch_nvalchemiops_scaling_h100.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Average step time for batched FIRE optimization.</span><a class="headerlink" href="#id17" title="Link to this image">#</a></p>
+<p><span class="caption-text">Average step time for batched FIRE optimization.</span><a class="headerlink" href="#id12" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 </section>
-<section id="id6">
-<h4>Throughput<a class="headerlink" href="#id6" title="Link to this heading">#</a></h4>
-<figure class="align-center" id="id18">
+<section id="id4">
+<h4>Throughput<a class="headerlink" href="#id4" title="Link to this heading">#</a></h4>
+<figure class="align-center" id="id13">
 <a class="reference internal image-reference" href="../_images/dynamics_opt_batch_nvalchemiops_throughput_h100.png"><img alt="Optimization batched throughput" src="../_images/dynamics_opt_batch_nvalchemiops_throughput_h100.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Total throughput (atom-steps/s) for batched optimization.</span><a class="headerlink" href="#id18" title="Link to this image">#</a></p>
+<p><span class="caption-text">Total throughput (atom-steps/s) for batched optimization.</span><a class="headerlink" href="#id13" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 </section>
@@ -590,14 +565,16 @@ finding, or structural screening.</p>
 <h3>FIRE Algorithm Features<a class="headerlink" href="#fire-algorithm-features" title="Link to this heading">#</a></h3>
 <p><strong>Adaptive Timestep:</strong></p>
 <ul class="simple">
-<li><p>Increases timestep when optimization is progressing smoothly (power P = F · v &gt; 0)</p></li>
-<li><p>Decreases timestep and resets velocities when moving uphill (P &lt; 0)</p></li>
+<li><p>Increases timestep when optimization is progressing smoothly
+(power <span class="math notranslate nohighlight">\(P = \mathbf{F} \cdot \mathbf{v} &gt; 0\)</span>)</p></li>
+<li><p>Decreases timestep and resets velocities when moving uphill (<span class="math notranslate nohighlight">\(P &lt; 0\)</span>)</p></li>
 <li><p>Parameters: <code class="docutils literal notranslate"><span class="pre">dt_max</span></code> (10.0 fs), <code class="docutils literal notranslate"><span class="pre">f_inc</span></code> (1.1), <code class="docutils literal notranslate"><span class="pre">f_dec</span></code> (0.5)</p></li>
 </ul>
 <p><strong>Velocity Mixing:</strong></p>
 <ul class="simple">
-<li><p>Mixes velocity with force direction: v → (1-α)v + α|v|F̂</p></li>
-<li><p>Decreases mixing parameter α over time for faster convergence</p></li>
+<li><p>Mixes velocity with force direction:
+<span class="math notranslate nohighlight">\(\mathbf{v} \rightarrow (1-\alpha)\mathbf{v} + \alpha |\mathbf{v}| \hat{\mathbf{F}}\)</span></p></li>
+<li><p>Decreases mixing parameter <span class="math notranslate nohighlight">\(\alpha\)</span> over time for faster convergence</p></li>
 <li><p>Parameter: <code class="docutils literal notranslate"><span class="pre">f_alpha</span></code> (0.99)</p></li>
 </ul>
 <p><strong>Maximum Displacement:</strong></p>
@@ -606,7 +583,7 @@ finding, or structural screening.</p>
 </ul>
 <p><strong>Convergence:</strong></p>
 <ul class="simple">
-<li><p>Checks maximum force component: max(|F|) &lt; fmax (default 0.01 eV/Å)</p></li>
+<li><p>Checks maximum force component: <span class="math notranslate nohighlight">\(\max(|\mathbf{F}|) &lt; f_{\max}\)</span> (default 0.01 eV/Å)</p></li>
 </ul>
 </section>
 </section>
@@ -616,137 +593,40 @@ finding, or structural screening.</p>
 </section>
 <section id="benchmark-configuration">
 <h2>Benchmark Configuration<a class="headerlink" href="#benchmark-configuration" title="Link to this heading">#</a></h2>
-<section id="system-setup">
-<h3>System Setup<a class="headerlink" href="#system-setup" title="Link to this heading">#</a></h3>
-<table class="table">
-<thead>
-<tr class="row-odd"><th class="head"><p>Parameter</p></th>
-<th class="head"><p>Value</p></th>
-</tr>
-</thead>
-<tbody>
-<tr class="row-even"><td><p>System Type</p></td>
-<td><p>FCC argon lattice with periodic boundaries</p></td>
-</tr>
-<tr class="row-odd"><td><p>Lattice Constant</p></td>
-<td><p>5.26 Å (argon)</p></td>
-</tr>
-<tr class="row-even"><td><p>Temperature</p></td>
-<td><p>300 K</p></td>
-</tr>
-<tr class="row-odd"><td><p>Potential</p></td>
-<td><p>Lennard-Jones (ε = 0.0104 eV, σ = 3.40 Å)</p></td>
-</tr>
-<tr class="row-even"><td><p>Cutoff Distance</p></td>
-<td><p>8.5 Å</p></td>
-</tr>
-<tr class="row-odd"><td><p>Neighbor List</p></td>
-<td><p>Cell list algorithm with skin distance 1.0 Å</p></td>
-</tr>
-<tr class="row-even"><td><p>Rebuild Interval</p></td>
-<td><p>Every 10 steps (or displacement-based)</p></td>
-</tr>
-</tbody>
-</table>
-</section>
-<section id="md-parameters">
-<h3>MD Parameters<a class="headerlink" href="#md-parameters" title="Link to this heading">#</a></h3>
-<table class="table">
-<thead>
-<tr class="row-odd"><th class="head"><p>Parameter</p></th>
-<th class="head"><p>Value</p></th>
-</tr>
-</thead>
-<tbody>
-<tr class="row-even"><td><p>Timestep</p></td>
-<td><p>1.0 fs (0.001 time units)</p></td>
-</tr>
-<tr class="row-odd"><td><p>Total Steps</p></td>
-<td><p>10,000</p></td>
-</tr>
-<tr class="row-even"><td><p>Warmup Steps</p></td>
-<td><p>100 (excluded from timing)</p></td>
-</tr>
-<tr class="row-odd"><td><p>Langevin Friction</p></td>
-<td><p>0.01 fs⁻¹</p></td>
-</tr>
-<tr class="row-even"><td><p>NPT Pressure</p></td>
-<td><p>1.0 bar</p></td>
-</tr>
-<tr class="row-odd"><td><p>NPT Barostat Mass</p></td>
-<td><p>75.0 (time units²)</p></td>
-</tr>
-</tbody>
-</table>
-</section>
-<section id="optimization-parameters">
-<h3>Optimization Parameters<a class="headerlink" href="#optimization-parameters" title="Link to this heading">#</a></h3>
-<table class="table">
-<thead>
-<tr class="row-odd"><th class="head"><p>Parameter</p></th>
-<th class="head"><p>Value</p></th>
-</tr>
-</thead>
-<tbody>
-<tr class="row-even"><td><p>Max Steps</p></td>
-<td><p>1,000</p></td>
-</tr>
-<tr class="row-odd"><td><p>Force Tolerance</p></td>
-<td><p>0.01 eV/Å</p></td>
-</tr>
-<tr class="row-even"><td><p>Initial Perturbation</p></td>
-<td><p>Gaussian (σ = 0.15 Å for batched, 0.1 Å for single)</p></td>
-</tr>
-<tr class="row-odd"><td><p>dt_start</p></td>
-<td><p>1.0 fs</p></td>
-</tr>
-<tr class="row-even"><td><p>dt_max</p></td>
-<td><p>10.0 fs</p></td>
-</tr>
-<tr class="row-odd"><td><p>maxstep</p></td>
-<td><p>0.2 Å</p></td>
-</tr>
-</tbody>
-</table>
-</section>
-<section id="system-sizes">
-<h3>System Sizes<a class="headerlink" href="#system-sizes" title="Link to this heading">#</a></h3>
-<p><strong>Single-System Benchmarks:</strong></p>
-<ul class="simple">
-<li><p>MD: 256, 512, 1024, 2048, 4096 atoms</p></li>
-<li><p>Optimization: 256, 512, 1024, 2048 atoms</p></li>
-</ul>
-<p><strong>Batched Benchmarks:</strong></p>
-<ul class="simple">
-<li><p>System sizes: 256, 512, 1024 atoms per system</p></li>
-<li><p>Batch sizes: 1, 2, 4, 8, 16, 32 systems</p></li>
-</ul>
-</section>
+<p>The checked-in dynamics CSVs carry the measured atom counts, step counts,
+timestep, and warmup count for each row. The single-system MD snapshot uses
+1,000 steps, a 0.001 fs timestep, and 100 untimed warmup steps. Current runner
+defaults, including the 94.4 K single-system thermostat settings and all size
+grids, live in <code class="docutils literal notranslate"><span class="pre">benchmarks/dynamics/benchmark_config.yaml</span></code>.</p>
+<p>Dynamics results use their own historical schema and are not part of the
+reportable NL/D3/electrostatics 18-file snapshot. When reproducing a plotted
+dynamics point, treat the committed CSV row as the record of that measurement
+and the YAML as the configuration for a new run.</p>
 </section>
 <section id="running-your-own-benchmarks">
 <h2>Running Your Own Benchmarks<a class="headerlink" href="#running-your-own-benchmarks" title="Link to this heading">#</a></h2>
 <p>To reproduce these benchmarks or test on your own hardware:</p>
-<section id="id7">
-<h3>Single-System MD<a class="headerlink" href="#id7" title="Link to this heading">#</a></h3>
+<section id="id5">
+<h3>Single-System MD<a class="headerlink" href="#id5" title="Link to this heading">#</a></h3>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>benchmarks/dynamics
 python<span class="w"> </span>benchmark_md_single.py<span class="w"> </span>--config<span class="w"> </span>benchmark_config.yaml
 </pre></div>
 </div>
 </section>
-<section id="id8">
-<h3>Batched MD<a class="headerlink" href="#id8" title="Link to this heading">#</a></h3>
+<section id="batched-md">
+<h3>Batched MD<a class="headerlink" href="#batched-md" title="Link to this heading">#</a></h3>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>benchmark_md_batch.py<span class="w"> </span>--config<span class="w"> </span>benchmark_config.yaml
 </pre></div>
 </div>
 </section>
-<section id="id9">
-<h3>Single-System Optimization<a class="headerlink" href="#id9" title="Link to this heading">#</a></h3>
+<section id="id6">
+<h3>Single-System Optimization<a class="headerlink" href="#id6" title="Link to this heading">#</a></h3>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>benchmark_opt_single.py<span class="w"> </span>--config<span class="w"> </span>benchmark_config.yaml
 </pre></div>
 </div>
 </section>
-<section id="id10">
-<h3>Batched Optimization<a class="headerlink" href="#id10" title="Link to this heading">#</a></h3>
+<section id="id7">
+<h3>Batched Optimization<a class="headerlink" href="#id7" title="Link to this heading">#</a></h3>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>benchmark_opt_batch.py<span class="w"> </span>--config<span class="w"> </span>benchmark_config.yaml
 </pre></div>
 </div>
@@ -769,68 +649,15 @@ sizes across float32 and float64:</p>
 </section>
 <section id="configuration-file">
 <h3>Configuration File<a class="headerlink" href="#configuration-file" title="Link to this heading">#</a></h3>
-<p>Edit <code class="docutils literal notranslate"><span class="pre">benchmark_config.yaml</span></code> to customize benchmarks:</p>
-<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="c1"># MD single-system</span>
-<span class="nt">md_single</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-<span class="w">  </span><span class="nt">system_sizes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">256</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">512</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1024</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">2048</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">4096</span><span class="p p-Indicator">]</span>
-<span class="w">  </span><span class="nt">integrators</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">velocity_verlet</span><span class="p">:</span>
-<span class="w">      </span><span class="nt">steps</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10000</span>
-<span class="w">      </span><span class="nt">dt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.001</span><span class="w">  </span><span class="c1"># fs</span>
-<span class="w">      </span><span class="nt">warmup_steps</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span>
-<span class="w">    </span><span class="nt">langevin</span><span class="p">:</span>
-<span class="w">      </span><span class="nt">steps</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10000</span>
-<span class="w">      </span><span class="nt">dt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.001</span>
-<span class="w">      </span><span class="nt">temperature</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">300.0</span><span class="w">  </span><span class="c1"># K</span>
-<span class="w">      </span><span class="nt">friction</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.01</span><span class="w">  </span><span class="c1"># 1/fs</span>
-
-<span class="c1"># MD batched</span>
-<span class="nt">md_batch</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-<span class="w">  </span><span class="nt">system_sizes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">256</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">512</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1024</span><span class="p p-Indicator">]</span>
-<span class="w">  </span><span class="nt">batch_sizes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">1</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">2</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">4</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">8</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">16</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">32</span><span class="p p-Indicator">]</span>
-<span class="w">  </span><span class="nt">integrators</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">velocity_verlet</span><span class="p">:</span>
-<span class="w">      </span><span class="nt">steps</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10000</span>
-<span class="w">      </span><span class="nt">dt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.001</span>
-<span class="w">      </span><span class="nt">warmup_steps</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span>
-
-<span class="c1"># Optimization single-system</span>
-<span class="nt">opt_single</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-<span class="w">  </span><span class="nt">system_sizes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">256</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">512</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1024</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">2048</span><span class="p p-Indicator">]</span>
-<span class="w">  </span><span class="nt">optimizers</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">fire</span><span class="p">:</span>
-<span class="w">      </span><span class="nt">max_steps</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1000</span>
-<span class="w">      </span><span class="nt">force_tolerance</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.01</span><span class="w">  </span><span class="c1"># eV/Å</span>
-
-<span class="c1"># Optimization batched</span>
-<span class="nt">opt_batch</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-<span class="w">  </span><span class="nt">system_sizes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">256</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">512</span><span class="p p-Indicator">]</span>
-<span class="w">  </span><span class="nt">batch_sizes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">1</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">2</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">4</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">8</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">16</span><span class="p p-Indicator">]</span>
-<span class="w">  </span><span class="nt">optimizers</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">fire</span><span class="p">:</span>
-<span class="w">      </span><span class="nt">max_steps</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1000</span>
-<span class="w">      </span><span class="nt">force_tolerance</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.01</span>
-
-<span class="c1"># Potential parameters</span>
-<span class="nt">potential</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">epsilon</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.0104</span><span class="w">  </span><span class="c1"># eV</span>
-<span class="w">  </span><span class="nt">sigma</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3.40</span><span class="w">  </span><span class="c1"># Å</span>
-<span class="w">  </span><span class="nt">cutoff</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8.5</span><span class="w">  </span><span class="c1"># Å</span>
-<span class="w">  </span><span class="nt">skin</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.0</span><span class="w">  </span><span class="c1"># Å</span>
-<span class="w">  </span><span class="nt">neighbor_rebuild_interval</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10</span>
-</pre></div>
-</div>
+<p>Edit <code class="docutils literal notranslate"><span class="pre">benchmarks/dynamics/benchmark_config.yaml</span></code> to select current size grids,
+integrators, optimizers, and timing parameters. Keeping the executable YAML as
+the single configuration source avoids stale copies in the documentation.</p>
 </section>
 <section id="output">
 <h3>Output<a class="headerlink" href="#output" title="Link to this heading">#</a></h3>
 <p>Results are saved as CSV files in <code class="docutils literal notranslate"><span class="pre">docs/benchmarks/benchmark_results/</span></code>:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">dynamics_md_single_nvalchemiops_&lt;gpu_sku&gt;.csv</span></code></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">dynamics_md_batch_nvalchemiops_&lt;gpu_sku&gt;.csv</span></code></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">dynamics_opt_single_nvalchemiops_&lt;gpu_sku&gt;.csv</span></code></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">dynamics_opt_batch_nvalchemiops_&lt;gpu_sku&gt;.csv</span></code></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">fire_compare_&lt;gpu_sku&gt;.csv</span></code></p></li>
@@ -898,41 +725,30 @@ python<span class="w"> </span>generate_plots.py
 <li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#throughput">Throughput</a></li>
 </ul>
 </li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batched-md">Batched MD</a><ul class="nav section-nav flex-column">
-<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">Time Scaling</a></li>
-<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">Throughput</a></li>
-</ul>
-</li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#available-integrators">Available Integrators</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#geometry-optimization">Geometry Optimization</a><ul class="visible nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#single-system-optimization">Single-System Optimization</a><ul class="nav section-nav flex-column">
-<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">Time Scaling</a></li>
-<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">Throughput</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">Time Scaling</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">Throughput</a></li>
 </ul>
 </li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batched-optimization">Batched Optimization</a><ul class="nav section-nav flex-column">
-<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id5">Time Scaling</a></li>
-<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id6">Throughput</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">Time Scaling</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">Throughput</a></li>
 </ul>
 </li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#fire-algorithm-features">FIRE Algorithm Features</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#hardware-information">Hardware Information</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#benchmark-configuration">Benchmark Configuration</a><ul class="visible nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#system-setup">System Setup</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#md-parameters">MD Parameters</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#optimization-parameters">Optimization Parameters</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#system-sizes">System Sizes</a></li>
-</ul>
-</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#benchmark-configuration">Benchmark Configuration</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#running-your-own-benchmarks">Running Your Own Benchmarks</a><ul class="visible nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id7">Single-System MD</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id8">Batched MD</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id9">Single-System Optimization</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id10">Batched Optimization</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id5">Single-System MD</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batched-md">Batched MD</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id6">Single-System Optimization</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id7">Batched Optimization</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#fire1-vs-fire2-comparison">FIRE1 vs FIRE2 Comparison</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#fire2-kernel-performance">FIRE2 Kernel Performance</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#configuration-file">Configuration File</a></li>
@@ -963,9 +779,22 @@ python<span class="w"> </span>generate_plots.py
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -985,7 +814,7 @@ python<span class="w"> </span>generate_plots.py
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

@@ -2,17 +2,17 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../../" >
+<html lang="en" data-content_root="../../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>nvalchemiops.torch.neighbors &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>nvalchemiops.torch.neighbors &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -34,16 +34,17 @@
     <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -58,7 +59,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -125,8 +126,6 @@
   
   
     
-    
-      
     
     
     <img src="../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -429,10 +428,32 @@ document.write(`
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
 
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighbors.base_dispatch</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">NEIGHBOR_LIST_STRATEGIES</span><span class="p">,</span>
+    <span class="n">neighbor_list_strategy_run_args</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.neighbors._compiled_pair_fn</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">CompiledPairFn</span><span class="p">,</span>
+    <span class="n">compile_pair_fn</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.neighbors._dispatch</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">_auto_method_from_geometry</span><span class="p">,</span>
+    <span class="n">_reject_unsupported_cluster_tile_combo</span><span class="p">,</span>
+    <span class="n">_squeeze_single_system_cell_pbc</span><span class="p">,</span>
+    <span class="n">broadcast_shared_cell_for_batch</span><span class="p">,</span>
+    <span class="n">estimate_neighbor_list_costs</span><span class="p">,</span>
+    <span class="n">suggest_neighbor_list_method</span><span class="p">,</span>
+<span class="p">)</span>
+
 <span class="c1"># Batch cell list functions</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.neighbors.batch_cell_list</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">batch_cell_list</span><span class="p">,</span>
     <span class="n">estimate_batch_cell_list_sizes</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Batched cluster-pair tile functions</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.neighbors.batch_cluster_tile</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">batch_cluster_tile_neighbor_list</span><span class="p">,</span>
 <span class="p">)</span>
 
 <span class="c1"># Batch naive functions</span>
@@ -451,6 +472,11 @@ document.write(`
     <span class="n">estimate_cell_list_sizes</span><span class="p">,</span>
 <span class="p">)</span>
 
+<span class="c1"># Unbatched cluster-pair tile functions</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.neighbors.cluster_tile</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">cluster_tile_neighbor_list</span><span class="p">,</span>
+<span class="p">)</span>
+
 <span class="c1"># Unbatched naive functions</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.neighbors.naive</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">naive_neighbor_list</span><span class="p">,</span>
@@ -462,7 +488,11 @@ document.write(`
 <span class="p">)</span>
 
 <span class="c1"># Utility functions</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.neighbors.neighbor_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">prepare_batch_idx_ptr</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.neighbors.neighbor_utils</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">prepare_batch_idx_ptr</span><span class="p">,</span>
+    <span class="n">synthesize_cell_for_batch</span><span class="p">,</span>
+    <span class="n">synthesize_cell_for_ss</span><span class="p">,</span>
+<span class="p">)</span>
 
 
 <div class="viewcode-block" id="neighbor_list">
@@ -485,7 +515,7 @@ document.write(`
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute neighbor list using the appropriate method based on the provided parameters.</span>
 
 <span class="sd">    This is the main entry point for PyTorch users of the neighbor list API. It automatically</span>
-<span class="sd">    selects the most appropriate algorithm (naive O(N²) or cell list O(N)) based on system</span>
+<span class="sd">    selects the most appropriate algorithm (naive :math:`O(N^2)` or cell list :math:`O(N)`) based on system</span>
 <span class="sd">    size and parameters.</span>
 
 <span class="sd">    Parameters</span>
@@ -503,7 +533,12 @@ document.write(`
 <span class="sd">    pbc : torch.Tensor, shape (3,) or (num_systems, 3), dtype=torch.bool, optional</span>
 <span class="sd">        Periodic boundary condition flags for each dimension.</span>
 <span class="sd">    batch_idx : torch.Tensor, shape (total_atoms,), dtype=torch.int32, optional</span>
-<span class="sd">        System index for each atom.</span>
+<span class="sd">        System index for each atom.  Must be **sorted by system** (i.e.,</span>
+<span class="sd">        atoms in system 0 first, then system 1, and so on).  Interleaved</span>
+<span class="sd">        layouts are not supported by ``cluster_tile`` / ``batch_cluster_tile``</span>
+<span class="sd">        and will silently emit cross-system pairs.  For ``cell_list`` /</span>
+<span class="sd">        ``naive`` methods, interleaved layouts work but ``batch_ptr``</span>
+<span class="sd">        will still be derived assuming a contiguous layout.</span>
 <span class="sd">    batch_ptr : torch.Tensor, shape (num_systems + 1,), dtype=torch.int32, optional</span>
 <span class="sd">        Cumulative atom counts defining system boundaries.</span>
 <span class="sd">    cutoff2 : float, optional</span>
@@ -521,13 +556,23 @@ document.write(`
 <span class="sd">        and only convert to a neighbor list format if absolutely necessary.</span>
 <span class="sd">    method : str | None, optional</span>
 <span class="sd">        Method to use for neighbor list computation.</span>
-<span class="sd">        Choices: &quot;naive&quot;, &quot;cell_list&quot;, &quot;batch_naive&quot;, &quot;batch_cell_list&quot;, &quot;naive_dual_cutoff&quot;, &quot;batch_naive_dual_cutoff&quot;.</span>
-<span class="sd">        If None, a default method will be chosen based on average atoms per</span>
-<span class="sd">        system (cell_list when &gt;= 2000, naive otherwise). When only</span>
-<span class="sd">        ``batch_idx`` is provided (no ``batch_ptr`` or 3-D ``cell``),</span>
-<span class="sd">        auto-selection reads ``batch_idx[-1]`` which triggers a</span>
-<span class="sd">        device-to-host synchronization. To avoid this, pass ``batch_ptr``,</span>
-<span class="sd">        a 3-D ``cell`` array, or specify ``method`` explicitly.</span>
+<span class="sd">        Choices: &quot;naive&quot;, &quot;cell_list&quot;, &quot;cluster_tile&quot;, &quot;batch_naive&quot;,</span>
+<span class="sd">        &quot;batch_cell_list&quot;, &quot;batch_cluster_tile&quot;, &quot;naive_dual_cutoff&quot;,</span>
+<span class="sd">        &quot;batch_naive_dual_cutoff&quot;. If None, a default method is chosen by</span>
+<span class="sd">        comparing estimated work from per-system atom counts and cell (or</span>
+<span class="sd">        bounding-box) volumes and can select cluster-tile when the CUDA,</span>
+<span class="sd">        float32, fully-periodic, contiguous-batch, and output-option guards</span>
+<span class="sd">        allow it. Method names that do not start with ``batch_`` refer to</span>
+<span class="sd">        single-system algorithms. When ``batch_idx`` or ``batch_ptr`` (batch</span>
+<span class="sd">        metadata) is supplied, those explicit method names are treated as aliases</span>
+<span class="sd">        for the corresponding ``batch_*`` methods. For example,</span>
+<span class="sd">        ``method=&quot;naive&quot;`` is dispatched as ``method=&quot;batch_naive&quot;`` when batch</span>
+<span class="sd">        metadata is provided. When only ``batch_idx`` is provided (no</span>
+<span class="sd">        ``batch_ptr`` or 3-D ``cell``),</span>
+<span class="sd">        auto-selection computes ``batch_idx.max() + 1`` (and a ``bincount``)</span>
+<span class="sd">        which triggers a device-to-host</span>
+<span class="sd">        synchronization. To avoid this, pass ``batch_ptr``, a 3-D ``cell``</span>
+<span class="sd">        array, or specify ``method`` explicitly.</span>
 <span class="sd">    wrap_positions : bool, default=True</span>
 <span class="sd">        If True, wrap input positions into the primary cell before</span>
 <span class="sd">        neighbor search. Set to False when positions are already</span>
@@ -544,13 +589,15 @@ document.write(`
 <span class="sd">            Maximum number of neighbors per atom within cutoff2.</span>
 <span class="sd">            Can be provided to aid in allocation for naive dual cutoff method.</span>
 <span class="sd">        neighbor_matrix : torch.Tensor, optional</span>
-<span class="sd">            Pre-allocated tensor of shape (total_atoms, max_neighbors) for neighbor indices.</span>
+<span class="sd">            Pre-allocated tensor of shape (num_rows, max_neighbors) for neighbor indices,</span>
+<span class="sd">            where ``num_rows`` is ``total_atoms`` normally and</span>
+<span class="sd">            ``len(target_indices)`` for partial lists.</span>
 <span class="sd">            Can be provided to avoid reallocation for both naive and cell list methods.</span>
 <span class="sd">        neighbor_matrix_shifts : torch.Tensor, optional</span>
-<span class="sd">            Pre-allocated tensor of shape (total_atoms, max_neighbors, 3) for shift vectors.</span>
+<span class="sd">            Pre-allocated tensor of shape (num_rows, max_neighbors, 3) for shift vectors.</span>
 <span class="sd">            Can be provided to avoid reallocation for both naive and cell list methods.</span>
 <span class="sd">        num_neighbors : torch.Tensor, optional</span>
-<span class="sd">            Pre-allocated tensor of shape (total_atoms,) for neighbor counts.</span>
+<span class="sd">            Pre-allocated tensor of shape (num_rows,) for neighbor counts.</span>
 <span class="sd">            Can be provided to avoid reallocation for both naive and cell list methods.</span>
 <span class="sd">        shift_range_per_dimension : torch.Tensor, optional</span>
 <span class="sd">            Pre-allocated tensor of shape (1, 3) for shift range in each dimension.</span>
@@ -588,6 +635,34 @@ document.write(`
 <span class="sd">            Maximum number of atoms per system. Used in batch naive implementation</span>
 <span class="sd">            with PBC. If not provided, it will be computed automatically.</span>
 <span class="sd">            Can be provided to avoid CUDA synchronization.</span>
+<span class="sd">        target_indices : torch.Tensor, optional</span>
+<span class="sd">            Restrict the source rows of the neighbor list to this subset of atom</span>
+<span class="sd">            indices (partial neighbor list). Matrix outputs use</span>
+<span class="sd">            ``len(target_indices)`` compact rows; COO source rows are compact row</span>
+<span class="sd">            ids. Supported by naive and cell-list methods; not by cluster_tile.</span>
+<span class="sd">        return_distances : bool, default=False</span>
+<span class="sd">            Also return per-pair distances ``|r_ij|`` in matrix layout</span>
+<span class="sd">            ``(num_rows, max_neighbors)``, where ``num_rows`` is</span>
+<span class="sd">            ``total_atoms`` normally and ``len(target_indices)`` for partial</span>
+<span class="sd">            lists, differentiable w.r.t. positions (and cell). See the user</span>
+<span class="sd">            guide for layout notes.</span>
+<span class="sd">        return_vectors : bool, default=False</span>
+<span class="sd">            Also return per-pair displacement vectors ``r_ij`` in matrix layout</span>
+<span class="sd">            ``(num_rows, max_neighbors, 3)``, differentiable w.r.t. positions</span>
+<span class="sd">            (and cell).</span>
+<span class="sd">        rebuild_flags : torch.Tensor, optional</span>
+<span class="sd">            Boolean flags selecting which systems to re-enumerate; systems whose</span>
+<span class="sd">            flag is ``False`` keep their previous output (per-system skip for the</span>
+<span class="sd">            batched methods, whole-list flag for single-system methods).</span>
+<span class="sd">        pair_fn : warp.Function or CompiledPairFn, optional</span>
+<span class="sd">            Inline Warp pair potential evaluated as neighbors are enumerated;</span>
+<span class="sd">            requires ``pair_params`` and fills ``pair_energies`` / ``pair_forces``.</span>
+<span class="sd">            Forward-only (not differentiable). Pass ``compile_pair_fn(pair_fn)``</span>
+<span class="sd">            before ``torch.compile(fullgraph=True)`` to use fixed-shape matrix</span>
+<span class="sd">            outputs in compiled regions. See ``examples/neighbors/06_pair_outputs_lj.py``.</span>
+<span class="sd">        pair_params, pair_energies, pair_forces : torch.Tensor, optional</span>
+<span class="sd">            Per-atom parameter table and per-pair energy / force output buffers</span>
+<span class="sd">            consumed and filled by ``pair_fn``.</span>
 
 <span class="sd">    Returns</span>
 <span class="sd">    -------</span>
@@ -611,25 +686,28 @@ document.write(`
 <span class="sd">        - **neighbor_data** (tensor): Neighbor indices, format depends on ``return_neighbor_list``:</span>
 
 <span class="sd">            - If ``return_neighbor_list=False`` (default): Returns ``neighbor_matrix``</span>
-<span class="sd">              with shape (total_atoms, max_neighbors), dtype int32. Each row i contains</span>
-<span class="sd">              indices of atom i&#39;s neighbors.</span>
+<span class="sd">              with shape (num_rows, max_neighbors), dtype int32, where</span>
+<span class="sd">              ``num_rows`` is ``total_atoms`` normally and ``len(target_indices)``</span>
+<span class="sd">              for partial lists. Row ``r`` contains neighbors for atom ``r`` or</span>
+<span class="sd">              ``target_indices[r]`` respectively.</span>
 <span class="sd">            - If ``return_neighbor_list=True``: Returns ``neighbor_list`` with shape</span>
-<span class="sd">              (2, num_pairs), dtype int32, in COO format [source_atoms, target_atoms].</span>
+<span class="sd">              (2, num_pairs), dtype int32, in COO format [source_rows, target_atoms].</span>
+<span class="sd">              With ``target_indices``, source rows are compact row ids.</span>
 
 <span class="sd">        - **num_neighbor_data** (tensor): Information about the number of neighbors for each atom,</span>
 <span class="sd">          format depends on ``return_neighbor_list``:</span>
 
-<span class="sd">            - If ``return_neighbor_list=False`` (default): Returns ``num_neighbors`` with shape (total_atoms,), dtype int32.</span>
+<span class="sd">            - If ``return_neighbor_list=False`` (default): Returns ``num_neighbors`` with shape (num_rows,), dtype int32.</span>
 <span class="sd">              Count of neighbors found for each atom.</span>
-<span class="sd">            - If ``return_neighbor_list=True``: Returns ``neighbor_ptr`` with shape (total_atoms + 1,), dtype int32.</span>
+<span class="sd">            - If ``return_neighbor_list=True``: Returns ``neighbor_ptr`` with shape (num_rows + 1,), dtype int32.</span>
 <span class="sd">              CSR-style pointer arrays where ``neighbor_ptr_data[i]`` to ``neighbor_ptr_data[i+1]`` gives the range of</span>
-<span class="sd">              neighbors for atom i in the flattened neighbor list.</span>
+<span class="sd">              neighbors for row i in the flattened neighbor list.</span>
 
 <span class="sd">        - **neighbor_shift_data** (tensor, optional): Periodic shift vectors, only when ``pbc`` is provided:</span>
 <span class="sd">          format depends on ``return_neighbor_list``:</span>
 
 <span class="sd">            - If ``return_neighbor_list=False`` (default): Returns ``neighbor_matrix_shifts`` with</span>
-<span class="sd">              shape (total_atoms, max_neighbors, 3), dtype int32.</span>
+<span class="sd">              shape (num_rows, max_neighbors, 3), dtype int32.</span>
 <span class="sd">            - If ``return_neighbor_list=True``: Returns ``unit_shifts`` with shape</span>
 <span class="sd">              (num_pairs, 3), dtype int32.</span>
 
@@ -654,8 +732,8 @@ document.write(`
 
 <span class="sd">    See Also</span>
 <span class="sd">    --------</span>
-<span class="sd">    naive_neighbor_list : Direct access to naive O(N²) algorithm</span>
-<span class="sd">    cell_list : Direct access to cell list O(N) algorithm</span>
+<span class="sd">    naive_neighbor_list : Direct access to naive :math:`O(N^2)` algorithm</span>
+<span class="sd">    cell_list : Direct access to cell list :math:`O(N)` algorithm</span>
 <span class="sd">    batch_naive_neighbor_list : Batched naive algorithm</span>
 <span class="sd">    batch_cell_list : Batched cell list algorithm</span>
 <span class="sd">    &quot;&quot;&quot;</span>
@@ -666,36 +744,96 @@ document.write(`
             <span class="s2">&quot;e.g. pbc=torch.tensor([True, True, True]).&quot;</span>
         <span class="p">)</span>
 
+    <span class="k">if</span> <span class="n">batch_ptr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">batch_ptr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;batch_ptr must have length at least 2&quot;</span><span class="p">)</span>
+
+    <span class="n">use_pair_fn_option</span> <span class="o">=</span> <span class="nb">bool</span><span class="p">(</span><span class="n">kwargs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;use_pair_fn&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">))</span>
+    <span class="n">selected_atom_centric_path</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">kwargs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;atom_centric_path&quot;</span><span class="p">,</span> <span class="s2">&quot;auto&quot;</span><span class="p">))</span>
+    <span class="n">target_indices</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;target_indices&quot;</span><span class="p">)</span>
+    <span class="n">return_vectors</span> <span class="o">=</span> <span class="nb">bool</span><span class="p">(</span><span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;return_vectors&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">))</span>
+    <span class="n">return_distances</span> <span class="o">=</span> <span class="nb">bool</span><span class="p">(</span><span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;return_distances&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">))</span>
+    <span class="n">use_pair_fn</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">use_pair_fn_option</span>
+        <span class="ow">or</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;pair_fn&quot;</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="ow">or</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;pair_params&quot;</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="ow">or</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;pair_energies&quot;</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="ow">or</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;pair_forces&quot;</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+    <span class="p">)</span>
+    <span class="n">rebuild_flags</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;rebuild_flags&quot;</span><span class="p">)</span>
+    <span class="n">selected_naive_strategy</span> <span class="o">=</span> <span class="s2">&quot;auto&quot;</span>
+    <span class="n">selected_cell_strategy</span> <span class="o">=</span> <span class="s2">&quot;auto&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_apply_auto_suboptions</span><span class="p">(</span>
+        <span class="n">naive_strategy</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">cell_strategy</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">nonlocal</span> <span class="n">selected_naive_strategy</span><span class="p">,</span> <span class="n">selected_cell_strategy</span>
+        <span class="k">nonlocal</span> <span class="n">selected_atom_centric_path</span>
+        <span class="k">if</span> <span class="n">selected_naive_strategy</span> <span class="o">==</span> <span class="s2">&quot;auto&quot;</span> <span class="ow">and</span> <span class="n">naive_strategy</span> <span class="o">!=</span> <span class="s2">&quot;auto&quot;</span><span class="p">:</span>
+            <span class="n">selected_naive_strategy</span> <span class="o">=</span> <span class="n">naive_strategy</span>
+        <span class="k">if</span> <span class="n">selected_cell_strategy</span> <span class="o">==</span> <span class="s2">&quot;auto&quot;</span> <span class="ow">and</span> <span class="n">cell_strategy</span> <span class="o">!=</span> <span class="s2">&quot;auto&quot;</span><span class="p">:</span>
+            <span class="n">selected_cell_strategy</span> <span class="o">=</span> <span class="n">cell_strategy</span>
+        <span class="k">if</span> <span class="n">selected_atom_centric_path</span> <span class="o">==</span> <span class="s2">&quot;auto&quot;</span> <span class="ow">and</span> <span class="n">path</span> <span class="o">!=</span> <span class="s2">&quot;auto&quot;</span><span class="p">:</span>
+            <span class="n">selected_atom_centric_path</span> <span class="o">=</span> <span class="n">path</span>
+
     <span class="k">if</span> <span class="n">method</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
         <span class="n">total_atoms</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">has_batch_inputs</span> <span class="o">=</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">batch_ptr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
 
-        <span class="c1"># Compute average atoms per system for method selection.</span>
-        <span class="n">num_systems</span> <span class="o">=</span> <span class="mi">1</span>
-        <span class="k">if</span> <span class="n">cell</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">cell</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">3</span><span class="p">:</span>
-            <span class="c1"># cell shape is (num_systems, 3, 3)</span>
-            <span class="n">num_systems</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
-        <span class="k">elif</span> <span class="n">batch_ptr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="c1"># batch_ptr shape is (num_systems + 1,)</span>
-            <span class="n">num_systems</span> <span class="o">=</span> <span class="n">batch_ptr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span>
-        <span class="k">elif</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="c1"># NOTE: reading batch_idx[-1] triggers a GPU-to-CPU sync</span>
-            <span class="c1"># assume sorted batch_idx</span>
-            <span class="n">num_systems</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
-        <span class="n">avg_atoms</span> <span class="o">=</span> <span class="n">total_atoms</span> <span class="o">//</span> <span class="n">num_systems</span>
-
-        <span class="k">if</span> <span class="n">cutoff2</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="n">method</span> <span class="o">=</span> <span class="s2">&quot;naive_dual_cutoff&quot;</span>
-
-        <span class="k">elif</span> <span class="n">avg_atoms</span> <span class="o">&gt;=</span> <span class="mi">2000</span><span class="p">:</span>
-            <span class="n">method</span> <span class="o">=</span> <span class="s2">&quot;cell_list&quot;</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="n">method</span> <span class="o">=</span> <span class="s2">&quot;naive&quot;</span>
-
-        <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">batch_ptr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="n">method</span> <span class="o">=</span> <span class="s2">&quot;batch_&quot;</span> <span class="o">+</span> <span class="n">method</span>
+        <span class="k">if</span> <span class="n">has_batch_inputs</span><span class="p">:</span>
             <span class="n">batch_idx</span><span class="p">,</span> <span class="n">batch_ptr</span> <span class="o">=</span> <span class="n">prepare_batch_idx_ptr</span><span class="p">(</span>
                 <span class="n">batch_idx</span><span class="p">,</span> <span class="n">batch_ptr</span><span class="p">,</span> <span class="n">total_atoms</span><span class="p">,</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
             <span class="p">)</span>
+            <span class="n">num_systems</span> <span class="o">=</span> <span class="n">batch_ptr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span>
+        <span class="k">elif</span> <span class="n">cell</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">cell</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">3</span><span class="p">:</span>
+            <span class="n">num_systems</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">num_systems</span> <span class="o">=</span> <span class="mi">1</span>
+
+        <span class="n">strategy_name</span> <span class="o">=</span> <span class="n">_auto_method_from_geometry</span><span class="p">(</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="nb">max</span><span class="p">(</span>
+                <span class="nb">float</span><span class="p">(</span><span class="n">cutoff</span><span class="p">),</span> <span class="nb">float</span><span class="p">(</span><span class="n">cutoff2</span><span class="p">)</span> <span class="k">if</span> <span class="n">cutoff2</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="nb">float</span><span class="p">(</span><span class="n">cutoff</span><span class="p">)</span>
+            <span class="p">),</span>
+            <span class="n">cell</span><span class="p">,</span>
+            <span class="n">pbc</span><span class="p">,</span>
+            <span class="n">batch_idx</span> <span class="k">if</span> <span class="n">has_batch_inputs</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="n">batch_ptr</span> <span class="k">if</span> <span class="n">has_batch_inputs</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="n">num_systems</span><span class="p">,</span>
+            <span class="n">cutoff2</span><span class="o">=</span><span class="n">cutoff2</span><span class="p">,</span>
+            <span class="n">half_fill</span><span class="o">=</span><span class="n">half_fill</span><span class="p">,</span>
+            <span class="n">return_neighbor_list</span><span class="o">=</span><span class="n">return_neighbor_list</span><span class="p">,</span>
+            <span class="n">target_indices</span><span class="o">=</span><span class="n">target_indices</span><span class="p">,</span>
+            <span class="n">return_vectors</span><span class="o">=</span><span class="n">return_vectors</span><span class="p">,</span>
+            <span class="n">return_distances</span><span class="o">=</span><span class="n">return_distances</span><span class="p">,</span>
+            <span class="n">use_pair_fn</span><span class="o">=</span><span class="n">use_pair_fn</span><span class="p">,</span>
+            <span class="n">rebuild_flags</span><span class="o">=</span><span class="n">rebuild_flags</span><span class="p">,</span>
+            <span class="n">wrap_positions</span><span class="o">=</span><span class="n">wrap_positions</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">method</span><span class="p">,</span> <span class="n">auto_native</span><span class="p">,</span> <span class="n">auto_cell</span><span class="p">,</span> <span class="n">auto_path</span> <span class="o">=</span> <span class="n">neighbor_list_strategy_run_args</span><span class="p">(</span>
+            <span class="n">strategy_name</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">cutoff2</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">method</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;naive&quot;</span><span class="p">,</span> <span class="s2">&quot;cell_list&quot;</span><span class="p">):</span>
+            <span class="n">method</span> <span class="o">=</span> <span class="s2">&quot;naive_dual_cutoff&quot;</span>
+        <span class="n">_apply_auto_suboptions</span><span class="p">(</span><span class="n">auto_native</span><span class="p">,</span> <span class="n">auto_cell</span><span class="p">,</span> <span class="n">auto_path</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">has_batch_inputs</span> <span class="ow">and</span> <span class="n">num_systems</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">method</span> <span class="o">=</span> <span class="s2">&quot;batch_&quot;</span> <span class="o">+</span> <span class="n">method</span>
+        <span class="k">elif</span> <span class="n">has_batch_inputs</span><span class="p">:</span>
+            <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span> <span class="o">=</span> <span class="n">_squeeze_single_system_cell_pbc</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">batch_ptr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="c1"># Route explicit single-system method names through the matching</span>
+            <span class="c1"># batch method when batch metadata is provided.</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">method</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;batch_&quot;</span><span class="p">):</span>
+                <span class="n">method</span> <span class="o">=</span> <span class="s2">&quot;batch_&quot;</span> <span class="o">+</span> <span class="n">method</span>
+        <span class="n">base</span> <span class="o">=</span> <span class="n">method</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="s2">&quot;batch_&quot;</span><span class="p">)</span> <span class="p">:]</span> <span class="k">if</span> <span class="n">method</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;batch_&quot;</span><span class="p">)</span> <span class="k">else</span> <span class="n">method</span>
+        <span class="k">if</span> <span class="n">base</span> <span class="ow">in</span> <span class="n">NEIGHBOR_LIST_STRATEGIES</span><span class="p">:</span>
+            <span class="c1"># Fine-grained strategy name (e.g. from suggest/report): decompose</span>
+            <span class="c1"># to the base method plus its sub-options, honoring batch_ prefix.</span>
+            <span class="n">method</span><span class="p">,</span> <span class="n">fg_native</span><span class="p">,</span> <span class="n">fg_cell</span><span class="p">,</span> <span class="n">fg_path</span> <span class="o">=</span> <span class="n">neighbor_list_strategy_run_args</span><span class="p">(</span>
+                <span class="n">method</span>
+            <span class="p">)</span>
+            <span class="n">_apply_auto_suboptions</span><span class="p">(</span><span class="n">fg_native</span><span class="p">,</span> <span class="n">fg_cell</span><span class="p">,</span> <span class="n">fg_path</span><span class="p">)</span>
     <span class="k">match</span> <span class="n">method</span><span class="p">:</span>
         <span class="k">case</span> <span class="s2">&quot;naive&quot;</span><span class="p">:</span>
             <span class="k">return</span> <span class="n">naive_neighbor_list</span><span class="p">(</span>
@@ -707,18 +845,12 @@ document.write(`
                 <span class="n">fill_value</span><span class="o">=</span><span class="n">fill_value</span><span class="p">,</span>
                 <span class="n">return_neighbor_list</span><span class="o">=</span><span class="n">return_neighbor_list</span><span class="p">,</span>
                 <span class="n">wrap_positions</span><span class="o">=</span><span class="n">wrap_positions</span><span class="p">,</span>
+                <span class="n">strategy</span><span class="o">=</span><span class="n">selected_naive_strategy</span><span class="p">,</span>
                 <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
             <span class="p">)</span>
         <span class="k">case</span> <span class="s2">&quot;cell_list&quot;</span><span class="p">:</span>
             <span class="k">if</span> <span class="n">cell</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-                <span class="n">pos_min</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">values</span>
-                <span class="n">positions</span> <span class="o">=</span> <span class="n">positions</span> <span class="o">-</span> <span class="n">pos_min</span>
-                <span class="n">pos_max</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">values</span>
-                <span class="n">cell_lengths</span> <span class="o">=</span> <span class="n">pos_max</span> <span class="o">+</span> <span class="mf">0.1</span> <span class="o">*</span> <span class="n">cutoff</span>
-                <span class="n">cell</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">diag</span><span class="p">(</span><span class="n">cell_lengths</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
-                <span class="n">pbc</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span>
-                    <span class="p">[</span><span class="kc">False</span><span class="p">,</span> <span class="kc">False</span><span class="p">,</span> <span class="kc">False</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">device</span>
-                <span class="p">)</span>
+                <span class="n">positions</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span> <span class="o">=</span> <span class="n">synthesize_cell_for_ss</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">)</span>
             <span class="k">return</span> <span class="n">cell_list</span><span class="p">(</span>
                 <span class="n">positions</span><span class="p">,</span>
                 <span class="n">cutoff</span><span class="p">,</span>
@@ -727,6 +859,8 @@ document.write(`
                 <span class="n">half_fill</span><span class="o">=</span><span class="n">half_fill</span><span class="p">,</span>
                 <span class="n">fill_value</span><span class="o">=</span><span class="n">fill_value</span><span class="p">,</span>
                 <span class="n">return_neighbor_list</span><span class="o">=</span><span class="n">return_neighbor_list</span><span class="p">,</span>
+                <span class="n">strategy</span><span class="o">=</span><span class="n">selected_cell_strategy</span><span class="p">,</span>
+                <span class="n">atom_centric_path</span><span class="o">=</span><span class="n">selected_atom_centric_path</span><span class="p">,</span>
                 <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
             <span class="p">)</span>
         <span class="k">case</span> <span class="s2">&quot;batch_naive&quot;</span><span class="p">:</span>
@@ -741,6 +875,7 @@ document.write(`
                 <span class="n">fill_value</span><span class="o">=</span><span class="n">fill_value</span><span class="p">,</span>
                 <span class="n">return_neighbor_list</span><span class="o">=</span><span class="n">return_neighbor_list</span><span class="p">,</span>
                 <span class="n">wrap_positions</span><span class="o">=</span><span class="n">wrap_positions</span><span class="p">,</span>
+                <span class="n">strategy</span><span class="o">=</span><span class="n">selected_naive_strategy</span><span class="p">,</span>
                 <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
             <span class="p">)</span>
         <span class="k">case</span> <span class="s2">&quot;batch_cell_list&quot;</span><span class="p">:</span>
@@ -749,30 +884,8 @@ document.write(`
                     <span class="n">batch_idx</span><span class="p">,</span> <span class="n">batch_ptr</span><span class="p">,</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
                 <span class="p">)</span>
             <span class="k">if</span> <span class="n">cell</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-                <span class="n">num_systems</span> <span class="o">=</span> <span class="n">batch_ptr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span>
-                <span class="n">expanded_idx</span> <span class="o">=</span> <span class="n">batch_idx</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">expand_as</span><span class="p">(</span><span class="n">positions</span><span class="p">)</span>
-                <span class="n">pos_min</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">(</span>
-                    <span class="p">(</span><span class="n">num_systems</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span>
-                    <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;inf&quot;</span><span class="p">),</span>
-                    <span class="n">dtype</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span>
-                    <span class="n">device</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">device</span><span class="p">,</span>
-                <span class="p">)</span>
-                <span class="n">pos_min</span><span class="o">.</span><span class="n">scatter_reduce_</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">expanded_idx</span><span class="p">,</span> <span class="n">positions</span><span class="p">,</span> <span class="n">reduce</span><span class="o">=</span><span class="s2">&quot;amin&quot;</span><span class="p">)</span>
-                <span class="n">pos_max</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">(</span>
-                    <span class="p">(</span><span class="n">num_systems</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span>
-                    <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;-inf&quot;</span><span class="p">),</span>
-                    <span class="n">dtype</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span>
-                    <span class="n">device</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">device</span><span class="p">,</span>
-                <span class="p">)</span>
-                <span class="n">pos_max</span><span class="o">.</span><span class="n">scatter_reduce_</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">expanded_idx</span><span class="p">,</span> <span class="n">positions</span><span class="p">,</span> <span class="n">reduce</span><span class="o">=</span><span class="s2">&quot;amax&quot;</span><span class="p">)</span>
-                <span class="c1"># TODO: switch to segment_ops once #17 is merged</span>
-                <span class="n">positions</span> <span class="o">=</span> <span class="n">positions</span> <span class="o">-</span> <span class="n">torch</span><span class="o">.</span><span class="n">index_select</span><span class="p">(</span><span class="n">pos_min</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">)</span>
-                <span class="n">cell_lengths</span> <span class="o">=</span> <span class="n">pos_max</span> <span class="o">-</span> <span class="n">pos_min</span> <span class="o">+</span> <span class="mf">0.1</span> <span class="o">*</span> <span class="n">cutoff</span>
-                <span class="n">cell</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">diag_embed</span><span class="p">(</span><span class="n">cell_lengths</span><span class="p">)</span>
-                <span class="n">pbc</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span>
-                    <span class="p">(</span><span class="n">num_systems</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span>
-                    <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span>
-                    <span class="n">device</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">device</span><span class="p">,</span>
+                <span class="n">positions</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span> <span class="o">=</span> <span class="n">synthesize_cell_for_batch</span><span class="p">(</span>
+                    <span class="n">positions</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">batch_ptr</span><span class="p">,</span> <span class="n">cutoff</span>
                 <span class="p">)</span>
             <span class="k">return</span> <span class="n">batch_cell_list</span><span class="p">(</span>
                 <span class="n">positions</span><span class="p">,</span>
@@ -783,6 +896,46 @@ document.write(`
                 <span class="n">half_fill</span><span class="o">=</span><span class="n">half_fill</span><span class="p">,</span>
                 <span class="n">fill_value</span><span class="o">=</span><span class="n">fill_value</span><span class="p">,</span>
                 <span class="n">return_neighbor_list</span><span class="o">=</span><span class="n">return_neighbor_list</span><span class="p">,</span>
+                <span class="n">strategy</span><span class="o">=</span><span class="n">selected_cell_strategy</span><span class="p">,</span>
+                <span class="n">atom_centric_path</span><span class="o">=</span><span class="n">selected_atom_centric_path</span><span class="p">,</span>
+                <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">case</span> <span class="s2">&quot;cluster_tile&quot;</span><span class="p">:</span>
+            <span class="c1"># format=&quot;tile&quot; is reachable only via cluster_tile_neighbor_list directly.</span>
+            <span class="c1"># Reject before any cell handling (mirrors the JAX dispatch): cluster_tile is</span>
+            <span class="c1"># PBC-implicit, so a missing cell / non-periodic input must error rather than</span>
+            <span class="c1"># synthesize a tiny box and force PBC (which would emit spurious wrap-around pairs).</span>
+            <span class="n">_reject_unsupported_cluster_tile_combo</span><span class="p">(</span><span class="n">pbc</span><span class="p">,</span> <span class="n">half_fill</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">cell</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;cell is required for method=&#39;cluster_tile&#39;&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">cluster_tile_neighbor_list</span><span class="p">(</span>
+                <span class="n">positions</span><span class="p">,</span>
+                <span class="n">cutoff</span><span class="p">,</span>
+                <span class="n">cell</span><span class="p">,</span>
+                <span class="n">fill_value</span><span class="o">=</span><span class="n">fill_value</span><span class="p">,</span>
+                <span class="nb">format</span><span class="o">=</span><span class="s2">&quot;coo&quot;</span> <span class="k">if</span> <span class="n">return_neighbor_list</span> <span class="k">else</span> <span class="s2">&quot;matrix&quot;</span><span class="p">,</span>
+                <span class="n">cutoff2</span><span class="o">=</span><span class="n">cutoff2</span><span class="p">,</span>
+                <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">case</span> <span class="s2">&quot;batch_cluster_tile&quot;</span><span class="p">:</span>
+            <span class="c1"># Reject before any cell handling (mirrors the JAX dispatch); see the</span>
+            <span class="c1"># single-system case above for why cluster_tile must not synthesize a cell.</span>
+            <span class="n">_reject_unsupported_cluster_tile_combo</span><span class="p">(</span><span class="n">pbc</span><span class="p">,</span> <span class="n">half_fill</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">batch_ptr</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">batch_idx</span><span class="p">,</span> <span class="n">batch_ptr</span> <span class="o">=</span> <span class="n">prepare_batch_idx_ptr</span><span class="p">(</span>
+                    <span class="n">batch_idx</span><span class="p">,</span> <span class="n">batch_ptr</span><span class="p">,</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+                <span class="p">)</span>
+            <span class="k">if</span> <span class="n">cell</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;cell is required for method=&#39;batch_cluster_tile&#39;&quot;</span><span class="p">)</span>
+            <span class="n">cell</span> <span class="o">=</span> <span class="n">broadcast_shared_cell_for_batch</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">batch_ptr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">batch_cluster_tile_neighbor_list</span><span class="p">(</span>
+                <span class="n">positions</span><span class="p">,</span>
+                <span class="n">cutoff</span><span class="p">,</span>
+                <span class="n">cell</span><span class="p">,</span>
+                <span class="n">batch_ptr</span><span class="p">,</span>
+                <span class="n">fill_value</span><span class="o">=</span><span class="n">fill_value</span><span class="p">,</span>
+                <span class="nb">format</span><span class="o">=</span><span class="s2">&quot;coo&quot;</span> <span class="k">if</span> <span class="n">return_neighbor_list</span> <span class="k">else</span> <span class="s2">&quot;matrix&quot;</span><span class="p">,</span>
+                <span class="n">cutoff2</span><span class="o">=</span><span class="n">cutoff2</span><span class="p">,</span>
                 <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
             <span class="p">)</span>
         <span class="k">case</span> <span class="s2">&quot;naive_dual_cutoff&quot;</span><span class="p">:</span>
@@ -821,15 +974,21 @@ document.write(`
 <span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span>
     <span class="c1"># High-level API</span>
     <span class="s2">&quot;neighbor_list&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;estimate_neighbor_list_costs&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;suggest_neighbor_list_method&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;CompiledPairFn&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;compile_pair_fn&quot;</span><span class="p">,</span>
     <span class="c1"># Unbatched algorithms</span>
     <span class="s2">&quot;cell_list&quot;</span><span class="p">,</span>
     <span class="s2">&quot;naive_neighbor_list&quot;</span><span class="p">,</span>
     <span class="s2">&quot;naive_neighbor_list_dual_cutoff&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;cluster_tile_neighbor_list&quot;</span><span class="p">,</span>
     <span class="s2">&quot;estimate_cell_list_sizes&quot;</span><span class="p">,</span>
     <span class="c1"># Batched algorithms</span>
     <span class="s2">&quot;batch_cell_list&quot;</span><span class="p">,</span>
     <span class="s2">&quot;batch_naive_neighbor_list&quot;</span><span class="p">,</span>
     <span class="s2">&quot;batch_naive_neighbor_list_dual_cutoff&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;batch_cluster_tile_neighbor_list&quot;</span><span class="p">,</span>
     <span class="s2">&quot;estimate_batch_cell_list_sizes&quot;</span><span class="p">,</span>
 <span class="p">]</span>
 </pre></div>
@@ -862,9 +1021,22 @@ document.write(`
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -884,7 +1056,7 @@ document.write(`
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

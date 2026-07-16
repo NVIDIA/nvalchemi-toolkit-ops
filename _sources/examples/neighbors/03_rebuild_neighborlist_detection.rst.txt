@@ -264,12 +264,12 @@ Build initial neighbor list with skin distance
     BUILDING INITIAL NEIGHBOR LIST
     ======================================================================
     Memory estimates:
-      Max cells: 27
-      Neighbor search radius: tensor([1, 1, 1], device='cuda:0', dtype=torch.int32)
+      Max cells: 216
+      Neighbor search radius: tensor([2, 2, 2], device='cuda:0', dtype=torch.int32)
 
     Built cell list:
-      Cells per dimension: [3, 3, 3]
-      Neighbor search radius: [1, 1, 1]
+      Cells per dimension: [6, 6, 6]
+      Neighbor search radius: [2, 2, 2]
 
     Initial neighbor list (cutoff=2.5):
       Total pairs: 1906
@@ -999,7 +999,7 @@ change is equally clear.
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.104 seconds)
+   **Total running time of the script:** (0 minutes 0.113 seconds)
 
 
 .. _sphx_glr_download_examples_neighbors_03_rebuild_neighborlist_detection.py:

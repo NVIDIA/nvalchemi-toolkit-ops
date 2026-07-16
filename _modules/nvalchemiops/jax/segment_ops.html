@@ -1,0 +1,1651 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../" data-theme="light">
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nvalchemiops.jax.segment_ops &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/css/benchmark-docs.css?v=30688d9f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/nvalchemiops/jax/segment_ops';</script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../../index.html">
+  
+  
+  
+  
+  
+    
+    
+    
+    <img src="../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <div class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">nvalchemiops...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for nvalchemiops.jax.segment_ops</h1><div class="highlight"><pre>
+<span></span><span class="c1"># SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.</span>
+<span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="c1"># you may not use this file except in compliance with the License.</span>
+<span class="c1"># You may obtain a copy of the License at</span>
+<span class="c1">#</span>
+<span class="c1"># http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Unless required by applicable law or agreed to in writing, software</span>
+<span class="c1"># distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="c1"># WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="c1"># See the License for the specific language governing permissions and</span>
+<span class="c1"># limitations under the License.</span>
+
+<span class="sd">&quot;&quot;&quot;JAX autograd bindings for segment operations (PR 3).</span>
+
+<span class="sd">Mirrors the public Torch API in ``nvalchemiops.torch.segment_ops``.  Each op is</span>
+<span class="sd">registered with ``jax.custom_vjp`` and its backward is itself wrapped in a</span>
+<span class="sd">``jax.custom_vjp`` so the second-order adjoint can be triggered by</span>
+<span class="sd">``jax.grad(jax.grad(...))`` or ``jax.jacfwd(jax.jacrev(...))``.</span>
+
+<span class="sd">Kernel orchestration uses :func:`warp.jax_experimental.jax_callable`, which</span>
+<span class="sd">runs the existing ``_launch_*`` Python wrappers directly on the JAX device</span>
+<span class="sd">arrays — no host roundtrip.</span>
+
+<span class="sd">Index inputs (``idx``) are non-differentiable — JAX returns ``None`` for them.</span>
+<span class="sd">``num_segments`` (number of segments) is a static argument (compile-time constant).</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">partial</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">jax</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">jax.numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">jnp</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">warp</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">wp</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">warp.jax_experimental</span><span class="w"> </span><span class="kn">import</span> <span class="n">GraphMode</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">warp.jax_experimental</span><span class="w"> </span><span class="kn">import</span> <span class="n">jax_callable</span> <span class="k">as</span> <span class="n">_raw_jax_callable</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.segment_ops</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">segment_div</span> <span class="k">as</span> <span class="n">_wp_segment_div</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.segment_ops</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">segmented_count</span> <span class="k">as</span> <span class="n">_wp_segmented_count</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.segment_ops</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">segmented_dot</span> <span class="k">as</span> <span class="n">_wp_segmented_dot</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.segment_ops</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">segmented_matvec</span> <span class="k">as</span> <span class="n">_wp_segmented_matvec</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.segment_ops</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">segmented_mul</span> <span class="k">as</span> <span class="n">_wp_segmented_mul</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.segment_ops</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">segmented_sum</span> <span class="k">as</span> <span class="n">_wp_segmented_sum</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.segment_ops_backward</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">segmented_dot_backward</span><span class="p">,</span>
+    <span class="n">segmented_dot_double_backward</span><span class="p">,</span>
+    <span class="n">segmented_matvec_backward</span><span class="p">,</span>
+    <span class="n">segmented_matvec_double_backward</span><span class="p">,</span>
+    <span class="n">segmented_mean_backward</span><span class="p">,</span>
+    <span class="n">segmented_mean_double_backward</span><span class="p">,</span>
+    <span class="n">segmented_mul_backward</span><span class="p">,</span>
+    <span class="n">segmented_mul_double_backward</span><span class="p">,</span>
+    <span class="n">segmented_rms_norm_backward</span><span class="p">,</span>
+    <span class="n">segmented_rms_norm_double_backward</span><span class="p">,</span>
+    <span class="n">segmented_rms_norm_forward_precompute</span><span class="p">,</span>
+    <span class="n">segmented_sum_backward</span><span class="p">,</span>
+    <span class="n">segmented_sum_double_backward</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">jax_callable</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Wrap warp.jax_experimental.jax_callable with ``GraphMode.WARP``.</span>
+
+<span class="sd">    The default ``GraphMode.JAX`` fails when the orchestrator issues more than</span>
+<span class="sd">    one Warp kernel launch (e.g. mean, rms_norm forward, dot/matvec double-</span>
+<span class="sd">    backward), because JAX can&#39;t embed multi-command FFI calls as subgraphs</span>
+<span class="sd">    in nested ``jax.jit`` + ``jax.grad`` contexts.  ``GraphMode.WARP`` lets</span>
+<span class="sd">    Warp own the capture and presents the call as opaque to JAX.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">kwargs</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">&quot;graph_mode&quot;</span><span class="p">,</span> <span class="n">GraphMode</span><span class="o">.</span><span class="n">WARP</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">_raw_jax_callable</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;segmented_dot&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;segmented_matvec&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;segmented_mean&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;segmented_mul&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;segmented_rms_norm&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;segmented_sum&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># Dtype dispatch helpers</span>
+<span class="c1"># =============================================================================</span>
+
+<span class="n">_F</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">float32</span>
+<span class="n">_D</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">float64</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_norm_dtype</span><span class="p">(</span><span class="n">dtype</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">type</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Normalize a numpy/jax dtype to ``jnp.float32`` / ``jnp.float64`` for dict lookup.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">dtype</span> <span class="o">==</span> <span class="n">jnp</span><span class="o">.</span><span class="n">float32</span> <span class="ow">or</span> <span class="nb">str</span><span class="p">(</span><span class="n">dtype</span><span class="p">)</span> <span class="o">==</span> <span class="s2">&quot;float32&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">_F</span>
+    <span class="k">if</span> <span class="n">dtype</span> <span class="o">==</span> <span class="n">jnp</span><span class="o">.</span><span class="n">float64</span> <span class="ow">or</span> <span class="nb">str</span><span class="p">(</span><span class="n">dtype</span><span class="p">)</span> <span class="o">==</span> <span class="s2">&quot;float64&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">_D</span>
+    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unsupported dtype for segment ops: </span><span class="si">{</span><span class="n">dtype</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_callable_dict</span><span class="p">(</span>
+    <span class="n">builder</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">type</span><span class="p">,</span> <span class="nb">type</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span> <span class="n">Callable</span><span class="p">],</span>
+    <span class="n">variants</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">],</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">num_outputs</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Materialize a ``{key: jax_callable(...)}`` dispatch table.&quot;&quot;&quot;</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">variants</span><span class="p">:</span>
+        <span class="n">out</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">jax_callable</span><span class="p">(</span>
+            <span class="n">builder</span><span class="p">(</span><span class="o">*</span><span class="n">key</span><span class="p">),</span>
+            <span class="n">num_outputs</span><span class="o">=</span><span class="n">num_outputs</span><span class="p">,</span>
+            <span class="n">in_out_argnames</span><span class="o">=</span><span class="n">in_out_argnames</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">out</span>
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># segmented_sum</span>
+<span class="c1"># =============================================================================</span>
+<span class="c1"># Forward: out[s] = sum_{i : idx[i]=s} x[i]</span>
+<span class="c1"># First-order bwd:   grad_x[i] = g_out[idx[i]]  (gather)</span>
+<span class="c1"># Second-order bwd:  grad_g_out[s] = sum_{i : idx[i]=s} gg_x[i]  (scatter-sum)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_sum_fwd</span><span class="p">(</span><span class="n">wp_dtype</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">fn</span><span class="p">(</span>
+        <span class="n">x</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp_dtype</span><span class="p">),</span>
+        <span class="n">idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp_dtype</span><span class="p">),</span>
+    <span class="p">):</span>
+        <span class="n">_wp_segmented_sum</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">out</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">fn</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_sum_bwd</span><span class="p">(</span><span class="n">wp_dtype</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">fn</span><span class="p">(</span>
+        <span class="n">g_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp_dtype</span><span class="p">),</span>
+        <span class="n">idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">grad_x</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp_dtype</span><span class="p">),</span>
+    <span class="p">):</span>
+        <span class="n">segmented_sum_backward</span><span class="p">(</span><span class="n">g_out</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">grad_x</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">fn</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_sum_dbl_bwd</span><span class="p">(</span><span class="n">wp_dtype</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">fn</span><span class="p">(</span>
+        <span class="n">gg_x</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp_dtype</span><span class="p">),</span>
+        <span class="n">idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">grad_g_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp_dtype</span><span class="p">),</span>
+    <span class="p">):</span>
+        <span class="n">segmented_sum_double_backward</span><span class="p">(</span><span class="n">gg_x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">grad_g_out</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">grad_g_out</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">fn</span>
+
+
+<span class="c1"># (jax_dtype, &quot;scalar&quot;|&quot;vec3&quot;) -&gt; wp dtype</span>
+<span class="n">_SUM_WP</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="p">(</span><span class="n">_F</span><span class="p">,</span> <span class="s2">&quot;scalar&quot;</span><span class="p">):</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
+    <span class="p">(</span><span class="n">_D</span><span class="p">,</span> <span class="s2">&quot;scalar&quot;</span><span class="p">):</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span>
+    <span class="p">(</span><span class="n">_F</span><span class="p">,</span> <span class="s2">&quot;vec3&quot;</span><span class="p">):</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3f</span><span class="p">,</span>
+    <span class="p">(</span><span class="n">_D</span><span class="p">,</span> <span class="s2">&quot;vec3&quot;</span><span class="p">):</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">,</span>
+<span class="p">}</span>
+
+<span class="n">_FWD_SUM</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">k</span><span class="p">:</span> <span class="n">jax_callable</span><span class="p">(</span><span class="n">_make_sum_fwd</span><span class="p">(</span><span class="n">v</span><span class="p">),</span> <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">_SUM_WP</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+<span class="p">}</span>
+<span class="n">_BWD_SUM</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">k</span><span class="p">:</span> <span class="n">jax_callable</span><span class="p">(</span><span class="n">_make_sum_bwd</span><span class="p">(</span><span class="n">v</span><span class="p">),</span> <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">_SUM_WP</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+<span class="p">}</span>
+<span class="n">_DBL_SUM</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">k</span><span class="p">:</span> <span class="n">jax_callable</span><span class="p">(</span><span class="n">_make_sum_dbl_bwd</span><span class="p">(</span><span class="n">v</span><span class="p">),</span> <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">_SUM_WP</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+<span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_sum_kind</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">:</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">_norm_dtype</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">dtype</span><span class="p">),</span> <span class="s2">&quot;vec3&quot;</span> <span class="k">if</span> <span class="n">x</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span> <span class="k">else</span> <span class="s2">&quot;scalar&quot;</span><span class="p">)</span>
+
+
+<span class="c1"># Double-backward of segmented_sum.  ``kind`` and ``num_segments`` are static.</span>
+<span class="nd">@partial</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">custom_vjp</span><span class="p">,</span> <span class="n">nondiff_argnums</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_sum_bwd_op</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">kind</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">):</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="n">idx</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">out_shape</span> <span class="o">=</span> <span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span> <span class="k">if</span> <span class="n">kind</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;vec3&quot;</span> <span class="k">else</span> <span class="p">(</span><span class="n">n</span><span class="p">,)</span>
+    <span class="p">(</span><span class="n">grad_x</span><span class="p">,)</span> <span class="o">=</span> <span class="n">_BWD_SUM</span><span class="p">[</span><span class="n">kind</span><span class="p">](</span><span class="n">g_out</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">output_dims</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;grad_x&quot;</span><span class="p">:</span> <span class="n">out_shape</span><span class="p">})</span>
+    <span class="k">return</span> <span class="n">grad_x</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_sum_bwd_op_fwd</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">kind</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">_sum_bwd_op</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">kind</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">),</span> <span class="p">(</span><span class="n">idx</span><span class="p">,)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_sum_bwd_op_bwd</span><span class="p">(</span><span class="n">kind</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">residuals</span><span class="p">,</span> <span class="n">gg_x</span><span class="p">):</span>
+    <span class="p">(</span><span class="n">idx</span><span class="p">,)</span> <span class="o">=</span> <span class="n">residuals</span>
+    <span class="n">out_shape</span> <span class="o">=</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span> <span class="k">if</span> <span class="n">kind</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;vec3&quot;</span> <span class="k">else</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,)</span>
+    <span class="p">(</span><span class="n">grad_g_out</span><span class="p">,)</span> <span class="o">=</span> <span class="n">_DBL_SUM</span><span class="p">[</span><span class="n">kind</span><span class="p">](</span><span class="n">gg_x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">output_dims</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;grad_g_out&quot;</span><span class="p">:</span> <span class="n">out_shape</span><span class="p">})</span>
+    <span class="c1"># Return grads matching (idx, g_out).  idx is integer / non-differentiable.</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span> <span class="n">grad_g_out</span><span class="p">)</span>
+
+
+<span class="n">_sum_bwd_op</span><span class="o">.</span><span class="n">defvjp</span><span class="p">(</span><span class="n">_sum_bwd_op_fwd</span><span class="p">,</span> <span class="n">_sum_bwd_op_bwd</span><span class="p">)</span>
+
+
+<span class="c1"># First-order forward.  ``kind`` and ``num_segments`` are static.</span>
+<span class="nd">@partial</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">custom_vjp</span><span class="p">,</span> <span class="n">nondiff_argnums</span><span class="o">=</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_sum_op</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">kind</span><span class="p">):</span>
+    <span class="n">out_shape</span> <span class="o">=</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span> <span class="k">if</span> <span class="n">kind</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;vec3&quot;</span> <span class="k">else</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,)</span>
+    <span class="p">(</span><span class="n">out</span><span class="p">,)</span> <span class="o">=</span> <span class="n">_FWD_SUM</span><span class="p">[</span><span class="n">kind</span><span class="p">](</span><span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">output_dims</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;out&quot;</span><span class="p">:</span> <span class="n">out_shape</span><span class="p">})</span>
+    <span class="k">return</span> <span class="n">out</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_sum_op_fwd</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">kind</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">_sum_op</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">kind</span><span class="p">),</span> <span class="p">(</span><span class="n">idx</span><span class="p">,)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_sum_op_bwd</span><span class="p">(</span><span class="n">num_segments</span><span class="p">,</span> <span class="n">kind</span><span class="p">,</span> <span class="n">residuals</span><span class="p">,</span> <span class="n">g_out</span><span class="p">):</span>
+    <span class="p">(</span><span class="n">idx</span><span class="p">,)</span> <span class="o">=</span> <span class="n">residuals</span>
+    <span class="n">grad_x</span> <span class="o">=</span> <span class="n">_sum_bwd_op</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">kind</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">grad_x</span><span class="p">,</span> <span class="kc">None</span>
+
+
+<span class="n">_sum_op</span><span class="o">.</span><span class="n">defvjp</span><span class="p">(</span><span class="n">_sum_op_fwd</span><span class="p">,</span> <span class="n">_sum_op_bwd</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="segmented_sum">
+<a class="viewcode-back" href="../../../modules/jax/segment_ops.html#nvalchemiops.jax.segment_ops.segmented_sum">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">segmented_sum</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the differentiable per-segment sum of ``x``.</span>
+
+<span class="sd">    Supports scalar (shape ``(N,)``) and vec3 (shape ``(N, 3)``) inputs in</span>
+<span class="sd">    float32 or float64.  The backward pass is itself differentiable, so</span>
+<span class="sd">    second-order gradients via ``jax.grad(jax.grad(...))`` are supported.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    x : jax.Array, shape (N,) or (N, 3)</span>
+<span class="sd">        Values to reduce.  Must be float32 or float64.</span>
+<span class="sd">    idx : jax.Array, shape (N,), dtype int32</span>
+<span class="sd">        Segment index for each element.  Values must lie in</span>
+<span class="sd">        ``[0, num_segments)``.</span>
+<span class="sd">    num_segments : int</span>
+<span class="sd">        Number of output segments.  Treated as a static (compile-time)</span>
+<span class="sd">        constant by JAX.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    jax.Array, shape (num_segments,) or (num_segments, 3)</span>
+<span class="sd">        Per-segment sums; ``out[s] = sum(x[i] for i where idx[i] == s)``.</span>
+
+<span class="sd">    See Also</span>
+<span class="sd">    --------</span>
+<span class="sd">    :func:`nvalchemiops.jax.segment_ops.segmented_mean` : Per-segment mean.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">_sum_op</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">_sum_kind</span><span class="p">(</span><span class="n">x</span><span class="p">))</span></div>
+
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># segmented_dot   (vec3 only in the public API)</span>
+<span class="c1"># =============================================================================</span>
+<span class="c1"># Forward: out[s] = sum_{i: idx[i]=s} dot(x[i], y[i])</span>
+<span class="c1"># Bwd:    grad_x[i] = g_out[s] * y[i],  grad_y[i] = g_out[s] * x[i]</span>
+<span class="c1"># Dbl-bwd: grad_g_out[s] = sum dot(gg_gx, y) + sum dot(gg_gy, x)</span>
+<span class="c1">#          grad_x_extra[i] = gg_gy[i] * g_out[s]</span>
+<span class="c1">#          grad_y_extra[i] = gg_gx[i] * g_out[s]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_dot_fwd</span><span class="p">(</span><span class="n">vec_t</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">fn</span><span class="p">(</span>
+        <span class="n">x</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">y</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span> <span class="k">if</span> <span class="n">vec_t</span> <span class="ow">is</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3f</span> <span class="k">else</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+    <span class="p">):</span>
+        <span class="n">_wp_segmented_dot</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">out</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">fn</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_dot_bwd</span><span class="p">(</span><span class="n">vec_t</span><span class="p">):</span>
+    <span class="n">scalar_t</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span> <span class="k">if</span> <span class="n">vec_t</span> <span class="ow">is</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3f</span> <span class="k">else</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">fn</span><span class="p">(</span>
+        <span class="n">g_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">scalar_t</span><span class="p">),</span>
+        <span class="n">x</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">y</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">grad_x</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">grad_y</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+    <span class="p">):</span>
+        <span class="n">segmented_dot_backward</span><span class="p">(</span><span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">grad_x</span><span class="p">,</span> <span class="n">grad_y</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">fn</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_dot_dbl_bwd</span><span class="p">(</span><span class="n">vec_t</span><span class="p">):</span>
+    <span class="n">scalar_t</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span> <span class="k">if</span> <span class="n">vec_t</span> <span class="ow">is</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3f</span> <span class="k">else</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">fn</span><span class="p">(</span>
+        <span class="n">gg_gx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">gg_gy</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">g_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">scalar_t</span><span class="p">),</span>
+        <span class="n">x</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">y</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">grad_g_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">scalar_t</span><span class="p">),</span>
+        <span class="n">grad_x_extra</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">grad_y_extra</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+    <span class="p">):</span>
+        <span class="n">segmented_dot_double_backward</span><span class="p">(</span>
+            <span class="n">gg_gx</span><span class="p">,</span>
+            <span class="n">gg_gy</span><span class="p">,</span>
+            <span class="n">g_out</span><span class="p">,</span>
+            <span class="n">x</span><span class="p">,</span>
+            <span class="n">y</span><span class="p">,</span>
+            <span class="n">idx</span><span class="p">,</span>
+            <span class="n">grad_g_out</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+            <span class="n">grad_g_out</span><span class="p">,</span>
+            <span class="n">grad_x_extra</span><span class="p">,</span>
+            <span class="n">grad_y_extra</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">fn</span>
+
+
+<span class="n">_DOT_WP</span> <span class="o">=</span> <span class="p">{</span><span class="n">_F</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3f</span><span class="p">,</span> <span class="n">_D</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">}</span>
+<span class="n">_FWD_DOT</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">k</span><span class="p">:</span> <span class="n">jax_callable</span><span class="p">(</span><span class="n">_make_dot_fwd</span><span class="p">(</span><span class="n">v</span><span class="p">),</span> <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">_DOT_WP</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+<span class="p">}</span>
+<span class="n">_BWD_DOT</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">k</span><span class="p">:</span> <span class="n">jax_callable</span><span class="p">(</span><span class="n">_make_dot_bwd</span><span class="p">(</span><span class="n">v</span><span class="p">),</span> <span class="n">num_outputs</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">_DOT_WP</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+<span class="p">}</span>
+<span class="n">_DBL_DOT</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">k</span><span class="p">:</span> <span class="n">jax_callable</span><span class="p">(</span><span class="n">_make_dot_dbl_bwd</span><span class="p">(</span><span class="n">v</span><span class="p">),</span> <span class="n">num_outputs</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">_DOT_WP</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+<span class="p">}</span>
+
+
+<span class="c1"># Double-backward of segmented_dot.  ``dtype`` and ``num_segments`` static.</span>
+<span class="nd">@partial</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">custom_vjp</span><span class="p">,</span> <span class="n">nondiff_argnums</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_dot_bwd_op</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">):</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="p">(</span><span class="n">grad_x</span><span class="p">,</span> <span class="n">grad_y</span><span class="p">)</span> <span class="o">=</span> <span class="n">_BWD_DOT</span><span class="p">[</span><span class="n">dtype</span><span class="p">](</span>
+        <span class="n">g_out</span><span class="p">,</span>
+        <span class="n">x</span><span class="p">,</span>
+        <span class="n">y</span><span class="p">,</span>
+        <span class="n">idx</span><span class="p">,</span>
+        <span class="n">output_dims</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;grad_x&quot;</span><span class="p">:</span> <span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="s2">&quot;grad_y&quot;</span><span class="p">:</span> <span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="mi">3</span><span class="p">)},</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">grad_x</span><span class="p">,</span> <span class="n">grad_y</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_dot_bwd_op_fwd</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">_dot_bwd_op</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">),</span> <span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_dot_bwd_op_bwd</span><span class="p">(</span><span class="n">dtype</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">residuals</span><span class="p">,</span> <span class="n">cotangents</span><span class="p">):</span>
+    <span class="n">idx</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span> <span class="o">=</span> <span class="n">residuals</span>
+    <span class="n">gg_gx</span><span class="p">,</span> <span class="n">gg_gy</span> <span class="o">=</span> <span class="n">cotangents</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="p">(</span><span class="n">grad_g_out</span><span class="p">,</span> <span class="n">grad_x_extra</span><span class="p">,</span> <span class="n">grad_y_extra</span><span class="p">)</span> <span class="o">=</span> <span class="n">_DBL_DOT</span><span class="p">[</span><span class="n">dtype</span><span class="p">](</span>
+        <span class="n">gg_gx</span><span class="p">,</span>
+        <span class="n">gg_gy</span><span class="p">,</span>
+        <span class="n">g_out</span><span class="p">,</span>
+        <span class="n">x</span><span class="p">,</span>
+        <span class="n">y</span><span class="p">,</span>
+        <span class="n">idx</span><span class="p">,</span>
+        <span class="n">output_dims</span><span class="o">=</span><span class="p">{</span>
+            <span class="s2">&quot;grad_g_out&quot;</span><span class="p">:</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,),</span>
+            <span class="s2">&quot;grad_x_extra&quot;</span><span class="p">:</span> <span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span>
+            <span class="s2">&quot;grad_y_extra&quot;</span><span class="p">:</span> <span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span>
+        <span class="p">},</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span> <span class="n">grad_g_out</span><span class="p">,</span> <span class="n">grad_x_extra</span><span class="p">,</span> <span class="n">grad_y_extra</span><span class="p">)</span>
+
+
+<span class="n">_dot_bwd_op</span><span class="o">.</span><span class="n">defvjp</span><span class="p">(</span><span class="n">_dot_bwd_op_fwd</span><span class="p">,</span> <span class="n">_dot_bwd_op_bwd</span><span class="p">)</span>
+
+
+<span class="nd">@partial</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">custom_vjp</span><span class="p">,</span> <span class="n">nondiff_argnums</span><span class="o">=</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">))</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_dot_op</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">dtype</span><span class="p">):</span>
+    <span class="p">(</span><span class="n">out</span><span class="p">,)</span> <span class="o">=</span> <span class="n">_FWD_DOT</span><span class="p">[</span><span class="n">dtype</span><span class="p">](</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">output_dims</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;out&quot;</span><span class="p">:</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,)})</span>
+    <span class="k">return</span> <span class="n">out</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_dot_op_fwd</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">dtype</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">_dot_op</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">dtype</span><span class="p">),</span> <span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">idx</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_dot_op_bwd</span><span class="p">(</span><span class="n">num_segments</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">residuals</span><span class="p">,</span> <span class="n">g_out</span><span class="p">):</span>
+    <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">idx</span> <span class="o">=</span> <span class="n">residuals</span>
+    <span class="n">grad_x</span><span class="p">,</span> <span class="n">grad_y</span> <span class="o">=</span> <span class="n">_dot_bwd_op</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">grad_x</span><span class="p">,</span> <span class="n">grad_y</span><span class="p">,</span> <span class="kc">None</span>
+
+
+<span class="n">_dot_op</span><span class="o">.</span><span class="n">defvjp</span><span class="p">(</span><span class="n">_dot_op_fwd</span><span class="p">,</span> <span class="n">_dot_op_bwd</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="segmented_dot">
+<a class="viewcode-back" href="../../../modules/jax/segment_ops.html#nvalchemiops.jax.segment_ops.segmented_dot">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">segmented_dot</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the differentiable per-segment dot product of vec3 arrays.</span>
+
+<span class="sd">    For each segment ``s``, accumulates</span>
+<span class="sd">    :math:`\\text{out}[s] = \\sum_{i:\\,\\text{idx}[i]=s} x[i] \\cdot y[i]`.</span>
+<span class="sd">    Supports float32 and float64.  Second-order gradients are supported.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    x : jax.Array, shape (N, 3)</span>
+<span class="sd">        First vec3 operand.  Must be float32 or float64.</span>
+<span class="sd">    y : jax.Array, shape (N, 3)</span>
+<span class="sd">        Second vec3 operand.  Must share dtype with ``x``.</span>
+<span class="sd">    idx : jax.Array, shape (N,), dtype int32</span>
+<span class="sd">        Segment index for each element.  Values must lie in</span>
+<span class="sd">        ``[0, num_segments)``.</span>
+<span class="sd">    num_segments : int</span>
+<span class="sd">        Number of output segments.  Treated as a static (compile-time)</span>
+<span class="sd">        constant by JAX.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    jax.Array, shape (num_segments,)</span>
+<span class="sd">        Per-segment dot products.</span>
+
+<span class="sd">    See Also</span>
+<span class="sd">    --------</span>
+<span class="sd">    :func:`nvalchemiops.jax.segment_ops.segmented_sum` : Per-segment sum.</span>
+<span class="sd">    :func:`nvalchemiops.jax.segment_ops.segmented_mul` : Per-element scale by per-segment scalar.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">_dot_op</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">_norm_dtype</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">dtype</span><span class="p">))</span></div>
+
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># segmented_mul   (vec3 × per-segment scalar)</span>
+<span class="c1"># =============================================================================</span>
+<span class="c1"># Forward: out[i] = x[i] * y[idx[i]]                          (x: vec3, y: scalar)</span>
+<span class="c1"># Bwd:     grad_x[i] = g_out[i] * y[s]</span>
+<span class="c1">#          grad_y[s] = sum_{i: idx[i]=s} dot(g_out[i], x[i])</span>
+<span class="c1"># Dbl-bwd: grad_g_out[i]   = gg_gx[i]*y[s] + gg_gy[s]*x[i]</span>
+<span class="c1">#          grad_x_extra[i] = gg_gy[s] * g_out[i]</span>
+<span class="c1">#          grad_y_extra[s] = sum dot(gg_gx[i], g_out[i])</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_mul_fwd</span><span class="p">(</span><span class="n">vec_t</span><span class="p">,</span> <span class="n">scalar_t</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">fn</span><span class="p">(</span>
+        <span class="n">x</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">y</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">scalar_t</span><span class="p">),</span>
+        <span class="n">idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+    <span class="p">):</span>
+        <span class="n">_wp_segmented_mul</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">out</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">fn</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_mul_bwd</span><span class="p">(</span><span class="n">vec_t</span><span class="p">,</span> <span class="n">scalar_t</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">fn</span><span class="p">(</span>
+        <span class="n">g_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">x</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">y</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">scalar_t</span><span class="p">),</span>
+        <span class="n">idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">grad_x</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">grad_y</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">scalar_t</span><span class="p">),</span>
+    <span class="p">):</span>
+        <span class="n">segmented_mul_backward</span><span class="p">(</span><span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">grad_y</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">grad_x</span><span class="p">,</span> <span class="n">grad_y</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">fn</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_mul_dbl_bwd</span><span class="p">(</span><span class="n">vec_t</span><span class="p">,</span> <span class="n">scalar_t</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">fn</span><span class="p">(</span>
+        <span class="n">gg_gx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">gg_gy</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">scalar_t</span><span class="p">),</span>
+        <span class="n">g_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">x</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">y</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">scalar_t</span><span class="p">),</span>
+        <span class="n">idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">grad_g_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">grad_x_extra</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">grad_y_extra</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">scalar_t</span><span class="p">),</span>
+    <span class="p">):</span>
+        <span class="n">segmented_mul_double_backward</span><span class="p">(</span>
+            <span class="n">gg_gx</span><span class="p">,</span>
+            <span class="n">gg_gy</span><span class="p">,</span>
+            <span class="n">g_out</span><span class="p">,</span>
+            <span class="n">x</span><span class="p">,</span>
+            <span class="n">y</span><span class="p">,</span>
+            <span class="n">idx</span><span class="p">,</span>
+            <span class="n">grad_g_out</span><span class="p">,</span>
+            <span class="n">grad_x_extra</span><span class="p">,</span>
+            <span class="n">grad_y_extra</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">fn</span>
+
+
+<span class="n">_MUL_WP</span> <span class="o">=</span> <span class="p">{</span><span class="n">_F</span><span class="p">:</span> <span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3f</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">),</span> <span class="n">_D</span><span class="p">:</span> <span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">)}</span>
+<span class="n">_FWD_MUL</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">k</span><span class="p">:</span> <span class="n">jax_callable</span><span class="p">(</span><span class="n">_make_mul_fwd</span><span class="p">(</span><span class="o">*</span><span class="n">v</span><span class="p">),</span> <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">_MUL_WP</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+<span class="p">}</span>
+<span class="n">_BWD_MUL</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">k</span><span class="p">:</span> <span class="n">jax_callable</span><span class="p">(</span><span class="n">_make_mul_bwd</span><span class="p">(</span><span class="o">*</span><span class="n">v</span><span class="p">),</span> <span class="n">num_outputs</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">_MUL_WP</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+<span class="p">}</span>
+<span class="n">_DBL_MUL</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">k</span><span class="p">:</span> <span class="n">jax_callable</span><span class="p">(</span><span class="n">_make_mul_dbl_bwd</span><span class="p">(</span><span class="o">*</span><span class="n">v</span><span class="p">),</span> <span class="n">num_outputs</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">_MUL_WP</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+<span class="p">}</span>
+
+
+<span class="nd">@partial</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">custom_vjp</span><span class="p">,</span> <span class="n">nondiff_argnums</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_mul_bwd_op</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">):</span>
+    <span class="p">(</span><span class="n">grad_x</span><span class="p">,</span> <span class="n">grad_y</span><span class="p">)</span> <span class="o">=</span> <span class="n">_BWD_MUL</span><span class="p">[</span><span class="n">dtype</span><span class="p">](</span>
+        <span class="n">g_out</span><span class="p">,</span>
+        <span class="n">x</span><span class="p">,</span>
+        <span class="n">y</span><span class="p">,</span>
+        <span class="n">idx</span><span class="p">,</span>
+        <span class="n">output_dims</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;grad_x&quot;</span><span class="p">:</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="s2">&quot;grad_y&quot;</span><span class="p">:</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,)},</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">grad_x</span><span class="p">,</span> <span class="n">grad_y</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_mul_bwd_op_fwd</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">_mul_bwd_op</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">),</span> <span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_mul_bwd_op_bwd</span><span class="p">(</span><span class="n">dtype</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">residuals</span><span class="p">,</span> <span class="n">cotangents</span><span class="p">):</span>
+    <span class="n">idx</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span> <span class="o">=</span> <span class="n">residuals</span>
+    <span class="n">gg_gx</span><span class="p">,</span> <span class="n">gg_gy</span> <span class="o">=</span> <span class="n">cotangents</span>
+    <span class="p">(</span><span class="n">grad_g_out</span><span class="p">,</span> <span class="n">grad_x_extra</span><span class="p">,</span> <span class="n">grad_y_extra</span><span class="p">)</span> <span class="o">=</span> <span class="n">_DBL_MUL</span><span class="p">[</span><span class="n">dtype</span><span class="p">](</span>
+        <span class="n">gg_gx</span><span class="p">,</span>
+        <span class="n">gg_gy</span><span class="p">,</span>
+        <span class="n">g_out</span><span class="p">,</span>
+        <span class="n">x</span><span class="p">,</span>
+        <span class="n">y</span><span class="p">,</span>
+        <span class="n">idx</span><span class="p">,</span>
+        <span class="n">output_dims</span><span class="o">=</span><span class="p">{</span>
+            <span class="s2">&quot;grad_g_out&quot;</span><span class="p">:</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span>
+            <span class="s2">&quot;grad_x_extra&quot;</span><span class="p">:</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span>
+            <span class="s2">&quot;grad_y_extra&quot;</span><span class="p">:</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,),</span>
+        <span class="p">},</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span> <span class="n">grad_g_out</span><span class="p">,</span> <span class="n">grad_x_extra</span><span class="p">,</span> <span class="n">grad_y_extra</span><span class="p">)</span>
+
+
+<span class="n">_mul_bwd_op</span><span class="o">.</span><span class="n">defvjp</span><span class="p">(</span><span class="n">_mul_bwd_op_fwd</span><span class="p">,</span> <span class="n">_mul_bwd_op_bwd</span><span class="p">)</span>
+
+
+<span class="nd">@partial</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">custom_vjp</span><span class="p">,</span> <span class="n">nondiff_argnums</span><span class="o">=</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">))</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_mul_op</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">dtype</span><span class="p">):</span>
+    <span class="p">(</span><span class="n">out</span><span class="p">,)</span> <span class="o">=</span> <span class="n">_FWD_MUL</span><span class="p">[</span><span class="n">dtype</span><span class="p">](</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">output_dims</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;out&quot;</span><span class="p">:</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">})</span>
+    <span class="k">return</span> <span class="n">out</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_mul_op_fwd</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">dtype</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">_mul_op</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">dtype</span><span class="p">),</span> <span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">idx</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_mul_op_bwd</span><span class="p">(</span><span class="n">num_segments</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">residuals</span><span class="p">,</span> <span class="n">g_out</span><span class="p">):</span>
+    <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">idx</span> <span class="o">=</span> <span class="n">residuals</span>
+    <span class="n">grad_x</span><span class="p">,</span> <span class="n">grad_y</span> <span class="o">=</span> <span class="n">_mul_bwd_op</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">grad_x</span><span class="p">,</span> <span class="n">grad_y</span><span class="p">,</span> <span class="kc">None</span>
+
+
+<span class="n">_mul_op</span><span class="o">.</span><span class="n">defvjp</span><span class="p">(</span><span class="n">_mul_op_fwd</span><span class="p">,</span> <span class="n">_mul_op_bwd</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="segmented_mul">
+<a class="viewcode-back" href="../../../modules/jax/segment_ops.html#nvalchemiops.jax.segment_ops.segmented_mul">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">segmented_mul</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Scale each vec3 element by its corresponding per-segment scalar.</span>
+
+<span class="sd">    Computes :math:`\\text{out}[i] = x[i] \\times y[\\text{idx}[i]]` where</span>
+<span class="sd">    ``x`` is a vec3 array and ``y`` holds one scalar per segment.  Supports</span>
+<span class="sd">    float32 and float64.  Second-order gradients are supported.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    x : jax.Array, shape (N, 3)</span>
+<span class="sd">        Vec3 values to scale.  Must be float32 or float64.</span>
+<span class="sd">    y : jax.Array, shape (num_segments,)</span>
+<span class="sd">        Per-segment scalar multipliers.  Must share dtype with ``x``.</span>
+<span class="sd">    idx : jax.Array, shape (N,), dtype int32</span>
+<span class="sd">        Segment index for each element.  Values must lie in</span>
+<span class="sd">        ``[0, num_segments)``.</span>
+<span class="sd">    num_segments : int</span>
+<span class="sd">        Number of segments.  Treated as a static (compile-time) constant</span>
+<span class="sd">        by JAX.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    jax.Array, shape (N, 3)</span>
+<span class="sd">        Scaled vec3 values; ``out[i] = x[i] * y[idx[i]]``.</span>
+
+<span class="sd">    See Also</span>
+<span class="sd">    --------</span>
+<span class="sd">    :func:`nvalchemiops.jax.segment_ops.segmented_dot` : Per-segment dot product.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">_mul_op</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">_norm_dtype</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">dtype</span><span class="p">))</span></div>
+
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># segmented_mean</span>
+<span class="c1"># =============================================================================</span>
+<span class="c1"># Forward: out[s] = mean(x[i] for i in segment s)</span>
+<span class="c1"># Forward kernel also produces counts[s] which the backward needs.</span>
+<span class="c1"># Bwd:     grad_x[i] = g_out[s] / counts[s]</span>
+<span class="c1"># Dbl-bwd: grad_g_out[s] = sum_{i: idx[i]=s} gg_x[i] / counts[s]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_mean_fwd</span><span class="p">(</span><span class="n">wp_dtype</span><span class="p">):</span>
+    <span class="n">is_vec</span> <span class="o">=</span> <span class="n">wp_dtype</span> <span class="ow">in</span> <span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3f</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">fn</span><span class="p">(</span>
+        <span class="n">x</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp_dtype</span><span class="p">),</span>
+        <span class="n">idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp_dtype</span><span class="p">),</span>
+        <span class="n">counts</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="p">):</span>
+        <span class="c1"># ``counts`` is exposed as a kernel output so the JAX VJP can save it</span>
+        <span class="c1"># as residual state without recomputing ``jnp.bincount`` on the host.</span>
+        <span class="n">num_segments</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">sums</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">num_segments</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">x</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">_wp_segmented_sum</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">sums</span><span class="p">)</span>
+        <span class="n">_wp_segmented_count</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">counts</span><span class="p">)</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.segment_ops</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+            <span class="n">_segmented_vec_div_by_count_overloads</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">is_vec</span><span class="p">:</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+                <span class="n">_segmented_vec_div_by_count_overloads</span><span class="p">[</span><span class="n">wp_dtype</span><span class="p">],</span>
+                <span class="n">dim</span><span class="o">=</span><span class="n">num_segments</span><span class="p">,</span>
+                <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">sums</span><span class="p">,</span> <span class="n">counts</span><span class="p">,</span> <span class="n">out</span><span class="p">],</span>
+                <span class="n">device</span><span class="o">=</span><span class="n">x</span><span class="o">.</span><span class="n">device</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">_wp_segment_div</span><span class="p">(</span><span class="n">sums</span><span class="p">,</span> <span class="n">counts</span><span class="p">,</span> <span class="n">out</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">fn</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_mean_bwd</span><span class="p">(</span><span class="n">wp_dtype</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">fn</span><span class="p">(</span>
+        <span class="n">g_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp_dtype</span><span class="p">),</span>
+        <span class="n">counts</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">grad_x</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp_dtype</span><span class="p">),</span>
+    <span class="p">):</span>
+        <span class="n">segmented_mean_backward</span><span class="p">(</span><span class="n">g_out</span><span class="p">,</span> <span class="n">counts</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">grad_x</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">fn</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_mean_dbl_bwd</span><span class="p">(</span><span class="n">wp_dtype</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">fn</span><span class="p">(</span>
+        <span class="n">gg_x</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp_dtype</span><span class="p">),</span>
+        <span class="n">counts</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">grad_g_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp_dtype</span><span class="p">),</span>
+    <span class="p">):</span>
+        <span class="n">segmented_mean_double_backward</span><span class="p">(</span><span class="n">gg_x</span><span class="p">,</span> <span class="n">counts</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">grad_g_out</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">fn</span>
+
+
+<span class="n">_MEAN_WP</span> <span class="o">=</span> <span class="n">_SUM_WP</span>
+<span class="n">_FWD_MEAN</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">k</span><span class="p">:</span> <span class="n">jax_callable</span><span class="p">(</span><span class="n">_make_mean_fwd</span><span class="p">(</span><span class="n">v</span><span class="p">),</span> <span class="n">num_outputs</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">_MEAN_WP</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+<span class="p">}</span>
+<span class="n">_BWD_MEAN</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">k</span><span class="p">:</span> <span class="n">jax_callable</span><span class="p">(</span><span class="n">_make_mean_bwd</span><span class="p">(</span><span class="n">v</span><span class="p">),</span> <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">_MEAN_WP</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+<span class="p">}</span>
+<span class="n">_DBL_MEAN</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">k</span><span class="p">:</span> <span class="n">jax_callable</span><span class="p">(</span><span class="n">_make_mean_dbl_bwd</span><span class="p">(</span><span class="n">v</span><span class="p">),</span> <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">_MEAN_WP</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+<span class="p">}</span>
+
+
+<span class="nd">@partial</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">custom_vjp</span><span class="p">,</span> <span class="n">nondiff_argnums</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_mean_bwd_op</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">kind</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">counts</span><span class="p">):</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="n">idx</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">out_shape</span> <span class="o">=</span> <span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span> <span class="k">if</span> <span class="n">kind</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;vec3&quot;</span> <span class="k">else</span> <span class="p">(</span><span class="n">n</span><span class="p">,)</span>
+    <span class="p">(</span><span class="n">grad_x</span><span class="p">,)</span> <span class="o">=</span> <span class="n">_BWD_MEAN</span><span class="p">[</span><span class="n">kind</span><span class="p">](</span><span class="n">g_out</span><span class="p">,</span> <span class="n">counts</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">output_dims</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;grad_x&quot;</span><span class="p">:</span> <span class="n">out_shape</span><span class="p">})</span>
+    <span class="k">return</span> <span class="n">grad_x</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_mean_bwd_op_fwd</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">kind</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">counts</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">_mean_bwd_op</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">kind</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">counts</span><span class="p">),</span> <span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">counts</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_mean_bwd_op_bwd</span><span class="p">(</span><span class="n">kind</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">residuals</span><span class="p">,</span> <span class="n">gg_x</span><span class="p">):</span>
+    <span class="n">idx</span><span class="p">,</span> <span class="n">counts</span> <span class="o">=</span> <span class="n">residuals</span>
+    <span class="n">out_shape</span> <span class="o">=</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span> <span class="k">if</span> <span class="n">kind</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;vec3&quot;</span> <span class="k">else</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,)</span>
+    <span class="p">(</span><span class="n">grad_g_out</span><span class="p">,)</span> <span class="o">=</span> <span class="n">_DBL_MEAN</span><span class="p">[</span><span class="n">kind</span><span class="p">](</span>
+        <span class="n">gg_x</span><span class="p">,</span> <span class="n">counts</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">output_dims</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;grad_g_out&quot;</span><span class="p">:</span> <span class="n">out_shape</span><span class="p">}</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span> <span class="n">grad_g_out</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">counts</span><span class="p">))</span>
+
+
+<span class="n">_mean_bwd_op</span><span class="o">.</span><span class="n">defvjp</span><span class="p">(</span><span class="n">_mean_bwd_op_fwd</span><span class="p">,</span> <span class="n">_mean_bwd_op_bwd</span><span class="p">)</span>
+
+
+<span class="nd">@partial</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">custom_vjp</span><span class="p">,</span> <span class="n">nondiff_argnums</span><span class="o">=</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_mean_op</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">kind</span><span class="p">):</span>
+    <span class="c1"># Returns (out, counts) so the VJP can save ``counts`` as residual state</span>
+    <span class="c1"># without recomputing it.  ``counts`` is int32 → JAX treats it as</span>
+    <span class="c1"># non-differentiable automatically.</span>
+    <span class="n">out_shape</span> <span class="o">=</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span> <span class="k">if</span> <span class="n">kind</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;vec3&quot;</span> <span class="k">else</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,)</span>
+    <span class="n">out</span><span class="p">,</span> <span class="n">counts</span> <span class="o">=</span> <span class="n">_FWD_MEAN</span><span class="p">[</span><span class="n">kind</span><span class="p">](</span>
+        <span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">output_dims</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;out&quot;</span><span class="p">:</span> <span class="n">out_shape</span><span class="p">,</span> <span class="s2">&quot;counts&quot;</span><span class="p">:</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,)}</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">out</span><span class="p">,</span> <span class="n">counts</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_mean_op_fwd</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">kind</span><span class="p">):</span>
+    <span class="n">out</span><span class="p">,</span> <span class="n">counts</span> <span class="o">=</span> <span class="n">_mean_op</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">kind</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">out</span><span class="p">,</span> <span class="n">counts</span><span class="p">),</span> <span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">counts</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_mean_op_bwd</span><span class="p">(</span><span class="n">num_segments</span><span class="p">,</span> <span class="n">kind</span><span class="p">,</span> <span class="n">residuals</span><span class="p">,</span> <span class="n">cotangents</span><span class="p">):</span>
+    <span class="c1"># ``cotangents`` is the pair (g_out, g_counts); g_counts is the zero</span>
+    <span class="c1"># JVP-tangent of an int32 output and is unused.</span>
+    <span class="n">g_out</span><span class="p">,</span> <span class="n">_g_counts</span> <span class="o">=</span> <span class="n">cotangents</span>
+    <span class="n">idx</span><span class="p">,</span> <span class="n">counts</span> <span class="o">=</span> <span class="n">residuals</span>
+    <span class="n">grad_x</span> <span class="o">=</span> <span class="n">_mean_bwd_op</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">kind</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">counts</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">grad_x</span><span class="p">,</span> <span class="kc">None</span>
+
+
+<span class="n">_mean_op</span><span class="o">.</span><span class="n">defvjp</span><span class="p">(</span><span class="n">_mean_op_fwd</span><span class="p">,</span> <span class="n">_mean_op_bwd</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="segmented_mean">
+<a class="viewcode-back" href="../../../modules/jax/segment_ops.html#nvalchemiops.jax.segment_ops.segmented_mean">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">segmented_mean</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the differentiable per-segment mean of ``x``.</span>
+
+<span class="sd">    Supports scalar (shape ``(N,)``) and vec3 (shape ``(N, 3)``) inputs in</span>
+<span class="sd">    float32 or float64.  Per-segment element counts are computed once during</span>
+<span class="sd">    the forward pass and cached as residuals so the backward never recomputes</span>
+<span class="sd">    them.  Second-order gradients are supported.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    x : jax.Array, shape (N,) or (N, 3)</span>
+<span class="sd">        Values to average.  Must be float32 or float64.</span>
+<span class="sd">    idx : jax.Array, shape (N,), dtype int32</span>
+<span class="sd">        Segment index for each element.  Values must lie in</span>
+<span class="sd">        ``[0, num_segments)``.</span>
+<span class="sd">    num_segments : int</span>
+<span class="sd">        Number of output segments.  Treated as a static (compile-time)</span>
+<span class="sd">        constant by JAX.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    jax.Array, shape (num_segments,) or (num_segments, 3)</span>
+<span class="sd">        Per-segment means; ``out[s] = mean(x[i] for i where idx[i] == s)``.</span>
+
+<span class="sd">    See Also</span>
+<span class="sd">    --------</span>
+<span class="sd">    :func:`nvalchemiops.jax.segment_ops.segmented_sum` : Per-segment sum.</span>
+<span class="sd">    :func:`nvalchemiops.jax.segment_ops.segmented_rms_norm` : Per-segment RMS norm.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">out</span><span class="p">,</span> <span class="n">_counts</span> <span class="o">=</span> <span class="n">_mean_op</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">_sum_kind</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">out</span></div>
+
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># segmented_rms_norm   (vec3 only)</span>
+<span class="c1"># =============================================================================</span>
+<span class="c1"># Forward (precompute): out[s] = sqrt(mean(||x[i]||² for i in s))</span>
+<span class="c1">#                       and saves inv_norm[s], counts[s] for the backward.</span>
+<span class="c1"># Bwd:    grad_x[i] = g_out[s] * x[i] * inv_norm[s]</span>
+<span class="c1"># Dbl-bwd: (see segmented_rms_norm_double_backward)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_rms_fwd</span><span class="p">(</span><span class="n">vec_t</span><span class="p">):</span>
+    <span class="n">scalar_t</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span> <span class="k">if</span> <span class="n">vec_t</span> <span class="ow">is</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3f</span> <span class="k">else</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">fn</span><span class="p">(</span>
+        <span class="n">x</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">scalar_t</span><span class="p">),</span>
+        <span class="n">inv_norm</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">scalar_t</span><span class="p">),</span>
+        <span class="n">counts</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="p">):</span>
+        <span class="c1"># ``inv_norm`` and ``counts`` are exposed as kernel outputs so the JAX</span>
+        <span class="c1"># VJP can save them as residual state without recomputing the divide</span>
+        <span class="c1"># and the bincount on the host.</span>
+        <span class="n">num_segments</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">sum_sq</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">num_segments</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">scalar_t</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">x</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">segmented_rms_norm_forward_precompute</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">sum_sq</span><span class="p">,</span> <span class="n">counts</span><span class="p">,</span> <span class="n">out</span><span class="p">,</span> <span class="n">inv_norm</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">fn</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_rms_bwd</span><span class="p">(</span><span class="n">vec_t</span><span class="p">):</span>
+    <span class="n">scalar_t</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span> <span class="k">if</span> <span class="n">vec_t</span> <span class="ow">is</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3f</span> <span class="k">else</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">fn</span><span class="p">(</span>
+        <span class="n">g_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">scalar_t</span><span class="p">),</span>
+        <span class="n">x</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">inv_norm</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">scalar_t</span><span class="p">),</span>
+        <span class="n">idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">grad_x</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+    <span class="p">):</span>
+        <span class="n">segmented_rms_norm_backward</span><span class="p">(</span><span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">inv_norm</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">grad_x</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">fn</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_rms_dbl_bwd</span><span class="p">(</span><span class="n">vec_t</span><span class="p">):</span>
+    <span class="n">scalar_t</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span> <span class="k">if</span> <span class="n">vec_t</span> <span class="ow">is</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3f</span> <span class="k">else</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">fn</span><span class="p">(</span>
+        <span class="n">gg_x</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">x</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">g_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">scalar_t</span><span class="p">),</span>
+        <span class="n">inv_norm</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">scalar_t</span><span class="p">),</span>
+        <span class="n">counts</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">grad_x_extra</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">grad_g_out_extra</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">scalar_t</span><span class="p">),</span>
+    <span class="p">):</span>
+        <span class="n">segmented_rms_norm_double_backward</span><span class="p">(</span>
+            <span class="n">gg_x</span><span class="p">,</span>
+            <span class="n">x</span><span class="p">,</span>
+            <span class="n">g_out</span><span class="p">,</span>
+            <span class="n">inv_norm</span><span class="p">,</span>
+            <span class="n">counts</span><span class="p">,</span>
+            <span class="n">idx</span><span class="p">,</span>
+            <span class="n">grad_g_out_extra</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+            <span class="n">grad_x_extra</span><span class="p">,</span>
+            <span class="n">grad_g_out_extra</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">fn</span>
+
+
+<span class="n">_RMS_WP</span> <span class="o">=</span> <span class="p">{</span><span class="n">_F</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3f</span><span class="p">,</span> <span class="n">_D</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">}</span>
+<span class="n">_FWD_RMS</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">k</span><span class="p">:</span> <span class="n">jax_callable</span><span class="p">(</span><span class="n">_make_rms_fwd</span><span class="p">(</span><span class="n">v</span><span class="p">),</span> <span class="n">num_outputs</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">_RMS_WP</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+<span class="p">}</span>
+<span class="n">_BWD_RMS</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">k</span><span class="p">:</span> <span class="n">jax_callable</span><span class="p">(</span><span class="n">_make_rms_bwd</span><span class="p">(</span><span class="n">v</span><span class="p">),</span> <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">_RMS_WP</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+<span class="p">}</span>
+<span class="n">_DBL_RMS</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">k</span><span class="p">:</span> <span class="n">jax_callable</span><span class="p">(</span><span class="n">_make_rms_dbl_bwd</span><span class="p">(</span><span class="n">v</span><span class="p">),</span> <span class="n">num_outputs</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">_RMS_WP</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+<span class="p">}</span>
+
+
+<span class="nd">@partial</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">custom_vjp</span><span class="p">,</span> <span class="n">nondiff_argnums</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_rms_bwd_op</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">inv_norm</span><span class="p">,</span> <span class="n">counts</span><span class="p">):</span>
+    <span class="p">(</span><span class="n">grad_x</span><span class="p">,)</span> <span class="o">=</span> <span class="n">_BWD_RMS</span><span class="p">[</span><span class="n">dtype</span><span class="p">](</span>
+        <span class="n">g_out</span><span class="p">,</span>
+        <span class="n">x</span><span class="p">,</span>
+        <span class="n">inv_norm</span><span class="p">,</span>
+        <span class="n">idx</span><span class="p">,</span>
+        <span class="n">output_dims</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;grad_x&quot;</span><span class="p">:</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">},</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">grad_x</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_rms_bwd_op_fwd</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">inv_norm</span><span class="p">,</span> <span class="n">counts</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">_rms_bwd_op</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">inv_norm</span><span class="p">,</span> <span class="n">counts</span><span class="p">),</span> <span class="p">(</span>
+        <span class="n">idx</span><span class="p">,</span>
+        <span class="n">g_out</span><span class="p">,</span>
+        <span class="n">x</span><span class="p">,</span>
+        <span class="n">inv_norm</span><span class="p">,</span>
+        <span class="n">counts</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_rms_bwd_op_bwd</span><span class="p">(</span><span class="n">dtype</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">residuals</span><span class="p">,</span> <span class="n">gg_x</span><span class="p">):</span>
+    <span class="n">idx</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">inv_norm</span><span class="p">,</span> <span class="n">counts</span> <span class="o">=</span> <span class="n">residuals</span>
+    <span class="p">(</span><span class="n">grad_x_extra</span><span class="p">,</span> <span class="n">grad_g_out_extra</span><span class="p">)</span> <span class="o">=</span> <span class="n">_DBL_RMS</span><span class="p">[</span><span class="n">dtype</span><span class="p">](</span>
+        <span class="n">gg_x</span><span class="p">,</span>
+        <span class="n">x</span><span class="p">,</span>
+        <span class="n">g_out</span><span class="p">,</span>
+        <span class="n">inv_norm</span><span class="p">,</span>
+        <span class="n">counts</span><span class="p">,</span>
+        <span class="n">idx</span><span class="p">,</span>
+        <span class="n">output_dims</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;grad_x_extra&quot;</span><span class="p">:</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="s2">&quot;grad_g_out_extra&quot;</span><span class="p">:</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,)},</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="n">jnp</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span>
+        <span class="n">grad_g_out_extra</span><span class="p">,</span>
+        <span class="n">grad_x_extra</span><span class="p">,</span>
+        <span class="n">jnp</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">inv_norm</span><span class="p">),</span>
+        <span class="n">jnp</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">counts</span><span class="p">),</span>
+    <span class="p">)</span>
+
+
+<span class="n">_rms_bwd_op</span><span class="o">.</span><span class="n">defvjp</span><span class="p">(</span><span class="n">_rms_bwd_op_fwd</span><span class="p">,</span> <span class="n">_rms_bwd_op_bwd</span><span class="p">)</span>
+
+
+<span class="nd">@partial</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">custom_vjp</span><span class="p">,</span> <span class="n">nondiff_argnums</span><span class="o">=</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_rms_op</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">dtype</span><span class="p">):</span>
+    <span class="c1"># Returns (out, inv_norm, counts) so the VJP can save the precompute</span>
+    <span class="c1"># state as residuals.  ``counts`` is int32 and ``inv_norm`` is the</span>
+    <span class="c1"># already-saved-state slot from the underlying Warp precompute kernel</span>
+    <span class="c1"># — JAX treats counts as non-differentiable automatically, and we</span>
+    <span class="c1"># don&#39;t differentiate inv_norm because it&#39;s bookkeeping for the bwd.</span>
+    <span class="n">out</span><span class="p">,</span> <span class="n">inv_norm</span><span class="p">,</span> <span class="n">counts</span> <span class="o">=</span> <span class="n">_FWD_RMS</span><span class="p">[</span><span class="n">dtype</span><span class="p">](</span>
+        <span class="n">x</span><span class="p">,</span>
+        <span class="n">idx</span><span class="p">,</span>
+        <span class="n">output_dims</span><span class="o">=</span><span class="p">{</span>
+            <span class="s2">&quot;out&quot;</span><span class="p">:</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,),</span>
+            <span class="s2">&quot;inv_norm&quot;</span><span class="p">:</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,),</span>
+            <span class="s2">&quot;counts&quot;</span><span class="p">:</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,),</span>
+        <span class="p">},</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">out</span><span class="p">,</span> <span class="n">inv_norm</span><span class="p">,</span> <span class="n">counts</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_rms_op_fwd</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">dtype</span><span class="p">):</span>
+    <span class="n">out</span><span class="p">,</span> <span class="n">inv_norm</span><span class="p">,</span> <span class="n">counts</span> <span class="o">=</span> <span class="n">_rms_op</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">dtype</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">out</span><span class="p">,</span> <span class="n">inv_norm</span><span class="p">,</span> <span class="n">counts</span><span class="p">),</span> <span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">inv_norm</span><span class="p">,</span> <span class="n">counts</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_rms_op_bwd</span><span class="p">(</span><span class="n">num_segments</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">residuals</span><span class="p">,</span> <span class="n">cotangents</span><span class="p">):</span>
+    <span class="c1"># ``cotangents`` is the triple (g_out, g_inv_norm, g_counts); only</span>
+    <span class="c1"># g_out is meaningful (the other two are saved state).</span>
+    <span class="n">g_out</span><span class="p">,</span> <span class="n">_g_inv_norm</span><span class="p">,</span> <span class="n">_g_counts</span> <span class="o">=</span> <span class="n">cotangents</span>
+    <span class="n">idx</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">inv_norm</span><span class="p">,</span> <span class="n">counts</span> <span class="o">=</span> <span class="n">residuals</span>
+    <span class="n">grad_x</span> <span class="o">=</span> <span class="n">_rms_bwd_op</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">inv_norm</span><span class="p">,</span> <span class="n">counts</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">grad_x</span><span class="p">,</span> <span class="kc">None</span>
+
+
+<span class="n">_rms_op</span><span class="o">.</span><span class="n">defvjp</span><span class="p">(</span><span class="n">_rms_op_fwd</span><span class="p">,</span> <span class="n">_rms_op_bwd</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="segmented_rms_norm">
+<a class="viewcode-back" href="../../../modules/jax/segment_ops.html#nvalchemiops.jax.segment_ops.segmented_rms_norm">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">segmented_rms_norm</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the differentiable per-segment RMS norm of vec3 inputs.</span>
+
+<span class="sd">    For each segment ``s``, computes</span>
+<span class="sd">    :math:`\\text{out}[s] = \\sqrt{\\frac{1}{|s|} \\sum_{i:\\,\\text{idx}[i]=s} \\|x[i]\\|^2}`.</span>
+<span class="sd">    Inverse norms and per-segment counts are precomputed during the forward</span>
+<span class="sd">    pass and cached as residuals.  Supports float32 and float64.</span>
+<span class="sd">    Second-order gradients are supported.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    x : jax.Array, shape (N, 3)</span>
+<span class="sd">        Vec3 values.  Must be float32 or float64.</span>
+<span class="sd">    idx : jax.Array, shape (N,), dtype int32</span>
+<span class="sd">        Segment index for each element.  Values must lie in</span>
+<span class="sd">        ``[0, num_segments)``.</span>
+<span class="sd">    num_segments : int</span>
+<span class="sd">        Number of output segments.  Treated as a static (compile-time)</span>
+<span class="sd">        constant by JAX.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    jax.Array, shape (num_segments,)</span>
+<span class="sd">        Per-segment RMS norms.</span>
+
+<span class="sd">    See Also</span>
+<span class="sd">    --------</span>
+<span class="sd">    :func:`nvalchemiops.jax.segment_ops.segmented_mean` : Per-segment mean.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">out</span><span class="p">,</span> <span class="n">_inv_norm</span><span class="p">,</span> <span class="n">_counts</span> <span class="o">=</span> <span class="n">_rms_op</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">_norm_dtype</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">dtype</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">out</span></div>
+
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># segmented_matvec</span>
+<span class="c1"># =============================================================================</span>
+<span class="c1"># Forward:  out[i] = m[idx[i]]^T @ v[i]</span>
+<span class="c1"># Bwd:      grad_v[i] = num_segments[s] @ g_out[i]</span>
+<span class="c1">#           grad_M[s] = sum_{i: idx[i]=s} outer(v[i], g_out[i])</span>
+<span class="c1"># Dbl-bwd:  grad_g_out[i]   = num_segments[s]^T @ gg_gv[i] + gg_gM[s]^T @ v[i]</span>
+<span class="c1">#           grad_v_extra[i] = gg_gM[s] @ g_out[i]</span>
+<span class="c1">#           grad_M_extra[s] = sum outer(gg_gv[i], g_out[i])</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_matvec_fwd</span><span class="p">(</span><span class="n">vec_t</span><span class="p">,</span> <span class="n">mat_t</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">fn</span><span class="p">(</span>
+        <span class="n">v</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">m</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">mat_t</span><span class="p">),</span>
+        <span class="n">idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+    <span class="p">):</span>
+        <span class="n">_wp_segmented_matvec</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">m</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">out</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">fn</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_matvec_bwd</span><span class="p">(</span><span class="n">vec_t</span><span class="p">,</span> <span class="n">mat_t</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">fn</span><span class="p">(</span>
+        <span class="n">g_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">v</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">m</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">mat_t</span><span class="p">),</span>
+        <span class="n">idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">grad_v</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">grad_M</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">mat_t</span><span class="p">),</span>
+    <span class="p">):</span>
+        <span class="n">segmented_matvec_backward</span><span class="p">(</span><span class="n">g_out</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">m</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">grad_v</span><span class="p">,</span> <span class="n">grad_M</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">fn</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_matvec_dbl_bwd</span><span class="p">(</span><span class="n">vec_t</span><span class="p">,</span> <span class="n">mat_t</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">fn</span><span class="p">(</span>
+        <span class="n">gg_gv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">gg_gM</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">mat_t</span><span class="p">),</span>
+        <span class="n">g_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">v</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">m</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">mat_t</span><span class="p">),</span>
+        <span class="n">idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">grad_g_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">grad_v_extra</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_t</span><span class="p">),</span>
+        <span class="n">grad_M_extra</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">mat_t</span><span class="p">),</span>
+    <span class="p">):</span>
+        <span class="n">segmented_matvec_double_backward</span><span class="p">(</span>
+            <span class="n">gg_gv</span><span class="p">,</span>
+            <span class="n">gg_gM</span><span class="p">,</span>
+            <span class="n">g_out</span><span class="p">,</span>
+            <span class="n">v</span><span class="p">,</span>
+            <span class="n">m</span><span class="p">,</span>
+            <span class="n">idx</span><span class="p">,</span>
+            <span class="n">grad_g_out</span><span class="p">,</span>
+            <span class="n">grad_v_extra</span><span class="p">,</span>
+            <span class="n">grad_M_extra</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">fn</span>
+
+
+<span class="n">_MAT_WP</span> <span class="o">=</span> <span class="p">{</span><span class="n">_F</span><span class="p">:</span> <span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3f</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">mat33f</span><span class="p">),</span> <span class="n">_D</span><span class="p">:</span> <span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">mat33d</span><span class="p">)}</span>
+<span class="n">_FWD_MAT</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">k</span><span class="p">:</span> <span class="n">jax_callable</span><span class="p">(</span><span class="n">_make_matvec_fwd</span><span class="p">(</span><span class="o">*</span><span class="n">v</span><span class="p">),</span> <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">_MAT_WP</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+<span class="p">}</span>
+<span class="n">_BWD_MAT</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">k</span><span class="p">:</span> <span class="n">jax_callable</span><span class="p">(</span><span class="n">_make_matvec_bwd</span><span class="p">(</span><span class="o">*</span><span class="n">v</span><span class="p">),</span> <span class="n">num_outputs</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">_MAT_WP</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+<span class="p">}</span>
+<span class="n">_DBL_MAT</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">k</span><span class="p">:</span> <span class="n">jax_callable</span><span class="p">(</span><span class="n">_make_matvec_dbl_bwd</span><span class="p">(</span><span class="o">*</span><span class="n">v</span><span class="p">),</span> <span class="n">num_outputs</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">_MAT_WP</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+<span class="p">}</span>
+
+
+<span class="nd">@partial</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">custom_vjp</span><span class="p">,</span> <span class="n">nondiff_argnums</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_matvec_bwd_op</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">m</span><span class="p">):</span>
+    <span class="p">(</span><span class="n">grad_v</span><span class="p">,</span> <span class="n">grad_M</span><span class="p">)</span> <span class="o">=</span> <span class="n">_BWD_MAT</span><span class="p">[</span><span class="n">dtype</span><span class="p">](</span>
+        <span class="n">g_out</span><span class="p">,</span>
+        <span class="n">v</span><span class="p">,</span>
+        <span class="n">m</span><span class="p">,</span>
+        <span class="n">idx</span><span class="p">,</span>
+        <span class="n">output_dims</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;grad_v&quot;</span><span class="p">:</span> <span class="n">v</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="s2">&quot;grad_M&quot;</span><span class="p">:</span> <span class="n">m</span><span class="o">.</span><span class="n">shape</span><span class="p">},</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">grad_v</span><span class="p">,</span> <span class="n">grad_M</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_matvec_bwd_op_fwd</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">m</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">_matvec_bwd_op</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">m</span><span class="p">),</span> <span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">m</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_matvec_bwd_op_bwd</span><span class="p">(</span><span class="n">dtype</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">residuals</span><span class="p">,</span> <span class="n">cotangents</span><span class="p">):</span>
+    <span class="n">idx</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">m</span> <span class="o">=</span> <span class="n">residuals</span>
+    <span class="n">gg_gv</span><span class="p">,</span> <span class="n">gg_gM</span> <span class="o">=</span> <span class="n">cotangents</span>
+    <span class="p">(</span><span class="n">grad_g_out</span><span class="p">,</span> <span class="n">grad_v_extra</span><span class="p">,</span> <span class="n">grad_M_extra</span><span class="p">)</span> <span class="o">=</span> <span class="n">_DBL_MAT</span><span class="p">[</span><span class="n">dtype</span><span class="p">](</span>
+        <span class="n">gg_gv</span><span class="p">,</span>
+        <span class="n">gg_gM</span><span class="p">,</span>
+        <span class="n">g_out</span><span class="p">,</span>
+        <span class="n">v</span><span class="p">,</span>
+        <span class="n">m</span><span class="p">,</span>
+        <span class="n">idx</span><span class="p">,</span>
+        <span class="n">output_dims</span><span class="o">=</span><span class="p">{</span>
+            <span class="s2">&quot;grad_g_out&quot;</span><span class="p">:</span> <span class="n">v</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span>
+            <span class="s2">&quot;grad_v_extra&quot;</span><span class="p">:</span> <span class="n">v</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span>
+            <span class="s2">&quot;grad_M_extra&quot;</span><span class="p">:</span> <span class="n">m</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span>
+        <span class="p">},</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span> <span class="n">grad_g_out</span><span class="p">,</span> <span class="n">grad_v_extra</span><span class="p">,</span> <span class="n">grad_M_extra</span><span class="p">)</span>
+
+
+<span class="n">_matvec_bwd_op</span><span class="o">.</span><span class="n">defvjp</span><span class="p">(</span><span class="n">_matvec_bwd_op_fwd</span><span class="p">,</span> <span class="n">_matvec_bwd_op_bwd</span><span class="p">)</span>
+
+
+<span class="nd">@partial</span><span class="p">(</span><span class="n">jax</span><span class="o">.</span><span class="n">custom_vjp</span><span class="p">,</span> <span class="n">nondiff_argnums</span><span class="o">=</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">))</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_matvec_op</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">m</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">dtype</span><span class="p">):</span>
+    <span class="p">(</span><span class="n">out</span><span class="p">,)</span> <span class="o">=</span> <span class="n">_FWD_MAT</span><span class="p">[</span><span class="n">dtype</span><span class="p">](</span><span class="n">v</span><span class="p">,</span> <span class="n">m</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">output_dims</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;out&quot;</span><span class="p">:</span> <span class="n">v</span><span class="o">.</span><span class="n">shape</span><span class="p">})</span>
+    <span class="k">return</span> <span class="n">out</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_matvec_op_fwd</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">m</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">dtype</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">_matvec_op</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">m</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">dtype</span><span class="p">),</span> <span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">m</span><span class="p">,</span> <span class="n">idx</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_matvec_op_bwd</span><span class="p">(</span><span class="n">num_segments</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">residuals</span><span class="p">,</span> <span class="n">g_out</span><span class="p">):</span>
+    <span class="n">v</span><span class="p">,</span> <span class="n">m</span><span class="p">,</span> <span class="n">idx</span> <span class="o">=</span> <span class="n">residuals</span>
+    <span class="n">grad_v</span><span class="p">,</span> <span class="n">grad_M</span> <span class="o">=</span> <span class="n">_matvec_bwd_op</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">m</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">grad_v</span><span class="p">,</span> <span class="n">grad_M</span><span class="p">,</span> <span class="kc">None</span>
+
+
+<span class="n">_matvec_op</span><span class="o">.</span><span class="n">defvjp</span><span class="p">(</span><span class="n">_matvec_op_fwd</span><span class="p">,</span> <span class="n">_matvec_op_bwd</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="segmented_matvec">
+<a class="viewcode-back" href="../../../modules/jax/segment_ops.html#nvalchemiops.jax.segment_ops.segmented_matvec">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">segmented_matvec</span><span class="p">(</span>
+    <span class="n">v</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">m</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Apply a per-segment 3x3 matrix transpose to each vec3 element.</span>
+
+<span class="sd">    Computes :math:`\\text{out}[i] = m[\\text{idx}[i]]^\\top v[i]` where</span>
+<span class="sd">    ``m`` holds one 3x3 matrix per segment.  Supports float32 and float64.</span>
+<span class="sd">    Second-order gradients are supported.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    v : jax.Array, shape (N, 3)</span>
+<span class="sd">        Vec3 inputs.  Must be float32 or float64.</span>
+<span class="sd">    m : jax.Array, shape (num_segments, 3, 3)</span>
+<span class="sd">        Per-segment 3x3 matrices.  Must share dtype with ``v``.</span>
+<span class="sd">    idx : jax.Array, shape (N,), dtype int32</span>
+<span class="sd">        Segment index for each element.  Values must lie in</span>
+<span class="sd">        ``[0, num_segments)``.</span>
+<span class="sd">    num_segments : int</span>
+<span class="sd">        Number of segments.  Treated as a static (compile-time) constant</span>
+<span class="sd">        by JAX.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    jax.Array, shape (N, 3)</span>
+<span class="sd">        Transformed vec3 values; ``out[i] = m[idx[i]]^T @ v[i]``.</span>
+
+<span class="sd">    See Also</span>
+<span class="sd">    --------</span>
+<span class="sd">    :func:`nvalchemiops.jax.segment_ops.segmented_mul` : Per-element scale by per-segment scalar.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">_matvec_op</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">m</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">_norm_dtype</span><span class="p">(</span><span class="n">v</span><span class="o">.</span><span class="n">dtype</span><span class="p">))</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

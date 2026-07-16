@@ -40,23 +40,28 @@ The Ewald energy is decomposed as:
 .. math::
     E_{\text{total}} = E_{\text{real}} + E_{\text{reciprocal}} - E_{\text{self}}
 
+For this neutral-system example the uniform-background correction is zero. It
+is included by the API for non-neutral periodic systems.
+
 .. important::
     This script is intended as an API demonstration. Do not use this script
     for performance benchmarking; refer to the `benchmarks` folder instead.
 
-.. GENERATED FROM PYTHON SOURCE LINES 45-49
+.. GENERATED FROM PYTHON SOURCE LINES 48-52
 
 Setup and Imports
 -----------------
 First, we import the necessary modules. The Ewald API provides unified functions
 that handle both single-system and batched calculations.
 
-.. GENERATED FROM PYTHON SOURCE LINES 49-64
+.. GENERATED FROM PYTHON SOURCE LINES 52-69
 
 .. code-block:: Python
 
 
     from __future__ import annotations
+
+    import warnings
 
     import numpy as np
     import torch
@@ -77,12 +82,12 @@ that handle both single-system and batched calculations.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 65-67
+.. GENERATED FROM PYTHON SOURCE LINES 70-72
 
 Configure Device
 ----------------
 
-.. GENERATED FROM PYTHON SOURCE LINES 67-76
+.. GENERATED FROM PYTHON SOURCE LINES 72-93
 
 .. code-block:: Python
 
@@ -96,6 +101,18 @@ Configure Device
         print("Using CPU")
 
 
+    def _legacy_direct_output_call(function, *args, **kwargs):
+        """Call a deprecated direct-output path used for explicit migration checks."""
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                category=DeprecationWarning,
+                message="The direct-output flags.*",
+            )
+            return function(*args, **kwargs)
+
+
+
 
 
 
@@ -104,19 +121,19 @@ Configure Device
  .. code-block:: none
 
     Using CUDA device
-      NVIDIA L4
+      NVIDIA H100 80GB HBM3
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 77-81
+.. GENERATED FROM PYTHON SOURCE LINES 94-98
 
 Create a NaCl Crystal System
 ----------------------------
 We define a helper function to create NaCl rock salt crystal supercells.
 NaCl has Na+ at (0,0,0) and Cl- at (0.5,0.5,0.5) in fractional coordinates.
 
-.. GENERATED FROM PYTHON SOURCE LINES 81-120
+.. GENERATED FROM PYTHON SOURCE LINES 98-137
 
 .. code-block:: Python
 
@@ -166,7 +183,7 @@ NaCl has Na+ at (0,0,0) and Cl- at (0.5,0.5,0.5) in fractional coordinates.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 121-126
+.. GENERATED FROM PYTHON SOURCE LINES 138-143
 
 Basic Usage with Automatic Parameters
 -------------------------------------
@@ -174,7 +191,7 @@ The simplest way to use Ewald summation is with automatic parameter estimation.
 Given an accuracy tolerance, the API estimates optimal alpha, real-space cutoff,
 and reciprocal-space cutoff using the Kolafa-Perram formula.
 
-.. GENERATED FROM PYTHON SOURCE LINES 126-134
+.. GENERATED FROM PYTHON SOURCE LINES 143-151
 
 .. code-block:: Python
 
@@ -184,7 +201,7 @@ and reciprocal-space cutoff using the Kolafa-Perram formula.
 
     print(f"System: {len(positions)} atoms NaCl crystal")
     print(f"Cell size: {cell[0, 0, 0]:.2f} Å")
-    print(f"Total charge: {charges.sum().item():.1f} (should be 0 for neutral)")
+    print(f"Total charge: {charges.sum().item():.1f} (constructed neutral system)")
 
 
 
@@ -196,16 +213,16 @@ and reciprocal-space cutoff using the Kolafa-Perram formula.
 
     System: 16 atoms NaCl crystal
     Cell size: 11.28 Å
-    Total charge: 0.0 (should be 0 for neutral)
+    Total charge: 0.0 (constructed neutral system)
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 135-136
+.. GENERATED FROM PYTHON SOURCE LINES 152-153
 
 Estimate optimal parameters for target accuracy:
 
-.. GENERATED FROM PYTHON SOURCE LINES 136-144
+.. GENERATED FROM PYTHON SOURCE LINES 153-161
 
 .. code-block:: Python
 
@@ -234,11 +251,11 @@ Estimate optimal parameters for target accuracy:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 145-146
+.. GENERATED FROM PYTHON SOURCE LINES 162-163
 
 Build neighbor list and run Ewald summation:
 
-.. GENERATED FROM PYTHON SOURCE LINES 146-172
+.. GENERATED FROM PYTHON SOURCE LINES 163-190
 
 .. code-block:: Python
 
@@ -251,16 +268,17 @@ Build neighbor list and run Ewald summation:
         return_neighbor_list=True,
     )
 
-    energies, forces = ewald_summation(
-        positions=positions,
+    positions_grad = positions.detach().clone().requires_grad_(True)
+    energies = ewald_summation(
+        positions=positions_grad,
         charges=charges,
         cell=cell,
         neighbor_list=neighbor_list,
         neighbor_ptr=neighbor_ptr,
         neighbor_shifts=neighbor_shifts,
         accuracy=1e-6,  # Parameters estimated automatically
-        compute_forces=True,
     )
+    forces = -torch.autograd.grad(energies.sum(), positions_grad)[0]
 
     total_energy = energies.sum().item()
     print("\nEwald Summation Results:")
@@ -285,14 +303,14 @@ Build neighbor list and run Ewald summation:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 173-177
+.. GENERATED FROM PYTHON SOURCE LINES 191-195
 
 Neighbor List vs Neighbor Matrix Format
 ---------------------------------------
 The Ewald functions support two neighbor formats. Both produce identical results.
 We use the estimated parameters from above for consistency.
 
-.. GENERATED FROM PYTHON SOURCE LINES 177-199
+.. GENERATED FROM PYTHON SOURCE LINES 195-217
 
 .. code-block:: Python
 
@@ -333,11 +351,11 @@ We use the estimated parameters from above for consistency.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 200-201
+.. GENERATED FROM PYTHON SOURCE LINES 218-219
 
 Using neighbor list format:
 
-.. GENERATED FROM PYTHON SOURCE LINES 201-214
+.. GENERATED FROM PYTHON SOURCE LINES 219-232
 
 .. code-block:: Python
 
@@ -367,11 +385,11 @@ Using neighbor list format:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 215-216
+.. GENERATED FROM PYTHON SOURCE LINES 233-234
 
 Using neighbor matrix format:
 
-.. GENERATED FROM PYTHON SOURCE LINES 216-231
+.. GENERATED FROM PYTHON SOURCE LINES 234-249
 
 .. code-block:: Python
 
@@ -404,7 +422,7 @@ Using neighbor matrix format:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 232-237
+.. GENERATED FROM PYTHON SOURCE LINES 250-255
 
 Convergence with Accuracy Parameter
 -----------------------------------
@@ -412,7 +430,7 @@ The Ewald summation accuracy depends on the accuracy parameter, which controls
 both the real-space cutoff and the k-space cutoff. The parameter estimation
 uses the Kolafa-Perram formula to balance computational cost.
 
-.. GENERATED FROM PYTHON SOURCE LINES 237-284
+.. GENERATED FROM PYTHON SOURCE LINES 255-302
 
 .. code-block:: Python
 
@@ -441,7 +459,7 @@ uses the Kolafa-Perram formula to balance computational cost.
 
         # Generate k-vectors for counting
         k_vectors = generate_k_vectors_ewald_summation(
-            cell, params_acc.reciprocal_space_cutoff
+            cell.detach(), params_acc.reciprocal_space_cutoff
         )
         num_kvec = k_vectors.shape[1]
 
@@ -485,11 +503,11 @@ uses the Kolafa-Perram formula to balance computational cost.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 285-286
+.. GENERATED FROM PYTHON SOURCE LINES 303-304
 
 Show convergence relative to highest accuracy:
 
-.. GENERATED FROM PYTHON SOURCE LINES 286-293
+.. GENERATED FROM PYTHON SOURCE LINES 304-311
 
 .. code-block:: Python
 
@@ -519,14 +537,14 @@ Show convergence relative to highest accuracy:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 294-298
+.. GENERATED FROM PYTHON SOURCE LINES 312-316
 
 Real-Space and Reciprocal-Space Components
 ------------------------------------------
 The Ewald energy splits into real-space (short-range) and reciprocal-space
 (long-range) components. You can access these separately.
 
-.. GENERATED FROM PYTHON SOURCE LINES 298-317
+.. GENERATED FROM PYTHON SOURCE LINES 316-335
 
 .. code-block:: Python
 
@@ -536,7 +554,7 @@ The Ewald energy splits into real-space (short-range) and reciprocal-space
 
     params_4 = estimate_ewald_parameters(positions_4, cell_4, accuracy=1e-4)
     k_vectors_4 = generate_k_vectors_ewald_summation(
-        cell_4, params_4.reciprocal_space_cutoff
+        cell_4.detach(), params_4.reciprocal_space_cutoff
     )
 
     neighbor_list_4, neighbor_ptr_4, neighbor_shifts_4 = neighbor_list_fn(
@@ -563,11 +581,11 @@ The Ewald energy splits into real-space (short-range) and reciprocal-space
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 318-319
+.. GENERATED FROM PYTHON SOURCE LINES 336-337
 
 Real-space component:
 
-.. GENERATED FROM PYTHON SOURCE LINES 319-333
+.. GENERATED FROM PYTHON SOURCE LINES 337-351
 
 .. code-block:: Python
 
@@ -593,16 +611,16 @@ Real-space component:
 
  .. code-block:: none
 
-      Real-space: -10.361826
+      Real-space: -10.361825
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 334-335
+.. GENERATED FROM PYTHON SOURCE LINES 352-353
 
 Reciprocal-space component:
 
-.. GENERATED FROM PYTHON SOURCE LINES 335-348
+.. GENERATED FROM PYTHON SOURCE LINES 353-366
 
 .. code-block:: Python
 
@@ -633,15 +651,15 @@ Reciprocal-space component:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 349-354
+.. GENERATED FROM PYTHON SOURCE LINES 367-372
 
-Charge Gradients for ML Potentials
-----------------------------------
-The Ewald functions support computing analytical charge gradients (∂E/∂q_i),
-which are useful for training machine learning potentials that predict charges.
-The charge gradient represents the electrostatic potential at each atom.
+Legacy Direct Charge-Gradient Outputs
+-------------------------------------
+Component charge-gradient outputs remain available for compatibility and
+migration checks. New differentiable training code should prefer the energy
+autograd recipe verified below.
 
-.. GENERATED FROM PYTHON SOURCE LINES 354-396
+.. GENERATED FROM PYTHON SOURCE LINES 372-414
 
 .. code-block:: Python
 
@@ -697,6 +715,8 @@ The charge gradient represents the electrostatic potential at each atom.
 
 
     Charge Gradients:
+    /lustre/fs1/portfolios/coreai/projects/coreai_modulus_alchemi/users/kinlongkelvi/code/nvalchemi-toolkit-ops/examples/electrostatics/02_ewald_summation_example.py:376: DeprecationWarning: The component direct-output flag(s) compute_charge_gradients on ewald_real_space are deprecated for differentiable training and will be removed in a future release. Component compute_forces=True remains supported for no-autograd MD/inference loops. For training, compute the energy and use torch.autograd.grad on the energy instead.
+      real_energies, real_forces, real_charge_grads = ewald_real_space(
       Real-space charge gradients shape: torch.Size([128])
       Real-space charge gradients range: [-0.1619, 0.1619]
       Reciprocal-space charge gradients range: [-0.1990, 0.1990]
@@ -705,19 +725,20 @@ The charge gradient represents the electrostatic potential at each atom.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 397-401
+.. GENERATED FROM PYTHON SOURCE LINES 415-419
 
-Full Ewald with charge gradients in one call:
+Full Ewald legacy charge-gradient output in one call:
 
-Instead of calling the components separately, ``ewald_summation`` now supports
-``compute_charge_gradients`` directly — matching ``particle_mesh_ewald``.
+This direct-output flag remains functional for compatibility; use
+``torch.autograd.grad`` on the scalar energy for new training code.
 
-.. GENERATED FROM PYTHON SOURCE LINES 401-422
+.. GENERATED FROM PYTHON SOURCE LINES 419-441
 
 .. code-block:: Python
 
 
-    energies_full, forces_full, charge_grads_full = ewald_summation(
+    energies_full, forces_full, charge_grads_full = _legacy_direct_output_call(
+        ewald_summation,
         positions=positions_4,
         charges=charges_4,
         cell=cell_4,
@@ -752,11 +773,11 @@ Instead of calling the components separately, ``ewald_summation`` now supports
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 423-424
+.. GENERATED FROM PYTHON SOURCE LINES 442-443
 
-Verify charge gradients against autograd:
+Verify legacy direct charge gradients against the training autograd recipe:
 
-.. GENERATED FROM PYTHON SOURCE LINES 424-445
+.. GENERATED FROM PYTHON SOURCE LINES 443-464
 
 .. code-block:: Python
 
@@ -777,7 +798,7 @@ Verify charge gradients against autograd:
     charges_4.requires_grad_(False)
     charges_4.grad = None
 
-    # Compare explicit vs autograd charge gradients
+    # Compare legacy direct vs autograd charge gradients
     charge_grad_diff = (charge_grads_full - autograd_charge_grads).abs().max().item()
     print(f"  Explicit vs Autograd charge gradient max diff: {charge_grad_diff:.2e}")
 
@@ -789,19 +810,19 @@ Verify charge gradients against autograd:
 
  .. code-block:: none
 
-      Explicit vs Autograd charge gradient max diff: 2.77e-09
+      Explicit vs Autograd charge gradient max diff: 3.33e-16
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 446-450
+.. GENERATED FROM PYTHON SOURCE LINES 465-469
 
 Batch Evaluation
 ----------------
 Multiple systems can be evaluated simultaneously using batch_idx.
 Each system can have different alpha values.
 
-.. GENERATED FROM PYTHON SOURCE LINES 450-470
+.. GENERATED FROM PYTHON SOURCE LINES 469-491
 
 .. code-block:: Python
 
@@ -812,6 +833,7 @@ Each system can have different alpha values.
     all_cells = []
     all_pbc = []
     batch_idx_list = []
+    atom_counts = []
 
     print(f"\nBatch Evaluation: Creating {n_systems} systems...")
 
@@ -819,6 +841,7 @@ Each system can have different alpha values.
         n_cells = i + 2  # 2×2×2, 3×3×3, 4×4×4
         pos, chrg, cell_i, pbc_i = create_nacl_system(n_cells=n_cells)
         batch_idx_list.extend([i] * len(pos))
+        atom_counts.append(len(pos))
         all_positions.append(pos)
         all_charges.append(chrg)
         all_cells.append(cell_i)
@@ -842,11 +865,11 @@ Each system can have different alpha values.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 471-472
+.. GENERATED FROM PYTHON SOURCE LINES 492-493
 
 Concatenate all systems:
 
-.. GENERATED FROM PYTHON SOURCE LINES 472-489
+.. GENERATED FROM PYTHON SOURCE LINES 493-512
 
 .. code-block:: Python
 
@@ -856,6 +879,8 @@ Concatenate all systems:
     cells_batch = torch.cat(all_cells, dim=0)
     pbc_batch = torch.cat(all_pbc, dim=0)
     batch_idx = torch.tensor(batch_idx_list, dtype=torch.int32, device=device)
+    # Host-known launch bound from the systems constructed above.
+    max_atoms_per_system = max(atom_counts)
 
     # Estimate parameters for the batch with desired accuracy
     params_batch = estimate_ewald_parameters(
@@ -863,7 +888,7 @@ Concatenate all systems:
     )
 
     print(f"\nTotal atoms: {len(positions_batch)}")
-    print(f"Per-system alphas: {params_batch.alpha.tolist()}")
+    print(f"Estimated alphas: {params_batch.alpha.tolist()}")
     print(f"Real-space cutoff: {params_batch.real_space_cutoff.max().item():.2f} Å")
     print(f"K-space cutoff: {params_batch.reciprocal_space_cutoff.max().item():.2f} Å⁻¹")
 
@@ -877,18 +902,18 @@ Concatenate all systems:
 
 
     Total atoms: 198
-    Per-system alphas: [0.24943219038054099, 0.20366053061902537, 0.17637519326429443]
+    Estimated alphas: [0.24943219038054099, 0.20366053061902537, 0.17637519326429443]
     Real-space cutoff: 19.24 Å
     K-space cutoff: 1.69 Å⁻¹
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 490-491
+.. GENERATED FROM PYTHON SOURCE LINES 513-514
 
 Build batched neighbor list and run:
 
-.. GENERATED FROM PYTHON SOURCE LINES 491-523
+.. GENERATED FROM PYTHON SOURCE LINES 514-547
 
 .. code-block:: Python
 
@@ -905,7 +930,8 @@ Build batched neighbor list and run:
         return_neighbor_list=False,
     )
 
-    energies_batch, forces_batch = ewald_summation(
+    energies_batch, forces_batch = _legacy_direct_output_call(
+        ewald_summation,
         positions=positions_batch,
         charges=charges_batch,
         cell=cells_batch,
@@ -932,12 +958,6 @@ Build batched neighbor list and run:
 
  .. code-block:: none
 
-    Warp DeprecationWarning: The symbol `warp.types.torch` will soon be removed from the public API. It can still be accessed from `warp._src.types.torch` but might be changed or removed without notice.
-    Warp DeprecationWarning: The symbol `warp.utils.torch` will soon be removed from the public API. It can still be accessed from `warp._src.utils.torch` but might be changed or removed without notice.
-    Warp DeprecationWarning: The namespace `warp.torch` will soon be removed from the public API. It can still be accessed from `warp._src.torch` but might be changed or removed without notice.
-    Warp DeprecationWarning: The symbol `warp.torch.contiguous_format` will soon be removed from the public API. It can still be accessed from `warp._src.torch.contiguous_format` but might be changed or removed without notice.
-    Warp DeprecationWarning: The symbol `warp.types.torch` will soon be removed from the public API. Use `warp.torch` instead.
-    Warp DeprecationWarning: The symbol `warp.utils.torch` will soon be removed from the public API. Use `warp.torch` instead.
 
     Per-system results:
       System 0: 16 atoms, E=-2.8870, |F|_max=0.0000
@@ -947,11 +967,54 @@ Build batched neighbor list and run:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 524-525
+.. GENERATED FROM PYTHON SOURCE LINES 548-550
+
+Preferred training recipe: derive batched forces from the scalar energy.
+Passing max_atoms_per_system avoids reciprocal-kernel launch-bound inference.
+
+.. GENERATED FROM PYTHON SOURCE LINES 550-568
+
+.. code-block:: Python
+
+
+    positions_batch_ag = positions_batch.detach().clone().requires_grad_(True)
+    energies_batch_ag = ewald_summation(
+        positions=positions_batch_ag,
+        charges=charges_batch,
+        cell=cells_batch,
+        batch_idx=batch_idx,
+        neighbor_matrix=neighbor_matrix_batch,
+        neighbor_matrix_shifts=neighbor_matrix_shifts_batch,
+        accuracy=1e-5,
+        max_atoms_per_system=max_atoms_per_system,
+    )
+    forces_batch_ag = -torch.autograd.grad(energies_batch_ag.sum(), positions_batch_ag)[0]
+
+    print("\nBatched energy-autograd forces:")
+    print(f"  Total energy: {energies_batch_ag.sum().item():.4f}")
+    print(f"  Max force magnitude: {torch.norm(forces_batch_ag, dim=1).max().item():.4f}")
+
+
+
+
+
+.. rst-class:: sphx-glr-script-out
+
+ .. code-block:: none
+
+
+    Batched energy-autograd forces:
+      Total energy: -35.7271
+      Max force magnitude: 0.0000
+
+
+
+
+.. GENERATED FROM PYTHON SOURCE LINES 569-570
 
 Verify batch vs individual calculations:
 
-.. GENERATED FROM PYTHON SOURCE LINES 525-550
+.. GENERATED FROM PYTHON SOURCE LINES 570-595
 
 .. code-block:: Python
 
@@ -997,7 +1060,7 @@ Verify batch vs individual calculations:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 551-570
+.. GENERATED FROM PYTHON SOURCE LINES 596-615
 
 Summary
 -------
@@ -1019,7 +1082,7 @@ Key equations implemented:
 - Self-energy: :math:`E_{\\text{self}} = \\frac{\\alpha}{\\sqrt{\\pi}} \\sum_i q_i^2`
 - Charge gradient: :math:`\\frac{\\partial E}{\\partial q_i} = \\phi_i` (electrostatic potential)
 
-.. GENERATED FROM PYTHON SOURCE LINES 570-572
+.. GENERATED FROM PYTHON SOURCE LINES 615-617
 
 .. code-block:: Python
 
@@ -1042,7 +1105,7 @@ Key equations implemented:
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 1.169 seconds)
+   **Total running time of the script:** (0 minutes 1.910 seconds)
 
 
 .. _sphx_glr_download_examples_electrostatics_02_ewald_summation_example.py:

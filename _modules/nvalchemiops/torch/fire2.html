@@ -2,17 +2,17 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../../" >
+<html lang="en" data-content_root="../../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>nvalchemiops.torch.fire2 &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>nvalchemiops.torch.fire2 &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -34,16 +34,17 @@
     <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -58,7 +59,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -125,8 +126,6 @@
   
   
     
-    
-      
     
     
     <img src="../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -420,19 +419,38 @@ document.write(`
 <span class="c1"># See the License for the specific language governing permissions and</span>
 <span class="c1"># limitations under the License.</span>
 
-<span class="sd">&quot;&quot;&quot;</span>
+<span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">PyTorch Adapter for FIRE2 Optimizer</span>
 <span class="sd">====================================</span>
 
 <span class="sd">Thin wrapper that accepts PyTorch tensors, allocates scratch buffers via</span>
 <span class="sd">PyTorch&#39;s CUDA caching allocator, and calls the pure-Warp FIRE2 kernels.</span>
 
+<span class="sd">Every entry point runs the FIRE2 scheme of Guenole et al. (2020): the</span>
+<span class="sd">leapfrog half-step is deferred into the reduction, so the per-system power is</span>
+<span class="sd">measured on the post-kick velocity and the half-step is fused into the mixing:</span>
+
+<span class="sd">.. math::</span>
+
+<span class="sd">    P = \sum_i (\mathbf{v}_i + \Delta t\,\mathbf{F}_i) \cdot \mathbf{F}_i,\qquad</span>
+<span class="sd">    \mathbf{v} = (1-\alpha)\,\mathbf{v}</span>
+<span class="sd">        + \left[(1-\alpha)\,\Delta t</span>
+<span class="sd">        + \alpha\sqrt{\tfrac{\mathbf{v}\cdot\mathbf{v}}</span>
+<span class="sd">        {\mathbf{F}\cdot\mathbf{F}}}\right]\mathbf{F}</span>
+
+<span class="sd">The displacement is :math:`\Delta\mathbf{r} = \Delta t\,\mathbf{v}` downhill and</span>
+<span class="sd">:math:`-\tfrac{1}{2}\Delta t\,\mathbf{v}` uphill (:math:`P \le 0`, velocity then</span>
+<span class="sd">zeroed), clamped by :math:`\min(1, \text{maxstep}/\lVert\Delta\mathbf{r}\rVert)`</span>
+<span class="sd">per system with :math:`\Delta t` scaled by the same factor.</span>
+
 <span class="sd">Entry points:</span>
 
 <span class="sd">- :func:`fire2_step_coord` -- coordinate-only optimization.</span>
 <span class="sd">- :func:`fire2_step_coord_cell` -- variable-cell optimization</span>
 <span class="sd">  (coordinates + cell DOFs).  Packs atomic and cell DOFs into an</span>
-<span class="sd">  interleaved extended array, runs FIRE2, and unpacks results.</span>
+<span class="sd">  interleaved extended velocity/force representation, runs FIRE2</span>
+<span class="sd">  mixing on the generalized DOFs, then applies a coupled atomic/cell</span>
+<span class="sd">  position update.</span>
 <span class="sd">- :func:`fire2_step_extended` -- run FIRE2 directly on caller-managed</span>
 <span class="sd">  extended arrays (no per-step pack/unpack overhead).</span>
 
@@ -445,17 +463,24 @@ document.write(`
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
 
+<span class="kn">import</span><span class="w"> </span><span class="nn">warnings</span>
+
 <span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">warp</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">wp</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.batch_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">atom_ptr_to_batch_idx</span><span class="p">,</span> <span class="n">batch_idx_to_atom_ptr</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.dynamics.optimizers.fire2</span><span class="w"> </span><span class="kn">import</span> <span class="n">fire2_step</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.dynamics.optimizers.fire2</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">fire2_reduce</span><span class="p">,</span>
+    <span class="n">fire2_step</span><span class="p">,</span>
+    <span class="n">fire2_update</span><span class="p">,</span>
+<span class="p">)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.dynamics.utils.cell_filter</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">_apply_fire2_coord_cell_step</span><span class="p">,</span>
+    <span class="n">_fire2_coord_cell_clamp_apply</span><span class="p">,</span>
+    <span class="n">_fire2_coord_cell_compute_max_norm</span><span class="p">,</span>
     <span class="n">extend_atom_ptr</span><span class="p">,</span>
     <span class="n">pack_forces_with_cell</span><span class="p">,</span>
-    <span class="n">pack_positions_with_cell</span><span class="p">,</span>
     <span class="n">pack_velocities_with_cell</span><span class="p">,</span>
-    <span class="n">unpack_positions_with_cell</span><span class="p">,</span>
     <span class="n">unpack_velocities_with_cell</span><span class="p">,</span>
 <span class="p">)</span>
 
@@ -472,6 +497,231 @@ document.write(`
         <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">size</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
     <span class="n">buf</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
     <span class="k">return</span> <span class="n">buf</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_coord_cell_ext_metadata</span><span class="p">(</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">M</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">,</span>
+    <span class="n">wp_device</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">atom_ptr</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">ext_atom_ptr</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">ext_batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the packed-layout metadata for variable-cell FIRE2.</span>
+
+<span class="sd">    Computes ``atom_ptr`` / ``ext_atom_ptr`` / ``ext_batch_idx`` (as Warp arrays)</span>
+<span class="sd">    for the interleaved [atoms, 2 cell rows] layout, filling any not supplied.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">N</span> <span class="o">=</span> <span class="n">batch_idx</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">N_ext</span> <span class="o">=</span> <span class="n">N</span> <span class="o">+</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">M</span>
+    <span class="n">wp_bidx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">batch_idx</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">atom_ptr</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">atom_ptr</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">M</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">atom_counts</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">batch_idx_to_atom_ptr</span><span class="p">(</span>
+            <span class="n">wp_bidx</span><span class="p">,</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">atom_counts</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">atom_ptr</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="p">)</span>
+    <span class="n">wp_atom_ptr</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">atom_ptr</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">ext_atom_ptr</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">ext_atom_ptr</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">M</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">extend_atom_ptr</span><span class="p">(</span>
+            <span class="n">wp_atom_ptr</span><span class="p">,</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">ext_atom_ptr</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="n">wp_ext_atom_ptr</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">ext_atom_ptr</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">ext_batch_idx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">ext_batch_idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">N_ext</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">atom_ptr_to_batch_idx</span><span class="p">(</span>
+            <span class="n">wp_ext_atom_ptr</span><span class="p">,</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">ext_batch_idx</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="p">)</span>
+    <span class="n">wp_ext_batch_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">ext_batch_idx</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">atom_ptr</span><span class="p">,</span> <span class="n">wp_atom_ptr</span><span class="p">,</span> <span class="n">wp_ext_atom_ptr</span><span class="p">,</span> <span class="n">wp_ext_batch_idx</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_coord_cell_mix_impl</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span>
+    <span class="n">velocities</span><span class="p">,</span>
+    <span class="n">forces</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">,</span>
+    <span class="n">cell_velocities</span><span class="p">,</span>
+    <span class="n">cell_force</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="p">,</span>
+    <span class="n">dt</span><span class="p">,</span>
+    <span class="n">nsteps_inc</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">atom_ptr</span><span class="p">,</span>
+    <span class="n">ext_atom_ptr</span><span class="p">,</span>
+    <span class="n">ext_velocities</span><span class="p">,</span>
+    <span class="n">ext_forces</span><span class="p">,</span>
+    <span class="n">ext_batch_idx</span><span class="p">,</span>
+    <span class="n">vf</span><span class="p">,</span>
+    <span class="n">v_sumsq</span><span class="p">,</span>
+    <span class="n">f_sumsq</span><span class="p">,</span>
+    <span class="n">max_norm</span><span class="p">,</span>
+    <span class="n">delaystep</span><span class="p">,</span>
+    <span class="n">dtgrow</span><span class="p">,</span>
+    <span class="n">dtshrink</span><span class="p">,</span>
+    <span class="n">alphashrink</span><span class="p">,</span>
+    <span class="n">alpha0</span><span class="p">,</span>
+    <span class="n">tmax</span><span class="p">,</span>
+    <span class="n">tmin</span><span class="p">,</span>
+    <span class="n">cell_force_scale</span><span class="p">,</span>
+    <span class="n">compute_reductions</span><span class="p">,</span>
+    <span class="n">ext_positions</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Shared front half of the variable-cell FIRE2 step.</span>
+
+<span class="sd">    Packs atomic + cell DOFs, runs the FIRE2 reduction (gated by</span>
+<span class="sd">    ``compute_reductions``) and velocity mix on the packed DOFs, and unpacks the</span>
+<span class="sd">    mixed velocities. Does **not** apply positions/cell. Returns the Warp</span>
+<span class="sd">    handles the apply phase needs, or ``None`` for an empty system.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">dtype</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+    <span class="n">N</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">M</span> <span class="o">=</span> <span class="n">alpha</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">N_ext</span> <span class="o">=</span> <span class="n">N</span> <span class="o">+</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">M</span>
+    <span class="n">vec_type</span> <span class="o">=</span> <span class="n">_TORCH_TO_WP_VEC</span><span class="p">[</span><span class="n">dtype</span><span class="p">]</span>
+    <span class="n">mat_type</span> <span class="o">=</span> <span class="n">_TORCH_TO_WP_MAT</span><span class="p">[</span><span class="n">dtype</span><span class="p">]</span>
+    <span class="n">wp_device</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">device_from_torch</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">cell_force_scale</span> <span class="o">&lt;=</span> <span class="mf">0.0</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;cell_force_scale must be positive&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">ext_positions</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
+            <span class="s2">&quot;fire2_step_coord_cell(..., ext_positions=...) is deprecated and ignored.&quot;</span><span class="p">,</span>
+            <span class="ne">DeprecationWarning</span><span class="p">,</span>
+            <span class="n">stacklevel</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="n">N</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">buf</span> <span class="ow">in</span> <span class="p">(</span><span class="n">vf</span><span class="p">,</span> <span class="n">v_sumsq</span><span class="p">,</span> <span class="n">f_sumsq</span><span class="p">,</span> <span class="n">max_norm</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">buf</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">buf</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="k">if</span> <span class="n">ext_velocities</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">ext_velocities</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">N_ext</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">ext_forces</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">ext_forces</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">N_ext</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">compute_reductions</span><span class="p">:</span>
+        <span class="n">vf</span> <span class="o">=</span> <span class="n">_alloc_or_zero</span><span class="p">(</span><span class="n">vf</span><span class="p">,</span> <span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+        <span class="n">v_sumsq</span> <span class="o">=</span> <span class="n">_alloc_or_zero</span><span class="p">(</span><span class="n">v_sumsq</span><span class="p">,</span> <span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+        <span class="n">f_sumsq</span> <span class="o">=</span> <span class="n">_alloc_or_zero</span><span class="p">(</span><span class="n">f_sumsq</span><span class="p">,</span> <span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">vf</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">v_sumsq</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">f_sumsq</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s2">&quot;vf, v_sumsq, f_sumsq must be provided when compute_reductions=False&quot;</span>
+        <span class="p">)</span>
+    <span class="n">max_norm</span> <span class="o">=</span> <span class="n">_alloc_or_zero</span><span class="p">(</span><span class="n">max_norm</span><span class="p">,</span> <span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+
+    <span class="n">wp_pos</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">)</span>
+    <span class="n">wp_vel</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">velocities</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">)</span>
+    <span class="n">wp_forces</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">forces</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">)</span>
+    <span class="n">wp_cell</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">cell</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">mat_type</span><span class="p">)</span>
+    <span class="n">wp_cell_vel</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">cell_velocities</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">mat_type</span><span class="p">)</span>
+    <span class="n">wp_bidx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">batch_idx</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+    <span class="n">wp_ext_vel</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">ext_velocities</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">)</span>
+    <span class="n">wp_ext_forces</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">ext_forces</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">)</span>
+
+    <span class="n">atom_ptr</span><span class="p">,</span> <span class="n">wp_atom_ptr</span><span class="p">,</span> <span class="n">wp_ext_atom_ptr</span><span class="p">,</span> <span class="n">wp_ext_batch_idx</span> <span class="o">=</span> <span class="n">_coord_cell_ext_metadata</span><span class="p">(</span>
+        <span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">M</span><span class="p">,</span>
+        <span class="n">device</span><span class="p">,</span>
+        <span class="n">wp_device</span><span class="p">,</span>
+        <span class="n">atom_ptr</span><span class="o">=</span><span class="n">atom_ptr</span><span class="p">,</span>
+        <span class="n">ext_atom_ptr</span><span class="o">=</span><span class="n">ext_atom_ptr</span><span class="p">,</span>
+        <span class="n">ext_batch_idx</span><span class="o">=</span><span class="n">ext_batch_idx</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">atom_counts</span> <span class="o">=</span> <span class="n">atom_ptr</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span> <span class="o">-</span> <span class="n">atom_ptr</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">any</span><span class="p">(</span><span class="n">atom_counts</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">item</span><span class="p">():</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;fire2_step_coord_cell requires at least one atom per system&quot;</span><span class="p">)</span>
+    <span class="n">cell_force_divisor</span> <span class="o">=</span> <span class="n">atom_counts</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">M</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">cell_force_scale</span>
+    <span class="n">cell_force_work</span> <span class="o">=</span> <span class="p">(</span><span class="n">cell_force</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span> <span class="o">/</span> <span class="n">cell_force_divisor</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+    <span class="n">wp_cell_force</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">cell_force_work</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">mat_type</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">M</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">pack_velocities_with_cell</span><span class="p">(</span><span class="n">wp_vel</span><span class="p">,</span> <span class="n">wp_cell_vel</span><span class="p">,</span> <span class="n">wp_ext_vel</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">)</span>
+        <span class="n">pack_forces_with_cell</span><span class="p">(</span><span class="n">wp_forces</span><span class="p">,</span> <span class="n">wp_cell_force</span><span class="p">,</span> <span class="n">wp_ext_forces</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">pack_velocities_with_cell</span><span class="p">(</span>
+            <span class="n">wp_vel</span><span class="p">,</span>
+            <span class="n">wp_cell_vel</span><span class="p">,</span>
+            <span class="n">wp_ext_vel</span><span class="p">,</span>
+            <span class="n">wp_atom_ptr</span><span class="p">,</span>
+            <span class="n">wp_ext_atom_ptr</span><span class="p">,</span>
+            <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">,</span>
+            <span class="n">batch_idx</span><span class="o">=</span><span class="n">wp_bidx</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">pack_forces_with_cell</span><span class="p">(</span>
+            <span class="n">wp_forces</span><span class="p">,</span>
+            <span class="n">wp_cell_force</span><span class="p">,</span>
+            <span class="n">wp_ext_forces</span><span class="p">,</span>
+            <span class="n">wp_atom_ptr</span><span class="p">,</span>
+            <span class="n">wp_ext_atom_ptr</span><span class="p">,</span>
+            <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">,</span>
+            <span class="n">batch_idx</span><span class="o">=</span><span class="n">wp_bidx</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="n">wp_dt</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">dt</span><span class="o">.</span><span class="n">detach</span><span class="p">())</span>
+    <span class="n">wp_vf</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">vf</span><span class="p">)</span>
+    <span class="n">wp_max_norm</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">max_norm</span><span class="p">)</span>
+    <span class="n">fire2_update</span><span class="p">(</span>
+        <span class="n">wp_ext_vel</span><span class="p">,</span>
+        <span class="n">wp_ext_forces</span><span class="p">,</span>
+        <span class="n">wp_ext_batch_idx</span><span class="p">,</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">alpha</span><span class="o">.</span><span class="n">detach</span><span class="p">()),</span>
+        <span class="n">wp_dt</span><span class="p">,</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">nsteps_inc</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">wp_vf</span><span class="p">,</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">v_sumsq</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">f_sumsq</span><span class="p">),</span>
+        <span class="n">wp_max_norm</span><span class="p">,</span>
+        <span class="n">delaystep</span><span class="o">=</span><span class="n">delaystep</span><span class="p">,</span>
+        <span class="n">dtgrow</span><span class="o">=</span><span class="n">dtgrow</span><span class="p">,</span>
+        <span class="n">dtshrink</span><span class="o">=</span><span class="n">dtshrink</span><span class="p">,</span>
+        <span class="n">alphashrink</span><span class="o">=</span><span class="n">alphashrink</span><span class="p">,</span>
+        <span class="n">alpha0</span><span class="o">=</span><span class="n">alpha0</span><span class="p">,</span>
+        <span class="n">tmax</span><span class="o">=</span><span class="n">tmax</span><span class="p">,</span>
+        <span class="n">tmin</span><span class="o">=</span><span class="n">tmin</span><span class="p">,</span>
+        <span class="n">compute_max_norm</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">compute_reductions</span><span class="o">=</span><span class="n">compute_reductions</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">M</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">unpack_velocities_with_cell</span><span class="p">(</span>
+            <span class="n">wp_ext_vel</span><span class="p">,</span> <span class="n">wp_vel</span><span class="p">,</span> <span class="n">wp_cell_vel</span><span class="p">,</span> <span class="n">num_atoms</span><span class="o">=</span><span class="n">N</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span>
+        <span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">unpack_velocities_with_cell</span><span class="p">(</span>
+            <span class="n">wp_ext_vel</span><span class="p">,</span>
+            <span class="n">wp_vel</span><span class="p">,</span>
+            <span class="n">wp_cell_vel</span><span class="p">,</span>
+            <span class="n">atom_ptr</span><span class="o">=</span><span class="n">wp_atom_ptr</span><span class="p">,</span>
+            <span class="n">ext_atom_ptr</span><span class="o">=</span><span class="n">wp_ext_atom_ptr</span><span class="p">,</span>
+            <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">,</span>
+            <span class="n">batch_idx</span><span class="o">=</span><span class="n">wp_bidx</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="n">wp_pos</span><span class="p">,</span>
+        <span class="n">wp_vel</span><span class="p">,</span>
+        <span class="n">wp_cell</span><span class="p">,</span>
+        <span class="n">wp_cell_vel</span><span class="p">,</span>
+        <span class="n">wp_dt</span><span class="p">,</span>
+        <span class="n">wp_vf</span><span class="p">,</span>
+        <span class="n">wp_ext_batch_idx</span><span class="p">,</span>
+        <span class="n">wp_ext_atom_ptr</span><span class="p">,</span>
+        <span class="n">wp_max_norm</span><span class="p">,</span>
+        <span class="n">wp_device</span><span class="p">,</span>
+    <span class="p">)</span>
 
 
 <div class="viewcode-block" id="fire2_step_coord">
@@ -497,11 +747,30 @@ document.write(`
     <span class="n">tmax</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.08</span><span class="p">,</span>
     <span class="n">tmin</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.005</span><span class="p">,</span>
     <span class="n">maxstep</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span>
+    <span class="n">compute_reductions</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;FIRE2 coordinate-only optimization step.</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;FIRE2 coordinate-only optimization step.</span>
 
 <span class="sd">    Converts PyTorch tensors to Warp arrays (zero-copy) and delegates to</span>
 <span class="sd">    the pure-Warp :func:`~nvalchemiops.dynamics.optimizers.fire2.fire2_step`.</span>
+
+<span class="sd">    The deferred half-step is folded into the reduction, so the per-system</span>
+<span class="sd">    power is measured on the post-kick velocity, and the mixing fuses that</span>
+<span class="sd">    half-step with the FIRE2 rule:</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        P = \sum_i (\mathbf{v}_i + \Delta t\,\mathbf{F}_i) \cdot \mathbf{F}_i,\qquad</span>
+<span class="sd">        \mathbf{v} = (1-\alpha)\,\mathbf{v}</span>
+<span class="sd">            + \left[(1-\alpha)\,\Delta t</span>
+<span class="sd">            + \alpha\sqrt{\tfrac{\mathbf{v}\cdot\mathbf{v}}</span>
+<span class="sd">            {\mathbf{F}\cdot\mathbf{F}}}\right]\mathbf{F}</span>
+
+<span class="sd">    The displacement is :math:`\Delta\mathbf{r} = \Delta t\,\mathbf{v}` downhill</span>
+<span class="sd">    and :math:`-\tfrac{1}{2}\Delta t\,\mathbf{v}` uphill (:math:`P \le 0`,</span>
+<span class="sd">    velocity then zeroed), capped by</span>
+<span class="sd">    :math:`\min(1, \text{maxstep}/\lVert\Delta\mathbf{r}\rVert)` per system with</span>
+<span class="sd">    :math:`\Delta t` scaled by the same factor.</span>
 
 <span class="sd">    Modifies *positions*, *velocities*, *alpha*, *dt*, and *nsteps_inc*</span>
 <span class="sd">    in-place.</span>
@@ -539,6 +808,11 @@ document.write(`
 <span class="sd">        FIRE2 hyperparameters.  See</span>
 <span class="sd">        :func:`~nvalchemiops.dynamics.optimizers.fire2.fire2_step` for</span>
 <span class="sd">        defaults and descriptions.</span>
+<span class="sd">    compute_reductions : bool, default True</span>
+<span class="sd">        If True, recompute ``vf``/``v_sumsq``/``f_sumsq`` internally. If False,</span>
+<span class="sd">        use the caller-supplied values in those buffers instead of recomputing</span>
+<span class="sd">        them (they must be provided and are not zeroed); the ``maxstep`` clamp</span>
+<span class="sd">        still uses this call&#39;s internally-computed ``max_norm``.</span>
 
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
@@ -581,11 +855,20 @@ document.write(`
     <span class="n">M</span> <span class="o">=</span> <span class="n">alpha</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
     <span class="n">vec_type</span> <span class="o">=</span> <span class="n">_TORCH_TO_WP_VEC</span><span class="p">[</span><span class="n">dtype</span><span class="p">]</span>
 
-    <span class="c1"># Scratch buffers: allocate if not provided, zero if provided</span>
-    <span class="n">vf</span> <span class="o">=</span> <span class="n">_alloc_or_zero</span><span class="p">(</span><span class="n">vf</span><span class="p">,</span> <span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
-    <span class="n">v_sumsq</span> <span class="o">=</span> <span class="n">_alloc_or_zero</span><span class="p">(</span><span class="n">v_sumsq</span><span class="p">,</span> <span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
-    <span class="n">f_sumsq</span> <span class="o">=</span> <span class="n">_alloc_or_zero</span><span class="p">(</span><span class="n">f_sumsq</span><span class="p">,</span> <span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+    <span class="c1"># Scratch buffers: allocate/zero when recomputing; require and preserve</span>
+    <span class="c1"># them when the caller supplies precomputed reductions.</span>
+    <span class="k">if</span> <span class="n">compute_reductions</span><span class="p">:</span>
+        <span class="n">vf</span> <span class="o">=</span> <span class="n">_alloc_or_zero</span><span class="p">(</span><span class="n">vf</span><span class="p">,</span> <span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+        <span class="n">v_sumsq</span> <span class="o">=</span> <span class="n">_alloc_or_zero</span><span class="p">(</span><span class="n">v_sumsq</span><span class="p">,</span> <span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+        <span class="n">f_sumsq</span> <span class="o">=</span> <span class="n">_alloc_or_zero</span><span class="p">(</span><span class="n">f_sumsq</span><span class="p">,</span> <span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">vf</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">v_sumsq</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">f_sumsq</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s2">&quot;vf, v_sumsq, f_sumsq must be provided when compute_reductions=False&quot;</span>
+        <span class="p">)</span>
     <span class="n">max_norm</span> <span class="o">=</span> <span class="n">_alloc_or_zero</span><span class="p">(</span><span class="n">max_norm</span><span class="p">,</span> <span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span>
 
     <span class="c1"># Delegate to the Warp-level fire2_step</span>
     <span class="n">fire2_step</span><span class="p">(</span>
@@ -608,6 +891,7 @@ document.write(`
         <span class="n">tmax</span><span class="o">=</span><span class="n">tmax</span><span class="p">,</span>
         <span class="n">tmin</span><span class="o">=</span><span class="n">tmin</span><span class="p">,</span>
         <span class="n">maxstep</span><span class="o">=</span><span class="n">maxstep</span><span class="p">,</span>
+        <span class="n">compute_reductions</span><span class="o">=</span><span class="n">compute_reductions</span><span class="p">,</span>
     <span class="p">)</span></div>
 
 
@@ -644,14 +928,41 @@ document.write(`
     <span class="n">tmax</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.08</span><span class="p">,</span>
     <span class="n">tmin</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.005</span><span class="p">,</span>
     <span class="n">maxstep</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span>
+    <span class="n">cell_force_scale</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span>
+    <span class="n">compute_reductions</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;FIRE2 variable-cell optimization step.</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;FIRE2 variable-cell optimization step.</span>
 
 <span class="sd">    Performs a FIRE2 step on both atomic coordinates and cell degrees of</span>
-<span class="sd">    freedom.  Internally packs atomic + cell DOFs into extended arrays</span>
-<span class="sd">    using an **interleaved layout** (each system&#39;s atoms followed by its</span>
-<span class="sd">    2 cell vec3s), runs the 3-kernel FIRE2 algorithm, and unpacks</span>
-<span class="sd">    results back.</span>
+<span class="sd">    freedom. Internally packs atomic + cell velocity/force DOFs into an</span>
+<span class="sd">    **interleaved layout** (each system&#39;s atoms followed by its 2 cell</span>
+<span class="sd">    vec3s), runs the FIRE2 reduction + mixing phase on those generalized</span>
+<span class="sd">    DOFs, unpacks the mixed velocities, and then applies the physically</span>
+<span class="sd">    coupled atomic/cell update directly on the caller&#39;s coordinate and cell</span>
+<span class="sd">    tensors.</span>
+
+<span class="sd">    FIRE2 runs on the generalized DOF vectors :math:`\mathbf{v}`,</span>
+<span class="sd">    :math:`\mathbf{F}` that stack the atomic velocities/forces and the (scaled)</span>
+<span class="sd">    cell velocity/force rows. The power and mixing are taken over those</span>
+<span class="sd">    generalized DOFs:</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        P = \sum_i (\mathbf{v}_i + \Delta t\,\mathbf{F}_i) \cdot \mathbf{F}_i,\qquad</span>
+<span class="sd">        \mathbf{v} = (1-\alpha)\,\mathbf{v}</span>
+<span class="sd">            + \left[(1-\alpha)\,\Delta t</span>
+<span class="sd">            + \alpha\sqrt{\tfrac{\mathbf{v}\cdot\mathbf{v}}</span>
+<span class="sd">            {\mathbf{F}\cdot\mathbf{F}}}\right]\mathbf{F}</span>
+
+<span class="sd">    where :math:`\mathbf{v}\cdot\mathbf{v}` and :math:`\mathbf{F}\cdot\mathbf{F}`</span>
+<span class="sd">    sum over each system&#39;s atomic and cell DOFs. The mixed generalized velocity</span>
+<span class="sd">    is then applied as a coupled atomic/cell position update: cell DOFs deform</span>
+<span class="sd">    the cell while atoms follow the affine cell remap plus their own coordinate</span>
+<span class="sd">    motion. The resulting Cartesian atomic displacement is capped by</span>
+<span class="sd">    :math:`\min(1, \text{maxstep}/\lVert\Delta\mathbf{r}\rVert)` per system</span>
+<span class="sd">    (uphill systems, :math:`P \le 0`, take the :math:`-\tfrac{1}{2}\Delta t`</span>
+<span class="sd">    correction and zero their velocities), with :math:`\Delta t` scaled by the</span>
+<span class="sd">    same factor.</span>
 
 <span class="sd">    The cell must be pre-aligned to upper-triangular form via</span>
 <span class="sd">    :func:`nvalchemiops.dynamics.utils.cell_filter.align_cell` before</span>
@@ -673,7 +984,9 @@ document.write(`
 <span class="sd">    cell_velocities : Tensor, shape (M, 3, 3), dtype float32/float64</span>
 <span class="sd">        Cell velocity matrices.</span>
 <span class="sd">    cell_force : Tensor, shape (M, 3, 3), dtype float32/float64</span>
-<span class="sd">        Cell force matrices from ``stress_to_cell_force()`` (read-only).</span>
+<span class="sd">        Raw cell force matrices from ``stress_to_cell_force()`` (read-only).</span>
+<span class="sd">        These are divided by ``atoms_per_system * cell_force_scale`` before</span>
+<span class="sd">        FIRE2 velocity mixing.</span>
 <span class="sd">    batch_idx : Tensor, shape (N,), dtype int32</span>
 <span class="sd">        Sorted system index per atom.</span>
 <span class="sd">    alpha : Tensor, shape (M,), dtype float32/float64</span>
@@ -693,10 +1006,16 @@ document.write(`
 <span class="sd">        If ``None``, computed from *atom_ptr* each call via</span>
 <span class="sd">        :func:`~nvalchemiops.dynamics.utils.cell_filter.extend_atom_ptr`.</span>
 <span class="sd">        See *Notes* for how to compute.</span>
-<span class="sd">    ext_positions, ext_velocities, ext_forces : Tensor, shape (N+2M, 3), optional</span>
-<span class="sd">        Pre-allocated extended working arrays.  Allocated if ``None``;</span>
-<span class="sd">        contents are overwritten each call.  Providing them avoids</span>
-<span class="sd">        repeated allocation in tight loops.</span>
+<span class="sd">    ext_positions : Tensor, shape (N+2M, 3), optional</span>
+<span class="sd">        Deprecated and ignored.</span>
+<span class="sd">        ``ext_positions`` is accepted only for backward compatibility.</span>
+<span class="sd">        The coupled variable-cell FIRE2 path no longer updates packed</span>
+<span class="sd">        positions directly.</span>
+
+<span class="sd">    ext_velocities, ext_forces : Tensor, shape (N+2M, 3), optional</span>
+<span class="sd">        Pre-allocated extended working arrays for the FIRE2 generalized-DOF</span>
+<span class="sd">        reduction and mixing phase. Allocated if ``None``; contents are</span>
+<span class="sd">        overwritten each call.</span>
 <span class="sd">    ext_batch_idx : Tensor, shape (N+2M,), dtype int32, optional</span>
 <span class="sd">        Pre-computed extended batch index (sorted, matching interleaved</span>
 <span class="sd">        pack layout).  If ``None``, computed from *ext_atom_ptr* each</span>
@@ -706,9 +1025,22 @@ document.write(`
 <span class="sd">        See *Notes* for how to compute.</span>
 <span class="sd">    vf, v_sumsq, f_sumsq, max_norm : Tensor, shape (M,), optional</span>
 <span class="sd">        Scratch buffers for reductions.  Allocated and zeroed if ``None``;</span>
-<span class="sd">        zeroed in-place if provided.</span>
+<span class="sd">        zeroed in-place if provided. In this coupled cell adapter,</span>
+<span class="sd">        ``max_norm`` is the final physical Cartesian atomic displacement norm,</span>
+<span class="sd">        recomputed after cell motion is coupled back to the atoms.</span>
 <span class="sd">    delaystep, dtgrow, dtshrink, alphashrink, alpha0, tmax, tmin, maxstep</span>
 <span class="sd">        FIRE2 hyperparameters.</span>
+<span class="sd">    cell_force_scale : float, default=1.0</span>
+<span class="sd">        Extra positive multiplier for stress-derived cell-force normalization.</span>
+<span class="sd">        Cell forces are divided by ``atoms_per_system * cell_force_scale``.</span>
+<span class="sd">    compute_reductions : bool, default True</span>
+<span class="sd">        If True, recompute ``vf``/``v_sumsq``/``f_sumsq`` internally. If False,</span>
+<span class="sd">        use the caller-supplied values instead (they must be provided and are</span>
+<span class="sd">        not zeroed). These reductions are over the **generalized (atom + cell)</span>
+<span class="sd">        DOFs** of each system, so a caller assembling them across a partition</span>
+<span class="sd">        must include the (replicated) cell contribution exactly once. The</span>
+<span class="sd">        ``maxstep`` clamp still uses this call&#39;s internally-recomputed</span>
+<span class="sd">        ``max_norm`` (the physical Cartesian displacement after cell coupling).</span>
 
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
@@ -718,6 +1050,10 @@ document.write(`
 <span class="sd">    ``tmin=0.005``, ``maxstep=0.1``.</span>
 <span class="sd">    See :func:`nvalchemiops.dynamics.optimizers.fire2.fire2_step` for</span>
 <span class="sd">    full descriptions.</span>
+
+<span class="sd">    The high-level variable-cell adapter normalizes raw stress-derived cell</span>
+<span class="sd">    forces by the number of atoms in each system. ``cell_force_scale`` is an</span>
+<span class="sd">    extra multiplier on top of that per-system atom-count normalization.</span>
 
 <span class="sd">    **Pre-computing static metadata for tight loops**</span>
 
@@ -772,7 +1108,7 @@ document.write(`
 
 <span class="sd">    **Extended array layout (interleaved)**</span>
 
-<span class="sd">    The packing places each system&#39;s cell DOFs immediately after its</span>
+<span class="sd">    The mixing phase places each system&#39;s cell DOFs immediately after its</span>
 <span class="sd">    atoms::</span>
 
 <span class="sd">        [sys0_atom0, ..., sys0_atomK, sys0_cell_row0, sys0_cell_row1,</span>
@@ -799,10 +1135,9 @@ document.write(`
 <span class="sd">    &gt;&gt;&gt; ext_atom_ptr = ...</span>
 <span class="sd">    &gt;&gt;&gt; ext_batch_idx = ...</span>
 <span class="sd">    &gt;&gt;&gt; N_ext = positions.shape[0] + 2 * alpha.shape[0]</span>
-<span class="sd">    &gt;&gt;&gt; ext_pos = torch.empty(N_ext, 3, dtype=positions.dtype,</span>
+<span class="sd">    &gt;&gt;&gt; ext_vel = torch.empty(N_ext, 3, dtype=positions.dtype,</span>
 <span class="sd">    ...                       device=positions.device)</span>
-<span class="sd">    &gt;&gt;&gt; ext_vel = torch.empty_like(ext_pos)</span>
-<span class="sd">    &gt;&gt;&gt; ext_forces = torch.empty_like(ext_pos)</span>
+<span class="sd">    &gt;&gt;&gt; ext_forces = torch.empty_like(ext_vel)</span>
 <span class="sd">    &gt;&gt;&gt; M = alpha.shape[0]</span>
 <span class="sd">    &gt;&gt;&gt; vf = torch.empty(M, dtype=positions.dtype, device=positions.device)</span>
 <span class="sd">    &gt;&gt;&gt; v_sumsq = torch.empty_like(vf)</span>
@@ -815,7 +1150,6 @@ document.write(`
 <span class="sd">    ...         batch_idx, alpha, dt, nsteps_inc,</span>
 <span class="sd">    ...         atom_ptr=atom_ptr,</span>
 <span class="sd">    ...         ext_atom_ptr=ext_atom_ptr,</span>
-<span class="sd">    ...         ext_positions=ext_pos,</span>
 <span class="sd">    ...         ext_velocities=ext_vel,</span>
 <span class="sd">    ...         ext_forces=ext_forces,</span>
 <span class="sd">    ...         ext_batch_idx=ext_batch_idx,</span>
@@ -823,132 +1157,26 @@ document.write(`
 <span class="sd">    ...         f_sumsq=f_sumsq, max_norm=max_norm,</span>
 <span class="sd">    ...     )</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">dtype</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span>
-    <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
-    <span class="n">N</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
-    <span class="n">M</span> <span class="o">=</span> <span class="n">alpha</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
-    <span class="n">N_ext</span> <span class="o">=</span> <span class="n">N</span> <span class="o">+</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">M</span>
-    <span class="n">vec_type</span> <span class="o">=</span> <span class="n">_TORCH_TO_WP_VEC</span><span class="p">[</span><span class="n">dtype</span><span class="p">]</span>
-    <span class="n">mat_type</span> <span class="o">=</span> <span class="n">_TORCH_TO_WP_MAT</span><span class="p">[</span><span class="n">dtype</span><span class="p">]</span>
-    <span class="n">wp_device</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">device_from_torch</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
-
-    <span class="c1"># --- Allocate extended working arrays if not provided ---</span>
-    <span class="k">if</span> <span class="n">ext_positions</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">ext_positions</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">N_ext</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
-    <span class="k">if</span> <span class="n">ext_velocities</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">ext_velocities</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">N_ext</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
-    <span class="k">if</span> <span class="n">ext_forces</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">ext_forces</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">N_ext</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
-
-    <span class="c1"># --- Reduction scratch buffers: allocate or zero ---</span>
-    <span class="n">vf</span> <span class="o">=</span> <span class="n">_alloc_or_zero</span><span class="p">(</span><span class="n">vf</span><span class="p">,</span> <span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
-    <span class="n">v_sumsq</span> <span class="o">=</span> <span class="n">_alloc_or_zero</span><span class="p">(</span><span class="n">v_sumsq</span><span class="p">,</span> <span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
-    <span class="n">f_sumsq</span> <span class="o">=</span> <span class="n">_alloc_or_zero</span><span class="p">(</span><span class="n">f_sumsq</span><span class="p">,</span> <span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
-    <span class="n">max_norm</span> <span class="o">=</span> <span class="n">_alloc_or_zero</span><span class="p">(</span><span class="n">max_norm</span><span class="p">,</span> <span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
-
-    <span class="c1"># --- Convert inputs to Warp arrays for pack/unpack kernels ---</span>
-    <span class="n">wp_pos</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">)</span>
-    <span class="n">wp_vel</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">velocities</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">)</span>
-    <span class="n">wp_forces</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">forces</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">)</span>
-    <span class="n">wp_cell</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">cell</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">mat_type</span><span class="p">)</span>
-    <span class="n">wp_cell_vel</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">cell_velocities</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">mat_type</span><span class="p">)</span>
-    <span class="n">wp_cell_force</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">cell_force</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">mat_type</span><span class="p">)</span>
-    <span class="n">wp_bidx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">batch_idx</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
-
-    <span class="n">wp_ext_pos</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">ext_positions</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">)</span>
-    <span class="n">wp_ext_vel</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">ext_velocities</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">)</span>
-    <span class="n">wp_ext_forces</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">ext_forces</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">)</span>
-
-    <span class="c1"># --- Compute atom_ptr / ext_atom_ptr if not provided ---</span>
-    <span class="k">if</span> <span class="n">atom_ptr</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">atom_ptr</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">M</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
-        <span class="n">atom_counts</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
-        <span class="n">batch_idx_to_atom_ptr</span><span class="p">(</span>
-            <span class="n">wp_bidx</span><span class="p">,</span>
-            <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">atom_counts</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
-            <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">atom_ptr</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
-        <span class="p">)</span>
-    <span class="n">wp_atom_ptr</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">atom_ptr</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
-
-    <span class="k">if</span> <span class="n">ext_atom_ptr</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">ext_atom_ptr</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">M</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
-        <span class="n">extend_atom_ptr</span><span class="p">(</span>
-            <span class="n">wp_atom_ptr</span><span class="p">,</span>
-            <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">ext_atom_ptr</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
-            <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">,</span>
-        <span class="p">)</span>
-    <span class="n">wp_ext_atom_ptr</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">ext_atom_ptr</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
-
-    <span class="c1"># --- Pack into extended arrays ---</span>
-    <span class="k">if</span> <span class="n">M</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
-        <span class="n">pack_positions_with_cell</span><span class="p">(</span>
-            <span class="n">wp_pos</span><span class="p">,</span>
-            <span class="n">wp_cell</span><span class="p">,</span>
-            <span class="n">wp_ext_pos</span><span class="p">,</span>
-            <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">,</span>
-        <span class="p">)</span>
-        <span class="n">pack_velocities_with_cell</span><span class="p">(</span>
-            <span class="n">wp_vel</span><span class="p">,</span>
-            <span class="n">wp_cell_vel</span><span class="p">,</span>
-            <span class="n">wp_ext_vel</span><span class="p">,</span>
-            <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">,</span>
-        <span class="p">)</span>
-        <span class="n">pack_forces_with_cell</span><span class="p">(</span>
-            <span class="n">wp_forces</span><span class="p">,</span>
-            <span class="n">wp_cell_force</span><span class="p">,</span>
-            <span class="n">wp_ext_forces</span><span class="p">,</span>
-            <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">,</span>
-        <span class="p">)</span>
-    <span class="k">else</span><span class="p">:</span>
-        <span class="n">pack_positions_with_cell</span><span class="p">(</span>
-            <span class="n">wp_pos</span><span class="p">,</span>
-            <span class="n">wp_cell</span><span class="p">,</span>
-            <span class="n">wp_ext_pos</span><span class="p">,</span>
-            <span class="n">wp_atom_ptr</span><span class="p">,</span>
-            <span class="n">wp_ext_atom_ptr</span><span class="p">,</span>
-            <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">,</span>
-            <span class="n">batch_idx</span><span class="o">=</span><span class="n">wp_bidx</span><span class="p">,</span>
-        <span class="p">)</span>
-        <span class="n">pack_velocities_with_cell</span><span class="p">(</span>
-            <span class="n">wp_vel</span><span class="p">,</span>
-            <span class="n">wp_cell_vel</span><span class="p">,</span>
-            <span class="n">wp_ext_vel</span><span class="p">,</span>
-            <span class="n">wp_atom_ptr</span><span class="p">,</span>
-            <span class="n">wp_ext_atom_ptr</span><span class="p">,</span>
-            <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">,</span>
-            <span class="n">batch_idx</span><span class="o">=</span><span class="n">wp_bidx</span><span class="p">,</span>
-        <span class="p">)</span>
-        <span class="n">pack_forces_with_cell</span><span class="p">(</span>
-            <span class="n">wp_forces</span><span class="p">,</span>
-            <span class="n">wp_cell_force</span><span class="p">,</span>
-            <span class="n">wp_ext_forces</span><span class="p">,</span>
-            <span class="n">wp_atom_ptr</span><span class="p">,</span>
-            <span class="n">wp_ext_atom_ptr</span><span class="p">,</span>
-            <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">,</span>
-            <span class="n">batch_idx</span><span class="o">=</span><span class="n">wp_bidx</span><span class="p">,</span>
-        <span class="p">)</span>
-
-    <span class="c1"># --- Extended batch_idx: compute sorted index from ext_atom_ptr if not provided ---</span>
-    <span class="k">if</span> <span class="n">ext_batch_idx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">ext_batch_idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">N_ext</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
-        <span class="n">atom_ptr_to_batch_idx</span><span class="p">(</span>
-            <span class="n">wp_ext_atom_ptr</span><span class="p">,</span>
-            <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">ext_batch_idx</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
-        <span class="p">)</span>
-
-    <span class="c1"># --- Delegate to the Warp-level fire2_step on extended arrays ---</span>
-    <span class="n">fire2_step</span><span class="p">(</span>
-        <span class="n">wp_ext_pos</span><span class="p">,</span>
-        <span class="n">wp_ext_vel</span><span class="p">,</span>
-        <span class="n">wp_ext_forces</span><span class="p">,</span>
-        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">ext_batch_idx</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
-        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">alpha</span><span class="o">.</span><span class="n">detach</span><span class="p">()),</span>
-        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">dt</span><span class="o">.</span><span class="n">detach</span><span class="p">()),</span>
-        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">nsteps_inc</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
-        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">vf</span><span class="p">),</span>
-        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">v_sumsq</span><span class="p">),</span>
-        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">f_sumsq</span><span class="p">),</span>
-        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">max_norm</span><span class="p">),</span>
+    <span class="n">res</span> <span class="o">=</span> <span class="n">_coord_cell_mix_impl</span><span class="p">(</span>
+        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">velocities</span><span class="p">,</span>
+        <span class="n">forces</span><span class="p">,</span>
+        <span class="n">cell</span><span class="p">,</span>
+        <span class="n">cell_velocities</span><span class="p">,</span>
+        <span class="n">cell_force</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">alpha</span><span class="p">,</span>
+        <span class="n">dt</span><span class="p">,</span>
+        <span class="n">nsteps_inc</span><span class="p">,</span>
+        <span class="n">atom_ptr</span><span class="o">=</span><span class="n">atom_ptr</span><span class="p">,</span>
+        <span class="n">ext_atom_ptr</span><span class="o">=</span><span class="n">ext_atom_ptr</span><span class="p">,</span>
+        <span class="n">ext_velocities</span><span class="o">=</span><span class="n">ext_velocities</span><span class="p">,</span>
+        <span class="n">ext_forces</span><span class="o">=</span><span class="n">ext_forces</span><span class="p">,</span>
+        <span class="n">ext_batch_idx</span><span class="o">=</span><span class="n">ext_batch_idx</span><span class="p">,</span>
+        <span class="n">vf</span><span class="o">=</span><span class="n">vf</span><span class="p">,</span>
+        <span class="n">v_sumsq</span><span class="o">=</span><span class="n">v_sumsq</span><span class="p">,</span>
+        <span class="n">f_sumsq</span><span class="o">=</span><span class="n">f_sumsq</span><span class="p">,</span>
+        <span class="n">max_norm</span><span class="o">=</span><span class="n">max_norm</span><span class="p">,</span>
         <span class="n">delaystep</span><span class="o">=</span><span class="n">delaystep</span><span class="p">,</span>
         <span class="n">dtgrow</span><span class="o">=</span><span class="n">dtgrow</span><span class="p">,</span>
         <span class="n">dtshrink</span><span class="o">=</span><span class="n">dtshrink</span><span class="p">,</span>
@@ -956,45 +1184,511 @@ document.write(`
         <span class="n">alpha0</span><span class="o">=</span><span class="n">alpha0</span><span class="p">,</span>
         <span class="n">tmax</span><span class="o">=</span><span class="n">tmax</span><span class="p">,</span>
         <span class="n">tmin</span><span class="o">=</span><span class="n">tmin</span><span class="p">,</span>
+        <span class="n">cell_force_scale</span><span class="o">=</span><span class="n">cell_force_scale</span><span class="p">,</span>
+        <span class="n">compute_reductions</span><span class="o">=</span><span class="n">compute_reductions</span><span class="p">,</span>
+        <span class="n">ext_positions</span><span class="o">=</span><span class="n">ext_positions</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="n">res</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span>
+    <span class="p">(</span>
+        <span class="n">wp_pos</span><span class="p">,</span>
+        <span class="n">wp_vel</span><span class="p">,</span>
+        <span class="n">wp_cell</span><span class="p">,</span>
+        <span class="n">wp_cell_vel</span><span class="p">,</span>
+        <span class="n">wp_dt</span><span class="p">,</span>
+        <span class="n">wp_vf</span><span class="p">,</span>
+        <span class="n">wp_ext_batch_idx</span><span class="p">,</span>
+        <span class="n">wp_ext_atom_ptr</span><span class="p">,</span>
+        <span class="n">wp_max_norm</span><span class="p">,</span>
+        <span class="n">wp_device</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">=</span> <span class="n">res</span>
+    <span class="c1"># Couple + clamp + apply the affine cell update directly on positions/cells.</span>
+    <span class="n">_apply_fire2_coord_cell_step</span><span class="p">(</span>
+        <span class="n">wp_pos</span><span class="p">,</span>
+        <span class="n">wp_vel</span><span class="p">,</span>
+        <span class="n">wp_cell</span><span class="p">,</span>
+        <span class="n">wp_cell_vel</span><span class="p">,</span>
+        <span class="n">wp_dt</span><span class="p">,</span>
+        <span class="n">wp_vf</span><span class="p">,</span>
+        <span class="n">wp_ext_batch_idx</span><span class="p">,</span>
+        <span class="n">wp_ext_atom_ptr</span><span class="p">,</span>
+        <span class="n">wp_max_norm</span><span class="p">,</span>
         <span class="n">maxstep</span><span class="o">=</span><span class="n">maxstep</span><span class="p">,</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">,</span>
+    <span class="p">)</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">fire2_step_coord_cell_mix</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">forces</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">cell_velocities</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">cell_force</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">nsteps_inc</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">atom_ptr</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">ext_atom_ptr</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">ext_velocities</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">ext_forces</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">ext_batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">vf</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">v_sumsq</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">f_sumsq</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">max_norm</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">delaystep</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">60</span><span class="p">,</span>
+    <span class="n">dtgrow</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.05</span><span class="p">,</span>
+    <span class="n">dtshrink</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.75</span><span class="p">,</span>
+    <span class="n">alphashrink</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.985</span><span class="p">,</span>
+    <span class="n">alpha0</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.09</span><span class="p">,</span>
+    <span class="n">tmax</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.08</span><span class="p">,</span>
+    <span class="n">tmin</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.005</span><span class="p">,</span>
+    <span class="n">cell_force_scale</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span>
+    <span class="n">compute_reductions</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Phase 1 of the coupled variable-cell FIRE2 step: reduce + mix only.</span>
+
+<span class="sd">    Packs atomic + cell DOFs, runs the FIRE2 reduction (gated by</span>
+<span class="sd">    ``compute_reductions``) and velocity mixing on the generalized DOFs, and</span>
+<span class="sd">    unpacks the mixed velocities back into ``velocities`` / ``cell_velocities``.</span>
+<span class="sd">    Updates ``alpha``, ``dt``, ``nsteps_inc`` in-place.</span>
+
+<span class="sd">    The reduction and mixing run over the generalized (atomic + cell) DOFs:</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        P = \sum_i (\mathbf{v}_i + \Delta t\,\mathbf{F}_i) \cdot \mathbf{F}_i,\qquad</span>
+<span class="sd">        \mathbf{v} = (1-\alpha)\,\mathbf{v}</span>
+<span class="sd">            + \left[(1-\alpha)\,\Delta t</span>
+<span class="sd">            + \alpha\sqrt{\tfrac{\mathbf{v}\cdot\mathbf{v}}</span>
+<span class="sd">            {\mathbf{F}\cdot\mathbf{F}}}\right]\mathbf{F}</span>
+
+<span class="sd">    It does **not** apply the</span>
+<span class="sd">    position/cell step — pair it with :func:`fire2_step_coord_cell_couple` and</span>
+<span class="sd">    :func:`fire2_step_coord_cell_apply` so the displacement clamp can use a</span>
+<span class="sd">    ``max_norm`` post-processed between the couple and apply phases.</span>
+
+<span class="sd">    See :func:`fire2_step_coord_cell` for parameter descriptions.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">_coord_cell_mix_impl</span><span class="p">(</span>
+        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">velocities</span><span class="p">,</span>
+        <span class="n">forces</span><span class="p">,</span>
+        <span class="n">cell</span><span class="p">,</span>
+        <span class="n">cell_velocities</span><span class="p">,</span>
+        <span class="n">cell_force</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">alpha</span><span class="p">,</span>
+        <span class="n">dt</span><span class="p">,</span>
+        <span class="n">nsteps_inc</span><span class="p">,</span>
+        <span class="n">atom_ptr</span><span class="o">=</span><span class="n">atom_ptr</span><span class="p">,</span>
+        <span class="n">ext_atom_ptr</span><span class="o">=</span><span class="n">ext_atom_ptr</span><span class="p">,</span>
+        <span class="n">ext_velocities</span><span class="o">=</span><span class="n">ext_velocities</span><span class="p">,</span>
+        <span class="n">ext_forces</span><span class="o">=</span><span class="n">ext_forces</span><span class="p">,</span>
+        <span class="n">ext_batch_idx</span><span class="o">=</span><span class="n">ext_batch_idx</span><span class="p">,</span>
+        <span class="n">vf</span><span class="o">=</span><span class="n">vf</span><span class="p">,</span>
+        <span class="n">v_sumsq</span><span class="o">=</span><span class="n">v_sumsq</span><span class="p">,</span>
+        <span class="n">f_sumsq</span><span class="o">=</span><span class="n">f_sumsq</span><span class="p">,</span>
+        <span class="n">max_norm</span><span class="o">=</span><span class="n">max_norm</span><span class="p">,</span>
+        <span class="n">delaystep</span><span class="o">=</span><span class="n">delaystep</span><span class="p">,</span>
+        <span class="n">dtgrow</span><span class="o">=</span><span class="n">dtgrow</span><span class="p">,</span>
+        <span class="n">dtshrink</span><span class="o">=</span><span class="n">dtshrink</span><span class="p">,</span>
+        <span class="n">alphashrink</span><span class="o">=</span><span class="n">alphashrink</span><span class="p">,</span>
+        <span class="n">alpha0</span><span class="o">=</span><span class="n">alpha0</span><span class="p">,</span>
+        <span class="n">tmax</span><span class="o">=</span><span class="n">tmax</span><span class="p">,</span>
+        <span class="n">tmin</span><span class="o">=</span><span class="n">tmin</span><span class="p">,</span>
+        <span class="n">cell_force_scale</span><span class="o">=</span><span class="n">cell_force_scale</span><span class="p">,</span>
+        <span class="n">compute_reductions</span><span class="o">=</span><span class="n">compute_reductions</span><span class="p">,</span>
+        <span class="n">ext_positions</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span>
 
-    <span class="c1"># --- Unpack extended arrays back to original tensors ---</span>
-    <span class="k">if</span> <span class="n">M</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
-        <span class="n">unpack_positions_with_cell</span><span class="p">(</span>
-            <span class="n">wp_ext_pos</span><span class="p">,</span>
-            <span class="n">wp_pos</span><span class="p">,</span>
-            <span class="n">wp_cell</span><span class="p">,</span>
-            <span class="n">num_atoms</span><span class="o">=</span><span class="n">N</span><span class="p">,</span>
-            <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">,</span>
-        <span class="p">)</span>
-        <span class="n">unpack_velocities_with_cell</span><span class="p">(</span>
-            <span class="n">wp_ext_vel</span><span class="p">,</span>
-            <span class="n">wp_vel</span><span class="p">,</span>
-            <span class="n">wp_cell_vel</span><span class="p">,</span>
-            <span class="n">num_atoms</span><span class="o">=</span><span class="n">N</span><span class="p">,</span>
-            <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">,</span>
-        <span class="p">)</span>
-    <span class="k">else</span><span class="p">:</span>
-        <span class="n">unpack_positions_with_cell</span><span class="p">(</span>
-            <span class="n">wp_ext_pos</span><span class="p">,</span>
-            <span class="n">wp_pos</span><span class="p">,</span>
-            <span class="n">wp_cell</span><span class="p">,</span>
-            <span class="n">atom_ptr</span><span class="o">=</span><span class="n">wp_atom_ptr</span><span class="p">,</span>
-            <span class="n">ext_atom_ptr</span><span class="o">=</span><span class="n">wp_ext_atom_ptr</span><span class="p">,</span>
-            <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">,</span>
-            <span class="n">batch_idx</span><span class="o">=</span><span class="n">wp_bidx</span><span class="p">,</span>
-        <span class="p">)</span>
-        <span class="n">unpack_velocities_with_cell</span><span class="p">(</span>
-            <span class="n">wp_ext_vel</span><span class="p">,</span>
-            <span class="n">wp_vel</span><span class="p">,</span>
-            <span class="n">wp_cell_vel</span><span class="p">,</span>
-            <span class="n">atom_ptr</span><span class="o">=</span><span class="n">wp_atom_ptr</span><span class="p">,</span>
-            <span class="n">ext_atom_ptr</span><span class="o">=</span><span class="n">wp_ext_atom_ptr</span><span class="p">,</span>
-            <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">,</span>
-            <span class="n">batch_idx</span><span class="o">=</span><span class="n">wp_bidx</span><span class="p">,</span>
-        <span class="p">)</span></div>
 
+<span class="k">def</span><span class="w"> </span><span class="nf">fire2_step_coord_cell_couple</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">cell_velocities</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">vf</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">max_norm</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">atom_ptr</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">ext_atom_ptr</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">ext_batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Phase 2 of the coupled variable-cell FIRE2 step: measure ``max_norm``.</span>
+
+<span class="sd">    Recomputes each atom&#39;s cell-coupled step from the mixed velocities (output</span>
+<span class="sd">    of :func:`fire2_step_coord_cell_mix`) and writes the per-system maximum</span>
+<span class="sd">    physical Cartesian displacement norm into ``max_norm`` (zeroed first):</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        \text{max\_norm}[s] = \max_{i \in s} \lVert \Delta\mathbf{r}_i \rVert,</span>
+
+<span class="sd">    where :math:`\Delta\mathbf{r}_i = \Delta t\,\mathbf{v}_i` downhill and</span>
+<span class="sd">    :math:`-\tfrac{1}{2}\Delta t\,\mathbf{v}_i` uphill (:math:`vf[s] \le 0`), each</span>
+<span class="sd">    the coupled Cartesian atomic displacement including the affine cell remap.</span>
+<span class="sd">    Positions and cell are **not** moved, so a caller can post-process</span>
+<span class="sd">    ``max_norm`` before :func:`fire2_step_coord_cell_apply`.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : torch.Tensor, shape (N, 3), dtype float32/float64</span>
+<span class="sd">        Atomic positions (read-only).</span>
+<span class="sd">    velocities : torch.Tensor, shape (N, 3), dtype float32/float64</span>
+<span class="sd">        Atomic velocities after the mix phase (read-only).</span>
+<span class="sd">    cell : torch.Tensor, shape (M, 3, 3), dtype float32/float64</span>
+<span class="sd">        Cell matrices (read-only).</span>
+<span class="sd">    cell_velocities : torch.Tensor, shape (M, 3, 3), dtype float32/float64</span>
+<span class="sd">        Cell velocity matrices after the mix phase (read-only).</span>
+<span class="sd">    dt : torch.Tensor, shape (M,), dtype float32/float64</span>
+<span class="sd">        Per-system timestep.</span>
+<span class="sd">    vf : torch.Tensor, shape (M,), dtype float32/float64</span>
+<span class="sd">        Per-system velocity-force dot product from the mix phase (read-only).</span>
+<span class="sd">    batch_idx : torch.Tensor, shape (N,), dtype int32</span>
+<span class="sd">        Sorted system index per atom.</span>
+<span class="sd">    max_norm : torch.Tensor, shape (M,), dtype float32/float64</span>
+<span class="sd">        Output buffer: zeroed then filled with the per-system maximum physical</span>
+<span class="sd">        Cartesian displacement norm. Modified in-place.</span>
+<span class="sd">    atom_ptr : torch.Tensor, shape (M+1,), dtype int32, optional</span>
+<span class="sd">        CSR-style atom pointers. Computed from *batch_idx* if ``None``.</span>
+<span class="sd">    ext_atom_ptr : torch.Tensor, shape (M+1,), dtype int32, optional</span>
+<span class="sd">        Extended atom pointers (2 cell DOFs per system). Computed if ``None``.</span>
+<span class="sd">    ext_batch_idx : torch.Tensor, shape (N+2M,), dtype int32, optional</span>
+<span class="sd">        System index for each element of the extended layout. Computed if ``None``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+    <span class="n">M</span> <span class="o">=</span> <span class="n">dt</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">max_norm</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+        <span class="k">return</span>
+    <span class="n">vec_type</span> <span class="o">=</span> <span class="n">_TORCH_TO_WP_VEC</span><span class="p">[</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">]</span>
+    <span class="n">mat_type</span> <span class="o">=</span> <span class="n">_TORCH_TO_WP_MAT</span><span class="p">[</span><span class="n">cell</span><span class="o">.</span><span class="n">dtype</span><span class="p">]</span>
+    <span class="n">wp_device</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">device_from_torch</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">wp_ext_atom_ptr</span><span class="p">,</span> <span class="n">wp_ext_batch_idx</span> <span class="o">=</span> <span class="n">_coord_cell_ext_metadata</span><span class="p">(</span>
+        <span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">M</span><span class="p">,</span>
+        <span class="n">device</span><span class="p">,</span>
+        <span class="n">wp_device</span><span class="p">,</span>
+        <span class="n">atom_ptr</span><span class="o">=</span><span class="n">atom_ptr</span><span class="p">,</span>
+        <span class="n">ext_atom_ptr</span><span class="o">=</span><span class="n">ext_atom_ptr</span><span class="p">,</span>
+        <span class="n">ext_batch_idx</span><span class="o">=</span><span class="n">ext_batch_idx</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">_fire2_coord_cell_compute_max_norm</span><span class="p">(</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">velocities</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">cell</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">mat_type</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">cell_velocities</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">mat_type</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">dt</span><span class="o">.</span><span class="n">detach</span><span class="p">()),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">vf</span><span class="p">),</span>
+        <span class="n">wp_ext_batch_idx</span><span class="p">,</span>
+        <span class="n">wp_ext_atom_ptr</span><span class="p">,</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">max_norm</span><span class="p">),</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">fire2_step_coord_cell_apply</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">cell_velocities</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">vf</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">max_norm</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">maxstep</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span>
+    <span class="n">atom_ptr</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">ext_atom_ptr</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">ext_batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Phase 3 of the coupled variable-cell FIRE2 step: clamp + apply.</span>
+
+<span class="sd">    Recomputes the same cell-coupled step as</span>
+<span class="sd">    :func:`fire2_step_coord_cell_couple`, clamps it by</span>
+<span class="sd">    :math:`\min(1, \text{maxstep}/\text{max\_norm}[s])` using the supplied</span>
+<span class="sd">    ``max_norm``, and applies</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        \mathbf{r} \leftarrow \mathbf{r}</span>
+<span class="sd">            + \min\!\left(1, \tfrac{\text{maxstep}}{\text{max\_norm}[s]}\right)</span>
+<span class="sd">            \Delta\mathbf{r},</span>
+
+<span class="sd">    with :math:`\Delta\mathbf{r} = \Delta t\,\mathbf{v}` downhill and</span>
+<span class="sd">    :math:`-\tfrac{1}{2}\Delta t\,\mathbf{v}` uphill (:math:`vf[s] \le 0`). Writes</span>
+<span class="sd">    ``positions``, ``cell``, ``cell_velocities`` (uphill zeroing), and the clamped</span>
+<span class="sd">    ``dt`` in-place.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : torch.Tensor, shape (N, 3), dtype float32/float64</span>
+<span class="sd">        Atomic positions. Modified in-place.</span>
+<span class="sd">    velocities : torch.Tensor, shape (N, 3), dtype float32/float64</span>
+<span class="sd">        Atomic velocities after the mix phase (read-only; cell_velocities are</span>
+<span class="sd">        zeroed for uphill systems by the underlying Warp kernel).</span>
+<span class="sd">    cell : torch.Tensor, shape (M, 3, 3), dtype float32/float64</span>
+<span class="sd">        Cell matrices. Modified in-place.</span>
+<span class="sd">    cell_velocities : torch.Tensor, shape (M, 3, 3), dtype float32/float64</span>
+<span class="sd">        Cell velocity matrices. Modified in-place (zeroed for uphill systems).</span>
+<span class="sd">    dt : torch.Tensor, shape (M,), dtype float32/float64</span>
+<span class="sd">        Per-system timestep. Modified in-place (shrunk when step is clamped).</span>
+<span class="sd">    vf : torch.Tensor, shape (M,), dtype float32/float64</span>
+<span class="sd">        Per-system velocity-force dot product from the mix phase (read-only).</span>
+<span class="sd">    batch_idx : torch.Tensor, shape (N,), dtype int32</span>
+<span class="sd">        Sorted system index per atom.</span>
+<span class="sd">    max_norm : torch.Tensor, shape (M,), dtype float32/float64</span>
+<span class="sd">        Per-system maximum physical Cartesian displacement norm, as computed by</span>
+<span class="sd">        :func:`fire2_step_coord_cell_couple` (possibly post-processed by the</span>
+<span class="sd">        caller). Read-only.</span>
+<span class="sd">    maxstep : float, default 0.1</span>
+<span class="sd">        Maximum allowed displacement per atom. Steps larger than this are</span>
+<span class="sd">        rescaled by ``maxstep / max_norm[s]``.</span>
+<span class="sd">    atom_ptr : torch.Tensor, shape (M+1,), dtype int32, optional</span>
+<span class="sd">        CSR-style atom pointers. Computed from *batch_idx* if ``None``.</span>
+<span class="sd">    ext_atom_ptr : torch.Tensor, shape (M+1,), dtype int32, optional</span>
+<span class="sd">        Extended atom pointers (2 cell DOFs per system). Computed if ``None``.</span>
+<span class="sd">    ext_batch_idx : torch.Tensor, shape (N+2M,), dtype int32, optional</span>
+<span class="sd">        System index for each element of the extended layout. Computed if ``None``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+    <span class="n">M</span> <span class="o">=</span> <span class="n">dt</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span>
+    <span class="n">vec_type</span> <span class="o">=</span> <span class="n">_TORCH_TO_WP_VEC</span><span class="p">[</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">]</span>
+    <span class="n">mat_type</span> <span class="o">=</span> <span class="n">_TORCH_TO_WP_MAT</span><span class="p">[</span><span class="n">cell</span><span class="o">.</span><span class="n">dtype</span><span class="p">]</span>
+    <span class="n">wp_device</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">device_from_torch</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">wp_ext_atom_ptr</span><span class="p">,</span> <span class="n">wp_ext_batch_idx</span> <span class="o">=</span> <span class="n">_coord_cell_ext_metadata</span><span class="p">(</span>
+        <span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">M</span><span class="p">,</span>
+        <span class="n">device</span><span class="p">,</span>
+        <span class="n">wp_device</span><span class="p">,</span>
+        <span class="n">atom_ptr</span><span class="o">=</span><span class="n">atom_ptr</span><span class="p">,</span>
+        <span class="n">ext_atom_ptr</span><span class="o">=</span><span class="n">ext_atom_ptr</span><span class="p">,</span>
+        <span class="n">ext_batch_idx</span><span class="o">=</span><span class="n">ext_batch_idx</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">_fire2_coord_cell_clamp_apply</span><span class="p">(</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">velocities</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">cell</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">mat_type</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">cell_velocities</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">mat_type</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">dt</span><span class="o">.</span><span class="n">detach</span><span class="p">()),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">vf</span><span class="p">),</span>
+        <span class="n">wp_ext_batch_idx</span><span class="p">,</span>
+        <span class="n">wp_ext_atom_ptr</span><span class="p">,</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">max_norm</span><span class="p">),</span>
+        <span class="n">maxstep</span><span class="p">,</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">fire2_compute_extended_reductions</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">forces</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">cell_velocities</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">cell_force</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">atom_ptr</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">ext_atom_ptr</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">ext_velocities</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">ext_forces</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">ext_batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">cell_force_scale</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span>
+    <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">],</span>
+    <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">],</span>
+<span class="p">]:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Split the variable-cell FIRE2 reductions into atom and cell parts.</span>
+
+<span class="sd">    Computes the FIRE2 generalized-DOF reductions over the extended (atomic +</span>
+<span class="sd">    cell) degrees of freedom, using the same deferred :math:`\mathbf{v} +</span>
+<span class="sd">    \Delta t\,\mathbf{F}` half-step:</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        \sum_i (\mathbf{v}_i + \Delta t\,\mathbf{F}_i) \cdot \mathbf{F}_i,\qquad</span>
+<span class="sd">        \sum_i \lVert \mathbf{v}_i + \Delta t\,\mathbf{F}_i \rVert^2,\qquad</span>
+<span class="sd">        \sum_i \mathbf{F}_i \cdot \mathbf{F}_i</span>
+
+<span class="sd">    Returns ``(atom_partial, cell_term)``, each a ``(vf, v_sumsq, f_sumsq)``</span>
+<span class="sd">    triple of ``(M,)`` tensors, such that ``atom_partial + cell_term`` equals the</span>
+<span class="sd">    reduction :func:`fire2_step_coord_cell_mix` computes over the packed</span>
+<span class="sd">    generalized DOFs. The atom part is a plain per-atom partition (combine it</span>
+<span class="sd">    across a caller-side partition), while the cell part is replicated (add it</span>
+<span class="sd">    exactly once)::</span>
+
+<span class="sd">        atom, cell_t = fire2_compute_extended_reductions(..., dt)</span>
+<span class="sd">        vf = allreduce(SUM, atom[0]) + cell_t[0]   # and v_sumsq, f_sumsq</span>
+<span class="sd">        fire2_step_coord_cell_mix(..., vf=vf, ..., compute_reductions=False)</span>
+
+<span class="sd">    Uses the same ``v + f*dt`` half-step as the internal reduction, so the</span>
+<span class="sd">    combined result is bit-parity with recomputing it in one pass.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : torch.Tensor, shape (N, 3), dtype float32/float64</span>
+<span class="sd">        Atomic positions (read-only; used only to determine N and dtype).</span>
+<span class="sd">    velocities : torch.Tensor, shape (N, 3), dtype float32/float64</span>
+<span class="sd">        Atomic velocities (read-only).</span>
+<span class="sd">    forces : torch.Tensor, shape (N, 3), dtype float32/float64</span>
+<span class="sd">        Forces on atoms (read-only).</span>
+<span class="sd">    cell : torch.Tensor, shape (M, 3, 3), dtype float32/float64</span>
+<span class="sd">        Cell matrices (read-only; used only to determine M).</span>
+<span class="sd">    cell_velocities : torch.Tensor, shape (M, 3, 3), dtype float32/float64</span>
+<span class="sd">        Cell velocity matrices (read-only).</span>
+<span class="sd">    cell_force : torch.Tensor, shape (M, 3, 3), dtype float32/float64</span>
+<span class="sd">        Raw cell force matrices (read-only). Divided by</span>
+<span class="sd">        ``atoms_per_system * cell_force_scale`` before packing.</span>
+<span class="sd">    batch_idx : torch.Tensor, shape (N,), dtype int32</span>
+<span class="sd">        Sorted system index per atom.</span>
+<span class="sd">    dt : torch.Tensor, shape (M,), dtype float32/float64</span>
+<span class="sd">        Per-system timestep used for the ``v + f*dt`` half-step projection.</span>
+<span class="sd">    atom_ptr : torch.Tensor, shape (M+1,), dtype int32, optional</span>
+<span class="sd">        CSR-style atom pointers. Computed from *batch_idx* if ``None``.</span>
+<span class="sd">    ext_atom_ptr : torch.Tensor, shape (M+1,), dtype int32, optional</span>
+<span class="sd">        Extended atom pointers (2 cell DOFs per system). Computed if ``None``.</span>
+<span class="sd">    ext_velocities : torch.Tensor, shape (N+2M, 3), optional</span>
+<span class="sd">        Scratch buffer for the packed extended velocity array. Allocated if ``None``.</span>
+<span class="sd">    ext_forces : torch.Tensor, shape (N+2M, 3), optional</span>
+<span class="sd">        Scratch buffer for the packed extended force array. Allocated if ``None``.</span>
+<span class="sd">    ext_batch_idx : torch.Tensor, shape (N+2M,), dtype int32, optional</span>
+<span class="sd">        System index for each element of the extended layout. Computed if ``None``.</span>
+<span class="sd">    cell_force_scale : float, default 1.0</span>
+<span class="sd">        Extra positive multiplier for cell-force normalization; cell forces are</span>
+<span class="sd">        divided by ``atoms_per_system * cell_force_scale``.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    atom_partial : tuple[torch.Tensor, torch.Tensor, torch.Tensor]</span>
+<span class="sd">        ``(vf, v_sumsq, f_sumsq)`` reduction contributions from the atom DOFs</span>
+<span class="sd">        only, each of shape ``(M,)``. Sum across a caller-side partition before</span>
+<span class="sd">        combining with *cell_term*.</span>
+<span class="sd">    cell_term : tuple[torch.Tensor, torch.Tensor, torch.Tensor]</span>
+<span class="sd">        ``(vf, v_sumsq, f_sumsq)`` reduction contributions from the cell DOFs</span>
+<span class="sd">        only, each of shape ``(M,)``. Replicated — add exactly once regardless</span>
+<span class="sd">        of the partition scheme.</span>
+
+<span class="sd">    See Also</span>
+<span class="sd">    --------</span>
+<span class="sd">    :func:`nvalchemiops.torch.fire2.fire2_step_coord_cell_mix` : Runs the mix phase with caller-supplied reductions.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">dtype</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+    <span class="n">N</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">M</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">N_ext</span> <span class="o">=</span> <span class="n">N</span> <span class="o">+</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">M</span>
+    <span class="n">vec_type</span> <span class="o">=</span> <span class="n">_TORCH_TO_WP_VEC</span><span class="p">[</span><span class="n">dtype</span><span class="p">]</span>
+    <span class="n">mat_type</span> <span class="o">=</span> <span class="n">_TORCH_TO_WP_MAT</span><span class="p">[</span><span class="n">dtype</span><span class="p">]</span>
+    <span class="n">wp_device</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">device_from_torch</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">cell_force_scale</span> <span class="o">&lt;=</span> <span class="mf">0.0</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;cell_force_scale must be positive&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_triple</span><span class="p">():</span>
+        <span class="k">return</span> <span class="p">(</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">),</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">),</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">),</span>
+        <span class="p">)</span>
+
+    <span class="n">atom_partial</span> <span class="o">=</span> <span class="n">_triple</span><span class="p">()</span>
+    <span class="n">cell_term</span> <span class="o">=</span> <span class="n">_triple</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">N</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">atom_partial</span><span class="p">,</span> <span class="n">cell_term</span>
+
+    <span class="n">wp_dt</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">dt</span><span class="o">.</span><span class="n">detach</span><span class="p">())</span>
+    <span class="n">wp_bidx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">batch_idx</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+
+    <span class="c1"># atom partial: the FIRE2 half-step reduction over the atom arrays directly.</span>
+    <span class="n">fire2_reduce</span><span class="p">(</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">velocities</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">forces</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">),</span>
+        <span class="n">wp_dt</span><span class="p">,</span>
+        <span class="n">wp_bidx</span><span class="p">,</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">atom_partial</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">atom_partial</span><span class="p">[</span><span class="mi">1</span><span class="p">]),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">atom_partial</span><span class="p">[</span><span class="mi">2</span><span class="p">]),</span>
+    <span class="p">)</span>
+
+    <span class="c1"># total: pack the extended (atom + cell) DOFs and reduce over them.</span>
+    <span class="k">if</span> <span class="n">ext_velocities</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">ext_velocities</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">N_ext</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">ext_forces</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">ext_forces</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">N_ext</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">wp_vel</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">velocities</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">)</span>
+    <span class="n">wp_forces</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">forces</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">)</span>
+    <span class="n">wp_cell_vel</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">cell_velocities</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">mat_type</span><span class="p">)</span>
+    <span class="n">wp_ext_vel</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">ext_velocities</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">)</span>
+    <span class="n">wp_ext_forces</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">ext_forces</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">)</span>
+
+    <span class="n">atom_ptr</span><span class="p">,</span> <span class="n">wp_atom_ptr</span><span class="p">,</span> <span class="n">wp_ext_atom_ptr</span><span class="p">,</span> <span class="n">wp_ext_batch_idx</span> <span class="o">=</span> <span class="n">_coord_cell_ext_metadata</span><span class="p">(</span>
+        <span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">M</span><span class="p">,</span>
+        <span class="n">device</span><span class="p">,</span>
+        <span class="n">wp_device</span><span class="p">,</span>
+        <span class="n">atom_ptr</span><span class="o">=</span><span class="n">atom_ptr</span><span class="p">,</span>
+        <span class="n">ext_atom_ptr</span><span class="o">=</span><span class="n">ext_atom_ptr</span><span class="p">,</span>
+        <span class="n">ext_batch_idx</span><span class="o">=</span><span class="n">ext_batch_idx</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">atom_counts</span> <span class="o">=</span> <span class="n">atom_ptr</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span> <span class="o">-</span> <span class="n">atom_ptr</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">any</span><span class="p">(</span><span class="n">atom_counts</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">item</span><span class="p">():</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s2">&quot;fire2_compute_extended_reductions requires at least one atom per system&quot;</span>
+        <span class="p">)</span>
+    <span class="n">cell_force_divisor</span> <span class="o">=</span> <span class="n">atom_counts</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">M</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">cell_force_scale</span>
+    <span class="n">cell_force_work</span> <span class="o">=</span> <span class="p">(</span><span class="n">cell_force</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span> <span class="o">/</span> <span class="n">cell_force_divisor</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+    <span class="n">wp_cell_force</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">cell_force_work</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">mat_type</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">M</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">pack_velocities_with_cell</span><span class="p">(</span><span class="n">wp_vel</span><span class="p">,</span> <span class="n">wp_cell_vel</span><span class="p">,</span> <span class="n">wp_ext_vel</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">)</span>
+        <span class="n">pack_forces_with_cell</span><span class="p">(</span><span class="n">wp_forces</span><span class="p">,</span> <span class="n">wp_cell_force</span><span class="p">,</span> <span class="n">wp_ext_forces</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">pack_velocities_with_cell</span><span class="p">(</span>
+            <span class="n">wp_vel</span><span class="p">,</span>
+            <span class="n">wp_cell_vel</span><span class="p">,</span>
+            <span class="n">wp_ext_vel</span><span class="p">,</span>
+            <span class="n">wp_atom_ptr</span><span class="p">,</span>
+            <span class="n">wp_ext_atom_ptr</span><span class="p">,</span>
+            <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">,</span>
+            <span class="n">batch_idx</span><span class="o">=</span><span class="n">wp_bidx</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">pack_forces_with_cell</span><span class="p">(</span>
+            <span class="n">wp_forces</span><span class="p">,</span>
+            <span class="n">wp_cell_force</span><span class="p">,</span>
+            <span class="n">wp_ext_forces</span><span class="p">,</span>
+            <span class="n">wp_atom_ptr</span><span class="p">,</span>
+            <span class="n">wp_ext_atom_ptr</span><span class="p">,</span>
+            <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">,</span>
+            <span class="n">batch_idx</span><span class="o">=</span><span class="n">wp_bidx</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="n">total</span> <span class="o">=</span> <span class="n">_triple</span><span class="p">()</span>
+    <span class="n">fire2_reduce</span><span class="p">(</span>
+        <span class="n">wp_ext_vel</span><span class="p">,</span>
+        <span class="n">wp_ext_forces</span><span class="p">,</span>
+        <span class="n">wp_dt</span><span class="p">,</span>
+        <span class="n">wp_ext_batch_idx</span><span class="p">,</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">total</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">total</span><span class="p">[</span><span class="mi">1</span><span class="p">]),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">total</span><span class="p">[</span><span class="mi">2</span><span class="p">]),</span>
+    <span class="p">)</span>
+
+    <span class="c1"># cell term = total (atom + cell) - atom partial.</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>
+        <span class="n">cell_term</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">copy_</span><span class="p">(</span><span class="n">total</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">-</span> <span class="n">atom_partial</span><span class="p">[</span><span class="n">i</span><span class="p">])</span>
+
+    <span class="k">return</span> <span class="n">atom_partial</span><span class="p">,</span> <span class="n">cell_term</span>
 
 
 <div class="viewcode-block" id="fire2_step_extended">
@@ -1021,15 +1715,37 @@ document.write(`
     <span class="n">tmin</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.005</span><span class="p">,</span>
     <span class="n">maxstep</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Run FIRE2 directly on pre-packed extended arrays (no pack/unpack).</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Run FIRE2 directly on pre-packed extended arrays (no pack/unpack).</span>
 
 <span class="sd">    This is a lower-level API for callers that maintain persistent extended</span>
 <span class="sd">    arrays (positions + cell DOFs interleaved).  The caller is responsible</span>
 <span class="sd">    for packing data into the extended layout before the first call and</span>
 <span class="sd">    unpacking results after the last call (or as needed).</span>
 
+<span class="sd">    Runs the standard FIRE2 scheme directly on the packed generalized DOFs</span>
+<span class="sd">    :math:`\mathbf{v}`, :math:`\mathbf{F}`:</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        P = \sum_i (\mathbf{v}_i + \Delta t\,\mathbf{F}_i) \cdot \mathbf{F}_i,\qquad</span>
+<span class="sd">        \mathbf{v} = (1-\alpha)\,\mathbf{v}</span>
+<span class="sd">            + \left[(1-\alpha)\,\Delta t</span>
+<span class="sd">            + \alpha\sqrt{\tfrac{\mathbf{v}\cdot\mathbf{v}}</span>
+<span class="sd">            {\mathbf{F}\cdot\mathbf{F}}}\right]\mathbf{F}</span>
+
+<span class="sd">    with displacement :math:`\Delta\mathbf{r} = \Delta t\,\mathbf{v}` downhill and</span>
+<span class="sd">    :math:`-\tfrac{1}{2}\Delta t\,\mathbf{v}` uphill (:math:`P \le 0`, velocity</span>
+<span class="sd">    then zeroed), capped by</span>
+<span class="sd">    :math:`\min(1, \text{maxstep}/\lVert\Delta\mathbf{r}\rVert)` per system with</span>
+<span class="sd">    :math:`\Delta t` scaled by the same factor.</span>
+
 <span class="sd">    This eliminates the per-step pack/unpack overhead that</span>
 <span class="sd">    ``fire2_step_coord_cell`` incurs.</span>
+
+<span class="sd">    Unlike :func:`fire2_step_coord_cell`, this function treats the packed DOFs</span>
+<span class="sd">    exactly as provided. It does not add the affine atomic remap implied by</span>
+<span class="sd">    variable-cell motion, so it should be used only when the caller explicitly</span>
+<span class="sd">    wants generic packed-DOF FIRE2 behavior.</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
@@ -1067,6 +1783,9 @@ document.write(`
     <span class="n">v_sumsq</span> <span class="o">=</span> <span class="n">_alloc_or_zero</span><span class="p">(</span><span class="n">v_sumsq</span><span class="p">,</span> <span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
     <span class="n">f_sumsq</span> <span class="o">=</span> <span class="n">_alloc_or_zero</span><span class="p">(</span><span class="n">f_sumsq</span><span class="p">,</span> <span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
     <span class="n">max_norm</span> <span class="o">=</span> <span class="n">_alloc_or_zero</span><span class="p">(</span><span class="n">max_norm</span><span class="p">,</span> <span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">ext_positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span>
 
     <span class="n">fire2_step</span><span class="p">(</span>
         <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">ext_positions</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">),</span>
@@ -1120,9 +1839,22 @@ document.write(`
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -1142,7 +1874,7 @@ document.write(`
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

@@ -2,18 +2,18 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="./" >
+<html lang="en" data-content_root="./" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>Change Log &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>Change Log &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -35,16 +35,17 @@
     <link rel="stylesheet" type="text/css" href="_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="_static/doctools.js?v=9bcbadda"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -61,7 +62,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -128,8 +129,6 @@
   
   
     
-    
-      
     
     
     <img src="_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -418,6 +417,110 @@ document.write(`
   <!-- markdownlint-disable MD013 -->
 <section class="tex2jax_ignore mathjax_ignore" id="change-log">
 <h1>Change Log<a class="headerlink" href="#change-log" title="Link to this heading">#</a></h1>
+<section id="version-0-4-0">
+<h2>Version 0.4.0<a class="headerlink" href="#version-0-4-0" title="Link to this heading">#</a></h2>
+<section id="added">
+<h3>Added<a class="headerlink" href="#added" title="Link to this heading">#</a></h3>
+<ul class="simple">
+<li><p>Full Torch Ewald/PME APIs support energy-derived forces, charge gradients,
+and strain-first virials, including second-order force/stress losses.</p></li>
+<li><p>Full JAX Ewald/PME energy-only calls support first-order gradients for
+positions, charges, and row-vector displacement virials. JAX PME reciprocal
+higher-order support is limited to tested position and charge scalar losses;
+PME cell/stress/strain higher-order derivatives remain unsupported.</p></li>
+<li><p>2D slab correction is exposed through <code class="docutils literal notranslate"><span class="pre">compute_slab_correction</span></code> and the
+high-level Ewald/PME <code class="docutils literal notranslate"><span class="pre">slab_correction=</span></code> keyword in Torch and JAX.</p></li>
+<li><p>Higher-order multipole electrostatics for charges, dipoles, and quadrupoles
+(<code class="docutils literal notranslate"><span class="pre">l</span> <span class="pre">=</span> <span class="pre">0,</span> <span class="pre">1,</span> <span class="pre">2</span></code>) are available through Torch/Warp direct-k Ewald, PME,
+feature extraction, and SCF cache/step APIs.</p></li>
+<li><p>Differentiable segment operations are available through
+<code class="docutils literal notranslate"><span class="pre">nvalchemiops.torch.segment_ops</span></code> and <code class="docutils literal notranslate"><span class="pre">nvalchemiops.jax.segment_ops</span></code>.</p></li>
+<li><p>Neighbor-list APIs now include inline <code class="docutils literal notranslate"><span class="pre">pair_fn</span></code> potentials, optional per-pair
+vectors/distances, a cluster-pair tile strategy, partial rebuild flags, and
+public strategy cost/suggestion helpers.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">compute_bspline_moduli_1d</span></code> is exported from the top-level Torch and JAX
+electrostatics namespaces for PME precompute workflows.</p></li>
+</ul>
+</section>
+<section id="changed">
+<h3>Changed<a class="headerlink" href="#changed" title="Link to this heading">#</a></h3>
+<ul class="simple">
+<li><p>Direct-output flags on full Ewald/PME APIs remain functional but are
+deprecated for differentiable training. Use energy-only calls plus framework
+autograd for forces, charge gradients, and virials in training workflows.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">neighbor_list(method=None)</span></code> now uses a geometry cost model and can select
+fine-grained strategies such as <code class="docutils literal notranslate"><span class="pre">naive_tile</span></code>, <code class="docutils literal notranslate"><span class="pre">cell_list_pair_centric</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">cluster_tile</span></code> when eligible.</p></li>
+<li><p>The <code class="docutils literal notranslate"><span class="pre">nvalchemiops.neighbors</span></code> package was restructured into per-strategy
+subpackages (<code class="docutils literal notranslate"><span class="pre">naive/</span></code>, <code class="docutils literal notranslate"><span class="pre">cell_list/</span></code>, <code class="docutils literal notranslate"><span class="pre">cluster_tile/</span></code>, <code class="docutils literal notranslate"><span class="pre">rebuild/</span></code>). Flat
+compatibility modules continue to re-export with <code class="docutils literal notranslate"><span class="pre">DeprecationWarning</span></code>.</p></li>
+<li><p>DFT-D3 dispersion kernels were optimized for improved performance.</p></li>
+<li><p>PyTorch version requirements were loosened and CUDA backend extras were
+updated for CUDA 12/13 install workflows.</p></li>
+<li><p>The minimum <code class="docutils literal notranslate"><span class="pre">warp-lang</span></code> requirement is now <code class="docutils literal notranslate"><span class="pre">&gt;=</span> <span class="pre">1.13</span></code>.</p></li>
+</ul>
+</section>
+<section id="fixed">
+<h3>Fixed<a class="headerlink" href="#fixed" title="Link to this heading">#</a></h3>
+<ul class="simple">
+<li><p>Fixed an issue with JAX <code class="docutils literal notranslate"><span class="pre">naive</span></code> PBC pair-output paths that dropped non-zero
+periodic images. The  JAX <code class="docutils literal notranslate"><span class="pre">naive_neighbor_list</span></code> pair-output path (<code class="docutils literal notranslate"><span class="pre">return_distances</span></code> /
+<code class="docutils literal notranslate"><span class="pre">return_vectors</span></code>, and now <code class="docutils literal notranslate"><span class="pre">pair_fn</span></code>) launched its periodic kernel with the
+shift axis pinned to 1, so when <code class="docutils literal notranslate"><span class="pre">cutoff</span></code> exceeded half the cell width (R&gt;1)
+every non-zero periodic image was silently dropped — yielding too few
+neighbors and incorrect per-pair distances/vectors/forces relative to the
+PyTorch binding. The launch now enumerates all shifts (<code class="docutils literal notranslate"><span class="pre">max_shifts</span></code>), matching
+PyTorch and the analytic neighbor set in the multi-image regime. The
+single-cutoff <code class="docutils literal notranslate"><span class="pre">cutoff</span> <span class="pre">&lt;</span> <span class="pre">half-cell</span></code> (R==1) case is unchanged.</p></li>
+<li><p>Fixed an issue with JAX per-pair distance/vector higher-order gradients.
+The JAX neighbor-list autograd returned the <em>detached</em>
+Warp-kernel distances/vectors and re-attached only a first-order gradient via a
+<code class="docutils literal notranslate"><span class="pre">custom_vjp</span></code>, so the Hessian / Hessian-vector-product was incorrect (~45% off)
+whenever the downstream loss was nonlinear in the returned distances (e.g.
+<code class="docutils literal notranslate"><span class="pre">(distances**2).sum()</span></code>); first-order gradients (forces) were unaffected. The
+geometry is now reconstructed as a live, differentiable pure-JAX function of
+positions/cell, so gradients of all orders are exact (matching PyTorch and the
+analytic Hessian). Affects all JAX <code class="docutils literal notranslate"><span class="pre">return_distances</span></code>/<code class="docutils literal notranslate"><span class="pre">return_vectors</span></code> bindings
+(<code class="docutils literal notranslate"><span class="pre">naive</span></code>, <code class="docutils literal notranslate"><span class="pre">cell_list</span></code>, <code class="docutils literal notranslate"><span class="pre">cluster_tile</span></code>, batched).</p></li>
+<li><p>Fixed DFT-D3 forces and virials with S5 smoothing. When smoothing was
+active, the CN-chain <code class="docutils literal notranslate"><span class="pre">dE/dCN</span></code> used the unswitched pair energy, so CN-chain
+forces and virials did not exactly match the gradient of the switched energy.
+Only runs with S5 smoothing enabled were affected; the default (smoothing
+disabled) was already correct and is unchanged.</p></li>
+<li><p>Naive PBC neighbor wrapping now leaves non-periodic axes unwrapped when
+per-axis <code class="docutils literal notranslate"><span class="pre">pbc</span></code> flags are supplied.</p></li>
+<li><p>Fixed Torch Ewald gradients for non-uniform per-atom energy cotangents.</p></li>
+<li><p>JAX electrostatics no longer imports the removed <code class="docutils literal notranslate"><span class="pre">jax.custom_transpose</span></code>;
+transpose rules use stable <code class="docutils literal notranslate"><span class="pre">jax.custom_vjp</span></code> paths.</p></li>
+<li><p>FIRE2 variable-cell updates now advance positions and cell degrees of
+freedom consistently during constrained/variable-cell relaxation.</p></li>
+<li><p>Neighbor-list launchers now reject unbatched methods when batch metadata is
+supplied.</p></li>
+<li><p>MTK NPT/NPH cell propagation, velocity half-step coupling, and barostat
+half-step thermostat coupling now match the intended strain-rate formulation.</p></li>
+<li><p>JAX <code class="docutils literal notranslate"><span class="pre">naive</span></code> PBC pair-output paths enumerate all periodic images in the
+multi-image regime.</p></li>
+<li><p>JAX per-pair distance/vector outputs are reconstructed as live differentiable
+geometry, fixing higher-order gradients for nonlinear distance losses.</p></li>
+</ul>
+</section>
+<section id="deprecated-and-removed">
+<h3>Deprecated and Removed<a class="headerlink" href="#deprecated-and-removed" title="Link to this heading">#</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">compute_forces</span></code>, <code class="docutils literal notranslate"><span class="pre">compute_virial</span></code>, <code class="docutils literal notranslate"><span class="pre">compute_charge_gradients</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">hybrid_forces</span></code> direct-output flags on full Ewald/PME APIs are deprecated for
+differentiable training.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">nvalchemiops.neighbors.zero_array</span></code> is deprecated; call <code class="docutils literal notranslate"><span class="pre">array.zero_()</span></code>
+directly.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">cells_inv</span></code> and <code class="docutils literal notranslate"><span class="pre">volumes</span></code> dynamics arguments listed in <code class="docutils literal notranslate"><span class="pre">CHANGELOG.md</span></code> are
+deprecated.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">cell_velocities</span></code> now stores the strain rate <code class="docutils literal notranslate"><span class="pre">ε̇</span> <span class="pre">=</span> <span class="pre">p_g/W</span></code>, not
+<code class="docutils literal notranslate"><span class="pre">ḣ</span> <span class="pre">=</span> <span class="pre">dh/dt</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">npt_barostat_half_step{,_aniso,_triclinic}</span></code> drop the <code class="docutils literal notranslate"><span class="pre">eta_dots</span></code> argument.</p></li>
+<li><p>The internal <code class="docutils literal notranslate"><span class="pre">make_outer_neigh_offsets</span></code> helper was removed.</p></li>
+</ul>
+</section>
+</section>
 <section id="version-0-3-0">
 <h2>Version 0.3.0<a class="headerlink" href="#version-0-3-0" title="Link to this heading">#</a></h2>
 <section id="breaking-changes">
@@ -507,6 +610,13 @@ to remind users to update import paths (shown below).</p>
   </div>
   <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#version-0-4-0">Version 0.4.0</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#added">Added</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#changed">Changed</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#fixed">Fixed</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#deprecated-and-removed">Deprecated and Removed</a></li>
+</ul>
+</li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#version-0-3-0">Version 0.3.0</a><ul class="visible nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#breaking-changes">Breaking Changes</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#migration-guide">Migration Guide</a></li>
@@ -538,9 +648,22 @@ to remind users to update import paths (shown below).</p>
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -560,7 +683,7 @@ to remind users to update import paths (shown below).</p>
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

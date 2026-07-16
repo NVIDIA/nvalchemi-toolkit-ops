@@ -1,0 +1,811 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" data-theme="light">
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
+    <title>Segment Operations &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/benchmark-docs.css?v=30688d9f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'userguide/components/segment_ops';</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Contribution Guide" href="../about/contributing.html" />
+    <link rel="prev" title="Molecular Dynamics Integrators" href="dynamics.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+    
+    <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+    <label class="sidebar-toggle secondary-toggle" for="__secondary" tabindex="0">
+      <span class="fa-solid fa-outdent"></span>
+    </label>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <div class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">About</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../about/install.html">Installation Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../about/intro.html">Introduction to ALCHEMI Toolkit-Ops</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../about/conventions.html">Conventions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../about/migration.html">Migration Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../about/faq.html">Frequently Asked Questions</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Core Components</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="neighborlist.html">Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="electrostatics.html">Electrostatic Interactions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="dispersion.html">DFT-D3(BJ) Dispersion Correction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="dynamics.html">Molecular Dynamics Integrators</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Segment Operations</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Advanced Usage</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../about/contributing.html">Contribution Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../about/kernel-style-guide.html">Kernel Style Guide</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">User Guide</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">Segment Operations</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <!-- markdownlint-disable MD013 -->
+<section class="tex2jax_ignore mathjax_ignore" id="segment-operations">
+<span id="segment-ops-userguide"></span><h1>Segment Operations<a class="headerlink" href="#segment-operations" title="Link to this heading">#</a></h1>
+<p>Segment operations reduce or transform per-element data grouped by a per-element
+segment index. They are the workhorses for “reduce by category” patterns — sum
+of edge messages per node in a GNN, per-body force accumulation in a particle
+simulation, or per-cluster normalization. ALCHEMI Toolkit-Ops provides
+GPU-accelerated forward and first/second-order backward kernels via
+<a class="reference external" href="https://nvidia.github.io/warp/">NVIDIA Warp</a>, with bindings for both PyTorch
+and JAX.</p>
+<section id="quick-start">
+<h2>Quick Start<a class="headerlink" href="#quick-start" title="Link to this heading">#</a></h2>
+<div class="sd-tab-set docutils">
+<input checked="checked" id="sd-tab-item-0" name="sd-tab-set-0" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="pytorch" for="sd-tab-item-0">
+PyTorch</label><div class="sd-tab-content docutils">
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.segment_ops</span><span class="w"> </span><span class="kn">import</span> <span class="n">segmented_sum</span>
+
+<span class="n">x</span>   <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mf">1.</span><span class="p">,</span> <span class="mf">2.</span><span class="p">,</span> <span class="mf">3.</span><span class="p">,</span> <span class="mf">4.</span><span class="p">,</span> <span class="mf">5.</span><span class="p">,</span> <span class="mf">6.</span><span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+
+<span class="n">out</span> <span class="o">=</span> <span class="n">segmented_sum</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<span class="c1"># out = tensor([3., 12., 6.], device=&#39;cuda:0&#39;, grad_fn=&lt;SegmentedSumBackward&gt;)</span>
+
+<span class="n">out</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+<span class="c1"># x.grad = tensor([1., 1., 1., 1., 1., 1.], device=&#39;cuda:0&#39;)</span>
+</pre></div>
+</div>
+</div>
+<input id="sd-tab-item-1" name="sd-tab-set-0" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="jax" for="sd-tab-item-1">
+JAX</label><div class="sd-tab-content docutils">
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">jax.numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">jnp</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.jax.segment_ops</span><span class="w"> </span><span class="kn">import</span> <span class="n">segmented_sum</span>
+
+<span class="n">x</span>   <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">1.</span><span class="p">,</span> <span class="mf">2.</span><span class="p">,</span> <span class="mf">3.</span><span class="p">,</span> <span class="mf">4.</span><span class="p">,</span> <span class="mf">5.</span><span class="p">,</span> <span class="mf">6.</span><span class="p">])</span>
+<span class="n">idx</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+
+<span class="n">out</span> <span class="o">=</span> <span class="n">segmented_sum</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<span class="c1"># DeviceArray([3., 12., 6.], dtype=float32)</span>
+</pre></div>
+</div>
+</div>
+</div>
+<p>The full set of operations covers sums, dot products, scaled-broadcasts, mean,
+RMS norm, max norm, and matrix-vector products — all first- and second-order
+differentiable. See the <a class="reference internal" href="../../modules/torch/segment_ops.html"><span class="doc">Torch</span></a> and
+<a class="reference internal" href="../../modules/jax/segment_ops.html"><span class="doc">JAX</span></a> segment-op API reference pages for the
+complete public signatures.</p>
+</section>
+<section id="accelerating-hot-loops-with-cuda-graphs">
+<span id="segment-ops-cuda-graphs"></span><h2>Accelerating Hot Loops with CUDA Graphs<a class="headerlink" href="#accelerating-hot-loops-with-cuda-graphs" title="Link to this heading">#</a></h2>
+<p>The segment-op kernels themselves are small and bandwidth-bound. For low-N
+problem sizes (<span class="math notranslate nohighlight">\(\lesssim 100\text{k}\)</span> elements), the wall time is dominated by <strong>host-side
+launch overhead</strong>: Python dispatch, dtype-keyed overload lookup, parameter
+packing, and the CUDA driver’s <code class="docutils literal notranslate"><span class="pre">cuLaunchKernel</span></code> call. This shows up as a
+2-3× gap between our launchers and PyTorch’s fused C++ kernels at small N,
+even though our kernels themselves are equal or faster.</p>
+<p>For workloads that call segment ops repeatedly with the same shapes — training
+steps, MD timesteps, Monte Carlo iterations — the right tool is a
+<a class="reference external" href="https://developer.nvidia.com/blog/cuda-graphs/">CUDA graph</a>. Warp exposes
+this via <a class="reference external" href="https://nvidia.github.io/warp/_generated/warp.ScopedCapture.html"><code class="docutils literal notranslate"><span class="pre">wp.ScopedCapture</span></code></a>:
+record the op chain once into a graph node, then replay it on every iteration
+with a single submission. All the per-call host work happens at capture time
+instead of at every replay.</p>
+<section id="speedup">
+<h3>Speedup<a class="headerlink" href="#speedup" title="Link to this heading">#</a></h3>
+<p>On an RTX PRO 6000 (Blackwell) at N=10k, M=1000, the difference is:</p>
+<table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Op</p></th>
+<th class="head"><p>Eager</p></th>
+<th class="head"><p><strong>Graph replay</strong></p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">segmented_sum</span></code> bwd</p></td>
+<td><p>0.84× vs torch (we lose)</p></td>
+<td><p><strong>1.50× vs torch</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">segmented_dot</span></code> bwd</p></td>
+<td><p>1.13×</p></td>
+<td><p><strong>3.53×</strong></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">segmented_rms_norm</span></code> dbl</p></td>
+<td><p>1.45×</p></td>
+<td><p><strong>8.58×</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">segmented_matvec</span></code> dbl</p></td>
+<td><p>1.68×</p></td>
+<td><p><strong>5.81×</strong></p></td>
+</tr>
+</tbody>
+</table>
+<p>The pattern: at small N the host overhead is most of the eager time, so the
+graph replay claws back the biggest fraction. At large N the kernel work
+dominates and the relative win is smaller (but the absolute work is also where
+our launchers already beat torch by 10-25×).</p>
+</section>
+<section id="what-about-torch-compile">
+<h3>What About <code class="docutils literal notranslate"><span class="pre">torch.compile</span></code>?<a class="headerlink" href="#what-about-torch-compile" title="Link to this heading">#</a></h3>
+<p>A natural first question is whether <code class="docutils literal notranslate"><span class="pre">torch.compile(segmented_sum,</span> <span class="pre">fullgraph=True)</span></code> captures the public wrappers. In this release, it does:
+the Torch segment ops are registered as custom op chains, so TorchDynamo sees
+each public wrapper as an opaque graph node. Eager calls still validate
+<code class="docutils literal notranslate"><span class="pre">idx</span></code> on the host, including range checks, while compiled calls skip the
+range check under <code class="docutils literal notranslate"><span class="pre">torch.compiler.is_compiling()</span></code> to avoid a data-dependent
+host sync. Pass pre-validated segment indices when compiling with
+<code class="docutils literal notranslate"><span class="pre">fullgraph=True</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">mode=&quot;reduce-overhead&quot;</span></code> can reduce Torch’s own launch overhead, but the
+speedups reported in the table above come from explicit <code class="docutils literal notranslate"><span class="pre">wp.ScopedCapture</span></code>
+around the raw launchers. Use <code class="docutils literal notranslate"><span class="pre">torch.compile</span></code> when the segment op is part
+of a larger compiled PyTorch model; use <code class="docutils literal notranslate"><span class="pre">wp.ScopedCapture</span></code> when repeatedly
+replaying the same fixed-shape Warp launcher sequence.</p>
+</section>
+<section id="minimal-pattern">
+<h3>Minimal Pattern<a class="headerlink" href="#minimal-pattern" title="Link to this heading">#</a></h3>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">warp</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">wp</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.segment_ops_backward</span><span class="w"> </span><span class="kn">import</span> <span class="n">segmented_sum_backward</span>
+
+<span class="n">wp_device</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">get_device</span><span class="p">(</span><span class="s2">&quot;cuda:0&quot;</span><span class="p">)</span>
+
+<span class="c1"># 1. Pre-warm the eager path so JIT compilation and module loading happen</span>
+<span class="c1">#    BEFORE capture.  If you skip this, the graph records the first-call</span>
+<span class="c1">#    compile work and replay is much slower.</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>
+    <span class="n">segmented_sum_backward</span><span class="p">(</span><span class="n">g_out</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">grad_x</span><span class="p">)</span>
+<span class="n">wp</span><span class="o">.</span><span class="n">synchronize_device</span><span class="p">(</span><span class="n">wp_device</span><span class="p">)</span>
+
+<span class="c1"># 2. Capture the op chain into a graph.  Every kernel launch and memset</span>
+<span class="c1">#    inside the with-block is recorded, not executed.</span>
+<span class="k">with</span> <span class="n">wp</span><span class="o">.</span><span class="n">ScopedCapture</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">)</span> <span class="k">as</span> <span class="n">cap</span><span class="p">:</span>
+    <span class="n">segmented_sum_backward</span><span class="p">(</span><span class="n">g_out</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">grad_x</span><span class="p">)</span>
+
+<span class="c1"># 3. Replay the graph from the hot loop.  One submission, no Python dispatch.</span>
+<span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_steps</span><span class="p">):</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">capture_launch</span><span class="p">(</span><span class="n">cap</span><span class="o">.</span><span class="n">graph</span><span class="p">)</span>
+    <span class="c1"># ... other work that doesn&#39;t need to be captured ...</span>
+</pre></div>
+</div>
+<p>The same pattern works for any combination of segment ops — capture a whole
+fused chain (forward pass, backward, gradient update) into one graph if the
+shapes are stable.</p>
+</section>
+<section id="when-to-use-it">
+<h3>When to Use It<a class="headerlink" href="#when-to-use-it" title="Link to this heading">#</a></h3>
+<p>CUDA graphs win when <strong>the same shape/dtype op chain is replayed many times</strong>.
+The breakeven is roughly 100 replays: capture itself takes a few hundred
+microseconds, so a single-shot use isn’t worth it.</p>
+<p>Best fits:</p>
+<ul class="simple">
+<li><p><strong>Training loops</strong> — every minibatch runs the same forward + backward shape.</p></li>
+<li><p><strong>MD/simulation steps</strong> — atom count and segment partitioning are constant
+across steps.</p></li>
+<li><p><strong>Inner loops of iterative solvers</strong> — fixed-point or Krylov iterations on
+stable inputs.</p></li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p><strong>All shapes, dtypes, and tensor identities must be stable across replays.</strong>
+A captured graph hard-codes the pointer addresses of every input and output,
+plus the kernel launch dimensions.  Re-allocating an input tensor or changing
+the segment count invalidates the graph — you’ll need to re-capture.</p>
+<p>If your shapes change frequently, either bucket inputs to fixed sizes
+(zero-padding) or accept the eager-path cost.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p><strong>The op chain must not branch on device state.</strong>  CUDA graphs record one
+deterministic sequence of kernel launches.  If the captured Python code has
+<code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">x.sum()</span> <span class="pre">&gt;</span> <span class="pre">0:</span></code>-style branches, the graph only records the path taken at
+capture time.  Subsequent replays will execute that same path regardless of
+what the data says.</p>
+</div>
+</section>
+<section id="capturing-across-backward-passes-torch-autograd">
+<h3>Capturing Across Backward Passes (Torch Autograd)<a class="headerlink" href="#capturing-across-backward-passes-torch-autograd" title="Link to this heading">#</a></h3>
+<p>Wrapping <code class="xref py py-class docutils literal notranslate"><span class="pre">torch.autograd.Function.apply</span></code> calls in a graph requires
+care: autograd hooks and saved-tensor management are host-side state that
+doesn’t capture cleanly.  Two patterns work:</p>
+<ol class="arabic simple">
+<li><p><strong>Capture only the forward</strong>, run the backward eagerly.  Works well when
+you want graph speedup for inference loops.</p></li>
+<li><p><strong>Capture the launcher calls directly</strong> (e.g. <code class="docutils literal notranslate"><span class="pre">segmented_sum_backward</span></code>)
+bypassing the autograd wrappers entirely.  This is what the benchmark
+harness does — it’s the shortest path to the speedup numbers above.</p></li>
+</ol>
+<p>For end-to-end graph capture of an entire training step, PyTorch’s
+<a class="reference external" href="https://docs.pytorch.org/docs/stable/generated/torch.cuda.CUDAGraph.html#torch.cuda.CUDAGraph" title="(in PyTorch v2.13)"><code class="xref py py-class docutils literal notranslate"><span class="pre">torch.cuda.CUDAGraph</span></code></a> and the higher-level <code class="docutils literal notranslate"><span class="pre">torch.cuda.graph()</span></code>
+context manager interoperate with Warp launches as long as both sides use the
+same CUDA stream.  Hand-off mechanics are documented in the
+<a class="reference external" href="https://pytorch.org/docs/stable/notes/cuda.html#cuda-graphs">PyTorch CUDA graphs guide</a>.</p>
+</section>
+<section id="caveats-and-gotchas">
+<h3>Caveats and Gotchas<a class="headerlink" href="#caveats-and-gotchas" title="Link to this heading">#</a></h3>
+<ul class="simple">
+<li><p><strong>Internal allocations</strong>: Some second-order backward launchers (e.g.
+<code class="docutils literal notranslate"><span class="pre">segmented_rms_norm_double_backward</span></code>) allocate small scratch
+buffers via <a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.zeros.html#warp.zeros" title="(in Warp v1.16.0.dev0)"><code class="xref py py-func docutils literal notranslate"><span class="pre">warp.zeros()</span></code></a>.  These are capturable because Warp routes
+through CUDA’s stream-ordered memory pool — but the allocator itself is the
+only guaranteed-graph-safe path.  Don’t add per-call <code class="docutils literal notranslate"><span class="pre">torch.zeros</span></code>
+allocations inside the capture; route through <code class="docutils literal notranslate"><span class="pre">warp.zeros</span></code> or pre-allocate
+outside.</p></li>
+<li><p><strong>Stream binding</strong>: <code class="docutils literal notranslate"><span class="pre">ScopedCapture</span></code> captures on Warp’s own device stream.
+If your surrounding code uses a torch stream and times with
+<code class="docutils literal notranslate"><span class="pre">torch.cuda.Event</span></code>, the final <code class="docutils literal notranslate"><span class="pre">torch.cuda.synchronize()</span></code> is what makes
+the timing reflect actual graph completion.</p></li>
+<li><p><strong>First-call overhead</strong>: Module loading and JIT compilation happen lazily on
+the first kernel launch.  Always run the eager path 2-3 times before
+capture, then <code class="docutils literal notranslate"><span class="pre">wp.synchronize_device(device)</span></code>, then capture.  Otherwise
+the graph bakes in compile-time work and replay is slow.</p></li>
+</ul>
+</section>
+<section id="where-to-look-next">
+<h3>Where to Look Next<a class="headerlink" href="#where-to-look-next" title="Link to this heading">#</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">benchmarks/segment_ops/benchmark_segment_ops.py</span></code> ships a working
+<code class="docutils literal notranslate"><span class="pre">_bench_cuda_graph</span></code> helper that captures any segment op and times the
+replay against the eager path — a useful template for adapting the pattern
+to your own workload.</p></li>
+<li><p>The benchmark CSV’s <code class="docutils literal notranslate"><span class="pre">warp_graph_median_ms</span></code> and <code class="docutils literal notranslate"><span class="pre">graph_speedup</span></code> columns
+show the per-shape gain across the full op set.</p></li>
+<li><p><a class="reference external" href="https://nvidia.github.io/warp/modules/runtime.html#warp.ScopedCapture">Warp’s ScopedCapture docs</a>
+for the underlying API, including <code class="docutils literal notranslate"><span class="pre">capture_save</span></code>/<code class="docutils literal notranslate"><span class="pre">capture_load</span></code> for
+graphs that survive across processes.</p></li>
+</ul>
+</section>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="dynamics.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Molecular Dynamics Integrators</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="../about/contributing.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Contribution Guide</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#quick-start">Quick Start</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#accelerating-hot-loops-with-cuda-graphs">Accelerating Hot Loops with CUDA Graphs</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#speedup">Speedup</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#what-about-torch-compile">What About <code class="docutils literal notranslate"><span class="pre">torch.compile</span></code>?</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#minimal-pattern">Minimal Pattern</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#when-to-use-it">When to Use It</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#capturing-across-backward-passes-torch-autograd">Capturing Across Backward Passes (Torch Autograd)</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#caveats-and-gotchas">Caveats and Gotchas</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#where-to-look-next">Where to Look Next</a></li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/userguide/components/segment_ops.md.txt">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

@@ -2,17 +2,17 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../../../" >
+<html lang="en" data-content_root="../../../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>nvalchemiops.torch.neighbors.rebuild_detection &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>nvalchemiops.torch.neighbors.rebuild_detection &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -34,16 +34,17 @@
     <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -58,7 +59,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -125,8 +126,6 @@
   
   
     
-    
-      
     
     
     <img src="../../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -434,7 +433,7 @@ document.write(`
 <span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">warp</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">wp</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighbors.rebuild_detection</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighbors.rebuild</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">check_batch_cell_list_rebuild</span><span class="p">,</span>
     <span class="n">check_batch_neighbor_list_rebuild</span><span class="p">,</span>
     <span class="n">check_cell_list_rebuild</span><span class="p">,</span>
@@ -503,20 +502,33 @@ document.write(`
 
     <span class="c1"># Convert PyTorch tensors to warp arrays</span>
     <span class="n">wp_current_positions</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">current_positions</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_vec_dtype</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">current_positions</span><span class="p">,</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">wp_vec_dtype</span><span class="p">,</span>
+        <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="p">)</span>
-    <span class="n">wp_cell</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_mat_dtype</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="n">wp_pbc</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">pbc</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">wp_cell</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">cell</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_mat_dtype</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
+    <span class="n">wp_pbc</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">pbc</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
     <span class="n">wp_atom_to_cell_mapping</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">atom_to_cell_mapping</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">atom_to_cell_mapping</span><span class="p">,</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">,</span>
+        <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="p">)</span>
     <span class="n">wp_cells_per_dimension</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">cells_per_dimension</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">cells_per_dimension</span><span class="p">,</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>
+        <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="p">)</span>
 
     <span class="c1"># Initialize rebuild flag (False = no rebuild needed)</span>
     <span class="n">rebuild_needed</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="kc">False</span><span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">)</span>
-    <span class="n">wp_rebuild_flag</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">rebuild_needed</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">wp_rebuild_flag</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">rebuild_needed</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
 
     <span class="c1"># Call core warp launcher</span>
     <span class="n">check_cell_list_rebuild</span><span class="p">(</span>
@@ -667,21 +679,35 @@ document.write(`
     <span class="n">wp_vec_dtype</span> <span class="o">=</span> <span class="n">get_wp_vec_dtype</span><span class="p">(</span><span class="n">reference_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
 
     <span class="n">wp_reference_positions</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">reference_positions</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_vec_dtype</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">reference_positions</span><span class="p">,</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">wp_vec_dtype</span><span class="p">,</span>
+        <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="p">)</span>
     <span class="n">wp_current_positions</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">current_positions</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_vec_dtype</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">current_positions</span><span class="p">,</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">wp_vec_dtype</span><span class="p">,</span>
+        <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="p">)</span>
 
     <span class="n">rebuild_needed</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="kc">False</span><span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">)</span>
-    <span class="n">wp_rebuild_flag</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">rebuild_needed</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">wp_rebuild_flag</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">rebuild_needed</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
 
     <span class="n">wp_cell</span> <span class="o">=</span> <span class="n">wp_cell_inv</span> <span class="o">=</span> <span class="n">wp_pbc</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="k">if</span> <span class="n">cell</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">cell_inv</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">pbc</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
         <span class="n">wp_mat_dtype</span> <span class="o">=</span> <span class="n">get_wp_mat_dtype</span><span class="p">(</span><span class="n">reference_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
-        <span class="n">wp_cell</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_mat_dtype</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-        <span class="n">wp_cell_inv</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">cell_inv</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_mat_dtype</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-        <span class="n">wp_pbc</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">pbc</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">wp_cell</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+            <span class="n">cell</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_mat_dtype</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="p">)</span>
+        <span class="n">wp_cell_inv</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+            <span class="n">cell_inv</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_mat_dtype</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="p">)</span>
+        <span class="n">wp_pbc</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+            <span class="n">pbc</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="p">)</span>
 
     <span class="n">check_neighbor_list_rebuild</span><span class="p">(</span>
         <span class="n">reference_positions</span><span class="o">=</span><span class="n">wp_reference_positions</span><span class="p">,</span>
@@ -923,6 +949,7 @@ document.write(`
     <span class="n">current_positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
     <span class="n">batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
     <span class="n">skin_distance_threshold</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">num_systems</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
     <span class="n">update_reference_positions</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">cell</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">cell_inv</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
@@ -940,6 +967,9 @@ document.write(`
 <span class="sd">        System index for each atom.</span>
 <span class="sd">    skin_distance_threshold : float</span>
 <span class="sd">        Maximum allowed displacement before neighbor list becomes invalid.</span>
+<span class="sd">    num_systems : int</span>
+<span class="sd">        Number of systems represented by ``batch_idx``. Provided explicitly so</span>
+<span class="sd">        fake/meta execution does not need to inspect tensor values.</span>
 <span class="sd">    update_reference_positions : bool, default=False</span>
 <span class="sd">        If True, overwrite ``reference_positions`` with ``current_positions``</span>
 <span class="sd">        after a rebuild is detected. Uses a separate deterministic kernel launch.</span>
@@ -960,7 +990,6 @@ document.write(`
 <span class="sd">    batch_neighbor_list_needs_rebuild : High-level wrapper function</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">if</span> <span class="n">reference_positions</span><span class="o">.</span><span class="n">shape</span> <span class="o">!=</span> <span class="n">current_positions</span><span class="o">.</span><span class="n">shape</span><span class="p">:</span>
-        <span class="n">num_systems</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">batch_idx</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">())</span> <span class="o">+</span> <span class="mi">1</span> <span class="k">if</span> <span class="n">batch_idx</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mi">1</span>
         <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span>
             <span class="n">num_systems</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">current_positions</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span>
         <span class="p">)</span>
@@ -968,7 +997,6 @@ document.write(`
     <span class="n">total_atoms</span> <span class="o">=</span> <span class="n">reference_positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
     <span class="n">device</span> <span class="o">=</span> <span class="n">reference_positions</span><span class="o">.</span><span class="n">device</span>
 
-    <span class="n">num_systems</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">batch_idx</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">())</span> <span class="o">+</span> <span class="mi">1</span> <span class="k">if</span> <span class="n">total_atoms</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mi">1</span>
     <span class="n">rebuild_flags</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">num_systems</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">)</span>
 
     <span class="k">if</span> <span class="n">total_atoms</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
@@ -978,20 +1006,39 @@ document.write(`
     <span class="n">wp_vec_dtype</span> <span class="o">=</span> <span class="n">get_wp_vec_dtype</span><span class="p">(</span><span class="n">reference_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
 
     <span class="n">wp_reference</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">reference_positions</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_vec_dtype</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">reference_positions</span><span class="p">,</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">wp_vec_dtype</span><span class="p">,</span>
+        <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="p">)</span>
-    <span class="n">wp_current</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">current_positions</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_vec_dtype</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">wp_current</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">current_positions</span><span class="p">,</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">wp_vec_dtype</span><span class="p">,</span>
+        <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="p">)</span>
     <span class="n">wp_batch_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">batch_idx</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">batch_idx</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>
+        <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="p">)</span>
-    <span class="n">wp_rebuild_flags</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">rebuild_flags</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">wp_rebuild_flags</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">rebuild_flags</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
 
     <span class="n">wp_cell</span> <span class="o">=</span> <span class="n">wp_cell_inv</span> <span class="o">=</span> <span class="n">wp_pbc</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="k">if</span> <span class="n">cell</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">cell_inv</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">pbc</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
         <span class="n">wp_mat_dtype</span> <span class="o">=</span> <span class="n">get_wp_mat_dtype</span><span class="p">(</span><span class="n">reference_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
-        <span class="n">wp_cell</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_mat_dtype</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-        <span class="n">wp_cell_inv</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">cell_inv</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_mat_dtype</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-        <span class="n">wp_pbc</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">pbc</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">wp_cell</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+            <span class="n">cell</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_mat_dtype</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="p">)</span>
+        <span class="n">wp_cell_inv</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+            <span class="n">cell_inv</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_mat_dtype</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="p">)</span>
+        <span class="n">wp_pbc</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+            <span class="n">pbc</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="p">)</span>
 
     <span class="n">check_batch_neighbor_list_rebuild</span><span class="p">(</span>
         <span class="n">reference_positions</span><span class="o">=</span><span class="n">wp_reference</span><span class="p">,</span>
@@ -1016,14 +1063,16 @@ document.write(`
     <span class="n">current_positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
     <span class="n">batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
     <span class="n">skin_distance_threshold</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">num_systems</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
     <span class="n">update_reference_positions</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">cell</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">cell_inv</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">pbc</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Fake implementation for torch.compile compatibility.&quot;&quot;&quot;</span>
-    <span class="n">num_systems</span> <span class="o">=</span> <span class="n">batch_idx</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">+</span> <span class="mi">1</span> <span class="k">if</span> <span class="n">batch_idx</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mi">1</span>
-    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">num_systems</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">reference_positions</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span>
+        <span class="p">(</span><span class="n">num_systems</span><span class="p">,),</span> <span class="n">device</span><span class="o">=</span><span class="n">reference_positions</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span>
+    <span class="p">)</span>
 
 
 <div class="viewcode-block" id="batch_neighbor_list_needs_rebuild">
@@ -1037,6 +1086,8 @@ document.write(`
     <span class="n">cell</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">cell_inv</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">pbc</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">num_systems</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Detect per-system if neighbor lists require rebuilding due to atomic motion.</span>
 
@@ -1067,6 +1118,10 @@ document.write(`
 <span class="sd">        Inverse cell matrices, same shape as ``cell``.</span>
 <span class="sd">    pbc : torch.Tensor or None, optional</span>
 <span class="sd">        PBC flags, shape (num_systems, 3), dtype=bool.</span>
+<span class="sd">    num_systems : int, optional</span>
+<span class="sd">        Number of systems represented by ``batch_idx``. Required under</span>
+<span class="sd">        ``torch.compile`` because deriving it from ``batch_idx.max()`` is a</span>
+<span class="sd">        host-only synchronization.</span>
 
 <span class="sd">    Returns</span>
 <span class="sd">    -------</span>
@@ -1078,17 +1133,28 @@ document.write(`
 <span class="sd">    -----</span>
 <span class="sd">    - torch.compile compatible custom operation</span>
 <span class="sd">    - No CPU-GPU synchronization required; all flag writes happen on GPU</span>
-<span class="sd">    - ``num_systems`` is inferred as ``batch_idx.max() + 1``</span>
+<span class="sd">    - In eager mode, ``num_systems`` defaults to ``batch_idx.max() + 1``</span>
 
 <span class="sd">    See Also</span>
 <span class="sd">    --------</span>
 <span class="sd">    neighbor_list_needs_rebuild : Single-system version</span>
 <span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">num_systems</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">compiler</span><span class="o">.</span><span class="n">is_compiling</span><span class="p">()</span> <span class="ow">or</span> <span class="n">torch</span><span class="o">.</span><span class="n">_dynamo</span><span class="o">.</span><span class="n">is_compiling</span><span class="p">():</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+                <span class="s2">&quot;batch_neighbor_list_needs_rebuild requires num_systems under &quot;</span>
+                <span class="s2">&quot;torch.compile. Compute it before compiling and pass &quot;</span>
+                <span class="s2">&quot;num_systems=... to avoid tracing a host-only batch_idx.max() &quot;</span>
+                <span class="s2">&quot;synchronization.&quot;</span>
+            <span class="p">)</span>
+        <span class="n">num_systems</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">batch_idx</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">())</span> <span class="o">+</span> <span class="mi">1</span> <span class="k">if</span> <span class="n">batch_idx</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mi">1</span>
+
     <span class="k">return</span> <span class="n">_batch_neighbor_list_needs_rebuild</span><span class="p">(</span>
         <span class="n">reference_positions</span><span class="p">,</span>
         <span class="n">current_positions</span><span class="p">,</span>
         <span class="n">batch_idx</span><span class="p">,</span>
         <span class="n">skin_distance_threshold</span><span class="p">,</span>
+        <span class="nb">int</span><span class="p">(</span><span class="n">num_systems</span><span class="p">),</span>
         <span class="n">update_reference_positions</span><span class="p">,</span>
         <span class="n">cell</span><span class="p">,</span>
         <span class="n">cell_inv</span><span class="p">,</span>
@@ -1152,20 +1218,38 @@ document.write(`
     <span class="n">wp_vec_dtype</span> <span class="o">=</span> <span class="n">get_wp_vec_dtype</span><span class="p">(</span><span class="n">current_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
     <span class="n">wp_mat_dtype</span> <span class="o">=</span> <span class="n">get_wp_mat_dtype</span><span class="p">(</span><span class="n">current_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
 
-    <span class="n">wp_current</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">current_positions</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_vec_dtype</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="n">wp_cell</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_mat_dtype</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">wp_current</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">current_positions</span><span class="p">,</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">wp_vec_dtype</span><span class="p">,</span>
+        <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">wp_cell</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">cell</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_mat_dtype</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
     <span class="n">wp_atom_to_cell_mapping</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">atom_to_cell_mapping</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">atom_to_cell_mapping</span><span class="p">,</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">,</span>
+        <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="p">)</span>
     <span class="n">wp_batch_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">batch_idx</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">batch_idx</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>
+        <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="p">)</span>
     <span class="n">wp_cells_per_dimension</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">cells_per_dimension</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">cells_per_dimension</span><span class="p">,</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">,</span>
+        <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="p">)</span>
     <span class="c1"># pbc shape (num_systems, 3) → 2D warp array of bool</span>
-    <span class="n">wp_pbc</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">pbc</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="n">wp_rebuild_flags</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">rebuild_flags</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">wp_pbc</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">pbc</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">wp_rebuild_flags</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">rebuild_flags</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
 
     <span class="n">check_batch_cell_list_rebuild</span><span class="p">(</span>
         <span class="n">current_positions</span><span class="o">=</span><span class="n">wp_current</span><span class="p">,</span>
@@ -1283,9 +1367,22 @@ document.write(`
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -1305,7 +1402,7 @@ document.write(`
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

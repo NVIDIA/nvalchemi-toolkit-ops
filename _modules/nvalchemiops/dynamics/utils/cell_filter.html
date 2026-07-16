@@ -2,17 +2,17 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../../../" >
+<html lang="en" data-content_root="../../../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>nvalchemiops.dynamics.utils.cell_filter &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>nvalchemiops.dynamics.utils.cell_filter &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -34,16 +34,17 @@
     <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -58,7 +59,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -125,8 +126,6 @@
   
   
     
-    
-      
     
     
     <img src="../../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -428,14 +427,14 @@ document.write(`
 <span class="sd">variable-cell optimization without modification.</span>
 
 <span class="sd">The approach follows the &quot;filter&quot; pattern:</span>
-<span class="sd">- Atomic positions (3N DOFs) + cell parameters (6 DOFs) → extended positions (3N + 6)</span>
-<span class="sd">- Atomic forces + stress tensor → extended forces (3N + 6)</span>
+<span class="sd">- Atomic positions (3N DOFs) + cell parameters (6 DOFs) -&gt; extended positions (3N + 6)</span>
+<span class="sd">- Atomic forces + stress tensor -&gt; extended forces (3N + 6)</span>
 <span class="sd">- Standard optimizer operates on extended arrays</span>
 <span class="sd">- Results are unpacked back to atomic positions and cell</span>
 
 <span class="sd">Key features:</span>
 <span class="sd">- Cell alignment to upper-triangular form for stability</span>
-<span class="sd">- 6-DOF cell representation (upper-triangular: a, b*cos(γ), b*sin(γ), c1, c2, c3)</span>
+<span class="sd">- 6-DOF cell representation (upper-triangular: a, b*cos(gamma), b*sin(gamma), c1, c2, c3)</span>
 <span class="sd">- Stress-to-cell-force conversion with proper volume scaling</span>
 <span class="sd">- batch_idx/atom_ptr extension for batched systems</span>
 
@@ -498,7 +497,7 @@ document.write(`
 <span class="sd">            c_1 &amp; c_2 &amp; c_3</span>
 <span class="sd">        \end{pmatrix}</span>
 
-<span class="sd">    where a, b, c are lattice vector lengths and γ is the angle between a and b.</span>
+<span class="sd">    where a, b, c are lattice vector lengths and :math:`\gamma` is the angle between a and b.</span>
 
 <span class="sd">    This representation:</span>
 <span class="sd">    - Reduces rotational ambiguity (improves optimization stability)</span>
@@ -666,8 +665,8 @@ document.write(`
 <span class="sd">    upper-triangular form from align_cell().</span>
 
 <span class="sd">    Cell packing format:</span>
-<span class="sd">        extended[N]   = [H[0,0], H[1,0], H[2,0]] = [a, b*cos(γ), c1]</span>
-<span class="sd">        extended[N+1] = [H[1,1], H[2,1], H[2,2]] = [b*sin(γ), c2, c3]</span>
+<span class="sd">        extended[N]   = [H[0,0], H[1,0], H[2,0]] = [a, b*cos(gamma), c1]</span>
+<span class="sd">        extended[N+1] = [H[1,1], H[2,1], H[2,2]] = [b*sin(gamma), c2, c3]</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
@@ -1108,7 +1107,7 @@ document.write(`
 
 <span class="sd">        \mathbf{F}_{\text{cell}} = -V \cdot \boldsymbol{\sigma} \cdot (\mathbf{H}^{-1})^T</span>
 
-<span class="sd">    where V is cell volume, σ is the stress tensor, and H is the cell matrix.</span>
+<span class="sd">    where V is cell volume, :math:`\sigma` is the stress tensor, and H is the cell matrix.</span>
 
 <span class="sd">    For upper-triangular cells, this simplifies since H^{-1} is also upper-triangular.</span>
 
@@ -1117,7 +1116,7 @@ document.write(`
 <span class="sd">    stress : wp.array, shape (B,), dtype=wp.mat33*</span>
 <span class="sd">        Stress tensor in tension-positive (negative for compression)</span>
 <span class="sd">        convention, in energy/volume units.  For zero-pressure relaxation</span>
-<span class="sd">        this is typically ``virial / V`` where virial = −Σ r⊗F from the</span>
+<span class="sd">        this is typically ``virial / V`` where virial = :math:`-\sum_i \mathbf{r}_i \otimes \mathbf{F}_i` from the</span>
 <span class="sd">        LJ kernel.  For finite external pressure use</span>
 <span class="sd">        ``P_ext − P_internal`` (see ``virial_to_stress``).</span>
 <span class="sd">    cell : wp.array, shape (B,), dtype=wp.mat33*</span>
@@ -1179,6 +1178,181 @@ document.write(`
         <span class="n">cell_force</span><span class="p">[</span><span class="n">sys</span><span class="p">]</span> <span class="o">=</span> <span class="n">Fc</span>
 
 
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span><span class="p">(</span><span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_fire2_coord_cell_max_displacement_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cells</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cell_velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">vf</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">ext_batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">ext_atom_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">max_norm</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Reduce the coupled FIRE2 variable-cell atomic displacement norm.</span>
+
+<span class="sd">    The raw trial update is:</span>
+
+<span class="sd">    ``cell_raw = H + factor * dt * Hdot``</span>
+<span class="sd">    ``r_raw = (cell_raw @ H^-1) @ r + factor * dt * v``</span>
+
+<span class="sd">    where ``factor`` is ``1`` downhill and ``-0.5`` uphill.  The per-system</span>
+<span class="sd">    maximum is computed from the actual Cartesian atomic displacement</span>
+<span class="sd">    ``r_raw - r``.</span>
+
+<span class="sd">    Thread launch</span>
+<span class="sd">    -------------</span>
+<span class="sd">    One thread per extended DOF. Atomic entries contribute to ``max_norm``;</span>
+<span class="sd">    cell DOF entries return without work.</span>
+
+<span class="sd">    Modifies</span>
+<span class="sd">    --------</span>
+<span class="sd">    max_norm</span>
+<span class="sd">        Per-system maximum raw atomic displacement norm.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">ext_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">sys</span> <span class="o">=</span> <span class="n">ext_batch_idx</span><span class="p">[</span><span class="n">ext_idx</span><span class="p">]</span>
+    <span class="n">cell_dof_start</span> <span class="o">=</span> <span class="n">ext_atom_ptr</span><span class="p">[</span><span class="n">sys</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">ext_idx</span> <span class="o">&gt;=</span> <span class="n">cell_dof_start</span><span class="p">:</span>
+        <span class="k">return</span>
+
+    <span class="n">atom_idx</span> <span class="o">=</span> <span class="n">ext_idx</span> <span class="o">-</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span> <span class="o">*</span> <span class="n">sys</span>
+    <span class="n">local_dt</span> <span class="o">=</span> <span class="n">dt</span><span class="p">[</span><span class="n">sys</span><span class="p">]</span>
+    <span class="n">zero</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">local_dt</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">)</span>
+    <span class="n">one</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">local_dt</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span>
+    <span class="n">uphill</span> <span class="o">=</span> <span class="n">vf</span><span class="p">[</span><span class="n">sys</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="n">zero</span>
+    <span class="n">factor</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">local_dt</span><span class="p">)(</span><span class="o">-</span><span class="mf">0.5</span><span class="p">)</span> <span class="k">if</span> <span class="n">uphill</span> <span class="k">else</span> <span class="n">one</span>
+
+    <span class="n">cell_old</span> <span class="o">=</span> <span class="n">cells</span><span class="p">[</span><span class="n">sys</span><span class="p">]</span>
+    <span class="n">cell_old_inv</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">inverse</span><span class="p">(</span><span class="n">cell_old</span><span class="p">)</span>
+    <span class="n">cell_step_raw</span> <span class="o">=</span> <span class="n">factor</span> <span class="o">*</span> <span class="n">local_dt</span> <span class="o">*</span> <span class="n">cell_velocities</span><span class="p">[</span><span class="n">sys</span><span class="p">]</span>
+    <span class="n">cell_raw</span> <span class="o">=</span> <span class="n">cell_old</span> <span class="o">+</span> <span class="n">cell_step_raw</span>
+    <span class="n">transform</span> <span class="o">=</span> <span class="n">cell_raw</span> <span class="o">*</span> <span class="n">cell_old_inv</span>
+
+    <span class="n">position_old</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">raw_displacement</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">transform</span><span class="p">,</span> <span class="n">position_old</span><span class="p">)</span>
+        <span class="o">+</span> <span class="n">factor</span> <span class="o">*</span> <span class="n">local_dt</span> <span class="o">*</span> <span class="n">velocities</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+        <span class="o">-</span> <span class="n">position_old</span>
+    <span class="p">)</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">max_norm</span><span class="p">,</span> <span class="n">sys</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">length</span><span class="p">(</span><span class="n">raw_displacement</span><span class="p">))</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span><span class="p">(</span><span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_fire2_coord_cell_apply_positions_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cells</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cell_velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">vf</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">ext_batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">ext_atom_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">max_norm</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">maxstep</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Apply coupled FIRE2 atomic coordinate updates.</span>
+
+<span class="sd">    Thread launch</span>
+<span class="sd">    -------------</span>
+<span class="sd">    One thread per extended DOF. Atomic entries update one atom; cell DOF</span>
+<span class="sd">    entries return without work.</span>
+
+<span class="sd">    Modifies</span>
+<span class="sd">    --------</span>
+<span class="sd">    positions</span>
+<span class="sd">        Atomic positions after affine cell remapping and coordinate motion.</span>
+<span class="sd">    velocities</span>
+<span class="sd">        Atomic velocities, zeroed for uphill systems.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">ext_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">sys</span> <span class="o">=</span> <span class="n">ext_batch_idx</span><span class="p">[</span><span class="n">ext_idx</span><span class="p">]</span>
+    <span class="n">cell_dof_start</span> <span class="o">=</span> <span class="n">ext_atom_ptr</span><span class="p">[</span><span class="n">sys</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">ext_idx</span> <span class="o">&gt;=</span> <span class="n">cell_dof_start</span><span class="p">:</span>
+        <span class="k">return</span>
+
+    <span class="n">atom_idx</span> <span class="o">=</span> <span class="n">ext_idx</span> <span class="o">-</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span> <span class="o">*</span> <span class="n">sys</span>
+    <span class="n">local_dt</span> <span class="o">=</span> <span class="n">dt</span><span class="p">[</span><span class="n">sys</span><span class="p">]</span>
+    <span class="n">zero</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">local_dt</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">)</span>
+    <span class="n">one</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">local_dt</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span>
+    <span class="n">uphill</span> <span class="o">=</span> <span class="n">vf</span><span class="p">[</span><span class="n">sys</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="n">zero</span>
+    <span class="n">factor</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">local_dt</span><span class="p">)(</span><span class="o">-</span><span class="mf">0.5</span><span class="p">)</span> <span class="k">if</span> <span class="n">uphill</span> <span class="k">else</span> <span class="n">one</span>
+
+    <span class="n">cell_old</span> <span class="o">=</span> <span class="n">cells</span><span class="p">[</span><span class="n">sys</span><span class="p">]</span>
+    <span class="n">cell_old_inv</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">inverse</span><span class="p">(</span><span class="n">cell_old</span><span class="p">)</span>
+    <span class="n">cell_step_raw</span> <span class="o">=</span> <span class="n">factor</span> <span class="o">*</span> <span class="n">local_dt</span> <span class="o">*</span> <span class="n">cell_velocities</span><span class="p">[</span><span class="n">sys</span><span class="p">]</span>
+    <span class="n">cell_raw</span> <span class="o">=</span> <span class="n">cell_old</span> <span class="o">+</span> <span class="n">cell_step_raw</span>
+    <span class="n">transform</span> <span class="o">=</span> <span class="n">cell_raw</span> <span class="o">*</span> <span class="n">cell_old_inv</span>
+
+    <span class="n">inv</span> <span class="o">=</span> <span class="n">one</span>
+    <span class="n">mn</span> <span class="o">=</span> <span class="n">max_norm</span><span class="p">[</span><span class="n">sys</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">mn</span> <span class="o">&gt;</span> <span class="n">zero</span><span class="p">:</span>
+        <span class="n">inv</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">one</span><span class="p">,</span> <span class="n">maxstep</span> <span class="o">/</span> <span class="n">mn</span><span class="p">)</span>
+
+    <span class="n">position_old</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">raw_displacement</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">transform</span><span class="p">,</span> <span class="n">position_old</span><span class="p">)</span>
+        <span class="o">+</span> <span class="n">factor</span> <span class="o">*</span> <span class="n">local_dt</span> <span class="o">*</span> <span class="n">velocities</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+        <span class="o">-</span> <span class="n">position_old</span>
+    <span class="p">)</span>
+    <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">position_old</span> <span class="o">+</span> <span class="n">inv</span> <span class="o">*</span> <span class="n">raw_displacement</span>
+    <span class="k">if</span> <span class="n">uphill</span><span class="p">:</span>
+        <span class="n">velocities</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">velocities</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">])()</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span><span class="p">(</span><span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_fire2_coord_cell_apply_cell_kernel</span><span class="p">(</span>
+    <span class="n">cells</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cell_velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">vf</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">ext_batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">ext_atom_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">max_norm</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">maxstep</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Apply coupled FIRE2 cell and timestep updates.</span>
+
+<span class="sd">    Thread launch</span>
+<span class="sd">    -------------</span>
+<span class="sd">    One thread per extended DOF. Only the first cell DOF entry for each system</span>
+<span class="sd">    updates that system&#39;s cell state.</span>
+
+<span class="sd">    Modifies</span>
+<span class="sd">    --------</span>
+<span class="sd">    cells</span>
+<span class="sd">        Cell matrices after the clamped FIRE2 cell step.</span>
+<span class="sd">    cell_velocities</span>
+<span class="sd">        Cell velocities, zeroed for uphill systems.</span>
+<span class="sd">    dt</span>
+<span class="sd">        Per-system timestep scaled by the same clamp factor as the coordinates.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">ext_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">sys</span> <span class="o">=</span> <span class="n">ext_batch_idx</span><span class="p">[</span><span class="n">ext_idx</span><span class="p">]</span>
+    <span class="n">cell_dof_start</span> <span class="o">=</span> <span class="n">ext_atom_ptr</span><span class="p">[</span><span class="n">sys</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">ext_idx</span> <span class="o">!=</span> <span class="n">cell_dof_start</span><span class="p">:</span>
+        <span class="k">return</span>
+
+    <span class="n">local_dt</span> <span class="o">=</span> <span class="n">dt</span><span class="p">[</span><span class="n">sys</span><span class="p">]</span>
+    <span class="n">zero</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">local_dt</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">)</span>
+    <span class="n">one</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">local_dt</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span>
+    <span class="n">uphill</span> <span class="o">=</span> <span class="n">vf</span><span class="p">[</span><span class="n">sys</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="n">zero</span>
+    <span class="n">factor</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">local_dt</span><span class="p">)(</span><span class="o">-</span><span class="mf">0.5</span><span class="p">)</span> <span class="k">if</span> <span class="n">uphill</span> <span class="k">else</span> <span class="n">one</span>
+
+    <span class="n">inv</span> <span class="o">=</span> <span class="n">one</span>
+    <span class="n">mn</span> <span class="o">=</span> <span class="n">max_norm</span><span class="p">[</span><span class="n">sys</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">mn</span> <span class="o">&gt;</span> <span class="n">zero</span><span class="p">:</span>
+        <span class="n">inv</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">one</span><span class="p">,</span> <span class="n">maxstep</span> <span class="o">/</span> <span class="n">mn</span><span class="p">)</span>
+
+    <span class="n">cell_old</span> <span class="o">=</span> <span class="n">cells</span><span class="p">[</span><span class="n">sys</span><span class="p">]</span>
+    <span class="n">cell_step_raw</span> <span class="o">=</span> <span class="n">factor</span> <span class="o">*</span> <span class="n">local_dt</span> <span class="o">*</span> <span class="n">cell_velocities</span><span class="p">[</span><span class="n">sys</span><span class="p">]</span>
+    <span class="n">cells</span><span class="p">[</span><span class="n">sys</span><span class="p">]</span> <span class="o">=</span> <span class="n">cell_old</span> <span class="o">+</span> <span class="n">inv</span> <span class="o">*</span> <span class="n">cell_step_raw</span>
+    <span class="k">if</span> <span class="n">uphill</span><span class="p">:</span>
+        <span class="n">cell_velocities</span><span class="p">[</span><span class="n">sys</span><span class="p">]</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">cell_velocities</span><span class="p">[</span><span class="n">sys</span><span class="p">])()</span>
+    <span class="n">dt</span><span class="p">[</span><span class="n">sys</span><span class="p">]</span> <span class="o">=</span> <span class="n">local_dt</span> <span class="o">*</span> <span class="n">inv</span>
+
+
 <span class="c1"># ==============================================================================</span>
 <span class="c1"># Kernel Overloads for Explicit Typing</span>
 <span class="c1"># ==============================================================================</span>
@@ -1208,6 +1382,9 @@ document.write(`
 
 <span class="c1"># Stress to cell force kernel overloads</span>
 <span class="n">_stress_to_cell_force_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_fire2_coord_cell_max_displacement_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_fire2_coord_cell_apply_positions_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_fire2_coord_cell_apply_cell_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
 
 <span class="k">for</span> <span class="n">t</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">m</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">_T</span><span class="p">,</span> <span class="n">_V</span><span class="p">,</span> <span class="n">_M</span><span class="p">):</span>
     <span class="c1"># Cell alignment kernels</span>
@@ -1284,6 +1461,48 @@ document.write(`
             <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
             <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span>
             <span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+    <span class="n">_fire2_coord_cell_max_displacement_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_fire2_coord_cell_max_displacement_kernel</span><span class="p">,</span>
+        <span class="p">[</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+    <span class="n">_fire2_coord_cell_apply_positions_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_fire2_coord_cell_apply_positions_kernel</span><span class="p">,</span>
+        <span class="p">[</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+            <span class="n">t</span><span class="p">,</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+    <span class="n">_fire2_coord_cell_apply_cell_kernel_overload</span><span class="p">[</span><span class="n">m</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_fire2_coord_cell_apply_cell_kernel</span><span class="p">,</span>
+        <span class="p">[</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+            <span class="n">t</span><span class="p">,</span>
         <span class="p">],</span>
     <span class="p">)</span>
 
@@ -1498,8 +1717,8 @@ document.write(`
 <span class="sd">    Single-system mode (atom_ptr=None):</span>
 <span class="sd">        The extended array has shape (N + 2,) with dtype vec3*, where:</span>
 <span class="sd">        - First N entries: atomic positions</span>
-<span class="sd">        - Entry N: [a, b*cos(γ), c1] (first 3 cell parameters)</span>
-<span class="sd">        - Entry N+1: [b*sin(γ), c2, c3] (remaining 3 cell parameters)</span>
+<span class="sd">        - Entry N: [a, b*cos(gamma), c1] (first 3 cell parameters)</span>
+<span class="sd">        - Entry N+1: [b*sin(gamma), c2, c3] (remaining 3 cell parameters)</span>
 
 <span class="sd">    Batched mode (atom_ptr provided):</span>
 <span class="sd">        Positions are concatenated across systems, cells have shape (B,).</span>
@@ -1945,7 +2164,7 @@ document.write(`
 <span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Convert stress tensor to cell force for optimization.</span>
 
-<span class="sd">    Computes: F_cell = -V * σ * (H^{-1})^T</span>
+<span class="sd">    Computes: F_cell = -V * sigma * (H^{-1})^T</span>
 
 <span class="sd">    This is the &quot;force&quot; on the cell that, when minimized, leads to</span>
 <span class="sd">    zero stress (pressure equilibration).</span>
@@ -2005,6 +2224,157 @@ document.write(`
 
     <span class="k">return</span> <span class="n">cell_force</span></div>
 
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_apply_fire2_coord_cell_step</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cell_velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">vf</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">ext_batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">ext_atom_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">max_norm</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">maxstep</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Apply the coupled variable-cell FIRE2 update after velocity mixing.</span>
+
+<span class="sd">    This helper is intended for the high-level FIRE2 variable-cell adapter,</span>
+<span class="sd">    which performs the FIRE2 reduction and velocity-mixing phase on packed</span>
+<span class="sd">    atomic + cell DOFs and then applies the physically coupled position/cell</span>
+<span class="sd">    update on the unpacked tensors.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">_fire2_coord_cell_compute_max_norm</span><span class="p">(</span>
+        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">velocities</span><span class="p">,</span>
+        <span class="n">cell</span><span class="p">,</span>
+        <span class="n">cell_velocities</span><span class="p">,</span>
+        <span class="n">dt</span><span class="p">,</span>
+        <span class="n">vf</span><span class="p">,</span>
+        <span class="n">ext_batch_idx</span><span class="p">,</span>
+        <span class="n">ext_atom_ptr</span><span class="p">,</span>
+        <span class="n">max_norm</span><span class="p">,</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">_fire2_coord_cell_clamp_apply</span><span class="p">(</span>
+        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">velocities</span><span class="p">,</span>
+        <span class="n">cell</span><span class="p">,</span>
+        <span class="n">cell_velocities</span><span class="p">,</span>
+        <span class="n">dt</span><span class="p">,</span>
+        <span class="n">vf</span><span class="p">,</span>
+        <span class="n">ext_batch_idx</span><span class="p">,</span>
+        <span class="n">ext_atom_ptr</span><span class="p">,</span>
+        <span class="n">max_norm</span><span class="p">,</span>
+        <span class="n">maxstep</span><span class="p">,</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_fire2_coord_cell_compute_max_norm</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cell_velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">vf</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">ext_batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">ext_atom_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">max_norm</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Fill ``max_norm`` with the per-system max physical displacement norm.</span>
+
+<span class="sd">    This is the couple/measure phase of the coupled variable-cell FIRE2 update:</span>
+<span class="sd">    it recomputes each atom&#39;s cell-coupled step and reduces the largest norm per</span>
+<span class="sd">    system into ``max_norm`` (zeroed first). It does **not** move positions or</span>
+<span class="sd">    cell, so a caller can post-process ``max_norm`` before the clamp/apply phase.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+    <span class="n">num_ext</span> <span class="o">=</span> <span class="n">ext_batch_idx</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">vec_dtype</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span>
+
+    <span class="n">max_norm</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+        <span class="n">_fire2_coord_cell_max_displacement_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+        <span class="n">dim</span><span class="o">=</span><span class="n">num_ext</span><span class="p">,</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">velocities</span><span class="p">,</span>
+            <span class="n">cell</span><span class="p">,</span>
+            <span class="n">cell_velocities</span><span class="p">,</span>
+            <span class="n">dt</span><span class="p">,</span>
+            <span class="n">vf</span><span class="p">,</span>
+            <span class="n">ext_batch_idx</span><span class="p">,</span>
+            <span class="n">ext_atom_ptr</span><span class="p">,</span>
+            <span class="n">max_norm</span><span class="p">,</span>
+        <span class="p">],</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_fire2_coord_cell_clamp_apply</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cell_velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">vf</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">ext_batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">ext_atom_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">max_norm</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">maxstep</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Clamp the coupled step by ``max_norm`` and apply it to positions + cell.</span>
+
+<span class="sd">    This is the apply phase of the coupled variable-cell FIRE2 update: it</span>
+<span class="sd">    recomputes the same cell-coupled step as</span>
+<span class="sd">    :func:`_fire2_coord_cell_compute_max_norm`, scales it by</span>
+<span class="sd">    ``min(1, maxstep / max_norm[s])``, and writes positions, cell, and the</span>
+<span class="sd">    clamped ``dt``. The ``max_norm`` handed in is used as-is.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+    <span class="n">num_ext</span> <span class="o">=</span> <span class="n">ext_batch_idx</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">vec_dtype</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="n">mat_dtype</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">dtype</span>
+
+    <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+        <span class="n">_fire2_coord_cell_apply_positions_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+        <span class="n">dim</span><span class="o">=</span><span class="n">num_ext</span><span class="p">,</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">velocities</span><span class="p">,</span>
+            <span class="n">cell</span><span class="p">,</span>
+            <span class="n">cell_velocities</span><span class="p">,</span>
+            <span class="n">dt</span><span class="p">,</span>
+            <span class="n">vf</span><span class="p">,</span>
+            <span class="n">ext_batch_idx</span><span class="p">,</span>
+            <span class="n">ext_atom_ptr</span><span class="p">,</span>
+            <span class="n">max_norm</span><span class="p">,</span>
+            <span class="n">maxstep</span><span class="p">,</span>
+        <span class="p">],</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+        <span class="n">_fire2_coord_cell_apply_cell_kernel_overload</span><span class="p">[</span><span class="n">mat_dtype</span><span class="p">],</span>
+        <span class="n">dim</span><span class="o">=</span><span class="n">num_ext</span><span class="p">,</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">cell</span><span class="p">,</span>
+            <span class="n">cell_velocities</span><span class="p">,</span>
+            <span class="n">dt</span><span class="p">,</span>
+            <span class="n">vf</span><span class="p">,</span>
+            <span class="n">ext_batch_idx</span><span class="p">,</span>
+            <span class="n">ext_atom_ptr</span><span class="p">,</span>
+            <span class="n">max_norm</span><span class="p">,</span>
+            <span class="n">maxstep</span><span class="p">,</span>
+        <span class="p">],</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+    <span class="p">)</span>
 </pre></div>
 
                 </article>
@@ -2035,9 +2405,22 @@ document.write(`
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -2057,7 +2440,7 @@ document.write(`
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

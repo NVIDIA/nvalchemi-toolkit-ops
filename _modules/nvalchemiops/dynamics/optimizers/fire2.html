@@ -2,17 +2,17 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../../../" >
+<html lang="en" data-content_root="../../../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>nvalchemiops.dynamics.optimizers.fire2 &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>nvalchemiops.dynamics.optimizers.fire2 &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -34,16 +34,17 @@
     <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -58,7 +59,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -125,8 +126,6 @@
   
   
     
-    
-      
     
     
     <img src="../../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -420,7 +419,7 @@ document.write(`
 <span class="c1"># See the License for the specific language governing permissions and</span>
 <span class="c1"># limitations under the License.</span>
 
-<span class="sd">&quot;&quot;&quot;</span>
+<span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">FIRE2 Optimizer Kernels</span>
 <span class="sd">=======================</span>
 
@@ -431,22 +430,33 @@ document.write(`
 <span class="sd">FIRE2 step in only **3 kernel launches**, minimizing Python-side and</span>
 <span class="sd">launch overhead.</span>
 
+<span class="sd">The public :func:`fire2_update` helper exposes only the reduction, adaptive</span>
+<span class="sd">parameter update, and velocity-mixing phase for callers that need a custom</span>
+<span class="sd">final apply step, such as coupled variable-cell optimization.</span>
+
 <span class="sd">FIRE2 ALGORITHM (Guenole et al., 2020)</span>
 <span class="sd">=======================================</span>
 
-<span class="sd">Given positions *r*, velocities *v*, and forces *f*:</span>
+<span class="sd">Given positions :math:`\mathbf{r}`, velocities :math:`\mathbf{v}`, and forces</span>
+<span class="sd">:math:`\mathbf{F}`:</span>
 
-<span class="sd">1. Half-step velocity update:  v += f * dt</span>
-<span class="sd">2. Compute power:  P = sum(v . f)  per system</span>
+<span class="sd">1. Half-step velocity update:</span>
+<span class="sd">   :math:`\mathbf{v} \leftarrow \mathbf{v} + \mathbf{F} \Delta t`</span>
+<span class="sd">2. Compute power:  :math:`P = \sum \mathbf{v} \cdot \mathbf{F}`  per system</span>
 <span class="sd">3. Adaptive parameter update:</span>
-<span class="sd">   - If P &gt; 0: increment counter, optionally grow dt, shrink alpha</span>
-<span class="sd">   - If P &lt;= 0: reset counter, shrink dt, reset alpha</span>
+<span class="sd">   - If :math:`P &gt; 0`: increment counter, optionally grow :math:`\Delta t`,</span>
+<span class="sd">     shrink :math:`\alpha`</span>
+<span class="sd">   - If :math:`P \leq 0`: reset counter, shrink :math:`\Delta t`, reset</span>
+<span class="sd">     :math:`\alpha`</span>
 <span class="sd">4. Velocity mixing:</span>
-<span class="sd">   v = (1 - alpha) * v + alpha * sqrt(v.v / f.f) * f</span>
-<span class="sd">5. Compute step:  step = v * dt</span>
+<span class="sd">   :math:`\mathbf{v} = (1 - \alpha) \mathbf{v}</span>
+<span class="sd">   + \alpha \sqrt{(\mathbf{v} \cdot \mathbf{v}) / (\mathbf{F} \cdot \mathbf{F})}\, \mathbf{F}`</span>
+<span class="sd">5. Compute step:  :math:`\Delta \mathbf{r} = \mathbf{v} \Delta t`</span>
 <span class="sd">6. Uphill correction:</span>
-<span class="sd">   if P &lt;= 0:  step = -0.5 * dt * v_mixed;  v = 0</span>
-<span class="sd">7. Step clamping + position update + coupled dt scaling</span>
+<span class="sd">   if :math:`P \leq 0`:</span>
+<span class="sd">   :math:`\Delta \mathbf{r} = -\frac{1}{2} \Delta t\, \mathbf{v}_\text{mixed}`;</span>
+<span class="sd">   :math:`\mathbf{v} = 0`</span>
+<span class="sd">7. Step clamping + position update + coupled :math:`\Delta t` scaling</span>
 
 <span class="sd">KERNEL STRUCTURE</span>
 <span class="sd">================</span>
@@ -484,6 +494,8 @@ document.write(`
 <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.dynamics.utils.kernel_functions</span><span class="w"> </span><span class="kn">import</span> <span class="n">compute_vf_vv_ff</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.segment_ops</span><span class="w"> </span><span class="kn">import</span> <span class="n">compute_ept</span>
 
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;fire2_step&quot;</span><span class="p">,</span> <span class="s2">&quot;fire2_update&quot;</span><span class="p">]</span>
+
 <span class="c1"># =============================================================================</span>
 <span class="c1"># Kernel 1: Triple inner-product reduction (deferred half-step)</span>
 <span class="c1"># =============================================================================</span>
@@ -504,7 +516,7 @@ document.write(`
     <span class="n">N</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>
     <span class="n">elems_per_thread</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>
 <span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Triple inner-product reduction with deferred velocity half-step.</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Triple inner-product reduction with deferred velocity half-step.</span>
 
 <span class="sd">    Computes three inner products per segment without modifying velocities:</span>
 <span class="sd">    - ``vf[s] = sum(dot(v_upd[i], f[i]) for i where batch_idx[i] == s)``</span>
@@ -533,11 +545,11 @@ document.write(`
 <span class="sd">    batch_idx : wp.array, shape (N,), dtype int32</span>
 <span class="sd">        Sorted system index per atom in [0, M).</span>
 <span class="sd">    vf : wp.array, shape (M,), dtype float32/float64</span>
-<span class="sd">        OUTPUT: v_upd·f per segment. Zeroed internally before each use.</span>
+<span class="sd">        OUTPUT: :math:`v_\text{upd} \cdot f` per segment. Zeroed internally before each use.</span>
 <span class="sd">    v_sumsq : wp.array, shape (M,), dtype float32/float64</span>
-<span class="sd">        OUTPUT: v_upd·v_upd per segment. Zeroed internally before each use.</span>
+<span class="sd">        OUTPUT: :math:`v_\text{upd} \cdot v_\text{upd}` per segment. Zeroed internally before each use.</span>
 <span class="sd">    f_sumsq : wp.array, shape (M,), dtype float32/float64</span>
-<span class="sd">        OUTPUT: f·f per segment. Zeroed internally before each use.</span>
+<span class="sd">        OUTPUT: :math:`f \cdot f` per segment. Zeroed internally before each use.</span>
 <span class="sd">    N : int32</span>
 <span class="sd">        Total number of atoms.</span>
 <span class="sd">    elems_per_thread : int32</span>
@@ -658,6 +670,7 @@ document.write(`
     <span class="n">alpha</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">nsteps_inc</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
     <span class="n">max_norm</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">compute_max_norm</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span>
     <span class="n">N</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>
     <span class="n">elems_per_thread</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>
     <span class="n">delaystep</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>
@@ -668,7 +681,7 @@ document.write(`
     <span class="n">tmax</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
     <span class="n">tmin</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
 <span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Fused adaptive parameter update, deferred half-step, velocity mixing, and max-norm reduction.</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Fused adaptive parameter update, deferred half-step, velocity mixing, and max-norm reduction.</span>
 
 <span class="sd">    This kernel performs four operations in a single launch:</span>
 
@@ -678,7 +691,7 @@ document.write(`
 
 <span class="sd">    2. **Deferred half-step + velocity mixing** (algebraically combined):</span>
 <span class="sd">       ``v[i] = mix_a * v[i] + (mix_a * dt_old + mix_b) * f[i]``</span>
-<span class="sd">       where ``mix_a = 1 - alpha``, ``mix_b = alpha * sqrt(v·v / f·f)``</span>
+<span class="sd">       where ``mix_a = 1 - alpha``, ``mix_b = alpha * sqrt(v.v / f.f)``</span>
 
 <span class="sd">    3. **State updates** (first atom per segment writes):</span>
 <span class="sd">       Updates ``alpha[s]``, ``dt[s]``, and ``nsteps_inc[s]``</span>
@@ -706,17 +719,20 @@ document.write(`
 <span class="sd">    batch_idx : wp.array, shape (N,), dtype int32</span>
 <span class="sd">        Sorted system index per atom in [0, M).</span>
 <span class="sd">    vf : wp.array, shape (M,), dtype float32/float64</span>
-<span class="sd">        v·f inner product per segment from kernel 1 (read-only).</span>
+<span class="sd">        :math:`v \cdot f` inner product per segment from kernel 1 (read-only).</span>
 <span class="sd">    v_sumsq : wp.array, shape (M,), dtype float32/float64</span>
-<span class="sd">        v·v inner product per segment from kernel 1 (read-only).</span>
+<span class="sd">        :math:`v \cdot v` inner product per segment from kernel 1 (read-only).</span>
 <span class="sd">    f_sumsq : wp.array, shape (M,), dtype float32/float64</span>
-<span class="sd">        f·f inner product per segment from kernel 1 (read-only).</span>
+<span class="sd">        :math:`f \cdot f` inner product per segment from kernel 1 (read-only).</span>
 <span class="sd">    alpha : wp.array, shape (M,), dtype float32/float64</span>
 <span class="sd">        FIRE2 mixing parameter. Modified in-place by first atom per segment.</span>
 <span class="sd">    nsteps_inc : wp.array, shape (M,), dtype int32</span>
 <span class="sd">        Consecutive positive-power step counter. Modified by first atom per segment.</span>
 <span class="sd">    max_norm : wp.array, shape (M,), dtype float32/float64</span>
 <span class="sd">        OUTPUT: Maximum step norm per segment. Zeroed internally before each use.</span>
+<span class="sd">    compute_max_norm : bool</span>
+<span class="sd">        If true, compute and write ``max_norm``. If false, skip the max-norm</span>
+<span class="sd">        reduction while still applying the FIRE2 velocity and state updates.</span>
 <span class="sd">    N : int32</span>
 <span class="sd">        Total number of atoms.</span>
 <span class="sd">    elems_per_thread : int32</span>
@@ -791,16 +807,19 @@ document.write(`
     <span class="c1"># --- Process first element: deferred halfstep + mix (algebraic combo) ---</span>
     <span class="n">f_coeff</span> <span class="o">=</span> <span class="n">mix_a</span> <span class="o">*</span> <span class="n">dt_old</span> <span class="o">+</span> <span class="n">mix_b</span>
     <span class="n">velocities</span><span class="p">[</span><span class="n">start</span><span class="p">]</span> <span class="o">=</span> <span class="n">mix_a</span> <span class="o">*</span> <span class="n">velocities</span><span class="p">[</span><span class="n">start</span><span class="p">]</span> <span class="o">+</span> <span class="n">f_coeff</span> <span class="o">*</span> <span class="n">forces</span><span class="p">[</span><span class="n">start</span><span class="p">]</span>
-    <span class="k">if</span> <span class="n">w_dec</span><span class="p">:</span>
-        <span class="n">max_val</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">length</span><span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="n">_dt</span><span class="p">)(</span><span class="o">-</span><span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">_dt</span> <span class="o">*</span> <span class="n">velocities</span><span class="p">[</span><span class="n">start</span><span class="p">])</span>
-    <span class="k">else</span><span class="p">:</span>
-        <span class="n">max_val</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">length</span><span class="p">(</span><span class="n">_dt</span> <span class="o">*</span> <span class="n">velocities</span><span class="p">[</span><span class="n">start</span><span class="p">])</span>
+    <span class="n">max_val</span> <span class="o">=</span> <span class="n">zero</span>
+    <span class="k">if</span> <span class="n">compute_max_norm</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">w_dec</span><span class="p">:</span>
+            <span class="n">max_val</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">length</span><span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="n">_dt</span><span class="p">)(</span><span class="o">-</span><span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">_dt</span> <span class="o">*</span> <span class="n">velocities</span><span class="p">[</span><span class="n">start</span><span class="p">])</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">max_val</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">length</span><span class="p">(</span><span class="n">_dt</span> <span class="o">*</span> <span class="n">velocities</span><span class="p">[</span><span class="n">start</span><span class="p">])</span>
 
     <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">start</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">end</span><span class="p">):</span>
         <span class="n">s</span> <span class="o">=</span> <span class="n">batch_idx</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
         <span class="k">if</span> <span class="n">s</span> <span class="o">!=</span> <span class="n">s_cur</span><span class="p">:</span>
             <span class="c1"># Flush max_norm for previous segment</span>
-            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">max_norm</span><span class="p">,</span> <span class="n">s_cur</span><span class="p">,</span> <span class="n">max_val</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">compute_max_norm</span><span class="p">:</span>
+                <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">max_norm</span><span class="p">,</span> <span class="n">s_cur</span><span class="p">,</span> <span class="n">max_val</span><span class="p">)</span>
             <span class="n">s_cur</span> <span class="o">=</span> <span class="n">s</span>
 
             <span class="c1"># --- Redundant param-update computation for new segment ---</span>
@@ -839,13 +858,15 @@ document.write(`
 
         <span class="c1"># Deferred halfstep + mix (algebraic combo)</span>
         <span class="n">velocities</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">mix_a</span> <span class="o">*</span> <span class="n">velocities</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">+</span> <span class="n">f_coeff</span> <span class="o">*</span> <span class="n">forces</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
-        <span class="k">if</span> <span class="n">w_dec</span><span class="p">:</span>
-            <span class="n">norm</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">length</span><span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="n">_dt</span><span class="p">)(</span><span class="o">-</span><span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">_dt</span> <span class="o">*</span> <span class="n">velocities</span><span class="p">[</span><span class="n">i</span><span class="p">])</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="n">norm</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">length</span><span class="p">(</span><span class="n">_dt</span> <span class="o">*</span> <span class="n">velocities</span><span class="p">[</span><span class="n">i</span><span class="p">])</span>
-        <span class="n">max_val</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">max_val</span><span class="p">,</span> <span class="n">norm</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">compute_max_norm</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">w_dec</span><span class="p">:</span>
+                <span class="n">norm</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">length</span><span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="n">_dt</span><span class="p">)(</span><span class="o">-</span><span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">_dt</span> <span class="o">*</span> <span class="n">velocities</span><span class="p">[</span><span class="n">i</span><span class="p">])</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">norm</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">length</span><span class="p">(</span><span class="n">_dt</span> <span class="o">*</span> <span class="n">velocities</span><span class="p">[</span><span class="n">i</span><span class="p">])</span>
+            <span class="n">max_val</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">max_val</span><span class="p">,</span> <span class="n">norm</span><span class="p">)</span>
 
-    <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">max_norm</span><span class="p">,</span> <span class="n">s_cur</span><span class="p">,</span> <span class="n">max_val</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">compute_max_norm</span><span class="p">:</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">max_norm</span><span class="p">,</span> <span class="n">s_cur</span><span class="p">,</span> <span class="n">max_val</span><span class="p">)</span>
 
 
 <span class="c1"># =============================================================================</span>
@@ -863,7 +884,7 @@ document.write(`
     <span class="n">vf</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">maxstep</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
 <span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Step recomputation, clamping, position update, velocity zeroing, and coupled dt scaling.</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Step recomputation, clamping, position update, velocity zeroing, and coupled dt scaling.</span>
 
 <span class="sd">    This kernel performs the final operations of the FIRE2 step:</span>
 
@@ -906,7 +927,7 @@ document.write(`
 <span class="sd">    max_norm : wp.array, shape (M,), dtype float32/float64</span>
 <span class="sd">        Maximum step norm per segment from kernel 2.</span>
 <span class="sd">    vf : wp.array, shape (M,), dtype float32/float64</span>
-<span class="sd">        v·f inner product per segment from kernel 1. System is uphill if vf[s] &lt;= 0.</span>
+<span class="sd">        :math:`v \cdot f` inner product per segment from kernel 1. System is uphill if vf[s] &lt;= 0.</span>
 <span class="sd">    maxstep : float32/float64</span>
 <span class="sd">        Maximum allowed step size (FIRE2 hyperparameter).</span>
 
@@ -991,6 +1012,7 @@ document.write(`
             <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">_t</span><span class="p">),</span>  <span class="c1"># alpha</span>
             <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>  <span class="c1"># nsteps_inc</span>
             <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">_t</span><span class="p">),</span>  <span class="c1"># max_norm</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span>  <span class="c1"># compute_max_norm</span>
             <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>  <span class="c1"># N</span>
             <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>  <span class="c1"># elems_per_thread</span>
             <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>  <span class="c1"># delaystep</span>
@@ -1048,10 +1070,38 @@ document.write(`
     <span class="n">tmax</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.08</span><span class="p">,</span>
     <span class="n">tmin</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.005</span><span class="p">,</span>
     <span class="n">maxstep</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span>
+    <span class="n">compute_reductions</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Complete FIRE2 optimization step.</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Complete FIRE2 optimization step.</span>
 
 <span class="sd">    Modifies *positions*, *velocities*, *alpha*, *dt*, and *nsteps_inc* in-place.</span>
+
+<span class="sd">    Runs the full FIRE2 scheme of Guenole et al. (2020): the leapfrog half-step</span>
+<span class="sd">    is deferred into the reduction, so the per-system power is measured on the</span>
+<span class="sd">    post-kick velocity :math:`\mathbf{v} + \Delta t\,\mathbf{F}`:</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        P = \sum_i (\mathbf{v}_i + \Delta t\,\mathbf{F}_i) \cdot \mathbf{F}_i,\quad</span>
+<span class="sd">        vv = \sum_i \lVert \mathbf{v}_i + \Delta t\,\mathbf{F}_i \rVert^2,\quad</span>
+<span class="sd">        ff = \sum_i \mathbf{F}_i \cdot \mathbf{F}_i</span>
+
+<span class="sd">    The half-step and the FIRE2 mixing are then fused (no intermediate velocity</span>
+<span class="sd">    write):</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        \mathbf{v} = (1-\alpha)\,\mathbf{v}</span>
+<span class="sd">            + \big[(1-\alpha)\,\Delta t + \alpha\sqrt{vv/ff}\big]\,\mathbf{F}</span>
+
+<span class="sd">    Displacement is :math:`\Delta\mathbf{r} = \Delta t\,\mathbf{v}` when</span>
+<span class="sd">    :math:`P &gt; 0`; for uphill systems (:math:`P \le 0`) the FIRE2 correction</span>
+<span class="sd">    :math:`\Delta\mathbf{r} = -\tfrac{1}{2}\Delta t\,\mathbf{v}` is applied and</span>
+<span class="sd">    the velocity is then zeroed. The step is capped by</span>
+<span class="sd">    :math:`\min(1, \text{maxstep}/\lVert\text{step}\rVert)` per system, and :math:`\Delta t`</span>
+<span class="sd">    is scaled by the same factor. This differs from :func:`~nvalchemiops.dynamics.optimizers.fire.fire_step`</span>
+<span class="sd">    by the deferred half-step, the modified mixing coefficient, and the</span>
+<span class="sd">    half-back uphill correction (FIRE simply zeroes velocity uphill).</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
@@ -1062,7 +1112,7 @@ document.write(`
 <span class="sd">    forces : wp.array, shape (N,), dtype vec3f/vec3d</span>
 <span class="sd">        Forces on atoms (read-only).</span>
 <span class="sd">    batch_idx : wp.array, shape (N,), dtype int32</span>
-<span class="sd">        Sorted system index per atom (required).</span>
+<span class="sd">        Sorted system index per atom. Required for non-empty inputs.</span>
 <span class="sd">    alpha : wp.array, shape (M,), dtype float*</span>
 <span class="sd">        FIRE2 mixing parameter.</span>
 <span class="sd">    dt : wp.array, shape (M,), dtype float*</span>
@@ -1083,6 +1133,13 @@ document.write(`
 <span class="sd">        Timestep bounds.</span>
 <span class="sd">    maxstep : float</span>
 <span class="sd">        Maximum step magnitude per system.</span>
+<span class="sd">    compute_reductions : bool, default True</span>
+<span class="sd">        If True, recompute ``vf``/``v_sumsq``/``f_sumsq`` internally. If False,</span>
+<span class="sd">        use the caller-supplied values for the mixing and parameter update. Note</span>
+<span class="sd">        that the final ``maxstep`` clamp still uses the ``max_norm`` produced by</span>
+<span class="sd">        this call&#39;s mixing kernel; for a clamp reduced across a caller-side</span>
+<span class="sd">        partition, drive the mixing via ``fire2_update`` and apply the clamp</span>
+<span class="sd">        after reducing ``max_norm``.</span>
 
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
@@ -1094,21 +1151,311 @@ document.write(`
 <span class="sd">    ...            alpha, dt, nsteps_inc,</span>
 <span class="sd">    ...            vf, v_sumsq, f_sumsq, max_norm)</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="c1"># --- Input validation ---</span>
     <span class="n">N</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
-
-    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;batch_idx is required for fire2_step&quot;</span><span class="p">)</span>
-
     <span class="k">if</span> <span class="n">velocities</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">N</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
             <span class="sa">f</span><span class="s2">&quot;velocities length </span><span class="si">{</span><span class="n">velocities</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2"> != positions length </span><span class="si">{</span><span class="n">N</span><span class="si">}</span><span class="s2">&quot;</span>
         <span class="p">)</span>
     <span class="k">if</span> <span class="n">forces</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">N</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;forces length </span><span class="si">{</span><span class="n">forces</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2"> != positions length </span><span class="si">{</span><span class="n">N</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="k">if</span> <span class="n">batch_idx</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">N</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">batch_idx</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">N</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
             <span class="sa">f</span><span class="s2">&quot;batch_idx length </span><span class="si">{</span><span class="n">batch_idx</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2"> != positions length </span><span class="si">{</span><span class="n">N</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="n">N</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">vf</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+        <span class="n">v_sumsq</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+        <span class="n">f_sumsq</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+        <span class="n">max_norm</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+        <span class="k">return</span>
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;batch_idx is required for fire2_step&quot;</span><span class="p">)</span>
+
+    <span class="n">vec_dtype</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="n">fire2_update</span><span class="p">(</span>
+        <span class="n">velocities</span><span class="o">=</span><span class="n">velocities</span><span class="p">,</span>
+        <span class="n">forces</span><span class="o">=</span><span class="n">forces</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">alpha</span><span class="o">=</span><span class="n">alpha</span><span class="p">,</span>
+        <span class="n">dt</span><span class="o">=</span><span class="n">dt</span><span class="p">,</span>
+        <span class="n">nsteps_inc</span><span class="o">=</span><span class="n">nsteps_inc</span><span class="p">,</span>
+        <span class="n">vf</span><span class="o">=</span><span class="n">vf</span><span class="p">,</span>
+        <span class="n">v_sumsq</span><span class="o">=</span><span class="n">v_sumsq</span><span class="p">,</span>
+        <span class="n">f_sumsq</span><span class="o">=</span><span class="n">f_sumsq</span><span class="p">,</span>
+        <span class="n">max_norm</span><span class="o">=</span><span class="n">max_norm</span><span class="p">,</span>
+        <span class="n">delaystep</span><span class="o">=</span><span class="n">delaystep</span><span class="p">,</span>
+        <span class="n">dtgrow</span><span class="o">=</span><span class="n">dtgrow</span><span class="p">,</span>
+        <span class="n">dtshrink</span><span class="o">=</span><span class="n">dtshrink</span><span class="p">,</span>
+        <span class="n">alphashrink</span><span class="o">=</span><span class="n">alphashrink</span><span class="p">,</span>
+        <span class="n">alpha0</span><span class="o">=</span><span class="n">alpha0</span><span class="p">,</span>
+        <span class="n">tmax</span><span class="o">=</span><span class="n">tmax</span><span class="p">,</span>
+        <span class="n">tmin</span><span class="o">=</span><span class="n">tmin</span><span class="p">,</span>
+        <span class="n">compute_reductions</span><span class="o">=</span><span class="n">compute_reductions</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Kernel 3: recompute step + clamp + position update + velocity zeroing</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+        <span class="n">_fire2_clamp_apply_recompute_overloads</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+        <span class="n">dim</span><span class="o">=</span><span class="n">N</span><span class="p">,</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">velocities</span><span class="p">,</span>
+            <span class="n">dt</span><span class="p">,</span>
+            <span class="n">batch_idx</span><span class="p">,</span>
+            <span class="n">max_norm</span><span class="p">,</span>
+            <span class="n">vf</span><span class="p">,</span>  <span class="c1"># vf holds v.f; uphill if &lt;= 0</span>
+            <span class="n">maxstep</span><span class="p">,</span>
+        <span class="p">],</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+    <span class="p">)</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">fire2_reduce</span><span class="p">(</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">forces</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">vf</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">v_sumsq</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">f_sumsq</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Fill the FIRE2 per-system reductions over the half-stepped velocities.</span>
+
+<span class="sd">    Computes, per system :math:`s`:</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        vf[s]      &amp;= \sum_i (\mathbf{v}_i + \mathbf{F}_i \Delta t[s]) \cdot \mathbf{F}_i \\</span>
+<span class="sd">        v_{sumsq}[s] &amp;= \sum_i (\mathbf{v}_i + \mathbf{F}_i \Delta t[s]) \cdot (\mathbf{v}_i + \mathbf{F}_i \Delta t[s]) \\</span>
+<span class="sd">        f_{sumsq}[s] &amp;= \sum_i \mathbf{F}_i \cdot \mathbf{F}_i</span>
+
+<span class="sd">    — the same reduction ``fire2_update`` performs internally (the</span>
+<span class="sd">    :math:`\mathbf{v} + \mathbf{F} \Delta t` half-step is applied in registers,</span>
+<span class="sd">    velocities are not modified). Exposed so a caller can build the reductions</span>
+<span class="sd">    over a subset of the degrees of freedom and combine them.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    velocities, forces : wp.array, shape (N,), dtype vec3f/vec3d</span>
+<span class="sd">        Velocities and forces (read-only).</span>
+<span class="sd">    dt : wp.array, shape (M,), dtype float*</span>
+<span class="sd">        Per-system timestep used for the half-step.</span>
+<span class="sd">    batch_idx : wp.array, shape (N,), dtype int32</span>
+<span class="sd">        Sorted system index per element.</span>
+<span class="sd">    vf, v_sumsq, f_sumsq : wp.array, shape (M,), dtype float*</span>
+<span class="sd">        Outputs. Zeroed internally before accumulation.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">vf</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+    <span class="n">v_sumsq</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+    <span class="n">f_sumsq</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+    <span class="n">N</span> <span class="o">=</span> <span class="n">velocities</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">N</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span>
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;batch_idx is required for fire2_reduce&quot;</span><span class="p">)</span>
+    <span class="n">vec_dtype</span> <span class="o">=</span> <span class="n">velocities</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">velocities</span><span class="o">.</span><span class="n">device</span>
+    <span class="n">sm</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">device</span><span class="o">.</span><span class="n">sm_count</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">ept</span> <span class="o">=</span> <span class="n">compute_ept</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">sm</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
+    <span class="n">dim</span> <span class="o">=</span> <span class="p">(</span><span class="n">N</span> <span class="o">+</span> <span class="n">ept</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">//</span> <span class="n">ept</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+        <span class="n">_fire2_reduce_only_overloads</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+        <span class="n">dim</span><span class="o">=</span><span class="n">dim</span><span class="p">,</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">velocities</span><span class="p">,</span> <span class="n">forces</span><span class="p">,</span> <span class="n">dt</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">vf</span><span class="p">,</span> <span class="n">v_sumsq</span><span class="p">,</span> <span class="n">f_sumsq</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">ept</span><span class="p">],</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">fire2_apply_step</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">max_norm</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">vf</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">maxstep</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Apply the final FIRE2 clamp + position update from mixed velocities.</span>
+
+<span class="sd">    This is the third phase of :func:`fire2_step`, exposed on its own so a</span>
+<span class="sd">    caller can interpose between the velocity mix and the displacement clamp.</span>
+<span class="sd">    For each atom it recomputes the raw step from the (already mixed) velocity</span>
+<span class="sd">    — :math:`\mathbf{v}\,\Delta t` downhill, :math:`-\tfrac{1}{2}\Delta t\,\mathbf{v}`</span>
+<span class="sd">    uphill — clamps it by</span>
+<span class="sd">    :math:`\min(1, \text{maxstep} / \text{max\_norm}[s])`, applies</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        \mathbf{r} \leftarrow \mathbf{r}</span>
+<span class="sd">            + \min\!\left(1, \tfrac{\text{maxstep}}{\text{max\_norm}[s]}\right)</span>
+<span class="sd">            \Delta\mathbf{r},</span>
+
+<span class="sd">    scales ``dt`` by the same factor, and zeroes velocities for uphill systems</span>
+<span class="sd">    (:math:`vf[s] \leq 0`).</span>
+
+<span class="sd">    Pairing with :func:`fire2_update` reproduces :func:`fire2_step` exactly::</span>
+
+<span class="sd">        fire2_update(velocities, forces, batch_idx, alpha, dt, nsteps_inc,</span>
+<span class="sd">                     vf, v_sumsq, f_sumsq, max_norm, ...)  # mix, fill max_norm</span>
+<span class="sd">        fire2_apply_step(positions, velocities, dt, batch_idx, max_norm, vf,</span>
+<span class="sd">                         maxstep=maxstep)</span>
+
+<span class="sd">    Splitting the two lets a caller post-process ``max_norm`` (e.g. combine the</span>
+<span class="sd">    per-partition maxima with a MAX reduction) before the clamp so every</span>
+<span class="sd">    partition scales the step identically.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array, shape (N,), dtype vec3f/vec3d</span>
+<span class="sd">        Atomic positions, modified in-place.</span>
+<span class="sd">    velocities : wp.array, shape (N,), dtype vec3f/vec3d</span>
+<span class="sd">        Mixed velocities (from ``fire2_update``), modified in-place (zeroed for</span>
+<span class="sd">        uphill systems).</span>
+<span class="sd">    dt : wp.array, shape (M,), dtype float*</span>
+<span class="sd">        Per-system timestep, scaled in-place by the clamp factor.</span>
+<span class="sd">    batch_idx : wp.array, shape (N,), dtype int32</span>
+<span class="sd">        Sorted system index per atom.</span>
+<span class="sd">    max_norm : wp.array, shape (M,), dtype float*</span>
+<span class="sd">        Maximum step norm per system used for the clamp. Supply the</span>
+<span class="sd">        post-processed value here to override the one ``fire2_update`` produced.</span>
+<span class="sd">    vf : wp.array, shape (M,), dtype float*</span>
+<span class="sd">        Per-system :math:`\mathbf{v} \cdot \mathbf{F}`; a system is uphill when</span>
+<span class="sd">        :math:`vf[s] \leq 0`.</span>
+<span class="sd">    maxstep : float</span>
+<span class="sd">        Maximum allowed step size.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">N</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">N</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span>
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;batch_idx is required for fire2_apply_step&quot;</span><span class="p">)</span>
+    <span class="n">vec_dtype</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+        <span class="n">_fire2_clamp_apply_recompute_overloads</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+        <span class="n">dim</span><span class="o">=</span><span class="n">N</span><span class="p">,</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">positions</span><span class="p">,</span> <span class="n">velocities</span><span class="p">,</span> <span class="n">dt</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">max_norm</span><span class="p">,</span> <span class="n">vf</span><span class="p">,</span> <span class="n">maxstep</span><span class="p">],</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<div class="viewcode-block" id="fire2_update">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.optimizers.fire2.fire2_update">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">fire2_update</span><span class="p">(</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">forces</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">nsteps_inc</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">vf</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">v_sumsq</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">f_sumsq</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">max_norm</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">delaystep</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">60</span><span class="p">,</span>
+    <span class="n">dtgrow</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.05</span><span class="p">,</span>
+    <span class="n">dtshrink</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.75</span><span class="p">,</span>
+    <span class="n">alphashrink</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.985</span><span class="p">,</span>
+    <span class="n">alpha0</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.09</span><span class="p">,</span>
+    <span class="n">tmax</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.08</span><span class="p">,</span>
+    <span class="n">tmin</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.005</span><span class="p">,</span>
+    <span class="n">compute_max_norm</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">compute_reductions</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Run FIRE2 reduction, parameter update, and velocity mixing only.</span>
+
+<span class="sd">    This low-level helper updates ``velocities``, ``alpha``, ``dt``, and</span>
+<span class="sd">    ``nsteps_inc`` in-place, and refreshes ``vf``, ``v_sumsq``, ``f_sumsq``,</span>
+<span class="sd">    and, by default, ``max_norm``. It deliberately does not apply positions,</span>
+<span class="sd">    clamp the final displacement, or zero velocities on uphill systems.</span>
+
+<span class="sd">    The FIRE2 power is measured on the deferred half-step velocity, and mixing</span>
+<span class="sd">    fuses that half-step with the FIRE2 rule:</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        P = \sum_i (\mathbf{v}_i + \Delta t\,\mathbf{F}_i) \cdot \mathbf{F}_i,\qquad</span>
+<span class="sd">        \mathbf{v} = (1-\alpha)\,\mathbf{v}</span>
+<span class="sd">            + \big[(1-\alpha)\,\Delta t + \alpha\sqrt{vv/ff}\big]\,\mathbf{F}</span>
+
+<span class="sd">    where :math:`vv = \sum_i \lVert \mathbf{v}_i + \Delta t\,\mathbf{F}_i \rVert^2`</span>
+<span class="sd">    and :math:`ff = \sum_i \mathbf{F}_i \cdot \mathbf{F}_i`. When</span>
+<span class="sd">    ``compute_max_norm`` is set, ``max_norm`` records</span>
+<span class="sd">    :math:`\max_i \lVert \Delta t\,\mathbf{v}_i \rVert` downhill and</span>
+<span class="sd">    :math:`\max_i \lVert -\tfrac{1}{2}\Delta t\,\mathbf{v}_i \rVert` uphill for a</span>
+<span class="sd">    later clamp.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    velocities : wp.array, shape (N,), dtype vec3f/vec3d</span>
+<span class="sd">        Generalized velocities, modified in-place with FIRE2 velocity mixing.</span>
+<span class="sd">    forces : wp.array, shape (N,), dtype vec3f/vec3d</span>
+<span class="sd">        Generalized forces. Read-only.</span>
+<span class="sd">    batch_idx : wp.array, shape (N,), dtype int32</span>
+<span class="sd">        Sorted system index for each generalized degree of freedom. Required</span>
+<span class="sd">        for non-empty inputs.</span>
+<span class="sd">    alpha : wp.array, shape (M,), dtype float32/float64</span>
+<span class="sd">        FIRE2 mixing parameter, modified in-place.</span>
+<span class="sd">    dt : wp.array, shape (M,), dtype float32/float64</span>
+<span class="sd">        Per-system timestep, modified in-place by FIRE2 growth/shrink rules.</span>
+<span class="sd">    nsteps_inc : wp.array, shape (M,), dtype int32</span>
+<span class="sd">        Consecutive positive-power step counter, modified in-place.</span>
+<span class="sd">    vf : wp.array, shape (M,), dtype float32/float64</span>
+<span class="sd">        Scratch buffer for per-system :math:`\mathbf{v} \cdot \mathbf{F}` power. Zeroed internally.</span>
+<span class="sd">    v_sumsq : wp.array, shape (M,), dtype float32/float64</span>
+<span class="sd">        Scratch buffer for per-system :math:`\mathbf{v} \cdot \mathbf{v}` after the half-step. Zeroed internally.</span>
+<span class="sd">    f_sumsq : wp.array, shape (M,), dtype float32/float64</span>
+<span class="sd">        Scratch buffer for per-system :math:`\mathbf{F} \cdot \mathbf{F}`. Zeroed internally.</span>
+<span class="sd">    max_norm : wp.array, shape (M,), dtype float32/float64</span>
+<span class="sd">        Scratch buffer for the maximum raw final-step norm after mixing, using</span>
+<span class="sd">        :math:`\Delta t\, \mathbf{v}` downhill and :math:`-\frac{1}{2} \Delta t\, \mathbf{v}` uphill. Zeroed</span>
+<span class="sd">        internally when ``compute_max_norm`` is true. Custom final apply phases</span>
+<span class="sd">        may pass ``compute_max_norm=False`` and recompute this buffer for their</span>
+<span class="sd">        own displacement definition.</span>
+<span class="sd">    delaystep : int</span>
+<span class="sd">        Minimum positive-power steps before timestep growth.</span>
+<span class="sd">    dtgrow, dtshrink : float</span>
+<span class="sd">        Timestep growth/shrink factors.</span>
+<span class="sd">    alphashrink : float</span>
+<span class="sd">        Alpha decay factor after enough positive-power steps.</span>
+<span class="sd">    alpha0 : float</span>
+<span class="sd">        Alpha reset value for uphill systems.</span>
+<span class="sd">    tmax, tmin : float</span>
+<span class="sd">        Timestep bounds.</span>
+<span class="sd">    compute_max_norm : bool, default True</span>
+<span class="sd">        Whether to compute the extended-DOF maximum raw final-step norm into</span>
+<span class="sd">        ``max_norm``. Set to false when a custom final apply phase will</span>
+<span class="sd">        overwrite ``max_norm`` with a different physical displacement norm.</span>
+<span class="sd">    compute_reductions : bool, default True</span>
+<span class="sd">        If True, recompute ``vf``/``v_sumsq``/``f_sumsq`` internally from the</span>
+<span class="sd">        post-half-step velocities and forces. If False, use the caller-supplied</span>
+<span class="sd">        values already in those buffers for the mixing and parameter update</span>
+<span class="sd">        (they are not zeroed). ``max_norm`` is produced by the mixing kernel and</span>
+<span class="sd">        is unaffected by this flag; a caller that needs the displacement clamp</span>
+<span class="sd">        reduced across a caller-side partition should leave the final clamp to</span>
+<span class="sd">        itself (see ``compute_max_norm`` and the Notes).</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    Callers that use this helper directly must finish the FIRE2 step</span>
+<span class="sd">    themselves. For systems with :math:`vf \leq 0`, the final apply phase must use</span>
+<span class="sd">    the uphill correction :math:`\Delta \mathbf{r} = -\frac{1}{2} \Delta t\, \mathbf{v}`</span>
+<span class="sd">    and zero the corresponding velocities after applying the step. Downhill</span>
+<span class="sd">    systems use :math:`\Delta \mathbf{r} = \Delta t\, \mathbf{v}`. Any final</span>
+<span class="sd">    ``maxstep`` clamp must be applied by</span>
+<span class="sd">    the caller and should scale ``dt`` consistently with the accepted step.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">N</span> <span class="o">=</span> <span class="n">velocities</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="n">forces</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">N</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;forces length </span><span class="si">{</span><span class="n">forces</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2"> != velocities length </span><span class="si">{</span><span class="n">N</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">batch_idx</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">N</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;batch_idx length </span><span class="si">{</span><span class="n">batch_idx</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2"> != velocities length </span><span class="si">{</span><span class="n">N</span><span class="si">}</span><span class="s2">&quot;</span>
         <span class="p">)</span>
 
     <span class="n">M</span> <span class="o">=</span> <span class="n">alpha</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
@@ -1117,26 +1464,32 @@ document.write(`
     <span class="k">if</span> <span class="n">nsteps_inc</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">M</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;nsteps_inc length </span><span class="si">{</span><span class="n">nsteps_inc</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2"> != alpha length </span><span class="si">{</span><span class="n">M</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 
-    <span class="n">vec_dtype</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span>
-    <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+    <span class="n">vec_dtype</span> <span class="o">=</span> <span class="n">velocities</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">velocities</span><span class="o">.</span><span class="n">device</span>
 
-    <span class="n">vf</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
-    <span class="n">v_sumsq</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
-    <span class="n">f_sumsq</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
-    <span class="n">max_norm</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">compute_reductions</span><span class="p">:</span>
+        <span class="n">vf</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+        <span class="n">v_sumsq</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+        <span class="n">f_sumsq</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">compute_max_norm</span> <span class="ow">or</span> <span class="n">N</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">max_norm</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">N</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span>
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;batch_idx is required for FIRE2 updates&quot;</span><span class="p">)</span>
+
     <span class="n">sm</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">device</span><span class="o">.</span><span class="n">sm_count</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
 
-    <span class="c1"># Kernel 1: reduce only (no velocity write, deferred to fused kernel)</span>
-    <span class="n">ept1</span> <span class="o">=</span> <span class="n">compute_ept</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">sm</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
-    <span class="n">dim1</span> <span class="o">=</span> <span class="p">(</span><span class="n">N</span> <span class="o">+</span> <span class="n">ept1</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">//</span> <span class="n">ept1</span>
-    <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
-        <span class="n">_fire2_reduce_only_overloads</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
-        <span class="n">dim</span><span class="o">=</span><span class="n">dim1</span><span class="p">,</span>
-        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">velocities</span><span class="p">,</span> <span class="n">forces</span><span class="p">,</span> <span class="n">dt</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">vf</span><span class="p">,</span> <span class="n">v_sumsq</span><span class="p">,</span> <span class="n">f_sumsq</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">ept1</span><span class="p">],</span>
-        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
-    <span class="p">)</span>
+    <span class="k">if</span> <span class="n">compute_reductions</span><span class="p">:</span>
+        <span class="n">ept1</span> <span class="o">=</span> <span class="n">compute_ept</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">sm</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
+        <span class="n">dim1</span> <span class="o">=</span> <span class="p">(</span><span class="n">N</span> <span class="o">+</span> <span class="n">ept1</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">//</span> <span class="n">ept1</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+            <span class="n">_fire2_reduce_only_overloads</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+            <span class="n">dim</span><span class="o">=</span><span class="n">dim1</span><span class="p">,</span>
+            <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">velocities</span><span class="p">,</span> <span class="n">forces</span><span class="p">,</span> <span class="n">dt</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">vf</span><span class="p">,</span> <span class="n">v_sumsq</span><span class="p">,</span> <span class="n">f_sumsq</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">ept1</span><span class="p">],</span>
+            <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="p">)</span>
 
-    <span class="c1"># Kernel 2: param update + deferred halfstep + mix + maxnorm</span>
     <span class="n">ept2</span> <span class="o">=</span> <span class="n">compute_ept</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">sm</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
     <span class="n">dim2</span> <span class="o">=</span> <span class="p">(</span><span class="n">N</span> <span class="o">+</span> <span class="n">ept2</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">//</span> <span class="n">ept2</span>
     <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
@@ -1153,6 +1506,7 @@ document.write(`
             <span class="n">alpha</span><span class="p">,</span>
             <span class="n">nsteps_inc</span><span class="p">,</span>
             <span class="n">max_norm</span><span class="p">,</span>
+            <span class="n">compute_max_norm</span><span class="p">,</span>
             <span class="n">N</span><span class="p">,</span>
             <span class="n">ept2</span><span class="p">,</span>
             <span class="n">delaystep</span><span class="p">,</span>
@@ -1162,22 +1516,6 @@ document.write(`
             <span class="n">alpha0</span><span class="p">,</span>
             <span class="n">tmax</span><span class="p">,</span>
             <span class="n">tmin</span><span class="p">,</span>
-        <span class="p">],</span>
-        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
-    <span class="p">)</span>
-
-    <span class="c1"># Kernel 3: recompute step + clamp + position update + velocity zeroing</span>
-    <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
-        <span class="n">_fire2_clamp_apply_recompute_overloads</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
-        <span class="n">dim</span><span class="o">=</span><span class="n">N</span><span class="p">,</span>
-        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span>
-            <span class="n">positions</span><span class="p">,</span>
-            <span class="n">velocities</span><span class="p">,</span>
-            <span class="n">dt</span><span class="p">,</span>
-            <span class="n">batch_idx</span><span class="p">,</span>
-            <span class="n">max_norm</span><span class="p">,</span>
-            <span class="n">vf</span><span class="p">,</span>  <span class="c1"># vf holds v.f; uphill if &lt;= 0</span>
-            <span class="n">maxstep</span><span class="p">,</span>
         <span class="p">],</span>
         <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
     <span class="p">)</span></div>
@@ -1212,9 +1550,22 @@ document.write(`
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -1234,7 +1585,7 @@ document.write(`
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

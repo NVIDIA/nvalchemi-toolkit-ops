@@ -2,18 +2,18 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../" >
+<html lang="en" data-content_root="../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>nvalchemiops.math and nvalchemiops.torch.types: Utilities &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>nvalchemiops.math and nvalchemiops.torch.types: Utilities &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -35,16 +35,17 @@
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -52,7 +53,7 @@
     <script src="../_static/design-tabs.js?v=f930bc37"></script>
     <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
     <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
-    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'modules/utilities';</script>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
@@ -62,7 +63,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -129,8 +130,6 @@
   
   
     
-    
-      
     
     
     <img src="../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -365,6 +364,7 @@ document.write(`
   <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
   <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="torch/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="torch/segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.segment_ops</span></code>: Segment Operations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="torch/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="torch/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.electrostatics</span></code>: Electrostatics</a></li>
 <li class="toctree-l1"><a class="reference internal" href="torch/dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch</span></code>: Dynamics Optimizers</a></li>
@@ -372,11 +372,13 @@ document.write(`
 </ul>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="jax/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="jax/segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.segment_ops</span></code>: Segment Operations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="jax/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="jax/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.electrostatics</span></code>: Electrostatics</a></li>
 </ul>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="warp/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="warp/segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.segment_ops</span></code>: Segment Operations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="warp/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="warp/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.electrostatics</span></code>: Electrostatic Interactions (Warp)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="warp/dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.dynamics</span></code>: Molecular Dynamics</a></li>
@@ -473,7 +475,7 @@ Warp kernels and launcher functions.</p>
 <li><p><strong>positions</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.vec3f</em><em> or </em><em>wp.vec3d</em>) – Atomic positions for all systems.</p></li>
 <li><p><strong>batch_idx</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – System index for each atom.</p></li>
 <li><p><strong>cell_inv_t</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>B</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.mat33f</em><em> or </em><em>wp.mat33d</em>) – Per-system transpose of inverse cell matrix.</p></li>
-<li><p><strong>order</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – B-spline order (1-4).</p></li>
+<li><p><strong>order</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – B-spline order (1-6).</p></li>
 <li><p><strong>mesh</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>B</em><em>, </em><em>nx</em><em>, </em><em>ny</em><em>, </em><em>nz</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Batched mesh to interpolate from.</p></li>
 <li><p><strong>output</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – OUTPUT: Interpolated values per atom. Must be zero-initialized.</p></li>
 <li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp scalar dtype (wp.float32 or wp.float64).</p></li>
@@ -498,7 +500,7 @@ Warp kernels and launcher functions.</p>
 <li><p><strong>charges</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Atomic charges.</p></li>
 <li><p><strong>batch_idx</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – System index for each atom.</p></li>
 <li><p><strong>cell_inv_t</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>B</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.mat33f</em><em> or </em><em>wp.mat33d</em>) – Per-system transpose of inverse cell matrix.</p></li>
-<li><p><strong>order</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – B-spline order (1-4).</p></li>
+<li><p><strong>order</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – B-spline order (1-6).</p></li>
 <li><p><strong>mesh</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>B</em><em>, </em><em>nx</em><em>, </em><em>ny</em><em>, </em><em>nz</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Batched potential mesh.</p></li>
 <li><p><strong>forces</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.vec3f</em><em> or </em><em>wp.vec3d</em>) – OUTPUT: Forces per atom. Must be zero-initialized.</p></li>
 <li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp scalar dtype (wp.float32 or wp.float64).</p></li>
@@ -523,7 +525,7 @@ Warp kernels and launcher functions.</p>
 <li><p><strong>charges</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Atomic charges.</p></li>
 <li><p><strong>batch_idx</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – System index for each atom.</p></li>
 <li><p><strong>cell_inv_t</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>B</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.mat33f</em><em> or </em><em>wp.mat33d</em>) – Per-system transpose of inverse cell matrix.</p></li>
-<li><p><strong>order</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – B-spline order (1-4).</p></li>
+<li><p><strong>order</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – B-spline order (1-6).</p></li>
 <li><p><strong>mesh</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>B</em><em>, </em><em>nx</em><em>, </em><em>ny</em><em>, </em><em>nz</em><em>)</em><em>, </em><em>dtype=wp.vec3f</em><em> or </em><em>wp.vec3d</em>) – Batched vector mesh to interpolate from.</p></li>
 <li><p><strong>output</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.vec3f</em><em> or </em><em>wp.vec3d</em>) – OUTPUT: Charge-weighted interpolated vectors. Must be zero-initialized.</p></li>
 <li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp scalar dtype (wp.float32 or wp.float64).</p></li>
@@ -548,7 +550,7 @@ Warp kernels and launcher functions.</p>
 <li><p><strong>values</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Values to spread.</p></li>
 <li><p><strong>batch_idx</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N_total</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – System index for each atom.</p></li>
 <li><p><strong>cell_inv_t</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>B</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.mat33f</em><em> or </em><em>wp.mat33d</em>) – Per-system transpose of inverse cell matrix.</p></li>
-<li><p><strong>order</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – B-spline order (1-4).</p></li>
+<li><p><strong>order</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – B-spline order (1-6).</p></li>
 <li><p><strong>mesh</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>B</em><em>, </em><em>nx</em><em>, </em><em>ny</em><em>, </em><em>nz</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – OUTPUT: Batched mesh to accumulate values. Must be zero-initialized.</p></li>
 <li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp scalar dtype (wp.float32 or wp.float64).</p></li>
 <li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em> | </em><em>None</em>) – Warp device string. If None, inferred from arrays.</p></li>
@@ -556,50 +558,6 @@ Warp kernels and launcher functions.</p>
 </dd>
 <dt class="field-even">Return type<span class="colon">:</span></dt>
 <dd class="field-even"><p>None</p>
-</dd>
-</dl>
-</dd></dl>
-
-<dl class="py function">
-<dt class="sig sig-object py" id="nvalchemiops.math.eval_gto_density_pytorch">
-<span class="sig-prename descclassname"><span class="pre">nvalchemiops.math.</span></span><span class="sig-name descname"><span class="pre">eval_gto_density_pytorch</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sigma</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">L_max</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/nvalchemiops/math/gto.html#eval_gto_density_pytorch"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.math.eval_gto_density_pytorch" title="Link to this definition">#</a></dt>
-<dd><p>Evaluate GTO densities from PyTorch tensors.</p>
-<dl class="field-list simple">
-<dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><ul class="simple">
-<li><p><strong>positions</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a>) – Input positions [N, 3] as float64.</p></li>
-<li><p><strong>sigma</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Gaussian width parameter.</p></li>
-<li><p><strong>L_max</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – Maximum angular momentum (0, 1, or 2). Default: 2.</p></li>
-<li><p><strong>device</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.device" title="(in PyTorch v2.11)"><em>torch.device</em></a><em>, </em><em>optional</em>) – Device for computation.</p></li>
-</ul>
-</dd>
-<dt class="field-even">Returns<span class="colon">:</span></dt>
-<dd class="field-even"><p>GTO density values [N, num_components].</p>
-</dd>
-<dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p><a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)">torch.Tensor</a></p>
-</dd>
-</dl>
-</dd></dl>
-
-<dl class="py function">
-<dt class="sig sig-object py" id="nvalchemiops.math.eval_gto_fourier_pytorch">
-<span class="sig-prename descclassname"><span class="pre">nvalchemiops.math.</span></span><span class="sig-name descname"><span class="pre">eval_gto_fourier_pytorch</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">k_vectors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sigma</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">L_max</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/nvalchemiops/math/gto.html#eval_gto_fourier_pytorch"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.math.eval_gto_fourier_pytorch" title="Link to this definition">#</a></dt>
-<dd><p>Evaluate GTO Fourier transforms from PyTorch tensors.</p>
-<dl class="field-list simple">
-<dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><ul class="simple">
-<li><p><strong>k_vectors</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a>) – Input wave vectors [K, 3] as float64.</p></li>
-<li><p><strong>sigma</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Gaussian width parameter.</p></li>
-<li><p><strong>L_max</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – Maximum angular momentum (0, 1, or 2). Default: 2.</p></li>
-<li><p><strong>device</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.device" title="(in PyTorch v2.11)"><em>torch.device</em></a><em>, </em><em>optional</em>) – Device for computation.</p></li>
-</ul>
-</dd>
-<dt class="field-even">Returns<span class="colon">:</span></dt>
-<dd class="field-even"><p>(real_part, imag_part) each of shape [K, num_components].</p>
-</dd>
-<dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)">torch.Tensor</a>, <a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)">torch.Tensor</a>]</p>
 </dd>
 </dl>
 </dd></dl>
@@ -614,7 +572,7 @@ Warp kernels and launcher functions.</p>
 <dd class="field-odd"><ul class="simple">
 <li><p><strong>positions</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.vec3f</em><em> or </em><em>wp.vec3d</em>) – Atomic positions.</p></li>
 <li><p><strong>cell_inv_t</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.mat33f</em><em> or </em><em>wp.mat33d</em>) – Transpose of inverse cell matrix.</p></li>
-<li><p><strong>order</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – B-spline order (1-4).</p></li>
+<li><p><strong>order</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – B-spline order (1-6).</p></li>
 <li><p><strong>mesh</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>nx</em><em>, </em><em>ny</em><em>, </em><em>nz</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Mesh to interpolate from.</p></li>
 <li><p><strong>output</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – OUTPUT: Interpolated values per atom. Must be zero-initialized.</p></li>
 <li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp scalar dtype (wp.float32 or wp.float64).</p></li>
@@ -638,7 +596,7 @@ Warp kernels and launcher functions.</p>
 <li><p><strong>positions</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.vec3f</em><em> or </em><em>wp.vec3d</em>) – Atomic positions.</p></li>
 <li><p><strong>charges</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Atomic charges.</p></li>
 <li><p><strong>cell_inv_t</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.mat33f</em><em> or </em><em>wp.mat33d</em>) – Transpose of inverse cell matrix.</p></li>
-<li><p><strong>order</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – B-spline order (1-4).</p></li>
+<li><p><strong>order</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – B-spline order (1-6).</p></li>
 <li><p><strong>mesh</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>nx</em><em>, </em><em>ny</em><em>, </em><em>nz</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Potential mesh.</p></li>
 <li><p><strong>forces</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.vec3f</em><em> or </em><em>wp.vec3d</em>) – OUTPUT: Forces per atom. Must be zero-initialized.</p></li>
 <li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp scalar dtype (wp.float32 or wp.float64).</p></li>
@@ -662,7 +620,7 @@ Warp kernels and launcher functions.</p>
 <li><p><strong>positions</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.vec3f</em><em> or </em><em>wp.vec3d</em>) – Atomic positions.</p></li>
 <li><p><strong>charges</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Atomic charges.</p></li>
 <li><p><strong>cell_inv_t</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.mat33f</em><em> or </em><em>wp.mat33d</em>) – Transpose of inverse cell matrix.</p></li>
-<li><p><strong>order</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – B-spline order (1-4).</p></li>
+<li><p><strong>order</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – B-spline order (1-6).</p></li>
 <li><p><strong>mesh</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>nx</em><em>, </em><em>ny</em><em>, </em><em>nz</em><em>)</em><em>, </em><em>dtype=wp.vec3f</em><em> or </em><em>wp.vec3d</em>) – Vector-valued mesh to interpolate from.</p></li>
 <li><p><strong>output</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.vec3f</em><em> or </em><em>wp.vec3d</em>) – OUTPUT: Charge-weighted interpolated vectors. Must be zero-initialized.</p></li>
 <li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp scalar dtype (wp.float32 or wp.float64).</p></li>
@@ -686,7 +644,7 @@ Warp kernels and launcher functions.</p>
 <li><p><strong>positions</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.vec3f</em><em> or </em><em>wp.vec3d</em>) – Atomic positions.</p></li>
 <li><p><strong>values</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – Values to spread (e.g., charges).</p></li>
 <li><p><strong>cell_inv_t</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.mat33f</em><em> or </em><em>wp.mat33d</em>) – Transpose of inverse cell matrix.</p></li>
-<li><p><strong>order</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – B-spline order (1-4).</p></li>
+<li><p><strong>order</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – B-spline order (1-6).</p></li>
 <li><p><strong>mesh</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>nx</em><em>, </em><em>ny</em><em>, </em><em>nz</em><em>)</em><em>, </em><em>dtype=wp.float32</em><em> or </em><em>wp.float64</em>) – OUTPUT: Mesh to accumulate values. Must be zero-initialized.</p></li>
 <li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp scalar dtype (wp.float32 or wp.float64).</p></li>
 <li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em> | </em><em>None</em>) – Warp device string. If None, inferred from arrays.</p></li>
@@ -719,10 +677,21 @@ Warp kernels and launcher functions.</p>
 <dl class="py function">
 <dt class="sig sig-object py" id="nvalchemiops.torch.types.get_wp_dtype">
 <span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.types.</span></span><span class="sig-name descname"><span class="pre">get_wp_dtype</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dtype</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/nvalchemiops/torch/types.html#get_wp_dtype"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.torch.types.get_wp_dtype" title="Link to this definition">#</a></dt>
-<dd><p>Get the warp dtype for a given torch dtype.</p>
+<dd><p>Get the Warp scalar dtype corresponding to a PyTorch dtype.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.11)"><em>dtype</em></a>)</p>
+<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.13)"><em>torch.dtype</em></a>) – PyTorch floating-point dtype. Supported values: <code class="docutils literal notranslate"><span class="pre">torch.float32</span></code>,
+<code class="docutils literal notranslate"><span class="pre">torch.float64</span></code>, <code class="docutils literal notranslate"><span class="pre">torch.float16</span></code>.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Corresponding Warp scalar dtype (<code class="docutils literal notranslate"><span class="pre">wp.float32</span></code>, <code class="docutils literal notranslate"><span class="pre">wp.float64</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">wp.float16</span></code>).</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>wp.type</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/exceptions.html#ValueError" title="(in Python v3.14)"><strong>ValueError</strong></a> – If <code class="docutils literal notranslate"><span class="pre">dtype</span></code> is not one of the supported floating-point dtypes.</p>
 </dd>
 </dl>
 </dd></dl>
@@ -730,10 +699,21 @@ Warp kernels and launcher functions.</p>
 <dl class="py function">
 <dt class="sig sig-object py" id="nvalchemiops.torch.types.get_wp_mat_dtype">
 <span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.types.</span></span><span class="sig-name descname"><span class="pre">get_wp_mat_dtype</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dtype</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/nvalchemiops/torch/types.html#get_wp_mat_dtype"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.torch.types.get_wp_mat_dtype" title="Link to this definition">#</a></dt>
-<dd><p>Get the warp mat dtype for a given torch dtype.</p>
+<dd><p>Get the Warp 3x3 matrix dtype corresponding to a PyTorch dtype.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.11)"><em>dtype</em></a>)</p>
+<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.13)"><em>torch.dtype</em></a>) – PyTorch floating-point dtype. Supported values: <code class="docutils literal notranslate"><span class="pre">torch.float32</span></code>,
+<code class="docutils literal notranslate"><span class="pre">torch.float64</span></code>, <code class="docutils literal notranslate"><span class="pre">torch.float16</span></code>.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Corresponding Warp mat33 dtype (<code class="docutils literal notranslate"><span class="pre">wp.mat33f</span></code>, <code class="docutils literal notranslate"><span class="pre">wp.mat33d</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">wp.mat33h</span></code>).</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>wp.type</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/exceptions.html#ValueError" title="(in Python v3.14)"><strong>ValueError</strong></a> – If <code class="docutils literal notranslate"><span class="pre">dtype</span></code> is not one of the supported floating-point dtypes.</p>
 </dd>
 </dl>
 </dd></dl>
@@ -741,10 +721,21 @@ Warp kernels and launcher functions.</p>
 <dl class="py function">
 <dt class="sig sig-object py" id="nvalchemiops.torch.types.get_wp_vec_dtype">
 <span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.types.</span></span><span class="sig-name descname"><span class="pre">get_wp_vec_dtype</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dtype</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/nvalchemiops/torch/types.html#get_wp_vec_dtype"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.torch.types.get_wp_vec_dtype" title="Link to this definition">#</a></dt>
-<dd><p>Get the warp vec dtype for a given torch dtype.</p>
+<dd><p>Get the Warp 3-vector dtype corresponding to a PyTorch dtype.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.11)"><em>dtype</em></a>)</p>
+<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.13)"><em>torch.dtype</em></a>) – PyTorch floating-point dtype. Supported values: <code class="docutils literal notranslate"><span class="pre">torch.float32</span></code>,
+<code class="docutils literal notranslate"><span class="pre">torch.float64</span></code>, <code class="docutils literal notranslate"><span class="pre">torch.float16</span></code>.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Corresponding Warp vec3 dtype (<code class="docutils literal notranslate"><span class="pre">wp.vec3f</span></code>, <code class="docutils literal notranslate"><span class="pre">wp.vec3d</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">wp.vec3h</span></code>).</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>wp.type</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/exceptions.html#ValueError" title="(in Python v3.14)"><strong>ValueError</strong></a> – If <code class="docutils literal notranslate"><span class="pre">dtype</span></code> is not one of the supported floating-point dtypes.</p>
 </dd>
 </dl>
 </dd></dl>
@@ -752,10 +743,21 @@ Warp kernels and launcher functions.</p>
 <dl class="py function">
 <dt class="sig sig-object py">
 <span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.types.</span></span><span class="sig-name descname"><span class="pre">get_wp_dtype</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dtype</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/nvalchemiops/torch/types.html#get_wp_dtype"><span class="viewcode-link"><span class="pre">[source]</span></span></a></dt>
-<dd><p>Get the warp dtype for a given torch dtype.</p>
+<dd><p>Get the Warp scalar dtype corresponding to a PyTorch dtype.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.11)"><em>dtype</em></a>)</p>
+<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.13)"><em>torch.dtype</em></a>) – PyTorch floating-point dtype. Supported values: <code class="docutils literal notranslate"><span class="pre">torch.float32</span></code>,
+<code class="docutils literal notranslate"><span class="pre">torch.float64</span></code>, <code class="docutils literal notranslate"><span class="pre">torch.float16</span></code>.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Corresponding Warp scalar dtype (<code class="docutils literal notranslate"><span class="pre">wp.float32</span></code>, <code class="docutils literal notranslate"><span class="pre">wp.float64</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">wp.float16</span></code>).</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>wp.type</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/exceptions.html#ValueError" title="(in Python v3.14)"><strong>ValueError</strong></a> – If <code class="docutils literal notranslate"><span class="pre">dtype</span></code> is not one of the supported floating-point dtypes.</p>
 </dd>
 </dl>
 </dd></dl>
@@ -763,10 +765,21 @@ Warp kernels and launcher functions.</p>
 <dl class="py function">
 <dt class="sig sig-object py">
 <span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.types.</span></span><span class="sig-name descname"><span class="pre">get_wp_vec_dtype</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dtype</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/nvalchemiops/torch/types.html#get_wp_vec_dtype"><span class="viewcode-link"><span class="pre">[source]</span></span></a></dt>
-<dd><p>Get the warp vec dtype for a given torch dtype.</p>
+<dd><p>Get the Warp 3-vector dtype corresponding to a PyTorch dtype.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.11)"><em>dtype</em></a>)</p>
+<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.13)"><em>torch.dtype</em></a>) – PyTorch floating-point dtype. Supported values: <code class="docutils literal notranslate"><span class="pre">torch.float32</span></code>,
+<code class="docutils literal notranslate"><span class="pre">torch.float64</span></code>, <code class="docutils literal notranslate"><span class="pre">torch.float16</span></code>.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Corresponding Warp vec3 dtype (<code class="docutils literal notranslate"><span class="pre">wp.vec3f</span></code>, <code class="docutils literal notranslate"><span class="pre">wp.vec3d</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">wp.vec3h</span></code>).</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>wp.type</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/exceptions.html#ValueError" title="(in Python v3.14)"><strong>ValueError</strong></a> – If <code class="docutils literal notranslate"><span class="pre">dtype</span></code> is not one of the supported floating-point dtypes.</p>
 </dd>
 </dl>
 </dd></dl>
@@ -774,10 +787,21 @@ Warp kernels and launcher functions.</p>
 <dl class="py function">
 <dt class="sig sig-object py">
 <span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.types.</span></span><span class="sig-name descname"><span class="pre">get_wp_mat_dtype</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dtype</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/nvalchemiops/torch/types.html#get_wp_mat_dtype"><span class="viewcode-link"><span class="pre">[source]</span></span></a></dt>
-<dd><p>Get the warp mat dtype for a given torch dtype.</p>
+<dd><p>Get the Warp 3x3 matrix dtype corresponding to a PyTorch dtype.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.11)"><em>dtype</em></a>)</p>
+<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.13)"><em>torch.dtype</em></a>) – PyTorch floating-point dtype. Supported values: <code class="docutils literal notranslate"><span class="pre">torch.float32</span></code>,
+<code class="docutils literal notranslate"><span class="pre">torch.float64</span></code>, <code class="docutils literal notranslate"><span class="pre">torch.float16</span></code>.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Corresponding Warp mat33 dtype (<code class="docutils literal notranslate"><span class="pre">wp.mat33f</span></code>, <code class="docutils literal notranslate"><span class="pre">wp.mat33d</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">wp.mat33h</span></code>).</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>wp.type</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/exceptions.html#ValueError" title="(in Python v3.14)"><strong>ValueError</strong></a> – If <code class="docutils literal notranslate"><span class="pre">dtype</span></code> is not one of the supported floating-point dtypes.</p>
 </dd>
 </dl>
 </dd></dl>
@@ -831,8 +855,6 @@ Warp kernels and launcher functions.</p>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.math.batch_spline_gather_gradient"><code class="docutils literal notranslate"><span class="pre">batch_spline_gather_gradient()</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.math.batch_spline_gather_vec3"><code class="docutils literal notranslate"><span class="pre">batch_spline_gather_vec3()</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.math.batch_spline_spread"><code class="docutils literal notranslate"><span class="pre">batch_spline_spread()</span></code></a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.math.eval_gto_density_pytorch"><code class="docutils literal notranslate"><span class="pre">eval_gto_density_pytorch()</span></code></a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.math.eval_gto_fourier_pytorch"><code class="docutils literal notranslate"><span class="pre">eval_gto_fourier_pytorch()</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.math.spline_gather"><code class="docutils literal notranslate"><span class="pre">spline_gather()</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.math.spline_gather_gradient"><code class="docutils literal notranslate"><span class="pre">spline_gather_gradient()</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.math.spline_gather_vec3"><code class="docutils literal notranslate"><span class="pre">spline_gather_vec3()</span></code></a></li>
@@ -870,9 +892,22 @@ Warp kernels and launcher functions.</p>
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -892,7 +927,7 @@ Warp kernels and launcher functions.</p>
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

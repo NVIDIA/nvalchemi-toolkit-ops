@@ -1,0 +1,897 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../../../" data-theme="light">
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nvalchemiops.torch.interactions.electrostatics._multipole_moments &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../../../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/css/benchmark-docs.css?v=30688d9f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../../../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../../../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../../../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/nvalchemiops/torch/interactions/electrostatics/_multipole_moments';</script>
+    <link rel="index" title="Index" href="../../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../../../../index.html">
+  
+  
+  
+  
+  
+    
+    
+    
+    <img src="../../../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../../../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <div class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">nvalchemiops...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for nvalchemiops.torch.interactions.electrostatics._multipole_moments</h1><div class="highlight"><pre>
+<span></span><span class="c1"># SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.</span>
+<span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="c1"># you may not use this file except in compliance with the License.</span>
+<span class="c1"># You may obtain a copy of the License at</span>
+<span class="c1">#</span>
+<span class="c1"># http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Unless required by applicable law or agreed to in writing, software</span>
+<span class="c1"># distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="c1"># WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="c1"># See the License for the specific language governing permissions and</span>
+<span class="c1"># limitations under the License.</span>
+
+<span class="sa">r</span><span class="sd">&quot;&quot;&quot;Packed ``multipole_moments`` &lt;-&gt; per-:math:`l` Cartesian channels.</span>
+
+<span class="sd">The public multipole-electrostatics bindings accept a single packed</span>
+<span class="sd">``multipole_moments`` tensor of shape ``(N, (l_max + 1)**2)`` in e3nn</span>
+<span class="sd">real-spherical-harmonic order:</span>
+
+<span class="sd">==============  =====  ==============================================</span>
+<span class="sd">slice           ``l``  contents</span>
+<span class="sd">==============  =====  ==============================================</span>
+<span class="sd">``[:, 0]``      0      charge</span>
+<span class="sd">``[:, 1:4]``    1      dipole, e3nn ``(y, z, x)`` order (= raw Cartesian</span>
+<span class="sd">                       dipole, permuted) -- matches the customer reference.</span>
+<span class="sd">``[:, 4:9]``    2      quadrupole, e3nn ``component``-normalized real</span>
+<span class="sd">                       spherical-harmonic coefficients (**traceless**, 5).</span>
+<span class="sd">==============  =====  ==============================================</span>
+
+<span class="sd">The internal Warp kernels are Cartesian: scalar ``charges``, ``(x, y, z)``</span>
+<span class="sd">``dipoles``, and a symmetric **traceless** ``(N, 3, 3)`` ``quadrupoles``.</span>
+<span class="sd">This module converts between the two layouts at the wrapper boundary with</span>
+<span class="sd">pure ``torch`` ops (static-shape gather / matmul / stack), so the whole</span>
+<span class="sd">conversion stays on the autograd tape and is ``torch.compile`` /</span>
+<span class="sd">CUDA-graph friendly.</span>
+
+<span class="sd">l=2 convention</span>
+<span class="sd">--------------</span>
+<span class="sd">The l=2 channel is the e3nn ``component``-normalized real-SH basis (what an</span>
+<span class="sd">e3nn irrep head emits). The conversion is fixed by requiring</span>
+
+<span class="sd">.. math::</span>
+
+<span class="sd">    \hat k \cdot Q \cdot \hat k = \sum_m c_m\, Y_{2m}(\hat k);</span>
+
+<span class="sd">the constant matrices below are the exact closed form. The l=2 channel is</span>
+<span class="sd">traceless: the isotropic trace of a Cartesian quadrupole is dropped on the</span>
+<span class="sd">way in (it is unrepresentable in 5 spherical components).</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;infer_l_max&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;split_multipole_moments&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;split_packed_for_kernels&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;split_source_feats&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;pack_multipole_moments&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;pack_charges_dipoles&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;e3nn_to_cartesian_quadrupole&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;cartesian_quadrupole_to_e3nn&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;dipole_spherical_to_cartesian&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;dipole_cartesian_to_spherical&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+<span class="c1"># Dipole bare (N, 3): e3nn (y, z, x) &lt;-&gt; Cartesian (x, y, z); inverse perms.</span>
+<span class="n">_DIP_CART_TO_SPH</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+<span class="n">_DIP_SPH_TO_CART</span> <span class="o">=</span> <span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+<span class="c1"># Packed (N, 4) [charge, e3nn dipole]: gather Cartesian (x, y, z) from slots 3,1,2.</span>
+<span class="n">_DIP_PACKED_SPH_TO_CART</span> <span class="o">=</span> <span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+
+<span class="n">_S5</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mf">5.0</span><span class="p">)</span>
+<span class="n">_S15</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mf">15.0</span><span class="p">)</span>
+<span class="n">_HALF_S5</span> <span class="o">=</span> <span class="n">_S5</span> <span class="o">/</span> <span class="mf">2.0</span>
+<span class="n">_HALF_S15</span> <span class="o">=</span> <span class="n">_S15</span> <span class="o">/</span> <span class="mf">2.0</span>
+
+<span class="c1"># q6 = B @ feats5.</span>
+<span class="n">_B_E3NN_TO_CART</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="o">-</span><span class="n">_HALF_S5</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="o">-</span><span class="n">_HALF_S15</span><span class="p">),</span>  <span class="c1"># Qxx</span>
+    <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="n">_S5</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">),</span>  <span class="c1"># Qyy</span>
+    <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="o">-</span><span class="n">_HALF_S5</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="n">_HALF_S15</span><span class="p">),</span>  <span class="c1"># Qzz</span>
+    <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">_HALF_S15</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">),</span>  <span class="c1"># Qxy</span>
+    <span class="p">(</span><span class="n">_HALF_S15</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">),</span>  <span class="c1"># Qxz</span>
+    <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="n">_HALF_S15</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">),</span>  <span class="c1"># Qyz</span>
+<span class="p">)</span>
+
+<span class="c1"># Symmetric (3, 3) &lt;-&gt; q6 gather index: mat[i, j] = q6[_Q6_OF_MAT[i, j]].</span>
+<span class="n">_Q6_OF_MAT</span> <span class="o">=</span> <span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">),</span> <span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">5</span><span class="p">),</span> <span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
+
+<span class="c1"># Per-(dtype, device-string) cached constant tensors (built once).</span>
+<span class="n">_CACHE</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="p">{}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_consts</span><span class="p">(</span><span class="n">dtype</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return ``(B, T, q6_idx)`` constant tensors for ``(dtype, device)``.&quot;&quot;&quot;</span>
+    <span class="n">key</span> <span class="o">=</span> <span class="p">(</span><span class="n">dtype</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">device</span><span class="p">))</span>
+    <span class="n">cached</span> <span class="o">=</span> <span class="n">_CACHE</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">cached</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">B</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">_B_E3NN_TO_CART</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>  <span class="c1"># (6, 5)</span>
+        <span class="n">T</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">pinv</span><span class="p">(</span><span class="n">B</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">))</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="p">)</span>  <span class="c1"># (5, 6)</span>
+        <span class="n">idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">_Q6_OF_MAT</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>  <span class="c1"># (3, 3)</span>
+        <span class="n">cached</span> <span class="o">=</span> <span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">idx</span><span class="p">)</span>
+        <span class="n">_CACHE</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">cached</span>
+    <span class="k">return</span> <span class="n">cached</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">infer_l_max</span><span class="p">(</span><span class="n">multipole_moments</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return ``l_max`` implied by ``multipole_moments.shape[-1]``.</span>
+
+<span class="sd">    =============  =======</span>
+<span class="sd">    last-dim size  l_max</span>
+<span class="sd">    =============  =======</span>
+<span class="sd">    1              0   (charges)</span>
+<span class="sd">    4              1   (charges + dipoles)</span>
+<span class="sd">    9              2   (charges + dipoles + quadrupoles)</span>
+<span class="sd">    =============  =======</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">multipole_moments</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;multipole_moments must be rank-2 (N, (l_max+1)^2), got shape &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">multipole_moments</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">.&quot;</span>
+        <span class="p">)</span>
+    <span class="n">last</span> <span class="o">=</span> <span class="n">multipole_moments</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">sizes</span> <span class="o">=</span> <span class="p">{</span><span class="mi">1</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">4</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">9</span><span class="p">:</span> <span class="mi">2</span><span class="p">}</span>
+    <span class="k">if</span> <span class="n">last</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">sizes</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s2">&quot;multipole_moments last-dim must be 1 (l_max=0), 4 (l_max=1), or &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;9 (l_max=2); got </span><span class="si">{</span><span class="n">last</span><span class="si">}</span><span class="s2">.&quot;</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">sizes</span><span class="p">[</span><span class="n">last</span><span class="p">]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">dipole_spherical_to_cartesian</span><span class="p">(</span><span class="n">dipole_sph</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Permute an e3nn ``(y, z, x)`` dipole to Cartesian ``(x, y, z)``.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    dipole_sph : torch.Tensor, shape ``(..., 3)``</span>
+<span class="sd">        Dipole in e3nn spherical ``(y, z, x)`` order.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    torch.Tensor, shape ``(..., 3)``</span>
+<span class="sd">        Same data permuted to Cartesian ``(x, y, z)`` (contiguous).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">dipole_sph</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">_DIP_SPH_TO_CART</span><span class="p">]</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">dipole_cartesian_to_spherical</span><span class="p">(</span><span class="n">dipole_cart</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Permute a Cartesian ``(x, y, z)`` dipole to e3nn ``(y, z, x)`` order.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    dipole_cart : torch.Tensor, shape ``(..., 3)``</span>
+<span class="sd">        Dipole in Cartesian ``(x, y, z)`` order.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    torch.Tensor, shape ``(..., 3)``</span>
+<span class="sd">        Same data permuted to e3nn ``(y, z, x)`` (contiguous).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">dipole_cart</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">_DIP_CART_TO_SPH</span><span class="p">]</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">e3nn_to_cartesian_quadrupole</span><span class="p">(</span><span class="n">feats5</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Convert e3nn l=2 coefficients to a symmetric traceless Cartesian tensor.</span>
+
+<span class="sd">    Pure torch (matmul + gather); autograd- and graph-friendly. The output is</span>
+<span class="sd">    traceless by construction.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    feats5 : torch.Tensor, shape ``(N, 5)``</span>
+<span class="sd">        e3nn ``component``-normalized real-SH l=2 coefficients</span>
+<span class="sd">        (``m = -2, -1, 0, +1, +2`` order).</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    torch.Tensor, shape ``(N, 3, 3)``</span>
+<span class="sd">        Symmetric traceless Cartesian quadrupole tensor.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">B</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">idx</span> <span class="o">=</span> <span class="n">_consts</span><span class="p">(</span><span class="n">feats5</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">feats5</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">q6</span> <span class="o">=</span> <span class="n">feats5</span> <span class="o">@</span> <span class="n">B</span><span class="o">.</span><span class="n">t</span><span class="p">()</span>  <span class="c1"># (N, 6) = [xx, yy, zz, xy, xz, yz]</span>
+    <span class="k">return</span> <span class="n">q6</span><span class="p">[:,</span> <span class="n">idx</span><span class="p">]</span>  <span class="c1"># (N, 3, 3) symmetric</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">cartesian_quadrupole_to_e3nn</span><span class="p">(</span><span class="n">quadrupoles</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Convert a symmetric Cartesian quadrupole to e3nn l=2 coefficients.</span>
+
+<span class="sd">    The map annihilates the isotropic trace (l=2 is traceless), so any trace</span>
+<span class="sd">    in the input is silently dropped -- callers that care should detrace first</span>
+<span class="sd">    (``pack_multipole_moments`` warns).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    quadrupoles : torch.Tensor, shape ``(N, 3, 3)``</span>
+<span class="sd">        Symmetric Cartesian quadrupole tensor (defensively symmetrized).</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    torch.Tensor, shape ``(N, 5)``</span>
+<span class="sd">        e3nn ``component``-normalized real-SH l=2 coefficients.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">_consts</span><span class="p">(</span><span class="n">quadrupoles</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">quadrupoles</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="c1"># Symmetrize defensively, then pull the 6 unique entries.</span>
+    <span class="n">q</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="n">quadrupoles</span> <span class="o">+</span> <span class="n">quadrupoles</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">2</span><span class="p">))</span>
+    <span class="n">q6</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span>
+        <span class="p">[</span><span class="n">q</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">],</span> <span class="n">q</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">],</span> <span class="n">q</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">2</span><span class="p">],</span> <span class="n">q</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">],</span> <span class="n">q</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">],</span> <span class="n">q</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]],</span>
+        <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">q6</span> <span class="o">@</span> <span class="n">T</span><span class="o">.</span><span class="n">t</span><span class="p">()</span>  <span class="c1"># (N, 5)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">split_multipole_moments</span><span class="p">(</span>
+    <span class="n">multipole_moments</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Slice packed moments into ``(charges, dipoles_cart, quadrupoles_cart, l_max)``.</span>
+
+<span class="sd">    ``dipoles_cart`` is ``None`` for l_max=0; ``quadrupoles_cart`` is ``None``</span>
+<span class="sd">    for l_max&lt;2. All outputs stay on the autograd graph (gradients route back</span>
+<span class="sd">    through the converter to the packed input).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    multipole_moments : torch.Tensor, shape ``(N, (l_max+1)**2)``</span>
+<span class="sd">        Packed e3nn moments (last-dim 1, 4, or 9).</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    charges : torch.Tensor, shape ``(N,)``</span>
+<span class="sd">    dipoles_cart : torch.Tensor or None, shape ``(N, 3)``</span>
+<span class="sd">        Cartesian ``(x, y, z)`` dipole; ``None`` for ``l_max == 0``.</span>
+<span class="sd">    quadrupoles_cart : torch.Tensor or None, shape ``(N, 3, 3)``</span>
+<span class="sd">        Symmetric traceless Cartesian quadrupole; ``None`` for ``l_max &lt; 2``.</span>
+<span class="sd">    l_max : int</span>
+<span class="sd">        Inferred angular order (0, 1, or 2).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">l_max</span> <span class="o">=</span> <span class="n">infer_l_max</span><span class="p">(</span><span class="n">multipole_moments</span><span class="p">)</span>
+    <span class="n">charges</span> <span class="o">=</span> <span class="n">multipole_moments</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span>
+    <span class="n">dipoles_cart</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">quadrupoles_cart</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="n">l_max</span> <span class="o">&gt;=</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">dipoles_cart</span> <span class="o">=</span> <span class="n">multipole_moments</span><span class="p">[:,</span> <span class="n">_DIP_PACKED_SPH_TO_CART</span><span class="p">]</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">l_max</span> <span class="o">&gt;=</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="n">quadrupoles_cart</span> <span class="o">=</span> <span class="n">e3nn_to_cartesian_quadrupole</span><span class="p">(</span><span class="n">multipole_moments</span><span class="p">[:,</span> <span class="mi">4</span><span class="p">:</span><span class="mi">9</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">charges</span><span class="p">,</span> <span class="n">dipoles_cart</span><span class="p">,</span> <span class="n">quadrupoles_cart</span><span class="p">,</span> <span class="n">l_max</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">split_packed_for_kernels</span><span class="p">(</span>
+    <span class="n">multipole_moments</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return ``(source_feats_l1, quadrupoles_cart, l_max)`` for the Ewald/PME</span>
+<span class="sd">    internal contract.</span>
+
+<span class="sd">    ``source_feats_l1`` is the e3nn l&lt;=1 block ``(N, 1)`` or ``(N, 4)`` -- the</span>
+<span class="sd">    legacy packed layout the internal kernels / self-energy / SCF-step consume</span>
+<span class="sd">    unchanged. The l=2 block (when present) is converted to a Cartesian</span>
+<span class="sd">    symmetric **traceless** ``(N, 3, 3)``. Both stay on the autograd graph, so</span>
+<span class="sd">    gradients route back through the converter to ``multipole_moments``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">l_max</span> <span class="o">=</span> <span class="n">infer_l_max</span><span class="p">(</span><span class="n">multipole_moments</span><span class="p">)</span>
+    <span class="n">n_l1</span> <span class="o">=</span> <span class="mi">4</span> <span class="k">if</span> <span class="n">l_max</span> <span class="o">&gt;=</span> <span class="mi">1</span> <span class="k">else</span> <span class="mi">1</span>
+    <span class="n">source_feats_l1</span> <span class="o">=</span> <span class="n">multipole_moments</span><span class="p">[:,</span> <span class="p">:</span><span class="n">n_l1</span><span class="p">]</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+    <span class="n">quadrupoles_cart</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">e3nn_to_cartesian_quadrupole</span><span class="p">(</span><span class="n">multipole_moments</span><span class="p">[:,</span> <span class="mi">4</span><span class="p">:</span><span class="mi">9</span><span class="p">])</span> <span class="k">if</span> <span class="n">l_max</span> <span class="o">==</span> <span class="mi">2</span> <span class="k">else</span> <span class="kc">None</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">source_feats_l1</span><span class="p">,</span> <span class="n">quadrupoles_cart</span><span class="p">,</span> <span class="n">l_max</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">split_source_feats</span><span class="p">(</span>
+    <span class="n">source_feats</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Slice the l&lt;=1 packed block into ``(charges, dipoles_cart, l_max)``.</span>
+
+<span class="sd">    Kernel-boundary helper for the l&lt;=1 charge+dipole packed block (``(N, 1)``</span>
+<span class="sd">    or ``(N, 4)`` in e3nn ``[q, mu_y, mu_z, mu_x]`` order) that the Warp</span>
+<span class="sd">    kernels / SCF-step / self-energy consume. Equivalent to the l&lt;=1 prefix</span>
+<span class="sd">    of :func:`split_multipole_moments` (no quadrupole channel). All outputs</span>
+<span class="sd">    stay on the autograd graph.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    source_feats : torch.Tensor, shape ``(N, 1)`` or ``(N, 4)``</span>
+<span class="sd">        Packed l&lt;=1 e3nn block (``[q]`` or ``[q, mu_y, mu_z, mu_x]``).</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    charges : torch.Tensor, shape ``(N,)``</span>
+<span class="sd">    dipoles_cart : torch.Tensor or None, shape ``(N, 3)``</span>
+<span class="sd">        Cartesian ``(x, y, z)`` dipole; ``None`` for ``l_max == 0``.</span>
+<span class="sd">    l_max : int</span>
+<span class="sd">        Inferred angular order (0 or 1).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">l_max</span> <span class="o">=</span> <span class="n">infer_l_max</span><span class="p">(</span><span class="n">source_feats</span><span class="p">)</span>
+    <span class="n">charges</span> <span class="o">=</span> <span class="n">source_feats</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">l_max</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">charges</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="mi">0</span>
+    <span class="n">dipoles_cart</span> <span class="o">=</span> <span class="n">source_feats</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">_DIP_PACKED_SPH_TO_CART</span><span class="p">]</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">charges</span><span class="p">,</span> <span class="n">dipoles_cart</span><span class="p">,</span> <span class="n">l_max</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">pack_charges_dipoles</span><span class="p">(</span>
+    <span class="n">charges</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">dipoles_cart</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Inverse of :func:`split_source_feats` -- build the l&lt;=1 packed block.</span>
+
+<span class="sd">    Concatenates ``charges[..., None]`` with the e3nn-permuted</span>
+<span class="sd">    ``dipoles_cart``; ``dipoles_cart=None`` yields shape ``(N, 1)``. Round-trip</span>
+<span class="sd">    helper for tests and the l&lt;=1 internal contract.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">dipoles_cart</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">charges</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span>
+        <span class="p">[</span><span class="n">charges</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">),</span> <span class="n">dipole_cartesian_to_spherical</span><span class="p">(</span><span class="n">dipoles_cart</span><span class="p">)],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span>
+    <span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+
+
+<div class="viewcode-block" id="pack_multipole_moments">
+<a class="viewcode-back" href="../../../../../modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.pack_multipole_moments">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">pack_multipole_moments</span><span class="p">(</span>
+    <span class="n">charges</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">dipoles</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">quadrupoles</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">trace_atol</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-8</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Build packed e3nn ``multipole_moments`` from Cartesian channels.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    charges : ``(N,)``</span>
+<span class="sd">    dipoles : ``(N, 3)`` Cartesian ``(x, y, z)`` or ``None``.</span>
+<span class="sd">    quadrupoles : ``(N, 3, 3)`` symmetric Cartesian or ``None``. The l=2</span>
+<span class="sd">        channel is traceless; a non-negligible input trace (&gt; ``trace_atol``)</span>
+<span class="sd">        is dropped and raises a warning.</span>
+<span class="sd">    trace_atol : float, default 1e-8</span>
+<span class="sd">        Absolute tolerance on ``max |Tr Q|`` above which the dropped</span>
+<span class="sd">        quadrupole trace triggers a warning.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    torch.Tensor, shape ``(N, (l_max+1)**2)``</span>
+<span class="sd">        Packed e3nn ``multipole_moments`` (last-dim 1, 4, or 9 depending on</span>
+<span class="sd">        which channels were supplied), contiguous, on ``charges.device``.</span>
+
+<span class="sd">    Raises</span>
+<span class="sd">    ------</span>
+<span class="sd">    ValueError</span>
+<span class="sd">        If ``quadrupoles`` is given without ``dipoles`` (the packed l_max=2</span>
+<span class="sd">        layout requires the ``(N, 4)`` charge+dipole block).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Input shape validation. This is a host-side constructor called once to</span>
+    <span class="c1"># build inputs (not on the torch.compile hot path), so cheap Python checks</span>
+    <span class="c1"># are safe and catch mis-shaped moments before they reach the kernels.</span>
+    <span class="k">if</span> <span class="n">charges</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;charges must be 1-D (N,); got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">charges</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="n">charges</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">dipoles</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">dipoles</span><span class="o">.</span><span class="n">shape</span> <span class="o">!=</span> <span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="mi">3</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;dipoles must be (N, 3) = (</span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2">, 3); got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">dipoles</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="n">quadrupoles</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">quadrupoles</span><span class="o">.</span><span class="n">shape</span> <span class="o">!=</span> <span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;quadrupoles must be (N, 3, 3) = (</span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2">, 3, 3); &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">quadrupoles</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+    <span class="n">cols</span> <span class="o">=</span> <span class="p">[</span><span class="n">charges</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="mi">1</span><span class="p">)]</span>
+    <span class="k">if</span> <span class="n">dipoles</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">cols</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">dipole_cartesian_to_spherical</span><span class="p">(</span><span class="n">dipoles</span><span class="p">))</span>  <span class="c1"># (N, 3) e3nn order</span>
+    <span class="k">if</span> <span class="n">quadrupoles</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">dipoles</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="s2">&quot;quadrupoles given without dipoles: packed l_max=2 moments &quot;</span>
+                <span class="s2">&quot;require the (N, 4) charge+dipole block. Pass dipoles &quot;</span>
+                <span class="s2">&quot;(use zeros for a pure quadrupole).&quot;</span>
+            <span class="p">)</span>
+        <span class="c1"># Diagnostic only: warn if Q is not traceless. Skipped under</span>
+        <span class="c1"># ``torch.compile`` because ``float(...)`` is a device sync (a graph</span>
+        <span class="c1"># break on the hot path); ``cartesian_quadrupole_to_e3nn`` below drops</span>
+        <span class="c1"># the trace regardless of this check. Detach so a grad-requiring Q does</span>
+        <span class="c1"># not emit a spurious &quot;requires_grad to a scalar&quot; warning.</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">compiler</span><span class="o">.</span><span class="n">is_compiling</span><span class="p">():</span>
+            <span class="n">tr_max</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span>
+                <span class="n">quadrupoles</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">diagonal</span><span class="p">(</span><span class="n">dim1</span><span class="o">=-</span><span class="mi">2</span><span class="p">,</span> <span class="n">dim2</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">()</span>
+            <span class="p">)</span>
+            <span class="k">if</span> <span class="n">tr_max</span> <span class="o">&gt;</span> <span class="n">trace_atol</span><span class="p">:</span>
+                <span class="kn">import</span><span class="w"> </span><span class="nn">warnings</span>
+
+                <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
+                    <span class="s2">&quot;pack_multipole_moments: quadrupoles have a non-zero trace &quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;(max |Tr Q| = </span><span class="si">{</span><span class="n">tr_max</span><span class="si">:</span><span class="s2">.3e</span><span class="si">}</span><span class="s2">); the l=2 channel &quot;</span>
+                    <span class="s2">&quot;is traceless, so the trace is dropped.&quot;</span><span class="p">,</span>
+                    <span class="n">stacklevel</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+                <span class="p">)</span>
+        <span class="n">cols</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">cartesian_quadrupole_to_e3nn</span><span class="p">(</span><span class="n">quadrupoles</span><span class="p">))</span>  <span class="c1"># (N, 5)</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="n">cols</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

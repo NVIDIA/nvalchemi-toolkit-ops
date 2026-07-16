@@ -2,18 +2,18 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../" >
+<html lang="en" data-content_root="../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>nvalchemiops.torch: Dynamics Optimizers &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>nvalchemiops.torch: Dynamics Optimizers &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -35,22 +35,25 @@
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
     <script src="../../_static/togglebutton.js?v=4a39c7ea"></script>
     <script src="../../_static/design-tabs.js?v=f930bc37"></script>
     <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'modules/torch/dynamics';</script>
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
@@ -61,7 +64,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -128,8 +131,6 @@
   
   
     
-    
-      
     
     
     <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -364,6 +365,7 @@ document.write(`
   <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
   <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.segment_ops</span></code>: Segment Operations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.electrostatics</span></code>: Electrostatics</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch</span></code>: Dynamics Optimizers</a></li>
@@ -371,11 +373,13 @@ document.write(`
 </ul>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../jax/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../jax/segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.segment_ops</span></code>: Segment Operations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../jax/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../jax/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.electrostatics</span></code>: Electrostatics</a></li>
 </ul>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../warp/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../warp/segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.segment_ops</span></code>: Segment Operations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../warp/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../warp/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.electrostatics</span></code>: Electrostatic Interactions (Warp)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../warp/dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.dynamics</span></code>: Molecular Dynamics</a></li>
@@ -457,6 +461,9 @@ PyTorch’s CUDA caching allocator.</p>
 <dt>fire2</dt><dd><p>PyTorch adapter for the FIRE2 optimizer
 (coordinate-only and variable-cell).</p>
 </dd>
+<dt>segment_ops</dt><dd><p>Differentiable PyTorch wrappers for segmented reductions and broadcasts
+with explicit first- and second-order backward support.</p>
+</dd>
 </dl>
 </section>
 </section>
@@ -469,10 +476,24 @@ caching allocator, and call the pure-Warp FIRE2 kernels.</p>
 <h3>Coordinate-Only Optimization<a class="headerlink" href="#coordinate-only-optimization" title="Link to this heading">#</a></h3>
 <dl class="py function">
 <dt class="sig sig-object py" id="nvalchemiops.torch.fire2.fire2_step_coord">
-<span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.fire2.</span></span><span class="sig-name descname"><span class="pre">fire2_step_coord</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">velocities</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">forces</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dt</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">nsteps_inc</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">vf</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">v_sumsq</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">f_sumsq</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_norm</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">delaystep</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">60</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtgrow</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.05</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtshrink</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.75</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alphashrink</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.985</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha0</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.09</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tmax</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.08</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tmin</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.005</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">maxstep</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.1</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/torch/fire2.html#fire2_step_coord"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.torch.fire2.fire2_step_coord" title="Link to this definition">#</a></dt>
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.fire2.</span></span><span class="sig-name descname"><span class="pre">fire2_step_coord</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">velocities</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">forces</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dt</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">nsteps_inc</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">vf</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">v_sumsq</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">f_sumsq</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_norm</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">delaystep</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">60</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtgrow</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.05</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtshrink</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.75</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alphashrink</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.985</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha0</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.09</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tmax</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.08</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tmin</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.005</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">maxstep</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compute_reductions</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/torch/fire2.html#fire2_step_coord"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.torch.fire2.fire2_step_coord" title="Link to this definition">#</a></dt>
 <dd><p>FIRE2 coordinate-only optimization step.</p>
 <p>Converts PyTorch tensors to Warp arrays (zero-copy) and delegates to
 the pure-Warp <a class="reference internal" href="../warp/dynamics.html#nvalchemiops.dynamics.optimizers.fire2.fire2_step" title="nvalchemiops.dynamics.optimizers.fire2.fire2_step"><code class="xref py py-func docutils literal notranslate"><span class="pre">fire2_step()</span></code></a>.</p>
+<p>The deferred half-step is folded into the reduction, so the per-system
+power is measured on the post-kick velocity, and the mixing fuses that
+half-step with the FIRE2 rule:</p>
+<div class="math notranslate nohighlight">
+\[P = \sum_i (\mathbf{v}_i + \Delta t\,\mathbf{F}_i) \cdot \mathbf{F}_i,\qquad
+\mathbf{v} = (1-\alpha)\,\mathbf{v}
+    + \left[(1-\alpha)\,\Delta t
+    + \alpha\sqrt{\tfrac{\mathbf{v}\cdot\mathbf{v}}
+    {\mathbf{F}\cdot\mathbf{F}}}\right]\mathbf{F}\]</div>
+<p>The displacement is <span class="math notranslate nohighlight">\(\Delta\mathbf{r} = \Delta t\,\mathbf{v}\)</span> downhill
+and <span class="math notranslate nohighlight">\(-\tfrac{1}{2}\Delta t\,\mathbf{v}\)</span> uphill (<span class="math notranslate nohighlight">\(P \le 0\)</span>,
+velocity then zeroed), capped by
+<span class="math notranslate nohighlight">\(\min(1, \text{maxstep}/\lVert\Delta\mathbf{r}\rVert)\)</span> per system with
+<span class="math notranslate nohighlight">\(\Delta t\)</span> scaled by the same factor.</p>
 <p>Modifies <em>positions</em>, <em>velocities</em>, <em>alpha</em>, <em>dt</em>, and <em>nsteps_inc</em>
 in-place.</p>
 <dl class="field-list simple">
@@ -558,6 +579,10 @@ defaults and descriptions.</p></li>
 <li><p><strong>maxstep</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – FIRE2 hyperparameters.  See
 <a class="reference internal" href="../warp/dynamics.html#nvalchemiops.dynamics.optimizers.fire2.fire2_step" title="nvalchemiops.dynamics.optimizers.fire2.fire2_step"><code class="xref py py-func docutils literal notranslate"><span class="pre">fire2_step()</span></code></a> for
 defaults and descriptions.</p></li>
+<li><p><strong>compute_reductions</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default True</em>) – If True, recompute <code class="docutils literal notranslate"><span class="pre">vf</span></code>/<code class="docutils literal notranslate"><span class="pre">v_sumsq</span></code>/<code class="docutils literal notranslate"><span class="pre">f_sumsq</span></code> internally. If False,
+use the caller-supplied values in those buffers instead of recomputing
+them (they must be provided and are not zeroed); the <code class="docutils literal notranslate"><span class="pre">maxstep</span></code> clamp
+still uses this call’s internally-computed <code class="docutils literal notranslate"><span class="pre">max_norm</span></code>.</p></li>
 </ul>
 </dd>
 <dt class="field-even">Return type<span class="colon">:</span></dt>
@@ -604,13 +629,34 @@ full descriptions.</p>
 <p>For optimizing both atomic coordinates and simulation cell parameters simultaneously.</p>
 <dl class="py function">
 <dt class="sig sig-object py" id="nvalchemiops.torch.fire2.fire2_step_coord_cell">
-<span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.fire2.</span></span><span class="sig-name descname"><span class="pre">fire2_step_coord_cell</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">velocities</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">forces</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_velocities</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_force</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dt</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">nsteps_inc</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">atom_ptr</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ext_atom_ptr</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ext_positions</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ext_velocities</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ext_forces</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ext_batch_idx</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vf</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">v_sumsq</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">f_sumsq</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_norm</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">delaystep</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">60</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtgrow</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.05</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtshrink</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.75</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alphashrink</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.985</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha0</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.09</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tmax</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.08</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tmin</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.005</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">maxstep</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.1</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/torch/fire2.html#fire2_step_coord_cell"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.torch.fire2.fire2_step_coord_cell" title="Link to this definition">#</a></dt>
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.fire2.</span></span><span class="sig-name descname"><span class="pre">fire2_step_coord_cell</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">velocities</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">forces</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_velocities</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_force</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dt</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">nsteps_inc</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">atom_ptr</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ext_atom_ptr</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ext_positions</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ext_velocities</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ext_forces</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ext_batch_idx</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vf</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">v_sumsq</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">f_sumsq</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_norm</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">delaystep</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">60</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtgrow</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.05</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtshrink</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.75</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alphashrink</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.985</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha0</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.09</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tmax</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.08</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tmin</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.005</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">maxstep</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_force_scale</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compute_reductions</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/torch/fire2.html#fire2_step_coord_cell"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.torch.fire2.fire2_step_coord_cell" title="Link to this definition">#</a></dt>
 <dd><p>FIRE2 variable-cell optimization step.</p>
 <p>Performs a FIRE2 step on both atomic coordinates and cell degrees of
-freedom.  Internally packs atomic + cell DOFs into extended arrays
-using an <strong>interleaved layout</strong> (each system’s atoms followed by its
-2 cell vec3s), runs the 3-kernel FIRE2 algorithm, and unpacks
-results back.</p>
+freedom. Internally packs atomic + cell velocity/force DOFs into an
+<strong>interleaved layout</strong> (each system’s atoms followed by its 2 cell
+vec3s), runs the FIRE2 reduction + mixing phase on those generalized
+DOFs, unpacks the mixed velocities, and then applies the physically
+coupled atomic/cell update directly on the caller’s coordinate and cell
+tensors.</p>
+<p>FIRE2 runs on the generalized DOF vectors <span class="math notranslate nohighlight">\(\mathbf{v}\)</span>,
+<span class="math notranslate nohighlight">\(\mathbf{F}\)</span> that stack the atomic velocities/forces and the (scaled)
+cell velocity/force rows. The power and mixing are taken over those
+generalized DOFs:</p>
+<div class="math notranslate nohighlight">
+\[P = \sum_i (\mathbf{v}_i + \Delta t\,\mathbf{F}_i) \cdot \mathbf{F}_i,\qquad
+\mathbf{v} = (1-\alpha)\,\mathbf{v}
+    + \left[(1-\alpha)\,\Delta t
+    + \alpha\sqrt{\tfrac{\mathbf{v}\cdot\mathbf{v}}
+    {\mathbf{F}\cdot\mathbf{F}}}\right]\mathbf{F}\]</div>
+<p>where <span class="math notranslate nohighlight">\(\mathbf{v}\cdot\mathbf{v}\)</span> and <span class="math notranslate nohighlight">\(\mathbf{F}\cdot\mathbf{F}\)</span>
+sum over each system’s atomic and cell DOFs. The mixed generalized velocity
+is then applied as a coupled atomic/cell position update: cell DOFs deform
+the cell while atoms follow the affine cell remap plus their own coordinate
+motion. The resulting Cartesian atomic displacement is capped by
+<span class="math notranslate nohighlight">\(\min(1, \text{maxstep}/\lVert\Delta\mathbf{r}\rVert)\)</span> per system
+(uphill systems, <span class="math notranslate nohighlight">\(P \le 0\)</span>, take the <span class="math notranslate nohighlight">\(-\tfrac{1}{2}\Delta t\)</span>
+correction and zero their velocities), with <span class="math notranslate nohighlight">\(\Delta t\)</span> scaled by the
+same factor.</p>
 <p>The cell must be pre-aligned to upper-triangular form via
 <a class="reference internal" href="../warp/dynamics.html#nvalchemiops.dynamics.utils.cell_filter.align_cell" title="nvalchemiops.dynamics.utils.cell_filter.align_cell"><code class="xref py py-func docutils literal notranslate"><span class="pre">nvalchemiops.dynamics.utils.cell_filter.align_cell()</span></code></a> before
 the first call.</p>
@@ -624,7 +670,9 @@ the first call.</p>
 <li><p><strong>forces</strong> (<em>Tensor</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype float32/float64</em>) – Forces on atoms (read-only).</p></li>
 <li><p><strong>cell</strong> (<em>Tensor</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype float32/float64</em>) – Cell matrices (upper-triangular from <code class="docutils literal notranslate"><span class="pre">align_cell()</span></code>).</p></li>
 <li><p><strong>cell_velocities</strong> (<em>Tensor</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype float32/float64</em>) – Cell velocity matrices.</p></li>
-<li><p><strong>cell_force</strong> (<em>Tensor</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype float32/float64</em>) – Cell force matrices from <code class="docutils literal notranslate"><span class="pre">stress_to_cell_force()</span></code> (read-only).</p></li>
+<li><p><strong>cell_force</strong> (<em>Tensor</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype float32/float64</em>) – Raw cell force matrices from <code class="docutils literal notranslate"><span class="pre">stress_to_cell_force()</span></code> (read-only).
+These are divided by <code class="docutils literal notranslate"><span class="pre">atoms_per_system</span> <span class="pre">*</span> <span class="pre">cell_force_scale</span></code> before
+FIRE2 velocity mixing.</p></li>
 <li><p><strong>batch_idx</strong> (<em>Tensor</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype int32</em>) – Sorted system index per atom.</p></li>
 <li><p><strong>alpha</strong> (<em>Tensor</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>dtype float32/float64</em>) – FIRE2 mixing parameter.</p></li>
 <li><p><strong>dt</strong> (<em>Tensor</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>dtype float32/float64</em>) – Per-system timestep.</p></li>
@@ -638,15 +686,16 @@ allocation.  See <em>Notes</em> for how to compute.</p></li>
 If <code class="docutils literal notranslate"><span class="pre">None</span></code>, computed from <em>atom_ptr</em> each call via
 <a class="reference internal" href="../warp/dynamics.html#nvalchemiops.dynamics.utils.cell_filter.extend_atom_ptr" title="nvalchemiops.dynamics.utils.cell_filter.extend_atom_ptr"><code class="xref py py-func docutils literal notranslate"><span class="pre">extend_atom_ptr()</span></code></a>.
 See <em>Notes</em> for how to compute.</p></li>
-<li><p><strong>ext_positions</strong> (<em>Tensor</em><em>, </em><em>shape</em><em> (</em><em>N+2M</em><em>, </em><em>3</em><em>)</em><em>, </em><em>optional</em>) – Pre-allocated extended working arrays.  Allocated if <code class="docutils literal notranslate"><span class="pre">None</span></code>;
-contents are overwritten each call.  Providing them avoids
-repeated allocation in tight loops.</p></li>
-<li><p><strong>ext_velocities</strong> (<em>Tensor</em><em>, </em><em>shape</em><em> (</em><em>N+2M</em><em>, </em><em>3</em><em>)</em><em>, </em><em>optional</em>) – Pre-allocated extended working arrays.  Allocated if <code class="docutils literal notranslate"><span class="pre">None</span></code>;
-contents are overwritten each call.  Providing them avoids
-repeated allocation in tight loops.</p></li>
-<li><p><strong>ext_forces</strong> (<em>Tensor</em><em>, </em><em>shape</em><em> (</em><em>N+2M</em><em>, </em><em>3</em><em>)</em><em>, </em><em>optional</em>) – Pre-allocated extended working arrays.  Allocated if <code class="docutils literal notranslate"><span class="pre">None</span></code>;
-contents are overwritten each call.  Providing them avoids
-repeated allocation in tight loops.</p></li>
+<li><p><strong>ext_positions</strong> (<em>Tensor</em><em>, </em><em>shape</em><em> (</em><em>N+2M</em><em>, </em><em>3</em><em>)</em><em>, </em><em>optional</em>) – Deprecated and ignored.
+<code class="docutils literal notranslate"><span class="pre">ext_positions</span></code> is accepted only for backward compatibility.
+The coupled variable-cell FIRE2 path no longer updates packed
+positions directly.</p></li>
+<li><p><strong>ext_velocities</strong> (<em>Tensor</em><em>, </em><em>shape</em><em> (</em><em>N+2M</em><em>, </em><em>3</em><em>)</em><em>, </em><em>optional</em>) – Pre-allocated extended working arrays for the FIRE2 generalized-DOF
+reduction and mixing phase. Allocated if <code class="docutils literal notranslate"><span class="pre">None</span></code>; contents are
+overwritten each call.</p></li>
+<li><p><strong>ext_forces</strong> (<em>Tensor</em><em>, </em><em>shape</em><em> (</em><em>N+2M</em><em>, </em><em>3</em><em>)</em><em>, </em><em>optional</em>) – Pre-allocated extended working arrays for the FIRE2 generalized-DOF
+reduction and mixing phase. Allocated if <code class="docutils literal notranslate"><span class="pre">None</span></code>; contents are
+overwritten each call.</p></li>
 <li><p><strong>ext_batch_idx</strong> (<em>Tensor</em><em>, </em><em>shape</em><em> (</em><em>N+2M</em><em>,</em><em>)</em><em>, </em><em>dtype int32</em><em>, </em><em>optional</em>) – Pre-computed extended batch index (sorted, matching interleaved
 pack layout).  If <code class="docutils literal notranslate"><span class="pre">None</span></code>, computed from <em>ext_atom_ptr</em> each
 call via
@@ -654,13 +703,21 @@ call via
 If provided, assumed correct and reused without recomputation.
 See <em>Notes</em> for how to compute.</p></li>
 <li><p><strong>vf</strong> (<em>Tensor</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>optional</em>) – Scratch buffers for reductions.  Allocated and zeroed if <code class="docutils literal notranslate"><span class="pre">None</span></code>;
-zeroed in-place if provided.</p></li>
+zeroed in-place if provided. In this coupled cell adapter,
+<code class="docutils literal notranslate"><span class="pre">max_norm</span></code> is the final physical Cartesian atomic displacement norm,
+recomputed after cell motion is coupled back to the atoms.</p></li>
 <li><p><strong>v_sumsq</strong> (<em>Tensor</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>optional</em>) – Scratch buffers for reductions.  Allocated and zeroed if <code class="docutils literal notranslate"><span class="pre">None</span></code>;
-zeroed in-place if provided.</p></li>
+zeroed in-place if provided. In this coupled cell adapter,
+<code class="docutils literal notranslate"><span class="pre">max_norm</span></code> is the final physical Cartesian atomic displacement norm,
+recomputed after cell motion is coupled back to the atoms.</p></li>
 <li><p><strong>f_sumsq</strong> (<em>Tensor</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>optional</em>) – Scratch buffers for reductions.  Allocated and zeroed if <code class="docutils literal notranslate"><span class="pre">None</span></code>;
-zeroed in-place if provided.</p></li>
+zeroed in-place if provided. In this coupled cell adapter,
+<code class="docutils literal notranslate"><span class="pre">max_norm</span></code> is the final physical Cartesian atomic displacement norm,
+recomputed after cell motion is coupled back to the atoms.</p></li>
 <li><p><strong>max_norm</strong> (<em>Tensor</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>optional</em>) – Scratch buffers for reductions.  Allocated and zeroed if <code class="docutils literal notranslate"><span class="pre">None</span></code>;
-zeroed in-place if provided.</p></li>
+zeroed in-place if provided. In this coupled cell adapter,
+<code class="docutils literal notranslate"><span class="pre">max_norm</span></code> is the final physical Cartesian atomic displacement norm,
+recomputed after cell motion is coupled back to the atoms.</p></li>
 <li><p><strong>delaystep</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – FIRE2 hyperparameters.</p></li>
 <li><p><strong>dtgrow</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – FIRE2 hyperparameters.</p></li>
 <li><p><strong>dtshrink</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – FIRE2 hyperparameters.</p></li>
@@ -669,6 +726,15 @@ zeroed in-place if provided.</p></li>
 <li><p><strong>tmax</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – FIRE2 hyperparameters.</p></li>
 <li><p><strong>tmin</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – FIRE2 hyperparameters.</p></li>
 <li><p><strong>maxstep</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – FIRE2 hyperparameters.</p></li>
+<li><p><strong>cell_force_scale</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>default=1.0</em>) – Extra positive multiplier for stress-derived cell-force normalization.
+Cell forces are divided by <code class="docutils literal notranslate"><span class="pre">atoms_per_system</span> <span class="pre">*</span> <span class="pre">cell_force_scale</span></code>.</p></li>
+<li><p><strong>compute_reductions</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default True</em>) – If True, recompute <code class="docutils literal notranslate"><span class="pre">vf</span></code>/<code class="docutils literal notranslate"><span class="pre">v_sumsq</span></code>/<code class="docutils literal notranslate"><span class="pre">f_sumsq</span></code> internally. If False,
+use the caller-supplied values instead (they must be provided and are
+not zeroed). These reductions are over the <strong>generalized (atom + cell)
+DOFs</strong> of each system, so a caller assembling them across a partition
+must include the (replicated) cell contribution exactly once. The
+<code class="docutils literal notranslate"><span class="pre">maxstep</span></code> clamp still uses this call’s internally-recomputed
+<code class="docutils literal notranslate"><span class="pre">max_norm</span></code> (the physical Cartesian displacement after cell coupling).</p></li>
 </ul>
 </dd>
 <dt class="field-even">Return type<span class="colon">:</span></dt>
@@ -682,6 +748,9 @@ zeroed in-place if provided.</p></li>
 <code class="docutils literal notranslate"><span class="pre">tmin=0.005</span></code>, <code class="docutils literal notranslate"><span class="pre">maxstep=0.1</span></code>.
 See <a class="reference internal" href="../warp/dynamics.html#nvalchemiops.dynamics.optimizers.fire2.fire2_step" title="nvalchemiops.dynamics.optimizers.fire2.fire2_step"><code class="xref py py-func docutils literal notranslate"><span class="pre">nvalchemiops.dynamics.optimizers.fire2.fire2_step()</span></code></a> for
 full descriptions.</p>
+<p>The high-level variable-cell adapter normalizes raw stress-derived cell
+forces by the number of atoms in each system. <code class="docutils literal notranslate"><span class="pre">cell_force_scale</span></code> is an
+extra multiplier on top of that per-system atom-count normalization.</p>
 <p><strong>Pre-computing static metadata for tight loops</strong></p>
 <p>When <em>batch_idx</em> does not change between steps (fixed system sizes),
 <em>atom_ptr</em>, <em>ext_atom_ptr</em>, and <em>ext_batch_idx</em> are constant and can
@@ -733,7 +802,7 @@ launches:</p>
 </pre></div>
 </div>
 <p><strong>Extended array layout (interleaved)</strong></p>
-<p>The packing places each system’s cell DOFs immediately after its
+<p>The mixing phase places each system’s cell DOFs immediately after its
 atoms:</p>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">[</span><span class="n">sys0_atom0</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span> <span class="n">sys0_atomK</span><span class="p">,</span> <span class="n">sys0_cell_row0</span><span class="p">,</span> <span class="n">sys0_cell_row1</span><span class="p">,</span>
  <span class="n">sys1_atom0</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span> <span class="n">sys1_atomJ</span><span class="p">,</span> <span class="n">sys1_cell_row0</span><span class="p">,</span> <span class="n">sys1_cell_row1</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span>
@@ -757,10 +826,9 @@ precede all DOFs for system 1, etc.), which is required by
 <span class="gp">&gt;&gt;&gt; </span><span class="n">ext_atom_ptr</span> <span class="o">=</span> <span class="o">...</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">ext_batch_idx</span> <span class="o">=</span> <span class="o">...</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">N_ext</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">alpha</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">ext_pos</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">N_ext</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">ext_vel</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">N_ext</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span>
 <span class="gp">... </span>                      <span class="n">device</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">ext_vel</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty_like</span><span class="p">(</span><span class="n">ext_pos</span><span class="p">)</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">ext_forces</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty_like</span><span class="p">(</span><span class="n">ext_pos</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">ext_forces</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty_like</span><span class="p">(</span><span class="n">ext_vel</span><span class="p">)</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">M</span> <span class="o">=</span> <span class="n">alpha</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">vf</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">v_sumsq</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty_like</span><span class="p">(</span><span class="n">vf</span><span class="p">)</span>
@@ -773,7 +841,6 @@ precede all DOFs for system 1, etc.), which is required by
 <span class="gp">... </span>        <span class="n">batch_idx</span><span class="p">,</span> <span class="n">alpha</span><span class="p">,</span> <span class="n">dt</span><span class="p">,</span> <span class="n">nsteps_inc</span><span class="p">,</span>
 <span class="gp">... </span>        <span class="n">atom_ptr</span><span class="o">=</span><span class="n">atom_ptr</span><span class="p">,</span>
 <span class="gp">... </span>        <span class="n">ext_atom_ptr</span><span class="o">=</span><span class="n">ext_atom_ptr</span><span class="p">,</span>
-<span class="gp">... </span>        <span class="n">ext_positions</span><span class="o">=</span><span class="n">ext_pos</span><span class="p">,</span>
 <span class="gp">... </span>        <span class="n">ext_velocities</span><span class="o">=</span><span class="n">ext_vel</span><span class="p">,</span>
 <span class="gp">... </span>        <span class="n">ext_forces</span><span class="o">=</span><span class="n">ext_forces</span><span class="p">,</span>
 <span class="gp">... </span>        <span class="n">ext_batch_idx</span><span class="o">=</span><span class="n">ext_batch_idx</span><span class="p">,</span>
@@ -796,22 +863,39 @@ precede all DOFs for system 1, etc.), which is required by
 arrays (positions + cell DOFs interleaved).  The caller is responsible
 for packing data into the extended layout before the first call and
 unpacking results after the last call (or as needed).</p>
+<p>Runs the standard FIRE2 scheme directly on the packed generalized DOFs
+<span class="math notranslate nohighlight">\(\mathbf{v}\)</span>, <span class="math notranslate nohighlight">\(\mathbf{F}\)</span>:</p>
+<div class="math notranslate nohighlight">
+\[P = \sum_i (\mathbf{v}_i + \Delta t\,\mathbf{F}_i) \cdot \mathbf{F}_i,\qquad
+\mathbf{v} = (1-\alpha)\,\mathbf{v}
+    + \left[(1-\alpha)\,\Delta t
+    + \alpha\sqrt{\tfrac{\mathbf{v}\cdot\mathbf{v}}
+    {\mathbf{F}\cdot\mathbf{F}}}\right]\mathbf{F}\]</div>
+<p>with displacement <span class="math notranslate nohighlight">\(\Delta\mathbf{r} = \Delta t\,\mathbf{v}\)</span> downhill and
+<span class="math notranslate nohighlight">\(-\tfrac{1}{2}\Delta t\,\mathbf{v}\)</span> uphill (<span class="math notranslate nohighlight">\(P \le 0\)</span>, velocity
+then zeroed), capped by
+<span class="math notranslate nohighlight">\(\min(1, \text{maxstep}/\lVert\Delta\mathbf{r}\rVert)\)</span> per system with
+<span class="math notranslate nohighlight">\(\Delta t\)</span> scaled by the same factor.</p>
 <p>This eliminates the per-step pack/unpack overhead that
 <code class="docutils literal notranslate"><span class="pre">fire2_step_coord_cell</span></code> incurs.</p>
+<p>Unlike <a class="reference internal" href="#nvalchemiops.torch.fire2.fire2_step_coord_cell" title="nvalchemiops.torch.fire2.fire2_step_coord_cell"><code class="xref py py-func docutils literal notranslate"><span class="pre">fire2_step_coord_cell()</span></code></a>, this function treats the packed DOFs
+exactly as provided. It does not add the affine atomic remap implied by
+variable-cell motion, so it should be used only when the caller explicitly
+wants generic packed-DOF FIRE2 behavior.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>ext_positions</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>N_ext</em><em>, </em><em>3</em><em>)</em>) – Extended position array (atoms + cell DOFs interleaved).</p></li>
-<li><p><strong>ext_velocities</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>N_ext</em><em>, </em><em>3</em><em>)</em>) – Extended velocity array.</p></li>
-<li><p><strong>ext_forces</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>N_ext</em><em>, </em><em>3</em><em>)</em>) – Extended force array.</p></li>
-<li><p><strong>ext_batch_idx</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>N_ext</em><em>,</em><em>)</em><em>, </em><em>dtype=int32</em>) – System index for each element in the extended arrays.</p></li>
-<li><p><strong>alpha</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em>) – FIRE2 mixing parameter per system.</p></li>
-<li><p><strong>dt</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em>) – Timestep per system.</p></li>
-<li><p><strong>nsteps_inc</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>dtype=int32</em>) – Consecutive positive-power step counter per system.</p></li>
-<li><p><strong>vf</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em> or </em><em>None</em>) – Per-system scratch buffers, shape (M,). Allocated internally if None.</p></li>
-<li><p><strong>v_sumsq</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em> or </em><em>None</em>) – Per-system scratch buffers, shape (M,). Allocated internally if None.</p></li>
-<li><p><strong>f_sumsq</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em> or </em><em>None</em>) – Per-system scratch buffers, shape (M,). Allocated internally if None.</p></li>
-<li><p><strong>max_norm</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em> or </em><em>None</em>) – Per-system scratch buffers, shape (M,). Allocated internally if None.</p></li>
+<li><p><strong>ext_positions</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>N_ext</em><em>, </em><em>3</em><em>)</em>) – Extended position array (atoms + cell DOFs interleaved).</p></li>
+<li><p><strong>ext_velocities</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>N_ext</em><em>, </em><em>3</em><em>)</em>) – Extended velocity array.</p></li>
+<li><p><strong>ext_forces</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>N_ext</em><em>, </em><em>3</em><em>)</em>) – Extended force array.</p></li>
+<li><p><strong>ext_batch_idx</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>N_ext</em><em>,</em><em>)</em><em>, </em><em>dtype=int32</em>) – System index for each element in the extended arrays.</p></li>
+<li><p><strong>alpha</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em>) – FIRE2 mixing parameter per system.</p></li>
+<li><p><strong>dt</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em>) – Timestep per system.</p></li>
+<li><p><strong>nsteps_inc</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>dtype=int32</em>) – Consecutive positive-power step counter per system.</p></li>
+<li><p><strong>vf</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em> or </em><em>None</em>) – Per-system scratch buffers, shape (M,). Allocated internally if None.</p></li>
+<li><p><strong>v_sumsq</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em> or </em><em>None</em>) – Per-system scratch buffers, shape (M,). Allocated internally if None.</p></li>
+<li><p><strong>f_sumsq</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em> or </em><em>None</em>) – Per-system scratch buffers, shape (M,). Allocated internally if None.</p></li>
+<li><p><strong>max_norm</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em> or </em><em>None</em>) – Per-system scratch buffers, shape (M,). Allocated internally if None.</p></li>
 <li><p><strong>delaystep</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – FIRE2 hyperparameters.  See <code class="docutils literal notranslate"><span class="pre">fire2_step_coord_cell</span></code> for details.</p></li>
 <li><p><strong>dtgrow</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – FIRE2 hyperparameters.  See <code class="docutils literal notranslate"><span class="pre">fire2_step_coord_cell</span></code> for details.</p></li>
 <li><p><strong>dtshrink</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – FIRE2 hyperparameters.  See <code class="docutils literal notranslate"><span class="pre">fire2_step_coord_cell</span></code> for details.</p></li>
@@ -924,9 +1008,22 @@ and <code class="docutils literal notranslate"><span class="pre">nsteps_inc</spa
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -946,7 +1043,7 @@ and <code class="docutils literal notranslate"><span class="pre">nsteps_inc</spa
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

@@ -2,18 +2,18 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../" >
+<html lang="en" data-content_root="../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>Conventions &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>Conventions &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -35,16 +35,17 @@
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -52,18 +53,18 @@
     <script src="../../_static/design-tabs.js?v=f930bc37"></script>
     <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
     <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
-    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'userguide/about/conventions';</script>
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
-    <link rel="next" title="Migration Guide (v0.3.0)" href="migration.html" />
+    <link rel="next" title="Migration Guide" href="migration.html" />
     <link rel="prev" title="Introduction to ALCHEMI Toolkit-Ops" href="intro.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -130,8 +131,6 @@
   
   
     
-    
-      
     
     
     <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -369,7 +368,7 @@ document.write(`
 <li class="toctree-l1"><a class="reference internal" href="install.html">Installation Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="intro.html">Introduction to ALCHEMI Toolkit-Ops</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Conventions</a></li>
-<li class="toctree-l1"><a class="reference internal" href="migration.html">Migration Guide (v0.3.0)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migration Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="faq.html">Frequently Asked Questions</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Core Components</span></p>
@@ -378,6 +377,12 @@ document.write(`
 <li class="toctree-l1"><a class="reference internal" href="../components/electrostatics.html">Electrostatic Interactions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../components/dispersion.html">DFT-D3(BJ) Dispersion Correction</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../components/dynamics.html">Molecular Dynamics Integrators</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../components/segment_ops.html">Segment Operations</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Advanced Usage</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="contributing.html">Contribution Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="kernel-style-guide.html">Kernel Style Guide</a></li>
 </ul>
 </div>
 </nav></div>
@@ -441,11 +446,16 @@ document.write(`
 interaction modules (electrostatics, dispersion, Lennard-Jones).</p>
 <section id="virial">
 <h2>Virial<a class="headerlink" href="#virial" title="Link to this heading">#</a></h2>
-<p>All modules return the virial tensor defined as the negative strain derivative
-of the energy:</p>
+<p>All modules return the virial tensor defined as the negative derivative of the
+energy with respect to the row-vector affine displacement tensor:</p>
 <div class="math notranslate nohighlight">
-\[W_{ab} = -\frac{\partial E}{\partial \varepsilon_{ab}}\]</div>
-<p>where <span class="math notranslate nohighlight">\(\varepsilon\)</span> is the symmetric infinitesimal strain tensor.</p>
+\[W_{ab} = -\frac{\partial E}{\partial u_{ab}}\]</div>
+<p>where deformed coordinates and cells are built as:</p>
+<div class="math notranslate nohighlight">
+\[R' = R (I + u), \qquad C' = C (I + u).\]</div>
+<p>This matches the <code class="docutils literal notranslate"><span class="pre">nvalchemi-toolkit</span></code> <code class="docutils literal notranslate"><span class="pre">prepare_strain</span></code> /
+<code class="docutils literal notranslate"><span class="pre">autograd_stresses</span></code> convention. The displacement tensor is not symmetrized by
+the energy-derivative recipe.</p>
 <p>For pairwise real-space interactions this is equivalent to:</p>
 <div class="math notranslate nohighlight">
 \[W = -\sum_{i &lt; j} \mathbf{r}_{ij} \otimes \mathbf{F}_{ij}\]</div>
@@ -460,6 +470,9 @@ reaction force internally, but returned virials always follow this convention.</
 <div class="math notranslate nohighlight">
 \[\sigma = -\frac{W}{V}\]</div>
 <p>where <span class="math notranslate nohighlight">\(V = |\det(\mathbf{C})|\)</span> is the cell volume.</p>
+<p>Equivalently, when using the displacement recipe above:</p>
+<div class="math notranslate nohighlight">
+\[\sigma = \frac{1}{V}\frac{\partial E}{\partial u}.\]</div>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 <p>Some molecular-dynamics codes use the opposite (compression-positive or
@@ -501,7 +514,7 @@ returned virial always follows the convention above.</p>
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Migration Guide (v0.3.0)</p>
+        <p class="prev-next-title">Migration Guide</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -550,9 +563,22 @@ returned virial always follows the convention above.</p>
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -572,7 +598,7 @@ returned virial always follows the convention above.</p>
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

@@ -2,18 +2,18 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../" >
+<html lang="en" data-content_root="../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>nvalchemiops.jax.interactions.dispersion: Dispersion Corrections &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>nvalchemiops.jax.interactions.dispersion: Dispersion Corrections &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -35,33 +35,36 @@
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
     <script src="../../_static/togglebutton.js?v=4a39c7ea"></script>
     <script src="../../_static/design-tabs.js?v=f930bc37"></script>
     <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'modules/jax/dispersion';</script>
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
     <link rel="next" title="nvalchemiops.jax.interactions.electrostatics: Electrostatics" href="electrostatics.html" />
-    <link rel="prev" title="nvalchemiops.jax.neighbors: Neighbor Lists" href="neighbors.html" />
+    <link rel="prev" title="nvalchemiops.jax.segment_ops: Segment Operations" href="segment_ops.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -128,8 +131,6 @@
   
   
     
-    
-      
     
     
     <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -364,6 +365,7 @@ document.write(`
   <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
   <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../torch/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../torch/segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.segment_ops</span></code>: Segment Operations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../torch/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../torch/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.electrostatics</span></code>: Electrostatics</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../torch/dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch</span></code>: Dynamics Optimizers</a></li>
@@ -371,11 +373,13 @@ document.write(`
 </ul>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.segment_ops</span></code>: Segment Operations</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.electrostatics</span></code>: Electrostatics</a></li>
 </ul>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../warp/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../warp/segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.segment_ops</span></code>: Segment Operations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../warp/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../warp/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.electrostatics</span></code>: Electrostatic Interactions (Warp)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../warp/dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.dynamics</span></code>: Molecular Dynamics</a></li>
@@ -483,12 +487,12 @@ units (conventionally Bohr when using standard D3 parameters)</p></li>
 <li><p><strong>numbers</strong> (<a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a>) – Atomic numbers [num_atoms] as int32</p></li>
 <li><p><strong>a1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Becke-Johnson damping parameter 1 (functional-dependent, dimensionless)</p></li>
 <li><p><strong>a2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Becke-Johnson damping parameter 2 (functional-dependent), in same units as positions</p></li>
-<li><p><strong>s8</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – C8 term scaling factor (functional-dependent, dimensionless)</p></li>
+<li><p><strong>s8</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – <span class="math notranslate nohighlight">\(C_8\)</span> term scaling factor (functional-dependent, dimensionless)</p></li>
 <li><p><strong>k1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>optional</em>) – CN counting function steepness parameter, in inverse distance units
 (typically 16.0 1/Bohr for atomic units). Default: 16.0</p></li>
 <li><p><strong>k3</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>optional</em>) – CN interpolation Gaussian width parameter (typically -4.0, dimensionless).
 Default: -4.0</p></li>
-<li><p><strong>s6</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>optional</em>) – C6 term scaling factor (typically 1.0, dimensionless). Default: 1.0</p></li>
+<li><p><strong>s6</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>optional</em>) – <span class="math notranslate nohighlight">\(C_6\)</span> term scaling factor (typically 1.0, dimensionless). Default: 1.0</p></li>
 <li><p><strong>s5_smoothing_on</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>optional</em>) – Distance where S5 switching begins, in same units as positions. Default: 1e10</p></li>
 <li><p><strong>s5_smoothing_off</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>optional</em>) – Distance where S5 switching completes, in same units as positions.
 Default: 1e10 (effectively no cutoff)</p></li>
@@ -500,9 +504,11 @@ Default: None</p></li>
 Individual parameters below can override values from d3_params.</p></li>
 <li><p><strong>covalent_radii</strong> (<a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>optional</em>) – Covalent radii [max_Z+1] as float32, indexed by atomic number, in same units
 as positions. If provided, overrides the value in d3_params.</p></li>
-<li><p><strong>r4r2</strong> (<a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>optional</em>) – &lt;r4&gt;/&lt;r2&gt; expectation values [max_Z+1] as float32 for C8 computation (dimensionless).
+<li><p><strong>r4r2</strong> (<a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>optional</em>) – <span class="math notranslate nohighlight">\(\langle r^4 \rangle / \langle r^2 \rangle\)</span> expectation values [max_Z+1] as float32
+for <span class="math notranslate nohighlight">\(C_8\)</span> computation (dimensionless).
 If provided, overrides the value in d3_params.</p></li>
-<li><p><strong>c6_reference</strong> (<a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>optional</em>) – C6 reference values [max_Z+1, max_Z+1, 5, 5] as float32 in energy × distance^6 units.
+<li><p><strong>c6_reference</strong> (<a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>optional</em>) – <span class="math notranslate nohighlight">\(C_6\)</span> reference values [max_Z+1, max_Z+1, 5, 5] as float32
+in energy <span class="math notranslate nohighlight">\(\times\)</span> distance<span class="math notranslate nohighlight">\(^6\)</span> units.
 If provided, overrides the value in d3_params.</p></li>
 <li><p><strong>coord_num_ref</strong> (<a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>optional</em>) – CN reference grid [max_Z+1, max_Z+1, 5, 5] as float32 (dimensionless).
 If provided, overrides the value in d3_params.</p></li>
@@ -555,10 +561,10 @@ from the Grimme group use atomic units (Bohr for distances, Hartree for energy).
 <li><p>Float32 or float64 precision for positions and cell; outputs always float32</p></li>
 <li><p><strong>Neighbor formats</strong>: Supports both neighbor_matrix (dense) and neighbor_list (sparse)
 formats. Choose neighbor_list for sparse systems or when memory efficiency is important.</p></li>
-<li><p>Padding atoms indicated by numbers[i] == 0</p></li>
+<li><p>Padding atoms indicated by <code class="docutils literal notranslate"><span class="pre">numbers[i]</span> <span class="pre">==</span> <span class="pre">0</span></code></p></li>
 <li><p>Requires symmetric neighbor representation (each pair appears twice)</p></li>
-<li><p><strong>Two-body only</strong>: Computes pairwise C6 and C8 dispersion terms; three-body
-Axilrod-Teller-Muto (ATM/C9) terms are not included</p></li>
+<li><p><strong>Two-body only</strong>: Computes pairwise <span class="math notranslate nohighlight">\(C_6\)</span> and <span class="math notranslate nohighlight">\(C_8\)</span> dispersion terms;
+three-body Axilrod-Teller-Muto (ATM/<span class="math notranslate nohighlight">\(C_9\)</span>) terms are not included</p></li>
 <li><p>Virial computation requires periodic boundary conditions.</p></li>
 </ul>
 <dl class="field-list simple">
@@ -635,7 +641,7 @@ for convenience—the <code class="docutils literal notranslate"><span class="pr
 required by the kernels.</p>
 <dl class="py class">
 <dt class="sig sig-object py" id="nvalchemiops.jax.interactions.dispersion.D3Parameters">
-<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">nvalchemiops.jax.interactions.dispersion.</span></span><span class="sig-name descname"><span class="pre">D3Parameters</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rcov</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">r4r2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">c6ab</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cn_ref</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">interp_mesh</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/jax/interactions/dispersion/_dftd3.html#D3Parameters"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.jax.interactions.dispersion.D3Parameters" title="Link to this definition">#</a></dt>
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">nvalchemiops.jax.interactions.dispersion.</span></span><span class="sig-name descname"><span class="pre">D3Parameters</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rcov</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">r4r2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">c6ab</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cn_ref</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">interp_mesh</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/jax/interactions/dispersion/_dftd3.html#D3Parameters"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.jax.interactions.dispersion.D3Parameters" title="Link to this definition">#</a></dt>
 <dd><p>DFT-D3 reference parameters for dispersion correction calculations.</p>
 <p>This dataclass encapsulates all element-specific parameters required for
 DFT-D3 dispersion corrections. The main purpose for this structure is to
@@ -647,15 +653,15 @@ present and complete. These parameters are used by <a class="reference internal"
 <li><p><strong>rcov</strong> (<a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a>) – Covalent radii [max_Z+1] as float32. Units should be consistent
 with position coordinates. Index 0 is reserved for
 padding; valid atomic numbers are 1 to max_Z.</p></li>
-<li><p><strong>r4r2</strong> (<a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a>) – &lt;r⁴&gt;/&lt;r²&gt; expectation values [max_Z+1] as float32.
-Dimensionless ratio used for computing C8 coefficients from C6 values.</p></li>
-<li><p><strong>c6ab</strong> (<a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a>) – C6 reference coefficients [max_Z+1, max_Z+1, interp_mesh, interp_mesh]
-as float32. Units are energy x distance^6. Indexed by atomic numbers and
+<li><p><strong>r4r2</strong> (<a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a>) – <span class="math notranslate nohighlight">\(\langle r^4 \rangle / \langle r^2 \rangle\)</span> expectation values [max_Z+1] as float32.
+Dimensionless ratio used for computing <span class="math notranslate nohighlight">\(C_8\)</span> coefficients from <span class="math notranslate nohighlight">\(C_6\)</span> values.</p></li>
+<li><p><strong>c6ab</strong> (<a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a>) – <span class="math notranslate nohighlight">\(C_6\)</span> reference coefficients [max_Z+1, max_Z+1, interp_mesh, interp_mesh]
+as float32. Units are energy <span class="math notranslate nohighlight">\(\times\)</span> distance<span class="math notranslate nohighlight">\(^6\)</span>. Indexed by atomic numbers and
 coordination number reference indices.</p></li>
 <li><p><strong>cn_ref</strong> (<a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a>) – Coordination number reference grid [max_Z+1, max_Z+1, interp_mesh, interp_mesh]
 as float32. Dimensionless CN values for Gaussian interpolation.</p></li>
 <li><p><strong>interp_mesh</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>optional</em>) – Size of the coordination number interpolation mesh. Default: 5
-(standard DFT-D3 uses a 5x5 grid)</p></li>
+(standard DFT-D3 uses a <span class="math notranslate nohighlight">\(5 \times 5\)</span> grid)</p></li>
 </ul>
 </dd>
 <dt class="field-even">Raises<span class="colon">:</span></dt>
@@ -669,7 +675,7 @@ as float32. Dimensionless CN values for Gaussian interpolation.</p></li>
 <ul class="simple">
 <li><p>Parameters should use consistent units matching your coordinate system.
 Standard D3 parameters from the Grimme group use atomic units (Bohr for
-distances, Hartree x Bohr^6 for C6 coefficients).</p></li>
+distances, Hartree <span class="math notranslate nohighlight">\(\times\)</span> Bohr<span class="math notranslate nohighlight">\(^6\)</span> for <span class="math notranslate nohighlight">\(C_6\)</span> coefficients).</p></li>
 <li><p>Index 0 in all arrays is reserved for padding atoms (atomic number 0)</p></li>
 <li><p>Valid atomic numbers range from 1 to max_z</p></li>
 <li><p>The standard DFT-D3 implementation supports elements 1-94 (H to Pu)</p></li>
@@ -687,33 +693,42 @@ distances, Hartree x Bohr^6 for C6 coefficients).</p></li>
 </div>
 <dl class="py attribute">
 <dt class="sig sig-object py" id="nvalchemiops.jax.interactions.dispersion.D3Parameters.c6ab">
-<span class="sig-name descname"><span class="pre">c6ab</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><span class="pre">Array</span></a></span><a class="headerlink" href="#nvalchemiops.jax.interactions.dispersion.D3Parameters.c6ab" title="Link to this definition">#</a></dt>
+<span class="sig-name descname"><span class="pre">c6ab</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><span class="pre">Array</span></a></em><a class="headerlink" href="#nvalchemiops.jax.interactions.dispersion.D3Parameters.c6ab" title="Link to this definition">#</a></dt>
 <dd></dd></dl>
 
 <dl class="py attribute">
 <dt class="sig sig-object py" id="nvalchemiops.jax.interactions.dispersion.D3Parameters.cn_ref">
-<span class="sig-name descname"><span class="pre">cn_ref</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><span class="pre">Array</span></a></span><a class="headerlink" href="#nvalchemiops.jax.interactions.dispersion.D3Parameters.cn_ref" title="Link to this definition">#</a></dt>
+<span class="sig-name descname"><span class="pre">cn_ref</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><span class="pre">Array</span></a></em><a class="headerlink" href="#nvalchemiops.jax.interactions.dispersion.D3Parameters.cn_ref" title="Link to this definition">#</a></dt>
 <dd></dd></dl>
 
 <dl class="py attribute">
 <dt class="sig sig-object py" id="nvalchemiops.jax.interactions.dispersion.D3Parameters.interp_mesh">
-<span class="sig-name descname"><span class="pre">interp_mesh</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><span class="pre">int</span></a></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">5</span></span><a class="headerlink" href="#nvalchemiops.jax.interactions.dispersion.D3Parameters.interp_mesh" title="Link to this definition">#</a></dt>
+<span class="sig-name descname"><span class="pre">interp_mesh</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><span class="pre">int</span></a></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">5</span></em><a class="headerlink" href="#nvalchemiops.jax.interactions.dispersion.D3Parameters.interp_mesh" title="Link to this definition">#</a></dt>
 <dd></dd></dl>
 
 <dl class="py property">
 <dt class="sig sig-object py" id="nvalchemiops.jax.interactions.dispersion.D3Parameters.max_z">
-<span class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">max_z</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><span class="pre">int</span></a></span><a class="headerlink" href="#nvalchemiops.jax.interactions.dispersion.D3Parameters.max_z" title="Link to this definition">#</a></dt>
-<dd><p>Maximum atomic number supported by these parameters.</p>
+<em class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">max_z</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><span class="pre">int</span></a></em><a class="headerlink" href="#nvalchemiops.jax.interactions.dispersion.D3Parameters.max_z" title="Link to this definition">#</a></dt>
+<dd><p>Return the maximum atomic number supported by these parameters.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Largest atomic number Z for which parameters are available;
+equal to <code class="docutils literal notranslate"><span class="pre">rcov.shape[0]</span> <span class="pre">-</span> <span class="pre">1</span></code> (index 0 is reserved for padding).</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)">int</a></p>
+</dd>
+</dl>
 </dd></dl>
 
 <dl class="py attribute">
 <dt class="sig sig-object py" id="nvalchemiops.jax.interactions.dispersion.D3Parameters.r4r2">
-<span class="sig-name descname"><span class="pre">r4r2</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><span class="pre">Array</span></a></span><a class="headerlink" href="#nvalchemiops.jax.interactions.dispersion.D3Parameters.r4r2" title="Link to this definition">#</a></dt>
+<span class="sig-name descname"><span class="pre">r4r2</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><span class="pre">Array</span></a></em><a class="headerlink" href="#nvalchemiops.jax.interactions.dispersion.D3Parameters.r4r2" title="Link to this definition">#</a></dt>
 <dd></dd></dl>
 
 <dl class="py attribute">
 <dt class="sig sig-object py" id="nvalchemiops.jax.interactions.dispersion.D3Parameters.rcov">
-<span class="sig-name descname"><span class="pre">rcov</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><span class="pre">Array</span></a></span><a class="headerlink" href="#nvalchemiops.jax.interactions.dispersion.D3Parameters.rcov" title="Link to this definition">#</a></dt>
+<span class="sig-name descname"><span class="pre">rcov</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><span class="pre">Array</span></a></em><a class="headerlink" href="#nvalchemiops.jax.interactions.dispersion.D3Parameters.rcov" title="Link to this definition">#</a></dt>
 <dd></dd></dl>
 
 </dd></dl>
@@ -815,12 +830,12 @@ For most use cases, prefer the high-level <a class="reference internal" href="#n
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="neighbors.html"
+       href="segment_ops.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.neighbors</span></code>: Neighbor Lists</p>
+        <p class="prev-next-title"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.segment_ops</span></code>: Segment Operations</p>
       </div>
     </a>
     <a class="right-next"
@@ -904,9 +919,22 @@ For most use cases, prefer the high-level <a class="reference internal" href="#n
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -926,7 +954,7 @@ For most use cases, prefer the high-level <a class="reference internal" href="#n
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

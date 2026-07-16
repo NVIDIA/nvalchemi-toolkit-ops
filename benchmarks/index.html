@@ -2,18 +2,18 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../" >
+<html lang="en" data-content_root="../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>Benchmarks &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>Benchmarks &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -35,16 +35,17 @@
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -55,13 +56,13 @@
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
     <link rel="next" title="Neighbor List Benchmarks" href="neighborlist.html" />
-    <link rel="prev" title="JAX Neighbor List Example" href="../examples/neighbors/05_jax_neighbor_list.html" />
+    <link rel="prev" title="Targeted Lennard-Jones Pair Outputs" href="../examples/neighbors/06_pair_outputs_lj.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -128,8 +129,6 @@
   
   
     
-    
-      
     
     
     <img src="../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -423,12 +422,10 @@ document.write(`
                   
   <section class="tex2jax_ignore mathjax_ignore" id="benchmarks">
 <h1>Benchmarks<a class="headerlink" href="#benchmarks" title="Link to this heading">#</a></h1>
-<p>Performance benchmarks for ALCHEMI Toolkit-Ops kernels. Currently, results
-are static and cached but we intend to evolve to CI-generated benchmark
-results gradually to cover different NVIDIA architectures, benchmark
-systems, and so on.</p>
-<section id="available-benchmarks">
-<h2>Available Benchmarks<a class="headerlink" href="#available-benchmarks" title="Link to this heading">#</a></h2>
+<p>Performance benchmarks for ALCHEMI Toolkit-Ops GPU kernels, covering both
+the <strong>Torch</strong> and <strong>JAX</strong> backends. These pages present scaling behaviour
+across system sizes, constant-workload sweeps, and batch-scaling modes for
+each module.</p>
 <div class="toctree-wrapper compound">
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="neighborlist.html">Neighbor List Benchmarks</a></li>
@@ -437,28 +434,162 @@ systems, and so on.</p>
 <li class="toctree-l1"><a class="reference internal" href="dynamics.html">Dynamics Benchmarks</a></li>
 </ul>
 </div>
+<section id="methodology">
+<h2>Methodology<a class="headerlink" href="#methodology" title="Link to this heading">#</a></h2>
+<section id="timing">
+<h3>Timing<a class="headerlink" href="#timing" title="Link to this heading">#</a></h3>
+<table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Backend</p></th>
+<th class="head"><p>Mechanism</p></th>
+<th class="head"><p>Details</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>Torch</strong></p></td>
+<td><p>CUDA Events</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">start_event.record()</span></code> / <code class="docutils literal notranslate"><span class="pre">end_event.record()</span></code> around the kernel call, then <code class="docutils literal notranslate"><span class="pre">torch.cuda.synchronize()</span></code>. No host-side sync inside the timed loop.</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>JAX</strong></p></td>
+<td><p>Wall-clock + <code class="docutils literal notranslate"><span class="pre">block_until_ready</span></code></p></td>
+<td><p>Warmups block to exclude tracing/compilation. The standard timed loop dispatches all calls and blocks on the final result; allocation-heavy rows may retry with a block after each call. Rows record the exact <code class="docutils literal notranslate"><span class="pre">timing_method</span></code>.</p></td>
+</tr>
+</tbody>
+</table>
+<p>The shipped benchmark YAMLs use the publication timing protocol by default:
+three warmup iterations and ten timed iterations on the full benchmark grid.
+Both values are configurable via <code class="docutils literal notranslate"><span class="pre">parameters.warmup_runs</span></code> and
+<code class="docutils literal notranslate"><span class="pre">parameters.timing_runs</span></code>, or via the shared <code class="docutils literal notranslate"><span class="pre">--warmup-runs</span></code> / <code class="docutils literal notranslate"><span class="pre">--timing-runs</span></code>
+CLI flags. The reported value is the mean steady-state time per call after
+warmup/compile/load work is excluded.</p>
 </section>
-<section id="about-these-benchmarks">
-<h2>About These Benchmarks<a class="headerlink" href="#about-these-benchmarks" title="Link to this heading">#</a></h2>
-<p>Benchmarks are intended to be indicative of <code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> performance under
-a specific set of criteria; actual performance may differ depending
-on a number of factors including but not limited to structure/system
-topology, GPU architecture, driver and firmware versions.</p>
+<section id="scaling-modes">
+<h3>Scaling modes<a class="headerlink" href="#scaling-modes" title="Link to this heading">#</a></h3>
+<p>Each benchmark page presents three scaling modes:</p>
+<p>System Size Scaling
+: Fix batch size = 1, sweep the number of atoms per system.</p>
+<p>Constant Workload
+: Target a total atom count while sweeping batch size (fewer atoms per system,
+more systems). Discrete system sizes and integer batch counts mean the actual
+total can be below the target, especially for CsCl supercells. Plots use the
+actual <code class="docutils literal notranslate"><span class="pre">total_atoms</span></code> recorded in each CSV row.</p>
+<p>Batch Scaling
+: Fix atoms per system, sweep batch size. Reveals how well the kernel
+amortises fixed overhead across systems.</p>
 </section>
-<section id="benchmark-methodology">
-<h2>Benchmark Methodology<a class="headerlink" href="#benchmark-methodology" title="Link to this heading">#</a></h2>
-<p>All benchmarks follow these principles:</p>
+<section id="systems">
+<h3>Systems<a class="headerlink" href="#systems" title="Link to this heading">#</a></h3>
+<table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>System</p></th>
+<th class="head"><p>Source</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>CsCl</strong></p></td>
+<td><p>Programmatic supercell builder in <code class="docutils literal notranslate"><span class="pre">benchmarks.suite_systems</span></code></p></td>
+<td><p>CsCl/B2 primitive-cubic supercells (2 atoms/unit cell, cubic 4.119 Å).</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>NH₃</strong></p></td>
+<td><p>PDB files generated by <code class="docutils literal notranslate"><span class="pre">benchmarks/nh3/generate_pbc_pdbs.sh</span></code> (requires <a class="reference external" href="https://m3g.github.io/packmol/">packmol</a>)</p></td>
+<td><p>Periodic ammonia boxes at powers-of-two atom counts.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="hardware">
+<h3>Hardware<a class="headerlink" href="#hardware" title="Link to this heading">#</a></h3>
+<table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>GPU</p></th>
+<th class="head"><p>VRAM</p></th>
+<th class="head"><p>Architecture</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>NVIDIA H100 80GB HBM3</p></td>
+<td><p>80 GB HBM3</p></td>
+<td><p>Hopper</p></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>These results are intended to be indicative <em>only</em>: your actual performance
+may vary depending on the atomic system topology, software and hardware
+configuration. We encourage users to benchmark on their own systems of
+interest.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><strong>Precision</strong>: NL and DFT-D3 use <code class="docutils literal notranslate"><span class="pre">float32</span></code>; electrostatics
+(PME / Ewald) use <code class="docutils literal notranslate"><span class="pre">float64</span></code>; charges are always <code class="docutils literal notranslate"><span class="pre">float64</span></code>.</p>
+<p><strong>Missing plotted points</strong> are rows where the benchmark wrote <code class="docutils literal notranslate"><span class="pre">success=False</span></code>
+with a concrete <code class="docutils literal notranslate"><span class="pre">error_type</span></code> such as <code class="docutils literal notranslate"><span class="pre">OutOfMemoryError</span></code>, <code class="docutils literal notranslate"><span class="pre">SkippedByPolicy</span></code>,
+<code class="docutils literal notranslate"><span class="pre">SkippedAfterOOM</span></code>, or <code class="docutils literal notranslate"><span class="pre">UnsupportedConfiguration</span></code>. The latter records a public
+API capability or launch-safety guard; it does not substitute another method.
+Hardware-dependent OOM limits are not hardcoded into the suite; failed and
+skipped rows remain in the CSVs, are not drawn as data, and break plotted lines
+at their coordinates.</p>
+<p>Successful JAX rows timed with per-call blocking are shown as separate line
+segments from batch-dispatch timings; the CSV <code class="docutils literal notranslate"><span class="pre">timing_method</span></code> column records
+the boundary used for every point.</p>
+</div>
+</section>
+</section>
+<section id="running-the-full-suite">
+<h2>Running the full suite<a class="headerlink" href="#running-the-full-suite" title="Link to this heading">#</a></h2>
+<p>The three modules share a single entry point,
+<code class="docutils literal notranslate"><span class="pre">benchmarks.benchmark_suite</span></code>, which loads each per-module
+<code class="docutils literal notranslate"><span class="pre">benchmark_config.yaml</span></code> and dispatches in-process. Use a fresh scratch
+directory for each reportable run, then promote a complete, reviewed CSV set
+into the documentation only after validation.</p>
+<details class="sd-sphinx-override sd-dropdown sd-card sd-mb-3">
+<summary class="sd-summary-title sd-card-header">
+<span class="sd-summary-text">Commands and controls</span><span class="sd-summary-state-marker sd-summary-chevron-right"><svg version="1.1" width="1.5em" height="1.5em" class="sd-octicon sd-octicon-chevron-right" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.72 18.78a.75.75 0 0 1 0-1.06L14.44 12 8.72 6.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0Z"></path></svg></span></summary><div class="sd-summary-content sd-card-body docutils">
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">RESULT_DIR</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$BENCHMARK_SCRATCH</span><span class="s2">/results/reportable-run&quot;</span>
+
+<span class="c1"># All three modules, Torch backend (default)</span>
+python<span class="w"> </span>-m<span class="w"> </span>benchmarks.benchmark_suite<span class="w"> </span>--benchmark<span class="w"> </span>all<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--run-dir<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$RESULT_DIR</span><span class="s2">&quot;</span>
+
+<span class="c1"># All three modules, JAX backend</span>
+python<span class="w"> </span>-m<span class="w"> </span>benchmarks.benchmark_suite<span class="w"> </span>--benchmark<span class="w"> </span>all<span class="w"> </span>--backend<span class="w"> </span>jax<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--run-dir<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$RESULT_DIR</span><span class="s2">&quot;</span>
+
+<span class="c1"># Or a subset:</span>
+python<span class="w"> </span>-m<span class="w"> </span>benchmarks.benchmark_suite<span class="w"> </span>--benchmark<span class="w"> </span>nl<span class="w"> </span>d3<span class="w"> </span>--backend<span class="w"> </span>torch
+</pre></div>
+</div>
+<p class="sd-card-text">Common controls:</p>
 <ul class="simple">
-<li><p><strong>Tensor allocation excluded</strong>: Only <em>relevant</em> kernel execution time
-is measured, i.e. excluding neighbor lists and preprocessing if they
-are not part of the benchmark.</p></li>
-<li><p><strong>Warm-up runs</strong>: Multiple warm-up iterations to ensure kernels compile
-overhead is removed, and that noise from cache effects are minimized.</p></li>
-<li><p><strong>Statistical sampling</strong>: Multiple timing runs with median time,
-maximum memory utilization, and throughput aggregated for reporting.</p></li>
-<li><p><strong>Error handling</strong>: OOM results are included.</p></li>
-<li><p><strong>Consistent inputs</strong>: Same cutoff, lattice type, and parameters across runs</p></li>
+<li><p class="sd-card-text"><code class="docutils literal notranslate"><span class="pre">--method</span></code> / <code class="docutils literal notranslate"><span class="pre">--methods</span></code> selects named APIs.</p></li>
+<li><p class="sd-card-text"><code class="docutils literal notranslate"><span class="pre">--dry-run</span></code>, <code class="docutils literal notranslate"><span class="pre">--list</span></code>, and <code class="docutils literal notranslate"><span class="pre">--count</span></code> inspect the expanded plan without GPU
+allocation.</p></li>
+<li><p class="sd-card-text"><code class="docutils literal notranslate"><span class="pre">--plot-only</span> <span class="pre">RESULTS_DIR</span></code> rebuilds figures from an existing complete CSV set.</p></li>
+<li><p class="sd-card-text"><code class="docutils literal notranslate"><span class="pre">--backend</span> <span class="pre">warp</span></code> is available for neighbor lists; D3 and electrostatics use
+Torch or JAX.</p></li>
+<li><p class="sd-card-text">Electrostatics component profiling is optional; reportable runs time the full
+energy, force, and charge-gradient workload once per iteration.</p></li>
 </ul>
+</div>
+</details><p>Before publishing plots, the suite checks case coverage and confirms that the
+run, source, hardware, inputs, and runtime settings belong together. Backend
+reruns replace only that backend’s rows inside the same validated run rather
+than mixing unrelated CSV snapshots.</p>
+</section>
+<section id="published-snapshot">
+<h2>Published snapshot<a class="headerlink" href="#published-snapshot" title="Link to this heading">#</a></h2>
+<p>The bundled H100 snapshot uses the full YAML grids with three warmups and ten
+timed iterations. Failed cases remain explicit CSV rows; plots leave those
+coordinates empty and do not connect lines across them. Collection may be
+sharded across compatible GPUs; CSV timings always
+represent steady-state calls, not queue, compilation, or environment setup.</p>
+<p>See <span class="xref myst">Benchmark Results</span> for the current run ID,
+row and failure counts, CSV schema, scratch-only cluster setup, sharding rules,
+and the detailed reproducibility runbook. Module-specific commands remain on
+the neighbor-list, DFT-D3, and electrostatics pages.</p>
 </section>
 </section>
 
@@ -473,12 +604,12 @@ maximum memory utilization, and throughput aggregated for reporting.</p></li>
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="../examples/neighbors/05_jax_neighbor_list.html"
+       href="../examples/neighbors/06_pair_outputs_lj.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">JAX Neighbor List Example</p>
+        <p class="prev-next-title">Targeted Lennard-Jones Pair Outputs</p>
       </div>
     </a>
     <a class="right-next"
@@ -508,9 +639,15 @@ maximum memory utilization, and throughput aggregated for reporting.</p></li>
   </div>
   <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="visible nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#available-benchmarks">Available Benchmarks</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#about-these-benchmarks">About These Benchmarks</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#benchmark-methodology">Benchmark Methodology</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#methodology">Methodology</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#timing">Timing</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#scaling-modes">Scaling modes</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#systems">Systems</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#hardware">Hardware</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#running-the-full-suite">Running the full suite</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#published-snapshot">Published snapshot</a></li>
 </ul>
   </nav></div>
 
@@ -535,9 +672,22 @@ maximum memory utilization, and throughput aggregated for reporting.</p></li>
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -557,7 +707,7 @@ maximum memory utilization, and throughput aggregated for reporting.</p></li>
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

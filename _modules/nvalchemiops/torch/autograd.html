@@ -2,17 +2,17 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../../" >
+<html lang="en" data-content_root="../../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>nvalchemiops.torch.autograd &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>nvalchemiops.torch.autograd &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -34,16 +34,17 @@
     <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -58,7 +59,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -125,8 +126,6 @@
   
   
     
-    
-      
     
     
     <img src="../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -670,7 +669,23 @@ document.write(`
 <a class="viewcode-back" href="../../../modules/torch/autograd.html#nvalchemiops.torch.autograd.warp_stream_from_torch">[docs]</a>
 <span class="nd">@contextmanager</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">warp_stream_from_torch</span><span class="p">(</span><span class="o">*</span><span class="n">values</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Bind Warp launches to PyTorch&#39;s current CUDA stream when tensors are CUDA.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Bind Warp launches to PyTorch&#39;s current CUDA stream when tensors are CUDA.</span>
+
+<span class="sd">    Finds the first CUDA tensor in ``values`` and switches Warp to its stream</span>
+<span class="sd">    for the duration of the context.  Falls back to a no-op context when no</span>
+<span class="sd">    CUDA tensor is found (e.g., CPU-only runs).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    *values : Any</span>
+<span class="sd">        Arbitrary arguments; only ``torch.Tensor`` instances on CUDA are</span>
+<span class="sd">        inspected for stream information.</span>
+
+<span class="sd">    Yields</span>
+<span class="sd">    ------</span>
+<span class="sd">    torch.cuda.Stream or None</span>
+<span class="sd">        The active PyTorch CUDA stream, or ``None`` when running on CPU.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">stream_tensor</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span>
         <span class="p">(</span>
             <span class="n">value</span>
@@ -774,10 +789,8 @@ document.write(`
 
 <span class="sd">    This decorator eliminates boilerplate by automatically generating:</span>
 <span class="sd">    - A ``torch.library.custom_op`` forward registered with fake/meta support</span>
-<span class="sd">    - A hidden token input for runtime state handoff while the public wrapper</span>
-<span class="sd">      still exposes only the user-visible signature</span>
-<span class="sd">    - A traceable ``register_autograd`` wrapper that replays Warp tapes through</span>
-<span class="sd">      an opaque backward custom op</span>
+<span class="sd">    - A hidden token input for runtime state handoff while the public wrapper still exposes only the user-visible signature</span>
+<span class="sd">    - A traceable ``register_autograd`` wrapper that replays Warp tapes through an opaque backward custom op</span>
 <span class="sd">    - Stream binding so Warp launches execute on PyTorch&#39;s current CUDA stream</span>
 
 <span class="sd">    Parameters</span>
@@ -1159,22 +1172,22 @@ document.write(`
     <span class="n">warp_dtype</span><span class="p">:</span> <span class="nb">type</span><span class="p">,</span>
     <span class="n">requires_grad</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Convert a PyTorch tensor to a Warp array with proper gradient tracking.</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Convert a PyTorch tensor to a Warp array with proper gradient tracking.</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
 <span class="sd">    tensor : torch.Tensor</span>
-<span class="sd">        Input PyTorch tensor</span>
+<span class="sd">        Input PyTorch tensor.</span>
 <span class="sd">    warp_dtype : wp.dtype</span>
-<span class="sd">        Warp data type for the array</span>
-<span class="sd">    requires_grad : bool | None, optional</span>
-<span class="sd">        Override gradient tracking. If None, inherits from tensor.requires_grad</span>
+<span class="sd">        Warp data type for the resulting array (e.g., ``wp.vec3f``, ``wp.float64``).</span>
+<span class="sd">    requires_grad : bool, optional</span>
+<span class="sd">        Override gradient tracking. If ``None``, inherits from ``tensor.requires_grad``.</span>
 
 <span class="sd">    Returns</span>
 <span class="sd">    -------</span>
 <span class="sd">    wp.array</span>
-<span class="sd">        Warp array with gradient tracking if needed</span>
+<span class="sd">        Warp array backed by the same storage as ``tensor``, with gradient</span>
+<span class="sd">        tracking enabled when ``requires_grad`` is ``True``.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="c1"># Determine if we need gradient tracking</span>
     <span class="n">needs_grad</span> <span class="o">=</span> <span class="n">requires_grad</span> <span class="k">if</span> <span class="n">requires_grad</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">tensor</span><span class="o">.</span><span class="n">requires_grad</span>
@@ -1194,21 +1207,20 @@ document.write(`
 <div class="viewcode-block" id="needs_grad">
 <a class="viewcode-back" href="../../../modules/torch/autograd.html#nvalchemiops.torch.autograd.needs_grad">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">needs_grad</span><span class="p">(</span><span class="o">*</span><span class="n">tensors</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Check if any of the provided tensors requires gradients.</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Check if any of the provided tensors requires gradients.</span>
 
-<span class="sd">    This is useful for conditionally enabling Warp gradient tracking</span>
-<span class="sd">    and tape recording only when needed for backpropagation.</span>
+<span class="sd">    Useful for conditionally enabling Warp gradient tracking and tape recording</span>
+<span class="sd">    only when needed for backpropagation.</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
 <span class="sd">    *tensors : torch.Tensor</span>
-<span class="sd">        Variable number of PyTorch tensors to check</span>
+<span class="sd">        Tensors to inspect; non-tensor values in ``tensors`` are silently skipped.</span>
 
 <span class="sd">    Returns</span>
 <span class="sd">    -------</span>
 <span class="sd">    bool</span>
-<span class="sd">        True if any tensor requires gradients, False otherwise</span>
+<span class="sd">        ``True`` if at least one tensor has ``requires_grad=True``, ``False`` otherwise.</span>
 
 <span class="sd">    Examples</span>
 <span class="sd">    --------</span>
@@ -1227,21 +1239,21 @@ document.write(`
 <a class="viewcode-back" href="../../../modules/torch/autograd.html#nvalchemiops.torch.autograd.WarpAutogradContextManager">[docs]</a>
 <span class="nd">@contextmanager</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">WarpAutogradContextManager</span><span class="p">(</span><span class="n">enable</span><span class="p">:</span> <span class="nb">bool</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Conditionally create a Warp tape as a context manager.</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Conditionally create a Warp tape as a context manager.</span>
 
-<span class="sd">    Returns a Warp Tape if enable=True for gradient recording,</span>
-<span class="sd">    otherwise returns a nullcontext (no-op) for zero overhead.</span>
+<span class="sd">    Yields a :class:`wp.Tape` when ``enable=True`` so Warp kernel launches are</span>
+<span class="sd">    recorded for differentiation.  When ``enable=False`` a no-op context is used,</span>
+<span class="sd">    incurring zero overhead.</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
 <span class="sd">    enable : bool</span>
-<span class="sd">        Whether to create a tape for gradient recording</span>
+<span class="sd">        Whether to create a tape for gradient recording.</span>
 
 <span class="sd">    Yields</span>
 <span class="sd">    ------</span>
-<span class="sd">    wp.Tape or nullcontext</span>
-<span class="sd">        Active tape for recording if enabled, otherwise nullcontext</span>
+<span class="sd">    wp.Tape or None</span>
+<span class="sd">        Active tape for recording when ``enable=True``; ``None`` otherwise.</span>
 
 <span class="sd">    Examples</span>
 <span class="sd">    --------</span>
@@ -1267,20 +1279,22 @@ document.write(`
 <span class="k">def</span><span class="w"> </span><span class="nf">attach_for_backward</span><span class="p">(</span>
     <span class="n">output</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">tape</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">Tape</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">warp_arrays</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Attach Warp tape and arrays to a PyTorch tensor for later retrieval in backward.</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Attach Warp tape and arrays to a PyTorch tensor for later retrieval in backward.</span>
 
-<span class="sd">    This stores the tape and warp arrays as attributes on the output tensor,</span>
-<span class="sd">    allowing them to be retrieved in the backward pass of a custom operator.</span>
+<span class="sd">    Stores ``tape`` and each entry in ``warp_arrays`` as attributes on ``output``,</span>
+<span class="sd">    so that :func:`retrieve_for_backward` can recover them inside a custom-op</span>
+<span class="sd">    backward pass.</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
 <span class="sd">    output : torch.Tensor</span>
-<span class="sd">        PyTorch tensor to attach attributes to (usually the output of forward)</span>
+<span class="sd">        PyTorch tensor to attach attributes to (typically the first output of the</span>
+<span class="sd">        forward function).</span>
 <span class="sd">    tape : wp.Tape, optional</span>
-<span class="sd">        Warp tape containing recorded operations for backward pass</span>
+<span class="sd">        Warp tape containing recorded operations for the backward pass.</span>
 <span class="sd">    **warp_arrays : wp.array</span>
-<span class="sd">        Named warp arrays to store (e.g., positions=wp_positions, charges=wp_charges)</span>
+<span class="sd">        Named Warp arrays to store (e.g., ``positions=wp_positions``,</span>
+<span class="sd">        ``charges=wp_charges``).</span>
 
 <span class="sd">    Examples</span>
 <span class="sd">    --------</span>
@@ -1307,22 +1321,26 @@ document.write(`
 <span class="k">def</span><span class="w"> </span><span class="nf">retrieve_for_backward</span><span class="p">(</span>
     <span class="n">output</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="o">*</span><span class="n">array_names</span><span class="p">:</span> <span class="nb">str</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">Tape</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">]]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Retrieve Warp tape and arrays from a PyTorch tensor in backward pass.</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Retrieve Warp tape and arrays from a PyTorch tensor in backward pass.</span>
+
+<span class="sd">    Companion to :func:`attach_for_backward`.  Arrays not present on ``output``</span>
+<span class="sd">    are silently omitted from the returned dict so optional attachments do not</span>
+<span class="sd">    need special handling.</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
 <span class="sd">    output : torch.Tensor</span>
-<span class="sd">        PyTorch tensor that has attached Warp objects (from attach_for_backward)</span>
+<span class="sd">        PyTorch tensor that has attached Warp objects via</span>
+<span class="sd">        :func:`attach_for_backward`.</span>
 <span class="sd">    *array_names : str</span>
-<span class="sd">        Names of warp arrays to retrieve (without &#39;_wp_&#39; prefix)</span>
+<span class="sd">        Names of Warp arrays to retrieve (without the ``_wp_`` attribute prefix).</span>
 
 <span class="sd">    Returns</span>
 <span class="sd">    -------</span>
-<span class="sd">    tape : wp.Tape</span>
-<span class="sd">        The stored Warp tape</span>
-<span class="sd">    arrays : dict[str, wp.array]</span>
-<span class="sd">        Dictionary mapping names to warp arrays</span>
+<span class="sd">    wp.Tape</span>
+<span class="sd">        The stored Warp tape attached to ``output``.</span>
+<span class="sd">    dict[str, wp.array]</span>
+<span class="sd">        Mapping from each requested name to its stored Warp array.</span>
 
 <span class="sd">    Examples</span>
 <span class="sd">    --------</span>
@@ -1352,27 +1370,29 @@ document.write(`
     <span class="n">warp_arrays</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">],</span>
     <span class="n">input_names</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="o">...</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Extract gradients from warp arrays and return in correct order for PyTorch.</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Extract gradients from Warp arrays and return them in PyTorch autograd order.</span>
 
-<span class="sd">    This helper extracts gradients from warp arrays and returns them in the</span>
-<span class="sd">    same order as the forward pass inputs, with None for inputs that don&#39;t</span>
-<span class="sd">    require gradients.</span>
+<span class="sd">    Returns gradients aligned to the forward function&#39;s input signature: each</span>
+<span class="sd">    position receives a ``torch.Tensor`` when the corresponding input required</span>
+<span class="sd">    gradients, or ``None`` otherwise.</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
 <span class="sd">    ctx : Any</span>
-<span class="sd">        PyTorch autograd context with saved tensors (must have attributes</span>
-<span class="sd">        matching input_names)</span>
+<span class="sd">        PyTorch autograd context.  Must expose each name in ``input_names`` as</span>
+<span class="sd">        an attribute holding the saved input tensor.</span>
 <span class="sd">    warp_arrays : dict[str, wp.array]</span>
-<span class="sd">        Dictionary mapping input names to warp arrays with computed gradients</span>
-<span class="sd">    input_names : Sequence[str]</span>
-<span class="sd">        Names of inputs in the order they appear in forward function signature</span>
+<span class="sd">        Mapping from input names to Warp arrays whose ``.grad`` fields have been</span>
+<span class="sd">        populated by ``tape.backward()``.</span>
+<span class="sd">    input_names : list[str] or tuple[str]</span>
+<span class="sd">        Names of inputs in the same order they appear in the forward function</span>
+<span class="sd">        signature.</span>
 
 <span class="sd">    Returns</span>
 <span class="sd">    -------</span>
-<span class="sd">    tuple[Optional[torch.Tensor], ...]</span>
-<span class="sd">        Gradients in order, with None for inputs without requires_grad</span>
+<span class="sd">    tuple[torch.Tensor or None, ...]</span>
+<span class="sd">        Gradients in ``input_names`` order; ``None`` for inputs that did not</span>
+<span class="sd">        require gradients or for which no Warp array was provided.</span>
 
 <span class="sd">    Examples</span>
 <span class="sd">    --------</span>
@@ -1411,15 +1431,12 @@ document.write(`
     <span class="n">input_names</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
     <span class="n">output_dtypes</span><span class="p">:</span> <span class="n">Any</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="o">...</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Standard backward implementation for Warp-PyTorch custom operators.</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Run the standard Warp tape backward pass for a PyTorch custom operator.</span>
 
-<span class="sd">    This function handles both single-output and multiple-output operators.</span>
-<span class="sd">    It encapsulates the common backward pattern:</span>
-<span class="sd">    1. Retrieve tape and warp arrays from context</span>
-<span class="sd">    2. Set gradient(s) on output(s)</span>
-<span class="sd">    3. Run tape backward</span>
-<span class="sd">    4. Extract and return gradients</span>
+<span class="sd">    Handles both single-output and multi-output operators by encapsulating the</span>
+<span class="sd">    common backward pattern: retrieve tape and Warp arrays from context, copy</span>
+<span class="sd">    upstream gradients into the output arrays, call ``tape.backward()``, then</span>
+<span class="sd">    return input gradients via :func:`extract_gradients`.</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
@@ -1534,7 +1551,11 @@ document.write(`
             <span class="k">if</span> <span class="n">grad_output</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">output_name</span> <span class="ow">in</span> <span class="n">arrays</span><span class="p">:</span>
                 <span class="n">output_array</span> <span class="o">=</span> <span class="n">arrays</span><span class="p">[</span><span class="n">output_name</span><span class="p">]</span>
                 <span class="n">actual_dtype</span> <span class="o">=</span> <span class="n">output_array</span><span class="o">.</span><span class="n">dtype</span>
-                <span class="n">wp_grad</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">grad_output</span><span class="o">.</span><span class="n">contiguous</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">actual_dtype</span><span class="p">)</span>
+                <span class="n">wp_grad</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+                    <span class="n">grad_output</span><span class="o">.</span><span class="n">contiguous</span><span class="p">(),</span>
+                    <span class="n">dtype</span><span class="o">=</span><span class="n">actual_dtype</span><span class="p">,</span>
+                    <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+                <span class="p">)</span>
                 <span class="n">wp</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">output_array</span><span class="o">.</span><span class="n">grad</span><span class="p">,</span> <span class="n">wp_grad</span><span class="p">)</span>
 
         <span class="n">tape</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
@@ -1572,9 +1593,22 @@ document.write(`
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -1594,7 +1628,7 @@ document.write(`
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

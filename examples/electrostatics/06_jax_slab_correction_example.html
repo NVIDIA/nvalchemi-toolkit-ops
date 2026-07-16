@@ -1,0 +1,1391 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" data-theme="light">
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
+    <title>2D Slab Correction for Ewald and PME with JAX &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/benchmark-docs.css?v=30688d9f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'examples/electrostatics/06_jax_slab_correction_example';</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Multipole Ewald Summation (charges + dipoles + quadrupoles)" href="07_multipole_ewald_summation_example.html" />
+    <link rel="prev" title="2D Slab Correction for Ewald and PME" href="05_slab_correction_example.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+    
+    <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+    <label class="sidebar-toggle secondary-toggle" for="__secondary" tabindex="0">
+      <span class="fa-solid fa-outdent"></span>
+    </label>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <div class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../01_bspline_visualization.html">B-Spline Interpolation for Particle Mesh Methods</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../02_segment_ops_autograd.html">Segment Ops: Pooling, Autograd, and <code class="docutils literal notranslate"><span class="pre">torch.compile</span></code></a></li>
+</ul>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../dispersion/index.html">Dispersion Interactions</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-1"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../dispersion/03_jax_dftd3_molecule.html">JAX DFT-D3 Dispersion Correction for a Molecule</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dispersion/01_dftd3_molecule.html">DFT-D3 Dispersion Correction for a Molecule</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dispersion/02_dftd3_batch_crystals.html">DFT-D3 Dispersion Correction for Batched Crystals</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../dynamics/index.html">Dynamics Examples</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-2"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/01_langevin_integration.html">Langevin Dynamics with Lennard-Jones Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/02_velocity_verlet_integration.html">Velocity Verlet Dynamics with Lennard-Jones Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/03_nph_integration.html">NPH Dynamics (MTK) with Lennard-Jones Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/04_npt_integration.html">NPT Dynamics (MTK + Nosé-Hoover Chain) with Lennard-Jones Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/05_batched_langevin_dynamics.html">Batched Langevin Dynamics (BAOAB) with Lennard-Jones Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/06_fire_optimization.html">FIRE Geometry Optimization (LJ Cluster)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/07_fire_variable_cell.html">Variable-Cell FIRE Optimization with LJ Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/08_fire_batched.html">Batched FIRE Optimization with LJ Clusters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/09_fire2_optimization.html">FIRE2 Geometry Optimization (LJ Cluster)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/10_fire2_batched.html">Batched FIRE2 Optimization with LJ Clusters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/11_fire2_variable_cell.html">Variable-Cell FIRE2 Optimization with LJ Potential</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Electrostatics</a><input checked="" class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-3"><i class="fa-solid fa-chevron-down"></i></label><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="01_coulomb_example.html">Coulomb Electrostatic Interactions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="02_ewald_summation_example.html">Ewald Summation for Long-Range Electrostatics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="03_pme_example.html">Particle Mesh Ewald (PME) for Long-Range Electrostatics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="04_jax_pme_example.html">Particle Mesh Ewald (PME) with JAX</a></li>
+<li class="toctree-l2"><a class="reference internal" href="05_slab_correction_example.html">2D Slab Correction for Ewald and PME</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">2D Slab Correction for Ewald and PME with JAX</a></li>
+<li class="toctree-l2"><a class="reference internal" href="07_multipole_ewald_summation_example.html">Multipole Ewald Summation (charges + dipoles + quadrupoles)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="08_multipole_pme_example.html">Multipole Particle Mesh Ewald (charges + dipoles + quadrupoles)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="09_multipole_features_example.html">Atom-Centered Multipole Electrostatic Features</a></li>
+<li class="toctree-l2"><a class="reference internal" href="10_multipole_scf_cache_example.html">Multipole SCF Cache + Step (amortized fixed-cell workflow)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="11_pme_energy_derivative_training.html">Energy-Derivative Training Contract (Forces, Stress, Charge Gradients)</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../neighbors/index.html">Neighbor Lists</a><input class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-4"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../neighbors/01_simple_neighbor_list.html">Simple Neighbor List Example</a></li>
+
+
+
+
+
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="../neighbors/02_batch_neighbor_list.html">Batch Neighbor List Example</a></li>
+
+
+
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="../neighbors/03_rebuild_neighborlist_detection.html">Neighbor List Rebuild Detection Example</a></li>
+
+
+
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="../neighbors/04_neighbors_list_torch_compile_performance.html">Torch.compile Performance Benefits Example</a></li>
+
+
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="../neighbors/05_jax_neighbor_list.html">JAX Neighbor List Example</a></li>
+
+
+
+
+
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="../neighbors/06_pair_outputs_lj.html">Targeted Lennard-Jones Pair Outputs</a></li>
+
+
+
+
+
+</ul>
+</li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Examples Gallery</a></li>
+    
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">Electrostatics</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">2D Slab...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <div class="sphx-glr-download-link-note admonition note">
+<p class="admonition-title">Note</p>
+<p><a class="reference internal" href="#sphx-glr-download-examples-electrostatics-06-jax-slab-correction-example-py"><span class="std std-ref">Go to the end</span></a>
+to download the full example code.</p>
+</div>
+<section class="sphx-glr-example-title" id="d-slab-correction-for-ewald-and-pme-with-jax">
+<span id="sphx-glr-examples-electrostatics-06-jax-slab-correction-example-py"></span><h1>2D Slab Correction for Ewald and PME with JAX<a class="headerlink" href="#d-slab-correction-for-ewald-and-pme-with-jax" title="Link to this heading">#</a></h1>
+<p>This example demonstrates how to apply the Yeh-Berkowitz / Ballenegger
+two-dimensional slab correction to JAX Ewald and Particle Mesh Ewald (PME)
+electrostatics. The correction is used for slab-like systems with two periodic
+directions and one non-periodic direction, such as interfaces with vacuum
+padding.</p>
+<p>In this example you will learn:</p>
+<ul class="simple">
+<li><p>How to run <code class="docutils literal notranslate"><span class="pre">ewald_summation(...,</span> <span class="pre">slab_correction=True)</span></code> in JAX</p></li>
+<li><p>How to run <code class="docutils literal notranslate"><span class="pre">particle_mesh_ewald(...,</span> <span class="pre">slab_correction=True)</span></code> in JAX</p></li>
+<li><p>How to pass slab periodicity with a boolean <code class="docutils literal notranslate"><span class="pre">pbc</span></code> array</p></li>
+<li><p>How to compute the standalone slab correction with <code class="docutils literal notranslate"><span class="pre">compute_slab_correction</span></code></p></li>
+<li><p>How the standalone correction equals the integrated Ewald energy/force delta</p></li>
+<li><p>How to derive slab forces from energy autograd for training</p></li>
+<li><p>How to compose total Ewald and PME component workflows with slab</p></li>
+<li><p>How triclinic slab cells use the normal to the periodic plane</p></li>
+<li><p>How to use <code class="docutils literal notranslate"><span class="pre">jax.jit</span></code> with a full neighbor list + PME slab pipeline</p></li>
+</ul>
+<div class="admonition important">
+<p class="admonition-title">Important</p>
+<p>This script is intended as an API demonstration. Do not use this script
+for performance benchmarking; refer to the <cite>benchmarks</cite> folder instead.</p>
+</div>
+<section id="setup-and-imports">
+<h2>Setup and Imports<a class="headerlink" href="#setup-and-imports" title="Link to this heading">#</a></h2>
+<p>The slab correction is available through the high-level JAX Ewald and PME
+APIs, and as a standalone helper. The standalone helper is useful for
+debugging, validation, and adding the correction when composing total
+component workflows.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">warnings</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">jax</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">jax.numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">jnp</span>
+<span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span>
+        <span class="s2">&quot;This example requires JAX. Install with: pip install &#39;nvalchemi-toolkit-ops[jax]&#39;&quot;</span>
+    <span class="p">)</span>
+    <a href="https://docs.python.org/3/library/sys.html#sys.exit" title="sys.exit" class="sphx-glr-backref-module-sys sphx-glr-backref-type-py-function"><a href="https://docs.python.org/3/library/sys.html#sys.exit" title="sys.exit" class="sphx-glr-backref-module-sys sphx-glr-backref-type-py-function"><a href="https://docs.python.org/3/library/sys.html#sys.exit" title="sys.exit" class="sphx-glr-backref-module-sys sphx-glr-backref-type-py-function"><span class="n">sys</span><span class="o">.</span><span class="n">exit</span></a></a></a><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.jax.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+        <span class="n">compute_slab_correction</span><span class="p">,</span>
+        <span class="n">ewald_real_space</span><span class="p">,</span>
+        <span class="n">ewald_reciprocal_space</span><span class="p">,</span>
+        <span class="n">ewald_summation</span><span class="p">,</span>
+        <span class="n">generate_k_vectors_ewald_summation</span><span class="p">,</span>
+        <span class="n">particle_mesh_ewald</span><span class="p">,</span>
+        <span class="n">pme_reciprocal_space</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.jax.neighbors</span><span class="w"> </span><span class="kn">import</span> <span class="n">neighbor_list</span> <span class="k">as</span> <span class="n">neighbor_list_fn</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.jax.neighbors.naive</span><span class="w"> </span><span class="kn">import</span> <span class="n">naive_neighbor_list</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.jax.neighbors.neighbor_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">compute_naive_num_shifts</span>
+<span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;JAX/Warp backend unavailable (</span><span class="si">{</span><span class="n">exc</span><span class="si">}</span><span class="s2">). This example requires a CUDA-backed runtime.&quot;</span>
+    <span class="p">)</span>
+    <a href="https://docs.python.org/3/library/sys.html#sys.exit" title="sys.exit" class="sphx-glr-backref-module-sys sphx-glr-backref-type-py-function"><a href="https://docs.python.org/3/library/sys.html#sys.exit" title="sys.exit" class="sphx-glr-backref-module-sys sphx-glr-backref-type-py-function"><a href="https://docs.python.org/3/library/sys.html#sys.exit" title="sys.exit" class="sphx-glr-backref-module-sys sphx-glr-backref-type-py-function"><span class="n">sys</span><span class="o">.</span><span class="n">exit</span></a></a></a><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_legacy_direct_output_call</span><span class="p">(</span><span class="n">function</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Call a deprecated direct-output path used for explicit migration checks.&quot;&quot;&quot;</span>
+    <span class="k">with</span> <a href="https://docs.python.org/3/library/warnings.html#warnings.catch_warnings" title="warnings.catch_warnings" class="sphx-glr-backref-module-warnings sphx-glr-backref-type-py-class"><a href="https://docs.python.org/3/library/warnings.html#warnings.catch_warnings" title="warnings.catch_warnings" class="sphx-glr-backref-module-warnings sphx-glr-backref-type-py-class"><a href="https://docs.python.org/3/library/warnings.html#warnings.catch_warnings" title="warnings.catch_warnings" class="sphx-glr-backref-module-warnings sphx-glr-backref-type-py-class"><span class="n">warnings</span><span class="o">.</span><span class="n">catch_warnings</span></a></a></a><span class="p">():</span>
+        <a href="https://docs.python.org/3/library/warnings.html#warnings.filterwarnings" title="warnings.filterwarnings" class="sphx-glr-backref-module-warnings sphx-glr-backref-type-py-function"><a href="https://docs.python.org/3/library/warnings.html#warnings.filterwarnings" title="warnings.filterwarnings" class="sphx-glr-backref-module-warnings sphx-glr-backref-type-py-function"><a href="https://docs.python.org/3/library/warnings.html#warnings.filterwarnings" title="warnings.filterwarnings" class="sphx-glr-backref-module-warnings sphx-glr-backref-type-py-function"><span class="n">warnings</span><span class="o">.</span><span class="n">filterwarnings</span></a></a></a><span class="p">(</span>
+            <span class="s2">&quot;ignore&quot;</span><span class="p">,</span>
+            <span class="n">category</span><span class="o">=</span><span class="ne">DeprecationWarning</span><span class="p">,</span>
+            <span class="n">message</span><span class="o">=</span><span class="s2">&quot;The direct-output flags.*&quot;</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">function</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_format_array</span><span class="p">(</span><span class="n">array</span><span class="p">:</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><span class="n">jax</span><span class="o">.</span><span class="n">Array</span></a></a></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Format small arrays consistently for gallery text output.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <a href="https://numpy.org/doc/stable/reference/generated/numpy.array2string.html#numpy.array2string" title="numpy.array2string" class="sphx-glr-backref-module-numpy sphx-glr-backref-type-py-function"><a href="https://numpy.org/doc/stable/reference/generated/numpy.array2string.html#numpy.array2string" title="numpy.array2string" class="sphx-glr-backref-module-numpy sphx-glr-backref-type-py-function"><a href="https://numpy.org/doc/stable/reference/generated/numpy.array2string.html#numpy.array2string" title="numpy.array2string" class="sphx-glr-backref-module-numpy sphx-glr-backref-type-py-function"><span class="n">np</span><span class="o">.</span><span class="n">array2string</span></a></a></a><span class="p">(</span>
+        <a href="https://numpy.org/doc/stable/reference/generated/numpy.asarray.html#numpy.asarray" title="numpy.asarray" class="sphx-glr-backref-module-numpy sphx-glr-backref-type-py-function"><a href="https://numpy.org/doc/stable/reference/generated/numpy.asarray.html#numpy.asarray" title="numpy.asarray" class="sphx-glr-backref-module-numpy sphx-glr-backref-type-py-function"><a href="https://numpy.org/doc/stable/reference/generated/numpy.asarray.html#numpy.asarray" title="numpy.asarray" class="sphx-glr-backref-module-numpy sphx-glr-backref-type-py-function"><span class="n">np</span><span class="o">.</span><span class="n">asarray</span></a></a></a><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.device_get.html#jax.device_get" title="jax.device_get" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.device_get.html#jax.device_get" title="jax.device_get" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.device_get.html#jax.device_get" title="jax.device_get" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-function"><span class="n">jax</span><span class="o">.</span><span class="n">device_get</span></a></a></a><span class="p">(</span><span class="n">array</span><span class="p">)),</span>
+        <span class="n">precision</span><span class="o">=</span><span class="mi">6</span><span class="p">,</span>
+        <span class="n">suppress_small</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="check-device">
+<h2>Check Device<a class="headerlink" href="#check-device" title="Link to this heading">#</a></h2>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;JAX 2D SLAB CORRECTION EXAMPLE&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<a href="https://docs.python.org/3/library/stdtypes.html#list" title="builtins.list" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#list" title="builtins.list" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#list" title="builtins.list" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">devices</span></a></a></a> <span class="o">=</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.devices.html#jax.devices" title="jax.devices" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.devices.html#jax.devices" title="jax.devices" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.devices.html#jax.devices" title="jax.devices" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-function"><span class="n">jax</span><span class="o">.</span><span class="n">devices</span></a></a></a><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">JAX devices: </span><span class="si">{</span><a href="https://docs.python.org/3/library/stdtypes.html#list" title="builtins.list" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#list" title="builtins.list" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#list" title="builtins.list" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">devices</span></a></a></a><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Default backend: </span><span class="si">{</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.default_backend.html#jax.default_backend" title="jax.default_backend" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.default_backend.html#jax.default_backend" title="jax.default_backend" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.default_backend.html#jax.default_backend" title="jax.default_backend" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-function"><span class="n">jax</span><span class="o">.</span><span class="n">default_backend</span></a></a></a><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+JAX 2D SLAB CORRECTION EXAMPLE
+======================================================================
+
+JAX devices: [CudaDevice(id=0)]
+Default backend: gpu
+</pre></div>
+</div>
+</section>
+<section id="create-a-small-slab-system">
+<h2>Create a Small Slab System<a class="headerlink" href="#create-a-small-slab-system" title="Link to this heading">#</a></h2>
+<p>We use a two-ion CsCl-like system in a cell with a long z direction. The
+long cell vector represents vacuum padding normal to the slab.</p>
+<p><code class="docutils literal notranslate"><span class="pre">pbc_slab</span></code> marks x and y as periodic and z as non-periodic. Batched slab
+simulations should pass an explicit <code class="docutils literal notranslate"><span class="pre">(B,</span> <span class="pre">3)</span></code> array so each system carries
+its own slab geometry.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">create_cscl_slab_system</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><span class="n">jax</span><span class="o">.</span><span class="n">Array</span></a></a></a><span class="p">,</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><span class="n">jax</span><span class="o">.</span><span class="n">Array</span></a></a></a><span class="p">,</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><span class="n">jax</span><span class="o">.</span><span class="n">Array</span></a></a></a><span class="p">,</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><span class="n">jax</span><span class="o">.</span><span class="n">Array</span></a></a></a><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Create a small T/T/F slab system with vacuum along z.&quot;&quot;&quot;</span>
+    <span class="n">positions</span> <span class="o">=</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.array.html#jax.numpy.array" title="jax.numpy.array" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.array.html#jax.numpy.array" title="jax.numpy.array" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.array.html#jax.numpy.array" title="jax.numpy.array" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">array</span></a></a></a><span class="p">(</span>
+        <span class="p">[[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span> <span class="p">[</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">]],</span>
+        <span class="n">dtype</span><span class="o">=</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.float64.html#jax.numpy.float64" title="jax.numpy.float64" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.float64.html#jax.numpy.float64" title="jax.numpy.float64" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.float64.html#jax.numpy.float64" title="jax.numpy.float64" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-class"><span class="n">jnp</span><span class="o">.</span><span class="n">float64</span></a></a></a><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">charges</span> <span class="o">=</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.array.html#jax.numpy.array" title="jax.numpy.array" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.array.html#jax.numpy.array" title="jax.numpy.array" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.array.html#jax.numpy.array" title="jax.numpy.array" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">array</span></a></a></a><span class="p">([</span><span class="mf">1.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.float64.html#jax.numpy.float64" title="jax.numpy.float64" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.float64.html#jax.numpy.float64" title="jax.numpy.float64" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.float64.html#jax.numpy.float64" title="jax.numpy.float64" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-class"><span class="n">jnp</span><span class="o">.</span><span class="n">float64</span></a></a></a><span class="p">)</span>
+    <span class="n">cell</span> <span class="o">=</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.diag.html#jax.numpy.diag" title="jax.numpy.diag" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.diag.html#jax.numpy.diag" title="jax.numpy.diag" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.diag.html#jax.numpy.diag" title="jax.numpy.diag" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">diag</span></a></a></a><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.array.html#jax.numpy.array" title="jax.numpy.array" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.array.html#jax.numpy.array" title="jax.numpy.array" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.array.html#jax.numpy.array" title="jax.numpy.array" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">array</span></a></a></a><span class="p">([</span><span class="mf">10.0</span><span class="p">,</span> <span class="mf">10.0</span><span class="p">,</span> <span class="mf">30.0</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.float64.html#jax.numpy.float64" title="jax.numpy.float64" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.float64.html#jax.numpy.float64" title="jax.numpy.float64" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.float64.html#jax.numpy.float64" title="jax.numpy.float64" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-class"><span class="n">jnp</span><span class="o">.</span><span class="n">float64</span></a></a></a><span class="p">))[</span><span class="kc">None</span><span class="p">,</span> <span class="p">:,</span> <span class="p">:]</span>
+    <span class="n">pbc_slab</span> <span class="o">=</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.array.html#jax.numpy.array" title="jax.numpy.array" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.array.html#jax.numpy.array" title="jax.numpy.array" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.array.html#jax.numpy.array" title="jax.numpy.array" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">array</span></a></a></a><span class="p">([[</span><span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">,</span> <span class="kc">False</span><span class="p">]],</span> <span class="n">dtype</span><span class="o">=</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.bool_.html#jax.numpy.bool_" title="jax.numpy.bool_" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-attribute"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.bool_.html#jax.numpy.bool_" title="jax.numpy.bool_" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-attribute"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.bool_.html#jax.numpy.bool_" title="jax.numpy.bool_" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-attribute"><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span></a></a></a><span class="p">)</span>
+    <span class="k">return</span> <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc_slab</span>
+
+
+<span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc_slab</span> <span class="o">=</span> <span class="n">create_cscl_slab_system</span><span class="p">()</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Slab system:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Number of atoms: </span><span class="si">{</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.shape.html#jax.Array.shape" title="jax.Array.shape" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.shape.html#jax.Array.shape" title="jax.Array.shape" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.shape.html#jax.Array.shape" title="jax.Array.shape" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><span class="n">positions</span><span class="o">.</span><span class="n">shape</span></a></a></a><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Cell rows:</span><span class="se">\n</span><span class="si">{</span><span class="n">_format_array</span><span class="p">(</span><span class="n">cell</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Slab pbc: </span><span class="si">{</span><span class="n">_format_array</span><span class="p">(</span><span class="n">pbc_slab</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Total charge: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">charges</span><span class="o">.</span><span class="n">sum</span></a></a></a><span class="p">())</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Slab system:
+  Number of atoms: 2
+  Cell rows:
+[[10.  0.  0.]
+ [ 0. 10.  0.]
+ [ 0.  0. 30.]]
+  Slab pbc: [ True  True False]
+  Total charge: 0.0
+</pre></div>
+</div>
+</section>
+<section id="build-the-real-space-neighbor-list">
+<h2>Build the Real-Space Neighbor List<a class="headerlink" href="#build-the-real-space-neighbor-list" title="Link to this heading">#</a></h2>
+<p>The neighbor list controls real-space periodic images. For this slab setup,
+use the same T/T/F periodicity and a cell with enough vacuum along z.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">alpha</span></a></a></a> <span class="o">=</span> <span class="mf">0.3</span>
+<a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">real_space_cutoff</span></a></a></a> <span class="o">=</span> <span class="mf">5.0</span>
+<a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">k_cutoff</span></a></a></a> <span class="o">=</span> <span class="mf">2.5</span>
+<a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">mesh_dimensions</span></a></a></a> <span class="o">=</span> <span class="p">(</span><span class="mi">16</span><span class="p">,</span> <span class="mi">16</span><span class="p">,</span> <span class="mi">16</span><span class="p">)</span>
+<span class="n">alpha_array</span> <span class="o">=</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.array.html#jax.numpy.array" title="jax.numpy.array" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.array.html#jax.numpy.array" title="jax.numpy.array" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.array.html#jax.numpy.array" title="jax.numpy.array" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">array</span></a></a></a><span class="p">([</span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">alpha</span></a></a></a><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.float64.html#jax.numpy.float64" title="jax.numpy.float64" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.float64.html#jax.numpy.float64" title="jax.numpy.float64" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.float64.html#jax.numpy.float64" title="jax.numpy.float64" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-class"><span class="n">jnp</span><span class="o">.</span><span class="n">float64</span></a></a></a><span class="p">)</span>
+
+<span class="n">neighbor_list</span><span class="p">,</span> <span class="n">neighbor_ptr</span><span class="p">,</span> <span class="n">neighbor_shifts</span> <span class="o">=</span> <span class="n">neighbor_list_fn</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span>
+    <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">real_space_cutoff</span></a></a></a><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="o">=</span><span class="n">pbc_slab</span><span class="p">,</span>
+    <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Neighbor list:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Number of neighbor entries: </span><span class="si">{</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.shape.html#jax.Array.shape" title="jax.Array.shape" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.shape.html#jax.Array.shape" title="jax.Array.shape" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.shape.html#jax.Array.shape" title="jax.Array.shape" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><span class="n">neighbor_list</span><span class="o">.</span><span class="n">shape</span></a></a></a><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Real-space cutoff: </span><span class="si">{</span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">real_space_cutoff</span></a></a></a><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> Å&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Neighbor list:
+  Number of neighbor entries: 2
+  Real-space cutoff: 5.0 Å
+</pre></div>
+</div>
+</section>
+<section id="standard-3d-ewald-legacy-direct-output-baseline">
+<h2>Standard 3D Ewald (Legacy Direct-Output Baseline)<a class="headerlink" href="#standard-3d-ewald-legacy-direct-output-baseline" title="Link to this heading">#</a></h2>
+<p>First compute the uncorrected 3D-periodic Ewald result. This is the quantity
+that will receive the slab correction. This section intentionally uses
+deprecated full-API direct-output flags only to build a compatibility baseline
+for the checks below.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">energies_3d</span><span class="p">,</span> <span class="n">forces_3d</span><span class="p">,</span> <span class="n">charge_grads_3d</span><span class="p">,</span> <span class="n">virial_3d</span> <span class="o">=</span> <span class="n">_legacy_direct_output_call</span><span class="p">(</span>
+    <span class="n">ewald_summation</span><span class="p">,</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">alpha</span></a></a></a><span class="o">=</span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">alpha</span></a></a></a><span class="p">,</span>
+    <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">k_cutoff</span></a></a></a><span class="o">=</span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">k_cutoff</span></a></a></a><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list</span><span class="p">,</span>
+    <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">neighbor_ptr</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">compute_charge_gradients</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">compute_virial</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Standard 3D Ewald:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Total energy: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">energies_3d</span><span class="o">.</span><span class="n">sum</span></a></a></a><span class="p">())</span><span class="si">:</span><span class="s2"> .8f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Max force magnitude: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.linalg.norm.html#jax.numpy.linalg.norm" title="jax.numpy.linalg.norm" class="sphx-glr-backref-module-jax-numpy-linalg sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.linalg.norm.html#jax.numpy.linalg.norm" title="jax.numpy.linalg.norm" class="sphx-glr-backref-module-jax-numpy-linalg sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.linalg.norm.html#jax.numpy.linalg.norm" title="jax.numpy.linalg.norm" class="sphx-glr-backref-module-jax-numpy-linalg sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span></a></a></a><span class="p">(</span><span class="n">forces_3d</span><span class="p">,</span><span class="w"> </span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">())</span><span class="si">:</span><span class="s2"> .8f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Charge gradients: </span><span class="si">{</span><span class="n">_format_array</span><span class="p">(</span><span class="n">charge_grads_3d</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Virial trace: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.trace.html#jax.numpy.trace" title="jax.numpy.trace" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.trace.html#jax.numpy.trace" title="jax.numpy.trace" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.trace.html#jax.numpy.trace" title="jax.numpy.trace" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">trace</span></a></a></a><span class="p">(</span><span class="n">virial_3d</span><span class="p">[</span><span class="mi">0</span><span class="p">]))</span><span class="si">:</span><span class="s2"> .8f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Standard 3D Ewald:
+  Total energy: -1.15521169
+  Max force magnitude:  1.33217910
+  Charge gradients: [-1.155212  1.155212]
+  Virial trace: -1.15515493
+</pre></div>
+</div>
+</section>
+<section id="ewald-with-slab-correction-legacy-direct-output-check">
+<h2>Ewald with Slab Correction (Legacy Direct-Output Check)<a class="headerlink" href="#ewald-with-slab-correction-legacy-direct-output-check" title="Link to this heading">#</a></h2>
+<p>Set <code class="docutils literal notranslate"><span class="pre">slab_correction=True</span></code> and pass the slab periodicity. The output tuple
+follows the same ordering as ordinary Ewald: energies, forces, charge
+gradients, and virial when all optional quantities are requested. For training
+code, copy the energy-autograd section immediately below instead.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">energies_slab</span><span class="p">,</span> <span class="n">forces_slab</span><span class="p">,</span> <span class="n">charge_grads_slab</span><span class="p">,</span> <span class="n">virial_slab</span> <span class="o">=</span> <span class="n">_legacy_direct_output_call</span><span class="p">(</span>
+    <span class="n">ewald_summation</span><span class="p">,</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">alpha</span></a></a></a><span class="o">=</span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">alpha</span></a></a></a><span class="p">,</span>
+    <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">k_cutoff</span></a></a></a><span class="o">=</span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">k_cutoff</span></a></a></a><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list</span><span class="p">,</span>
+    <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">neighbor_ptr</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">compute_charge_gradients</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">compute_virial</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="o">=</span><span class="n">pbc_slab</span><span class="p">,</span>
+    <span class="n">slab_correction</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Ewald with slab correction:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Total energy: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">energies_slab</span><span class="o">.</span><span class="n">sum</span></a></a></a><span class="p">())</span><span class="si">:</span><span class="s2"> .8f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Energy delta: </span><span class="si">{</span><span class="nb">float</span><span class="p">((</span><span class="n">energies_slab</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">energies_3d</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span><span class="si">:</span><span class="s2"> .8f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;  Max force magnitude: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.linalg.norm.html#jax.numpy.linalg.norm" title="jax.numpy.linalg.norm" class="sphx-glr-backref-module-jax-numpy-linalg sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.linalg.norm.html#jax.numpy.linalg.norm" title="jax.numpy.linalg.norm" class="sphx-glr-backref-module-jax-numpy-linalg sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.linalg.norm.html#jax.numpy.linalg.norm" title="jax.numpy.linalg.norm" class="sphx-glr-backref-module-jax-numpy-linalg sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span></a></a></a><span class="p">(</span><span class="n">forces_slab</span><span class="p">,</span><span class="w"> </span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">())</span><span class="si">:</span><span class="s2"> .8f</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Charge gradients: </span><span class="si">{</span><span class="n">_format_array</span><span class="p">(</span><span class="n">charge_grads_slab</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Virial trace: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.trace.html#jax.numpy.trace" title="jax.numpy.trace" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.trace.html#jax.numpy.trace" title="jax.numpy.trace" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.trace.html#jax.numpy.trace" title="jax.numpy.trace" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">trace</span></a></a></a><span class="p">(</span><span class="n">virial_slab</span><span class="p">[</span><span class="mi">0</span><span class="p">]))</span><span class="si">:</span><span class="s2"> .8f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Ewald with slab correction:
+  Total energy: -1.15468809
+  Energy delta:  0.00052360
+  Max force magnitude:  1.33339428
+  Charge gradients: [-1.154688  1.154688]
+  Virial trace: -1.15463133
+</pre></div>
+</div>
+</section>
+<section id="energy-autograd-slab-forces">
+<h2>Energy-Autograd Slab Forces<a class="headerlink" href="#energy-autograd-slab-forces" title="Link to this heading">#</a></h2>
+<p>For differentiable training, call the full API without direct-output flags and
+derive forces from the returned per-atom energies. The direct-output calls
+above are legacy compatibility checks.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">ewald_slab_total_energy</span><span class="p">(</span><span class="n">pos</span><span class="p">:</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><span class="n">jax</span><span class="o">.</span><span class="n">Array</span></a></a></a><span class="p">)</span> <span class="o">-&gt;</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><span class="n">jax</span><span class="o">.</span><span class="n">Array</span></a></a></a><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return total slab-corrected Ewald energy for force autograd.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.sum.html#jax.numpy.sum" title="jax.numpy.sum" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.sum.html#jax.numpy.sum" title="jax.numpy.sum" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.sum.html#jax.numpy.sum" title="jax.numpy.sum" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">sum</span></a></a></a><span class="p">(</span>
+        <span class="n">ewald_summation</span><span class="p">(</span>
+            <span class="n">positions</span><span class="o">=</span><span class="n">pos</span><span class="p">,</span>
+            <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+            <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+            <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">alpha</span></a></a></a><span class="o">=</span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">alpha</span></a></a></a><span class="p">,</span>
+            <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">k_cutoff</span></a></a></a><span class="o">=</span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">k_cutoff</span></a></a></a><span class="p">,</span>
+            <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list</span><span class="p">,</span>
+            <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">neighbor_ptr</span><span class="p">,</span>
+            <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+            <span class="n">pbc</span><span class="o">=</span><span class="n">pbc_slab</span><span class="p">,</span>
+            <span class="n">slab_correction</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="p">)</span>
+
+
+<span class="n">ewald_forces_ag</span> <span class="o">=</span> <span class="o">-</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.grad.html#jax.grad" title="jax.grad" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.grad.html#jax.grad" title="jax.grad" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.grad.html#jax.grad" title="jax.grad" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-function"><span class="n">jax</span><span class="o">.</span><span class="n">grad</span></a></a></a><span class="p">(</span><span class="n">ewald_slab_total_energy</span><span class="p">)(</span><span class="n">positions</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Ewald slab energy-autograd force check:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;  Max force delta vs legacy direct: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">max</span></a></a></a><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">abs</span></a></a></a><span class="p">(</span><span class="n">ewald_forces_ag</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">forces_slab</span><span class="p">)))</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Ewald slab energy-autograd force check:
+  Max force delta vs legacy direct: 9.37e-08
+</pre></div>
+</div>
+</section>
+<section id="standalone-slab-correction">
+<h2>Standalone Slab Correction<a class="headerlink" href="#standalone-slab-correction" title="Link to this heading">#</a></h2>
+<p>The same correction can be computed directly. The standalone result equals
+the difference between the slab-corrected and uncorrected Ewald outputs.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">correction_energy</span><span class="p">,</span> <span class="n">correction_forces</span><span class="p">,</span> <span class="n">correction_charge_grads</span><span class="p">,</span> <span class="n">correction_virial</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">compute_slab_correction</span><span class="p">(</span>
+        <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+        <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+        <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+        <span class="n">pbc</span><span class="o">=</span><span class="n">pbc_slab</span><span class="p">,</span>
+        <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">compute_charge_gradients</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">compute_virial</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="p">)</span>
+<span class="p">)</span>
+
+<span class="n">energy_delta_error</span> <span class="o">=</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">max</span></a></a></a><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">abs</span></a></a></a><span class="p">((</span><span class="n">energies_slab</span> <span class="o">-</span> <span class="n">energies_3d</span><span class="p">)</span> <span class="o">-</span> <span class="n">correction_energy</span><span class="p">))</span>
+<span class="n">force_delta_error</span> <span class="o">=</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">max</span></a></a></a><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">abs</span></a></a></a><span class="p">((</span><span class="n">forces_slab</span> <span class="o">-</span> <span class="n">forces_3d</span><span class="p">)</span> <span class="o">-</span> <span class="n">correction_forces</span><span class="p">))</span>
+<span class="n">charge_grad_delta_error</span> <span class="o">=</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">max</span></a></a></a><span class="p">(</span>
+    <a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">abs</span></a></a></a><span class="p">((</span><span class="n">charge_grads_slab</span> <span class="o">-</span> <span class="n">charge_grads_3d</span><span class="p">)</span> <span class="o">-</span> <span class="n">correction_charge_grads</span><span class="p">)</span>
+<span class="p">)</span>
+<span class="n">virial_delta_error</span> <span class="o">=</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">max</span></a></a></a><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">abs</span></a></a></a><span class="p">((</span><span class="n">virial_slab</span> <span class="o">-</span> <span class="n">virial_3d</span><span class="p">)</span> <span class="o">-</span> <span class="n">correction_virial</span><span class="p">))</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Standalone correction:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Correction energy: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">correction_energy</span><span class="o">.</span><span class="n">sum</span></a></a></a><span class="p">())</span><span class="si">:</span><span class="s2"> .8f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Max energy delta error: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="n">energy_delta_error</span><span class="p">)</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Max force delta error: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="n">force_delta_error</span><span class="p">)</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Max charge-gradient delta error: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="n">charge_grad_delta_error</span><span class="p">)</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Max virial delta error: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="n">virial_delta_error</span><span class="p">)</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Standalone correction:
+  Correction energy:  0.00052360
+  Max energy delta error: 1.63e-17
+  Max force delta error: 1.91e-17
+  Max charge-gradient delta error: 3.25e-17
+  Max virial delta error: 2.30e-17
+</pre></div>
+</div>
+</section>
+<section id="total-ewald-component-composition">
+<h2>Total Ewald Component Composition<a class="headerlink" href="#total-ewald-component-composition" title="Link to this heading">#</a></h2>
+<p>If you need the Ewald real-space, Ewald reciprocal-space, and slab terms
+separately, compute the three pieces explicitly and add matching outputs.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">ewald_component_real_energy</span><span class="p">,</span> <span class="n">ewald_component_real_forces</span> <span class="o">=</span> <span class="n">ewald_real_space</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">alpha</span></a></a></a><span class="o">=</span><span class="n">alpha_array</span><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list</span><span class="p">,</span>
+    <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">neighbor_ptr</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">ewald_k_vectors</span> <span class="o">=</span> <span class="n">generate_k_vectors_ewald_summation</span><span class="p">(</span>
+    <a href="https://docs.jax.dev/en/latest/_autosummary/jax.lax.stop_gradient.html#jax.lax.stop_gradient" title="jax.lax.stop_gradient" class="sphx-glr-backref-module-jax-lax sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.lax.stop_gradient.html#jax.lax.stop_gradient" title="jax.lax.stop_gradient" class="sphx-glr-backref-module-jax-lax sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.lax.stop_gradient.html#jax.lax.stop_gradient" title="jax.lax.stop_gradient" class="sphx-glr-backref-module-jax-lax sphx-glr-backref-type-py-function"><span class="n">jax</span><span class="o">.</span><span class="n">lax</span><span class="o">.</span><span class="n">stop_gradient</span></a></a></a><span class="p">(</span><span class="n">cell</span><span class="p">),</span> <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">k_cutoff</span></a></a></a>
+<span class="p">)</span>
+<span class="n">ewald_component_reciprocal_energy</span><span class="p">,</span> <span class="n">ewald_component_reciprocal_forces</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">ewald_reciprocal_space</span><span class="p">(</span>
+        <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+        <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+        <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+        <span class="n">k_vectors</span><span class="o">=</span><span class="n">ewald_k_vectors</span><span class="p">,</span>
+        <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">alpha</span></a></a></a><span class="o">=</span><span class="n">alpha_array</span><span class="p">,</span>
+        <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="p">)</span>
+<span class="p">)</span>
+<span class="n">ewald_component_slab_energy</span><span class="p">,</span> <span class="n">ewald_component_slab_forces</span> <span class="o">=</span> <span class="n">compute_slab_correction</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="o">=</span><span class="n">pbc_slab</span><span class="p">,</span>
+    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">total_ewald_energy</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">ewald_component_real_energy</span>
+    <span class="o">+</span> <span class="n">ewald_component_reciprocal_energy</span>
+    <span class="o">+</span> <span class="n">ewald_component_slab_energy</span>
+<span class="p">)</span>
+<span class="n">total_ewald_forces</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">ewald_component_real_forces</span>
+    <span class="o">+</span> <span class="n">ewald_component_reciprocal_forces</span>
+    <span class="o">+</span> <span class="n">ewald_component_slab_forces</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Total Ewald composition from components:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;  Max energy error: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">max</span></a></a></a><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">abs</span></a></a></a><span class="p">(</span><span class="n">total_ewald_energy</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">energies_slab</span><span class="p">)))</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;  Max force error: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">max</span></a></a></a><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">abs</span></a></a></a><span class="p">(</span><span class="n">total_ewald_forces</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">forces_slab</span><span class="p">)))</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Total Ewald composition from components:
+  Max energy error: 0.00e+00
+  Max force error: 0.00e+00
+</pre></div>
+</div>
+</section>
+<section id="pme-with-slab-correction-legacy-direct-output-check">
+<h2>PME with Slab Correction (Legacy Direct-Output Check)<a class="headerlink" href="#pme-with-slab-correction-legacy-direct-output-check" title="Link to this heading">#</a></h2>
+<p>Full PME accepts the same slab correction arguments as Ewald. The reciprocal
+PME component itself remains a 3D-periodic reciprocal-space calculation; the
+slab term is added by the high-level <code class="docutils literal notranslate"><span class="pre">particle_mesh_ewald</span></code> wrapper. This
+direct-output tuple is a legacy compatibility check; the following section is
+the training recipe.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">pme_3d_energy</span><span class="p">,</span> <span class="n">pme_3d_forces</span> <span class="o">=</span> <span class="n">_legacy_direct_output_call</span><span class="p">(</span>
+    <span class="n">particle_mesh_ewald</span><span class="p">,</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">alpha</span></a></a></a><span class="o">=</span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">alpha</span></a></a></a><span class="p">,</span>
+    <a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">mesh_dimensions</span></a></a></a><span class="o">=</span><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">mesh_dimensions</span></a></a></a><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list</span><span class="p">,</span>
+    <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">neighbor_ptr</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">pme_slab_energy</span><span class="p">,</span> <span class="n">pme_slab_forces</span> <span class="o">=</span> <span class="n">_legacy_direct_output_call</span><span class="p">(</span>
+    <span class="n">particle_mesh_ewald</span><span class="p">,</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">alpha</span></a></a></a><span class="o">=</span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">alpha</span></a></a></a><span class="p">,</span>
+    <a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">mesh_dimensions</span></a></a></a><span class="o">=</span><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">mesh_dimensions</span></a></a></a><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list</span><span class="p">,</span>
+    <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">neighbor_ptr</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="o">=</span><span class="n">pbc_slab</span><span class="p">,</span>
+    <span class="n">slab_correction</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">PME with slab correction:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Standard PME energy: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">pme_3d_energy</span><span class="o">.</span><span class="n">sum</span></a></a></a><span class="p">())</span><span class="si">:</span><span class="s2"> .8f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Slab PME energy: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">pme_slab_energy</span><span class="o">.</span><span class="n">sum</span></a></a></a><span class="p">())</span><span class="si">:</span><span class="s2"> .8f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Energy delta: </span><span class="si">{</span><span class="nb">float</span><span class="p">((</span><span class="n">pme_slab_energy</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">pme_3d_energy</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span><span class="si">:</span><span class="s2"> .8f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;  Max force magnitude: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.linalg.norm.html#jax.numpy.linalg.norm" title="jax.numpy.linalg.norm" class="sphx-glr-backref-module-jax-numpy-linalg sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.linalg.norm.html#jax.numpy.linalg.norm" title="jax.numpy.linalg.norm" class="sphx-glr-backref-module-jax-numpy-linalg sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.linalg.norm.html#jax.numpy.linalg.norm" title="jax.numpy.linalg.norm" class="sphx-glr-backref-module-jax-numpy-linalg sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span></a></a></a><span class="p">(</span><span class="n">pme_slab_forces</span><span class="p">,</span><span class="w"> </span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">())</span><span class="si">:</span><span class="s2"> .8f</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>PME with slab correction:
+  Standard PME energy: -1.15524338
+  Slab PME energy: -1.15471978
+  Energy delta:  0.00052360
+  Max force magnitude:  1.33336871
+</pre></div>
+</div>
+</section>
+<section id="pme-energy-autograd-slab-forces">
+<h2>PME Energy-Autograd Slab Forces<a class="headerlink" href="#pme-energy-autograd-slab-forces" title="Link to this heading">#</a></h2>
+<p>PME uses the same training recipe: omit direct-output flags and differentiate
+the energy. This is the path to copy into force-loss training code.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">pme_slab_total_energy</span><span class="p">(</span><span class="n">pos</span><span class="p">:</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><span class="n">jax</span><span class="o">.</span><span class="n">Array</span></a></a></a><span class="p">)</span> <span class="o">-&gt;</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><span class="n">jax</span><span class="o">.</span><span class="n">Array</span></a></a></a><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return total slab-corrected PME energy for force autograd.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.sum.html#jax.numpy.sum" title="jax.numpy.sum" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.sum.html#jax.numpy.sum" title="jax.numpy.sum" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.sum.html#jax.numpy.sum" title="jax.numpy.sum" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">sum</span></a></a></a><span class="p">(</span>
+        <span class="n">particle_mesh_ewald</span><span class="p">(</span>
+            <span class="n">positions</span><span class="o">=</span><span class="n">pos</span><span class="p">,</span>
+            <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+            <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+            <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">alpha</span></a></a></a><span class="o">=</span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">alpha</span></a></a></a><span class="p">,</span>
+            <a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">mesh_dimensions</span></a></a></a><span class="o">=</span><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">mesh_dimensions</span></a></a></a><span class="p">,</span>
+            <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list</span><span class="p">,</span>
+            <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">neighbor_ptr</span><span class="p">,</span>
+            <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+            <span class="n">pbc</span><span class="o">=</span><span class="n">pbc_slab</span><span class="p">,</span>
+            <span class="n">slab_correction</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="p">)</span>
+
+
+<span class="n">pme_forces_ag</span> <span class="o">=</span> <span class="o">-</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.grad.html#jax.grad" title="jax.grad" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.grad.html#jax.grad" title="jax.grad" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.grad.html#jax.grad" title="jax.grad" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-function"><span class="n">jax</span><span class="o">.</span><span class="n">grad</span></a></a></a><span class="p">(</span><span class="n">pme_slab_total_energy</span><span class="p">)(</span><span class="n">positions</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">PME slab energy-autograd force check:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;  Max force delta vs legacy direct: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">max</span></a></a></a><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">abs</span></a></a></a><span class="p">(</span><span class="n">pme_forces_ag</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">pme_slab_forces</span><span class="p">)))</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>PME slab energy-autograd force check:
+  Max force delta vs legacy direct: 9.37e-08
+</pre></div>
+</div>
+</section>
+<section id="total-pme-component-composition">
+<h2>Total PME Component Composition<a class="headerlink" href="#total-pme-component-composition" title="Link to this heading">#</a></h2>
+<p>If you need real-space, PME reciprocal-space, and slab terms separately,
+compute the three pieces explicitly and add matching outputs.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">real_energy</span><span class="p">,</span> <span class="n">real_forces</span> <span class="o">=</span> <span class="n">ewald_real_space</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">alpha</span></a></a></a><span class="o">=</span><span class="n">alpha_array</span><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list</span><span class="p">,</span>
+    <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">neighbor_ptr</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">reciprocal_energy</span><span class="p">,</span> <span class="n">reciprocal_forces</span> <span class="o">=</span> <span class="n">pme_reciprocal_space</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">alpha</span></a></a></a><span class="o">=</span><span class="n">alpha_array</span><span class="p">,</span>
+    <a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">mesh_dimensions</span></a></a></a><span class="o">=</span><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">mesh_dimensions</span></a></a></a><span class="p">,</span>
+    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">slab_energy_correction</span><span class="p">,</span> <span class="n">slab_forces_correction</span> <span class="o">=</span> <span class="n">compute_slab_correction</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="o">=</span><span class="n">pbc_slab</span><span class="p">,</span>
+    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">total_pme_energy</span> <span class="o">=</span> <span class="n">real_energy</span> <span class="o">+</span> <span class="n">reciprocal_energy</span> <span class="o">+</span> <span class="n">slab_energy_correction</span>
+<span class="n">total_pme_forces</span> <span class="o">=</span> <span class="n">real_forces</span> <span class="o">+</span> <span class="n">reciprocal_forces</span> <span class="o">+</span> <span class="n">slab_forces_correction</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Total PME composition from components:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;  Max energy error: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">max</span></a></a></a><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">abs</span></a></a></a><span class="p">(</span><span class="n">total_pme_energy</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">pme_slab_energy</span><span class="p">)))</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;  Max force error: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">max</span></a></a></a><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">abs</span></a></a></a><span class="p">(</span><span class="n">total_pme_forces</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">pme_slab_forces</span><span class="p">)))</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Total PME composition from components:
+  Max energy error: 0.00e+00
+  Max force error: 0.00e+00
+</pre></div>
+</div>
+</section>
+<section id="triclinic-slab-cells">
+<h2>Triclinic Slab Cells<a class="headerlink" href="#triclinic-slab-cells" title="Link to this heading">#</a></h2>
+<p>Triclinic cells are also supported. The slab normal follows the plane spanned
+by the two periodic cell vectors; it is not locked to a Cartesian axis.</p>
+<p>Here we reuse the same positions and charges with a tilted cell and compute
+the standalone correction.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">triclinic_cell</span> <span class="o">=</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.array.html#jax.numpy.array" title="jax.numpy.array" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.array.html#jax.numpy.array" title="jax.numpy.array" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.array.html#jax.numpy.array" title="jax.numpy.array" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">array</span></a></a></a><span class="p">(</span>
+    <span class="p">[[[</span><span class="mf">10.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span> <span class="p">[</span><span class="mf">1.5</span><span class="p">,</span> <span class="mf">9.0</span><span class="p">,</span> <span class="mf">0.8</span><span class="p">],</span> <span class="p">[</span><span class="mf">0.2</span><span class="p">,</span> <span class="mf">0.4</span><span class="p">,</span> <span class="mf">30.0</span><span class="p">]]],</span>
+    <span class="n">dtype</span><span class="o">=</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.float64.html#jax.numpy.float64" title="jax.numpy.float64" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.float64.html#jax.numpy.float64" title="jax.numpy.float64" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.float64.html#jax.numpy.float64" title="jax.numpy.float64" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-class"><span class="n">jnp</span><span class="o">.</span><span class="n">float64</span></a></a></a><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">triclinic_energy</span><span class="p">,</span> <span class="n">triclinic_forces</span> <span class="o">=</span> <span class="n">compute_slab_correction</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">triclinic_cell</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="o">=</span><span class="n">pbc_slab</span><span class="p">,</span>
+    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Triclinic standalone correction:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Cell rows:</span><span class="se">\n</span><span class="si">{</span><span class="n">_format_array</span><span class="p">(</span><span class="n">triclinic_cell</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Correction energy: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">triclinic_energy</span><span class="o">.</span><span class="n">sum</span></a></a></a><span class="p">())</span><span class="si">:</span><span class="s2"> .8f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Forces:</span><span class="se">\n</span><span class="si">{</span><span class="n">_format_array</span><span class="p">(</span><span class="n">triclinic_forces</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Triclinic standalone correction:
+  Cell rows:
+[[10.   0.   0. ]
+ [ 1.5  9.   0.8]
+ [ 0.2  0.4 30. ]]
+  Correction energy:  0.00047973
+  Forces:
+[[ 0.       -0.000187  0.002106]
+ [ 0.        0.000187 -0.002106]]
+</pre></div>
+</div>
+</section>
+<section id="jit-compilation">
+<h2>JIT Compilation<a class="headerlink" href="#jit-compilation" title="Link to this heading">#</a></h2>
+<p>Demonstrate combining the neighbor list build and PME slab calculation into a
+single <code class="docutils literal notranslate"><span class="pre">jax.jit</span></code>-compiled function. This compiles the array program into one
+callable while keeping launch-size metadata static.</p>
+<p>For JIT compatibility:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">max_neighbors</span></code> must be specified (static array shapes)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">mesh_dimensions</span></code> must be a concrete tuple (static FFT sizes)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">alpha</span></code> can be a traced JAX array</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">compute_forces</span></code> and other boolean flags must be static</p></li>
+<li><p>Periodic shift metadata (<code class="docutils literal notranslate"><span class="pre">shift_range</span></code>, <code class="docutils literal notranslate"><span class="pre">num_shifts_per_system</span></code>,
+<code class="docutils literal notranslate"><span class="pre">max_shifts_per_system</span></code>) must be pre-computed outside jit using
+<code class="docutils literal notranslate"><span class="pre">compute_naive_num_shifts</span></code>, since the launch dimensions must be concrete</p></li>
+</ul>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;JIT COMPILATION&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="n">jit_positions</span><span class="p">,</span> <span class="n">jit_charges</span><span class="p">,</span> <span class="n">jit_cell</span><span class="p">,</span> <span class="n">jit_pbc_slab</span> <span class="o">=</span> <span class="n">create_cscl_slab_system</span><span class="p">()</span>
+<span class="n">jit_alpha</span> <span class="o">=</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.array.html#jax.numpy.array" title="jax.numpy.array" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.array.html#jax.numpy.array" title="jax.numpy.array" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.array.html#jax.numpy.array" title="jax.numpy.array" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">array</span></a></a></a><span class="p">([</span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">alpha</span></a></a></a><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.float64.html#jax.numpy.float64" title="jax.numpy.float64" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.float64.html#jax.numpy.float64" title="jax.numpy.float64" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.float64.html#jax.numpy.float64" title="jax.numpy.float64" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-class"><span class="n">jnp</span><span class="o">.</span><span class="n">float64</span></a></a></a><span class="p">)</span>
+<a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">jit_max_neighbors</span></a></a></a> <span class="o">=</span> <span class="mi">16</span>
+<a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">jit_mask_value</span></a></a></a> <span class="o">=</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.shape.html#jax.Array.shape" title="jax.Array.shape" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.shape.html#jax.Array.shape" title="jax.Array.shape" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.shape.html#jax.Array.shape" title="jax.Array.shape" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><span class="n">jit_positions</span><span class="o">.</span><span class="n">shape</span></a></a></a><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+<span class="n">shift_range</span><span class="p">,</span> <span class="n">num_shifts_per_system</span><span class="p">,</span> <a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">max_shifts_per_system</span></a></a></a> <span class="o">=</span> <span class="n">compute_naive_num_shifts</span><span class="p">(</span>
+    <span class="n">jit_cell</span><span class="p">,</span>
+    <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">real_space_cutoff</span></a></a></a><span class="p">,</span>
+    <span class="n">jit_pbc_slab</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_pme_slab_energy_forces</span><span class="p">(</span>
+    <span class="n">positions_in</span><span class="p">:</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><span class="n">jax</span><span class="o">.</span><span class="n">Array</span></a></a></a><span class="p">,</span>
+    <span class="n">charges_in</span><span class="p">:</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><span class="n">jax</span><span class="o">.</span><span class="n">Array</span></a></a></a><span class="p">,</span>
+    <span class="n">cell_in</span><span class="p">:</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><span class="n">jax</span><span class="o">.</span><span class="n">Array</span></a></a></a><span class="p">,</span>
+    <span class="n">pbc_slab_in</span><span class="p">:</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><span class="n">jax</span><span class="o">.</span><span class="n">Array</span></a></a></a><span class="p">,</span>
+    <span class="n">alpha_in</span><span class="p">:</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><span class="n">jax</span><span class="o">.</span><span class="n">Array</span></a></a></a><span class="p">,</span>
+    <span class="n">shift_range_per_dimension</span><span class="p">:</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><span class="n">jax</span><span class="o">.</span><span class="n">Array</span></a></a></a> <span class="o">=</span> <span class="n">shift_range</span><span class="p">,</span>
+    <span class="n">num_shifts</span><span class="p">:</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><span class="n">jax</span><span class="o">.</span><span class="n">Array</span></a></a></a> <span class="o">=</span> <span class="n">num_shifts_per_system</span><span class="p">,</span>
+    <span class="n">cutoff</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">real_space_cutoff</span></a></a></a><span class="p">,</span>
+    <span class="n">max_neighbors</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">jit_max_neighbors</span></a></a></a><span class="p">,</span>
+    <span class="n">max_shifts</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">max_shifts_per_system</span></a></a></a><span class="p">,</span>
+    <span class="n">mask_value</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">jit_mask_value</span></a></a></a><span class="p">,</span>
+    <span class="n">mesh_dims</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">mesh_dimensions</span></a></a></a><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><span class="n">jax</span><span class="o">.</span><span class="n">Array</span></a></a></a><span class="p">,</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><span class="n">jax</span><span class="o">.</span><span class="n">Array</span></a></a></a><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;JIT-compatible neighbor matrix + PME slab pipeline.&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">total_energy</span><span class="p">(</span><span class="n">pos</span><span class="p">):</span>
+        <span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">neighbor_matrix_shifts</span> <span class="o">=</span> <span class="n">naive_neighbor_list</span><span class="p">(</span>
+            <span class="n">pos</span><span class="p">,</span>
+            <span class="n">cutoff</span><span class="p">,</span>
+            <span class="n">cell</span><span class="o">=</span><span class="n">cell_in</span><span class="p">,</span>
+            <span class="n">pbc</span><span class="o">=</span><span class="n">pbc_slab_in</span><span class="p">,</span>
+            <span class="n">max_neighbors</span><span class="o">=</span><span class="n">max_neighbors</span><span class="p">,</span>
+            <span class="n">fill_value</span><span class="o">=</span><span class="n">mask_value</span><span class="p">,</span>
+            <span class="n">shift_range_per_dimension</span><span class="o">=</span><span class="n">shift_range_per_dimension</span><span class="p">,</span>
+            <span class="n">num_shifts_per_system</span><span class="o">=</span><span class="n">num_shifts</span><span class="p">,</span>
+            <a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">max_shifts_per_system</span></a></a></a><span class="o">=</span><span class="n">max_shifts</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="n">energies</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
+            <span class="n">positions</span><span class="o">=</span><span class="n">pos</span><span class="p">,</span>
+            <span class="n">charges</span><span class="o">=</span><span class="n">charges_in</span><span class="p">,</span>
+            <span class="n">cell</span><span class="o">=</span><span class="n">cell_in</span><span class="p">,</span>
+            <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">alpha</span></a></a></a><span class="o">=</span><span class="n">alpha_in</span><span class="p">,</span>
+            <a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><a href="https://docs.python.org/3/library/stdtypes.html#tuple" title="builtins.tuple" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">mesh_dimensions</span></a></a></a><span class="o">=</span><span class="n">mesh_dims</span><span class="p">,</span>
+            <span class="n">neighbor_matrix</span><span class="o">=</span><span class="n">neighbor_matrix</span><span class="p">,</span>
+            <span class="n">neighbor_matrix_shifts</span><span class="o">=</span><span class="n">neighbor_matrix_shifts</span><span class="p">,</span>
+            <span class="n">mask_value</span><span class="o">=</span><span class="n">mask_value</span><span class="p">,</span>
+            <span class="n">pbc</span><span class="o">=</span><span class="n">pbc_slab_in</span><span class="p">,</span>
+            <span class="n">slab_correction</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">energies</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+
+    <span class="n">energy</span><span class="p">,</span> <span class="n">grad_positions</span> <span class="o">=</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.value_and_grad.html#jax.value_and_grad" title="jax.value_and_grad" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.value_and_grad.html#jax.value_and_grad" title="jax.value_and_grad" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.value_and_grad.html#jax.value_and_grad" title="jax.value_and_grad" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-function"><span class="n">jax</span><span class="o">.</span><span class="n">value_and_grad</span></a></a></a><span class="p">(</span><span class="n">total_energy</span><span class="p">)(</span><span class="n">positions_in</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">energy</span><span class="p">,</span> <span class="o">-</span><span class="n">grad_positions</span>
+
+
+<span class="n">jit_compute_pme_slab_energy_forces</span> <span class="o">=</span> <a href="https://docs.jax.dev/en/latest/_autosummary/jax.jit.html#jax.jit" title="jax.jit" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.jit.html#jax.jit" title="jax.jit" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.jit.html#jax.jit" title="jax.jit" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-function"><span class="n">jax</span><span class="o">.</span><span class="n">jit</span></a></a></a><span class="p">(</span><span class="n">compute_pme_slab_energy_forces</span><span class="p">)</span>
+
+<span class="n">energies_nonjit</span><span class="p">,</span> <span class="n">forces_nonjit</span> <span class="o">=</span> <span class="n">compute_pme_slab_energy_forces</span><span class="p">(</span>
+    <span class="n">jit_positions</span><span class="p">,</span>
+    <span class="n">jit_charges</span><span class="p">,</span>
+    <span class="n">jit_cell</span><span class="p">,</span>
+    <span class="n">jit_pbc_slab</span><span class="p">,</span>
+    <span class="n">jit_alpha</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">energies_nonjit</span><span class="o">.</span><span class="n">block_until_ready</span><span class="p">()</span>
+<span class="n">forces_nonjit</span><span class="o">.</span><span class="n">block_until_ready</span><span class="p">()</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  Non-jitted PME slab:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;    Total energy: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">energies_nonjit</span><span class="o">.</span><span class="n">sum</span></a></a></a><span class="p">())</span><span class="si">:</span><span class="s2"> .8f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;    Max force magnitude: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.linalg.norm.html#jax.numpy.linalg.norm" title="jax.numpy.linalg.norm" class="sphx-glr-backref-module-jax-numpy-linalg sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.linalg.norm.html#jax.numpy.linalg.norm" title="jax.numpy.linalg.norm" class="sphx-glr-backref-module-jax-numpy-linalg sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.linalg.norm.html#jax.numpy.linalg.norm" title="jax.numpy.linalg.norm" class="sphx-glr-backref-module-jax-numpy-linalg sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span></a></a></a><span class="p">(</span><span class="n">forces_nonjit</span><span class="p">,</span><span class="w"> </span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">())</span><span class="si">:</span><span class="s2"> .8f</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Compiling and running jitted PME slab pipeline...&quot;</span><span class="p">)</span>
+<span class="n">energies_jit</span><span class="p">,</span> <span class="n">forces_jit</span> <span class="o">=</span> <span class="n">jit_compute_pme_slab_energy_forces</span><span class="p">(</span>
+    <span class="n">jit_positions</span><span class="p">,</span>
+    <span class="n">jit_charges</span><span class="p">,</span>
+    <span class="n">jit_cell</span><span class="p">,</span>
+    <span class="n">jit_pbc_slab</span><span class="p">,</span>
+    <span class="n">jit_alpha</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">energies_jit</span><span class="o">.</span><span class="n">block_until_ready</span><span class="p">()</span>
+<span class="n">forces_jit</span><span class="o">.</span><span class="n">block_until_ready</span><span class="p">()</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  JIT PME slab:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;    Total energy: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">energies_jit</span><span class="o">.</span><span class="n">sum</span></a></a></a><span class="p">())</span><span class="si">:</span><span class="s2"> .8f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;    Max force magnitude: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.linalg.norm.html#jax.numpy.linalg.norm" title="jax.numpy.linalg.norm" class="sphx-glr-backref-module-jax-numpy-linalg sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.linalg.norm.html#jax.numpy.linalg.norm" title="jax.numpy.linalg.norm" class="sphx-glr-backref-module-jax-numpy-linalg sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.linalg.norm.html#jax.numpy.linalg.norm" title="jax.numpy.linalg.norm" class="sphx-glr-backref-module-jax-numpy-linalg sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span></a></a></a><span class="p">(</span><span class="n">forces_jit</span><span class="p">,</span><span class="w"> </span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">())</span><span class="si">:</span><span class="s2"> .8f</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;    Max energy error vs non-jit: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">max</span></a></a></a><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">abs</span></a></a></a><span class="p">(</span><span class="n">energies_jit</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">energies_nonjit</span><span class="p">)))</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;    Max force error vs non-jit: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.max.html#jax.numpy.max" title="jax.numpy.max" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">max</span></a></a></a><span class="p">(</span><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><a href="https://docs.jax.dev/en/latest/_autosummary/jax.numpy.abs.html#jax.numpy.abs" title="jax.numpy.abs" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">abs</span></a></a></a><span class="p">(</span><span class="n">forces_jit</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">forces_nonjit</span><span class="p">)))</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+JIT COMPILATION
+======================================================================
+  Non-jitted PME slab:
+    Total energy: -1.15471978
+    Max force magnitude:  1.33336855
+
+Compiling and running jitted PME slab pipeline...
+  JIT PME slab:
+    Total energy: -1.15471978
+    Max force magnitude:  1.33336855
+    Max energy error vs non-jit: 0.00e+00
+    Max force error vs non-jit: 1.11e-16
+</pre></div>
+</div>
+</section>
+<section id="summary">
+<h2>Summary<a class="headerlink" href="#summary" title="Link to this heading">#</a></h2>
+<p>Use <code class="docutils literal notranslate"><span class="pre">ewald_summation(...,</span> <span class="pre">slab_correction=True,</span> <span class="pre">pbc=pbc_slab)</span></code> or
+<code class="docutils literal notranslate"><span class="pre">particle_mesh_ewald(...,</span> <span class="pre">slab_correction=True,</span> <span class="pre">pbc=pbc_slab)</span></code> when you want
+the correction included in the total energy. For training derivatives, copy
+the energy-autograd force sections above. Use <code class="docutils literal notranslate"><span class="pre">compute_slab_correction</span></code>
+directly when you need the correction term alone or when composing
+<code class="docutils literal notranslate"><span class="pre">ewald_real_space</span></code> with <code class="docutils literal notranslate"><span class="pre">ewald_reciprocal_space</span></code> or
+<code class="docutils literal notranslate"><span class="pre">pme_reciprocal_space</span></code>.</p>
+<p>For <code class="docutils literal notranslate"><span class="pre">jax.jit</span></code> workflows, keep shape-determining values outside the jitted
+function: neighbor capacity, shift metadata, FFT mesh dimensions, and output
+flags should all be static.</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 45.272 seconds)</p>
+<div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-examples-electrostatics-06-jax-slab-correction-example-py">
+<div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/97bd0d23e0a8ab40bec2dc16618d971b/06_jax_slab_correction_example.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">06_jax_slab_correction_example.ipynb</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-python docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/99f416a85b7fbf904553feebbb42f34b/06_jax_slab_correction_example.py"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Python</span> <span class="pre">source</span> <span class="pre">code:</span> <span class="pre">06_jax_slab_correction_example.py</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-zip docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/b7fe62175788fa7a9d8d9bc189b6f939/06_jax_slab_correction_example.zip"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">zipped:</span> <span class="pre">06_jax_slab_correction_example.zip</span></code></a></p>
+</div>
+</div>
+<p class="sphx-glr-signature"><a class="reference external" href="https://sphinx-gallery.github.io">Gallery generated by Sphinx-Gallery</a></p>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="05_slab_correction_example.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">2D Slab Correction for Ewald and PME</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="07_multipole_ewald_summation_example.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Multipole Ewald Summation (charges + dipoles + quadrupoles)</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#setup-and-imports">Setup and Imports</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#check-device">Check Device</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#create-a-small-slab-system">Create a Small Slab System</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#build-the-real-space-neighbor-list">Build the Real-Space Neighbor List</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#standard-3d-ewald-legacy-direct-output-baseline">Standard 3D Ewald (Legacy Direct-Output Baseline)</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#ewald-with-slab-correction-legacy-direct-output-check">Ewald with Slab Correction (Legacy Direct-Output Check)</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#energy-autograd-slab-forces">Energy-Autograd Slab Forces</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#standalone-slab-correction">Standalone Slab Correction</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#total-ewald-component-composition">Total Ewald Component Composition</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#pme-with-slab-correction-legacy-direct-output-check">PME with Slab Correction (Legacy Direct-Output Check)</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#pme-energy-autograd-slab-forces">PME Energy-Autograd Slab Forces</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#total-pme-component-composition">Total PME Component Composition</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#triclinic-slab-cells">Triclinic Slab Cells</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#jit-compilation">JIT Compilation</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#summary">Summary</a></li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/examples/electrostatics/06_jax_slab_correction_example.rst.txt">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

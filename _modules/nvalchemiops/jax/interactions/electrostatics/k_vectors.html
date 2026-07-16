@@ -2,17 +2,17 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../../../../" >
+<html lang="en" data-content_root="../../../../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>nvalchemiops.jax.interactions.electrostatics.k_vectors &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>nvalchemiops.jax.interactions.electrostatics.k_vectors &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -34,16 +34,17 @@
     <link rel="stylesheet" type="text/css" href="../../../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../../../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../../../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../../../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../../../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -58,7 +59,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -125,8 +126,6 @@
   
   
     
-    
-      
     
     
     <img src="../../../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -492,7 +491,7 @@ document.write(`
     <span class="n">k_cutoff</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
     <span class="n">miller_bounds</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Generate reciprocal lattice vectors for Ewald summation (half-space).</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Generate reciprocal lattice vectors for Ewald summation (half-space).</span>
 
 <span class="sd">    Creates k-vectors within the specified cutoff for the reciprocal space</span>
 <span class="sd">    summation in the Ewald method. Uses half-space optimization to reduce</span>
@@ -510,7 +509,7 @@ document.write(`
 <span class="sd">        - (h == 0 AND k == 0 AND l &gt; 0)</span>
 
 <span class="sd">    The kernels in ewald_kernels.py compensate by doubling the Green&#39;s function</span>
-<span class="sd">    (using :math:`8\\pi` instead of :math:`4\\pi`), so energies, forces, and charge gradients are</span>
+<span class="sd">    (using :math:`8\pi` instead of :math:`4\pi`), so energies, forces, and charge gradients are</span>
 <span class="sd">    computed correctly.</span>
 
 <span class="sd">    Mathematical Background</span>
@@ -520,17 +519,17 @@ document.write(`
 
 <span class="sd">    .. math::</span>
 
-<span class="sd">        \\mathbf{a}^* &amp;= \\frac{2\\pi (\\mathbf{b} \\times \\mathbf{c})}{V}</span>
+<span class="sd">        \mathbf{a}^* &amp;= \frac{2\pi (\mathbf{b} \times \mathbf{c})}{V}</span>
 
-<span class="sd">        \\mathbf{b}^* &amp;= \\frac{2\\pi (\\mathbf{c} \\times \\mathbf{a})}{V}</span>
+<span class="sd">        \mathbf{b}^* &amp;= \frac{2\pi (\mathbf{c} \times \mathbf{a})}{V}</span>
 
-<span class="sd">        \\mathbf{c}^* &amp;= \\frac{2\\pi (\\mathbf{a} \\times \\mathbf{b})}{V}</span>
+<span class="sd">        \mathbf{c}^* &amp;= \frac{2\pi (\mathbf{a} \times \mathbf{b})}{V}</span>
 
-<span class="sd">    where :math:`V = \\mathbf{a} \\cdot (\\mathbf{b} \\times \\mathbf{c})` is the cell volume.</span>
+<span class="sd">    where :math:`V = \mathbf{a} \cdot (\mathbf{b} \times \mathbf{c})` is the cell volume.</span>
 
-<span class="sd">    In matrix form: :math:`\\text{reciprocal_matrix} = 2\\pi \\cdot (\\text{cell}^T)^{-1}`</span>
+<span class="sd">    In matrix form: :math:`\text{reciprocal_matrix} = 2\pi \cdot (\text{cell}^T)^{-1}`</span>
 
-<span class="sd">    Each k-vector is: :math:`\\mathbf{k} = h \\mathbf{a}^* + k \\mathbf{b}^* + l \\mathbf{c}^*`</span>
+<span class="sd">    Each k-vector is: :math:`\mathbf{k} = h \mathbf{a}^* + k \mathbf{b}^* + l \mathbf{c}^*`</span>
 <span class="sd">    where (h, k, l) are Miller indices (integers).</span>
 
 <span class="sd">    Parameters</span>
@@ -539,8 +538,8 @@ document.write(`
 <span class="sd">        Unit cell matrix with lattice vectors as rows.</span>
 <span class="sd">        Shape (3, 3) for single system or (B, 3, 3) for batch.</span>
 <span class="sd">    k_cutoff : float or jax.Array</span>
-<span class="sd">        Maximum magnitude of k-vectors to include (:math:`|\\mathbf{k}| \\leq k_{\\text{cutoff}}`).</span>
-<span class="sd">        Typical values: 8-12 :math:`\\text{\\AA}^{-1}` for molecular systems.</span>
+<span class="sd">        Maximum magnitude of k-vectors to include (:math:`|\mathbf{k}| \leq k_{\text{cutoff}}`).</span>
+<span class="sd">        Typical values: 8-12 :math:`\text{\AA}^{-1}` for molecular systems.</span>
 <span class="sd">        Higher values increase accuracy but also computational cost.</span>
 <span class="sd">    miller_bounds : tuple[int, int, int] | None, optional</span>
 <span class="sd">        Precomputed maximum Miller indices (M_h, M_k, M_l) for each lattice</span>
@@ -589,7 +588,7 @@ document.write(`
 <span class="sd">      transformed using each system&#39;s reciprocal cell. If ``k_cutoff`` is given</span>
 <span class="sd">      per system, the maximum cutoff across the batch determines the shared</span>
 <span class="sd">      Miller bounds.</span>
-<span class="sd">    - The number of k-vectors K scales as O(k_cutoff³ · V) where V is the cell volume.</span>
+<span class="sd">    - The number of k-vectors K scales as :math:`O(k_{\text{cutoff}}^3 \cdot V)` where V is the cell volume.</span>
 <span class="sd">    - When using inside ``jax.jit``, you **must** provide ``miller_bounds``</span>
 <span class="sd">      as a concrete ``tuple[int, int, int]``. The bounds determine array shapes</span>
 <span class="sd">      (via ``jnp.arange``), which must be statically known at trace time.</span>
@@ -819,9 +818,22 @@ document.write(`
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -841,7 +853,7 @@ document.write(`
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

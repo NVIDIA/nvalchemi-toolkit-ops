@@ -96,7 +96,7 @@ Set up the computation device and check torch.compile availability
 
     Using device: cuda
     Using dtype: torch.float32
-    PyTorch version: 2.10.0+cu128
+    PyTorch version: 2.12.0+cu126
 
 
 
@@ -635,6 +635,8 @@ Run short simulations and compare performance
     ======================================================================
 
     Warming up compiled version (5 steps)...
+    /lustre/fs1/portfolios/coreai/projects/coreai_modulus_alchemi/users/kinlongkelvi/code/nvalchemi-toolkit-ops/.venv/lib/python3.13/site-packages/torch/_inductor/compile_fx.py:320: UserWarning: TensorFloat32 tensor cores for float32 matrix multiplication available but not enabled. Consider setting `torch.set_float32_matmul_precision('high')` for better performance.
+      warnings.warn(
 
     Benchmarking uncompiled version (50 steps)...
     Benchmarking compiled version (50 steps)...
@@ -644,9 +646,9 @@ Run short simulations and compare performance
     ======================================================================
 
     Performance:
-      Uncompiled: 0.1907 s (3.81 ms/step)
-      Compiled:   0.0966 s (1.93 ms/step)
-      Speedup:    1.97x
+      Uncompiled: 0.1204 s (2.41 ms/step)
+      Compiled:   0.0518 s (1.04 ms/step)
+      Speedup:    2.32x
 
     Energies after 50 steps:
       Potential: -208.7127
@@ -678,7 +680,7 @@ Run short simulations and compare performance
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 1.090 seconds)
+   **Total running time of the script:** (0 minutes 2.212 seconds)
 
 
 .. _sphx_glr_download_examples_neighbors_04_neighbors_list_torch_compile_performance.py:

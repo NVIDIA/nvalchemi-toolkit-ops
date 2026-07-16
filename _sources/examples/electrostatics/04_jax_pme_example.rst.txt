@@ -30,7 +30,7 @@ In this example you will learn:
 - How to set up and run PME with automatic parameter estimation in JAX
 - Using neighbor list (COO) and neighbor matrix formats
 - Accessing real-space and reciprocal-space components separately
-- Computing charge gradients for ML potential training
+- Computing charge gradients from energy autograd for ML potential training
 - ``jax.jit`` compilation of the full neighbor list + PME pipeline
 
 .. important::
@@ -43,7 +43,7 @@ Setup and Imports
 -----------------
 Import JAX and the nvalchemiops electrostatics API.
 
-.. GENERATED FROM PYTHON SOURCE LINES 41-74
+.. GENERATED FROM PYTHON SOURCE LINES 41-87
 
 .. code-block:: Python
 
@@ -52,6 +52,7 @@ Import JAX and the nvalchemiops electrostatics API.
 
     import sys
     import time
+    import warnings
 
     try:
         import jax
@@ -63,6 +64,18 @@ Import JAX and the nvalchemiops electrostatics API.
         sys.exit(0)
 
     import numpy as np
+
+
+    def _legacy_direct_output_call(function, *args, **kwargs):
+        """Call a deprecated direct-output path used for explicit migration checks."""
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                category=DeprecationWarning,
+                message="The direct-output flags.*",
+            )
+            return function(*args, **kwargs)
+
 
     try:
         from nvalchemiops.jax.interactions.electrostatics import (
@@ -87,12 +100,12 @@ Import JAX and the nvalchemiops electrostatics API.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 75-77
+.. GENERATED FROM PYTHON SOURCE LINES 88-90
 
 Check Device
 ------------
 
-.. GENERATED FROM PYTHON SOURCE LINES 77-86
+.. GENERATED FROM PYTHON SOURCE LINES 90-99
 
 .. code-block:: Python
 
@@ -123,13 +136,13 @@ Check Device
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 87-90
+.. GENERATED FROM PYTHON SOURCE LINES 100-103
 
 Create a NaCl Crystal System
 ----------------------------
 We define a helper function to create NaCl rock salt crystal supercells.
 
-.. GENERATED FROM PYTHON SOURCE LINES 90-130
+.. GENERATED FROM PYTHON SOURCE LINES 103-143
 
 .. code-block:: Python
 
@@ -180,13 +193,13 @@ We define a helper function to create NaCl rock salt crystal supercells.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 131-134
+.. GENERATED FROM PYTHON SOURCE LINES 144-147
 
 Basic PME with Automatic Parameters
 -----------------------------------
 The simplest way to use PME is with automatic parameter estimation.
 
-.. GENERATED FROM PYTHON SOURCE LINES 134-146
+.. GENERATED FROM PYTHON SOURCE LINES 147-159
 
 .. code-block:: Python
 
@@ -200,7 +213,7 @@ The simplest way to use PME is with automatic parameter estimation.
 
     print(f"\nSystem: {len(positions)} atoms NaCl crystal")
     print(f"Cell size: {float(cell[0, 0, 0]):.2f} Å")
-    print(f"Total charge: {float(charges.sum()):.1f} (should be 0 for neutral)")
+    print(f"Total charge: {float(charges.sum()):.1f} (constructed neutral system)")
 
 
 
@@ -217,16 +230,16 @@ The simplest way to use PME is with automatic parameter estimation.
 
     System: 54 atoms NaCl crystal
     Cell size: 16.92 Å
-    Total charge: 0.0 (should be 0 for neutral)
+    Total charge: 0.0 (constructed neutral system)
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 147-148
+.. GENERATED FROM PYTHON SOURCE LINES 160-161
 
 Estimate optimal PME parameters:
 
-.. GENERATED FROM PYTHON SOURCE LINES 148-160
+.. GENERATED FROM PYTHON SOURCE LINES 161-173
 
 .. code-block:: Python
 
@@ -260,11 +273,11 @@ Estimate optimal PME parameters:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 161-162
+.. GENERATED FROM PYTHON SOURCE LINES 174-175
 
 Build neighbor list and run PME:
 
-.. GENERATED FROM PYTHON SOURCE LINES 162-191
+.. GENERATED FROM PYTHON SOURCE LINES 175-217
 
 .. code-block:: Python
 
@@ -278,16 +291,29 @@ Build neighbor list and run PME:
         return_neighbor_list=True,
     )
 
-    energies, forces = particle_mesh_ewald(
+
+    def energy_from_positions(pos):
+        return particle_mesh_ewald(
+            positions=pos,
+            charges=charges,
+            cell=cell,
+            neighbor_list=nl,
+            neighbor_ptr=nptr,
+            neighbor_shifts=ns,
+            accuracy=1e-6,
+        ).sum()
+
+
+    energies = particle_mesh_ewald(
         positions=positions,
         charges=charges,
         cell=cell,
         neighbor_list=nl,
         neighbor_ptr=nptr,
         neighbor_shifts=ns,
-        compute_forces=True,
         accuracy=1e-6,
     )
+    forces = -jax.grad(energy_from_positions)(positions)
 
     total_energy = float(energies.sum())
     max_force = float(jnp.linalg.norm(forces, axis=1).max())
@@ -314,13 +340,13 @@ Build neighbor list and run PME:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 192-195
+.. GENERATED FROM PYTHON SOURCE LINES 218-221
 
 Neighbor Matrix vs COO Format Comparison
 ----------------------------------------
 PME supports both neighbor formats, producing identical results.
 
-.. GENERATED FROM PYTHON SOURCE LINES 195-221
+.. GENERATED FROM PYTHON SOURCE LINES 221-247
 
 .. code-block:: Python
 
@@ -368,16 +394,17 @@ PME supports both neighbor formats, producing identical results.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 222-223
+.. GENERATED FROM PYTHON SOURCE LINES 248-249
 
 Using neighbor list (COO) format:
 
-.. GENERATED FROM PYTHON SOURCE LINES 223-237
+.. GENERATED FROM PYTHON SOURCE LINES 249-264
 
 .. code-block:: Python
 
 
-    energies_coo, forces_coo = particle_mesh_ewald(
+    energies_coo, forces_coo = _legacy_direct_output_call(
+        particle_mesh_ewald,
         positions=positions,
         charges=charges,
         cell=cell,
@@ -403,16 +430,17 @@ Using neighbor list (COO) format:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 238-239
+.. GENERATED FROM PYTHON SOURCE LINES 265-266
 
 Using neighbor matrix (dense) format:
 
-.. GENERATED FROM PYTHON SOURCE LINES 239-259
+.. GENERATED FROM PYTHON SOURCE LINES 266-287
 
 .. code-block:: Python
 
 
-    energies_dense, forces_dense = particle_mesh_ewald(
+    energies_dense, forces_dense = _legacy_direct_output_call(
+        particle_mesh_ewald,
         positions=positions,
         charges=charges,
         cell=cell,
@@ -442,18 +470,18 @@ Using neighbor matrix (dense) format:
       Dense format: E=-9.743761
 
     Energy difference: 0.00e+00
-    Max force difference: 1.68e-17
+    Max force difference: 3.49e-17
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 260-263
+.. GENERATED FROM PYTHON SOURCE LINES 288-291
 
 Real-Space and Reciprocal-Space Components
 ------------------------------------------
 You can compute the components separately if needed.
 
-.. GENERATED FROM PYTHON SOURCE LINES 263-280
+.. GENERATED FROM PYTHON SOURCE LINES 291-308
 
 .. code-block:: Python
 
@@ -490,11 +518,11 @@ You can compute the components separately if needed.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 281-282
+.. GENERATED FROM PYTHON SOURCE LINES 309-310
 
 Real-space component (uses same kernel as Ewald):
 
-.. GENERATED FROM PYTHON SOURCE LINES 282-295
+.. GENERATED FROM PYTHON SOURCE LINES 310-323
 
 .. code-block:: Python
 
@@ -525,11 +553,11 @@ Real-space component (uses same kernel as Ewald):
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 296-297
+.. GENERATED FROM PYTHON SOURCE LINES 324-325
 
 PME reciprocal-space component (FFT-based):
 
-.. GENERATED FROM PYTHON SOURCE LINES 297-309
+.. GENERATED FROM PYTHON SOURCE LINES 325-337
 
 .. code-block:: Python
 
@@ -559,11 +587,11 @@ PME reciprocal-space component (FFT-based):
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 310-311
+.. GENERATED FROM PYTHON SOURCE LINES 338-339
 
 Compare with full PME:
 
-.. GENERATED FROM PYTHON SOURCE LINES 311-329
+.. GENERATED FROM PYTHON SOURCE LINES 339-357
 
 .. code-block:: Python
 
@@ -595,19 +623,19 @@ Compare with full PME:
 
       Full PME: -9.743791
 
-      Component sum vs full PME difference: 0.00e+00
+      Component sum vs full PME difference: 1.78e-15
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 330-334
+.. GENERATED FROM PYTHON SOURCE LINES 358-362
 
 Charge Gradients for ML Potentials
 ----------------------------------
-PME supports computing analytical charge gradients (∂E/∂q_i), which are useful
-for training machine learning potentials that predict atomic partial charges.
+For training machine learning potentials that predict atomic partial charges,
+compute dE/dq from the energy with ``jax.grad``.
 
-.. GENERATED FROM PYTHON SOURCE LINES 334-363
+.. GENERATED FROM PYTHON SOURCE LINES 362-393
 
 .. code-block:: Python
 
@@ -616,18 +644,20 @@ for training machine learning potentials that predict atomic partial charges.
     print("CHARGE GRADIENTS")
     print("=" * 70)
 
-    # Compute PME with charge gradients
-    energies_cg, forces_cg, charge_grads = particle_mesh_ewald(
-        positions=positions,
-        charges=charges,
-        cell=cell,
-        neighbor_list=nl_comp,
-        neighbor_ptr=nptr_comp,
-        neighbor_shifts=ns_comp,
-        compute_forces=True,
-        compute_charge_gradients=True,
-        accuracy=1e-4,
-    )
+
+    def _pme_total_energy_for_charges(charge_values):
+        return particle_mesh_ewald(
+            positions=positions,
+            charges=charge_values,
+            cell=cell,
+            neighbor_list=nl_comp,
+            neighbor_ptr=nptr_comp,
+            neighbor_shifts=ns_comp,
+            accuracy=1e-4,
+        ).sum()
+
+
+    charge_grads = jax.grad(_pme_total_energy_for_charges)(charges)
 
     print(f"\n  Charge gradients shape: {charge_grads.shape}")
     print(
@@ -656,16 +686,16 @@ for training machine learning potentials that predict atomic partial charges.
       Charge gradients shape: (54,)
       Charge gradients range: [-0.3609, 0.3609]
       Charge gradients mean: 0.0000
-      Sum of charge gradients: 0.0000e+00
+      Sum of charge gradients: 1.7764e-15
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 364-365
+.. GENERATED FROM PYTHON SOURCE LINES 394-395
 
 Verify by checking gradient symmetry for Na+ and Cl- ions:
 
-.. GENERATED FROM PYTHON SOURCE LINES 365-372
+.. GENERATED FROM PYTHON SOURCE LINES 395-402
 
 .. code-block:: Python
 
@@ -691,13 +721,13 @@ Verify by checking gradient symmetry for Na+ and Cl- ions:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 373-390
+.. GENERATED FROM PYTHON SOURCE LINES 403-420
 
 JIT Compilation
 ---------------
 Demonstrate combining the neighbor list build and PME calculation into a
-single ``jax.jit``-compiled function. This allows JAX to fuse the entire
-pipeline into one optimized computation.
+single ``jax.jit``-compiled function. This compiles the array program into one
+callable while keeping launch-size metadata static.
 
 For JIT compatibility:
 
@@ -711,7 +741,7 @@ For JIT compatibility:
   ``max_shifts_per_system``) must be pre-computed outside jit using
   ``compute_naive_num_shifts``, since the launch dimensions must be concrete
 
-.. GENERATED FROM PYTHON SOURCE LINES 390-454
+.. GENERATED FROM PYTHON SOURCE LINES 420-485
 
 .. code-block:: Python
 
@@ -763,7 +793,8 @@ For JIT compatibility:
         )
 
         # Compute PME (mesh_dimensions is static, alpha is traced)
-        energies, forces = particle_mesh_ewald(
+        energies, forces = _legacy_direct_output_call(
+            particle_mesh_ewald,
             positions=positions,
             charges=charges,
             cell=cell,
@@ -795,11 +826,11 @@ For JIT compatibility:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 455-456
+.. GENERATED FROM PYTHON SOURCE LINES 486-487
 
 Run the non-jitted function:
 
-.. GENERATED FROM PYTHON SOURCE LINES 456-484
+.. GENERATED FROM PYTHON SOURCE LINES 487-515
 
 .. code-block:: Python
 
@@ -839,18 +870,18 @@ Run the non-jitted function:
 
  .. code-block:: none
 
-      Non-jitted total energy: -8.555864
-      Non-jitted max force: 0.059687
-      Non-jitted average time per call: 0.136376 seconds
+      Non-jitted total energy: -8.274256
+      Non-jitted max force: 0.051909
+      Non-jitted average time per call: 0.186817 seconds
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 485-486
+.. GENERATED FROM PYTHON SOURCE LINES 516-517
 
 Run the jitted function:
 
-.. GENERATED FROM PYTHON SOURCE LINES 486-524
+.. GENERATED FROM PYTHON SOURCE LINES 517-554
 
 .. code-block:: Python
 
@@ -886,10 +917,9 @@ Run the jitted function:
     total_time = time.time() - start_time
     print(f"  JIT average time per call: {total_time / 50:.6f} seconds")
 
-    # Compare with non-jitted result (note: may differ slightly due to different
-    # accuracy settings or neighbor list truncation from max_neighbors)
+    # Compare with the non-jitted result from the same construction path.
     energy_diff_jit = abs(jit_total_energy - total_energy)
-    print(f"  Difference vs non-jitted (different accuracy): {energy_diff_jit:.2e}")
+    print(f"  Difference vs non-jitted: {energy_diff_jit:.2e}")
 
 
 
@@ -902,15 +932,15 @@ Run the jitted function:
 
 
     Compiling and running jitted PME pipeline...
-      JIT total energy: -8.552797
-      JIT max force: 0.059145
-      JIT average time per call: 0.000816 seconds
-      Difference vs non-jitted (different accuracy): 3.07e-03
+      JIT total energy: -8.273605
+      JIT max force: 0.051960
+      JIT average time per call: 0.000389 seconds
+      Difference vs non-jitted: 6.52e-04
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 525-544
+.. GENERATED FROM PYTHON SOURCE LINES 555-574
 
 Summary
 -------
@@ -921,7 +951,7 @@ This example demonstrated:
 2. **Neighbor format flexibility** with COO (list) and dense (matrix) formats
 3. **Component access** for real-space and reciprocal-space separately
 4. **Charge gradients** (∂E/∂q_i) for ML potential training
-5. **JIT compilation** of the full neighbor list + PME pipeline
+5. **JIT compilation** of the neighbor list + PME pipeline
 
 Key JAX-specific patterns:
 
@@ -932,7 +962,7 @@ Key JAX-specific patterns:
 - For ``jax.jit``: estimate parameters outside, pass ``max_neighbors``
   and ``mesh_dimensions`` as static values
 
-.. GENERATED FROM PYTHON SOURCE LINES 544-555
+.. GENERATED FROM PYTHON SOURCE LINES 574-585
 
 .. code-block:: Python
 
@@ -945,7 +975,7 @@ Key JAX-specific patterns:
     print("  - Both COO and dense neighbor formats produce identical results")
     print("  - Real and reciprocal components can be computed separately")
     print("  - Charge gradients are available for ML potential training")
-    print("  - Use jax.jit to fuse neighbor list + PME into one compiled function")
+    print("  - Use jax.jit to compile neighbor list + PME into one callable")
     print("\nJAX PME example completed successfully!")
 
 
@@ -965,7 +995,7 @@ Key JAX-specific patterns:
       - Both COO and dense neighbor formats produce identical results
       - Real and reciprocal components can be computed separately
       - Charge gradients are available for ML potential training
-      - Use jax.jit to fuse neighbor list + PME into one compiled function
+      - Use jax.jit to compile neighbor list + PME into one callable
 
     JAX PME example completed successfully!
 
@@ -975,7 +1005,7 @@ Key JAX-specific patterns:
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 19.223 seconds)
+   **Total running time of the script:** (0 minutes 46.968 seconds)
 
 
 .. _sphx_glr_download_examples_electrostatics_04_jax_pme_example.py:

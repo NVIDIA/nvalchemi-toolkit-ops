@@ -2,17 +2,17 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../../../" >
+<html lang="en" data-content_root="../../../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>nvalchemiops.dynamics.optimizers.fire &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>nvalchemiops.dynamics.optimizers.fire &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -34,16 +34,17 @@
     <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -58,7 +59,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -125,8 +126,6 @@
   
   
     
-    
-      
     
     
     <img src="../../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -420,7 +419,7 @@ document.write(`
 <span class="c1"># See the License for the specific language governing permissions and</span>
 <span class="c1"># limitations under the License.</span>
 
-<span class="sd">&quot;&quot;&quot;</span>
+<span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">FIRE and FIRE2 Optimizer Kernels</span>
 <span class="sd">================================</span>
 
@@ -439,19 +438,19 @@ document.write(`
 
 <span class="sd">.. math::</span>
 
-<span class="sd">    \\mathbf{v}(t) \\leftarrow (1-\\alpha) \\mathbf{v}(t)</span>
-<span class="sd">                              + \\alpha \\hat{\\mathbf{F}}(t) |\\mathbf{v}(t)|</span>
+<span class="sd">    \mathbf{v}(t) \leftarrow (1-\alpha) \mathbf{v}(t)</span>
+<span class="sd">                              + \alpha \hat{\mathbf{F}}(t) |\mathbf{v}(t)|</span>
 
-<span class="sd">Adaptive parameter update based on power :math:`P = \\mathbf{F} \\cdot \\mathbf{v}`:</span>
+<span class="sd">Adaptive parameter update based on power :math:`P = \mathbf{F} \cdot \mathbf{v}`:</span>
 
-<span class="sd">If :math:`P &gt; 0` for :math:`N_{\\min}` consecutive steps:</span>
-<span class="sd">    - :math:`\\Delta t \\leftarrow \\min(\\Delta t \\cdot f_{\\text{inc}}, \\Delta t_{\\max})`</span>
-<span class="sd">    - :math:`\\alpha \\leftarrow \\alpha \\cdot f_\\alpha`</span>
+<span class="sd">If :math:`P &gt; 0` for :math:`N_{\min}` consecutive steps:</span>
+<span class="sd">    - :math:`\Delta t \leftarrow \min(\Delta t \cdot f_{\text{inc}}, \Delta t_{\max})`</span>
+<span class="sd">    - :math:`\alpha \leftarrow \alpha \cdot f_\alpha`</span>
 
-<span class="sd">If :math:`P \\leq 0`:</span>
-<span class="sd">    - :math:`\\mathbf{v} \\leftarrow 0`</span>
-<span class="sd">    - :math:`\\Delta t \\leftarrow \\max(\\Delta t \\cdot f_{\\text{dec}}, \\Delta t_{\\min})`</span>
-<span class="sd">    - :math:`\\alpha \\leftarrow \\alpha_{\\text{start}}`</span>
+<span class="sd">If :math:`P \leq 0`:</span>
+<span class="sd">    - :math:`\mathbf{v} \leftarrow 0`</span>
+<span class="sd">    - :math:`\Delta t \leftarrow \max(\Delta t \cdot f_{\text{dec}}, \Delta t_{\min})`</span>
+<span class="sd">    - :math:`\alpha \leftarrow \alpha_{\text{start}}`</span>
 
 <span class="sd">TYPICAL FIRE PARAMETERS</span>
 <span class="sd">=======================</span>
@@ -648,6 +647,46 @@ document.write(`
     <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">vf</span><span class="p">,</span> <span class="n">s_cur</span><span class="p">,</span> <span class="n">acc_vf</span><span class="p">)</span>
     <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">vv</span><span class="p">,</span> <span class="n">s_cur</span><span class="p">,</span> <span class="n">acc_vv</span><span class="p">)</span>
     <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">ff</span><span class="p">,</span> <span class="n">s_cur</span><span class="p">,</span> <span class="n">acc_ff</span><span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span><span class="p">(</span><span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_fire_revert_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">positions_last</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">velocities_last</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">uphill_flag</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Revert uphill systems / accept downhill systems (per-atom, no reduction).</span>
+
+<span class="sd">    Companion to the standalone reducer: does only the state roll-back that the</span>
+<span class="sd">    fused revert-and-reduce kernel performs, so the reduction can be a separate</span>
+<span class="sd">    (skippable) launch that reads the reverted state.</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_atoms]</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions, velocities : wp.array, shape (N,), dtype vec3*</span>
+<span class="sd">        Modified in-place for uphill systems (restored from *_last).</span>
+<span class="sd">    positions_last, velocities_last : wp.array, shape (N,), dtype vec3*</span>
+<span class="sd">        Modified in-place for downhill systems (set to current state).</span>
+<span class="sd">    batch_idx : wp.array, shape (N,), dtype int32</span>
+<span class="sd">        System index per atom.</span>
+<span class="sd">    uphill_flag : wp.array, shape (M,), dtype int32</span>
+<span class="sd">        Per-system uphill flags from the uphill check kernel.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">i</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">batch_idx</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">uphill_flag</span><span class="p">[</span><span class="n">s</span><span class="p">]</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">positions</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">positions_last</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+        <span class="n">velocities</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">velocities_last</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">positions_last</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+        <span class="n">velocities_last</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">velocities</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
 
 
 <span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span><span class="p">(</span><span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
@@ -906,7 +945,7 @@ document.write(`
     <span class="n">N</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>
     <span class="n">elems_per_thread</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>
 <span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;RLE-based reduction for FIRE diagnostics (vf, vv, ff).</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;RLE-based reduction for FIRE diagnostics (vf, vv, ff).</span>
 
 <span class="sd">    Uses run-length encoding to minimize atomic operations: accumulates</span>
 <span class="sd">    locally while batch_idx stays constant, emits atomic_add only on</span>
@@ -914,9 +953,9 @@ document.write(`
 
 <span class="sd">    This kernel implements the reduction phase for FIRE optimization,</span>
 <span class="sd">    computing three per-system inner products:</span>
-<span class="sd">    - vf[s] = sum(v·f for atoms in system s)</span>
-<span class="sd">    - vv[s] = sum(v·v for atoms in system s)</span>
-<span class="sd">    - ff[s] = sum(f·f for atoms in system s)</span>
+<span class="sd">    - vf[s] = sum(:math:`\mathbf{v} \cdot \mathbf{f}` for atoms in system s)</span>
+<span class="sd">    - vv[s] = sum(:math:`\mathbf{v} \cdot \mathbf{v}` for atoms in system s)</span>
+<span class="sd">    - ff[s] = sum(:math:`\mathbf{f} \cdot \mathbf{f}` for atoms in system s)</span>
 
 <span class="sd">    Launch Grid</span>
 <span class="sd">    -----------</span>
@@ -931,11 +970,11 @@ document.write(`
 <span class="sd">    batch_idx : wp.array, shape (N,), dtype int32</span>
 <span class="sd">        Sorted system index per atom in [0, M). **MUST BE SORTED**.</span>
 <span class="sd">    vf : wp.array, shape (M,), dtype float32/float64</span>
-<span class="sd">        OUTPUT: v·f per system. Zeroed internally before each use.</span>
+<span class="sd">        OUTPUT: :math:`\mathbf{v} \cdot \mathbf{f}` per system. Zeroed internally before each use.</span>
 <span class="sd">    vv : wp.array, shape (M,), dtype float32/float64</span>
-<span class="sd">        OUTPUT: v·v per system. Zeroed internally before each use.</span>
+<span class="sd">        OUTPUT: :math:`\mathbf{v} \cdot \mathbf{v}` per system. Zeroed internally before each use.</span>
 <span class="sd">    ff : wp.array, shape (M,), dtype float32/float64</span>
-<span class="sd">        OUTPUT: f·f per system. Zeroed internally before each use.</span>
+<span class="sd">        OUTPUT: :math:`\mathbf{f} \cdot \mathbf{f}` per system. Zeroed internally before each use.</span>
 <span class="sd">    N : int32</span>
 <span class="sd">        Total number of atoms.</span>
 <span class="sd">    elems_per_thread : int32</span>
@@ -1628,6 +1667,7 @@ document.write(`
 <span class="n">_fire_update_batch_idx_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
 <span class="n">_fire_uphill_check_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
 <span class="n">_fire_revert_and_reduce_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_fire_revert_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
 <span class="n">_fire_update_downhill_batch_idx_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
 
 <span class="c1"># RLE-based update-only kernels (no MD step)</span>
@@ -1728,6 +1768,18 @@ document.write(`
             <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>  <span class="c1"># ff</span>
             <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>  <span class="c1"># N</span>
             <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>  <span class="c1"># elems_per_thread</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+
+    <span class="n">_fire_revert_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_fire_revert_kernel</span><span class="p">,</span>
+        <span class="p">[</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>  <span class="c1"># positions</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>  <span class="c1"># velocities</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>  <span class="c1"># positions_last</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>  <span class="c1"># velocities_last</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>  <span class="c1"># batch_idx</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>  <span class="c1"># uphill_flag</span>
         <span class="p">],</span>
     <span class="p">)</span>
 
@@ -1906,6 +1958,76 @@ document.write(`
 <span class="c1"># =============================================================================</span>
 
 
+<span class="k">def</span><span class="w"> </span><span class="nf">fire_compute_vf_vv_ff</span><span class="p">(</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">forces</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">vf</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">vv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">ff</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Fill the per-system FIRE reductions over each system&#39;s atoms.</span>
+
+<span class="sd">    For every system :math:`s` this accumulates the three inner products used</span>
+<span class="sd">    by the FIRE parameter update and velocity mixing:</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        vf[s] &amp;= \sum_{i \in s} \mathbf{F}_i \cdot \mathbf{v}_i \\</span>
+<span class="sd">        vv[s] &amp;= \sum_{i \in s} \mathbf{v}_i \cdot \mathbf{v}_i \\</span>
+<span class="sd">        ff[s] &amp;= \sum_{i \in s} \mathbf{F}_i \cdot \mathbf{F}_i</span>
+
+<span class="sd">    where the power :math:`P = \sum_i \mathbf{F}_i \cdot \mathbf{v}_i` sets the</span>
+<span class="sd">    uphill/downhill decision and :math:`\sqrt{vv/ff}` sets the mixing scale.</span>
+<span class="sd">    This is the same reduction ``fire_step`` / ``fire_update`` perform</span>
+<span class="sd">    internally, exposed standalone.</span>
+
+<span class="sd">    Lets a caller compute these reductions separately, optionally post-process</span>
+<span class="sd">    them, and feed them back via ``fire_step(..., compute_reductions=False)``</span>
+<span class="sd">    (or ``fire_update``). Using this helper for the reduction gives</span>
+<span class="sd">    machine-precision parity with the values the step would otherwise compute</span>
+<span class="sd">    itself.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    velocities, forces : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d</span>
+<span class="sd">        Atomic velocities and forces.</span>
+<span class="sd">    vf, vv, ff : wp.array, shape (1,) or (num_systems,), dtype=wp.float*</span>
+<span class="sd">        Output reductions. Zeroed internally before accumulation. MODIFIED</span>
+<span class="sd">        in-place.</span>
+<span class="sd">    batch_idx : wp.array, shape (N,), dtype=wp.int32, optional</span>
+<span class="sd">        Sorted system index per atom. If None, all atoms are one system.</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device. If None, inferred from velocities.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">velocities</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="n">vf</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+    <span class="n">vv</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+    <span class="n">ff</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+
+    <span class="n">num_atoms</span> <span class="o">=</span> <span class="n">velocities</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">num_atoms</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span>
+
+    <span class="n">vec_dtype</span> <span class="o">=</span> <span class="n">velocities</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">batch_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">num_atoms</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="n">sm</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">device</span><span class="o">.</span><span class="n">sm_count</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">device</span><span class="p">,</span> <span class="s2">&quot;sm_count&quot;</span><span class="p">)</span> <span class="k">else</span> <span class="mi">1</span>
+    <span class="n">ept</span> <span class="o">=</span> <span class="n">compute_ept</span><span class="p">(</span><span class="n">num_atoms</span><span class="p">,</span> <span class="n">sm</span><span class="p">,</span> <span class="n">is_vec3</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">dim_reduce</span> <span class="o">=</span> <span class="p">(</span><span class="n">num_atoms</span> <span class="o">+</span> <span class="n">ept</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">//</span> <span class="n">ept</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+        <span class="n">_fire_reduce_batch_idx_rle_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+        <span class="n">dim</span><span class="o">=</span><span class="n">dim_reduce</span><span class="p">,</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">velocities</span><span class="p">,</span> <span class="n">forces</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">vf</span><span class="p">,</span> <span class="n">vv</span><span class="p">,</span> <span class="n">ff</span><span class="p">,</span> <span class="n">num_atoms</span><span class="p">,</span> <span class="n">ept</span><span class="p">],</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
 <div class="viewcode-block" id="fire_step">
 <a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.optimizers.fire.fire_step">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">fire_step</span><span class="p">(</span>
@@ -1940,9 +2062,35 @@ document.write(`
     <span class="n">energy_last</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">positions_last</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">velocities_last</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">compute_reductions</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Unified FIRE optimization step with MD integration.</span>
+
+<span class="sd">    Per system, reduce the power :math:`P = \sum_i \mathbf{F}_i \cdot \mathbf{v}_i`</span>
+<span class="sd">    together with :math:`\sum_i \mathbf{v}_i \cdot \mathbf{v}_i` and</span>
+<span class="sd">    :math:`\sum_i \mathbf{F}_i \cdot \mathbf{F}_i`, mix each atom&#39;s velocity</span>
+<span class="sd">    toward the force direction, take a mass-weighted MD kick, and apply the</span>
+<span class="sd">    displacement with a per-step cap:</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        \mathbf{v} &amp;\leftarrow (1-\alpha)\,\mathbf{v}</span>
+<span class="sd">            + \alpha \sqrt{\tfrac{\mathbf{v}\cdot\mathbf{v}}</span>
+<span class="sd">            {\mathbf{F}\cdot\mathbf{F}}}\,\mathbf{F} \\</span>
+<span class="sd">        \mathbf{v} &amp;\leftarrow \mathbf{v} + \Delta t\,\mathbf{F}/m \\</span>
+<span class="sd">        \Delta\mathbf{r} &amp;= \Delta t\,\mathbf{v},\quad</span>
+<span class="sd">            \mathbf{r} \leftarrow \mathbf{r}</span>
+<span class="sd">            + \min\!\left(1, \tfrac{\text{maxstep}}{\lVert\Delta\mathbf{r}\rVert}\right)</span>
+<span class="sd">            \Delta\mathbf{r}</span>
+
+<span class="sd">    When :math:`P &gt; 0` the timestep grows (after ``n_min`` consecutive positive</span>
+<span class="sd">    steps) and :math:`\alpha` decays; when :math:`P \le 0` (uphill) the velocity</span>
+<span class="sd">    is zeroed, :math:`\Delta t` shrinks, and :math:`\alpha` resets to</span>
+<span class="sd">    ``alpha_start``. Mixing uses the ``fire_velocity_mixing`` form</span>
+<span class="sd">    :math:`\alpha\sqrt{vv/ff}\,\mathbf{F}` rather than the textbook</span>
+<span class="sd">    :math:`\alpha\lVert\mathbf{v}\rVert\hat{\mathbf{F}}`; the two coincide only</span>
+<span class="sd">    when the pre-mix speed already matches the force-scaled velocity.</span>
 
 <span class="sd">    This function dispatches to the appropriate kernel based on:</span>
 <span class="sd">    - Batching mode: single system, batch_idx, or atom_ptr</span>
@@ -1998,6 +2146,15 @@ document.write(`
 <span class="sd">        Last accepted positions (for downhill rollback).</span>
 <span class="sd">    velocities_last : wp.array, shape (N,) or (N_total,), dtype=wp.vec3*, optional</span>
 <span class="sd">        Last accepted velocities (for downhill rollback).</span>
+<span class="sd">    compute_reductions : bool, optional</span>
+<span class="sd">        If True (default), recompute the per-system reductions vf/vv/ff</span>
+<span class="sd">        (:math:`\sum \mathbf{F} \cdot \mathbf{v}` / :math:`\sum \mathbf{v} \cdot \mathbf{v}` /</span>
+<span class="sd">        :math:`\sum \mathbf{F} \cdot \mathbf{F}`) internally from velocities/forces. If</span>
+<span class="sd">        False, use the caller-supplied values already in vf/vv/ff instead of</span>
+<span class="sd">        recomputing them (they are not zeroed); the state roll-back still runs,</span>
+<span class="sd">        so the supplied values must reflect the post-roll-back velocities. Only</span>
+<span class="sd">        supported for single/batch_idx mode. See ``fire_compute_vf_vv_ff`` for</span>
+<span class="sd">        the matching reduction helper.</span>
 
 <span class="sd">    Examples</span>
 <span class="sd">    --------</span>
@@ -2033,16 +2190,17 @@ document.write(`
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
 
-    <span class="k">if</span> <span class="n">vf</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">vf</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
-        <span class="n">vv</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
-        <span class="n">ff</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
-
     <span class="n">num_atoms</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
     <span class="n">vec_dtype</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span>
 
     <span class="c1"># Determine batching mode</span>
     <span class="n">exec_mode</span> <span class="o">=</span> <span class="n">resolve_execution_mode</span><span class="p">(</span><span class="n">batch_idx</span><span class="p">,</span> <span class="n">atom_ptr</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">compute_reductions</span> <span class="ow">and</span> <span class="n">exec_mode</span> <span class="ow">is</span> <span class="n">ExecutionMode</span><span class="o">.</span><span class="n">ATOM_PTR</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s2">&quot;compute_reductions=False is only supported for single/batch_idx &quot;</span>
+            <span class="s2">&quot;mode; the atom_ptr kernels compute reductions inline.&quot;</span>
+        <span class="p">)</span>
 
     <span class="c1"># Determine if downhill check is enabled</span>
     <span class="n">downhill_arrays</span> <span class="o">=</span> <span class="p">[</span><span class="n">energy</span><span class="p">,</span> <span class="n">energy_last</span><span class="p">,</span> <span class="n">positions_last</span><span class="p">,</span> <span class="n">velocities_last</span><span class="p">]</span>
@@ -2052,6 +2210,15 @@ document.write(`
             <span class="s2">&quot;For downhill check, must provide ALL of: &quot;</span>
             <span class="s2">&quot;energy, energy_last, positions_last, velocities_last&quot;</span>
         <span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">num_atoms</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="c1"># No atoms contribute; zero the reductions we own (skip when the caller</span>
+        <span class="c1"># supplies them via compute_reductions=False).</span>
+        <span class="k">if</span> <span class="n">compute_reductions</span> <span class="ow">and</span> <span class="n">vf</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">vf</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+            <span class="n">vv</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+            <span class="n">ff</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+        <span class="k">return</span>
 
     <span class="c1"># Dispatch to appropriate kernel</span>
     <span class="k">if</span> <span class="n">exec_mode</span> <span class="ow">is</span> <span class="n">ExecutionMode</span><span class="o">.</span><span class="n">ATOM_PTR</span><span class="p">:</span>
@@ -2125,26 +2292,41 @@ document.write(`
                 <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
             <span class="p">)</span>
 
-            <span class="c1"># Kernel 2: Revert if uphill + RLE reduction</span>
+            <span class="c1"># Kernel 2: Revert if uphill (per-atom roll-back, always runs)</span>
             <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
-                <span class="n">_fire_revert_and_reduce_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
-                <span class="n">dim</span><span class="o">=</span><span class="n">dim_reduce</span><span class="p">,</span>
+                <span class="n">_fire_revert_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+                <span class="n">dim</span><span class="o">=</span><span class="n">num_atoms</span><span class="p">,</span>
                 <span class="n">inputs</span><span class="o">=</span><span class="p">[</span>
                     <span class="n">positions</span><span class="p">,</span>
                     <span class="n">velocities</span><span class="p">,</span>
-                    <span class="n">forces</span><span class="p">,</span>
                     <span class="n">positions_last</span><span class="p">,</span>
                     <span class="n">velocities_last</span><span class="p">,</span>
                     <span class="n">batch_idx</span><span class="p">,</span>
                     <span class="n">uphill_flag</span><span class="p">,</span>
-                    <span class="n">vf</span><span class="p">,</span>
-                    <span class="n">vv</span><span class="p">,</span>
-                    <span class="n">ff</span><span class="p">,</span>
-                    <span class="n">num_atoms</span><span class="p">,</span>
-                    <span class="n">ept</span><span class="p">,</span>
                 <span class="p">],</span>
                 <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
             <span class="p">)</span>
+
+            <span class="c1"># Kernel 2b: RLE reduction over the post-revert state (skippable)</span>
+            <span class="k">if</span> <span class="n">compute_reductions</span><span class="p">:</span>
+                <span class="n">vf</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+                <span class="n">vv</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+                <span class="n">ff</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+                <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+                    <span class="n">_fire_reduce_batch_idx_rle_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+                    <span class="n">dim</span><span class="o">=</span><span class="n">dim_reduce</span><span class="p">,</span>
+                    <span class="n">inputs</span><span class="o">=</span><span class="p">[</span>
+                        <span class="n">velocities</span><span class="p">,</span>
+                        <span class="n">forces</span><span class="p">,</span>
+                        <span class="n">batch_idx</span><span class="p">,</span>
+                        <span class="n">vf</span><span class="p">,</span>
+                        <span class="n">vv</span><span class="p">,</span>
+                        <span class="n">ff</span><span class="p">,</span>
+                        <span class="n">num_atoms</span><span class="p">,</span>
+                        <span class="n">ept</span><span class="p">,</span>
+                    <span class="p">],</span>
+                    <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+                <span class="p">)</span>
 
             <span class="c1"># Kernel 3: Parameter update + velocity mixing</span>
             <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
@@ -2175,22 +2357,26 @@ document.write(`
                 <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
             <span class="p">)</span>
         <span class="k">else</span><span class="p">:</span>
-            <span class="c1"># Kernel 1: RLE-based reduction</span>
-            <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
-                <span class="n">_fire_reduce_batch_idx_rle_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
-                <span class="n">dim</span><span class="o">=</span><span class="n">dim_reduce</span><span class="p">,</span>
-                <span class="n">inputs</span><span class="o">=</span><span class="p">[</span>
-                    <span class="n">velocities</span><span class="p">,</span>
-                    <span class="n">forces</span><span class="p">,</span>
-                    <span class="n">batch_idx</span><span class="p">,</span>
-                    <span class="n">vf</span><span class="p">,</span>
-                    <span class="n">vv</span><span class="p">,</span>
-                    <span class="n">ff</span><span class="p">,</span>
-                    <span class="n">num_atoms</span><span class="p">,</span>
-                    <span class="n">ept</span><span class="p">,</span>
-                <span class="p">],</span>
-                <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
-            <span class="p">)</span>
+            <span class="c1"># Kernel 1: RLE-based reduction (skippable)</span>
+            <span class="k">if</span> <span class="n">compute_reductions</span><span class="p">:</span>
+                <span class="n">vf</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+                <span class="n">vv</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+                <span class="n">ff</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+                <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+                    <span class="n">_fire_reduce_batch_idx_rle_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+                    <span class="n">dim</span><span class="o">=</span><span class="n">dim_reduce</span><span class="p">,</span>
+                    <span class="n">inputs</span><span class="o">=</span><span class="p">[</span>
+                        <span class="n">velocities</span><span class="p">,</span>
+                        <span class="n">forces</span><span class="p">,</span>
+                        <span class="n">batch_idx</span><span class="p">,</span>
+                        <span class="n">vf</span><span class="p">,</span>
+                        <span class="n">vv</span><span class="p">,</span>
+                        <span class="n">ff</span><span class="p">,</span>
+                        <span class="n">num_atoms</span><span class="p">,</span>
+                        <span class="n">ept</span><span class="p">,</span>
+                    <span class="p">],</span>
+                    <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+                <span class="p">)</span>
 
             <span class="c1"># Kernel 2: Parameter update + velocity mixing + position update</span>
             <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
@@ -2252,9 +2438,28 @@ document.write(`
     <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">positions_last</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">velocities_last</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">compute_reductions</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    FIRE parameter update and velocity mixing WITHOUT MD integration.</span>
+
+<span class="sd">    Reduces the per-system power :math:`P = \sum_i \mathbf{F}_i \cdot \mathbf{v}_i`</span>
+<span class="sd">    (with :math:`\sum_i \mathbf{v}_i \cdot \mathbf{v}_i` and</span>
+<span class="sd">    :math:`\sum_i \mathbf{F}_i \cdot \mathbf{F}_i`), advances :math:`\Delta t`,</span>
+<span class="sd">    :math:`\alpha`, and the positive-step counter by the FIRE rules, and mixes</span>
+<span class="sd">    each velocity toward the force direction:</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        \mathbf{v} \leftarrow (1-\alpha)\,\mathbf{v}</span>
+<span class="sd">            + \alpha \sqrt{\tfrac{\mathbf{v}\cdot\mathbf{v}}</span>
+<span class="sd">            {\mathbf{F}\cdot\mathbf{F}}}\,\mathbf{F}</span>
+
+<span class="sd">    Unlike :func:`fire_step`, it stops here: no MD kick</span>
+<span class="sd">    (:math:`\mathbf{v} \mathrel{+}= \Delta t\,\mathbf{F}/m`), no displacement</span>
+<span class="sd">    (:math:`\Delta\mathbf{r} = \Delta t\,\mathbf{v}`), and no ``maxstep`` clamp.</span>
+<span class="sd">    Uphill systems (:math:`P \le 0`) still have their velocity zeroed and</span>
+<span class="sd">    :math:`\alpha`/:math:`\Delta t` reset.</span>
 
 <span class="sd">    Use this for variable-cell optimization where you want to:</span>
 <span class="sd">    1. Pack atomic + cell DOFs into extended arrays</span>
@@ -2308,6 +2513,11 @@ document.write(`
 <span class="sd">        Last accepted positions (for downhill rollback).</span>
 <span class="sd">    velocities_last : wp.array, shape (N,) or (N_total,), dtype=wp.vec3*, optional</span>
 <span class="sd">        Last accepted velocities (for downhill rollback).</span>
+<span class="sd">    compute_reductions : bool, optional</span>
+<span class="sd">        If True (default), recompute vf/vv/ff internally. If False, use the</span>
+<span class="sd">        caller-supplied values already in vf/vv/ff instead of recomputing them</span>
+<span class="sd">        (they are not zeroed); any state roll-back still runs. Only supported</span>
+<span class="sd">        for single/batch_idx mode. See ``fire_step`` and ``fire_compute_vf_vv_ff``.</span>
 
 <span class="sd">    Examples</span>
 <span class="sd">    --------</span>
@@ -2333,15 +2543,16 @@ document.write(`
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">device</span> <span class="o">=</span> <span class="n">velocities</span><span class="o">.</span><span class="n">device</span>
 
-    <span class="k">if</span> <span class="n">vf</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">vf</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
-        <span class="n">vv</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
-        <span class="n">ff</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
-
     <span class="n">num_atoms</span> <span class="o">=</span> <span class="n">velocities</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
 
     <span class="c1"># Determine batching mode</span>
     <span class="n">exec_mode</span> <span class="o">=</span> <span class="n">resolve_execution_mode</span><span class="p">(</span><span class="n">batch_idx</span><span class="p">,</span> <span class="n">atom_ptr</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">compute_reductions</span> <span class="ow">and</span> <span class="n">exec_mode</span> <span class="ow">is</span> <span class="n">ExecutionMode</span><span class="o">.</span><span class="n">ATOM_PTR</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s2">&quot;compute_reductions=False is only supported for single/batch_idx &quot;</span>
+            <span class="s2">&quot;mode; the atom_ptr kernels compute reductions inline.&quot;</span>
+        <span class="p">)</span>
 
     <span class="c1"># Determine if downhill check is enabled</span>
     <span class="n">downhill_arrays</span> <span class="o">=</span> <span class="p">[</span><span class="n">energy</span><span class="p">,</span> <span class="n">energy_last</span><span class="p">,</span> <span class="n">positions</span><span class="p">,</span> <span class="n">positions_last</span><span class="p">,</span> <span class="n">velocities_last</span><span class="p">]</span>
@@ -2351,6 +2562,15 @@ document.write(`
             <span class="s2">&quot;For downhill check, must provide ALL of: &quot;</span>
             <span class="s2">&quot;energy, energy_last, positions, positions_last, velocities_last&quot;</span>
         <span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">num_atoms</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="c1"># No atoms contribute; zero the reductions we own (skip when the caller</span>
+        <span class="c1"># supplies them via compute_reductions=False).</span>
+        <span class="k">if</span> <span class="n">compute_reductions</span> <span class="ow">and</span> <span class="n">vf</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">vf</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+            <span class="n">vv</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+            <span class="n">ff</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+        <span class="k">return</span>
 
     <span class="n">vec_dtype</span> <span class="o">=</span> <span class="n">velocities</span><span class="o">.</span><span class="n">dtype</span>
 
@@ -2424,26 +2644,41 @@ document.write(`
                 <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
             <span class="p">)</span>
 
-            <span class="c1"># Kernel 2: Revert if uphill + RLE reduction</span>
+            <span class="c1"># Kernel 2: Revert if uphill (per-atom roll-back, always runs)</span>
             <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
-                <span class="n">_fire_revert_and_reduce_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
-                <span class="n">dim</span><span class="o">=</span><span class="n">dim_reduce</span><span class="p">,</span>
+                <span class="n">_fire_revert_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+                <span class="n">dim</span><span class="o">=</span><span class="n">num_atoms</span><span class="p">,</span>
                 <span class="n">inputs</span><span class="o">=</span><span class="p">[</span>
                     <span class="n">positions</span><span class="p">,</span>
                     <span class="n">velocities</span><span class="p">,</span>
-                    <span class="n">forces</span><span class="p">,</span>
                     <span class="n">positions_last</span><span class="p">,</span>
                     <span class="n">velocities_last</span><span class="p">,</span>
                     <span class="n">batch_idx</span><span class="p">,</span>
                     <span class="n">uphill_flag</span><span class="p">,</span>
-                    <span class="n">vf</span><span class="p">,</span>
-                    <span class="n">vv</span><span class="p">,</span>
-                    <span class="n">ff</span><span class="p">,</span>
-                    <span class="n">num_atoms</span><span class="p">,</span>
-                    <span class="n">ept</span><span class="p">,</span>
                 <span class="p">],</span>
                 <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
             <span class="p">)</span>
+
+            <span class="c1"># Kernel 2b: RLE reduction over the post-revert state (skippable)</span>
+            <span class="k">if</span> <span class="n">compute_reductions</span><span class="p">:</span>
+                <span class="n">vf</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+                <span class="n">vv</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+                <span class="n">ff</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+                <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+                    <span class="n">_fire_reduce_batch_idx_rle_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+                    <span class="n">dim</span><span class="o">=</span><span class="n">dim_reduce</span><span class="p">,</span>
+                    <span class="n">inputs</span><span class="o">=</span><span class="p">[</span>
+                        <span class="n">velocities</span><span class="p">,</span>
+                        <span class="n">forces</span><span class="p">,</span>
+                        <span class="n">batch_idx</span><span class="p">,</span>
+                        <span class="n">vf</span><span class="p">,</span>
+                        <span class="n">vv</span><span class="p">,</span>
+                        <span class="n">ff</span><span class="p">,</span>
+                        <span class="n">num_atoms</span><span class="p">,</span>
+                        <span class="n">ept</span><span class="p">,</span>
+                    <span class="p">],</span>
+                    <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+                <span class="p">)</span>
 
             <span class="c1"># Kernel 3: Parameter update + velocity mixing (no MD)</span>
             <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
@@ -2471,22 +2706,26 @@ document.write(`
                 <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
             <span class="p">)</span>
         <span class="k">else</span><span class="p">:</span>
-            <span class="c1"># Kernel 1: RLE-based reduction</span>
-            <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
-                <span class="n">_fire_reduce_batch_idx_rle_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
-                <span class="n">dim</span><span class="o">=</span><span class="n">dim_reduce</span><span class="p">,</span>
-                <span class="n">inputs</span><span class="o">=</span><span class="p">[</span>
-                    <span class="n">velocities</span><span class="p">,</span>
-                    <span class="n">forces</span><span class="p">,</span>
-                    <span class="n">batch_idx</span><span class="p">,</span>
-                    <span class="n">vf</span><span class="p">,</span>
-                    <span class="n">vv</span><span class="p">,</span>
-                    <span class="n">ff</span><span class="p">,</span>
-                    <span class="n">num_atoms</span><span class="p">,</span>
-                    <span class="n">ept</span><span class="p">,</span>
-                <span class="p">],</span>
-                <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
-            <span class="p">)</span>
+            <span class="c1"># Kernel 1: RLE-based reduction (skippable)</span>
+            <span class="k">if</span> <span class="n">compute_reductions</span><span class="p">:</span>
+                <span class="n">vf</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+                <span class="n">vv</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+                <span class="n">ff</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+                <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+                    <span class="n">_fire_reduce_batch_idx_rle_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+                    <span class="n">dim</span><span class="o">=</span><span class="n">dim_reduce</span><span class="p">,</span>
+                    <span class="n">inputs</span><span class="o">=</span><span class="p">[</span>
+                        <span class="n">velocities</span><span class="p">,</span>
+                        <span class="n">forces</span><span class="p">,</span>
+                        <span class="n">batch_idx</span><span class="p">,</span>
+                        <span class="n">vf</span><span class="p">,</span>
+                        <span class="n">vv</span><span class="p">,</span>
+                        <span class="n">ff</span><span class="p">,</span>
+                        <span class="n">num_atoms</span><span class="p">,</span>
+                        <span class="n">ept</span><span class="p">,</span>
+                    <span class="p">],</span>
+                    <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+                <span class="p">)</span>
 
             <span class="c1"># Kernel 2: Parameter update + velocity mixing (no MD)</span>
             <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
@@ -2543,9 +2782,22 @@ document.write(`
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -2565,7 +2817,7 @@ document.write(`
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

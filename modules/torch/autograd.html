@@ -2,18 +2,18 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../" >
+<html lang="en" data-content_root="../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>nvalchemiops.torch.autograd: Autograd Utilities &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>nvalchemiops.torch.autograd: Autograd Utilities &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -35,16 +35,17 @@
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -61,7 +62,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -128,8 +129,6 @@
   
   
     
-    
-      
     
     
     <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -364,6 +363,7 @@ document.write(`
   <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
   <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.segment_ops</span></code>: Segment Operations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.electrostatics</span></code>: Electrostatics</a></li>
 <li class="toctree-l1"><a class="reference internal" href="dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch</span></code>: Dynamics Optimizers</a></li>
@@ -371,11 +371,13 @@ document.write(`
 </ul>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../jax/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../jax/segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.segment_ops</span></code>: Segment Operations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../jax/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../jax/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.electrostatics</span></code>: Electrostatics</a></li>
 </ul>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../warp/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../warp/segment_ops.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.segment_ops</span></code>: Segment Operations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../warp/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../warp/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.electrostatics</span></code>: Electrostatic Interactions (Warp)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../warp/dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.dynamics</span></code>: Molecular Dynamics</a></li>
@@ -463,15 +465,9 @@ from typing import Any, Optional, Sequence, Union</p>
 <dd><p>Decorator to create a Warp-backed PyTorch op with compile-safe autograd.</p>
 <p>This decorator eliminates boilerplate by automatically generating:
 - A <code class="docutils literal notranslate"><span class="pre">torch.library.custom_op</span></code> forward registered with fake/meta support
-- A hidden token input for runtime state handoff while the public wrapper</p>
-<blockquote>
-<div><p>still exposes only the user-visible signature</p>
-</div></blockquote>
-<ul class="simple">
-<li><p>A traceable <code class="docutils literal notranslate"><span class="pre">register_autograd</span></code> wrapper that replays Warp tapes through
-an opaque backward custom op</p></li>
-<li><p>Stream binding so Warp launches execute on PyTorch’s current CUDA stream</p></li>
-</ul>
+- A hidden token input for runtime state handoff while the public wrapper still exposes only the user-visible signature
+- A traceable <code class="docutils literal notranslate"><span class="pre">register_autograd</span></code> wrapper that replays Warp tapes through an opaque backward custom op
+- Stream binding so Warp launches execute on PyTorch’s current CUDA stream</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
@@ -526,7 +522,7 @@ explicit Warp forces with autograd-based charge-gradient forces.</p>
 
 <dl class="py class">
 <dt class="sig sig-object py" id="nvalchemiops.torch.autograd.OutputSpec">
-<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.autograd.</span></span><span class="sig-name descname"><span class="pre">OutputSpec</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">shape</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">torch_dtype</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/torch/autograd.html#OutputSpec"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.torch.autograd.OutputSpec" title="Link to this definition">#</a></dt>
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.autograd.</span></span><span class="sig-name descname"><span class="pre">OutputSpec</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">shape</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">torch_dtype</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/torch/autograd.html#OutputSpec"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.torch.autograd.OutputSpec" title="Link to this definition">#</a></dt>
 <dd><p>Specification for a custom op output.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
@@ -536,7 +532,7 @@ explicit Warp forces with autograd-based charge-gradient forces.</p>
 <li><p><strong>shape</strong> (<em>Callable</em><em> or </em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a>) – Either a tuple of ints, or a callable that takes the input tensors
 and returns the shape. For callable, signature should match the
 custom op’s input signature.</p></li>
-<li><p><strong>torch_dtype</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.11)"><em>torch.dtype</em></a><em>, </em><em>optional</em>) – PyTorch dtype override. If omitted (<code class="docutils literal notranslate"><span class="pre">None</span></code>), the dtype is inferred
+<li><p><strong>torch_dtype</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.13)"><em>torch.dtype</em></a><em>, </em><em>optional</em>) – PyTorch dtype override. If omitted (<code class="docutils literal notranslate"><span class="pre">None</span></code>), the dtype is inferred
 from the resolved Warp dtype via <code class="docutils literal notranslate"><span class="pre">_wp_dtype_to_torch</span></code>.</p></li>
 </ul>
 </dd>
@@ -556,9 +552,16 @@ from the resolved Warp dtype via <code class="docutils literal notranslate"><spa
 <dt class="sig sig-object py" id="nvalchemiops.torch.autograd.warp_stream_from_torch">
 <span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.autograd.</span></span><span class="sig-name descname"><span class="pre">warp_stream_from_torch</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">values</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/torch/autograd.html#warp_stream_from_torch"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.torch.autograd.warp_stream_from_torch" title="Link to this definition">#</a></dt>
 <dd><p>Bind Warp launches to PyTorch’s current CUDA stream when tensors are CUDA.</p>
+<p>Finds the first CUDA tensor in <code class="docutils literal notranslate"><span class="pre">values</span></code> and switches Warp to its stream
+for the duration of the context.  Falls back to a no-op context when no
+CUDA tensor is found (e.g., CPU-only runs).</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>values</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>)</p>
+<dd class="field-odd"><p><strong>*values</strong> (<em>Any</em>) – Arbitrary arguments; only <code class="docutils literal notranslate"><span class="pre">torch.Tensor</span></code> instances on CUDA are
+inspected for stream information.</p>
+</dd>
+<dt class="field-even">Yields<span class="colon">:</span></dt>
+<dd class="field-even"><p><em>torch.cuda.Stream or None</em> – The active PyTorch CUDA stream, or <code class="docutils literal notranslate"><span class="pre">None</span></code> when running on CPU.</p>
 </dd>
 </dl>
 </dd></dl>
@@ -570,13 +573,14 @@ from the resolved Warp dtype via <code class="docutils literal notranslate"><spa
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>tensor</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a>) – Input PyTorch tensor</p></li>
-<li><p><strong>warp_dtype</strong> (<em>wp.dtype</em>) – Warp data type for the array</p></li>
-<li><p><strong>requires_grad</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em> | </em><em>None</em><em>, </em><em>optional</em>) – Override gradient tracking. If None, inherits from tensor.requires_grad</p></li>
+<li><p><strong>tensor</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a>) – Input PyTorch tensor.</p></li>
+<li><p><strong>warp_dtype</strong> (<em>wp.dtype</em>) – Warp data type for the resulting array (e.g., <code class="docutils literal notranslate"><span class="pre">wp.vec3f</span></code>, <code class="docutils literal notranslate"><span class="pre">wp.float64</span></code>).</p></li>
+<li><p><strong>requires_grad</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>optional</em>) – Override gradient tracking. If <code class="docutils literal notranslate"><span class="pre">None</span></code>, inherits from <code class="docutils literal notranslate"><span class="pre">tensor.requires_grad</span></code>.</p></li>
 </ul>
 </dd>
 <dt class="field-even">Returns<span class="colon">:</span></dt>
-<dd class="field-even"><p>Warp array with gradient tracking if needed</p>
+<dd class="field-even"><p>Warp array backed by the same storage as <code class="docutils literal notranslate"><span class="pre">tensor</span></code>, with gradient
+tracking enabled when <code class="docutils literal notranslate"><span class="pre">requires_grad</span></code> is <code class="docutils literal notranslate"><span class="pre">True</span></code>.</p>
 </dd>
 <dt class="field-odd">Return type<span class="colon">:</span></dt>
 <dd class="field-odd"><p>wp.array</p>
@@ -588,14 +592,14 @@ from the resolved Warp dtype via <code class="docutils literal notranslate"><spa
 <dt class="sig sig-object py" id="nvalchemiops.torch.autograd.needs_grad">
 <span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.autograd.</span></span><span class="sig-name descname"><span class="pre">needs_grad</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">tensors</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/torch/autograd.html#needs_grad"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.torch.autograd.needs_grad" title="Link to this definition">#</a></dt>
 <dd><p>Check if any of the provided tensors requires gradients.</p>
-<p>This is useful for conditionally enabling Warp gradient tracking
-and tape recording only when needed for backpropagation.</p>
+<p>Useful for conditionally enabling Warp gradient tracking and tape recording
+only when needed for backpropagation.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>*tensors</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a>) – Variable number of PyTorch tensors to check</p>
+<dd class="field-odd"><p><strong>*tensors</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a>) – Tensors to inspect; non-tensor values in <code class="docutils literal notranslate"><span class="pre">tensors</span></code> are silently skipped.</p>
 </dd>
 <dt class="field-even">Returns<span class="colon">:</span></dt>
-<dd class="field-even"><p>True if any tensor requires gradients, False otherwise</p>
+<dd class="field-even"><p><code class="docutils literal notranslate"><span class="pre">True</span></code> if at least one tensor has <code class="docutils literal notranslate"><span class="pre">requires_grad=True</span></code>, <code class="docutils literal notranslate"><span class="pre">False</span></code> otherwise.</p>
 </dd>
 <dt class="field-odd">Return type<span class="colon">:</span></dt>
 <dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)">bool</a></p>
@@ -617,16 +621,17 @@ and tape recording only when needed for backpropagation.</p>
 <h2>Autograd Context Manager<a class="headerlink" href="#autograd-context-manager" title="Link to this heading">#</a></h2>
 <dl class="py class">
 <dt class="sig sig-object py" id="nvalchemiops.torch.autograd.WarpAutogradContextManager">
-<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.autograd.</span></span><span class="sig-name descname"><span class="pre">WarpAutogradContextManager</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">enable</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/torch/autograd.html#WarpAutogradContextManager"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.torch.autograd.WarpAutogradContextManager" title="Link to this definition">#</a></dt>
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.autograd.</span></span><span class="sig-name descname"><span class="pre">WarpAutogradContextManager</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">enable</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/torch/autograd.html#WarpAutogradContextManager"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.torch.autograd.WarpAutogradContextManager" title="Link to this definition">#</a></dt>
 <dd><p>Conditionally create a Warp tape as a context manager.</p>
-<p>Returns a Warp Tape if enable=True for gradient recording,
-otherwise returns a nullcontext (no-op) for zero overhead.</p>
+<p>Yields a <code class="xref py py-class docutils literal notranslate"><span class="pre">wp.Tape</span></code> when <code class="docutils literal notranslate"><span class="pre">enable=True</span></code> so Warp kernel launches are
+recorded for differentiation.  When <code class="docutils literal notranslate"><span class="pre">enable=False</span></code> a no-op context is used,
+incurring zero overhead.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>enable</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a>) – Whether to create a tape for gradient recording</p>
+<dd class="field-odd"><p><strong>enable</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a>) – Whether to create a tape for gradient recording.</p>
 </dd>
 <dt class="field-even">Yields<span class="colon">:</span></dt>
-<dd class="field-even"><p><em>wp.Tape or nullcontext</em> – Active tape for recording if enabled, otherwise nullcontext</p>
+<dd class="field-even"><p><em>wp.Tape or None</em> – Active tape for recording when <code class="docutils literal notranslate"><span class="pre">enable=True</span></code>; <code class="docutils literal notranslate"><span class="pre">None</span></code> otherwise.</p>
 </dd>
 </dl>
 <p class="rubric">Examples</p>
@@ -644,14 +649,17 @@ otherwise returns a nullcontext (no-op) for zero overhead.</p>
 <dt class="sig sig-object py" id="nvalchemiops.torch.autograd.attach_for_backward">
 <span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.autograd.</span></span><span class="sig-name descname"><span class="pre">attach_for_backward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">output</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tape</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">warp_arrays</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/torch/autograd.html#attach_for_backward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.torch.autograd.attach_for_backward" title="Link to this definition">#</a></dt>
 <dd><p>Attach Warp tape and arrays to a PyTorch tensor for later retrieval in backward.</p>
-<p>This stores the tape and warp arrays as attributes on the output tensor,
-allowing them to be retrieved in the backward pass of a custom operator.</p>
+<p>Stores <code class="docutils literal notranslate"><span class="pre">tape</span></code> and each entry in <code class="docutils literal notranslate"><span class="pre">warp_arrays</span></code> as attributes on <code class="docutils literal notranslate"><span class="pre">output</span></code>,
+so that <a class="reference internal" href="#nvalchemiops.torch.autograd.retrieve_for_backward" title="nvalchemiops.torch.autograd.retrieve_for_backward"><code class="xref py py-func docutils literal notranslate"><span class="pre">retrieve_for_backward()</span></code></a> can recover them inside a custom-op
+backward pass.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>output</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a>) – PyTorch tensor to attach attributes to (usually the output of forward)</p></li>
-<li><p><strong>tape</strong> (<em>wp.Tape</em><em>, </em><em>optional</em>) – Warp tape containing recorded operations for backward pass</p></li>
-<li><p><strong>**warp_arrays</strong> (<em>wp.array</em>) – Named warp arrays to store (e.g., positions=wp_positions, charges=wp_charges)</p></li>
+<li><p><strong>output</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a>) – PyTorch tensor to attach attributes to (typically the first output of the
+forward function).</p></li>
+<li><p><strong>tape</strong> (<em>wp.Tape</em><em>, </em><em>optional</em>) – Warp tape containing recorded operations for the backward pass.</p></li>
+<li><p><strong>**warp_arrays</strong> (<em>wp.array</em>) – Named Warp arrays to store (e.g., <code class="docutils literal notranslate"><span class="pre">positions=wp_positions</span></code>,
+<code class="docutils literal notranslate"><span class="pre">charges=wp_charges</span></code>).</p></li>
 </ul>
 </dd>
 <dt class="field-even">Return type<span class="colon">:</span></dt>
@@ -677,22 +685,26 @@ allowing them to be retrieved in the backward pass of a custom operator.</p>
 <dt class="sig sig-object py" id="nvalchemiops.torch.autograd.retrieve_for_backward">
 <span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.autograd.</span></span><span class="sig-name descname"><span class="pre">retrieve_for_backward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">output</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">array_names</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/torch/autograd.html#retrieve_for_backward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.torch.autograd.retrieve_for_backward" title="Link to this definition">#</a></dt>
 <dd><p>Retrieve Warp tape and arrays from a PyTorch tensor in backward pass.</p>
+<p>Companion to <a class="reference internal" href="#nvalchemiops.torch.autograd.attach_for_backward" title="nvalchemiops.torch.autograd.attach_for_backward"><code class="xref py py-func docutils literal notranslate"><span class="pre">attach_for_backward()</span></code></a>.  Arrays not present on <code class="docutils literal notranslate"><span class="pre">output</span></code>
+are silently omitted from the returned dict so optional attachments do not
+need special handling.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>output</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a>) – PyTorch tensor that has attached Warp objects (from attach_for_backward)</p></li>
-<li><p><strong>*array_names</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>) – Names of warp arrays to retrieve (without ‘_wp_’ prefix)</p></li>
+<li><p><strong>output</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a>) – PyTorch tensor that has attached Warp objects via
+<a class="reference internal" href="#nvalchemiops.torch.autograd.attach_for_backward" title="nvalchemiops.torch.autograd.attach_for_backward"><code class="xref py py-func docutils literal notranslate"><span class="pre">attach_for_backward()</span></code></a>.</p></li>
+<li><p><strong>*array_names</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>) – Names of Warp arrays to retrieve (without the <code class="docutils literal notranslate"><span class="pre">_wp_</span></code> attribute prefix).</p></li>
 </ul>
 </dd>
 <dt class="field-even">Returns<span class="colon">:</span></dt>
 <dd class="field-even"><p><ul class="simple">
-<li><p><strong>tape</strong> (<em>wp.Tape</em>) – The stored Warp tape</p></li>
-<li><p><strong>arrays</strong> (<em>dict[str, wp.array]</em>) – Dictionary mapping names to warp arrays</p></li>
+<li><p><em>wp.Tape</em> – The stored Warp tape attached to <code class="docutils literal notranslate"><span class="pre">output</span></code>.</p></li>
+<li><p><em>dict[str, wp.array]</em> – Mapping from each requested name to its stored Warp array.</p></li>
 </ul>
 </p>
 </dd>
 <dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<em>Tape</em>, <a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#dict" title="(in Python v3.14)">dict</a>[<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)">str</a>, <em>array</em>]]</p>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.Tape.html#warp.Tape" title="(in Warp v1.16.0.dev0)"><em>Tape</em></a>, <a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#dict" title="(in Python v3.14)">dict</a>[<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)">str</a>, <a class="reference external" href="https://nvidia.github.io/warp/latest/api_reference/_generated/warp.array.html#warp.array" title="(in Warp v1.16.0.dev0)"><em>array</em></a>]]</p>
 </dd>
 </dl>
 <p class="rubric">Examples</p>
@@ -709,24 +721,27 @@ allowing them to be retrieved in the backward pass of a custom operator.</p>
 <dl class="py function">
 <dt class="sig sig-object py" id="nvalchemiops.torch.autograd.extract_gradients">
 <span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.autograd.</span></span><span class="sig-name descname"><span class="pre">extract_gradients</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">warp_arrays</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">input_names</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/torch/autograd.html#extract_gradients"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.torch.autograd.extract_gradients" title="Link to this definition">#</a></dt>
-<dd><p>Extract gradients from warp arrays and return in correct order for PyTorch.</p>
-<p>This helper extracts gradients from warp arrays and returns them in the
-same order as the forward pass inputs, with None for inputs that don’t
-require gradients.</p>
+<dd><p>Extract gradients from Warp arrays and return them in PyTorch autograd order.</p>
+<p>Returns gradients aligned to the forward function’s input signature: each
+position receives a <code class="docutils literal notranslate"><span class="pre">torch.Tensor</span></code> when the corresponding input required
+gradients, or <code class="docutils literal notranslate"><span class="pre">None</span></code> otherwise.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>ctx</strong> (<em>Any</em>) – PyTorch autograd context with saved tensors (must have attributes
-matching input_names)</p></li>
-<li><p><strong>warp_arrays</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#dict" title="(in Python v3.14)"><em>dict</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><em>wp.array</em><em>]</em>) – Dictionary mapping input names to warp arrays with computed gradients</p></li>
-<li><p><strong>input_names</strong> (<em>Sequence</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>]</em>) – Names of inputs in the order they appear in forward function signature</p></li>
+<li><p><strong>ctx</strong> (<em>Any</em>) – PyTorch autograd context.  Must expose each name in <code class="docutils literal notranslate"><span class="pre">input_names</span></code> as
+an attribute holding the saved input tensor.</p></li>
+<li><p><strong>warp_arrays</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#dict" title="(in Python v3.14)"><em>dict</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><em>wp.array</em><em>]</em>) – Mapping from input names to Warp arrays whose <code class="docutils literal notranslate"><span class="pre">.grad</span></code> fields have been
+populated by <code class="docutils literal notranslate"><span class="pre">tape.backward()</span></code>.</p></li>
+<li><p><strong>input_names</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#list" title="(in Python v3.14)"><em>list</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>] or </em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>]</em>) – Names of inputs in the same order they appear in the forward function
+signature.</p></li>
 </ul>
 </dd>
 <dt class="field-even">Returns<span class="colon">:</span></dt>
-<dd class="field-even"><p>Gradients in order, with None for inputs without requires_grad</p>
+<dd class="field-even"><p>Gradients in <code class="docutils literal notranslate"><span class="pre">input_names</span></code> order; <code class="docutils literal notranslate"><span class="pre">None</span></code> for inputs that did not
+require gradients or for which no Warp array was provided.</p>
 </dd>
 <dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[Optional[<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)">torch.Tensor</a>], …]</p>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)">torch.Tensor</a> or None, …]</p>
 </dd>
 </dl>
 <p class="rubric">Examples</p>
@@ -746,18 +761,16 @@ matching input_names)</p></li>
 <dl class="py function">
 <dt class="sig sig-object py" id="nvalchemiops.torch.autograd.standard_backward">
 <span class="sig-prename descclassname"><span class="pre">nvalchemiops.torch.autograd.</span></span><span class="sig-name descname"><span class="pre">standard_backward</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ctx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">grad_outputs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">output_names</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">array_names</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">input_names</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">output_dtypes</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/torch/autograd.html#standard_backward"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.torch.autograd.standard_backward" title="Link to this definition">#</a></dt>
-<dd><p>Standard backward implementation for Warp-PyTorch custom operators.</p>
-<p>This function handles both single-output and multiple-output operators.
-It encapsulates the common backward pattern:
-1. Retrieve tape and warp arrays from context
-2. Set gradient(s) on output(s)
-3. Run tape backward
-4. Extract and return gradients</p>
+<dd><p>Run the standard Warp tape backward pass for a PyTorch custom operator.</p>
+<p>Handles both single-output and multi-output operators by encapsulating the
+common backward pattern: retrieve tape and Warp arrays from context, copy
+upstream gradients into the output arrays, call <code class="docutils literal notranslate"><span class="pre">tape.backward()</span></code>, then
+return input gradients via <a class="reference internal" href="#nvalchemiops.torch.autograd.extract_gradients" title="nvalchemiops.torch.autograd.extract_gradients"><code class="xref py py-func docutils literal notranslate"><span class="pre">extract_gradients()</span></code></a>.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
 <li><p><strong>ctx</strong> (<em>Any</em>) – PyTorch autograd context with saved tensors</p></li>
-<li><p><strong>grad_outputs</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em> or </em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>[</em><em>Optional</em><em>[</em><a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em>]</em><em>, </em><em>...</em><em>]</em>) – Gradient(s) from upstream operations.
+<li><p><strong>grad_outputs</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em> or </em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>[</em><em>Optional</em><em>[</em><a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)"><em>torch.Tensor</em></a><em>]</em><em>, </em><em>...</em><em>]</em>) – Gradient(s) from upstream operations.
 - Single output: pass the gradient tensor directly
 - Multiple outputs: pass tuple of gradient tensors (None if unused in loss)</p></li>
 <li><p><strong>output_names</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em> or </em><em>Sequence</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>]</em>) – Name(s) of the output array(s) stored in ctx.
@@ -778,7 +791,7 @@ Examples:
 <dd class="field-even"><p>Gradients for all inputs (None for those without requires_grad)</p>
 </dd>
 <dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[Optional[<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)">torch.Tensor</a>], …]</p>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[Optional[<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.13)">torch.Tensor</a>], …]</p>
 </dd>
 </dl>
 <p class="rubric">Examples</p>
@@ -911,9 +924,22 @@ Examples:
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -933,7 +959,7 @@ Examples:
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

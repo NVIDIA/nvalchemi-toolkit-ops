@@ -2,17 +2,17 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="./" >
+<html lang="en" data-content_root="./" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Index &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>Index &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -34,16 +34,17 @@
     <link rel="stylesheet" type="text/css" href="_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="_static/doctools.js?v=9bcbadda"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -58,7 +59,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -125,8 +126,6 @@
   
   
     
-    
-      
     
     
     <img src="_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -388,6 +387,7 @@ document.write(`
  | <a href="#F"><strong>F</strong></a>
  | <a href="#G"><strong>G</strong></a>
  | <a href="#I"><strong>I</strong></a>
+ | <a href="#K"><strong>K</strong></a>
  | <a href="#L"><strong>L</strong></a>
  | <a href="#M"><strong>M</strong></a>
  | <a href="#N"><strong>N</strong></a>
@@ -400,7 +400,6 @@ document.write(`
  | <a href="#U"><strong>U</strong></a>
  | <a href="#V"><strong>V</strong></a>
  | <a href="#W"><strong>W</strong></a>
- | <a href="#Z"><strong>Z</strong></a>
  
 </div>
 <h2 id="_">_</h2>
@@ -428,18 +427,32 @@ document.write(`
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_filter.align_cell">align_cell() (in module nvalchemiops.dynamics.utils.cell_filter)</a>
 </li>
+      <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.batch_cluster_tile.allocate_batch_cluster_tile_list">allocate_batch_cluster_tile_list() (in module nvalchemiops.jax.neighbors.batch_cluster_tile)</a>
+
+      <ul>
+        <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.batch_cluster_tile.allocate_batch_cluster_tile_list">(in module nvalchemiops.torch.neighbors.batch_cluster_tile)</a>
+</li>
+      </ul></li>
       <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.neighbor_utils.allocate_cell_list">allocate_cell_list() (in module nvalchemiops.jax.neighbors.neighbor_utils)</a>
 
       <ul>
         <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.neighbor_utils.allocate_cell_list">(in module nvalchemiops.torch.neighbors.neighbor_utils)</a>
 </li>
       </ul></li>
+      <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.cluster_tile.allocate_cluster_tile_list">allocate_cluster_tile_list() (in module nvalchemiops.torch.neighbors.cluster_tile)</a>
+</li>
       <li><a href="modules/jax/electrostatics.html#nvalchemiops.jax.interactions.electrostatics.EwaldParameters.alpha">alpha (nvalchemiops.jax.interactions.electrostatics.EwaldParameters attribute)</a>
 
       <ul>
         <li><a href="modules/jax/electrostatics.html#nvalchemiops.jax.interactions.electrostatics.PMEParameters.alpha">(nvalchemiops.jax.interactions.electrostatics.PMEParameters attribute)</a>
 </li>
         <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.EwaldParameters.alpha">(nvalchemiops.torch.interactions.electrostatics.EwaldParameters attribute)</a>
+</li>
+        <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleEwaldParameters.alpha">(nvalchemiops.torch.interactions.electrostatics.MultipoleEwaldParameters attribute)</a>
+</li>
+        <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipolePMEParameters.alpha">(nvalchemiops.torch.interactions.electrostatics.MultipolePMEParameters attribute)</a>
+</li>
+        <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.alpha">(nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache attribute)</a>
 </li>
         <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.PMEParameters.alpha">(nvalchemiops.torch.interactions.electrostatics.PMEParameters attribute)</a>
 </li>
@@ -459,9 +472,17 @@ document.write(`
       <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.batch_cell_list.batch_build_cell_list">batch_build_cell_list() (in module nvalchemiops.jax.neighbors.batch_cell_list)</a>
 
       <ul>
-        <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.batch_cell_list.batch_build_cell_list">(in module nvalchemiops.neighbors.batch_cell_list)</a>
+        <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.cell_list.batch_build_cell_list">(in module nvalchemiops.neighbors.cell_list)</a>
 </li>
         <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.batch_cell_list.batch_build_cell_list">(in module nvalchemiops.torch.neighbors.batch_cell_list)</a>
+</li>
+      </ul></li>
+      <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.batch_cluster_tile.batch_build_cluster_tile_list">batch_build_cluster_tile_list() (in module nvalchemiops.jax.neighbors.batch_cluster_tile)</a>
+
+      <ul>
+        <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.cluster_tile.batch_build_cluster_tile_list">(in module nvalchemiops.neighbors.cluster_tile)</a>
+</li>
+        <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.batch_cluster_tile.batch_build_cluster_tile_list">(in module nvalchemiops.torch.neighbors.batch_cluster_tile)</a>
 </li>
       </ul></li>
       <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.batch_cell_list">batch_cell_list() (in module nvalchemiops.jax.neighbors)</a>
@@ -474,6 +495,12 @@ document.write(`
 
       <ul>
         <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.rebuild_detection.batch_cell_list_needs_rebuild">(in module nvalchemiops.torch.neighbors.rebuild_detection)</a>
+</li>
+      </ul></li>
+      <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.batch_cluster_tile_neighbor_list">batch_cluster_tile_neighbor_list() (in module nvalchemiops.jax.neighbors)</a>
+
+      <ul>
+        <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.batch_cluster_tile_neighbor_list">(in module nvalchemiops.torch.neighbors)</a>
 </li>
       </ul></li>
       <li><a href="modules/warp/electrostatics.html#nvalchemiops.interactions.electrostatics.batch_coulomb_energy">batch_coulomb_energy() (in module nvalchemiops.interactions.electrostatics)</a>
@@ -506,8 +533,6 @@ document.write(`
 </li>
       <li><a href="modules/warp/electrostatics.html#nvalchemiops.interactions.electrostatics.batch_ewald_subtract_self_energy">batch_ewald_subtract_self_energy() (in module nvalchemiops.interactions.electrostatics)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.batch_naive_neighbor_list">batch_naive_neighbor_list() (in module nvalchemiops.jax.neighbors)</a>
 
       <ul>
@@ -520,13 +545,15 @@ document.write(`
         <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.batch_naive_neighbor_list_dual_cutoff">(in module nvalchemiops.torch.neighbors)</a>
 </li>
       </ul></li>
-      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.batch_naive.batch_naive_neighbor_matrix">batch_naive_neighbor_matrix() (in module nvalchemiops.neighbors.batch_naive)</a>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.naive.batch_naive_neighbor_matrix">batch_naive_neighbor_matrix() (in module nvalchemiops.neighbors.naive)</a>
 </li>
-      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.batch_naive_dual_cutoff.batch_naive_neighbor_matrix_dual_cutoff">batch_naive_neighbor_matrix_dual_cutoff() (in module nvalchemiops.neighbors.batch_naive_dual_cutoff)</a>
+      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.naive.batch_naive_neighbor_matrix_dual_cutoff">batch_naive_neighbor_matrix_dual_cutoff() (in module nvalchemiops.neighbors.naive)</a>
 </li>
-      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.batch_naive.batch_naive_neighbor_matrix_pbc">batch_naive_neighbor_matrix_pbc() (in module nvalchemiops.neighbors.batch_naive)</a>
+      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.naive.batch_naive_neighbor_matrix_pbc">batch_naive_neighbor_matrix_pbc() (in module nvalchemiops.neighbors.naive)</a>
 </li>
-      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.batch_naive_dual_cutoff.batch_naive_neighbor_matrix_pbc_dual_cutoff">batch_naive_neighbor_matrix_pbc_dual_cutoff() (in module nvalchemiops.neighbors.batch_naive_dual_cutoff)</a>
+      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.naive.batch_naive_neighbor_matrix_pbc_dual_cutoff">batch_naive_neighbor_matrix_pbc_dual_cutoff() (in module nvalchemiops.neighbors.naive)</a>
 </li>
       <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.rebuild_detection.batch_neighbor_list_needs_rebuild">batch_neighbor_list_needs_rebuild() (in module nvalchemiops.jax.neighbors.rebuild_detection)</a>
 
@@ -543,11 +570,29 @@ document.write(`
       <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.batch_cell_list.batch_query_cell_list">batch_query_cell_list() (in module nvalchemiops.jax.neighbors.batch_cell_list)</a>
 
       <ul>
-        <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.batch_cell_list.batch_query_cell_list">(in module nvalchemiops.neighbors.batch_cell_list)</a>
+        <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.cell_list.batch_query_cell_list">(in module nvalchemiops.neighbors.cell_list)</a>
 </li>
         <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.batch_cell_list.batch_query_cell_list">(in module nvalchemiops.torch.neighbors.batch_cell_list)</a>
 </li>
       </ul></li>
+      <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.batch_cluster_tile.batch_query_cluster_tile">batch_query_cluster_tile() (in module nvalchemiops.jax.neighbors.batch_cluster_tile)</a>
+
+      <ul>
+        <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.cluster_tile.batch_query_cluster_tile">(in module nvalchemiops.neighbors.cluster_tile)</a>
+</li>
+        <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.batch_cluster_tile.batch_query_cluster_tile">(in module nvalchemiops.torch.neighbors.batch_cluster_tile)</a>
+</li>
+      </ul></li>
+      <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.batch_cluster_tile.batch_query_cluster_tile_coo">batch_query_cluster_tile_coo() (in module nvalchemiops.jax.neighbors.batch_cluster_tile)</a>
+
+      <ul>
+        <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.cluster_tile.batch_query_cluster_tile_coo">(in module nvalchemiops.neighbors.cluster_tile)</a>
+</li>
+        <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.batch_cluster_tile.batch_query_cluster_tile_coo">(in module nvalchemiops.torch.neighbors.batch_cluster_tile)</a>
+</li>
+      </ul></li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.batch_size">batch_size (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache property)</a>
+</li>
       <li><a href="modules/utilities.html#nvalchemiops.math.batch_spline_gather">batch_spline_gather() (in module nvalchemiops.math)</a>
 </li>
       <li><a href="modules/utilities.html#nvalchemiops.math.batch_spline_gather_gradient">batch_spline_gather_gradient() (in module nvalchemiops.math)</a>
@@ -564,6 +609,14 @@ document.write(`
         <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.cell_list.build_cell_list">(in module nvalchemiops.torch.neighbors.cell_list)</a>
 </li>
       </ul></li>
+      <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.cluster_tile.build_cluster_tile_list">build_cluster_tile_list() (in module nvalchemiops.jax.neighbors.cluster_tile)</a>
+
+      <ul>
+        <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.cluster_tile.build_cluster_tile_list">(in module nvalchemiops.neighbors.cluster_tile)</a>
+</li>
+        <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.cluster_tile.build_cluster_tile_list">(in module nvalchemiops.torch.neighbors.cluster_tile)</a>
+</li>
+      </ul></li>
   </ul></td>
 </tr></table>
 
@@ -578,6 +631,8 @@ document.write(`
       </ul></li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_utils.cartesian_to_fractional">cartesian_to_fractional() (in module nvalchemiops.dynamics.utils.cell_utils)</a>
 </li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.cell">cell (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache attribute)</a>
+</li>
       <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.cell_list">cell_list() (in module nvalchemiops.jax.neighbors)</a>
 
       <ul>
@@ -590,18 +645,24 @@ document.write(`
         <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.rebuild_detection.cell_list_needs_rebuild">(in module nvalchemiops.torch.neighbors.rebuild_detection)</a>
 </li>
       </ul></li>
-      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.rebuild_detection.check_batch_cell_list_rebuild">check_batch_cell_list_rebuild() (in module nvalchemiops.neighbors.rebuild_detection)</a>
+      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.rebuild.check_batch_cell_list_rebuild">check_batch_cell_list_rebuild() (in module nvalchemiops.neighbors.rebuild)</a>
 </li>
-      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.rebuild_detection.check_batch_neighbor_list_rebuild">check_batch_neighbor_list_rebuild() (in module nvalchemiops.neighbors.rebuild_detection)</a>
+      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.rebuild.check_batch_neighbor_list_rebuild">check_batch_neighbor_list_rebuild() (in module nvalchemiops.neighbors.rebuild)</a>
 </li>
-      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.rebuild_detection.check_cell_list_rebuild">check_cell_list_rebuild() (in module nvalchemiops.neighbors.rebuild_detection)</a>
+      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.rebuild.check_cell_list_rebuild">check_cell_list_rebuild() (in module nvalchemiops.neighbors.rebuild)</a>
 </li>
       <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.rebuild_detection.check_cell_list_rebuild_needed">check_cell_list_rebuild_needed() (in module nvalchemiops.jax.neighbors.rebuild_detection)</a>
 </li>
-      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.rebuild_detection.check_neighbor_list_rebuild">check_neighbor_list_rebuild() (in module nvalchemiops.neighbors.rebuild_detection)</a>
+      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.rebuild.check_neighbor_list_rebuild">check_neighbor_list_rebuild() (in module nvalchemiops.neighbors.rebuild)</a>
 </li>
       <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.rebuild_detection.check_neighbor_list_rebuild_needed">check_neighbor_list_rebuild_needed() (in module nvalchemiops.jax.neighbors.rebuild_detection)</a>
 </li>
+      <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.cluster_tile_neighbor_list">cluster_tile_neighbor_list() (in module nvalchemiops.jax.neighbors)</a>
+
+      <ul>
+        <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.cluster_tile_neighbor_list">(in module nvalchemiops.torch.neighbors)</a>
+</li>
+      </ul></li>
       <li><a href="modules/jax/dispersion.html#nvalchemiops.jax.interactions.dispersion.D3Parameters.cn_ref">cn_ref (nvalchemiops.jax.interactions.dispersion.D3Parameters attribute)</a>
 
       <ul>
@@ -612,10 +673,16 @@ document.write(`
 </li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.npt.compute_barostat_potential_energy">compute_barostat_potential_energy() (in module nvalchemiops.dynamics.integrators.npt)</a>
 </li>
-      <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_utils.compute_cell_inverse">compute_cell_inverse() (in module nvalchemiops.dynamics.utils.cell_utils)</a>
+      <li><a href="modules/jax/electrostatics.html#nvalchemiops.jax.interactions.electrostatics.compute_bspline_moduli_1d">compute_bspline_moduli_1d() (in module nvalchemiops.jax.interactions.electrostatics)</a>
+
+      <ul>
+        <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.compute_bspline_moduli_1d">(in module nvalchemiops.torch.interactions.electrostatics)</a>
 </li>
+      </ul></li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_utils.compute_cell_inverse">compute_cell_inverse() (in module nvalchemiops.dynamics.utils.cell_utils)</a>
+</li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.npt.compute_cell_kinetic_energy">compute_cell_kinetic_energy() (in module nvalchemiops.dynamics.integrators.npt)</a>
 </li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_utils.compute_cell_volume">compute_cell_volume() (in module nvalchemiops.dynamics.utils.cell_utils)</a>
@@ -632,6 +699,12 @@ document.write(`
 </li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.npt.compute_scalar_pressure">compute_scalar_pressure() (in module nvalchemiops.dynamics.integrators.npt)</a>
 </li>
+      <li><a href="modules/jax/electrostatics.html#nvalchemiops.jax.interactions.electrostatics.compute_slab_correction">compute_slab_correction() (in module nvalchemiops.jax.interactions.electrostatics)</a>
+
+      <ul>
+        <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.compute_slab_correction">(in module nvalchemiops.torch.interactions.electrostatics)</a>
+</li>
+      </ul></li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_utils.compute_strain_tensor">compute_strain_tensor() (in module nvalchemiops.dynamics.utils.cell_utils)</a>
 </li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.utils.thermostat_utils.compute_temperature">compute_temperature() (in module nvalchemiops.dynamics.utils.thermostat_utils)</a>
@@ -675,7 +748,11 @@ document.write(`
 </li>
       </ul></li>
       <li><a href="modules/torch/dispersion.html#nvalchemiops.torch.interactions.dispersion.D3Parameters.device">device (nvalchemiops.torch.interactions.dispersion.D3Parameters property)</a>
+
+      <ul>
+        <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.device">(nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache property)</a>
 </li>
+      </ul></li>
       <li><a href="modules/warp/dispersion.html#nvalchemiops.interactions.dispersion._dftd3.dftd3">dftd3() (in module nvalchemiops.interactions.dispersion._dftd3)</a>
 
       <ul>
@@ -710,10 +787,38 @@ document.write(`
         <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.estimate_batch_cell_list_sizes">(in module nvalchemiops.torch.neighbors)</a>
 </li>
       </ul></li>
+      <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.estimate_batch_cluster_tile_list_sizes">estimate_batch_cluster_tile_list_sizes() (in module nvalchemiops.jax.neighbors)</a>
+
+      <ul>
+        <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.batch_cluster_tile.estimate_batch_cluster_tile_list_sizes">(in module nvalchemiops.torch.neighbors.batch_cluster_tile)</a>
+</li>
+      </ul></li>
+      <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.estimate_batch_cluster_tile_segments">estimate_batch_cluster_tile_segments() (in module nvalchemiops.jax.neighbors)</a>
+
+      <ul>
+        <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.cluster_tile.estimate_batch_cluster_tile_segments">(in module nvalchemiops.neighbors.cluster_tile)</a>
+</li>
+        <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.batch_cluster_tile.estimate_batch_cluster_tile_segments">(in module nvalchemiops.torch.neighbors.batch_cluster_tile)</a>
+</li>
+      </ul></li>
+      <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.estimate_batch_max_tiles_per_group">estimate_batch_max_tiles_per_group() (in module nvalchemiops.jax.neighbors)</a>
+
+      <ul>
+        <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.cluster_tile.estimate_batch_max_tiles_per_group">(in module nvalchemiops.neighbors.cluster_tile)</a>
+</li>
+        <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.batch_cluster_tile.estimate_batch_max_tiles_per_group">(in module nvalchemiops.torch.neighbors.batch_cluster_tile)</a>
+</li>
+      </ul></li>
       <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.estimate_cell_list_sizes">estimate_cell_list_sizes() (in module nvalchemiops.jax.neighbors)</a>
 
       <ul>
         <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.estimate_cell_list_sizes">(in module nvalchemiops.torch.neighbors)</a>
+</li>
+      </ul></li>
+      <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.estimate_cluster_tile_list_sizes">estimate_cluster_tile_list_sizes() (in module nvalchemiops.jax.neighbors)</a>
+
+      <ul>
+        <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.cluster_tile.estimate_cluster_tile_list_sizes">(in module nvalchemiops.torch.neighbors.cluster_tile)</a>
 </li>
       </ul></li>
       <li><a href="modules/jax/electrostatics.html#nvalchemiops.jax.interactions.electrostatics.estimate_ewald_parameters">estimate_ewald_parameters() (in module nvalchemiops.jax.interactions.electrostatics)</a>
@@ -728,22 +833,34 @@ document.write(`
         <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.neighbor_utils.estimate_max_neighbors">(in module nvalchemiops.neighbors.neighbor_utils)</a>
 </li>
       </ul></li>
+      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.cluster_tile.estimate_max_tiles_per_group">estimate_max_tiles_per_group() (in module nvalchemiops.neighbors.cluster_tile)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.estimate_multipole_ewald_parameters">estimate_multipole_ewald_parameters() (in module nvalchemiops.torch.interactions.electrostatics)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.estimate_multipole_pme_parameters">estimate_multipole_pme_parameters() (in module nvalchemiops.torch.interactions.electrostatics)</a>
+</li>
+      <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.estimate_neighbor_list_costs">estimate_neighbor_list_costs() (in module nvalchemiops.jax.neighbors)</a>
+
+      <ul>
+        <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.estimate_neighbor_list_costs">(in module nvalchemiops.neighbors)</a>
+</li>
+        <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.estimate_neighbor_list_costs">(in module nvalchemiops.torch.neighbors)</a>
+</li>
+      </ul></li>
       <li><a href="modules/jax/electrostatics.html#nvalchemiops.jax.interactions.electrostatics.estimate_pme_mesh_dimensions">estimate_pme_mesh_dimensions() (in module nvalchemiops.jax.interactions.electrostatics)</a>
 
       <ul>
         <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.estimate_pme_mesh_dimensions">(in module nvalchemiops.torch.interactions.electrostatics)</a>
 </li>
       </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="modules/jax/electrostatics.html#nvalchemiops.jax.interactions.electrostatics.estimate_pme_parameters">estimate_pme_parameters() (in module nvalchemiops.jax.interactions.electrostatics)</a>
 
       <ul>
         <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.estimate_pme_parameters">(in module nvalchemiops.torch.interactions.electrostatics)</a>
 </li>
       </ul></li>
-      <li><a href="modules/utilities.html#nvalchemiops.math.eval_gto_density_pytorch">eval_gto_density_pytorch() (in module nvalchemiops.math)</a>
-</li>
-      <li><a href="modules/utilities.html#nvalchemiops.math.eval_gto_fourier_pytorch">eval_gto_fourier_pytorch() (in module nvalchemiops.math)</a>
-</li>
       <li><a href="modules/jax/electrostatics.html#nvalchemiops.jax.interactions.electrostatics.ewald_real_space">ewald_real_space() (in module nvalchemiops.jax.interactions.electrostatics)</a>
 
       <ul>
@@ -754,8 +871,6 @@ document.write(`
 </li>
       <li><a href="modules/warp/electrostatics.html#nvalchemiops.interactions.electrostatics.ewald_real_space_energy_forces">ewald_real_space_energy_forces() (in module nvalchemiops.interactions.electrostatics)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="modules/warp/electrostatics.html#nvalchemiops.interactions.electrostatics.ewald_real_space_energy_forces_charge_grad">ewald_real_space_energy_forces_charge_grad() (in module nvalchemiops.interactions.electrostatics)</a>
 </li>
       <li><a href="modules/warp/electrostatics.html#nvalchemiops.interactions.electrostatics.ewald_real_space_energy_forces_charge_grad_matrix">ewald_real_space_energy_forces_charge_grad_matrix() (in module nvalchemiops.interactions.electrostatics)</a>
@@ -804,15 +919,23 @@ document.write(`
 <h2 id="F">F</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.feature_max_l">feature_max_l (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache attribute)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.feature_overlap_constants">feature_overlap_constants (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache attribute)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.feature_overlap_l2">feature_overlap_l2 (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache attribute)</a>
+</li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.optimizers.fire2.fire2_step">fire2_step() (in module nvalchemiops.dynamics.optimizers.fire2)</a>
 </li>
       <li><a href="modules/torch/dynamics.html#nvalchemiops.torch.fire2.fire2_step_coord">fire2_step_coord() (in module nvalchemiops.torch.fire2)</a>
 </li>
-      <li><a href="modules/torch/dynamics.html#nvalchemiops.torch.fire2.fire2_step_coord_cell">fire2_step_coord_cell() (in module nvalchemiops.torch.fire2)</a>
-</li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/torch/dynamics.html#nvalchemiops.torch.fire2.fire2_step_coord_cell">fire2_step_coord_cell() (in module nvalchemiops.torch.fire2)</a>
+</li>
       <li><a href="modules/torch/dynamics.html#nvalchemiops.torch.fire2.fire2_step_extended">fire2_step_extended() (in module nvalchemiops.torch.fire2)</a>
+</li>
+      <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.optimizers.fire2.fire2_update">fire2_update() (in module nvalchemiops.dynamics.optimizers.fire2)</a>
 </li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.optimizers.fire.fire_step">fire_step() (in module nvalchemiops.dynamics.optimizers.fire)</a>
 </li>
@@ -868,18 +991,36 @@ document.write(`
         <li><a href="modules/torch/dispersion.html#nvalchemiops.torch.interactions.dispersion.D3Parameters.interp_mesh">(nvalchemiops.torch.interactions.dispersion.D3Parameters attribute)</a>
 </li>
       </ul></li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.is_batched">is_batched (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache property)</a>
+</li>
+  </ul></td>
+</tr></table>
+
+<h2 id="K">K</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.k_factor_proj">k_factor_proj (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache attribute)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.k_norm2">k_norm2 (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache attribute)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.k_vectors">k_vectors (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache attribute)</a>
+</li>
   </ul></td>
 </tr></table>
 
 <h2 id="L">L</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.langevin.langevin_baoab_finalize">langevin_baoab_finalize() (in module nvalchemiops.dynamics.integrators.langevin)</a>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.l_max">l_max (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache attribute)</a>
 </li>
-      <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.langevin.langevin_baoab_finalize_out">langevin_baoab_finalize_out() (in module nvalchemiops.dynamics.integrators.langevin)</a>
+      <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.langevin.langevin_baoab_finalize">langevin_baoab_finalize() (in module nvalchemiops.dynamics.integrators.langevin)</a>
 </li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.langevin.langevin_baoab_finalize_out">langevin_baoab_finalize_out() (in module nvalchemiops.dynamics.integrators.langevin)</a>
+</li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.langevin.langevin_baoab_half_step">langevin_baoab_half_step() (in module nvalchemiops.dynamics.integrators.langevin)</a>
 </li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.langevin.langevin_baoab_half_step_out">langevin_baoab_half_step_out() (in module nvalchemiops.dynamics.integrators.langevin)</a>
@@ -899,12 +1040,16 @@ document.write(`
       <li><a href="modules/jax/electrostatics.html#nvalchemiops.jax.interactions.electrostatics.PMEParameters.mesh_dimensions">mesh_dimensions (nvalchemiops.jax.interactions.electrostatics.PMEParameters attribute)</a>
 
       <ul>
+        <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipolePMEParameters.mesh_dimensions">(nvalchemiops.torch.interactions.electrostatics.MultipolePMEParameters attribute)</a>
+</li>
         <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.PMEParameters.mesh_dimensions">(nvalchemiops.torch.interactions.electrostatics.PMEParameters attribute)</a>
 </li>
       </ul></li>
       <li><a href="modules/jax/electrostatics.html#nvalchemiops.jax.interactions.electrostatics.PMEParameters.mesh_spacing">mesh_spacing (nvalchemiops.jax.interactions.electrostatics.PMEParameters attribute)</a>
 
       <ul>
+        <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipolePMEParameters.mesh_spacing">(nvalchemiops.torch.interactions.electrostatics.MultipolePMEParameters attribute)</a>
+</li>
         <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.PMEParameters.mesh_spacing">(nvalchemiops.torch.interactions.electrostatics.PMEParameters attribute)</a>
 </li>
       </ul></li>
@@ -928,9 +1073,13 @@ document.write(`
 </li>
         <li><a href="modules/jax/neighbors.html#module-nvalchemiops.jax.neighbors">nvalchemiops.jax.neighbors</a>
 </li>
+        <li><a href="modules/jax/segment_ops.html#module-nvalchemiops.jax.segment_ops">nvalchemiops.jax.segment_ops</a>
+</li>
         <li><a href="modules/utilities.html#module-nvalchemiops.math">nvalchemiops.math</a>
 </li>
         <li><a href="modules/warp/neighbors.html#module-nvalchemiops.neighbors">nvalchemiops.neighbors</a>
+</li>
+        <li><a href="modules/warp/segment_ops.html#module-nvalchemiops.segment_ops">nvalchemiops.segment_ops</a>
 </li>
         <li><a href="modules/torch/dynamics.html#module-nvalchemiops.torch">nvalchemiops.torch</a>
 </li>
@@ -940,15 +1089,49 @@ document.write(`
 </li>
         <li><a href="modules/torch/neighbors.html#module-nvalchemiops.torch.neighbors">nvalchemiops.torch.neighbors</a>
 </li>
+        <li><a href="modules/torch/segment_ops.html#module-nvalchemiops.torch.segment_ops">nvalchemiops.torch.segment_ops</a>
+</li>
         <li><a href="modules/utilities.html#module-nvalchemiops.torch.types">nvalchemiops.torch.types</a>
 </li>
       </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.multipole_electrostatic_energy">multipole_electrostatic_energy() (in module nvalchemiops.torch.interactions.electrostatics)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.multipole_electrostatic_features">multipole_electrostatic_features() (in module nvalchemiops.torch.interactions.electrostatics)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.multipole_ewald_summation">multipole_ewald_summation() (in module nvalchemiops.torch.interactions.electrostatics)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.pme_multipole.multipole_particle_mesh_ewald">multipole_particle_mesh_ewald() (in module nvalchemiops.torch.interactions.electrostatics.pme_multipole)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.multipole_real_space_energy">multipole_real_space_energy() (in module nvalchemiops.torch.interactions.electrostatics)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.multipole_reciprocal_space_energy">multipole_reciprocal_space_energy() (in module nvalchemiops.torch.interactions.electrostatics)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.multipole_scf_step_energy">multipole_scf_step_energy() (in module nvalchemiops.torch.interactions.electrostatics)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.multipole_scf_step_features">multipole_scf_step_features() (in module nvalchemiops.torch.interactions.electrostatics)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleEwaldParameters">MultipoleEwaldParameters (class in nvalchemiops.torch.interactions.electrostatics)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipolePMEParameters">MultipolePMEParameters (class in nvalchemiops.torch.interactions.electrostatics)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache">MultipoleSCFCache (class in nvalchemiops.torch.interactions.electrostatics)</a>
+</li>
   </ul></td>
 </tr></table>
 
 <h2 id="N">N</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.n_k">n_k (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache property)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.n_k_max">n_k_max (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache property)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.n_sigma">n_sigma (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache property)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.n_systems">n_systems (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache attribute)</a>
+</li>
       <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.naive_neighbor_list">naive_neighbor_list() (in module nvalchemiops.jax.neighbors)</a>
 
       <ul>
@@ -963,11 +1146,11 @@ document.write(`
       </ul></li>
       <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.naive.naive_neighbor_matrix">naive_neighbor_matrix() (in module nvalchemiops.neighbors.naive)</a>
 </li>
-      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_dual_cutoff">naive_neighbor_matrix_dual_cutoff() (in module nvalchemiops.neighbors.naive_dual_cutoff)</a>
+      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.naive.naive_neighbor_matrix_dual_cutoff">naive_neighbor_matrix_dual_cutoff() (in module nvalchemiops.neighbors.naive)</a>
 </li>
       <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.naive.naive_neighbor_matrix_pbc">naive_neighbor_matrix_pbc() (in module nvalchemiops.neighbors.naive)</a>
 </li>
-      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_pbc_dual_cutoff">naive_neighbor_matrix_pbc_dual_cutoff() (in module nvalchemiops.neighbors.naive_dual_cutoff)</a>
+      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.naive.naive_neighbor_matrix_pbc_dual_cutoff">naive_neighbor_matrix_pbc_dual_cutoff() (in module nvalchemiops.neighbors.naive)</a>
 </li>
       <li><a href="modules/torch/autograd.html#nvalchemiops.torch.autograd.needs_grad">needs_grad() (in module nvalchemiops.torch.autograd)</a>
 </li>
@@ -983,7 +1166,7 @@ document.write(`
         <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.rebuild_detection.neighbor_list_needs_rebuild">(in module nvalchemiops.torch.neighbors.rebuild_detection)</a>
 </li>
       </ul></li>
-      <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.NeighborOverflowError">NeighborOverflowError</a>, <a href="modules/warp/neighbors.html#nvalchemiops.neighbors.NeighborOverflowError">[1]</a>
+      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.NeighborOverflowError">NeighborOverflowError</a>
 </li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.nose_hoover.nhc_compute_chain_energy">nhc_compute_chain_energy() (in module nvalchemiops.dynamics.integrators.nose_hoover)</a>
 </li>
@@ -1017,10 +1200,10 @@ document.write(`
 </li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.npt.npt_cell_update">npt_cell_update() (in module nvalchemiops.dynamics.integrators.npt)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.npt.npt_cell_update_out">npt_cell_update_out() (in module nvalchemiops.dynamics.integrators.npt)</a>
 </li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.npt.npt_position_update">npt_position_update() (in module nvalchemiops.dynamics.integrators.npt)</a>
 </li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.npt.npt_position_update_out">npt_position_update_out() (in module nvalchemiops.dynamics.integrators.npt)</a>
@@ -1067,6 +1250,13 @@ document.write(`
 </li>
       </ul></li>
       <li>
+    nvalchemiops.jax.segment_ops
+
+      <ul>
+        <li><a href="modules/jax/segment_ops.html#module-nvalchemiops.jax.segment_ops">module</a>
+</li>
+      </ul></li>
+      <li>
     nvalchemiops.math
 
       <ul>
@@ -1078,6 +1268,15 @@ document.write(`
 
       <ul>
         <li><a href="modules/warp/neighbors.html#module-nvalchemiops.neighbors">module</a>
+</li>
+      </ul></li>
+      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.nvalchemiops.neighbors.neighbor_list">nvalchemiops.neighbors.neighbor_list() (in module nvalchemiops.neighbors)</a>
+</li>
+      <li>
+    nvalchemiops.segment_ops
+
+      <ul>
+        <li><a href="modules/warp/segment_ops.html#module-nvalchemiops.segment_ops">module</a>
 </li>
       </ul></li>
       <li>
@@ -1109,6 +1308,13 @@ document.write(`
 </li>
       </ul></li>
       <li>
+    nvalchemiops.torch.segment_ops
+
+      <ul>
+        <li><a href="modules/torch/segment_ops.html#module-nvalchemiops.torch.segment_ops">module</a>
+</li>
+      </ul></li>
+      <li>
     nvalchemiops.torch.types
 
       <ul>
@@ -1121,6 +1327,14 @@ document.write(`
 <h2 id="O">O</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.out_col_inv_perm">out_col_inv_perm (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache attribute)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.out_col_lut_natural">out_col_lut_natural (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache attribute)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.out_col_lut_permuted">out_col_lut_permuted (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache attribute)</a>
+</li>
       <li><a href="modules/torch/autograd.html#nvalchemiops.torch.autograd.OutputSpec">OutputSpec (class in nvalchemiops.torch.autograd)</a>
 </li>
   </ul></td>
@@ -1133,6 +1347,8 @@ document.write(`
 </li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_filter.pack_masses_with_cell">pack_masses_with_cell() (in module nvalchemiops.dynamics.utils.cell_filter)</a>
 </li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.pack_multipole_moments">pack_multipole_moments() (in module nvalchemiops.torch.interactions.electrostatics)</a>
+</li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_filter.pack_positions_with_cell">pack_positions_with_cell() (in module nvalchemiops.dynamics.utils.cell_filter)</a>
 </li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_filter.pack_velocities_with_cell">pack_velocities_with_cell() (in module nvalchemiops.dynamics.utils.cell_filter)</a>
@@ -1143,32 +1359,16 @@ document.write(`
         <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.particle_mesh_ewald">(in module nvalchemiops.torch.interactions.electrostatics)</a>
 </li>
       </ul></li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.per_k_factor">per_k_factor (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache attribute)</a>
+</li>
       <li><a href="modules/warp/electrostatics.html#nvalchemiops.interactions.electrostatics.pme_energy_corrections">pme_energy_corrections() (in module nvalchemiops.interactions.electrostatics)</a>
-
-      <ul>
-        <li><a href="modules/jax/electrostatics.html#nvalchemiops.jax.interactions.electrostatics.pme_energy_corrections">(in module nvalchemiops.jax.interactions.electrostatics)</a>
 </li>
-        <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.pme_energy_corrections">(in module nvalchemiops.torch.interactions.electrostatics)</a>
-</li>
-      </ul></li>
-      <li><a href="modules/warp/electrostatics.html#nvalchemiops.interactions.electrostatics.pme_energy_corrections_with_charge_grad">pme_energy_corrections_with_charge_grad() (in module nvalchemiops.interactions.electrostatics)</a>
-
-      <ul>
-        <li><a href="modules/jax/electrostatics.html#nvalchemiops.jax.interactions.electrostatics.pme_energy_corrections_with_charge_grad">(in module nvalchemiops.jax.interactions.electrostatics)</a>
-</li>
-        <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.pme_energy_corrections_with_charge_grad">(in module nvalchemiops.torch.interactions.electrostatics)</a>
-</li>
-      </ul></li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/warp/electrostatics.html#nvalchemiops.interactions.electrostatics.pme_energy_corrections_with_charge_grad">pme_energy_corrections_with_charge_grad() (in module nvalchemiops.interactions.electrostatics)</a>
+</li>
       <li><a href="modules/warp/electrostatics.html#nvalchemiops.interactions.electrostatics.pme_green_structure_factor">pme_green_structure_factor() (in module nvalchemiops.interactions.electrostatics)</a>
-
-      <ul>
-        <li><a href="modules/jax/electrostatics.html#nvalchemiops.jax.interactions.electrostatics.pme_green_structure_factor">(in module nvalchemiops.jax.interactions.electrostatics)</a>
 </li>
-        <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.pme_green_structure_factor">(in module nvalchemiops.torch.interactions.electrostatics)</a>
-</li>
-      </ul></li>
       <li><a href="modules/jax/electrostatics.html#nvalchemiops.jax.interactions.electrostatics.pme_reciprocal_space">pme_reciprocal_space() (in module nvalchemiops.jax.interactions.electrostatics)</a>
 
       <ul>
@@ -1187,6 +1387,8 @@ document.write(`
         <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.neighbor_utils.prepare_batch_idx_ptr">(in module nvalchemiops.torch.neighbors.neighbor_utils)</a>
 </li>
       </ul></li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.prepare_multipole_scf_cache">prepare_multipole_scf_cache() (in module nvalchemiops.torch.interactions.electrostatics)</a>
+</li>
   </ul></td>
 </tr></table>
 
@@ -1199,6 +1401,24 @@ document.write(`
         <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.cell_list.query_cell_list">(in module nvalchemiops.neighbors.cell_list)</a>
 </li>
         <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.cell_list.query_cell_list">(in module nvalchemiops.torch.neighbors.cell_list)</a>
+</li>
+      </ul></li>
+      <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.cluster_tile.query_cluster_tile">query_cluster_tile() (in module nvalchemiops.jax.neighbors.cluster_tile)</a>
+
+      <ul>
+        <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.cluster_tile.query_cluster_tile">(in module nvalchemiops.neighbors.cluster_tile)</a>
+</li>
+        <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.cluster_tile.query_cluster_tile">(in module nvalchemiops.torch.neighbors.cluster_tile)</a>
+</li>
+      </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.cluster_tile.query_cluster_tile_coo">query_cluster_tile_coo() (in module nvalchemiops.jax.neighbors.cluster_tile)</a>
+
+      <ul>
+        <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.cluster_tile.query_cluster_tile_coo">(in module nvalchemiops.neighbors.cluster_tile)</a>
+</li>
+        <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.cluster_tile.query_cluster_tile_coo">(in module nvalchemiops.torch.neighbors.cluster_tile)</a>
 </li>
       </ul></li>
   </ul></td>
@@ -1234,15 +1454,25 @@ document.write(`
 </li>
         <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.EwaldParameters.real_space_cutoff">(nvalchemiops.torch.interactions.electrostatics.EwaldParameters attribute)</a>
 </li>
+        <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleEwaldParameters.real_space_cutoff">(nvalchemiops.torch.interactions.electrostatics.MultipoleEwaldParameters attribute)</a>
+</li>
+        <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipolePMEParameters.real_space_cutoff">(nvalchemiops.torch.interactions.electrostatics.MultipolePMEParameters attribute)</a>
+</li>
         <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.PMEParameters.real_space_cutoff">(nvalchemiops.torch.interactions.electrostatics.PMEParameters attribute)</a>
 </li>
       </ul></li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.receiver_phi_hat">receiver_phi_hat (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache attribute)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.receiver_sigmas">receiver_sigmas (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache attribute)</a>
+</li>
       <li><a href="modules/jax/electrostatics.html#nvalchemiops.jax.interactions.electrostatics.EwaldParameters.reciprocal_space_cutoff">reciprocal_space_cutoff (nvalchemiops.jax.interactions.electrostatics.EwaldParameters attribute)</a>
 
       <ul>
         <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.EwaldParameters.reciprocal_space_cutoff">(nvalchemiops.torch.interactions.electrostatics.EwaldParameters attribute)</a>
+</li>
+        <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleEwaldParameters.reciprocal_space_cutoff">(nvalchemiops.torch.interactions.electrostatics.MultipoleEwaldParameters attribute)</a>
 </li>
       </ul></li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.utils.thermostat_utils.remove_com_motion">remove_com_motion() (in module nvalchemiops.dynamics.utils.thermostat_utils)</a>
@@ -1265,6 +1495,78 @@ document.write(`
 </li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_utils.scale_positions_with_cell_out">scale_positions_with_cell_out() (in module nvalchemiops.dynamics.utils.cell_utils)</a>
 </li>
+      <li><a href="modules/warp/segment_ops.html#nvalchemiops.segment_ops.segment_div">segment_div() (in module nvalchemiops.segment_ops)</a>
+</li>
+      <li><a href="modules/warp/segment_ops.html#nvalchemiops.segment_ops.segmented_add">segmented_add() (in module nvalchemiops.segment_ops)</a>
+</li>
+      <li><a href="modules/warp/segment_ops.html#nvalchemiops.segment_ops.segmented_axpby">segmented_axpby() (in module nvalchemiops.segment_ops)</a>
+</li>
+      <li><a href="modules/warp/segment_ops.html#nvalchemiops.segment_ops.segmented_axpy">segmented_axpy() (in module nvalchemiops.segment_ops)</a>
+</li>
+      <li><a href="modules/warp/segment_ops.html#nvalchemiops.segment_ops.segmented_broadcast">segmented_broadcast() (in module nvalchemiops.segment_ops)</a>
+</li>
+      <li><a href="modules/warp/segment_ops.html#nvalchemiops.segment_ops.segmented_component_sum">segmented_component_sum() (in module nvalchemiops.segment_ops)</a>
+</li>
+      <li><a href="modules/warp/segment_ops.html#nvalchemiops.segment_ops.segmented_count">segmented_count() (in module nvalchemiops.segment_ops)</a>
+</li>
+      <li><a href="modules/jax/segment_ops.html#nvalchemiops.jax.segment_ops.segmented_dot">segmented_dot() (in module nvalchemiops.jax.segment_ops)</a>
+
+      <ul>
+        <li><a href="modules/warp/segment_ops.html#nvalchemiops.segment_ops.segmented_dot">(in module nvalchemiops.segment_ops)</a>
+</li>
+        <li><a href="modules/torch/segment_ops.html#nvalchemiops.torch.segment_ops.segmented_dot">(in module nvalchemiops.torch.segment_ops)</a>
+</li>
+      </ul></li>
+      <li><a href="modules/warp/segment_ops.html#nvalchemiops.segment_ops.segmented_inner_products">segmented_inner_products() (in module nvalchemiops.segment_ops)</a>
+</li>
+      <li><a href="modules/jax/segment_ops.html#nvalchemiops.jax.segment_ops.segmented_matvec">segmented_matvec() (in module nvalchemiops.jax.segment_ops)</a>
+
+      <ul>
+        <li><a href="modules/warp/segment_ops.html#nvalchemiops.segment_ops.segmented_matvec">(in module nvalchemiops.segment_ops)</a>
+</li>
+        <li><a href="modules/torch/segment_ops.html#nvalchemiops.torch.segment_ops.segmented_matvec">(in module nvalchemiops.torch.segment_ops)</a>
+</li>
+      </ul></li>
+      <li><a href="modules/warp/segment_ops.html#nvalchemiops.segment_ops.segmented_max">segmented_max() (in module nvalchemiops.segment_ops)</a>
+</li>
+      <li><a href="modules/warp/segment_ops.html#nvalchemiops.segment_ops.segmented_max_norm">segmented_max_norm() (in module nvalchemiops.segment_ops)</a>
+</li>
+      <li><a href="modules/jax/segment_ops.html#nvalchemiops.jax.segment_ops.segmented_mean">segmented_mean() (in module nvalchemiops.jax.segment_ops)</a>
+
+      <ul>
+        <li><a href="modules/warp/segment_ops.html#nvalchemiops.segment_ops.segmented_mean">(in module nvalchemiops.segment_ops)</a>
+</li>
+        <li><a href="modules/torch/segment_ops.html#nvalchemiops.torch.segment_ops.segmented_mean">(in module nvalchemiops.torch.segment_ops)</a>
+</li>
+      </ul></li>
+      <li><a href="modules/warp/segment_ops.html#nvalchemiops.segment_ops.segmented_min">segmented_min() (in module nvalchemiops.segment_ops)</a>
+</li>
+      <li><a href="modules/jax/segment_ops.html#nvalchemiops.jax.segment_ops.segmented_mul">segmented_mul() (in module nvalchemiops.jax.segment_ops)</a>
+
+      <ul>
+        <li><a href="modules/warp/segment_ops.html#nvalchemiops.segment_ops.segmented_mul">(in module nvalchemiops.segment_ops)</a>
+</li>
+        <li><a href="modules/torch/segment_ops.html#nvalchemiops.torch.segment_ops.segmented_mul">(in module nvalchemiops.torch.segment_ops)</a>
+</li>
+      </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/jax/segment_ops.html#nvalchemiops.jax.segment_ops.segmented_rms_norm">segmented_rms_norm() (in module nvalchemiops.jax.segment_ops)</a>
+
+      <ul>
+        <li><a href="modules/warp/segment_ops.html#nvalchemiops.segment_ops.segmented_rms_norm">(in module nvalchemiops.segment_ops)</a>
+</li>
+        <li><a href="modules/torch/segment_ops.html#nvalchemiops.torch.segment_ops.segmented_rms_norm">(in module nvalchemiops.torch.segment_ops)</a>
+</li>
+      </ul></li>
+      <li><a href="modules/jax/segment_ops.html#nvalchemiops.jax.segment_ops.segmented_sum">segmented_sum() (in module nvalchemiops.jax.segment_ops)</a>
+
+      <ul>
+        <li><a href="modules/warp/segment_ops.html#nvalchemiops.segment_ops.segmented_sum">(in module nvalchemiops.segment_ops)</a>
+</li>
+        <li><a href="modules/torch/segment_ops.html#nvalchemiops.torch.segment_ops.segmented_sum">(in module nvalchemiops.torch.segment_ops)</a>
+</li>
+      </ul></li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.utils.constraints.shake_constraints">shake_constraints() (in module nvalchemiops.dynamics.utils.constraints)</a>
 </li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.utils.constraints.shake_constraints_out">shake_constraints_out() (in module nvalchemiops.dynamics.utils.constraints)</a>
@@ -1273,8 +1575,20 @@ document.write(`
 </li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.utils.constraints.shake_iteration_out">shake_iteration_out() (in module nvalchemiops.dynamics.utils.constraints)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleEwaldParameters.sigma">sigma (nvalchemiops.torch.interactions.electrostatics.MultipoleEwaldParameters attribute)</a>
+
+      <ul>
+        <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipolePMEParameters.sigma">(nvalchemiops.torch.interactions.electrostatics.MultipolePMEParameters attribute)</a>
+</li>
+        <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.sigma">(nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache attribute)</a>
+</li>
+      </ul></li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.source_coeff2">source_coeff2 (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache attribute)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.source_overlap_constants">source_overlap_constants (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache attribute)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.source_phi_hat">source_phi_hat (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache attribute)</a>
+</li>
       <li><a href="modules/utilities.html#nvalchemiops.math.spline_gather">spline_gather() (in module nvalchemiops.math)</a>
 </li>
       <li><a href="modules/utilities.html#nvalchemiops.math.spline_gather_gradient">spline_gather_gradient() (in module nvalchemiops.math)</a>
@@ -1287,6 +1601,14 @@ document.write(`
 </li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_filter.stress_to_cell_force">stress_to_cell_force() (in module nvalchemiops.dynamics.utils.cell_filter)</a>
 </li>
+      <li><a href="modules/jax/neighbors.html#nvalchemiops.jax.neighbors.suggest_neighbor_list_method">suggest_neighbor_list_method() (in module nvalchemiops.jax.neighbors)</a>
+
+      <ul>
+        <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.suggest_neighbor_list_method">(in module nvalchemiops.neighbors)</a>
+</li>
+        <li><a href="modules/torch/neighbors.html#nvalchemiops.torch.neighbors.suggest_neighbor_list_method">(in module nvalchemiops.torch.neighbors)</a>
+</li>
+      </ul></li>
   </ul></td>
 </tr></table>
 
@@ -1313,6 +1635,8 @@ document.write(`
 <h2 id="V">V</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.valid_k_counts">valid_k_counts (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache attribute)</a>
+</li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.velocity_rescaling.velocity_rescale">velocity_rescale() (in module nvalchemiops.dynamics.integrators.velocity_rescaling)</a>
 </li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.velocity_rescaling.velocity_rescale_out">velocity_rescale_out() (in module nvalchemiops.dynamics.integrators.velocity_rescaling)</a>
@@ -1326,6 +1650,8 @@ document.write(`
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.velocity_verlet.velocity_verlet_velocity_finalize">velocity_verlet_velocity_finalize() (in module nvalchemiops.dynamics.integrators.velocity_verlet)</a>
 </li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.velocity_verlet.velocity_verlet_velocity_finalize_out">velocity_verlet_velocity_finalize_out() (in module nvalchemiops.dynamics.integrators.velocity_verlet)</a>
+</li>
+      <li><a href="modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache.volume">volume (nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache attribute)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -1348,14 +1674,6 @@ document.write(`
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_utils.wrap_positions_to_cell">wrap_positions_to_cell() (in module nvalchemiops.dynamics.utils.cell_utils)</a>
 </li>
       <li><a href="modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_utils.wrap_positions_to_cell_out">wrap_positions_to_cell_out() (in module nvalchemiops.dynamics.utils.cell_utils)</a>
-</li>
-  </ul></td>
-</tr></table>
-
-<h2 id="Z">Z</h2>
-<table style="width: 100%" class="indextable genindextable"><tr>
-  <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="modules/warp/neighbors.html#nvalchemiops.neighbors.neighbor_utils.zero_array">zero_array() (in module nvalchemiops.neighbors.neighbor_utils)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -1390,9 +1708,22 @@ document.write(`
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -1412,7 +1743,7 @@ document.write(`
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

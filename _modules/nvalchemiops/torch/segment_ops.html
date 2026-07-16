@@ -1,0 +1,1433 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../" data-theme="light">
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nvalchemiops.torch.segment_ops &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/css/benchmark-docs.css?v=30688d9f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/nvalchemiops/torch/segment_ops';</script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../../index.html">
+  
+  
+  
+  
+  
+    
+    
+    
+    <img src="../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <div class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">nvalchemiops...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for nvalchemiops.torch.segment_ops</h1><div class="highlight"><pre>
+<span></span><span class="c1"># SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.</span>
+<span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="c1"># you may not use this file except in compliance with the License.</span>
+<span class="c1"># You may obtain a copy of the License at</span>
+<span class="c1">#</span>
+<span class="c1"># http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Unless required by applicable law or agreed to in writing, software</span>
+<span class="c1"># distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="c1"># WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="c1"># See the License for the specific language governing permissions and</span>
+<span class="c1"># limitations under the License.</span>
+
+<span class="sd">&quot;&quot;&quot;PyTorch autograd bindings for segment operations.</span>
+
+<span class="sd">Each public function accepts PyTorch tensors and returns a PyTorch tensor with</span>
+<span class="sd">full first-order and second-order backward support.  Integer metadata (``idx``,</span>
+<span class="sd">``num_segments``) always receives ``None`` gradient.</span>
+
+<span class="sd">Every op is wired through :func:`register_warp_op_chain`, so the Warp launches</span>
+<span class="sd">are opaque ``torch.library`` custom ops: the bindings are ``torch.compile``-clean</span>
+<span class="sd">(single-graph capturable, no graph breaks) and differentiable to second order.</span>
+
+<span class="sd">Tensor layout conventions</span>
+<span class="sd">-------------------------</span>
+<span class="sd">- Scalar arrays  : shape ``(N,)`` or ``(num_segments,)``</span>
+<span class="sd">- Vec3 arrays    : shape ``(N, 3)`` or ``(num_segments, 3)``</span>
+<span class="sd">- Mat33 arrays   : shape ``(num_segments, 3, 3)``</span>
+
+<span class="sd">The dtype (float32 / float64) is inferred from the input tensor.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">warp</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">wp</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.segment_ops</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">segmented_dot</span> <span class="k">as</span> <span class="n">_wp_segmented_dot</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.segment_ops</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">segmented_matvec</span> <span class="k">as</span> <span class="n">_wp_segmented_matvec</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.segment_ops</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">segmented_mean</span> <span class="k">as</span> <span class="n">_wp_segmented_mean</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.segment_ops</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">segmented_mul</span> <span class="k">as</span> <span class="n">_wp_segmented_mul</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.segment_ops</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">segmented_sum</span> <span class="k">as</span> <span class="n">_wp_segmented_sum</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.segment_ops_backward</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">segmented_dot_backward</span><span class="p">,</span>
+    <span class="n">segmented_dot_double_backward</span><span class="p">,</span>
+    <span class="n">segmented_matvec_backward</span><span class="p">,</span>
+    <span class="n">segmented_matvec_double_backward</span><span class="p">,</span>
+    <span class="n">segmented_mean_backward</span><span class="p">,</span>
+    <span class="n">segmented_mean_double_backward</span><span class="p">,</span>
+    <span class="n">segmented_mul_backward</span><span class="p">,</span>
+    <span class="n">segmented_mul_double_backward</span><span class="p">,</span>
+    <span class="n">segmented_rms_norm_backward</span><span class="p">,</span>
+    <span class="n">segmented_rms_norm_double_backward</span><span class="p">,</span>
+    <span class="n">segmented_rms_norm_forward_precompute</span><span class="p">,</span>
+    <span class="n">segmented_sum_backward</span><span class="p">,</span>
+    <span class="n">segmented_sum_double_backward</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch._warp_op_helpers</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">register_warp_op_chain</span><span class="p">,</span>
+    <span class="n">scoped_warp_stream</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype  #, get_wp_vec_dtype</span>
+
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="c1"># All six ops are ``register_warp_op_chain`` custom-op chains: opaque to</span>
+    <span class="c1"># TorchDynamo (single-graph capturable) with full first- and second-order</span>
+    <span class="c1"># autograd. Callers use these public functions; there are no longer any</span>
+    <span class="c1"># ``torch.autograd.Function`` classes to invoke via ``.apply``.</span>
+    <span class="s2">&quot;segmented_dot&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;segmented_matvec&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;segmented_mean&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;segmented_mul&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;segmented_rms_norm&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;segmented_sum&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># Internal helpers</span>
+<span class="c1"># =============================================================================</span>
+
+<span class="n">_VEC_DTYPE</span> <span class="o">=</span> <span class="p">{</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3f</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">}</span>
+<span class="n">_MAT_DTYPE</span> <span class="o">=</span> <span class="p">{</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">mat33f</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">mat33d</span><span class="p">}</span>
+<span class="n">_SCALAR_DTYPE</span> <span class="o">=</span> <span class="p">{</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_infer_wp_dtype</span><span class="p">(</span><span class="n">t</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">t</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">3</span> <span class="ow">and</span> <span class="n">t</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">:]</span> <span class="o">==</span> <span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">_MAT_DTYPE</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">dtype</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">t</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span> <span class="ow">and</span> <span class="n">t</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="mi">3</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">_VEC_DTYPE</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">dtype</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">_SCALAR_DTYPE</span><span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">dtype</span><span class="p">]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_inp</span><span class="p">(</span><span class="n">t</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Read-only contiguous Warp view (no grad tracking).&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">_infer_wp_dtype</span><span class="p">(</span><span class="n">t</span><span class="p">))</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_inp_int</span><span class="p">(</span><span class="n">t</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_out</span><span class="p">(</span><span class="n">t</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Writable Warp view of a freshly-allocated tensor (shared memory).&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">t</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">_infer_wp_dtype</span><span class="p">(</span><span class="n">t</span><span class="p">))</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_out_int</span><span class="p">(</span><span class="n">t</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">t</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_validate_idx</span><span class="p">(</span><span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">op</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate segment-index metadata before dispatching to a Warp kernel.</span>
+
+<span class="sd">    ``idx`` is used as a raw memory index inside the Warp kernels, so a stray</span>
+<span class="sd">    value (wrong dtype, wrong rank, negative, or ``&gt;= num_segments``) becomes</span>
+<span class="sd">    an out-of-bounds memory access rather than a clear Python error.  This</span>
+<span class="sd">    runs at the public-wrapper boundary so users get a typed exception before</span>
+<span class="sd">    any device launch.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    idx : torch.Tensor</span>
+<span class="sd">        The segment-index tensor to validate.</span>
+<span class="sd">    num_segments : int</span>
+<span class="sd">        Declared number of segments.  Every entry of ``idx`` must satisfy</span>
+<span class="sd">        ``0 &lt;= idx[i] &lt; num_segments``.</span>
+<span class="sd">    op : str</span>
+<span class="sd">        Name of the calling op (used in the error message).</span>
+
+<span class="sd">    Raises</span>
+<span class="sd">    ------</span>
+<span class="sd">    ValueError</span>
+<span class="sd">        On dtype mismatch (not ``int32``), wrong rank (not 1-D), or — in eager</span>
+<span class="sd">        mode only — any value outside ``[0, num_segments)``.</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    The range check reads ``idx.min()`` / ``idx.max()`` as scalars, which forces</span>
+<span class="sd">    a CUDA -&gt; host synchronization *and* a ``torch.compile`` graph break. We skip</span>
+<span class="sd">    it under ``torch.compiler.is_compiling()`` so the public wrappers stay</span>
+<span class="sd">    fullgraph-clean when a caller (e.g. an MLIP model) compiles straight through</span>
+<span class="sd">    them; compiled callers are trusted to pass ``idx`` already validated at</span>
+<span class="sd">    construction. The cheap dtype/rank guards add no sync and run on every path.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">idx</span><span class="o">.</span><span class="n">dtype</span> <span class="o">!=</span> <span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">op</span><span class="si">}</span><span class="s2">: idx must be int32; got dtype=</span><span class="si">{</span><span class="n">idx</span><span class="o">.</span><span class="n">dtype</span><span class="si">}</span><span class="s2">.&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">idx</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">op</span><span class="si">}</span><span class="s2">: idx must be 1-D; got shape=</span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">idx</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">.&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">compiler</span><span class="o">.</span><span class="n">is_compiling</span><span class="p">():</span>
+        <span class="k">return</span>
+    <span class="k">if</span> <span class="n">idx</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span>
+    <span class="n">idx_min</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">idx</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+    <span class="n">idx_max</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">idx</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+    <span class="k">if</span> <span class="n">idx_min</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">op</span><span class="si">}</span><span class="s2">: idx contains negative values (min=</span><span class="si">{</span><span class="n">idx_min</span><span class="si">}</span><span class="s2">); all values &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;must be in the range [0, num_segments=</span><span class="si">{</span><span class="n">num_segments</span><span class="si">}</span><span class="s2">).&quot;</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="n">idx_max</span> <span class="o">&gt;=</span> <span class="n">num_segments</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">op</span><span class="si">}</span><span class="s2">: idx contains out-of-range values (max=</span><span class="si">{</span><span class="n">idx_max</span><span class="si">}</span><span class="s2">, &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;num_segments=</span><span class="si">{</span><span class="n">num_segments</span><span class="si">}</span><span class="s2">); all values must be in the range &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;[0, num_segments).&quot;</span>
+        <span class="p">)</span>
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># segmented_sum</span>
+<span class="c1"># =============================================================================</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_sum_forward</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Forward launcher: ``out[s] = sum_i x[i] where idx[i] == s``.&quot;&quot;&quot;</span>
+    <span class="n">out_shape</span> <span class="o">=</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span> <span class="k">if</span> <span class="n">x</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span> <span class="k">else</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,)</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">out_shape</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">scoped_warp_stream</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">device</span><span class="p">):</span>
+        <span class="n">_wp_segmented_sum</span><span class="p">(</span><span class="n">_inp</span><span class="p">(</span><span class="n">x</span><span class="p">),</span> <span class="n">_inp_int</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span> <span class="n">_out</span><span class="p">(</span><span class="n">out</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">out</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_sum_forward_fake</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+    <span class="c1"># Output is per-segment, so it does NOT share x&#39;s leading dim — the default</span>
+    <span class="c1"># ``empty_like(x)`` fake would report the wrong shape under torch.compile.</span>
+    <span class="n">out_shape</span> <span class="o">=</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span> <span class="k">if</span> <span class="n">x</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span> <span class="k">else</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,)</span>
+    <span class="k">return</span> <span class="n">x</span><span class="o">.</span><span class="n">new_empty</span><span class="p">(</span><span class="n">out_shape</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_sum_backward</span><span class="p">(</span>
+    <span class="n">g_out</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;First-order backward: ``grad_x[i] = g_out[idx[i]]`` (a gather).</span>
+
+<span class="sd">    ``x`` is unused in the computation; it is part of the signature because the</span>
+<span class="sd">    chain convention passes ``(*cotangents, *forward_inputs)`` and the helper</span>
+<span class="sd">    reshapes the returned grad against the matching forward input.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">N</span> <span class="o">=</span> <span class="n">idx</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">out_shape</span> <span class="o">=</span> <span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span> <span class="k">if</span> <span class="n">g_out</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span> <span class="k">else</span> <span class="p">(</span><span class="n">N</span><span class="p">,)</span>
+    <span class="n">grad_x</span> <span class="o">=</span> <span class="n">g_out</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">out_shape</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">scoped_warp_stream</span><span class="p">(</span><span class="n">g_out</span><span class="o">.</span><span class="n">device</span><span class="p">):</span>
+        <span class="n">segmented_sum_backward</span><span class="p">(</span><span class="n">_inp</span><span class="p">(</span><span class="n">g_out</span><span class="p">),</span> <span class="n">_inp_int</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span> <span class="n">_out</span><span class="p">(</span><span class="n">grad_x</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">grad_x</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_sum_double_backward</span><span class="p">(</span>
+    <span class="n">gg_x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">g_out</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Double-backward: ``grad_g_out[s] = sum_i gg_x[i]`` (scatter-sum).</span>
+
+<span class="sd">    The first backward is linear in ``g_out``, so the second-order adjoint of</span>
+<span class="sd">    that backward w.r.t. ``g_out`` is the segmented sum of ``gg_x`` — the same</span>
+<span class="sd">    scatter-sum as the original forward.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">out_shape</span> <span class="o">=</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span> <span class="k">if</span> <span class="n">gg_x</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span> <span class="k">else</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,)</span>
+    <span class="n">grad_g_out</span> <span class="o">=</span> <span class="n">gg_x</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">out_shape</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">scoped_warp_stream</span><span class="p">(</span><span class="n">gg_x</span><span class="o">.</span><span class="n">device</span><span class="p">):</span>
+        <span class="n">segmented_sum_double_backward</span><span class="p">(</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">gg_x</span><span class="p">),</span> <span class="n">_inp_int</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">_out</span><span class="p">(</span><span class="n">grad_g_out</span><span class="p">)</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">grad_g_out</span>
+
+
+<span class="c1"># Forward op + first-order backward + double-backward, wired for autograd and</span>
+<span class="c1"># torch.compile (the Warp launches are opaque to the inductor tracer). The</span>
+<span class="c1"># first backward is a gather (grad w.r.t. ``x`` at position 0); its own</span>
+<span class="c1"># backward is the scatter-sum above (grad w.r.t. ``g_out`` at position 0 of the</span>
+<span class="c1"># backward op&#39;s inputs).</span>
+<span class="n">_SEGMENTED_SUM_OPS</span> <span class="o">=</span> <span class="n">register_warp_op_chain</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;nvalchemiops::segmented_sum&quot;</span><span class="p">,</span>
+    <span class="n">forward</span><span class="o">=</span><span class="n">_segmented_sum_forward</span><span class="p">,</span>
+    <span class="n">backward</span><span class="o">=</span><span class="n">_segmented_sum_backward</span><span class="p">,</span>
+    <span class="n">double_backward</span><span class="o">=</span><span class="n">_segmented_sum_double_backward</span><span class="p">,</span>
+    <span class="n">diff_input_positions</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,),</span>
+    <span class="n">n_forward_inputs</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">second_order_diff_positions</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,),</span>
+    <span class="n">n_backward_inputs</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+    <span class="n">forward_fake</span><span class="o">=</span><span class="n">_segmented_sum_forward_fake</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<div class="viewcode-block" id="segmented_sum">
+<a class="viewcode-back" href="../../../modules/torch/segment_ops.html#nvalchemiops.torch.segment_ops.segmented_sum">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">segmented_sum</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Differentiable segmented sum.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    x : torch.Tensor</span>
+<span class="sd">        Shape ``(N,)`` or ``(N, 3)``.  dtype float32 or float64.</span>
+<span class="sd">    idx : torch.Tensor</span>
+<span class="sd">        Shape ``(N,)``, dtype int32.  Sorted segment indices in ``[0, num_segments)``.</span>
+<span class="sd">    num_segments : int</span>
+<span class="sd">        Number of segments.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    torch.Tensor</span>
+<span class="sd">        Shape ``(num_segments,)`` or ``(num_segments, 3)``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">_validate_idx</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">op</span><span class="o">=</span><span class="s2">&quot;segmented_sum&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">_SEGMENTED_SUM_OPS</span><span class="p">[</span><span class="s2">&quot;forward&quot;</span><span class="p">](</span><span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">)</span></div>
+
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># segmented_dot</span>
+<span class="c1"># =============================================================================</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_dot_forward</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Forward launcher: ``out[s] = sum_i dot(x[i], y[i]) where idx[i] == s``.&quot;&quot;&quot;</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">((</span><span class="n">num_segments</span><span class="p">,))</span>
+    <span class="k">with</span> <span class="n">scoped_warp_stream</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">device</span><span class="p">):</span>
+        <span class="n">_wp_segmented_dot</span><span class="p">(</span><span class="n">_inp</span><span class="p">(</span><span class="n">x</span><span class="p">),</span> <span class="n">_inp</span><span class="p">(</span><span class="n">y</span><span class="p">),</span> <span class="n">_inp_int</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span> <span class="n">_out</span><span class="p">(</span><span class="n">out</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">out</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_dot_forward_fake</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+    <span class="c1"># Output is one scalar per segment, not per element.</span>
+    <span class="k">return</span> <span class="n">x</span><span class="o">.</span><span class="n">new_empty</span><span class="p">((</span><span class="n">num_segments</span><span class="p">,))</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_dot_backward</span><span class="p">(</span>
+    <span class="n">g_out</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">y</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;First-order backward: ``grad_x[i] = g_out[s]*y[i]``, ``grad_y[i] = g_out[s]*x[i]``.&quot;&quot;&quot;</span>
+    <span class="n">grad_x</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+    <span class="n">grad_y</span> <span class="o">=</span> <span class="n">y</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">y</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">scoped_warp_stream</span><span class="p">(</span><span class="n">g_out</span><span class="o">.</span><span class="n">device</span><span class="p">):</span>
+        <span class="n">segmented_dot_backward</span><span class="p">(</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">g_out</span><span class="p">),</span> <span class="n">_inp</span><span class="p">(</span><span class="n">x</span><span class="p">),</span> <span class="n">_inp</span><span class="p">(</span><span class="n">y</span><span class="p">),</span> <span class="n">_inp_int</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span> <span class="n">_out</span><span class="p">(</span><span class="n">grad_x</span><span class="p">),</span> <span class="n">_out</span><span class="p">(</span><span class="n">grad_y</span><span class="p">)</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">grad_x</span><span class="p">,</span> <span class="n">grad_y</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_dot_double_backward</span><span class="p">(</span>
+    <span class="n">gg_gx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">gg_gy</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">g_out</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">y</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Double-backward w.r.t. the first backward&#39;s diff inputs ``(g_out, x, y)``.&quot;&quot;&quot;</span>
+    <span class="n">grad_g_out</span> <span class="o">=</span> <span class="n">g_out</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">((</span><span class="n">num_segments</span><span class="p">,))</span>
+    <span class="n">grad_x_extra</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+    <span class="n">grad_y_extra</span> <span class="o">=</span> <span class="n">y</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">y</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">scoped_warp_stream</span><span class="p">(</span><span class="n">gg_gx</span><span class="o">.</span><span class="n">device</span><span class="p">):</span>
+        <span class="n">segmented_dot_double_backward</span><span class="p">(</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">gg_gx</span><span class="p">),</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">gg_gy</span><span class="p">),</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">g_out</span><span class="p">),</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">x</span><span class="p">),</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">y</span><span class="p">),</span>
+            <span class="n">_inp_int</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span>
+            <span class="n">num_segments</span><span class="p">,</span>
+            <span class="n">_out</span><span class="p">(</span><span class="n">grad_g_out</span><span class="p">),</span>
+            <span class="n">_out</span><span class="p">(</span><span class="n">grad_x_extra</span><span class="p">),</span>
+            <span class="n">_out</span><span class="p">(</span><span class="n">grad_y_extra</span><span class="p">),</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">grad_g_out</span><span class="p">,</span> <span class="n">grad_x_extra</span><span class="p">,</span> <span class="n">grad_y_extra</span>
+
+
+<span class="c1"># Diff forward inputs x(0), y(1). Backward returns (grad_x, grad_y); its own</span>
+<span class="c1"># backward differentiates (g_out, x, y) at backward-input positions (0, 1, 2).</span>
+<span class="n">_SEGMENTED_DOT_OPS</span> <span class="o">=</span> <span class="n">register_warp_op_chain</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;nvalchemiops::segmented_dot&quot;</span><span class="p">,</span>
+    <span class="n">forward</span><span class="o">=</span><span class="n">_segmented_dot_forward</span><span class="p">,</span>
+    <span class="n">backward</span><span class="o">=</span><span class="n">_segmented_dot_backward</span><span class="p">,</span>
+    <span class="n">double_backward</span><span class="o">=</span><span class="n">_segmented_dot_double_backward</span><span class="p">,</span>
+    <span class="n">forward_fake</span><span class="o">=</span><span class="n">_segmented_dot_forward_fake</span><span class="p">,</span>
+    <span class="n">diff_input_positions</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+    <span class="n">n_forward_inputs</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+    <span class="n">second_order_diff_positions</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span>
+    <span class="n">n_backward_inputs</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<div class="viewcode-block" id="segmented_dot">
+<a class="viewcode-back" href="../../../modules/torch/segment_ops.html#nvalchemiops.torch.segment_ops.segmented_dot">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">segmented_dot</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Differentiable per-segment dot product.</span>
+
+<span class="sd">    ``out[s] = sum_i dot(x[i], y[i])``</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    x, y : torch.Tensor</span>
+<span class="sd">        Shape ``(N,)`` or ``(N, 3)``.  Same dtype and device.</span>
+<span class="sd">    idx : torch.Tensor</span>
+<span class="sd">        Shape ``(N,)``, dtype int32.</span>
+<span class="sd">    num_segments : int</span>
+<span class="sd">        Number of segments.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    torch.Tensor</span>
+<span class="sd">        Shape ``(num_segments,)`` — scalar per segment.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">_validate_idx</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">op</span><span class="o">=</span><span class="s2">&quot;segmented_dot&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">_SEGMENTED_DOT_OPS</span><span class="p">[</span><span class="s2">&quot;forward&quot;</span><span class="p">](</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">)</span></div>
+
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># segmented_mul   (x: vec3 or scalar, y: per-segment scalar)</span>
+<span class="c1"># =============================================================================</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_mul_forward</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Forward launcher: ``out[i] = x[i] * y[idx[i]]`` (per-element, same shape as ``x``).&quot;&quot;&quot;</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">scoped_warp_stream</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">device</span><span class="p">):</span>
+        <span class="n">_wp_segmented_mul</span><span class="p">(</span><span class="n">_inp</span><span class="p">(</span><span class="n">x</span><span class="p">),</span> <span class="n">_inp</span><span class="p">(</span><span class="n">y</span><span class="p">),</span> <span class="n">_inp_int</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span> <span class="n">_out</span><span class="p">(</span><span class="n">out</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">out</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_mul_backward</span><span class="p">(</span>
+    <span class="n">g_out</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">y</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;First-order backward: ``grad_x[i] = g_out[i]*y[s]``, ``grad_y[s] = sum_i dot(g_out[i], x[i])``.&quot;&quot;&quot;</span>
+    <span class="n">grad_x</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+    <span class="n">grad_y</span> <span class="o">=</span> <span class="n">y</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">((</span><span class="n">num_segments</span><span class="p">,))</span>
+    <span class="k">with</span> <span class="n">scoped_warp_stream</span><span class="p">(</span><span class="n">g_out</span><span class="o">.</span><span class="n">device</span><span class="p">):</span>
+        <span class="n">segmented_mul_backward</span><span class="p">(</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">g_out</span><span class="p">),</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">x</span><span class="p">),</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">y</span><span class="p">),</span>
+            <span class="n">_inp_int</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span>
+            <span class="n">num_segments</span><span class="p">,</span>
+            <span class="n">_out</span><span class="p">(</span><span class="n">grad_x</span><span class="p">),</span>
+            <span class="n">_out</span><span class="p">(</span><span class="n">grad_y</span><span class="p">),</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">grad_x</span><span class="p">,</span> <span class="n">grad_y</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_mul_double_backward</span><span class="p">(</span>
+    <span class="n">gg_gx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">gg_gy</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">g_out</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">y</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Double-backward w.r.t. the first backward&#39;s diff inputs ``(g_out, x, y)``.&quot;&quot;&quot;</span>
+    <span class="n">grad_g_out</span> <span class="o">=</span> <span class="n">g_out</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">g_out</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+    <span class="n">grad_x_extra</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+    <span class="n">grad_y_extra</span> <span class="o">=</span> <span class="n">y</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">((</span><span class="n">num_segments</span><span class="p">,))</span>
+    <span class="k">with</span> <span class="n">scoped_warp_stream</span><span class="p">(</span><span class="n">gg_gx</span><span class="o">.</span><span class="n">device</span><span class="p">):</span>
+        <span class="n">segmented_mul_double_backward</span><span class="p">(</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">gg_gx</span><span class="p">),</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">gg_gy</span><span class="p">),</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">g_out</span><span class="p">),</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">x</span><span class="p">),</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">y</span><span class="p">),</span>
+            <span class="n">_inp_int</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span>
+            <span class="n">_out</span><span class="p">(</span><span class="n">grad_g_out</span><span class="p">),</span>
+            <span class="n">_out</span><span class="p">(</span><span class="n">grad_x_extra</span><span class="p">),</span>
+            <span class="n">_out</span><span class="p">(</span><span class="n">grad_y_extra</span><span class="p">),</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">grad_g_out</span><span class="p">,</span> <span class="n">grad_x_extra</span><span class="p">,</span> <span class="n">grad_y_extra</span>
+
+
+<span class="c1"># Diff forward inputs x(0), y(1). Output matches x&#39;s shape, so the default</span>
+<span class="c1"># forward fake (``empty_like(x)``) is correct. Backward differentiates</span>
+<span class="c1"># (g_out, x, y) at backward-input positions (0, 1, 2).</span>
+<span class="n">_SEGMENTED_MUL_OPS</span> <span class="o">=</span> <span class="n">register_warp_op_chain</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;nvalchemiops::segmented_mul&quot;</span><span class="p">,</span>
+    <span class="n">forward</span><span class="o">=</span><span class="n">_segmented_mul_forward</span><span class="p">,</span>
+    <span class="n">backward</span><span class="o">=</span><span class="n">_segmented_mul_backward</span><span class="p">,</span>
+    <span class="n">double_backward</span><span class="o">=</span><span class="n">_segmented_mul_double_backward</span><span class="p">,</span>
+    <span class="n">diff_input_positions</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+    <span class="n">n_forward_inputs</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+    <span class="n">second_order_diff_positions</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span>
+    <span class="n">n_backward_inputs</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<div class="viewcode-block" id="segmented_mul">
+<a class="viewcode-back" href="../../../modules/torch/segment_ops.html#nvalchemiops.torch.segment_ops.segmented_mul">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">segmented_mul</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Differentiable per-element scale by a per-segment scalar.</span>
+
+<span class="sd">    ``out[i] = x[i] * y[idx[i]]``</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    x : torch.Tensor</span>
+<span class="sd">        Shape ``(N,)`` or ``(N, 3)``.</span>
+<span class="sd">    y : torch.Tensor</span>
+<span class="sd">        Shape ``(num_segments,)`` — one scalar per segment.</span>
+<span class="sd">    idx : torch.Tensor</span>
+<span class="sd">        Shape ``(N,)``, dtype int32.</span>
+<span class="sd">    num_segments : int</span>
+<span class="sd">        Number of segments.  Must equal ``y.shape[0]``.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    torch.Tensor</span>
+<span class="sd">        Same shape as ``x``.</span>
+
+<span class="sd">    Raises</span>
+<span class="sd">    ------</span>
+<span class="sd">    ValueError</span>
+<span class="sd">        If ``num_segments != y.shape[0]``.  Without this guard, ``forward``</span>
+<span class="sd">        would still succeed (``y`` is only indexed by ``idx``) but ``backward``</span>
+<span class="sd">        would allocate ``grad_y`` with shape ``(num_segments,)`` — a tensor</span>
+<span class="sd">        whose shape disagrees with the leaf ``y``, breaking the autograd</span>
+<span class="sd">        contract.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">y</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">num_segments</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;segmented_mul: num_segments (</span><span class="si">{</span><span class="n">num_segments</span><span class="si">}</span><span class="s2">) must equal &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;y.shape[0] (</span><span class="si">{</span><span class="n">y</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">); y is the per-segment broadcast operand.&quot;</span>
+        <span class="p">)</span>
+    <span class="n">_validate_idx</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">op</span><span class="o">=</span><span class="s2">&quot;segmented_mul&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">_SEGMENTED_MUL_OPS</span><span class="p">[</span><span class="s2">&quot;forward&quot;</span><span class="p">](</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">)</span></div>
+
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># segmented_mean</span>
+<span class="c1"># =============================================================================</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_mean_forward</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Forward launcher: ``(out, counts)`` where ``out[s] = mean(x[i] : idx[i]==s)``.</span>
+
+<span class="sd">    ``counts`` (per-segment population, int32) is returned as a second output so</span>
+<span class="sd">    the backward op can consume it via ``save_forward_outputs`` without</span>
+<span class="sd">    recomputing — it is non-differentiable (integer dtype).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">out_shape</span> <span class="o">=</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span> <span class="k">if</span> <span class="n">x</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span> <span class="k">else</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,)</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">out_shape</span><span class="p">)</span>
+    <span class="n">sums</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">out_shape</span><span class="p">)</span>
+    <span class="n">counts</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">((</span><span class="n">num_segments</span><span class="p">,),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">scoped_warp_stream</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">device</span><span class="p">):</span>
+        <span class="n">_wp_segmented_mean</span><span class="p">(</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">x</span><span class="p">),</span> <span class="n">_inp_int</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span> <span class="n">_out</span><span class="p">(</span><span class="n">sums</span><span class="p">),</span> <span class="n">_out_int</span><span class="p">(</span><span class="n">counts</span><span class="p">),</span> <span class="n">_out</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">out</span><span class="p">,</span> <span class="n">counts</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_mean_forward_fake</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+    <span class="n">out_shape</span> <span class="o">=</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span> <span class="k">if</span> <span class="n">x</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span> <span class="k">else</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,)</span>
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="n">x</span><span class="o">.</span><span class="n">new_empty</span><span class="p">(</span><span class="n">out_shape</span><span class="p">),</span>
+        <span class="n">x</span><span class="o">.</span><span class="n">new_empty</span><span class="p">((</span><span class="n">num_segments</span><span class="p">,),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_mean_backward</span><span class="p">(</span>
+    <span class="n">counts</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">g_out</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;First-order backward: ``grad_x[i] = g_out[s] / count[s]`` (linear in g_out).</span>
+
+<span class="sd">    ``counts`` is prepended by ``save_forward_outputs``; ``x`` is unused (the</span>
+<span class="sd">    gradient does not depend on the forward input values).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">N</span> <span class="o">=</span> <span class="n">idx</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">out_shape</span> <span class="o">=</span> <span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span> <span class="k">if</span> <span class="n">g_out</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span> <span class="k">else</span> <span class="p">(</span><span class="n">N</span><span class="p">,)</span>
+    <span class="n">grad_x</span> <span class="o">=</span> <span class="n">g_out</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">out_shape</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">scoped_warp_stream</span><span class="p">(</span><span class="n">g_out</span><span class="o">.</span><span class="n">device</span><span class="p">):</span>
+        <span class="n">segmented_mean_backward</span><span class="p">(</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">g_out</span><span class="p">),</span> <span class="n">_inp_int</span><span class="p">(</span><span class="n">counts</span><span class="p">),</span> <span class="n">_inp_int</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span> <span class="n">_out</span><span class="p">(</span><span class="n">grad_x</span><span class="p">)</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">grad_x</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_mean_backward_fake</span><span class="p">(</span><span class="n">counts</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty_like</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_mean_double_backward</span><span class="p">(</span>
+    <span class="n">gg_x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">counts</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">g_out</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Double-backward: ``grad_g_out[s] = sum_i gg_x[i] / count[s]`` (mean of gg_x).</span>
+
+<span class="sd">    The first backward is linear in ``g_out`` (and independent of ``x``), so the</span>
+<span class="sd">    only second-order term is w.r.t. ``g_out``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">out_shape</span> <span class="o">=</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span> <span class="k">if</span> <span class="n">gg_x</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span> <span class="k">else</span> <span class="p">(</span><span class="n">num_segments</span><span class="p">,)</span>
+    <span class="n">grad_g_out</span> <span class="o">=</span> <span class="n">gg_x</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">out_shape</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">scoped_warp_stream</span><span class="p">(</span><span class="n">gg_x</span><span class="o">.</span><span class="n">device</span><span class="p">):</span>
+        <span class="n">segmented_mean_double_backward</span><span class="p">(</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">gg_x</span><span class="p">),</span> <span class="n">_inp_int</span><span class="p">(</span><span class="n">counts</span><span class="p">),</span> <span class="n">_inp_int</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span> <span class="n">_out</span><span class="p">(</span><span class="n">grad_g_out</span><span class="p">)</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">grad_g_out</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_mean_double_backward_fake</span><span class="p">(</span>
+    <span class="n">gg_x</span><span class="p">,</span> <span class="n">counts</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty_like</span><span class="p">(</span><span class="n">g_out</span><span class="p">)</span>
+
+
+<span class="c1"># Forward returns (out, counts); only ``out``&#39;s cotangent drives the backward</span>
+<span class="c1"># (propagate_outputs=(0,)) and ``counts`` is threaded to the backward op as a</span>
+<span class="c1"># detached cache (save_forward_outputs=(1,)). The backward op&#39;s inputs are</span>
+<span class="c1"># therefore (counts, g_out, x, idx, num_segments) — the first backward is linear</span>
+<span class="c1"># in g_out, so its own backward differentiates only g_out at position 1.</span>
+<span class="n">_SEGMENTED_MEAN_OPS</span> <span class="o">=</span> <span class="n">register_warp_op_chain</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;nvalchemiops::segmented_mean&quot;</span><span class="p">,</span>
+    <span class="n">forward</span><span class="o">=</span><span class="n">_segmented_mean_forward</span><span class="p">,</span>
+    <span class="n">backward</span><span class="o">=</span><span class="n">_segmented_mean_backward</span><span class="p">,</span>
+    <span class="n">double_backward</span><span class="o">=</span><span class="n">_segmented_mean_double_backward</span><span class="p">,</span>
+    <span class="n">forward_fake</span><span class="o">=</span><span class="n">_segmented_mean_forward_fake</span><span class="p">,</span>
+    <span class="n">backward_fake</span><span class="o">=</span><span class="n">_segmented_mean_backward_fake</span><span class="p">,</span>
+    <span class="n">double_backward_fake</span><span class="o">=</span><span class="n">_segmented_mean_double_backward_fake</span><span class="p">,</span>
+    <span class="n">forward_return_arity</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+    <span class="n">propagate_outputs</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,),</span>
+    <span class="n">save_forward_outputs</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,),</span>
+    <span class="n">diff_input_positions</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,),</span>
+    <span class="n">n_forward_inputs</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">second_order_diff_positions</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,),</span>
+    <span class="n">n_backward_inputs</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<div class="viewcode-block" id="segmented_mean">
+<a class="viewcode-back" href="../../../modules/torch/segment_ops.html#nvalchemiops.torch.segment_ops.segmented_mean">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">segmented_mean</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Differentiable per-segment mean.</span>
+
+<span class="sd">    ``out[s] = mean(x[i] for i in segment s)``</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    x : torch.Tensor</span>
+<span class="sd">        Shape ``(N,)`` or ``(N, 3)``.</span>
+<span class="sd">    idx : torch.Tensor</span>
+<span class="sd">        Shape ``(N,)``, dtype int32.  Sorted.</span>
+<span class="sd">    num_segments : int</span>
+<span class="sd">        Number of segments.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    torch.Tensor</span>
+<span class="sd">        Shape ``(num_segments,)`` or ``(num_segments, 3)``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">_validate_idx</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">op</span><span class="o">=</span><span class="s2">&quot;segmented_mean&quot;</span><span class="p">)</span>
+    <span class="n">out</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">_SEGMENTED_MEAN_OPS</span><span class="p">[</span><span class="s2">&quot;forward&quot;</span><span class="p">](</span><span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">out</span></div>
+
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># segmented_rms_norm</span>
+<span class="c1"># =============================================================================</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_rms_norm_forward</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Forward launcher: ``(out, inv_norm, counts)``.</span>
+
+<span class="sd">    ``out[s] = sqrt(mean(||x[i]||^2 : idx[i]==s))``. The precompute path also</span>
+<span class="sd">    emits ``inv_norm`` and ``counts`` so the backward op can consume them via</span>
+<span class="sd">    ``save_forward_outputs`` without recomputing. Neither auxiliary output is</span>
+<span class="sd">    surfaced by the public wrapper (it returns ``out`` only).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">((</span><span class="n">num_segments</span><span class="p">,))</span>
+    <span class="n">sum_sq</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">((</span><span class="n">num_segments</span><span class="p">,))</span>
+    <span class="n">counts</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">((</span><span class="n">num_segments</span><span class="p">,),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+    <span class="n">inv_norm</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">((</span><span class="n">num_segments</span><span class="p">,))</span>
+    <span class="k">with</span> <span class="n">scoped_warp_stream</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">device</span><span class="p">):</span>
+        <span class="n">segmented_rms_norm_forward_precompute</span><span class="p">(</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">x</span><span class="p">),</span>
+            <span class="n">_inp_int</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span>
+            <span class="n">_out</span><span class="p">(</span><span class="n">sum_sq</span><span class="p">),</span>
+            <span class="n">_out_int</span><span class="p">(</span><span class="n">counts</span><span class="p">),</span>
+            <span class="n">_out</span><span class="p">(</span><span class="n">out</span><span class="p">),</span>
+            <span class="n">_out</span><span class="p">(</span><span class="n">inv_norm</span><span class="p">),</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">out</span><span class="p">,</span> <span class="n">inv_norm</span><span class="p">,</span> <span class="n">counts</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_rms_norm_forward_fake</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">):</span>
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="n">x</span><span class="o">.</span><span class="n">new_empty</span><span class="p">((</span><span class="n">num_segments</span><span class="p">,)),</span>
+        <span class="n">x</span><span class="o">.</span><span class="n">new_empty</span><span class="p">((</span><span class="n">num_segments</span><span class="p">,)),</span>
+        <span class="n">x</span><span class="o">.</span><span class="n">new_empty</span><span class="p">((</span><span class="n">num_segments</span><span class="p">,),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_rms_norm_backward</span><span class="p">(</span>
+    <span class="n">inv_norm</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">counts</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">g_out</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;First-order backward: ``grad_x[i] = g_out[s] * x[i] * inv_norm[s]``.</span>
+
+<span class="sd">    ``inv_norm`` and ``counts`` are prepended by ``save_forward_outputs``;</span>
+<span class="sd">    ``counts`` is unused at first order (only the double-backward needs it).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">grad_x</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">scoped_warp_stream</span><span class="p">(</span><span class="n">g_out</span><span class="o">.</span><span class="n">device</span><span class="p">):</span>
+        <span class="n">segmented_rms_norm_backward</span><span class="p">(</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">g_out</span><span class="p">),</span> <span class="n">_inp</span><span class="p">(</span><span class="n">x</span><span class="p">),</span> <span class="n">_inp</span><span class="p">(</span><span class="n">inv_norm</span><span class="p">),</span> <span class="n">_inp_int</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span> <span class="n">_out</span><span class="p">(</span><span class="n">grad_x</span><span class="p">)</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">grad_x</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_rms_norm_backward_fake</span><span class="p">(</span>
+    <span class="n">inv_norm</span><span class="p">,</span> <span class="n">counts</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty_like</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_rms_norm_double_backward</span><span class="p">(</span>
+    <span class="n">gg_x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">inv_norm</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">counts</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">g_out</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Double-backward w.r.t. the first backward&#39;s diff inputs ``(g_out, x)``.</span>
+
+<span class="sd">    Returns ``(grad_g_out, grad_x_extra)`` — order matches the backward op&#39;s</span>
+<span class="sd">    input positions ``(2, 3)`` = ``(g_out, x)``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">grad_x_extra</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+    <span class="n">grad_g_out</span> <span class="o">=</span> <span class="n">g_out</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">((</span><span class="n">num_segments</span><span class="p">,))</span>
+    <span class="k">with</span> <span class="n">scoped_warp_stream</span><span class="p">(</span><span class="n">gg_x</span><span class="o">.</span><span class="n">device</span><span class="p">):</span>
+        <span class="n">segmented_rms_norm_double_backward</span><span class="p">(</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">gg_x</span><span class="p">),</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">x</span><span class="p">),</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">g_out</span><span class="p">),</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">inv_norm</span><span class="p">),</span>
+            <span class="n">_inp_int</span><span class="p">(</span><span class="n">counts</span><span class="p">),</span>
+            <span class="n">_inp_int</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span>
+            <span class="n">num_segments</span><span class="p">,</span>
+            <span class="n">_out</span><span class="p">(</span><span class="n">grad_x_extra</span><span class="p">),</span>
+            <span class="n">_out</span><span class="p">(</span><span class="n">grad_g_out</span><span class="p">),</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">grad_g_out</span><span class="p">,</span> <span class="n">grad_x_extra</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_rms_norm_double_backward_fake</span><span class="p">(</span>
+    <span class="n">gg_x</span><span class="p">,</span> <span class="n">inv_norm</span><span class="p">,</span> <span class="n">counts</span><span class="p">,</span> <span class="n">g_out</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span>
+<span class="p">):</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">empty_like</span><span class="p">(</span><span class="n">g_out</span><span class="p">),</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty_like</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>
+
+
+<span class="c1"># Forward returns (out, inv_norm, counts); only ``out``&#39;s cotangent drives the</span>
+<span class="c1"># backward (propagate_outputs=(0,)), with ``inv_norm``/``counts`` threaded to the</span>
+<span class="c1"># backward op as detached caches (save_forward_outputs=(1, 2)). The backward op&#39;s</span>
+<span class="c1"># inputs are (inv_norm, counts, g_out, x, idx, num_segments); its own backward</span>
+<span class="c1"># differentiates (g_out, x) at positions (2, 3).</span>
+<span class="n">_SEGMENTED_RMS_NORM_OPS</span> <span class="o">=</span> <span class="n">register_warp_op_chain</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;nvalchemiops::segmented_rms_norm&quot;</span><span class="p">,</span>
+    <span class="n">forward</span><span class="o">=</span><span class="n">_segmented_rms_norm_forward</span><span class="p">,</span>
+    <span class="n">backward</span><span class="o">=</span><span class="n">_segmented_rms_norm_backward</span><span class="p">,</span>
+    <span class="n">double_backward</span><span class="o">=</span><span class="n">_segmented_rms_norm_double_backward</span><span class="p">,</span>
+    <span class="n">forward_fake</span><span class="o">=</span><span class="n">_segmented_rms_norm_forward_fake</span><span class="p">,</span>
+    <span class="n">backward_fake</span><span class="o">=</span><span class="n">_segmented_rms_norm_backward_fake</span><span class="p">,</span>
+    <span class="n">double_backward_fake</span><span class="o">=</span><span class="n">_segmented_rms_norm_double_backward_fake</span><span class="p">,</span>
+    <span class="n">forward_return_arity</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">propagate_outputs</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,),</span>
+    <span class="n">save_forward_outputs</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span>
+    <span class="n">diff_input_positions</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,),</span>
+    <span class="n">n_forward_inputs</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">second_order_diff_positions</span><span class="o">=</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span>
+    <span class="n">n_backward_inputs</span><span class="o">=</span><span class="mi">6</span><span class="p">,</span>
+    <span class="n">double_backward_return_arity</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<div class="viewcode-block" id="segmented_rms_norm">
+<a class="viewcode-back" href="../../../modules/torch/segment_ops.html#nvalchemiops.torch.segment_ops.segmented_rms_norm">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">segmented_rms_norm</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Differentiable per-segment RMS vector norm.</span>
+
+<span class="sd">    ``out[s] = sqrt(mean(||x[i]||^2 for i in segment s))``</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    x : torch.Tensor</span>
+<span class="sd">        Shape ``(N, 3)``.  dtype float32 or float64.</span>
+<span class="sd">    idx : torch.Tensor</span>
+<span class="sd">        Shape ``(N,)``, dtype int32.  Sorted.</span>
+<span class="sd">    num_segments : int</span>
+<span class="sd">        Number of segments.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    torch.Tensor</span>
+<span class="sd">        Shape ``(num_segments,)`` — scalar RMS norm per segment.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">_validate_idx</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">op</span><span class="o">=</span><span class="s2">&quot;segmented_rms_norm&quot;</span><span class="p">)</span>
+    <span class="n">out</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">_SEGMENTED_RMS_NORM_OPS</span><span class="p">[</span><span class="s2">&quot;forward&quot;</span><span class="p">](</span><span class="n">x</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">out</span></div>
+
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># segmented_matvec</span>
+<span class="c1"># =============================================================================</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_matvec_forward</span><span class="p">(</span>
+    <span class="n">v</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">m</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Forward launcher: ``out[i] = m[idx[i]]^T @ v[i]`` (per-element, same shape as ``v``).&quot;&quot;&quot;</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">v</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">v</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">scoped_warp_stream</span><span class="p">(</span><span class="n">v</span><span class="o">.</span><span class="n">device</span><span class="p">):</span>
+        <span class="n">_wp_segmented_matvec</span><span class="p">(</span><span class="n">_inp</span><span class="p">(</span><span class="n">v</span><span class="p">),</span> <span class="n">_inp</span><span class="p">(</span><span class="n">m</span><span class="p">),</span> <span class="n">_inp_int</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span> <span class="n">_out</span><span class="p">(</span><span class="n">out</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">out</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_matvec_backward</span><span class="p">(</span>
+    <span class="n">g_out</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">v</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">m</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;First-order backward: ``grad_v[i] = m[s] @ g_out[i]``, ``grad_m[s] = sum_i outer(v[i], g_out[i])``.&quot;&quot;&quot;</span>
+    <span class="n">grad_v</span> <span class="o">=</span> <span class="n">v</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">v</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+    <span class="n">grad_m</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">scoped_warp_stream</span><span class="p">(</span><span class="n">g_out</span><span class="o">.</span><span class="n">device</span><span class="p">):</span>
+        <span class="n">segmented_matvec_backward</span><span class="p">(</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">g_out</span><span class="p">),</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">m</span><span class="p">),</span>
+            <span class="n">_inp_int</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span>
+            <span class="n">_out</span><span class="p">(</span><span class="n">grad_v</span><span class="p">),</span>
+            <span class="n">_out</span><span class="p">(</span><span class="n">grad_m</span><span class="p">),</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">grad_v</span><span class="p">,</span> <span class="n">grad_m</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_segmented_matvec_double_backward</span><span class="p">(</span>
+    <span class="n">gg_gv</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">gg_gm</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">g_out</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">v</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">m</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Double-backward w.r.t. the first backward&#39;s diff inputs ``(g_out, v, m)``.&quot;&quot;&quot;</span>
+    <span class="n">grad_g_out</span> <span class="o">=</span> <span class="n">g_out</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">g_out</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+    <span class="n">grad_v_extra</span> <span class="o">=</span> <span class="n">v</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">v</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+    <span class="n">grad_m_extra</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">scoped_warp_stream</span><span class="p">(</span><span class="n">gg_gv</span><span class="o">.</span><span class="n">device</span><span class="p">):</span>
+        <span class="n">segmented_matvec_double_backward</span><span class="p">(</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">gg_gv</span><span class="p">),</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">gg_gm</span><span class="p">),</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">g_out</span><span class="p">),</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">_inp</span><span class="p">(</span><span class="n">m</span><span class="p">),</span>
+            <span class="n">_inp_int</span><span class="p">(</span><span class="n">idx</span><span class="p">),</span>
+            <span class="n">_out</span><span class="p">(</span><span class="n">grad_g_out</span><span class="p">),</span>
+            <span class="n">_out</span><span class="p">(</span><span class="n">grad_v_extra</span><span class="p">),</span>
+            <span class="n">_out</span><span class="p">(</span><span class="n">grad_m_extra</span><span class="p">),</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">grad_g_out</span><span class="p">,</span> <span class="n">grad_v_extra</span><span class="p">,</span> <span class="n">grad_m_extra</span>
+
+
+<span class="c1"># Diff forward inputs v(0), m(1). Output matches v&#39;s shape, so the default</span>
+<span class="c1"># forward fake (``empty_like(v)``) is correct. Backward differentiates</span>
+<span class="c1"># (g_out, v, m) at backward-input positions (0, 1, 2).</span>
+<span class="n">_SEGMENTED_MATVEC_OPS</span> <span class="o">=</span> <span class="n">register_warp_op_chain</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;nvalchemiops::segmented_matvec&quot;</span><span class="p">,</span>
+    <span class="n">forward</span><span class="o">=</span><span class="n">_segmented_matvec_forward</span><span class="p">,</span>
+    <span class="n">backward</span><span class="o">=</span><span class="n">_segmented_matvec_backward</span><span class="p">,</span>
+    <span class="n">double_backward</span><span class="o">=</span><span class="n">_segmented_matvec_double_backward</span><span class="p">,</span>
+    <span class="n">diff_input_positions</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+    <span class="n">n_forward_inputs</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+    <span class="n">second_order_diff_positions</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span>
+    <span class="n">n_backward_inputs</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<div class="viewcode-block" id="segmented_matvec">
+<a class="viewcode-back" href="../../../modules/torch/segment_ops.html#nvalchemiops.torch.segment_ops.segmented_matvec">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">segmented_matvec</span><span class="p">(</span>
+    <span class="n">v</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">m</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Differentiable per-segment matrix-vector multiply.</span>
+
+<span class="sd">    ``out[i] = m[idx[i]]^T @ v[i]``</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    v : torch.Tensor</span>
+<span class="sd">        Shape ``(N, 3)``.</span>
+<span class="sd">    m : torch.Tensor</span>
+<span class="sd">        Shape ``(num_segments, 3, 3)`` — one matrix per segment.</span>
+<span class="sd">    idx : torch.Tensor</span>
+<span class="sd">        Shape ``(N,)``, dtype int32.</span>
+<span class="sd">    num_segments : int</span>
+<span class="sd">        Number of segments.  Must equal ``m.shape[0]``.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    torch.Tensor</span>
+<span class="sd">        Shape ``(N, 3)``.</span>
+
+<span class="sd">    Raises</span>
+<span class="sd">    ------</span>
+<span class="sd">    ValueError</span>
+<span class="sd">        If ``num_segments != m.shape[0]``.  Without this guard, ``forward``</span>
+<span class="sd">        would succeed (``m`` is only indexed by ``idx``) but ``backward``</span>
+<span class="sd">        would allocate ``grad_m`` with the wrong leading dimension, breaking</span>
+<span class="sd">        the autograd contract.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">m</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">num_segments</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;segmented_matvec: num_segments (</span><span class="si">{</span><span class="n">num_segments</span><span class="si">}</span><span class="s2">) must equal &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;m.shape[0] (</span><span class="si">{</span><span class="n">m</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">); m is the per-segment matrix operand.&quot;</span>
+        <span class="p">)</span>
+    <span class="n">_validate_idx</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">,</span> <span class="n">op</span><span class="o">=</span><span class="s2">&quot;segmented_matvec&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">_SEGMENTED_MATVEC_OPS</span><span class="p">[</span><span class="s2">&quot;forward&quot;</span><span class="p">](</span><span class="n">v</span><span class="p">,</span> <span class="n">m</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">num_segments</span><span class="p">)</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

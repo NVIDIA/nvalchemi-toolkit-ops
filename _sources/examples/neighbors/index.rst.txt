@@ -12,6 +12,10 @@ These examples show how to:
 
 * Build neighbor lists for single and batched systems
 * Use dense or sparse COO output formats
+* Inspect Torch cost-model dispatch estimates
+* Request compact source rows with ``target_indices``
+* Return per-neighbor vectors and distances, including differentiable geometry
+* Compute inline Lennard-Jones pair energies and forces with ``pair_fn``
 * Detect when neighbor lists need rebuilding
 * Optimize performance with ``torch.compile``
 * Integrate with molecular dynamics workflows
@@ -109,6 +113,23 @@ These examples show how to:
     </div>
 
 
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates four neighbor-list features used together:">
+
+.. only:: html
+
+  .. image:: /examples/neighbors/images/thumb/sphx_glr_06_pair_outputs_lj_thumb.png
+    :alt:
+
+  :doc:`/examples/neighbors/06_pair_outputs_lj`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Targeted Lennard-Jones Pair Outputs</div>
+    </div>
+
+
 .. thumbnail-parent-div-close
 
 .. raw:: html
@@ -124,4 +145,5 @@ These examples show how to:
    /examples/neighbors/03_rebuild_neighborlist_detection
    /examples/neighbors/04_neighbors_list_torch_compile_performance
    /examples/neighbors/05_jax_neighbor_list
+   /examples/neighbors/06_pair_outputs_lj
 

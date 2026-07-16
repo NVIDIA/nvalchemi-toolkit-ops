@@ -2,17 +2,17 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../../../" >
+<html lang="en" data-content_root="../../../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>nvalchemiops.dynamics.integrators.velocity_rescaling &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>nvalchemiops.dynamics.integrators.velocity_rescaling &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -34,16 +34,17 @@
     <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -58,7 +59,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -125,8 +126,6 @@
   
   
     
-    
-      
     
     
     <img src="../../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -420,7 +419,7 @@ document.write(`
 <span class="c1"># See the License for the specific language governing permissions and</span>
 <span class="c1"># limitations under the License.</span>
 
-<span class="sd">&quot;&quot;&quot;</span>
+<span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">Velocity Rescaling Thermostat</span>
 <span class="sd">=============================</span>
 
@@ -436,14 +435,14 @@ document.write(`
 
 <span class="sd">.. math::</span>
 
-<span class="sd">    \\mathbf{v}_i \\leftarrow \\mathbf{v}_i \\cdot \\sqrt{\\frac{T_{\\text{target}}}{T_{\\text{current}}}}</span>
+<span class="sd">    \mathbf{v}_i \leftarrow \mathbf{v}_i \cdot \sqrt{\frac{T_{\text{target}}}{T_{\text{current}}}}</span>
 
 <span class="sd">where the instantaneous temperature is:</span>
 
 <span class="sd">.. math::</span>
 
-<span class="sd">    T_{\\text{current}} = \\frac{2 \\cdot KE}{N_{\\text{DOF}} \\cdot k_B}</span>
-<span class="sd">                        = \\frac{\\sum_i m_i |\\mathbf{v}_i|^2}{N_{\\text{DOF}} \\cdot k_B}</span>
+<span class="sd">    T_{\text{current}} = \frac{2 \cdot KE}{N_{\text{DOF}} \cdot k_B}</span>
+<span class="sd">                        = \frac{\sum_i m_i |\mathbf{v}_i|^2}{N_{\text{DOF}} \cdot k_B}</span>
 
 <span class="sd">USAGE</span>
 <span class="sd">=====</span>
@@ -530,8 +529,14 @@ document.write(`
     <span class="n">current_temperature</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
     <span class="n">target_temperature</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Compute velocity rescaling factor.</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        s = \sqrt{\frac{T_{\text{target}}}{T_{\text{current}}}}</span>
+
+<span class="sd">    Returns ``1`` when :math:`T_{\text{current}} \le 0` (undefined ratio guard).</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
@@ -543,7 +548,7 @@ document.write(`
 <span class="sd">    Returns</span>
 <span class="sd">    -------</span>
 <span class="sd">    float</span>
-<span class="sd">        Scaling factor sqrt(T_target / T_current).</span>
+<span class="sd">        Scaling factor :math:`\sqrt{T_{\text{target}} / T_{\text{current}}}`.</span>
 
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">if</span> <span class="n">current_temperature</span> <span class="o">&lt;=</span> <span class="nb">type</span><span class="p">(</span><span class="n">current_temperature</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">):</span>
@@ -560,10 +565,15 @@ document.write(`
     <span class="n">atom_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Rescale velocities to achieve target temperature (in-place).</span>
 
-<span class="sd">    Applies ``v_i *= scale_factor`` to all velocities.</span>
+<span class="sd">    .. math::</span>
+
+<span class="sd">        \mathbf{v}_i \leftarrow s\,\mathbf{v}_i</span>
+
+<span class="sd">    where :math:`s` is the scale factor, typically</span>
+<span class="sd">    :math:`s = \sqrt{T_{\text{target}} / T_{\text{current}}}`.</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
@@ -571,7 +581,7 @@ document.write(`
 <span class="sd">        Atomic velocities. Shape (N,). MODIFIED in-place.</span>
 <span class="sd">    scale_factor : wp.array</span>
 <span class="sd">        Scaling factor(s). Shape (1,) for single system, (B,) for batched.</span>
-<span class="sd">        Typically sqrt(T_target / T_current).</span>
+<span class="sd">        Typically :math:`\sqrt{T_{\text{target}} / T_{\text{current}}}`.</span>
 <span class="sd">    batch_idx : wp.array(dtype=wp.int32), optional</span>
 <span class="sd">        System index for each atom. For batched mode (atomic operations).</span>
 <span class="sd">    atom_ptr : wp.array(dtype=wp.int32), optional</span>
@@ -617,8 +627,11 @@ document.write(`
     <span class="n">atom_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Rescale velocities to achieve target temperature (non-mutating).</span>
+
+<span class="sd">    Writes :math:`s\,\mathbf{v}_i` into ``velocities_out``, where :math:`s` is</span>
+<span class="sd">    the scale factor.</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
@@ -684,9 +697,22 @@ document.write(`
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -706,7 +732,7 @@ document.write(`
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

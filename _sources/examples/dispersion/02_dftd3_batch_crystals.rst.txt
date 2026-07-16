@@ -500,6 +500,8 @@ Key features:
 
  .. code-block:: none
 
+    /lustre/fs1/portfolios/coreai/projects/coreai_modulus_alchemi/users/kinlongkelvi/code/nvalchemi-toolkit-ops/examples/dispersion/02_dftd3_batch_crystals.py:304: DeprecationWarning: The 'safety_factor' argument to estimate_max_neighbors is deprecated; it scales the estimate identically to 'atomic_density'. Set 'atomic_density' instead.
+      max_neighbors = estimate_max_neighbors(
 
     Neighbor list computed:
       Neighbor matrix shape: torch.Size([448, 512])
@@ -619,18 +621,18 @@ Convert results from atomic units (Hartree, Bohr) to conventional units
 
     Per-structure dispersion energies (eV):
       Structure 0: -3.201655 eV
-      Structure 1: -3.201655 eV
+      Structure 1: -3.201656 eV
       Structure 2: -3.201655 eV
       Structure 3: -3.201655 eV
       Structure 4: -3.201655 eV
       Structure 5: -3.201655 eV
       Structure 6: -3.201655 eV
-      Structure 7: -3.201655 eV
+      Structure 7: -3.201656 eV
 
     Energy statistics:
       Mean: -3.201655 eV
       Std:  0.000000 eV
-      Min:  -3.201655 eV
+      Min:  -3.201656 eV
       Max:  -3.201655 eV
 
     ============================================================
@@ -652,7 +654,7 @@ Convert results from atomic units (Hartree, Bohr) to conventional units
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.155 seconds)
+   **Total running time of the script:** (0 minutes 0.336 seconds)
 
 
 .. _sphx_glr_download_examples_dispersion_02_dftd3_batch_crystals.py:

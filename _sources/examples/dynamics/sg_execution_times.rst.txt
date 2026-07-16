@@ -6,7 +6,7 @@
 
 Computation times
 =================
-**00:27.505** total execution time for 11 files **from examples/dynamics**:
+**00:15.358** total execution time for 11 files **from examples/dynamics**:
 
 .. container::
 
@@ -33,35 +33,35 @@ Computation times
      - Time
      - Mem (MB)
    * - :ref:`sphx_glr_examples_dynamics_04_npt_integration.py` (``04_npt_integration.py``)
-     - 00:04.189
+     - 00:02.560
      - 0.0
    * - :ref:`sphx_glr_examples_dynamics_03_nph_integration.py` (``03_nph_integration.py``)
-     - 00:04.157
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_02_velocity_verlet_integration.py` (``02_velocity_verlet_integration.py``)
-     - 00:03.666
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_01_langevin_integration.py` (``01_langevin_integration.py``)
-     - 00:03.133
+     - 00:02.434
      - 0.0
    * - :ref:`sphx_glr_examples_dynamics_08_fire_batched.py` (``08_fire_batched.py``)
-     - 00:02.913
+     - 00:01.770
      - 0.0
    * - :ref:`sphx_glr_examples_dynamics_09_fire2_optimization.py` (``09_fire2_optimization.py``)
-     - 00:02.123
+     - 00:01.401
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_01_langevin_integration.py` (``01_langevin_integration.py``)
+     - 00:01.269
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_02_velocity_verlet_integration.py` (``02_velocity_verlet_integration.py``)
+     - 00:01.188
      - 0.0
    * - :ref:`sphx_glr_examples_dynamics_06_fire_optimization.py` (``06_fire_optimization.py``)
-     - 00:01.706
+     - 00:01.091
      - 0.0
    * - :ref:`sphx_glr_examples_dynamics_10_fire2_batched.py` (``10_fire2_batched.py``)
-     - 00:01.570
+     - 00:01.039
      - 0.0
    * - :ref:`sphx_glr_examples_dynamics_05_batched_langevin_dynamics.py` (``05_batched_langevin_dynamics.py``)
-     - 00:01.492
+     - 00:01.008
      - 0.0
    * - :ref:`sphx_glr_examples_dynamics_07_fire_variable_cell.py` (``07_fire_variable_cell.py``)
-     - 00:01.319
+     - 00:00.835
      - 0.0
    * - :ref:`sphx_glr_examples_dynamics_11_fire2_variable_cell.py` (``11_fire2_variable_cell.py``)
-     - 00:01.237
+     - 00:00.762
      - 0.0

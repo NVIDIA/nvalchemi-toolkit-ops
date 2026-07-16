@@ -30,11 +30,12 @@ on random systems. We'll cover:
 4. Comparison between algorithms
 5. Neighbor matrix vs neighbor list (COO) formats
 6. build_cell_list + query_cell_list: Lower-level API with caching
+7. return_distances / return_vectors: differentiable per-pair geometry (autograd)
 
 The neighbor list construction efficiently finds all atom pairs within a cutoff distance,
 which is essential for molecular simulations and materials science calculations.
 
-.. GENERATED FROM PYTHON SOURCE LINES 33-52
+.. GENERATED FROM PYTHON SOURCE LINES 34-53
 
 .. code-block:: Python
 
@@ -43,7 +44,7 @@ which is essential for molecular simulations and materials science calculations.
 
     import torch
 
-    from nvalchemiops.torch.neighbors import neighbor_list
+    from nvalchemiops.torch.neighbors import estimate_neighbor_list_costs, neighbor_list
     from nvalchemiops.torch.neighbors.cell_list import (
         build_cell_list,
         cell_list,
@@ -64,13 +65,13 @@ which is essential for molecular simulations and materials science calculations.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 53-56
+.. GENERATED FROM PYTHON SOURCE LINES 54-57
 
 Set up the computation device
 =============================
 Choose device (CPU or GPU if available)
 
-.. GENERATED FROM PYTHON SOURCE LINES 56-86
+.. GENERATED FROM PYTHON SOURCE LINES 57-108
 
 .. code-block:: Python
 
@@ -104,6 +105,27 @@ Choose device (CPU or GPU if available)
             return (time.perf_counter() - t0) / n_iter * 1000.0
 
 
+    def _dispatch_report(label, positions, cell, pbc, cutoff, **kwargs):
+        """Print sorted Torch neighbor-list method costs and return the cheapest."""
+        batch_ptr = torch.tensor(
+            [0, positions.shape[0]],
+            dtype=torch.int32,
+            device=positions.device,
+        )
+        report = estimate_neighbor_list_costs(
+            batch_ptr,
+            cell,
+            pbc,
+            cutoff,
+            positions_dtype=positions.dtype,
+            **kwargs,
+        )
+        print(f"\n{label}")
+        for method_name, cost in report:
+            print(f"  {method_name:24s} estimated cost (arbitrary units): {cost:.3g}")
+        return report[0][0]
+
+
 
 
 
@@ -118,13 +140,13 @@ Choose device (CPU or GPU if available)
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 87-90
+.. GENERATED FROM PYTHON SOURCE LINES 109-112
 
 Create random systems of different sizes
 ========================================
 We'll compare performance on small vs large systems
 
-.. GENERATED FROM PYTHON SOURCE LINES 90-126
+.. GENERATED FROM PYTHON SOURCE LINES 112-148
 
 .. code-block:: Python
 
@@ -137,9 +159,9 @@ We'll compare performance on small vs large systems
     small_num_atoms = 100
     small_box_size = 10.0
 
-    # Large system: requires cell list algorithm
-    large_num_atoms = 30_000
-    large_box_size = 100.0
+    # Larger system: demonstrates cell-list scaling without expensive O(N²) timing
+    large_num_atoms = 4096
+    large_box_size = 40.0
 
     cutoff = 5.0
 
@@ -178,19 +200,19 @@ We'll compare performance on small vs large systems
     ======================================================================
 
     Small system: 100 atoms in 10.0³ box
-    Large system: 30000 atoms in 100.0³ box
+    Large system: 4096 atoms in 40.0³ box
     Cutoff distance: 5.0 Å
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 127-130
+.. GENERATED FROM PYTHON SOURCE LINES 149-152
 
 Method 1: Cell List Algorithm (O(N) - best for large systems)
 =============================================================
 The cell list algorithm uses spatial decomposition for efficient neighbor finding
 
-.. GENERATED FROM PYTHON SOURCE LINES 130-177
+.. GENERATED FROM PYTHON SOURCE LINES 152-199
 
 .. code-block:: Python
 
@@ -199,8 +221,8 @@ The cell list algorithm uses spatial decomposition for efficient neighbor findin
     print("METHOD 1: CELL LIST ALGORITHM (O(N))")
     print("=" * 70)
 
-    # On large system (where cell list excels)
-    print("\n--- Large System (30,000 atoms) ---")
+    # On larger systems, spatial decomposition avoids all-pairs distance checks.
+    print(f"\n--- Large System ({large_num_atoms:,} atoms) ---")
 
     # Return neighbor matrix format (default)
     neighbor_matrix, num_neighbors, shifts = cell_list(
@@ -254,38 +276,38 @@ The cell list algorithm uses spatial decomposition for efficient neighbor findin
     METHOD 1: CELL LIST ALGORITHM (O(N))
     ======================================================================
 
-    --- Large System (30,000 atoms) ---
-    Returned neighbor matrix: shape torch.Size([30000, 112])
-      neighbor_matrix: (num_atoms, max_neighbors) = torch.Size([30000, 112])
-      num_neighbors: (num_atoms,) = torch.Size([30000])
-      shifts: (num_atoms, max_neighbors, 3) = torch.Size([30000, 112, 3])
-    Total neighbor pairs: 471810
-    Average neighbors per atom: 15.73
+    --- Large System (4,096 atoms) ---
+    Returned neighbor matrix: shape torch.Size([4096, 112])
+      neighbor_matrix: (num_atoms, max_neighbors) = torch.Size([4096, 112])
+      num_neighbors: (num_atoms,) = torch.Size([4096])
+      shifts: (num_atoms, max_neighbors, 3) = torch.Size([4096, 112, 3])
+    Total neighbor pairs: 136604
+    Average neighbors per atom: 33.35
 
-    Returned neighbor list (COO format): shape torch.Size([2, 471810])
-      neighbor_list: (2, num_pairs) = torch.Size([2, 471810])
-      source_atoms: torch.Size([471810])
-      target_atoms: torch.Size([471810])
-      shifts: (num_pairs, 3) = torch.Size([471810, 3])
-    Total pairs (COO): 471810
+    Returned neighbor list (COO format): shape torch.Size([2, 136604])
+      neighbor_list: (2, num_pairs) = torch.Size([2, 136604])
+      source_atoms: torch.Size([136604])
+      target_atoms: torch.Size([136604])
+      shifts: (num_pairs, 3) = torch.Size([136604, 3])
+    Total pairs (COO): 136604
 
     First 5 neighbor pairs:
-      Atom 0 -> Atom 8931, shift: [0, 0, 0]
+      Atom 0 -> Atom 1620, shift: [0, 0, 0]
+      Atom 0 -> Atom 595, shift: [0, 0, 0]
+      Atom 0 -> Atom 3771, shift: [0, 0, 0]
+      Atom 0 -> Atom 1745, shift: [0, 0, 0]
       Atom 0 -> Atom 2094, shift: [0, 0, 0]
-      Atom 0 -> Atom 12342, shift: [0, 0, 0]
-      Atom 0 -> Atom 25222, shift: [0, 0, 0]
-      Atom 0 -> Atom 16803, shift: [0, 0, 0]
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 178-181
+.. GENERATED FROM PYTHON SOURCE LINES 200-203
 
 Method 2: Naive Algorithm (O(N²) - best for small systems)
 ==========================================================
 The naive algorithm computes all pairwise distances
 
-.. GENERATED FROM PYTHON SOURCE LINES 181-207
+.. GENERATED FROM PYTHON SOURCE LINES 203-229
 
 .. code-block:: Python
 
@@ -340,13 +362,13 @@ The naive algorithm computes all pairwise distances
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 208-211
+.. GENERATED FROM PYTHON SOURCE LINES 230-233
 
 Comparing Cell List vs Naive Algorithm
 ======================================
 Compare performance and verify results match
 
-.. GENERATED FROM PYTHON SOURCE LINES 211-261
+.. GENERATED FROM PYTHON SOURCE LINES 233-274
 
 .. code-block:: Python
 
@@ -377,7 +399,7 @@ Compare performance and verify results match
         f"Results match: {torch.equal(num_neighbors_cell_small, num_neighbors_naive_small)}"
     )
 
-    print("\n--- Large System (30,000 atoms) ---")
+    print(f"\n--- Large System ({large_num_atoms:,} atoms) ---")
 
     # Cell list on large system
     _, num_neighbors_cell_large, _ = cell_list(large_positions, cutoff, large_cell, pbc)
@@ -385,20 +407,11 @@ Compare performance and verify results match
         lambda: cell_list(large_positions, cutoff, large_cell, pbc)
     )
 
-    # Naive on large system (will be slower)
-    _, num_neighbors_naive_large, _ = naive_neighbor_list(
-        large_positions, cutoff, cell=large_cell, pbc=pbc
-    )
-    naive_time_large = _timed_loop(
-        lambda: naive_neighbor_list(large_positions, cutoff, cell=large_cell, pbc=pbc)
-    )
-
     print(f"Cell list:  {cell_time_large:.3f} ms, {num_neighbors_cell_large.sum()} pairs")
-    print(f"Naive:      {naive_time_large:.3f} ms, {num_neighbors_naive_large.sum()} pairs")
     print(
-        f"Results match: {torch.equal(num_neighbors_cell_large, num_neighbors_naive_large)}"
+        "Naive large-system timing skipped: the O(N²) path is only demonstrated "
+        "on the small system above."
     )
-    print(f"\nSpeedup (cell list vs naive): {naive_time_large / cell_time_large:.1f}x")
 
 
 
@@ -414,28 +427,26 @@ Compare performance and verify results match
     ======================================================================
 
     --- Small System (100 atoms) ---
-    Cell list:  1.286 ms, 5152 pairs
-    Naive:      1.416 ms, 5152 pairs
+    Cell list:  0.797 ms, 5152 pairs
+    Naive:      0.539 ms, 5152 pairs
     Results match: True
 
-    --- Large System (30,000 atoms) ---
-    Cell list:  1.478 ms, 471810 pairs
-    Naive:      34.711 ms, 471810 pairs
-    Results match: True
-
-    Speedup (cell list vs naive): 23.5x
+    --- Large System (4,096 atoms) ---
+    Cell list:  0.728 ms, 136604 pairs
+    Naive large-system timing skipped: the O(N²) path is only demonstrated on the small system above.
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 262-266
+.. GENERATED FROM PYTHON SOURCE LINES 275-280
 
 Method 3: Unified neighbor_list Wrapper (Recommended)
 =====================================================
-The neighbor_list() wrapper provides a unified API that automatically
-selects the best algorithm based on system size and parameters
+The neighbor_list() wrapper provides a unified API and can choose a method
+from geometry-derived cost estimates. The same estimate can be printed once
+and reused by passing the selected method as ``method=...``.
 
-.. GENERATED FROM PYTHON SOURCE LINES 266-332
+.. GENERATED FROM PYTHON SOURCE LINES 280-359
 
 .. code-block:: Python
 
@@ -444,28 +455,41 @@ selects the best algorithm based on system size and parameters
     print("METHOD 3: UNIFIED neighbor_list() WRAPPER (RECOMMENDED)")
     print("=" * 70)
 
-    print("\n--- Automatic Method Selection ---")
-    # The wrapper automatically chooses the best algorithm:
-    # - Small systems (< 2000 avg atoms per system): naive algorithm
-    # - Large systems (>= 2000 avg atoms per system): cell_list algorithm
-    # - If cutoff2 is provided: dual cutoff algorithms
-    # - If batch_idx/batch_ptr is provided: batch algorithms
+    print("\n--- Cost-Model Method Dispatch ---")
 
-    # Small system - automatically uses naive algorithm
-    print("\nSmall system (auto-selects naive):")
+    small_method = _dispatch_report(
+        "Small system dispatch estimate:",
+        small_positions,
+        small_cell,
+        pbc,
+        cutoff,
+    )
     nm_auto_small, num_auto_small, shifts_auto_small = neighbor_list(
-        small_positions, cutoff, cell=small_cell, pbc=pbc
+        small_positions,
+        cutoff,
+        cell=small_cell,
+        pbc=pbc,
+        method=small_method,
     )
     print(f"  Total pairs: {num_auto_small.sum()}")
-    print("  Method selected: naive (auto)")
+    print(f"  Selected method: {small_method}")
 
-    # Large system - automatically uses cell_list algorithm
-    print("\nLarge system (auto-selects cell_list):")
+    large_method = _dispatch_report(
+        "Large system dispatch estimate:",
+        large_positions,
+        large_cell,
+        pbc,
+        cutoff,
+    )
     nm_auto_large, num_auto_large, shifts_auto_large = neighbor_list(
-        large_positions, cutoff, cell=large_cell, pbc=pbc
+        large_positions,
+        cutoff,
+        cell=large_cell,
+        pbc=pbc,
+        method=large_method,
     )
     print(f"  Total pairs: {num_auto_large.sum()}")
-    print("  Method selected: cell_list (auto)")
+    print(f"  Selected method: {large_method}")
 
     print("\n--- Explicit Method Selection ---")
     # You can also explicitly specify the method
@@ -500,7 +524,7 @@ selects the best algorithm based on system size and parameters
 
     print("\n--- Benefits of the Wrapper ---")
     print("✓ Unified API for all neighbor list methods")
-    print("✓ Automatic algorithm selection based on system size")
+    print("✓ Cost-model dispatch based on geometry and requested outputs")
     print("✓ Easy to switch between methods for testing")
     print("✓ Consistent return values across all methods")
     print("✓ Pass-through of method-specific kwargs")
@@ -518,15 +542,23 @@ selects the best algorithm based on system size and parameters
     METHOD 3: UNIFIED neighbor_list() WRAPPER (RECOMMENDED)
     ======================================================================
 
-    --- Automatic Method Selection ---
+    --- Cost-Model Method Dispatch ---
 
-    Small system (auto-selects naive):
+    Small system dispatch estimate:
+      naive_tile               estimated cost (arbitrary units): 1.13e+04
+      cell_list_pair_centric   estimated cost (arbitrary units): 3.67e+04
+      naive_scalar             estimated cost (arbitrary units): 6.15e+04
+      cell_list_atom_centric   estimated cost (arbitrary units): 7.58e+04
       Total pairs: 5152
-      Method selected: naive (auto)
+      Selected method: naive_tile
 
-    Large system (auto-selects cell_list):
-      Total pairs: 471810
-      Method selected: cell_list (auto)
+    Large system dispatch estimate:
+      cell_list_pair_centric   estimated cost (arbitrary units): 5.44e+05
+      cell_list_atom_centric   estimated cost (arbitrary units): 1.88e+06
+      naive_tile               estimated cost (arbitrary units): 2.56e+06
+      naive_scalar             estimated cost (arbitrary units): 8.25e+07
+      Total pairs: 136604
+      Selected method: cell_list_pair_centric
 
     --- Explicit Method Selection ---
     Explicitly using cell_list on small system: 5152 pairs
@@ -543,7 +575,7 @@ selects the best algorithm based on system size and parameters
 
     --- Benefits of the Wrapper ---
     ✓ Unified API for all neighbor list methods
-    ✓ Automatic algorithm selection based on system size
+    ✓ Cost-model dispatch based on geometry and requested outputs
     ✓ Easy to switch between methods for testing
     ✓ Consistent return values across all methods
     ✓ Pass-through of method-specific kwargs
@@ -551,13 +583,13 @@ selects the best algorithm based on system size and parameters
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 333-336
+.. GENERATED FROM PYTHON SOURCE LINES 360-363
 
 Method 4: Low-level Cell List API with Caching
 ==============================================
 For advanced users: separate build and query phases for efficient caching
 
-.. GENERATED FROM PYTHON SOURCE LINES 336-405
+.. GENERATED FROM PYTHON SOURCE LINES 363-432
 
 .. code-block:: Python
 
@@ -644,29 +676,31 @@ For advanced users: separate build and query phases for efficient caching
     ======================================================================
 
     --- Step 1: Estimate Memory Requirements ---
-    Estimated max cells: 8000
+    Estimated max cells: 512
     Neighbor search radius: tensor([1, 1, 1], device='cuda:0', dtype=torch.int32)
 
     --- Step 2: Allocate Memory ---
     Allocated cell list cache with 7 components
 
     --- Step 3: Build Cell List ---
-    Built cell list with [20, 20, 20] cells per dimension
+    Built cell list with [8, 8, 8] cells per dimension
 
     --- Step 4: Query Neighbors ---
-    Query found 471810 neighbor pairs
-    Average neighbors per atom: 15.73
+    /lustre/fs1/portfolios/coreai/projects/coreai_modulus_alchemi/users/kinlongkelvi/code/nvalchemi-toolkit-ops/examples/neighbors/01_simple_neighbor_list.py:409: DeprecationWarning: The 'safety_factor' argument to estimate_max_neighbors is deprecated; it scales the estimate identically to 'atomic_density'. Set 'atomic_density' instead.
+      max_neighbors = estimate_max_neighbors(cutoff, safety_factor=20.0)
+    Query found 136604 neighbor pairs
+    Average neighbors per atom: 33.35
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 406-409
+.. GENERATED FROM PYTHON SOURCE LINES 433-436
 
 Understanding Half-Fill Mode
 ============================
 Control whether to store both (i,j) and (j,i) pairs
 
-.. GENERATED FROM PYTHON SOURCE LINES 409-432
+.. GENERATED FROM PYTHON SOURCE LINES 436-459
 
 .. code-block:: Python
 
@@ -716,12 +750,12 @@ Control whether to store both (i,j) and (j,i) pairs
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 433-435
+.. GENERATED FROM PYTHON SOURCE LINES 460-462
 
 Validate neighbor distances
 ===========================
 
-.. GENERATED FROM PYTHON SOURCE LINES 435-475
+.. GENERATED FROM PYTHON SOURCE LINES 462-502
 
 .. code-block:: Python
 
@@ -779,25 +813,97 @@ Validate neighbor distances
     ======================================================================
 
     First 10 neighbor distances:
-      Pair 0: atom 0 -> 4, distance = 2.1855 Å
-      Pair 1: atom 0 -> 6, distance = 4.4884 Å
-      Pair 2: atom 0 -> 28, distance = 4.8273 Å
-      Pair 3: atom 0 -> 41, distance = 3.3273 Å
-      Pair 4: atom 0 -> 61, distance = 2.6520 Å
-      Pair 5: atom 0 -> 74, distance = 3.5964 Å
-      Pair 6: atom 0 -> 78, distance = 4.2534 Å
-      Pair 7: atom 0 -> 87, distance = 4.2602 Å
-      Pair 8: atom 0 -> 2, distance = 4.3182 Å
-      Pair 9: atom 0 -> 15, distance = 4.3769 Å
+      Pair 0: atom 0 -> 59, distance = 2.9541 Å
+      Pair 1: atom 0 -> 54, distance = 3.7794 Å
+      Pair 2: atom 0 -> 30, distance = 2.4518 Å
+      Pair 3: atom 0 -> 55, distance = 3.4643 Å
+      Pair 4: atom 0 -> 32, distance = 4.0754 Å
+      Pair 5: atom 0 -> 22, distance = 3.9844 Å
+      Pair 6: atom 0 -> 33, distance = 4.9199 Å
+      Pair 7: atom 0 -> 97, distance = 3.2057 Å
+      Pair 8: atom 0 -> 38, distance = 4.3813 Å
+      Pair 9: atom 0 -> 90, distance = 4.8307 Å
 
-    Max distance in pairs: 4.8273 Å
+    Max distance in pairs: 4.9199 Å
     Cutoff distance: 5.0000 Å
     ✓ All neighbor distances are within the cutoff
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 476-477
+.. GENERATED FROM PYTHON SOURCE LINES 503-506
+
+Differentiable distances and vectors
+====================================
+The returned distance and vector tensors can participate in autograd.
+
+.. GENERATED FROM PYTHON SOURCE LINES 506-548
+
+.. code-block:: Python
+
+
+    print("\n" + "=" * 70)
+    print("DIFFERENTIABLE DISTANCES AND VECTORS")
+    print("=" * 70)
+
+    positions_for_gradients = small_positions.clone().detach().requires_grad_(True)
+
+    (
+        neighbor_matrix,
+        neighbor_counts,
+        neighbor_shifts,
+        neighbor_distances,
+        neighbor_vectors,
+    ) = cell_list(
+        positions_for_gradients,
+        cutoff,
+        small_cell,
+        pbc,
+        return_distances=True,
+        return_vectors=True,
+    )
+
+    neighbor_slots = torch.arange(neighbor_distances.shape[1], device=device)
+    valid_slots = neighbor_slots[None, :] < neighbor_counts[:, None]
+
+    if valid_slots.any():
+        geometry_loss = (
+            neighbor_distances[valid_slots].pow(2).mean()
+            + 1.0e-4 * neighbor_vectors[valid_slots].pow(2).sum()
+        )
+        (position_gradients,) = torch.autograd.grad(
+            geometry_loss,
+            positions_for_gradients,
+        )
+
+        print(f"Neighbor matrix shape: {neighbor_matrix.shape}")
+        print(f"Neighbor shifts shape: {neighbor_shifts.shape}")
+        print(f"Geometry loss: {geometry_loss.item():.6f}")
+        print(f"Position gradient norm: {position_gradients.norm().item():.6f}")
+    else:
+        print("No neighbor pairs found for the differentiable geometry example.")
+
+
+
+
+
+.. rst-class:: sphx-glr-script-out
+
+ .. code-block:: none
+
+
+    ======================================================================
+    DIFFERENTIABLE DISTANCES AND VECTORS
+    ======================================================================
+    Neighbor matrix shape: torch.Size([100, 112])
+    Neighbor shifts shape: torch.Size([100, 112, 3])
+    Geometry loss: 23.116781
+    Position gradient norm: 0.243981
+
+
+
+
+.. GENERATED FROM PYTHON SOURCE LINES 549-550
 
 .. code-block:: Python
 
@@ -819,7 +925,7 @@ Validate neighbor distances
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.841 seconds)
+   **Total running time of the script:** (0 minutes 0.204 seconds)
 
 
 .. _sphx_glr_download_examples_neighbors_01_simple_neighbor_list.py:

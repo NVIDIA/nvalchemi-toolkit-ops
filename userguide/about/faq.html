@@ -2,18 +2,18 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../" >
+<html lang="en" data-content_root="../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>Frequently Asked Questions &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>Frequently Asked Questions &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -35,33 +35,36 @@
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
     <script src="../../_static/togglebutton.js?v=4a39c7ea"></script>
     <script src="../../_static/design-tabs.js?v=f930bc37"></script>
     <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'userguide/about/faq';</script>
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
     <link rel="next" title="Neighbor Lists" href="../components/neighborlist.html" />
-    <link rel="prev" title="Migration Guide (v0.3.0)" href="migration.html" />
+    <link rel="prev" title="Migration Guide" href="migration.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -128,8 +131,6 @@
   
   
     
-    
-      
     
     
     <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -367,7 +368,7 @@ document.write(`
 <li class="toctree-l1"><a class="reference internal" href="install.html">Installation Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="intro.html">Introduction to ALCHEMI Toolkit-Ops</a></li>
 <li class="toctree-l1"><a class="reference internal" href="conventions.html">Conventions</a></li>
-<li class="toctree-l1"><a class="reference internal" href="migration.html">Migration Guide (v0.3.0)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migration Guide</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Frequently Asked Questions</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Core Components</span></p>
@@ -376,6 +377,12 @@ document.write(`
 <li class="toctree-l1"><a class="reference internal" href="../components/electrostatics.html">Electrostatic Interactions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../components/dispersion.html">DFT-D3(BJ) Dispersion Correction</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../components/dynamics.html">Molecular Dynamics Integrators</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../components/segment_ops.html">Segment Operations</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Advanced Usage</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="contributing.html">Contribution Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="kernel-style-guide.html">Kernel Style Guide</a></li>
 </ul>
 </div>
 </nav></div>
@@ -463,10 +470,11 @@ benefit the community, please start a discussion on Github <a class="reference e
 <section id="how-do-i-install-with-cuda-13">
 <h3>How do I install with CUDA 13?<a class="headerlink" href="#how-do-i-install-with-cuda-13" title="Link to this heading">#</a></h3>
 <p>Blackwell GPUs require CUDA 13. <code class="docutils literal notranslate"><span class="pre">torch&gt;=2.11.0</span></code> and <code class="docutils literal notranslate"><span class="pre">jax[cuda13]</span></code> publish
-CUDA 13 wheels on the default PyPI index for x86. On Arm platforms (e.g. DGX
-Spark), an <code class="docutils literal notranslate"><span class="pre">--extra-index-url</span></code> is needed for PyTorch. See the
-<a class="reference internal" href="install.html#cuda-13-installation"><span class="std std-ref">CUDA 13 installation section</span></a> in the
-installation guide for step-by-step instructions.</p>
+CUDA 13 wheels on the default PyPI index for Linux x86_64 and aarch64. The
+<code class="docutils literal notranslate"><span class="pre">torch</span></code> and <code class="docutils literal notranslate"><span class="pre">jax</span></code> extras use CUDA 13 by default and are equivalent to
+<code class="docutils literal notranslate"><span class="pre">torch-cu13</span></code> and <code class="docutils literal notranslate"><span class="pre">jax-cu13</span></code>. Use <code class="docutils literal notranslate"><span class="pre">torch-cu12</span></code> and <code class="docutils literal notranslate"><span class="pre">jax-cu12</span></code> when a CUDA 12
+environment is required. See the <a class="reference internal" href="install.html#cuda-13-installation"><span class="std std-ref">CUDA 13 installation section</span></a>
+in the installation guide for step-by-step instructions.</p>
 </section>
 </section>
 <section id="neighbor-lists">
@@ -475,10 +483,10 @@ installation guide for step-by-step instructions.</p>
 <h3>What is the difference between cell_list and naive algorithms?<a class="headerlink" href="#what-is-the-difference-between-cell-list-and-naive-algorithms" title="Link to this heading">#</a></h3>
 <p>The two algorithm families have different computational complexity:</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">cell_list()</span></code> uses spatial decomposition for O(N) scaling. It is optimized
+<li><p><code class="docutils literal notranslate"><span class="pre">cell_list()</span></code> uses spatial decomposition for <span class="math notranslate nohighlight">\(O(N)\)</span> scaling. It is optimized
 for large systems (roughly &gt;2000 atoms) where the cutoff is small relative
 to the simulation box.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">naive_neighbor_list()</span></code> computes all pairwise distances for O(N²) scaling.
+<li><p><code class="docutils literal notranslate"><span class="pre">naive_neighbor_list()</span></code> computes all pairwise distances for <span class="math notranslate nohighlight">\(O(N^2)\)</span> scaling.
 It has lower overhead and can be faster for smaller systems.</p></li>
 </ul>
 <p>The crossover point depends on hardware, system density, and cutoff radius.
@@ -547,7 +555,7 @@ please open a Github <a class="reference external" href="https://www.github.com/
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Migration Guide (v0.3.0)</p>
+        <p class="prev-next-title">Migration Guide</p>
       </div>
     </a>
     <a class="right-next"
@@ -618,9 +626,22 @@ please open a Github <a class="reference external" href="https://www.github.com/
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -640,7 +661,7 @@ please open a Github <a class="reference external" href="https://www.github.com/
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

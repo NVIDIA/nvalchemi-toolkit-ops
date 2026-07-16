@@ -2,17 +2,17 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../../../../" >
+<html lang="en" data-content_root="../../../../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>nvalchemiops.torch.interactions.dispersion._dftd3 &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>nvalchemiops.torch.interactions.dispersion._dftd3 &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -34,16 +34,17 @@
     <link rel="stylesheet" type="text/css" href="../../../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../../../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../../../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../../../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../../../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -58,7 +59,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -125,8 +126,6 @@
   
   
     
-    
-      
     
     
     <img src="../../../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -451,7 +450,7 @@ document.write(`
 <a class="viewcode-back" href="../../../../../modules/torch/dispersion.html#nvalchemiops.torch.interactions.dispersion.D3Parameters">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">D3Parameters</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    DFT-D3 reference parameters for dispersion correction calculations.</span>
 
 <span class="sd">    This dataclass encapsulates all element-specific parameters required for</span>
@@ -466,17 +465,17 @@ document.write(`
 <span class="sd">        with position coordinates. Index 0 is reserved for</span>
 <span class="sd">        padding; valid atomic numbers are 1 to max_Z.</span>
 <span class="sd">    r4r2 : torch.Tensor</span>
-<span class="sd">        &lt;r⁴&gt;/&lt;r²&gt; expectation values [max_Z+1] as float32 or float64.</span>
-<span class="sd">        Dimensionless ratio used for computing C8 coefficients from C6 values.</span>
+<span class="sd">        :math:`\langle r^4 \rangle / \langle r^2 \rangle` expectation values [max_Z+1] as float32 or float64.</span>
+<span class="sd">        Dimensionless ratio used for computing :math:`C_8` coefficients from :math:`C_6` values.</span>
 <span class="sd">    c6ab : torch.Tensor</span>
-<span class="sd">        C6 reference coefficients [max_Z+1, max_Z+1, interp_mesh, interp_mesh]</span>
-<span class="sd">        as float32 or float64. Units are energy x distance^6. Indexed by atomic numbers and coordination number reference indices.</span>
+<span class="sd">        :math:`C_6` reference coefficients [max_Z+1, max_Z+1, interp_mesh, interp_mesh]</span>
+<span class="sd">        as float32 or float64. Units are energy :math:`\times` distance\ :math:`^6`. Indexed by atomic numbers and coordination number reference indices.</span>
 <span class="sd">    cn_ref : torch.Tensor</span>
 <span class="sd">        Coordination number reference grid [max_Z+1, max_Z+1, interp_mesh, interp_mesh]</span>
 <span class="sd">        as float32 or float64. Dimensionless CN values for Gaussian interpolation.</span>
 <span class="sd">    interp_mesh : int, optional</span>
 <span class="sd">        Size of the coordination number interpolation mesh. Default: 5</span>
-<span class="sd">        (standard DFT-D3 uses a 5x5 grid)</span>
+<span class="sd">        (standard DFT-D3 uses a :math:`5 \times 5` grid)</span>
 
 <span class="sd">    Raises</span>
 <span class="sd">    ------</span>
@@ -489,7 +488,7 @@ document.write(`
 <span class="sd">    -----</span>
 <span class="sd">    - Parameters should use consistent units matching your coordinate system.</span>
 <span class="sd">      Standard D3 parameters from the Grimme group use atomic units (Bohr for</span>
-<span class="sd">      distances, Hartree x Bohr^6 for C6 coefficients).</span>
+<span class="sd">      distances, Hartree :math:`\times` Bohr\ :math:`^6` for :math:`C_6` coefficients).</span>
 <span class="sd">    - Index 0 in all arrays is reserved for padding atoms (atomic number 0)</span>
 <span class="sd">    - Valid atomic numbers range from 1 to max_z</span>
 <span class="sd">    - The standard DFT-D3 implementation supports elements 1-94 (H to Pu)</span>
@@ -675,7 +674,7 @@ document.write(`
     <span class="n">batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Internal custom op for DFT-D3(BJ) dispersion energy and forces</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Internal custom op for DFT-D3(BJ) dispersion energy and forces</span>
 <span class="sd">    computation (non-PBC, neighbor matrix format).</span>
 
 <span class="sd">    This is a low-level custom operator that performs DFT-D3(BJ) dispersion</span>
@@ -699,7 +698,7 @@ document.write(`
 <span class="sd">    covalent_radii : torch.Tensor, shape (max_Z+1), dtype=float32</span>
 <span class="sd">        Covalent radii indexed by atomic number, in same units as positions</span>
 <span class="sd">    r4r2 : torch.Tensor, shape (max_Z+1), dtype=float32</span>
-<span class="sd">        &lt;r⁴&gt;/&lt;r²&gt; expectation values for C8 computation (dimensionless)</span>
+<span class="sd">        :math:`\langle r^4 \rangle / \langle r^2 \rangle` expectation values for C8 computation (dimensionless)</span>
 <span class="sd">    c6_reference : torch.Tensor, shape (max_Z+1, max_Z+1, 5, 5), dtype=float32</span>
 <span class="sd">        C6 reference values in energy x distance^6 units</span>
 <span class="sd">    coord_num_ref : torch.Tensor, shape (max_Z+1, max_Z+1, 5, 5), dtype=float32</span>
@@ -902,7 +901,7 @@ document.write(`
     <span class="n">compute_virial</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Internal custom op for DFT-D3(BJ) dispersion energy and forces computation (PBC, neighbor matrix format).</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Internal custom op for DFT-D3(BJ) dispersion energy and forces computation (PBC, neighbor matrix format).</span>
 
 <span class="sd">    This is a low-level custom operator that performs DFT-D3(BJ) dispersion</span>
 <span class="sd">    calculations using Warp kernels for periodic systems with neighbor matrix format.</span>
@@ -929,7 +928,7 @@ document.write(`
 <span class="sd">    covalent_radii : torch.Tensor, shape (max_Z+1), dtype=float32</span>
 <span class="sd">        Covalent radii indexed by atomic number, in same units as positions</span>
 <span class="sd">    r4r2 : torch.Tensor, shape (max_Z+1), dtype=float32</span>
-<span class="sd">        &lt;r⁴&gt;/&lt;r²&gt; expectation values for C8 computation (dimensionless)</span>
+<span class="sd">        :math:`\langle r^4 \rangle / \langle r^2 \rangle` expectation values for C8 computation (dimensionless)</span>
 <span class="sd">    c6_reference : torch.Tensor, shape (max_Z+1, max_Z+1, 5, 5), dtype=float32</span>
 <span class="sd">        C6 reference values in energy x distance^6 units</span>
 <span class="sd">    coord_num_ref : torch.Tensor, shape (max_Z+1, max_Z+1, 5, 5), dtype=float32</span>
@@ -1149,7 +1148,7 @@ document.write(`
     <span class="n">batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Internal custom op for DFT-D3(BJ) using CSR neighbor list format (non-PBC).</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Internal custom op for DFT-D3(BJ) using CSR neighbor list format (non-PBC).</span>
 
 <span class="sd">    This is a low-level custom operator that performs DFT-D3(BJ) dispersion</span>
 <span class="sd">    calculations using CSR (Compressed Sparse Row) neighbor list format with</span>
@@ -1173,7 +1172,7 @@ document.write(`
 <span class="sd">    covalent_radii : torch.Tensor, shape (max_Z+1), dtype=float32</span>
 <span class="sd">        Covalent radii indexed by atomic number</span>
 <span class="sd">    r4r2 : torch.Tensor, shape (max_Z+1), dtype=float32</span>
-<span class="sd">        &lt;r⁴&gt;/&lt;r²&gt; expectation values</span>
+<span class="sd">        :math:`\langle r^4 \rangle / \langle r^2 \rangle` expectation values</span>
 <span class="sd">    c6_reference : torch.Tensor, shape (max_Z+1, max_Z+1, 5, 5), dtype=float32</span>
 <span class="sd">        C6 reference values</span>
 <span class="sd">    coord_num_ref : torch.Tensor, shape (max_Z+1, max_Z+1, 5, 5), dtype=float32</span>
@@ -1367,7 +1366,7 @@ document.write(`
     <span class="n">compute_virial</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Internal custom op for DFT-D3(BJ) using CSR neighbor list format (PBC).</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Internal custom op for DFT-D3(BJ) using CSR neighbor list format (PBC).</span>
 
 <span class="sd">    This is a low-level custom operator that performs DFT-D3(BJ) dispersion</span>
 <span class="sd">    calculations using CSR (Compressed Sparse Row) neighbor list format with</span>
@@ -1395,7 +1394,7 @@ document.write(`
 <span class="sd">    covalent_radii : torch.Tensor, shape (max_Z+1), dtype=float32</span>
 <span class="sd">        Covalent radii indexed by atomic number</span>
 <span class="sd">    r4r2 : torch.Tensor, shape (max_Z+1), dtype=float32</span>
-<span class="sd">        &lt;r⁴&gt;/&lt;r²&gt; expectation values</span>
+<span class="sd">        :math:`\langle r^4 \rangle / \langle r^2 \rangle` expectation values</span>
 <span class="sd">    c6_reference : torch.Tensor, shape (max_Z+1, max_Z+1, 5, 5), dtype=float32</span>
 <span class="sd">        C6 reference values</span>
 <span class="sd">    coord_num_ref : torch.Tensor, shape (max_Z+1, max_Z+1, 5, 5), dtype=float32</span>
@@ -1611,7 +1610,7 @@ document.write(`
     <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]</span>
     <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]</span>
 <span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Compute DFT-D3(BJ) dispersion energy and forces using Warp</span>
 <span class="sd">    with optional periodic boundary condition support and smoothing function.</span>
 
@@ -1644,14 +1643,14 @@ document.write(`
 <span class="sd">    a2 : float</span>
 <span class="sd">        Becke-Johnson damping parameter 2 (functional-dependent), in same units as positions</span>
 <span class="sd">    s8 : float</span>
-<span class="sd">        C8 term scaling factor (functional-dependent, dimensionless)</span>
+<span class="sd">        :math:`C_8` term scaling factor (functional-dependent, dimensionless)</span>
 <span class="sd">    k1 : float, optional</span>
 <span class="sd">        CN counting function steepness parameter, in inverse distance units</span>
 <span class="sd">        (typically 16.0 1/Bohr for atomic units)</span>
 <span class="sd">    k3 : float, optional</span>
 <span class="sd">        CN interpolation Gaussian width parameter (typically -4.0, dimensionless)</span>
 <span class="sd">    s6 : float, optional</span>
-<span class="sd">        C6 term scaling factor (typically 1.0, dimensionless)</span>
+<span class="sd">        :math:`C_6` term scaling factor (typically 1.0, dimensionless)</span>
 <span class="sd">    s5_smoothing_on : float, optional</span>
 <span class="sd">        Distance where S5 switching begins, in same units as positions. Set greater or</span>
 <span class="sd">        equal to s5_smoothing_off to disable smoothing. Default: 1e10</span>
@@ -1670,10 +1669,12 @@ document.write(`
 <span class="sd">        Covalent radii [max_Z+1] as float32, indexed by atomic number, in same units</span>
 <span class="sd">        as positions. If provided, overrides the value in d3_params.</span>
 <span class="sd">    r4r2 : torch.Tensor | None, optional</span>
-<span class="sd">        &lt;r4&gt;/&lt;r2&gt; expectation values [max_Z+1] as float32 for C8 computation (dimensionless).</span>
+<span class="sd">        :math:`\langle r^4 \rangle / \langle r^2 \rangle` expectation values [max_Z+1] as float32</span>
+<span class="sd">        for :math:`C_8` computation (dimensionless).</span>
 <span class="sd">        If provided, overrides the value in d3_params.</span>
 <span class="sd">    c6_reference : torch.Tensor | None, optional</span>
-<span class="sd">        C6 reference values [max_Z+1, max_Z+1, 5, 5] as float32 in energy × distance^6 units.</span>
+<span class="sd">        :math:`C_6` reference values [max_Z+1, max_Z+1, 5, 5] as float32</span>
+<span class="sd">        in energy :math:`\times` distance\ :math:`^6` units.</span>
 <span class="sd">        If provided, overrides the value in d3_params.</span>
 <span class="sd">    coord_num_ref : torch.Tensor | None, optional</span>
 <span class="sd">        CN reference grid [max_Z+1, max_Z+1, 5, 5] as float32 (dimensionless).</span>
@@ -1747,10 +1748,10 @@ document.write(`
 <span class="sd">    - Float32 or float64 precision for positions and cell; outputs always float32</span>
 <span class="sd">    - **Neighbor formats**: Supports both neighbor_matrix (dense) and neighbor_list (sparse COO)</span>
 <span class="sd">      formats. Choose neighbor_list for sparse systems or when memory efficiency is important.</span>
-<span class="sd">    - Padding atoms indicated by numbers[i] == 0</span>
+<span class="sd">    - Padding atoms indicated by ``numbers[i] == 0``</span>
 <span class="sd">    - Requires symmetric neighbor representation (each pair appears twice)</span>
-<span class="sd">    - **Two-body only**: Computes pairwise C6 and C8 dispersion terms; three-body</span>
-<span class="sd">      Axilrod-Teller-Muto (ATM/C9) terms are not included</span>
+<span class="sd">    - **Two-body only**: Computes pairwise :math:`C_6` and :math:`C_8` dispersion terms;</span>
+<span class="sd">      three-body Axilrod-Teller-Muto (ATM/:math:`C_9`) terms are not included</span>
 <span class="sd">    - Virial computation requires periodic boundary conditions.</span>
 <span class="sd">    - Bulk stress tensor can be obtained by dividing virial by system volume.</span>
 
@@ -1758,7 +1759,8 @@ document.write(`
 
 <span class="sd">    - Use neighbor_matrix for dense systems or when max_neighbors is small</span>
 <span class="sd">    - Use neighbor_list for sparse systems, large cutoffs, or memory-constrained scenarios</span>
-<span class="sd">    - Both formats produce identical results and support PBC</span>
+<span class="sd">    - Both formats compute the same model and support PBC; results may differ</span>
+<span class="sd">      by floating-point roundoff due to traversal order</span>
 
 <span class="sd">    **PBC Handling**:</span>
 
@@ -2070,9 +2072,22 @@ document.write(`
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -2092,7 +2107,7 @@ document.write(`
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

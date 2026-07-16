@@ -2,17 +2,17 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../../../" >
+<html lang="en" data-content_root="../../../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>nvalchemiops.torch.neighbors.naive_dual_cutoff &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>nvalchemiops.torch.neighbors.naive_dual_cutoff &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -34,16 +34,17 @@
     <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -58,7 +59,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -125,8 +126,6 @@
   
   
     
-    
-      
     
     
     <img src="../../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -430,7 +429,7 @@ document.write(`
 <span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">warp</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">wp</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighbors.naive_dual_cutoff</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighbors.naive</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">naive_neighbor_matrix_dual_cutoff</span><span class="p">,</span>
     <span class="n">naive_neighbor_matrix_pbc_dual_cutoff</span><span class="p">,</span>
 <span class="p">)</span>
@@ -438,6 +437,7 @@ document.write(`
     <span class="n">estimate_max_neighbors</span><span class="p">,</span>
     <span class="n">selective_zero_num_neighbors_single</span><span class="p">,</span>
 <span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch._warp_op_helpers</span><span class="w"> </span><span class="kn">import</span> <span class="n">register_noop_fake</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.neighbors.neighbor_utils</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">compute_naive_num_shifts</span><span class="p">,</span>
     <span class="n">get_neighbor_list_from_neighbor_matrix</span><span class="p">,</span>
@@ -479,15 +479,21 @@ document.write(`
     <span class="n">wp_vec_dtype</span> <span class="o">=</span> <span class="n">get_wp_vec_dtype</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
     <span class="n">wp_dtype</span> <span class="o">=</span> <span class="n">get_wp_dtype</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
 
-    <span class="n">wp_positions</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_vec_dtype</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">wp_positions</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">positions</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_vec_dtype</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
     <span class="n">wp_neighbor_matrix1</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">neighbor_matrix1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">neighbor_matrix1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
     <span class="p">)</span>
-    <span class="n">wp_num_neighbors1</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">num_neighbors1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">wp_num_neighbors1</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">num_neighbors1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
     <span class="n">wp_neighbor_matrix2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">neighbor_matrix2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">neighbor_matrix2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
     <span class="p">)</span>
-    <span class="n">wp_num_neighbors2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">num_neighbors2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">wp_num_neighbors2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">num_neighbors2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
 
     <span class="n">naive_neighbor_matrix_dual_cutoff</span><span class="p">(</span>
         <span class="n">positions</span><span class="o">=</span><span class="n">wp_positions</span><span class="p">,</span>
@@ -519,6 +525,7 @@ document.write(`
     <span class="n">cutoff1</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
     <span class="n">cutoff2</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
     <span class="n">cell</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
     <span class="n">neighbor_matrix1</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
     <span class="n">neighbor_matrix2</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
     <span class="n">neighbor_matrix_shifts1</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
@@ -530,6 +537,9 @@ document.write(`
     <span class="n">max_shifts_per_system</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
     <span class="n">half_fill</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">wrap_positions</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">positions_wrapped_buffer</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">per_atom_cell_offsets_buffer</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">inv_cell_buffer</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute two neighbor matrices with periodic boundary conditions using dual cutoffs.</span>
 
@@ -545,31 +555,71 @@ document.write(`
     <span class="n">wp_mat_dtype</span> <span class="o">=</span> <span class="n">get_wp_mat_dtype</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
     <span class="n">wp_dtype</span> <span class="o">=</span> <span class="n">get_wp_dtype</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
 
-    <span class="n">wp_positions</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_vec_dtype</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="n">wp_cell</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_mat_dtype</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">wp_positions</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">positions</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_vec_dtype</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
+    <span class="n">wp_cell</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">cell</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_mat_dtype</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
+    <span class="n">wp_pbc</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">pbc</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
     <span class="n">wp_shift_range</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">shift_range_per_dimension</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">shift_range_per_dimension</span><span class="p">,</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">,</span>
+        <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="p">)</span>
     <span class="n">wp_neighbor_matrix1</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">neighbor_matrix1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">neighbor_matrix1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
     <span class="p">)</span>
     <span class="n">wp_neighbor_matrix2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">neighbor_matrix2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">neighbor_matrix2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
     <span class="p">)</span>
     <span class="n">wp_neighbor_matrix_shifts1</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">neighbor_matrix_shifts1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">neighbor_matrix_shifts1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
     <span class="p">)</span>
     <span class="n">wp_neighbor_matrix_shifts2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">neighbor_matrix_shifts2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">neighbor_matrix_shifts2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
     <span class="p">)</span>
-    <span class="n">wp_num_neighbors1</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">num_neighbors1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="n">wp_num_neighbors2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">num_neighbors2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">wp_num_neighbors1</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">num_neighbors1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
+    <span class="n">wp_num_neighbors2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">num_neighbors2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
+    <span class="n">wp_positions_wrapped</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+            <span class="n">positions_wrapped_buffer</span><span class="p">,</span>
+            <span class="n">dtype</span><span class="o">=</span><span class="n">wp_vec_dtype</span><span class="p">,</span>
+            <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+            <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">positions_wrapped_buffer</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="k">else</span> <span class="kc">None</span>
+    <span class="p">)</span>
+    <span class="n">wp_per_atom_cell_offsets</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+            <span class="n">per_atom_cell_offsets_buffer</span><span class="p">,</span>
+            <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">,</span>
+            <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+            <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">per_atom_cell_offsets_buffer</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="k">else</span> <span class="kc">None</span>
+    <span class="p">)</span>
+    <span class="n">wp_inv_cell</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+            <span class="n">inv_cell_buffer</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_mat_dtype</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">inv_cell_buffer</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="k">else</span> <span class="kc">None</span>
+    <span class="p">)</span>
 
     <span class="n">naive_neighbor_matrix_pbc_dual_cutoff</span><span class="p">(</span>
         <span class="n">positions</span><span class="o">=</span><span class="n">wp_positions</span><span class="p">,</span>
         <span class="n">cutoff1</span><span class="o">=</span><span class="n">cutoff1</span><span class="p">,</span>
         <span class="n">cutoff2</span><span class="o">=</span><span class="n">cutoff2</span><span class="p">,</span>
         <span class="n">cell</span><span class="o">=</span><span class="n">wp_cell</span><span class="p">,</span>
+        <span class="n">pbc</span><span class="o">=</span><span class="n">wp_pbc</span><span class="p">,</span>
         <span class="n">shift_range</span><span class="o">=</span><span class="n">wp_shift_range</span><span class="p">,</span>
         <span class="n">num_shifts</span><span class="o">=</span><span class="n">max_shifts_per_system</span><span class="p">,</span>
         <span class="n">neighbor_matrix1</span><span class="o">=</span><span class="n">wp_neighbor_matrix1</span><span class="p">,</span>
@@ -582,6 +632,9 @@ document.write(`
         <span class="n">device</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">device</span><span class="p">),</span>
         <span class="n">half_fill</span><span class="o">=</span><span class="n">half_fill</span><span class="p">,</span>
         <span class="n">wrap_positions</span><span class="o">=</span><span class="n">wrap_positions</span><span class="p">,</span>
+        <span class="n">positions_wrapped_buffer</span><span class="o">=</span><span class="n">wp_positions_wrapped</span><span class="p">,</span>
+        <span class="n">per_atom_cell_offsets_buffer</span><span class="o">=</span><span class="n">wp_per_atom_cell_offsets</span><span class="p">,</span>
+        <span class="n">inv_cell_buffer</span><span class="o">=</span><span class="n">wp_inv_cell</span><span class="p">,</span>
     <span class="p">)</span>
 
 
@@ -620,17 +673,26 @@ document.write(`
     <span class="n">wp_dtype</span> <span class="o">=</span> <span class="n">get_wp_dtype</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
     <span class="n">wp_vec_dtype</span> <span class="o">=</span> <span class="n">get_wp_vec_dtype</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
 
-    <span class="n">wp_positions</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_vec_dtype</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">wp_positions</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">positions</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_vec_dtype</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
     <span class="n">wp_neighbor_matrix1</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">neighbor_matrix1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">neighbor_matrix1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
     <span class="p">)</span>
-    <span class="n">wp_num_neighbors1</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">num_neighbors1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">wp_num_neighbors1</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">num_neighbors1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
     <span class="n">wp_neighbor_matrix2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">neighbor_matrix2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">neighbor_matrix2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
     <span class="p">)</span>
-    <span class="n">wp_num_neighbors2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">num_neighbors2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">wp_num_neighbors2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">num_neighbors2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
     <span class="n">wp_rebuild_flags</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">rebuild_flags</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)[:</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">contiguous</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">rebuild_flags</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)[:</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">contiguous</span><span class="p">(),</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span>
+        <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="p">)</span>
 
     <span class="n">selective_zero_num_neighbors_single</span><span class="p">(</span>
@@ -670,6 +732,7 @@ document.write(`
     <span class="n">cutoff1</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
     <span class="n">cutoff2</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
     <span class="n">cell</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
     <span class="n">neighbor_matrix1</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
     <span class="n">neighbor_matrix2</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
     <span class="n">neighbor_matrix_shifts1</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
@@ -682,6 +745,9 @@ document.write(`
     <span class="n">rebuild_flags</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
     <span class="n">half_fill</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">wrap_positions</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">positions_wrapped_buffer</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">per_atom_cell_offsets_buffer</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">inv_cell_buffer</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Selective naive dual cutoff PBC neighbor matrix custom op.</span>
 
@@ -698,27 +764,69 @@ document.write(`
     <span class="n">wp_mat_dtype</span> <span class="o">=</span> <span class="n">get_wp_mat_dtype</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
     <span class="n">wp_dtype</span> <span class="o">=</span> <span class="n">get_wp_dtype</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
 
-    <span class="n">wp_positions</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_vec_dtype</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="n">wp_cell</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_mat_dtype</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">wp_positions</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">positions</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_vec_dtype</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
+    <span class="n">wp_cell</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">cell</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_mat_dtype</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
+    <span class="n">wp_pbc</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">pbc</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
     <span class="n">wp_shift_range</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">shift_range_per_dimension</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">shift_range_per_dimension</span><span class="p">,</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">,</span>
+        <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="p">)</span>
     <span class="n">wp_neighbor_matrix1</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">neighbor_matrix1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">neighbor_matrix1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
     <span class="p">)</span>
     <span class="n">wp_neighbor_matrix2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">neighbor_matrix2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">neighbor_matrix2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
     <span class="p">)</span>
     <span class="n">wp_neighbor_matrix_shifts1</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">neighbor_matrix_shifts1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">neighbor_matrix_shifts1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
     <span class="p">)</span>
     <span class="n">wp_neighbor_matrix_shifts2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">neighbor_matrix_shifts2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">neighbor_matrix_shifts2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
     <span class="p">)</span>
-    <span class="n">wp_num_neighbors1</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">num_neighbors1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="n">wp_num_neighbors2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">num_neighbors2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">wp_num_neighbors1</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">num_neighbors1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
+    <span class="n">wp_num_neighbors2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">num_neighbors2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
     <span class="n">wp_rebuild_flags</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
-        <span class="n">rebuild_flags</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)[:</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">contiguous</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="n">rebuild_flags</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)[:</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">contiguous</span><span class="p">(),</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span>
+        <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">wp_positions_wrapped</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+            <span class="n">positions_wrapped_buffer</span><span class="p">,</span>
+            <span class="n">dtype</span><span class="o">=</span><span class="n">wp_vec_dtype</span><span class="p">,</span>
+            <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+            <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">positions_wrapped_buffer</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="k">else</span> <span class="kc">None</span>
+    <span class="p">)</span>
+    <span class="n">wp_per_atom_cell_offsets</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+            <span class="n">per_atom_cell_offsets_buffer</span><span class="p">,</span>
+            <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">,</span>
+            <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+            <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">per_atom_cell_offsets_buffer</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="k">else</span> <span class="kc">None</span>
+    <span class="p">)</span>
+    <span class="n">wp_inv_cell</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+            <span class="n">inv_cell_buffer</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp_mat_dtype</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">return_ctype</span><span class="o">=</span><span class="kc">True</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">inv_cell_buffer</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="k">else</span> <span class="kc">None</span>
     <span class="p">)</span>
 
     <span class="n">selective_zero_num_neighbors_single</span><span class="p">(</span>
@@ -732,6 +840,7 @@ document.write(`
         <span class="n">cutoff1</span><span class="o">=</span><span class="n">cutoff1</span><span class="p">,</span>
         <span class="n">cutoff2</span><span class="o">=</span><span class="n">cutoff2</span><span class="p">,</span>
         <span class="n">cell</span><span class="o">=</span><span class="n">wp_cell</span><span class="p">,</span>
+        <span class="n">pbc</span><span class="o">=</span><span class="n">wp_pbc</span><span class="p">,</span>
         <span class="n">shift_range</span><span class="o">=</span><span class="n">wp_shift_range</span><span class="p">,</span>
         <span class="n">num_shifts</span><span class="o">=</span><span class="n">max_shifts_per_system</span><span class="p">,</span>
         <span class="n">neighbor_matrix1</span><span class="o">=</span><span class="n">wp_neighbor_matrix1</span><span class="p">,</span>
@@ -745,7 +854,16 @@ document.write(`
         <span class="n">half_fill</span><span class="o">=</span><span class="n">half_fill</span><span class="p">,</span>
         <span class="n">rebuild_flags</span><span class="o">=</span><span class="n">wp_rebuild_flags</span><span class="p">,</span>
         <span class="n">wrap_positions</span><span class="o">=</span><span class="n">wrap_positions</span><span class="p">,</span>
+        <span class="n">positions_wrapped_buffer</span><span class="o">=</span><span class="n">wp_positions_wrapped</span><span class="p">,</span>
+        <span class="n">per_atom_cell_offsets_buffer</span><span class="o">=</span><span class="n">wp_per_atom_cell_offsets</span><span class="p">,</span>
+        <span class="n">inv_cell_buffer</span><span class="o">=</span><span class="n">wp_inv_cell</span><span class="p">,</span>
     <span class="p">)</span>
+
+
+<span class="n">register_noop_fake</span><span class="p">(</span><span class="n">_naive_neighbor_matrix_no_pbc_dual_cutoff</span><span class="p">)</span>
+<span class="n">register_noop_fake</span><span class="p">(</span><span class="n">_naive_neighbor_matrix_pbc_dual_cutoff</span><span class="p">)</span>
+<span class="n">register_noop_fake</span><span class="p">(</span><span class="n">_naive_neighbor_matrix_no_pbc_dual_cutoff_selective</span><span class="p">)</span>
+<span class="n">register_noop_fake</span><span class="p">(</span><span class="n">_naive_neighbor_matrix_pbc_dual_cutoff_selective</span><span class="p">)</span>
 
 
 <div class="viewcode-block" id="naive_neighbor_list_dual_cutoff">
@@ -772,6 +890,9 @@ document.write(`
     <span class="n">max_shifts_per_system</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">rebuild_flags</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">wrap_positions</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">positions_wrapped_buffer</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">per_atom_cell_offsets_buffer</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">inv_cell_buffer</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="p">(</span>
     <span class="nb">tuple</span><span class="p">[</span>
         <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
@@ -799,11 +920,138 @@ document.write(`
 <span class="sd">    single brute-force pairwise distance calculation. This is more efficient</span>
 <span class="sd">    than running two separate neighbor calculations when both neighbor lists are needed.</span>
 
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : torch.Tensor, shape (N, 3)</span>
+<span class="sd">        Atomic positions in Cartesian space, where N is the number of atoms.</span>
+<span class="sd">    cutoff1 : float</span>
+<span class="sd">        Inner cutoff radius; pairs within this distance populate the first neighbor list.</span>
+<span class="sd">    cutoff2 : float</span>
+<span class="sd">        Outer cutoff radius; pairs within this distance populate the second neighbor list.</span>
+<span class="sd">        Must satisfy ``cutoff2 &gt;= cutoff1``.</span>
+<span class="sd">    pbc : torch.Tensor, shape (1, 3) or (3,), dtype=bool, optional</span>
+<span class="sd">        Periodic boundary condition flags along x, y, z. Pass ``None`` for free-space.</span>
+<span class="sd">    cell : torch.Tensor, shape (1, 3, 3), optional</span>
+<span class="sd">        Unit-cell matrix whose rows are lattice vectors in Cartesian coordinates.</span>
+<span class="sd">        Required when ``pbc`` is not ``None``.</span>
+<span class="sd">    max_neighbors1 : int, optional</span>
+<span class="sd">        Maximum number of neighbors per atom for the inner cutoff list. Estimated</span>
+<span class="sd">        automatically when ``None`` and pre-allocated buffers are not supplied.</span>
+<span class="sd">    max_neighbors2 : int, optional</span>
+<span class="sd">        Maximum number of neighbors per atom for the outer cutoff list. Defaults to</span>
+<span class="sd">        ``max_neighbors1`` when ``None``.</span>
+<span class="sd">    half_fill : bool, optional</span>
+<span class="sd">        If ``True``, only the lower-triangular half of each neighbor matrix is filled.</span>
+<span class="sd">        Default is ``False``.</span>
+<span class="sd">    fill_value : int, optional</span>
+<span class="sd">        Padding value written into unused neighbor slots. Defaults to ``N``</span>
+<span class="sd">        (i.e., one past the last valid atom index).</span>
+<span class="sd">    return_neighbor_list : bool, optional</span>
+<span class="sd">        If ``True``, convert each neighbor matrix to a COO-style neighbor list</span>
+<span class="sd">        ``(neighbor_indices, neighbor_ptr)``. Incurs a masking step; prefer the</span>
+<span class="sd">        matrix format when possible. Default is ``False``.</span>
+<span class="sd">    neighbor_matrix1 : torch.Tensor, shape (N, max_neighbors1), dtype=int32, optional</span>
+<span class="sd">        Pre-allocated buffer for inner-cutoff neighbor indices. Modified in-place.</span>
+<span class="sd">        Allocated internally when ``None``.</span>
+<span class="sd">    neighbor_matrix2 : torch.Tensor, shape (N, max_neighbors2), dtype=int32, optional</span>
+<span class="sd">        Pre-allocated buffer for outer-cutoff neighbor indices. Modified in-place.</span>
+<span class="sd">        Allocated internally when ``None``.</span>
+<span class="sd">    neighbor_matrix_shifts1 : torch.Tensor, shape (N, max_neighbors1, 3), dtype=int32, optional</span>
+<span class="sd">        Pre-allocated buffer for PBC image shift vectors of the inner list. Modified</span>
+<span class="sd">        in-place. Only used when ``pbc`` is not ``None``.</span>
+<span class="sd">    neighbor_matrix_shifts2 : torch.Tensor, shape (N, max_neighbors2, 3), dtype=int32, optional</span>
+<span class="sd">        Pre-allocated buffer for PBC image shift vectors of the outer list. Modified</span>
+<span class="sd">        in-place. Only used when ``pbc`` is not ``None``.</span>
+<span class="sd">    num_neighbors1 : torch.Tensor, shape (N,), dtype=int32, optional</span>
+<span class="sd">        Pre-allocated buffer for per-atom inner-cutoff neighbor counts. Modified in-place.</span>
+<span class="sd">    num_neighbors2 : torch.Tensor, shape (N,), dtype=int32, optional</span>
+<span class="sd">        Pre-allocated buffer for per-atom outer-cutoff neighbor counts. Modified in-place.</span>
+<span class="sd">    shift_range_per_dimension : torch.Tensor, shape (3,), dtype=int32, optional</span>
+<span class="sd">        Number of periodic image layers to search along each lattice direction.</span>
+<span class="sd">        Computed automatically when ``None``.</span>
+<span class="sd">    num_shifts_per_system : torch.Tensor, optional</span>
+<span class="sd">        Total number of image shift vectors for each system. Computed automatically</span>
+<span class="sd">        when ``None``.</span>
+<span class="sd">    max_shifts_per_system : int, optional</span>
+<span class="sd">        Maximum value in ``num_shifts_per_system``. Computed automatically when ``None``.</span>
+<span class="sd">    rebuild_flags : torch.Tensor, shape (1,), dtype=bool, optional</span>
+<span class="sd">        Device-side flag. When provided, the neighbor lists are only recomputed for</span>
+<span class="sd">        the system if ``rebuild_flags[0]`` is ``True``; no CPU-GPU synchronisation</span>
+<span class="sd">        occurs. Pass ``None`` to always rebuild.</span>
+<span class="sd">    wrap_positions : bool, optional</span>
+<span class="sd">        If ``True``, atomic positions are wrapped into the primary unit cell before</span>
+<span class="sd">        the neighbor search. Default is ``True``.</span>
+<span class="sd">    positions_wrapped_buffer : torch.Tensor, shape (N, 3), optional</span>
+<span class="sd">        Pre-allocated buffer for wrapped positions. Allocated internally when ``None``.</span>
+<span class="sd">    per_atom_cell_offsets_buffer : torch.Tensor, shape (N, 3), dtype=int32, optional</span>
+<span class="sd">        Pre-allocated buffer for per-atom cell-image offsets. Allocated internally</span>
+<span class="sd">        when ``None``.</span>
+<span class="sd">    inv_cell_buffer : torch.Tensor, shape (1, 3, 3), optional</span>
+<span class="sd">        Pre-allocated buffer for the inverse cell matrix. Allocated internally</span>
+<span class="sd">        when ``None``.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    tuple</span>
+<span class="sd">        The return type depends on ``pbc`` and ``return_neighbor_list``:</span>
+
+<span class="sd">        **No PBC, return_neighbor_list=False** — 4-tuple:</span>
+
+<span class="sd">        neighbor_matrix1 : torch.Tensor, shape (N, max_neighbors1), dtype=int32</span>
+<span class="sd">            Inner-cutoff neighbor indices; unused slots are filled with ``fill_value``.</span>
+<span class="sd">        num_neighbors1 : torch.Tensor, shape (N,), dtype=int32</span>
+<span class="sd">            Number of inner-cutoff neighbors per atom.</span>
+<span class="sd">        neighbor_matrix2 : torch.Tensor, shape (N, max_neighbors2), dtype=int32</span>
+<span class="sd">            Outer-cutoff neighbor indices; unused slots are filled with ``fill_value``.</span>
+<span class="sd">        num_neighbors2 : torch.Tensor, shape (N,), dtype=int32</span>
+<span class="sd">            Number of outer-cutoff neighbors per atom.</span>
+
+<span class="sd">        **No PBC, return_neighbor_list=True** — 4-tuple:</span>
+
+<span class="sd">        neighbor_list1 : torch.Tensor, shape (E1,), dtype=int32</span>
+<span class="sd">            Flat array of inner-cutoff neighbor atom indices.</span>
+<span class="sd">        neighbor_ptr1 : torch.Tensor, shape (N+1,), dtype=int32</span>
+<span class="sd">            CSR row pointers for ``neighbor_list1``.</span>
+<span class="sd">        neighbor_list2 : torch.Tensor, shape (E2,), dtype=int32</span>
+<span class="sd">            Flat array of outer-cutoff neighbor atom indices.</span>
+<span class="sd">        neighbor_ptr2 : torch.Tensor, shape (N+1,), dtype=int32</span>
+<span class="sd">            CSR row pointers for ``neighbor_list2``.</span>
+
+<span class="sd">        **With PBC, return_neighbor_list=False** — 6-tuple:</span>
+
+<span class="sd">        neighbor_matrix1 : torch.Tensor, shape (N, max_neighbors1), dtype=int32</span>
+<span class="sd">            Inner-cutoff neighbor indices.</span>
+<span class="sd">        num_neighbors1 : torch.Tensor, shape (N,), dtype=int32</span>
+<span class="sd">            Inner-cutoff neighbor counts.</span>
+<span class="sd">        neighbor_matrix_shifts1 : torch.Tensor, shape (N, max_neighbors1, 3), dtype=int32</span>
+<span class="sd">            PBC image shift vectors for the inner list.</span>
+<span class="sd">        neighbor_matrix2 : torch.Tensor, shape (N, max_neighbors2), dtype=int32</span>
+<span class="sd">            Outer-cutoff neighbor indices.</span>
+<span class="sd">        num_neighbors2 : torch.Tensor, shape (N,), dtype=int32</span>
+<span class="sd">            Outer-cutoff neighbor counts.</span>
+<span class="sd">        neighbor_matrix_shifts2 : torch.Tensor, shape (N, max_neighbors2, 3), dtype=int32</span>
+<span class="sd">            PBC image shift vectors for the outer list.</span>
+
+<span class="sd">        **With PBC, return_neighbor_list=True** — 6-tuple:</span>
+
+<span class="sd">        neighbor_list1 : torch.Tensor, shape (E1,), dtype=int32</span>
+<span class="sd">            Flat inner-cutoff neighbor indices.</span>
+<span class="sd">        neighbor_ptr1 : torch.Tensor, shape (N+1,), dtype=int32</span>
+<span class="sd">            CSR row pointers for ``neighbor_list1``.</span>
+<span class="sd">        unit_shifts1 : torch.Tensor, shape (E1, 3), dtype=int32</span>
+<span class="sd">            PBC image shift vectors corresponding to ``neighbor_list1``.</span>
+<span class="sd">        neighbor_list2 : torch.Tensor, shape (E2,), dtype=int32</span>
+<span class="sd">            Flat outer-cutoff neighbor indices.</span>
+<span class="sd">        neighbor_ptr2 : torch.Tensor, shape (N+1,), dtype=int32</span>
+<span class="sd">            CSR row pointers for ``neighbor_list2``.</span>
+<span class="sd">        unit_shifts2 : torch.Tensor, shape (E2, 3), dtype=int32</span>
+<span class="sd">            PBC image shift vectors corresponding to ``neighbor_list2``.</span>
+
 <span class="sd">    See Also</span>
 <span class="sd">    --------</span>
-<span class="sd">    nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_dual_cutoff : Core warp launcher (no PBC)</span>
-<span class="sd">    nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_pbc_dual_cutoff : Core warp launcher (with PBC)</span>
-<span class="sd">    naive_neighbor_list : Single cutoff version</span>
+<span class="sd">    :func:`nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_dual_cutoff` : Core warp launcher (no PBC).</span>
+<span class="sd">    :func:`nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_pbc_dual_cutoff` : Core warp launcher (with PBC).</span>
+<span class="sd">    :func:`nvalchemiops.torch.neighbors.naive.naive_neighbor_list` : Single cutoff version.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">if</span> <span class="n">pbc</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">cell</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;If cell is provided, pbc must also be provided&quot;</span><span class="p">)</span>
@@ -943,6 +1191,7 @@ document.write(`
                 <span class="n">cutoff1</span><span class="o">=</span><span class="n">cutoff1</span><span class="p">,</span>
                 <span class="n">cutoff2</span><span class="o">=</span><span class="n">cutoff2</span><span class="p">,</span>
                 <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+                <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span>
                 <span class="n">neighbor_matrix1</span><span class="o">=</span><span class="n">neighbor_matrix1</span><span class="p">,</span>
                 <span class="n">neighbor_matrix2</span><span class="o">=</span><span class="n">neighbor_matrix2</span><span class="p">,</span>
                 <span class="n">neighbor_matrix_shifts1</span><span class="o">=</span><span class="n">neighbor_matrix_shifts1</span><span class="p">,</span>
@@ -955,6 +1204,9 @@ document.write(`
                 <span class="n">rebuild_flags</span><span class="o">=</span><span class="n">rebuild_flags</span><span class="p">,</span>
                 <span class="n">half_fill</span><span class="o">=</span><span class="n">half_fill</span><span class="p">,</span>
                 <span class="n">wrap_positions</span><span class="o">=</span><span class="n">wrap_positions</span><span class="p">,</span>
+                <span class="n">positions_wrapped_buffer</span><span class="o">=</span><span class="n">positions_wrapped_buffer</span><span class="p">,</span>
+                <span class="n">per_atom_cell_offsets_buffer</span><span class="o">=</span><span class="n">per_atom_cell_offsets_buffer</span><span class="p">,</span>
+                <span class="n">inv_cell_buffer</span><span class="o">=</span><span class="n">inv_cell_buffer</span><span class="p">,</span>
             <span class="p">)</span>
         <span class="k">else</span><span class="p">:</span>
             <span class="n">_naive_neighbor_matrix_pbc_dual_cutoff</span><span class="p">(</span>
@@ -962,6 +1214,7 @@ document.write(`
                 <span class="n">cutoff1</span><span class="o">=</span><span class="n">cutoff1</span><span class="p">,</span>
                 <span class="n">cutoff2</span><span class="o">=</span><span class="n">cutoff2</span><span class="p">,</span>
                 <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+                <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span>
                 <span class="n">neighbor_matrix1</span><span class="o">=</span><span class="n">neighbor_matrix1</span><span class="p">,</span>
                 <span class="n">neighbor_matrix2</span><span class="o">=</span><span class="n">neighbor_matrix2</span><span class="p">,</span>
                 <span class="n">neighbor_matrix_shifts1</span><span class="o">=</span><span class="n">neighbor_matrix_shifts1</span><span class="p">,</span>
@@ -973,6 +1226,9 @@ document.write(`
                 <span class="n">max_shifts_per_system</span><span class="o">=</span><span class="n">max_shifts_per_system</span><span class="p">,</span>
                 <span class="n">half_fill</span><span class="o">=</span><span class="n">half_fill</span><span class="p">,</span>
                 <span class="n">wrap_positions</span><span class="o">=</span><span class="n">wrap_positions</span><span class="p">,</span>
+                <span class="n">positions_wrapped_buffer</span><span class="o">=</span><span class="n">positions_wrapped_buffer</span><span class="p">,</span>
+                <span class="n">per_atom_cell_offsets_buffer</span><span class="o">=</span><span class="n">per_atom_cell_offsets_buffer</span><span class="p">,</span>
+                <span class="n">inv_cell_buffer</span><span class="o">=</span><span class="n">inv_cell_buffer</span><span class="p">,</span>
             <span class="p">)</span>
         <span class="k">if</span> <span class="n">return_neighbor_list</span><span class="p">:</span>
             <span class="n">neighbor_list1</span><span class="p">,</span> <span class="n">neighbor_ptr1</span><span class="p">,</span> <span class="n">unit_shifts1</span> <span class="o">=</span> <span class="p">(</span>
@@ -1039,9 +1295,22 @@ document.write(`
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -1061,7 +1330,7 @@ document.write(`
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

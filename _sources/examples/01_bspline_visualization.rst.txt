@@ -70,7 +70,7 @@ We import the B-spline functions and matplotlib for visualization.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 58-67
+.. GENERATED FROM PYTHON SOURCE LINES 58-69
 
 B-Spline Basis Functions
 ------------------------
@@ -81,12 +81,15 @@ Higher orders provide smoother interpolation but spread over more grid points.
 - Order 2: Linear (cloud-in-cell)
 - Order 3: Quadratic
 - Order 4: Cubic (most common in PME)
+- Order 5: Quartic
+- Order 6: Quintic
 
-.. GENERATED FROM PYTHON SOURCE LINES 69-70
+.. GENERATED FROM PYTHON SOURCE LINES 71-73
 
-Plot the B-spline basis functions for orders 1-4:
+Plot the B-spline basis functions for orders 1-4. Orders 5 and 6 are also
+supported by the APIs, but the compact plot focuses on the common low orders:
 
-.. GENERATED FROM PYTHON SOURCE LINES 70-113
+.. GENERATED FROM PYTHON SOURCE LINES 73-116
 
 .. code-block:: Python
 
@@ -145,14 +148,14 @@ Plot the B-spline basis functions for orders 1-4:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 114-118
+.. GENERATED FROM PYTHON SOURCE LINES 117-121
 
 1D Spreading Visualization
 --------------------------
 We visualize how a single charge spreads to nearby grid points in 1D.
 The weights depend on the atom's fractional position between grid points.
 
-.. GENERATED FROM PYTHON SOURCE LINES 118-128
+.. GENERATED FROM PYTHON SOURCE LINES 121-131
 
 .. code-block:: Python
 
@@ -181,13 +184,13 @@ The weights depend on the atom's fractional position between grid points.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 129-132
+.. GENERATED FROM PYTHON SOURCE LINES 132-135
 
 Now let's see how weights are distributed when we place an atom at different
 positions. We test 4 cases: exactly on a grid point, slightly off-grid,
 halfway between grid points, and at the next grid point.
 
-.. GENERATED FROM PYTHON SOURCE LINES 132-187
+.. GENERATED FROM PYTHON SOURCE LINES 135-190
 
 .. code-block:: Python
 
@@ -258,13 +261,13 @@ halfway between grid points, and at the next grid point.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 188-191
+.. GENERATED FROM PYTHON SOURCE LINES 191-194
 
 Key observation: The center of mass (cyan line) always matches the atom
 position (red dashed line), demonstrating that B-splines preserve the
 first moment of the charge distribution.
 
-.. GENERATED FROM PYTHON SOURCE LINES 191-201
+.. GENERATED FROM PYTHON SOURCE LINES 194-204
 
 .. code-block:: Python
 
@@ -295,14 +298,14 @@ first moment of the charge distribution.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 202-206
+.. GENERATED FROM PYTHON SOURCE LINES 205-209
 
 2D Spreading Visualization
 --------------------------
 We show how a single charge spreads in 2D using a scatter plot where
 circle size and color represent the weight at each grid point.
 
-.. GENERATED FROM PYTHON SOURCE LINES 206-299
+.. GENERATED FROM PYTHON SOURCE LINES 209-302
 
 .. code-block:: Python
 
@@ -406,11 +409,11 @@ circle size and color represent the weight at each grid point.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 300-301
+.. GENERATED FROM PYTHON SOURCE LINES 303-304
 
 Visualize single charge with different mesh resolutions:
 
-.. GENERATED FROM PYTHON SOURCE LINES 301-330
+.. GENERATED FROM PYTHON SOURCE LINES 304-333
 
 .. code-block:: Python
 
@@ -455,14 +458,15 @@ Visualize single charge with different mesh resolutions:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 331-335
+.. GENERATED FROM PYTHON SOURCE LINES 334-339
 
 Effect of Spline Order
 ----------------------
 Higher order splines spread over more grid points but provide smoother
-interpolation. We compare orders 1-4 for both spreading and gathering.
+interpolation. We compare orders 1-4 for both spreading and gathering; orders
+5 and 6 follow the same API and use wider stencils.
 
-.. GENERATED FROM PYTHON SOURCE LINES 335-420
+.. GENERATED FROM PYTHON SOURCE LINES 339-424
 
 .. code-block:: Python
 
@@ -558,11 +562,11 @@ interpolation. We compare orders 1-4 for both spreading and gathering.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 421-422
+.. GENERATED FROM PYTHON SOURCE LINES 425-426
 
 Compare spreading for different spline orders on a dipole system:
 
-.. GENERATED FROM PYTHON SOURCE LINES 422-430
+.. GENERATED FROM PYTHON SOURCE LINES 426-434
 
 .. code-block:: Python
 
@@ -589,11 +593,11 @@ Compare spreading for different spline orders on a dipole system:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 431-432
+.. GENERATED FROM PYTHON SOURCE LINES 435-436
 
 Spread visualization for each order:
 
-.. GENERATED FROM PYTHON SOURCE LINES 432-510
+.. GENERATED FROM PYTHON SOURCE LINES 436-514
 
 .. code-block:: Python
 
@@ -687,7 +691,7 @@ Spread visualization for each order:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 511-517
+.. GENERATED FROM PYTHON SOURCE LINES 515-521
 
 Observations:
 
@@ -696,7 +700,7 @@ Observations:
 - **Order 3**: Quadratic, smoother transition
 - **Order 4**: Cubic, smooth with continuous first derivative (used in PME)
 
-.. GENERATED FROM PYTHON SOURCE LINES 517-522
+.. GENERATED FROM PYTHON SOURCE LINES 521-526
 
 .. code-block:: Python
 
@@ -722,13 +726,13 @@ Observations:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 523-539
+.. GENERATED FROM PYTHON SOURCE LINES 527-543
 
 Summary
 -------
 This example demonstrated:
 
-1. **B-spline basis functions** of orders 1-4
+1. **B-spline basis functions** of orders 1-6, with orders 1-4 visualized
 2. **1D spreading** showing weight distribution near an atom
 3. **2D spreading** visualization with scatter plots
 4. **Effect of mesh resolution** on spreading
@@ -741,7 +745,7 @@ Key properties of B-splines in PME:
 - **Centering**: Center of mass of weights equals atom position
 - **Smoothness**: Higher orders give smoother potentials and forces
 
-.. GENERATED FROM PYTHON SOURCE LINES 539-541
+.. GENERATED FROM PYTHON SOURCE LINES 543-545
 
 .. code-block:: Python
 
@@ -764,7 +768,7 @@ Key properties of B-splines in PME:
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 1.778 seconds)
+   **Total running time of the script:** (0 minutes 1.678 seconds)
 
 
 .. _sphx_glr_download_examples_01_bspline_visualization.py:

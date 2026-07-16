@@ -2,18 +2,18 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../" >
+<html lang="en" data-content_root="../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>Molecular Dynamics Integrators &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>Molecular Dynamics Integrators &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -35,16 +35,17 @@
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -52,18 +53,18 @@
     <script src="../../_static/design-tabs.js?v=f930bc37"></script>
     <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
     <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
-    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'userguide/components/dynamics';</script>
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
-    <link rel="next" title="Examples Gallery" href="../../examples/index.html" />
+    <link rel="next" title="Segment Operations" href="segment_ops.html" />
     <link rel="prev" title="DFT-D3(BJ) Dispersion Correction" href="dispersion.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -130,8 +131,6 @@
   
   
     
-    
-      
     
     
     <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -369,7 +368,7 @@ document.write(`
 <li class="toctree-l1"><a class="reference internal" href="../about/install.html">Installation Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../about/intro.html">Introduction to ALCHEMI Toolkit-Ops</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../about/conventions.html">Conventions</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../about/migration.html">Migration Guide (v0.3.0)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../about/migration.html">Migration Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../about/faq.html">Frequently Asked Questions</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Core Components</span></p>
@@ -378,6 +377,12 @@ document.write(`
 <li class="toctree-l1"><a class="reference internal" href="electrostatics.html">Electrostatic Interactions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="dispersion.html">DFT-D3(BJ) Dispersion Correction</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Molecular Dynamics Integrators</a></li>
+<li class="toctree-l1"><a class="reference internal" href="segment_ops.html">Segment Operations</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Advanced Usage</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../about/contributing.html">Contribution Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../about/kernel-style-guide.html">Kernel Style Guide</a></li>
 </ul>
 </div>
 </nav></div>
@@ -744,8 +749,10 @@ B: \mathbf{v} \leftarrow \mathbf{v} + \frac{\Delta t}{2m}\mathbf{F}
 </section>
 <section id="npt-isothermal-isobaric">
 <h3>NPT (Isothermal-Isobaric)<a class="headerlink" href="#npt-isothermal-isobaric" title="Link to this heading">#</a></h3>
-<p>Constant temperature and pressure simulations using Martyna-Tobias-Klein (MTK) equations
-with coupled Nosé-Hoover chains for thermostat and barostat:</p>
+<p>Constant temperature and pressure simulations using Martyna-Tobias-Klein (MTK)
+equations. The convenience <code class="docutils literal notranslate"><span class="pre">run_npt_step</span></code> applies particle thermostat friction
+inside its NPT velocity half-steps; it is not a drop-in primitive for integrator
+splits that apply particle Nosé-Hoover velocity scaling separately.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.dynamics.integrators</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_npt_step</span>
 
 <span class="c1"># Run a complete NPT step</span>
@@ -762,7 +769,8 @@ with coupled Nosé-Hoover chains for thermostat and barostat:</p>
 <ul class="simple">
 <li><p>Maintains constant temperature and pressure</p></li>
 <li><p>Supports isotropic (scalar), orthorhombic (3 components), and fully anisotropic (9 components) pressure control</p></li>
-<li><p>Uses Nosé-Hoover chains for both thermostat and barostat</p></li>
+<li><p>Uses an NPT velocity primitive that includes particle thermostat drag</p></li>
+<li><p>Use <code class="docutils literal notranslate"><span class="pre">nph_velocity_half_step</span></code> or another no-thermostat velocity primitive when composing a separate particle NHC Trotter scaling step</p></li>
 </ul>
 </section>
 <section id="nph-isenthalpic-isobaric">
@@ -842,7 +850,7 @@ with coupled Nosé-Hoover chains for thermostat and barostat:</p>
 <section id="fire2-improved-fire">
 <h3>FIRE2 (Improved FIRE)<a class="headerlink" href="#fire2-improved-fire" title="Link to this heading">#</a></h3>
 <p>Improved FIRE optimizer with adaptive damping and velocity mixing:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.dynamics.optimizers</span><span class="w"> </span><span class="kn">import</span> <span class="n">fire2_step</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.dynamics.optimizers</span><span class="w"> </span><span class="kn">import</span> <span class="n">fire2_step</span><span class="p">,</span> <span class="n">fire2_update</span>
 
 <span class="c1"># FIRE2 with Warp arrays</span>
 <span class="n">fire2_step</span><span class="p">(</span>
@@ -850,6 +858,13 @@ with coupled Nosé-Hoover chains for thermostat and barostat:</p>
     <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>  <span class="c1"># Required for FIRE2</span>
     <span class="n">alpha</span><span class="o">=</span><span class="n">alpha</span><span class="p">,</span> <span class="n">dt</span><span class="o">=</span><span class="n">dt</span><span class="p">,</span> <span class="n">nsteps_inc</span><span class="o">=</span><span class="n">nsteps_inc</span><span class="p">,</span>
     <span class="n">vf</span><span class="o">=</span><span class="n">vf</span><span class="p">,</span> <span class="n">v_sumsq</span><span class="o">=</span><span class="n">v_sumsq</span><span class="p">,</span> <span class="n">f_sumsq</span><span class="o">=</span><span class="n">f_sumsq</span><span class="p">,</span> <span class="n">max_norm</span><span class="o">=</span><span class="n">max_norm</span>
+<span class="p">)</span>
+
+<span class="c1"># Mix/update only for custom final apply phases</span>
+<span class="n">fire2_update</span><span class="p">(</span>
+    <span class="n">velocities</span><span class="p">,</span> <span class="n">forces</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="p">,</span> <span class="n">dt</span><span class="p">,</span> <span class="n">nsteps_inc</span><span class="p">,</span>
+    <span class="n">vf</span><span class="p">,</span> <span class="n">v_sumsq</span><span class="p">,</span> <span class="n">f_sumsq</span><span class="p">,</span> <span class="n">max_norm</span><span class="p">,</span>
 <span class="p">)</span>
 </pre></div>
 </div>
@@ -865,15 +880,21 @@ with coupled Nosé-Hoover chains for thermostat and barostat:</p>
 
 <span class="c1"># Variable-cell optimization (coordinates + cell DOFs)</span>
 <span class="n">fire2_step_coord_cell</span><span class="p">(</span>
-    <span class="n">positions</span><span class="p">,</span> <span class="n">velocities</span><span class="p">,</span> <span class="n">forces</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span>
-    <span class="n">cells</span><span class="p">,</span> <span class="n">cell_velocities</span><span class="p">,</span> <span class="n">cell_forces</span><span class="p">,</span>
-    <span class="n">alpha</span><span class="p">,</span> <span class="n">dt</span><span class="p">,</span> <span class="n">nsteps_inc</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">velocities</span><span class="p">,</span> <span class="n">forces</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">,</span> <span class="n">cell_velocities</span><span class="p">,</span> <span class="n">cell_force</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="p">,</span> <span class="n">dt</span><span class="p">,</span> <span class="n">nsteps_inc</span><span class="p">,</span>
+    <span class="n">cell_force_scale</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
 <span class="p">)</span>
 </pre></div>
 </div>
 <p><strong>Key Properties:</strong></p>
 <ul class="simple">
 <li><p>Uses <code class="docutils literal notranslate"><span class="pre">batch_idx</span></code> for batched operations (required)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fire2_update</span></code> performs FIRE2 reduction, adaptive parameter update, and velocity mixing without applying positions</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fire2_update(compute_max_norm=False)</span></code> skips extended-DOF max-norm reduction for custom final apply phases that recompute their own physical displacement norm</p></li>
+<li><p>Applies coupled affine cell/coordinate updates for variable-cell optimization through <code class="docutils literal notranslate"><span class="pre">fire2_step_coord_cell</span></code></p></li>
+<li><p>Normalizes stress-derived cell forces by the number of atoms in each system; <code class="docutils literal notranslate"><span class="pre">cell_force_scale=1.0</span></code> is the default extra multiplier</p></li>
 <li><p>Improved convergence compared to original FIRE</p></li>
 <li><p>PyTorch adapters handle tensor conversion automatically</p></li>
 </ul>
@@ -1030,11 +1051,11 @@ with coupled Nosé-Hoover chains for thermostat and barostat:</p>
       </div>
     </a>
     <a class="right-next"
-       href="../../examples/index.html"
+       href="segment_ops.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Examples Gallery</p>
+        <p class="prev-next-title">Segment Operations</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -1115,9 +1136,22 @@ with coupled Nosé-Hoover chains for thermostat and barostat:</p>
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -1137,7 +1171,7 @@ with coupled Nosé-Hoover chains for thermostat and barostat:</p>
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>

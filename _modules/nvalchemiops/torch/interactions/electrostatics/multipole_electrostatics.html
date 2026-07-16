@@ -1,0 +1,868 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../../../" data-theme="light">
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nvalchemiops.torch.interactions.electrostatics.multipole_electrostatics &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../../../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../../../../_static/css/benchmark-docs.css?v=30688d9f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../../../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../../../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../../../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/nvalchemiops/torch/interactions/electrostatics/multipole_electrostatics';</script>
+    <link rel="index" title="Index" href="../../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../../../../index.html">
+  
+  
+  
+  
+  
+    
+    
+    
+    <img src="../../../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../../../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <div class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">nvalchemiops...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for nvalchemiops.torch.interactions.electrostatics.multipole_electrostatics</h1><div class="highlight"><pre>
+<span></span><span class="c1"># SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.</span>
+<span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="c1"># you may not use this file except in compliance with the License.</span>
+<span class="c1"># You may obtain a copy of the License at</span>
+<span class="c1">#</span>
+<span class="c1"># http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Unless required by applicable law or agreed to in writing, software</span>
+<span class="c1"># distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="c1"># WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="c1"># See the License for the specific language governing permissions and</span>
+<span class="c1"># limitations under the License.</span>
+
+<span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">PyTorch bindings for the direct-k-space multipole electrostatics.</span>
+
+<span class="sd">This module exposes ``multipole_electrostatic_energy(...)``, the public entry</span>
+<span class="sd">point that composes the Warp kernels into a single electrostatic energy</span>
+<span class="sd">calculator. It is designed as a drop-in companion to the customer reference</span>
+<span class="sd">``GTOElectrostaticEnergy`` with:</span>
+
+<span class="sd">* a friendlier API (Cartesian dipoles instead of pre-permuted ``(y, z, x)``,</span>
+<span class="sd">  cell matrix instead of pre-generated k-vectors);</span>
+<span class="sd">* Warp-accelerated kernels on CPU and CUDA;</span>
+<span class="sd">* bit-for-bit parity with the reference at float64 for ``l_max in {0, 1}``</span>
+<span class="sd">  under matched inputs.</span>
+
+<span class="sd">The forward path returns per-atom energies :math:`(N,)` that are</span>
+<span class="sd">autograd-connected to ``positions`` and ``multipole_moments``.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">TYPE_CHECKING</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics._multipole_moments</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">split_packed_for_kernels</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.math.gto</span><span class="w"> </span><span class="kn">import</span> <span class="n">NormMode</span>
+
+<span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics.multipole_scf_cache</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+        <span class="n">MultipoleSCFCache</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_resolve_norm_mode</span><span class="p">(</span><span class="n">mode</span><span class="p">:</span> <span class="n">NormMode</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">NormMode</span><span class="p">:</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">mode</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">NormMode</span><span class="p">[</span><span class="n">mode</span><span class="o">.</span><span class="n">upper</span><span class="p">()]</span>
+    <span class="k">return</span> <span class="n">NormMode</span><span class="p">(</span><span class="n">mode</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_prepend_origin</span><span class="p">(</span><span class="n">k_vectors</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Prepend a ``(0, 0, 0)`` row so k=0 is present as index 0.</span>
+
+<span class="sd">    ``generate_k_vectors_ewald_summation`` excludes k=0 (division by zero in the</span>
+<span class="sd">    Ewald Green&#39;s function); the direct-k-space pipeline needs it explicitly so</span>
+<span class="sd">    the ``per_k_factor`` array can be indexed uniformly. The k=0 term vanishes</span>
+<span class="sd">    because the caller zeros ``per_k_factor[0]``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">origin</span> <span class="o">=</span> <span class="n">k_vectors</span><span class="o">.</span><span class="n">new_zeros</span><span class="p">((</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">origin</span><span class="p">,</span> <span class="n">k_vectors</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="multipole_electrostatic_energy">
+<a class="viewcode-back" href="../../../../../modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.multipole_electrostatic_energy">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">multipole_electrostatic_energy</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">multipole_moments</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">sigma</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">k_cutoff</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">k_vectors</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">normalize</span><span class="p">:</span> <span class="n">NormMode</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">NormMode</span><span class="o">.</span><span class="n">MULTIPOLES</span><span class="p">,</span>
+    <span class="n">include_self_interaction</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Total PBC electrostatic energy via direct k-space summation.</span>
+
+<span class="sd">    Computes</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        E \;=\; \frac{1}{2} \cdot \frac{V}{(2\pi)^6}</span>
+<span class="sd">                \sum_{\mathbf{k}} 2\,\text{Re}\!\left[\rho^{*}(\mathbf{k})\,</span>
+<span class="sd">                V(\mathbf{k})\right]</span>
+<span class="sd">                \;-\; \tfrac{1}{2} E_{\text{self}},</span>
+
+<span class="sd">    where :math:`\rho(\mathbf{k})` and :math:`V(\mathbf{k}) = F \cdot \rho(\mathbf{k}) / k^2`</span>
+<span class="sd">    are assembled from per-atom ``multipole_moments`` via the Warp kernels.</span>
+<span class="sd">    Matches the customer reference ``GTOElectrostaticEnergy`` bit-for-bit at</span>
+<span class="sd">    ``l_max in {0, 1}`` under matched inputs.</span>
+
+<span class="sd">    Single-system vs batched dispatch</span>
+<span class="sd">    ---------------------------------</span>
+<span class="sd">    Mirrors :func:`multipole_ewald_summation`: pass ``cell`` of shape</span>
+<span class="sd">    ``(3, 3)`` (single) or ``(B, 3, 3)`` (batched) and use ``batch_idx`` to</span>
+<span class="sd">    select the batched path (returns per-atom :math:`(N_\text{total},)`).</span>
+<span class="sd">    Batched mode requires ``k_cutoff`` (a pre-generated ``k_vectors`` is</span>
+<span class="sd">    single-system only).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : torch.Tensor</span>
+<span class="sd">        Atomic positions, shape ``(N, 3)`` or ``(N_total, 3)`` (flat across</span>
+<span class="sd">        systems in the batched case), ``float32`` or ``float64``.</span>
+<span class="sd">    multipole_moments : torch.Tensor</span>
+<span class="sd">        Packed per-atom multipole moments, shape ``(N, (l_max+1)**2)``,</span>
+<span class="sd">        in e3nn spherical layout: ``[q]`` (l_max=0), ``[q, mu_y, mu_z, mu_x]``</span>
+<span class="sd">        (l_max=1), or the l_max=1 block plus the five traceless l=2 channels</span>
+<span class="sd">        (l_max=2). The l=2 quadrupole is expanded to the Cartesian symmetric</span>
+<span class="sd">        ``(N, 3, 3)`` form and threaded through the SCF-cache Q channel.</span>
+<span class="sd">    cell : torch.Tensor</span>
+<span class="sd">        Unit-cell matrix (lattice vectors as rows), shape ``(3, 3)``, or</span>
+<span class="sd">        ``B`` per-system cells ``(B, 3, 3)`` (batched).</span>
+<span class="sd">    batch_idx : torch.Tensor, optional, shape (N_total,), int32</span>
+<span class="sd">        Per-atom system index (expected sorted). Required when ``cell`` is</span>
+<span class="sd">        ``(B, 3, 3)``; must be ``None`` for a single ``(3, 3)`` cell.</span>
+<span class="sd">    sigma : float</span>
+<span class="sd">        Density-basis Gaussian width. Used for both the source GTO basis and</span>
+<span class="sd">        the self-interaction overlap (matches ``GTOElectrostaticEnergy``).</span>
+<span class="sd">    k_cutoff : float, optional</span>
+<span class="sd">        Maximum ``|k|`` to include in the reciprocal-space sum. Required when</span>
+<span class="sd">        ``k_vectors`` is not supplied; ignored when it is.</span>
+<span class="sd">    k_vectors : torch.Tensor, optional</span>
+<span class="sd">        Pre-computed k-grid, shape ``(N_k, 3)``, ``float64``. **Must include</span>
+<span class="sd">        ``(0, 0, 0)`` as the first row** — the kernel&#39;s ``V(k=0) = 0``</span>
+<span class="sd">        convention expects the origin explicitly and downstream indexing</span>
+<span class="sd">        assumes row 0 is it. Pass this when amortizing k-vector generation</span>
+<span class="sd">        across many energy evaluations for the same geometry (MD steps at</span>
+<span class="sd">        fixed cell, SCF iterations, benchmark loops). Must live on</span>
+<span class="sd">        ``positions.device``. When omitted, the function generates k-vectors</span>
+<span class="sd">        internally via ``generate_k_vectors_ewald_summation(cell, k_cutoff)``</span>
+<span class="sd">        and prepends the origin.</span>
+<span class="sd">    normalize : NormMode | int | str</span>
+<span class="sd">        Normalization convention for the density basis. Defaults to</span>
+<span class="sd">        ``NormMode.MULTIPOLES`` (the only physically meaningful choice for</span>
+<span class="sd">        source moments; the other modes exist for debugging / cross-checks).</span>
+<span class="sd">    include_self_interaction : bool</span>
+<span class="sd">        If False (default), subtracts :math:`0.5 \cdot E_{\text{self}}` where</span>
+<span class="sd">        :math:`E_\text{self} = \sum_i \mathrm{oc}[0]\,q_i^2 +</span>
+<span class="sd">        \mathrm{oc}[1]\,|\boldsymbol{\mu}_i|^2` and ``oc`` comes from</span>
+<span class="sd">        :func:`nvalchemiops.torch.math.compute_overlap_constants`.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    torch.Tensor</span>
+<span class="sd">        Per-atom :math:`(N,)` :math:`\text{float64}` (single) or</span>
+<span class="sd">        :math:`(N_\text{total},)` (batched, flat across systems) on</span>
+<span class="sd">        ``positions.device``. Call ``.sum()`` for the total energy or</span>
+<span class="sd">        ``torch.zeros(B).scatter_add(0, batch_idx, E)`` for per-system totals;</span>
+<span class="sd">        forces/stress/charge-grads flow from ``grad(E.sum(), ...)``.</span>
+<span class="sd">        Autograd-connected to ``positions`` and ``multipole_moments``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">is_batch</span> <span class="o">=</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="n">is_batch</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">cell</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">3</span> <span class="ow">or</span> <span class="n">cell</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">:]</span> <span class="o">!=</span> <span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;batched cell must be (B, 3, 3), got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">cell</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">k_vectors</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="s2">&quot;k_vectors is not supported for batched energy; pass k_cutoff instead.&quot;</span>
+            <span class="p">)</span>
+    <span class="k">elif</span> <span class="n">cell</span><span class="o">.</span><span class="n">shape</span> <span class="o">!=</span> <span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;cell must be (3, 3) or (B, 3, 3), got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">cell</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">positions</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">2</span> <span class="ow">or</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">!=</span> <span class="mi">3</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;positions must be (N, 3), got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">multipole_moments</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">2</span> <span class="ow">or</span> <span class="n">multipole_moments</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s2">&quot;multipole_moments must be (N, (l_max+1)^2) matching positions[0]; &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">multipole_moments</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="n">is_batch</span> <span class="ow">and</span> <span class="n">batch_idx</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;batch_idx must match N_total=</span><span class="si">{</span><span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">, &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">batch_idx</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="n">sigma</span> <span class="o">&lt;=</span> <span class="mf">0.0</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;sigma must be positive, got </span><span class="si">{</span><span class="n">sigma</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">k_vectors</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="p">(</span><span class="n">k_cutoff</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">k_cutoff</span> <span class="o">&lt;=</span> <span class="mf">0.0</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s2">&quot;Either k_vectors must be supplied, or k_cutoff must be a &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;positive float (got k_cutoff=</span><span class="si">{</span><span class="n">k_cutoff</span><span class="si">}</span><span class="s2">).&quot;</span>
+        <span class="p">)</span>
+
+    <span class="c1"># Split into the l&lt;=1 e3nn block + the Cartesian quadrupole (None for l&lt;2).</span>
+    <span class="n">source_feats_l1</span><span class="p">,</span> <span class="n">quadrupoles</span><span class="p">,</span> <span class="n">l_max</span> <span class="o">=</span> <span class="n">split_packed_for_kernels</span><span class="p">(</span><span class="n">multipole_moments</span><span class="p">)</span>
+    <span class="n">norm_mode</span> <span class="o">=</span> <span class="n">_resolve_norm_mode</span><span class="p">(</span><span class="n">normalize</span><span class="p">)</span>
+
+    <span class="c1"># Delayed imports avoid a circular module graph.</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics.multipole_scf_cache</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+        <span class="n">prepare_multipole_scf_cache</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics.multipole_scf_step</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+        <span class="n">multipole_scf_step_energy</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">cache</span> <span class="o">=</span> <span class="n">prepare_multipole_scf_cache</span><span class="p">(</span>
+        <span class="n">cell</span><span class="p">,</span>
+        <span class="n">sigma</span><span class="o">=</span><span class="n">sigma</span><span class="p">,</span>
+        <span class="n">receiver_sigmas</span><span class="o">=</span><span class="p">[</span><span class="n">sigma</span><span class="p">],</span>
+        <span class="n">k_cutoff</span><span class="o">=</span><span class="n">k_cutoff</span><span class="p">,</span>
+        <span class="n">k_vectors</span><span class="o">=</span><span class="kc">None</span> <span class="k">if</span> <span class="n">is_batch</span> <span class="k">else</span> <span class="n">k_vectors</span><span class="p">,</span>
+        <span class="n">l_max</span><span class="o">=</span><span class="n">l_max</span><span class="p">,</span>
+        <span class="n">density_normalize</span><span class="o">=</span><span class="n">norm_mode</span><span class="p">,</span>
+        <span class="n">feature_normalize</span><span class="o">=</span><span class="n">norm_mode</span><span class="p">,</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">device</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">multipole_scf_step_energy</span><span class="p">(</span>
+        <span class="n">cache</span><span class="p">,</span>
+        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">source_feats_l1</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">include_self_interaction</span><span class="o">=</span><span class="n">include_self_interaction</span><span class="p">,</span>
+        <span class="n">quadrupoles</span><span class="o">=</span><span class="n">quadrupoles</span><span class="p">,</span>
+    <span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="multipole_reciprocal_space_energy">
+<a class="viewcode-back" href="../../../../../modules/torch/electrostatics.html#nvalchemiops.torch.interactions.electrostatics.multipole_reciprocal_space_energy">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">multipole_reciprocal_space_energy</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">multipole_moments</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">sigma</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">k_cutoff</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">normalize</span><span class="p">:</span> <span class="n">NormMode</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">NormMode</span><span class="o">.</span><span class="n">MULTIPOLES</span><span class="p">,</span>
+    <span class="n">cache</span><span class="p">:</span> <span class="n">MultipoleSCFCache</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Reciprocal-space half of an Ewald-split multipole electrostatic energy.</span>
+
+<span class="sd">    Same pipeline as :func:`multipole_electrostatic_energy` but with a</span>
+<span class="sd">    Gaussian-damped per-k kernel:</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        V(\mathbf{k})</span>
+<span class="sd">            = \frac{F \, e^{-|\mathbf{k}|^2 / (4\alpha^2)}}{|\mathbf{k}|^2}</span>
+<span class="sd">              \, \rho(\mathbf{k}),</span>
+
+<span class="sd">    (``k = 0`` zeroed). Intended to be paired with a real-space</span>
+<span class="sd">    erfc-damped contribution (see :func:`multipole_real_space_energy`)</span>
+<span class="sd">    at the same :math:`\alpha` to assemble the full Ewald-split Coulomb sum.</span>
+
+<span class="sd">    Single-system vs batched dispatch</span>
+<span class="sd">    ---------------------------------</span>
+<span class="sd">    Mirrors :func:`multipole_ewald_summation`: pass ``cell`` of shape</span>
+<span class="sd">    ``(3, 3)`` (single) or ``(B, 3, 3)`` (batched) and use ``batch_idx`` to</span>
+<span class="sd">    select the batched path (returns per-atom :math:`(N_\text{total},)`).</span>
+<span class="sd">    Both single and batched modes build their k-grid from ``k_cutoff`` (or</span>
+<span class="sd">    reuse a pre-built ``cache``).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions, multipole_moments, cell, sigma, k_cutoff, normalize</span>
+<span class="sd">        Same as :func:`multipole_electrostatic_energy`.</span>
+<span class="sd">    batch_idx : torch.Tensor, optional, shape (N_total,), int32</span>
+<span class="sd">        Per-atom system index (expected sorted). Required when ``cell`` is</span>
+<span class="sd">        ``(B, 3, 3)``; must be ``None`` for a single ``(3, 3)`` cell.</span>
+<span class="sd">    alpha : float</span>
+<span class="sd">        Ewald splitting parameter (must be positive). The caller&#39;s</span>
+<span class="sd">        real-space kernel should use the same ``alpha``.</span>
+<span class="sd">    cache : MultipoleSCFCache, optional</span>
+<span class="sd">        Pre-built reciprocal cache (from :func:`prepare_multipole_scf_cache`)</span>
+<span class="sd">        holding the position-independent k-grid / GTO-Fourier (``phi_hat``) /</span>
+<span class="sd">        per-k-factor tables. When given, the per-call cache rebuild is skipped</span>
+<span class="sd">        (MD / inference steady state) — the analog of passing precomputed</span>
+<span class="sd">        ``k_squared`` to PME. ``cell``/``sigma``/``alpha``/``k_cutoff`` are then</span>
+<span class="sd">        ignored for the reciprocal (the cache already encodes them); the caller</span>
+<span class="sd">        owns matching the cache to the system.</span>
+
+<span class="sd">        .. warning::</span>
+<span class="sd">            A pre-built cache holds a fixed (detached) k-grid and volume, so</span>
+<span class="sd">            ``grad(E, cell)`` (stress) does **not** flow through it — pass</span>
+<span class="sd">            ``cache=None`` for stress / cell-gradient training. Forces</span>
+<span class="sd">            (``grad(E, positions)``) are unaffected (positions enter per call).</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    torch.Tensor</span>
+<span class="sd">        Per-atom :math:`(N,)` :math:`\text{float64}` (single) or</span>
+<span class="sd">        :math:`(N_\text{total},)` (batched, flat across systems) on</span>
+<span class="sd">        ``positions.device``. Does **not** subtract any self-interaction</span>
+<span class="sd">        correction — the caller combines this with the real-space and</span>
+<span class="sd">        self / background terms to get the full Ewald total.</span>
+<span class="sd">        Call ``.sum()`` for the total or</span>
+<span class="sd">        ``torch.zeros(B).scatter_add(0, batch_idx, E)`` for per-system totals.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">is_batch</span> <span class="o">=</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="n">is_batch</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">cell</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">3</span> <span class="ow">or</span> <span class="n">cell</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">:]</span> <span class="o">!=</span> <span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;batched cell must be (B, 3, 3), got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">cell</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">cell</span><span class="o">.</span><span class="n">shape</span> <span class="o">!=</span> <span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;cell must be (3, 3) or (B, 3, 3), got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">cell</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">positions</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">2</span> <span class="ow">or</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">!=</span> <span class="mi">3</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;positions must be (N, 3), got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">multipole_moments</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">2</span> <span class="ow">or</span> <span class="n">multipole_moments</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s2">&quot;multipole_moments must be (N, (l_max+1)^2) matching positions[0]; &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">multipole_moments</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="n">is_batch</span> <span class="ow">and</span> <span class="n">batch_idx</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;batch_idx must match N_total=</span><span class="si">{</span><span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">, &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">batch_idx</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="n">sigma</span> <span class="o">&lt;=</span> <span class="mf">0.0</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;sigma must be positive, got </span><span class="si">{</span><span class="n">sigma</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">alpha</span> <span class="o">&lt;=</span> <span class="mf">0.0</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;alpha must be positive, got </span><span class="si">{</span><span class="n">alpha</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">cache</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="p">(</span><span class="n">k_cutoff</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">k_cutoff</span> <span class="o">&lt;=</span> <span class="mf">0.0</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s2">&quot;Either a pre-built cache or a positive k_cutoff &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;must be supplied (got k_cutoff=</span><span class="si">{</span><span class="n">k_cutoff</span><span class="si">}</span><span class="s2">).&quot;</span>
+        <span class="p">)</span>
+
+    <span class="n">norm_mode</span> <span class="o">=</span> <span class="n">_resolve_norm_mode</span><span class="p">(</span><span class="n">normalize</span><span class="p">)</span>
+    <span class="c1"># Packed e3nn moments -&gt; l&lt;=1 SCF-step block + Cartesian l=2 channel.</span>
+    <span class="n">source_feats</span><span class="p">,</span> <span class="n">quadrupoles</span><span class="p">,</span> <span class="n">l_max</span> <span class="o">=</span> <span class="n">split_packed_for_kernels</span><span class="p">(</span><span class="n">multipole_moments</span><span class="p">)</span>
+
+    <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics.multipole_scf_step</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+        <span class="n">multipole_scf_step_energy</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">cache</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics.multipole_scf_cache</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+            <span class="n">prepare_multipole_scf_cache</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="n">cache</span> <span class="o">=</span> <span class="n">prepare_multipole_scf_cache</span><span class="p">(</span>
+            <span class="n">cell</span><span class="p">,</span>
+            <span class="n">sigma</span><span class="o">=</span><span class="n">sigma</span><span class="p">,</span>
+            <span class="n">receiver_sigmas</span><span class="o">=</span><span class="p">[</span><span class="n">sigma</span><span class="p">],</span>
+            <span class="n">k_cutoff</span><span class="o">=</span><span class="n">k_cutoff</span><span class="p">,</span>
+            <span class="n">l_max</span><span class="o">=</span><span class="n">l_max</span><span class="p">,</span>
+            <span class="n">density_normalize</span><span class="o">=</span><span class="n">norm_mode</span><span class="p">,</span>
+            <span class="n">feature_normalize</span><span class="o">=</span><span class="n">norm_mode</span><span class="p">,</span>
+            <span class="n">alpha</span><span class="o">=</span><span class="n">alpha</span><span class="p">,</span>
+            <span class="n">device</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">device</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c1"># Caller-supplied cache: cheap structural checks (the caller owns</span>
+        <span class="c1"># matching cell/sigma/alpha; see the cache= warning in the docstring).</span>
+        <span class="k">if</span> <span class="n">cache</span><span class="o">.</span><span class="n">is_batched</span> <span class="o">!=</span> <span class="n">is_batch</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;cache.is_batched=</span><span class="si">{</span><span class="n">cache</span><span class="o">.</span><span class="n">is_batched</span><span class="si">}</span><span class="s2"> does not match the call &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;(batch_idx </span><span class="si">{</span><span class="s1">&#39;set&#39;</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">is_batch</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">&#39;None&#39;</span><span class="si">}</span><span class="s2">); build the cache &quot;</span>
+                <span class="s2">&quot;from a (B, 3, 3) cell for batched runs and a (3, 3) cell &quot;</span>
+                <span class="s2">&quot;otherwise.&quot;</span>
+            <span class="p">)</span>
+        <span class="k">if</span> <span class="n">cache</span><span class="o">.</span><span class="n">l_max</span> <span class="o">&lt;</span> <span class="n">l_max</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;cache.l_max=</span><span class="si">{</span><span class="n">cache</span><span class="o">.</span><span class="n">l_max</span><span class="si">}</span><span class="s2"> is below the moment order l_max=&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">l_max</span><span class="si">}</span><span class="s2">; rebuild the cache with l_max&gt;=</span><span class="si">{</span><span class="n">l_max</span><span class="si">}</span><span class="s2">.&quot;</span>
+            <span class="p">)</span>
+    <span class="c1"># Return the raw reciprocal-space sum; the caller subtracts the Ewald</span>
+    <span class="c1"># self-term alongside their real-space erfc contribution.</span>
+    <span class="k">return</span> <span class="n">multipole_scf_step_energy</span><span class="p">(</span>
+        <span class="n">cache</span><span class="p">,</span>
+        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">source_feats</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">include_self_interaction</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">quadrupoles</span><span class="o">=</span><span class="n">quadrupoles</span><span class="p">,</span>
+    <span class="p">)</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

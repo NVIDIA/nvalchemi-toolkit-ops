@@ -1,0 +1,1513 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../" data-theme="light">
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nvalchemiops.neighbors.base_dispatch &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/css/benchmark-docs.css?v=30688d9f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/nvalchemiops/neighbors/base_dispatch';</script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../../index.html">
+  
+  
+  
+  
+  
+    
+    
+    
+    <img src="../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <div class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">nvalchemiops...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for nvalchemiops.neighbors.base_dispatch</h1><div class="highlight"><pre>
+<span></span><span class="c1"># SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.</span>
+<span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="c1"># you may not use this file except in compliance with the License.</span>
+<span class="c1"># You may obtain a copy of the License at</span>
+<span class="c1">#</span>
+<span class="c1"># http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Unless required by applicable law or agreed to in writing, software</span>
+<span class="c1"># distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="c1"># WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="c1"># See the License for the specific language governing permissions and</span>
+<span class="c1"># limitations under the License.</span>
+
+
+<span class="sd">&quot;&quot;&quot;Shared helpers for frontend neighbor-list auto dispatch.&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Iterable</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">lru_cache</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Literal</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">warp</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">wp</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighbors.neighbor_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">DTYPE_INFO_ALL</span><span class="p">,</span> <span class="n">empty_sentinel</span>
+
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;AUTO_BASE_DEFAULTS&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;DEFAULT_BATCH_MAX_NBINS&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;DEFAULT_SINGLE_MAX_NBINS&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;FEATURE_BATCHED&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;FEATURE_CUDA&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;FEATURE_POSITIONS_FLOAT32&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;NEIGHBOR_LIST_STRATEGIES&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;auto_base_constants&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;finalize_neighbor_list_method&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;get_select_neighbor_list_method_cost_kernel&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;neighbor_list_strategy_run_args&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;optional_outputs_mask&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;estimate_neighbor_list_costs&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;suggest_neighbor_list_method&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+<span class="n">NeighborListMethod</span> <span class="o">=</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;naive&quot;</span><span class="p">,</span> <span class="s2">&quot;cell_list&quot;</span><span class="p">,</span> <span class="s2">&quot;cluster_tile&quot;</span><span class="p">]</span>
+<span class="n">CellListStrategy</span> <span class="o">=</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;atom_centric&quot;</span><span class="p">,</span> <span class="s2">&quot;pair_centric&quot;</span><span class="p">]</span>
+<span class="n">AtomCentricPath</span> <span class="o">=</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;direct&quot;</span><span class="p">,</span> <span class="s2">&quot;sorted&quot;</span><span class="p">]</span>
+<span class="n">NaiveStrategy</span> <span class="o">=</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;scalar&quot;</span><span class="p">,</span> <span class="s2">&quot;tile&quot;</span><span class="p">]</span>
+
+<span class="c1"># Cost-model constants (env-overridable, NVALCHEMI_NEIGHLIST_* style).</span>
+<span class="c1">#</span>
+<span class="c1"># The selector compares three families using quantities computed from the same</span>
+<span class="c1"># geometry kernel:</span>
+<span class="c1">#   naive       ~ per-system direct candidate work, image count, output work</span>
+<span class="c1">#   cell_list   ~ cell-grid candidate work plus expected output work</span>
+<span class="c1">#   cluster_tile ~ fully-periodic tile output work when semantically compatible</span>
+<span class="c1">#</span>
+<span class="c1"># These are intentionally coarse: the selector is a routing guard, not a timing</span>
+<span class="c1"># predictor.  It uses volume and expected pairs so density/cutoff regimes drive</span>
+<span class="c1"># the decision rather than raw atom-count thresholds.</span>
+<span class="n">AUTO_BASE_DEFAULTS</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;NVALCHEMI_NEIGHLIST_CELL_SHELL&quot;</span><span class="p">:</span> <span class="mf">27.0</span><span class="p">,</span>
+    <span class="s2">&quot;NVALCHEMI_NEIGHLIST_CELL_SETUP&quot;</span><span class="p">:</span> <span class="mf">4096.0</span><span class="p">,</span>
+<span class="p">}</span>
+
+<span class="n">DEFAULT_SINGLE_MAX_NBINS</span> <span class="o">=</span> <span class="mi">524288</span>
+<span class="sd">&quot;&quot;&quot;Default single-system cell-list cell cap.&quot;&quot;&quot;</span>
+
+<span class="n">DEFAULT_BATCH_MAX_NBINS</span> <span class="o">=</span> <span class="mi">8192</span>
+<span class="sd">&quot;&quot;&quot;Default per-system batched cell-list cell cap.&quot;&quot;&quot;</span>
+
+<span class="n">FEATURE_CUDA</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">0</span>
+<span class="sd">&quot;&quot;&quot;Selector feature flag: the active device supports CUDA kernels.&quot;&quot;&quot;</span>
+
+<span class="n">FEATURE_POSITIONS_FLOAT32</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">1</span>
+<span class="sd">&quot;&quot;&quot;Selector feature flag: positions are float32, required by cluster-tile auto.&quot;&quot;&quot;</span>
+
+<span class="n">FEATURE_BATCHED</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">2</span>
+<span class="sd">&quot;&quot;&quot;Selector feature flag: the call routes through a batched frontend.&quot;&quot;&quot;</span>
+
+<span class="n">_MAX_WARP_LINEAR_LAUNCH</span> <span class="o">=</span> <span class="mi">2</span><span class="o">**</span><span class="mi">31</span> <span class="o">-</span> <span class="mi">1</span>
+<span class="n">_EPS</span> <span class="o">=</span> <span class="mf">1.0e-30</span>
+<span class="n">_INF</span> <span class="o">=</span> <span class="mf">3.0e30</span>
+<span class="n">_SPHERE_VOLUME_FACTOR</span> <span class="o">=</span> <span class="mf">4.1887902047863905</span>
+
+<span class="n">_OPTION_CUTOFF2</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">0</span>
+<span class="n">_OPTION_HALF_FILL</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">1</span>
+<span class="n">_OPTION_RETURN_NEIGHBOR_LIST</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">2</span>
+<span class="n">_OPTION_TARGET_INDICES</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">3</span>
+<span class="n">_OPTION_RETURN_VECTORS</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">4</span>
+<span class="n">_OPTION_RETURN_DISTANCES</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">5</span>
+<span class="n">_OPTION_USE_PAIR_FN</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">6</span>
+<span class="n">_OPTION_REBUILD_FLAGS</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">8</span>
+<span class="n">_OPTION_WRAP_POSITIONS_FALSE</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">9</span>
+
+<span class="n">_OPTION_BITS</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;cutoff2&quot;</span><span class="p">:</span> <span class="n">_OPTION_CUTOFF2</span><span class="p">,</span>
+    <span class="s2">&quot;half_fill&quot;</span><span class="p">:</span> <span class="n">_OPTION_HALF_FILL</span><span class="p">,</span>
+    <span class="s2">&quot;return_neighbor_list&quot;</span><span class="p">:</span> <span class="n">_OPTION_RETURN_NEIGHBOR_LIST</span><span class="p">,</span>
+    <span class="s2">&quot;target_indices&quot;</span><span class="p">:</span> <span class="n">_OPTION_TARGET_INDICES</span><span class="p">,</span>
+    <span class="s2">&quot;return_vectors&quot;</span><span class="p">:</span> <span class="n">_OPTION_RETURN_VECTORS</span><span class="p">,</span>
+    <span class="s2">&quot;return_distances&quot;</span><span class="p">:</span> <span class="n">_OPTION_RETURN_DISTANCES</span><span class="p">,</span>
+    <span class="s2">&quot;use_pair_fn&quot;</span><span class="p">:</span> <span class="n">_OPTION_USE_PAIR_FN</span><span class="p">,</span>
+    <span class="s2">&quot;rebuild_flags&quot;</span><span class="p">:</span> <span class="n">_OPTION_REBUILD_FLAGS</span><span class="p">,</span>
+    <span class="s2">&quot;wrap_positions_false&quot;</span><span class="p">:</span> <span class="n">_OPTION_WRAP_POSITIONS_FALSE</span><span class="p">,</span>
+<span class="p">}</span>
+
+<span class="n">_OPTION_ALIASES</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;compute_vectors&quot;</span><span class="p">:</span> <span class="s2">&quot;return_vectors&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;vectors&quot;</span><span class="p">:</span> <span class="s2">&quot;return_vectors&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;neighbor_vectors&quot;</span><span class="p">:</span> <span class="s2">&quot;return_vectors&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;compute_distances&quot;</span><span class="p">:</span> <span class="s2">&quot;return_distances&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;distances&quot;</span><span class="p">:</span> <span class="s2">&quot;return_distances&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;neighbor_distances&quot;</span><span class="p">:</span> <span class="s2">&quot;return_distances&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;pair_fn&quot;</span><span class="p">:</span> <span class="s2">&quot;use_pair_fn&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;pair_params&quot;</span><span class="p">:</span> <span class="s2">&quot;use_pair_fn&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;pair_energies&quot;</span><span class="p">:</span> <span class="s2">&quot;use_pair_fn&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;pair_forces&quot;</span><span class="p">:</span> <span class="s2">&quot;use_pair_fn&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;wrap_positions&quot;</span><span class="p">:</span> <span class="s2">&quot;wrap_positions_false&quot;</span><span class="p">,</span>
+<span class="p">}</span>
+
+<span class="n">_FLAG_NAMES</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="s2">&quot;invalid_input&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;naive_unsafe&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;cell_list_unsafe&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;cluster_tile_unsupported_options&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;cluster_tile_unsupported_geometry&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;cluster_tile_noncontiguous_batch&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;cluster_tile_image_multiplicity&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;pair_centric_unsafe&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;naive_tile_unsafe&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<span class="c1"># Fine-grained, directly-runnable neighbor-list strategies.  These are the names</span>
+<span class="c1"># returned by :func:`estimate_neighbor_list_costs` / :func:`suggest_neighbor_list_method`</span>
+<span class="c1"># and accepted by the public ``neighbor_list(method=...)`` frontends; each maps</span>
+<span class="c1"># 1:1 to a base method plus its sub-options.</span>
+<span class="n">NEIGHBOR_LIST_STRATEGIES</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="s2">&quot;naive_scalar&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;naive_tile&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;cell_list_atom_centric&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;cell_list_pair_centric&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;cluster_tile&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># name -&gt; (base_method, native_strategy, cell_list_strategy, atom_centric_path).</span>
+<span class="n">_STRATEGY_RUN_ARGS</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;naive_scalar&quot;</span><span class="p">:</span> <span class="p">(</span><span class="s2">&quot;naive&quot;</span><span class="p">,</span> <span class="s2">&quot;scalar&quot;</span><span class="p">,</span> <span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="s2">&quot;auto&quot;</span><span class="p">),</span>
+    <span class="s2">&quot;naive_tile&quot;</span><span class="p">:</span> <span class="p">(</span><span class="s2">&quot;naive&quot;</span><span class="p">,</span> <span class="s2">&quot;tile&quot;</span><span class="p">,</span> <span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="s2">&quot;auto&quot;</span><span class="p">),</span>
+    <span class="s2">&quot;cell_list_atom_centric&quot;</span><span class="p">:</span> <span class="p">(</span><span class="s2">&quot;cell_list&quot;</span><span class="p">,</span> <span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="s2">&quot;atom_centric&quot;</span><span class="p">,</span> <span class="s2">&quot;direct&quot;</span><span class="p">),</span>
+    <span class="s2">&quot;cell_list_pair_centric&quot;</span><span class="p">:</span> <span class="p">(</span><span class="s2">&quot;cell_list&quot;</span><span class="p">,</span> <span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="s2">&quot;pair_centric&quot;</span><span class="p">,</span> <span class="s2">&quot;sorted&quot;</span><span class="p">),</span>
+    <span class="s2">&quot;cluster_tile&quot;</span><span class="p">:</span> <span class="p">(</span><span class="s2">&quot;cluster_tile&quot;</span><span class="p">,</span> <span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="s2">&quot;auto&quot;</span><span class="p">),</span>
+<span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">neighbor_list_strategy_run_args</span><span class="p">(</span><span class="n">strategy</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Resolve a strategy name to its run arguments.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    strategy : str</span>
+<span class="sd">        A name from :data:`NEIGHBOR_LIST_STRATEGIES`, optionally ``batch_``</span>
+<span class="sd">        prefixed.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    tuple of str</span>
+<span class="sd">        ``(method, native_strategy, cell_list_strategy, atom_centric_path)``.</span>
+<span class="sd">        The ``batch_`` prefix, if present, is carried onto ``method``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">batched</span> <span class="o">=</span> <span class="n">strategy</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;batch_&quot;</span><span class="p">)</span>
+    <span class="n">base</span> <span class="o">=</span> <span class="n">strategy</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="s2">&quot;batch_&quot;</span><span class="p">)</span> <span class="p">:]</span> <span class="k">if</span> <span class="n">batched</span> <span class="k">else</span> <span class="n">strategy</span>
+    <span class="k">if</span> <span class="n">base</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_STRATEGY_RUN_ARGS</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;unknown neighbor-list strategy </span><span class="si">{</span><span class="n">strategy</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">method</span><span class="p">,</span> <span class="n">native_strategy</span><span class="p">,</span> <span class="n">cell_list_strategy</span><span class="p">,</span> <span class="n">atom_centric_path</span> <span class="o">=</span> <span class="n">_STRATEGY_RUN_ARGS</span><span class="p">[</span>
+        <span class="n">base</span>
+    <span class="p">]</span>
+    <span class="k">if</span> <span class="n">batched</span><span class="p">:</span>
+        <span class="n">method</span> <span class="o">=</span> <span class="s2">&quot;batch_&quot;</span> <span class="o">+</span> <span class="n">method</span>
+    <span class="k">return</span> <span class="n">method</span><span class="p">,</span> <span class="n">native_strategy</span><span class="p">,</span> <span class="n">cell_list_strategy</span><span class="p">,</span> <span class="n">atom_centric_path</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_auto_env_float</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+    <span class="n">raw</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span> <span class="k">if</span> <span class="n">raw</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="nb">float</span><span class="p">(</span><span class="n">AUTO_BASE_DEFAULTS</span><span class="p">[</span><span class="n">name</span><span class="p">])</span>
+    <span class="k">except</span> <span class="p">(</span><span class="ne">TypeError</span><span class="p">,</span> <span class="ne">ValueError</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">AUTO_BASE_DEFAULTS</span><span class="p">[</span><span class="n">name</span><span class="p">])</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">auto_base_constants</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the current auto-dispatch constants.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    shell : float</span>
+<span class="sd">        Multiplicative estimate of cell-list neighbor-shell work.</span>
+<span class="sd">    setup : float</span>
+<span class="sd">        Per-system setup floor for cell-list work.</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    The values are read from ``NVALCHEMI_NEIGHLIST_CELL_SHELL`` and</span>
+<span class="sd">    ``NVALCHEMI_NEIGHLIST_CELL_SETUP`` when present, otherwise from</span>
+<span class="sd">    :data:`AUTO_BASE_DEFAULTS`.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="n">_auto_env_float</span><span class="p">(</span><span class="s2">&quot;NVALCHEMI_NEIGHLIST_CELL_SHELL&quot;</span><span class="p">),</span>
+        <span class="n">_auto_env_float</span><span class="p">(</span><span class="s2">&quot;NVALCHEMI_NEIGHLIST_CELL_SETUP&quot;</span><span class="p">),</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_wp_scalar_from_cell_dtype</span><span class="p">(</span><span class="n">cell_dtype</span><span class="p">:</span> <span class="nb">type</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">type</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the Warp scalar dtype for a mat33 cell dtype.&quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">scalar_dtype</span><span class="p">,</span> <span class="p">(</span><span class="n">_</span><span class="p">,</span> <span class="n">mat_dtype</span><span class="p">)</span> <span class="ow">in</span> <span class="n">DTYPE_INFO_ALL</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="k">if</span> <span class="n">cell_dtype</span> <span class="o">==</span> <span class="n">mat_dtype</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">scalar_dtype</span>
+    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unsupported cell dtype: </span><span class="si">{</span><span class="n">cell_dtype</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_safe_int</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Convert host scalar-like values to ``int``.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">value</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="s2">&quot;item&quot;</span><span class="p">)</span> <span class="k">else</span> <span class="n">value</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_safe_float</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Convert host scalar-like values to ``float``.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">value</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="s2">&quot;item&quot;</span><span class="p">)</span> <span class="k">else</span> <span class="n">value</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_option_is_active</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">object</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return whether a public-style selector option should set a bit.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">value</span> <span class="ow">is</span> <span class="kc">False</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">False</span>
+    <span class="k">return</span> <span class="kc">True</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">optional_outputs_mask</span><span class="p">(</span>
+    <span class="n">optional_outputs</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="o">**</span><span class="n">public_kwargs</span><span class="p">:</span> <span class="nb">object</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Encode public neighbor-list option names into a selector bitmask.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    optional_outputs : iterable of str, optional</span>
+<span class="sd">        Public-style option names.  Supported names include ``&quot;cutoff2&quot;``,</span>
+<span class="sd">        ``&quot;half_fill&quot;``, ``&quot;return_neighbor_list&quot;``, ``&quot;target_indices&quot;``,</span>
+<span class="sd">        ``&quot;return_vectors&quot;``, ``&quot;return_distances&quot;``, ``&quot;use_pair_fn&quot;``, and</span>
+<span class="sd">        ``&quot;rebuild_flags&quot;``.  Aliases matching common public buffers such as</span>
+<span class="sd">        ``&quot;neighbor_vectors&quot;`` and ``&quot;pair_fn&quot;`` are accepted.</span>
+<span class="sd">    **public_kwargs</span>
+<span class="sd">        Public neighbor-list keyword names mapped to their values.  Truthy or</span>
+<span class="sd">        non-``None`` values set the corresponding feasibility bit.  For</span>
+<span class="sd">        ``wrap_positions``, a value of ``False`` sets</span>
+<span class="sd">        ``&quot;wrap_positions_false&quot;``.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    int</span>
+<span class="sd">        Bitmask consumed by the Warp selector kernel.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">mask</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">optional_outputs</span> <span class="ow">or</span> <span class="p">():</span>
+        <span class="n">canonical</span> <span class="o">=</span> <span class="n">_OPTION_ALIASES</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">name</span><span class="p">),</span> <span class="nb">str</span><span class="p">(</span><span class="n">name</span><span class="p">))</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">mask</span> <span class="o">|=</span> <span class="n">_OPTION_BITS</span><span class="p">[</span><span class="n">canonical</span><span class="p">]</span>
+        <span class="k">except</span> <span class="ne">KeyError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unknown optional output option: </span><span class="si">{</span><span class="n">name</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">exc</span>
+
+    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">public_kwargs</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">canonical</span> <span class="o">=</span> <span class="n">_OPTION_ALIASES</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">canonical</span> <span class="o">==</span> <span class="s2">&quot;wrap_positions_false&quot;</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="kc">False</span><span class="p">:</span>
+                <span class="n">mask</span> <span class="o">|=</span> <span class="n">_OPTION_BITS</span><span class="p">[</span><span class="n">canonical</span><span class="p">]</span>
+            <span class="k">continue</span>
+        <span class="k">if</span> <span class="n">canonical</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_OPTION_BITS</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unknown optional output option: </span><span class="si">{</span><span class="n">name</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">_option_is_active</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
+            <span class="n">mask</span> <span class="o">|=</span> <span class="n">_OPTION_BITS</span><span class="p">[</span><span class="n">canonical</span><span class="p">]</span>
+    <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">mask</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">finalize_neighbor_list_method</span><span class="p">(</span><span class="n">costs</span><span class="p">,</span> <span class="n">flags</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Reduce selector costs and flags to feasible strategies, cheapest-first.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    costs : array-like, shape (5,)</span>
+<span class="sd">        ``(naive_scalar, naive_tile, cell_atom, cell_pair, cluster_tile)``.</span>
+<span class="sd">    flags : array-like, shape (9,)</span>
+<span class="sd">        Invalid-input and per-strategy feasibility flags.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    list of (str, float)</span>
+<span class="sd">        Feasible strategy names (from :data:`NEIGHBOR_LIST_STRATEGIES`) paired</span>
+<span class="sd">        with their relative estimated cost (lower is faster), sorted ascending.</span>
+
+<span class="sd">    Raises</span>
+<span class="sd">    ------</span>
+<span class="sd">    ValueError</span>
+<span class="sd">        If the selector reported invalid input.</span>
+<span class="sd">    RuntimeError</span>
+<span class="sd">        If no strategy satisfies the safety and feasibility guards.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">raw_flags</span> <span class="o">=</span> <span class="p">[</span><span class="n">_safe_int</span><span class="p">(</span><span class="n">flags</span><span class="p">[</span><span class="n">i</span><span class="p">])</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">min</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">flags</span><span class="p">),</span> <span class="nb">len</span><span class="p">(</span><span class="n">_FLAG_NAMES</span><span class="p">)))]</span>
+    <span class="c1"># Pad to the full flag set so a short ``flags`` argument cannot IndexError on</span>
+    <span class="c1"># the fixed indices used below; a missing flag defaults to 0 (feasible).</span>
+    <span class="k">while</span> <span class="nb">len</span><span class="p">(</span><span class="n">raw_flags</span><span class="p">)</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">_FLAG_NAMES</span><span class="p">):</span>
+        <span class="n">raw_flags</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">raw_flags</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;invalid batch_ptr, cutoff, or max_nbins for auto dispatch&quot;</span><span class="p">)</span>
+
+    <span class="n">raw_costs</span> <span class="o">=</span> <span class="p">[</span><span class="n">_safe_float</span><span class="p">(</span><span class="n">costs</span><span class="p">[</span><span class="n">i</span><span class="p">])</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">min</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">costs</span><span class="p">),</span> <span class="mi">5</span><span class="p">))]</span>
+    <span class="k">while</span> <span class="nb">len</span><span class="p">(</span><span class="n">raw_costs</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">5</span><span class="p">:</span>
+        <span class="n">raw_costs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">_INF</span><span class="p">)</span>
+
+    <span class="n">naive_ok</span> <span class="o">=</span> <span class="n">raw_flags</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span>
+    <span class="n">cell_ok</span> <span class="o">=</span> <span class="n">raw_flags</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span>
+    <span class="n">cluster_ok</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">raw_flags</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span>
+        <span class="ow">and</span> <span class="n">raw_flags</span><span class="p">[</span><span class="mi">4</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span>
+        <span class="ow">and</span> <span class="n">raw_flags</span><span class="p">[</span><span class="mi">5</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span>
+        <span class="ow">and</span> <span class="n">raw_flags</span><span class="p">[</span><span class="mi">6</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span>
+    <span class="p">)</span>
+
+    <span class="n">candidates</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">if</span> <span class="n">naive_ok</span><span class="p">:</span>
+        <span class="n">candidates</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="s2">&quot;naive_scalar&quot;</span><span class="p">,</span> <span class="n">raw_costs</span><span class="p">[</span><span class="mi">0</span><span class="p">]))</span>
+        <span class="k">if</span> <span class="n">raw_flags</span><span class="p">[</span><span class="mi">8</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">candidates</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="s2">&quot;naive_tile&quot;</span><span class="p">,</span> <span class="n">raw_costs</span><span class="p">[</span><span class="mi">1</span><span class="p">]))</span>
+    <span class="k">if</span> <span class="n">cell_ok</span><span class="p">:</span>
+        <span class="n">candidates</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="s2">&quot;cell_list_atom_centric&quot;</span><span class="p">,</span> <span class="n">raw_costs</span><span class="p">[</span><span class="mi">2</span><span class="p">]))</span>
+        <span class="k">if</span> <span class="n">raw_flags</span><span class="p">[</span><span class="mi">7</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">candidates</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="s2">&quot;cell_list_pair_centric&quot;</span><span class="p">,</span> <span class="n">raw_costs</span><span class="p">[</span><span class="mi">3</span><span class="p">]))</span>
+    <span class="k">if</span> <span class="n">cluster_ok</span><span class="p">:</span>
+        <span class="n">candidates</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="s2">&quot;cluster_tile&quot;</span><span class="p">,</span> <span class="n">raw_costs</span><span class="p">[</span><span class="mi">4</span><span class="p">]))</span>
+
+    <span class="n">feasible</span> <span class="o">=</span> <span class="p">[(</span><span class="n">name</span><span class="p">,</span> <span class="n">cost</span><span class="p">)</span> <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">cost</span> <span class="ow">in</span> <span class="n">candidates</span> <span class="k">if</span> <span class="n">cost</span> <span class="o">&lt;</span> <span class="n">_INF</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">]</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">feasible</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+            <span class="s2">&quot;No neighbor-list method fits the current safety and feasibility guards&quot;</span>
+        <span class="p">)</span>
+    <span class="n">feasible</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">item</span><span class="p">:</span> <span class="n">item</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">feasible</span>
+
+
+<span class="nd">@lru_cache</span><span class="p">(</span><span class="n">maxsize</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_select_neighbor_list_method_cost_kernel</span><span class="p">(</span><span class="n">wp_dtype</span><span class="p">:</span> <span class="nb">type</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">Kernel</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the shared guarded auto-dispatch cost kernel.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    wp_dtype : type</span>
+<span class="sd">        Warp scalar dtype for cell matrices, usually ``wp.float32`` or</span>
+<span class="sd">        ``wp.float64``.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.Kernel</span>
+<span class="sd">        Kernel computing method costs, sub-option costs, and feasibility flags.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">wp_dtype</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">DTYPE_INFO_ALL</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unsupported dtype: </span><span class="si">{</span><span class="n">wp_dtype</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">mat_dtype</span> <span class="o">=</span> <span class="n">DTYPE_INFO_ALL</span><span class="p">[</span><span class="n">wp_dtype</span><span class="p">]</span>
+
+    <span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span><span class="p">(</span><span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_kernel</span><span class="p">(</span>
+        <span class="n">batch_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">batch_idx_is_provided</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+        <span class="n">cell</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">mat_dtype</span><span class="p">),</span>
+        <span class="n">pbc_single</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">),</span>
+        <span class="n">pbc_batch</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array2d</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">),</span>
+        <span class="n">pbc_is_batched</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+        <span class="n">cutoff</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
+        <span class="n">shell</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
+        <span class="n">setup</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
+        <span class="n">max_nbins</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>
+        <span class="n">max_launch_size</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">,</span>
+        <span class="n">option_mask</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>
+        <span class="n">feature_mask</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>
+        <span class="n">target_count</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>
+        <span class="n">costs</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">),</span>
+        <span class="n">flags</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Compute dispatch costs, sub-option costs, and safety flags.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        batch_ptr : wp.array, shape (num_systems + 1,), dtype=wp.int32</span>
+<span class="sd">            Cumulative per-system atom counts.</span>
+<span class="sd">        batch_idx : wp.array, shape (total_atoms,), dtype=wp.int32</span>
+<span class="sd">            Optional dense system ids.  Zero-size sentinel when absent.</span>
+<span class="sd">        batch_idx_is_provided : bool</span>
+<span class="sd">            Whether ``batch_idx`` should be validated for contiguous layout.</span>
+<span class="sd">        cell : wp.array, shape (num_systems,), dtype=wp.mat33*</span>
+<span class="sd">            Per-system cell matrices.</span>
+<span class="sd">        pbc_single : wp.array, shape (3,), dtype=wp.bool</span>
+<span class="sd">            Shared PBC flags. Zero-size sentinel when ``pbc_is_batched=True``.</span>
+<span class="sd">        pbc_batch : wp.array, shape (num_systems, 3), dtype=wp.bool</span>
+<span class="sd">            Per-system PBC flags. Zero-size sentinel when</span>
+<span class="sd">            ``pbc_is_batched=False``.</span>
+<span class="sd">        pbc_is_batched : bool</span>
+<span class="sd">            Selects ``pbc_batch`` vs ``pbc_single``.</span>
+<span class="sd">        cutoff : float</span>
+<span class="sd">            Neighbor-list cutoff.</span>
+<span class="sd">        shell : float</span>
+<span class="sd">            Cell-list shell work multiplier.</span>
+<span class="sd">        setup : float</span>
+<span class="sd">            Cell-list per-system setup cost.</span>
+<span class="sd">        max_nbins : int</span>
+<span class="sd">            Cell-list per-system cap used by the selected frontend.</span>
+<span class="sd">        max_launch_size : int</span>
+<span class="sd">            Conservative one-dimensional launch-size guard.</span>
+<span class="sd">        option_mask : int</span>
+<span class="sd">            Public-option feasibility bits from :func:`optional_outputs_mask`.</span>
+<span class="sd">        feature_mask : int</span>
+<span class="sd">            Device/dtype/frontend feature bits.</span>
+<span class="sd">        target_count : int</span>
+<span class="sd">            Number of targeted source rows when ``target_indices`` is active.</span>
+<span class="sd">            Zero means &quot;all atoms&quot;.</span>
+<span class="sd">        costs : wp.array, shape (5,), dtype=wp.float32</span>
+<span class="sd">            OUTPUT: ``(naive_scalar, naive_tile, cell_atom, cell_pair,</span>
+<span class="sd">            cluster_tile)``.</span>
+<span class="sd">        flags : wp.array, shape (9,), dtype=wp.int32</span>
+<span class="sd">            OUTPUT: invalid input and method/sub-option feasibility flags.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        None</span>
+<span class="sd">            The kernel has no return value; results are written in place to the</span>
+<span class="sd">            ``costs`` and ``flags`` output arrays.</span>
+
+<span class="sd">        Notes</span>
+<span class="sd">        -----</span>
+<span class="sd">        - Thread launch: ``max(num_systems, total_atoms when batch_idx is</span>
+<span class="sd">          supplied)``.</span>
+<span class="sd">        - Modifies: ``costs`` and ``flags`` by atomic updates.</span>
+
+<span class="sd">        See Also</span>
+<span class="sd">        --------</span>
+<span class="sd">        finalize_neighbor_list_method : Reduce these costs/flags to a method.</span>
+<span class="sd">        optional_outputs_mask : Builds the ``option_mask`` consumed here.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">tid</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+        <span class="n">num_systems</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="n">cell</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+
+        <span class="n">has_cuda</span> <span class="o">=</span> <span class="p">(</span><span class="n">feature_mask</span> <span class="o">&amp;</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="n">FEATURE_CUDA</span><span class="p">))</span> <span class="o">!=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">is_float32</span> <span class="o">=</span> <span class="p">(</span><span class="n">feature_mask</span> <span class="o">&amp;</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="n">FEATURE_POSITIONS_FLOAT32</span><span class="p">))</span> <span class="o">!=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">is_batched</span> <span class="o">=</span> <span class="p">(</span><span class="n">feature_mask</span> <span class="o">&amp;</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="n">FEATURE_BATCHED</span><span class="p">))</span> <span class="o">!=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+        <span class="n">has_cutoff2</span> <span class="o">=</span> <span class="p">(</span><span class="n">option_mask</span> <span class="o">&amp;</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="n">_OPTION_CUTOFF2</span><span class="p">))</span> <span class="o">!=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">half_fill</span> <span class="o">=</span> <span class="p">(</span><span class="n">option_mask</span> <span class="o">&amp;</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="n">_OPTION_HALF_FILL</span><span class="p">))</span> <span class="o">!=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">return_list</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">option_mask</span> <span class="o">&amp;</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="n">_OPTION_RETURN_NEIGHBOR_LIST</span><span class="p">)</span>
+        <span class="p">)</span> <span class="o">!=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">has_target_indices</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">option_mask</span> <span class="o">&amp;</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="n">_OPTION_TARGET_INDICES</span><span class="p">)</span>
+        <span class="p">)</span> <span class="o">!=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">has_vectors</span> <span class="o">=</span> <span class="p">(</span><span class="n">option_mask</span> <span class="o">&amp;</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="n">_OPTION_RETURN_VECTORS</span><span class="p">))</span> <span class="o">!=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">has_distances</span> <span class="o">=</span> <span class="p">(</span><span class="n">option_mask</span> <span class="o">&amp;</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="n">_OPTION_RETURN_DISTANCES</span><span class="p">))</span> <span class="o">!=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span>
+            <span class="mi">0</span>
+        <span class="p">)</span>
+        <span class="n">use_pair_fn</span> <span class="o">=</span> <span class="p">(</span><span class="n">option_mask</span> <span class="o">&amp;</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="n">_OPTION_USE_PAIR_FN</span><span class="p">))</span> <span class="o">!=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">has_rebuild_flags</span> <span class="o">=</span> <span class="p">(</span><span class="n">option_mask</span> <span class="o">&amp;</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="n">_OPTION_REBUILD_FLAGS</span><span class="p">))</span> <span class="o">!=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span>
+            <span class="mi">0</span>
+        <span class="p">)</span>
+        <span class="n">wrap_positions_false</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">option_mask</span> <span class="o">&amp;</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="n">_OPTION_WRAP_POSITIONS_FALSE</span><span class="p">)</span>
+        <span class="p">)</span> <span class="o">!=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">has_pair_outputs</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">has_target_indices</span> <span class="ow">or</span> <span class="n">has_vectors</span> <span class="ow">or</span> <span class="n">has_distances</span> <span class="ow">or</span> <span class="n">use_pair_fn</span>
+        <span class="p">)</span>
+
+        <span class="n">total_atoms</span> <span class="o">=</span> <span class="n">batch_ptr</span><span class="p">[</span><span class="n">num_systems</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">tid</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">cutoff</span> <span class="o">&lt;=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span> <span class="ow">or</span> <span class="n">max_nbins</span> <span class="o">&lt;=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">):</span>
+                <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+            <span class="k">if</span> <span class="n">batch_ptr</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="ow">or</span> <span class="n">total_atoms</span> <span class="o">&lt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">):</span>
+                <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+            <span class="k">if</span> <span class="n">has_cutoff2</span><span class="p">:</span>
+                <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+
+        <span class="k">if</span> <span class="n">batch_idx_is_provided</span> <span class="ow">and</span> <span class="n">tid</span> <span class="o">&lt;</span> <span class="n">total_atoms</span><span class="p">:</span>
+            <span class="n">atom_system</span> <span class="o">=</span> <span class="n">batch_idx</span><span class="p">[</span><span class="n">tid</span><span class="p">]</span>
+            <span class="k">if</span> <span class="n">atom_system</span> <span class="o">&lt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="ow">or</span> <span class="n">atom_system</span> <span class="o">&gt;=</span> <span class="n">num_systems</span><span class="p">:</span>
+                <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+                <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">tid</span> <span class="o">&lt;</span> <span class="n">batch_ptr</span><span class="p">[</span><span class="n">atom_system</span><span class="p">]</span> <span class="ow">or</span> <span class="n">tid</span> <span class="o">&gt;=</span> <span class="n">batch_ptr</span><span class="p">[</span><span class="n">atom_system</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]:</span>
+                    <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+
+        <span class="k">if</span> <span class="n">tid</span> <span class="o">&gt;=</span> <span class="n">num_systems</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="n">start</span> <span class="o">=</span> <span class="n">batch_ptr</span><span class="p">[</span><span class="n">tid</span><span class="p">]</span>
+        <span class="n">end</span> <span class="o">=</span> <span class="n">batch_ptr</span><span class="p">[</span><span class="n">tid</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
+        <span class="n">n_atoms</span> <span class="o">=</span> <span class="n">end</span> <span class="o">-</span> <span class="n">start</span>
+        <span class="k">if</span> <span class="n">n_atoms</span> <span class="o">&lt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">):</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+            <span class="n">n_atoms</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+        <span class="n">cell_i</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="n">tid</span><span class="p">]</span>
+        <span class="n">cell_volume</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">cell_i</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="p">(</span><span class="n">cell_i</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="n">cell_i</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">-</span> <span class="n">cell_i</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">*</span> <span class="n">cell_i</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">])</span>
+            <span class="o">-</span> <span class="n">cell_i</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="p">(</span><span class="n">cell_i</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">cell_i</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">-</span> <span class="n">cell_i</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">*</span> <span class="n">cell_i</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">])</span>
+            <span class="o">+</span> <span class="n">cell_i</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">*</span> <span class="p">(</span><span class="n">cell_i</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">cell_i</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">cell_i</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="n">cell_i</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">])</span>
+        <span class="p">)</span>
+        <span class="n">volume</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">cell_volume</span><span class="p">))</span>
+
+        <span class="n">pbc_x</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span>
+        <span class="n">pbc_y</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span>
+        <span class="n">pbc_z</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">pbc_is_batched</span><span class="p">:</span>
+            <span class="n">pbc_x</span> <span class="o">=</span> <span class="n">pbc_batch</span><span class="p">[</span><span class="n">tid</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span>
+            <span class="n">pbc_y</span> <span class="o">=</span> <span class="n">pbc_batch</span><span class="p">[</span><span class="n">tid</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span>
+            <span class="n">pbc_z</span> <span class="o">=</span> <span class="n">pbc_batch</span><span class="p">[</span><span class="n">tid</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">pbc_x</span> <span class="o">=</span> <span class="n">pbc_single</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="n">pbc_y</span> <span class="o">=</span> <span class="n">pbc_single</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+            <span class="n">pbc_z</span> <span class="o">=</span> <span class="n">pbc_single</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span>
+        <span class="n">any_pbc</span> <span class="o">=</span> <span class="n">pbc_x</span> <span class="ow">or</span> <span class="n">pbc_y</span> <span class="ow">or</span> <span class="n">pbc_z</span>
+        <span class="n">all_pbc</span> <span class="o">=</span> <span class="n">pbc_x</span> <span class="ow">and</span> <span class="n">pbc_y</span> <span class="ow">and</span> <span class="n">pbc_z</span>
+
+        <span class="n">n_float</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">n_atoms</span><span class="p">)</span>
+        <span class="n">active_atoms</span> <span class="o">=</span> <span class="n">n_atoms</span>
+        <span class="k">if</span> <span class="n">has_target_indices</span><span class="p">:</span>
+            <span class="n">active_atoms</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span>
+                <span class="n">wp</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span>
+                    <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">n_atoms</span><span class="p">)</span>
+                    <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="n">target_count</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">)))</span>
+                    <span class="o">/</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="n">total_atoms</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">)))</span>
+                <span class="p">)</span>
+            <span class="p">)</span>
+            <span class="n">active_atoms</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">active_atoms</span><span class="p">,</span> <span class="n">n_atoms</span><span class="p">)</span>
+        <span class="n">active_float</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">active_atoms</span><span class="p">)</span>
+        <span class="n">n_sq</span> <span class="o">=</span> <span class="n">n_float</span> <span class="o">*</span> <span class="n">n_float</span>
+        <span class="c1"># Naive candidate count: each of ``active`` source atoms is tested against</span>
+        <span class="c1"># all ``n`` atoms, so active_n_work ~ N^2 distance checks. n_pairs_cap =</span>
+        <span class="c1"># n*(n-1) is the exact upper bound on real pairs.</span>
+        <span class="n">active_n_work</span> <span class="o">=</span> <span class="n">active_float</span> <span class="o">*</span> <span class="n">n_float</span>
+        <span class="n">n_pairs_cap</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">max</span><span class="p">(</span>
+            <span class="n">n_float</span> <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="n">n_atoms</span> <span class="o">-</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span> <span class="mi">0</span><span class="p">)),</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+        <span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">volume</span> <span class="o">&lt;=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">_EPS</span><span class="p">):</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+            <span class="k">if</span> <span class="n">any_pbc</span><span class="p">:</span>
+                <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">costs</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">n_sq</span><span class="p">)</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">costs</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">n_sq</span><span class="p">)</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">costs</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">_INF</span><span class="p">))</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">costs</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">_INF</span><span class="p">))</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">costs</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">_INF</span><span class="p">))</span>
+            <span class="k">return</span>
+
+        <span class="n">inverse_cell_transpose</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">inverse</span><span class="p">(</span><span class="n">cell_i</span><span class="p">))</span>
+        <span class="n">face_distance_x</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">length</span><span class="p">(</span><span class="n">inverse_cell_transpose</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+        <span class="p">)</span>
+        <span class="n">face_distance_y</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">length</span><span class="p">(</span><span class="n">inverse_cell_transpose</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+        <span class="p">)</span>
+        <span class="n">face_distance_z</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">length</span><span class="p">(</span><span class="n">inverse_cell_transpose</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+        <span class="p">)</span>
+        <span class="n">min_face_distance</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">min</span><span class="p">(</span>
+            <span class="n">face_distance_x</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">face_distance_y</span><span class="p">,</span> <span class="n">face_distance_z</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">min_face_distance</span> <span class="o">&lt;=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">_EPS</span><span class="p">):</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+            <span class="k">return</span>
+
+        <span class="n">shift_x</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">shift_y</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">shift_z</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">any_pbc</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">pbc_x</span><span class="p">:</span>
+                <span class="n">shift_x</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span>
+                    <span class="n">wp</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">length</span><span class="p">(</span><span class="n">inverse_cell_transpose</span><span class="p">[</span><span class="mi">0</span><span class="p">]))</span> <span class="o">*</span> <span class="n">cutoff</span><span class="p">)</span>
+                <span class="p">)</span>
+            <span class="k">if</span> <span class="n">pbc_y</span><span class="p">:</span>
+                <span class="n">shift_y</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span>
+                    <span class="n">wp</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">length</span><span class="p">(</span><span class="n">inverse_cell_transpose</span><span class="p">[</span><span class="mi">1</span><span class="p">]))</span> <span class="o">*</span> <span class="n">cutoff</span><span class="p">)</span>
+                <span class="p">)</span>
+            <span class="k">if</span> <span class="n">pbc_z</span><span class="p">:</span>
+                <span class="n">shift_z</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span>
+                    <span class="n">wp</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">length</span><span class="p">(</span><span class="n">inverse_cell_transpose</span><span class="p">[</span><span class="mi">2</span><span class="p">]))</span> <span class="o">*</span> <span class="n">cutoff</span><span class="p">)</span>
+                <span class="p">)</span>
+
+        <span class="n">shift_count</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="n">shift_x</span><span class="p">)</span> <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">shift_y</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">shift_z</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+            <span class="o">+</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="n">shift_y</span><span class="p">)</span> <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">shift_z</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+            <span class="o">+</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="n">shift_z</span><span class="p">)</span>
+            <span class="o">+</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">shift_count</span> <span class="o">&lt;=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="mi">0</span><span class="p">):</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+            <span class="n">shift_count</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">shift_count</span> <span class="o">&gt;</span> <span class="n">max_launch_size</span><span class="p">:</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">shift_count</span> <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="n">total_atoms</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">)))</span> <span class="o">&gt;</span> <span class="n">max_launch_size</span><span class="p">:</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+        <span class="k">if</span> <span class="p">(</span>
+            <span class="n">shift_count</span>
+            <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="n">n_atoms</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">)))</span>
+            <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="n">num_systems</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">)))</span>
+            <span class="o">&gt;</span> <span class="n">max_launch_size</span>
+        <span class="p">):</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+
+        <span class="c1"># Naive viability bound: above ~8e9 candidate pairs</span>
+        <span class="c1"># (active_n_work * shift_count) naive stops being competitive with</span>
+        <span class="c1"># cell_list, so mark it unsafe.</span>
+        <span class="k">if</span> <span class="n">active_n_work</span> <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">shift_count</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">8.0e9</span><span class="p">):</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+
+        <span class="n">cutoff_volume</span> <span class="o">=</span> <span class="n">cutoff</span> <span class="o">*</span> <span class="n">cutoff</span> <span class="o">*</span> <span class="n">cutoff</span>
+        <span class="c1"># Floor against float32 underflow for tiny cutoffs so the cell-cost</span>
+        <span class="c1"># division below (volume / cutoff_volume) cannot produce inf/NaN.</span>
+        <span class="n">cutoff_volume</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">cutoff_volume</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">_EPS</span><span class="p">))</span>
+        <span class="n">density</span> <span class="o">=</span> <span class="n">n_float</span> <span class="o">/</span> <span class="n">wp</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">volume</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">_EPS</span><span class="p">))</span>
+        <span class="c1"># Expected output work, shared by every method: neighbors per atom</span>
+        <span class="c1"># (density * cutoff-sphere volume) times the active source atoms,</span>
+        <span class="c1"># capped by the exact pair count for non-periodic and halved for half_fill.</span>
+        <span class="n">expected_neighbors</span> <span class="o">=</span> <span class="n">density</span> <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">_SPHERE_VOLUME_FACTOR</span><span class="p">)</span> <span class="o">*</span> <span class="n">cutoff_volume</span>
+        <span class="n">expected_pairs</span> <span class="o">=</span> <span class="n">active_float</span> <span class="o">*</span> <span class="n">expected_neighbors</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">any_pbc</span><span class="p">:</span>
+            <span class="n">expected_pairs</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">expected_pairs</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">n_pairs_cap</span><span class="p">,</span> <span class="n">active_n_work</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">half_fill</span><span class="p">:</span>
+            <span class="n">expected_pairs</span> <span class="o">=</span> <span class="n">expected_pairs</span> <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
+
+        <span class="c1"># Fixed per-system launch/allocation overhead (higher when batched).</span>
+        <span class="n">naive_setup</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">2048.0</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">is_batched</span><span class="p">:</span>
+            <span class="n">naive_setup</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">20000.0</span><span class="p">)</span>
+        <span class="c1"># Naive cost = per-candidate scan + per-pair output write + setup.</span>
+        <span class="c1"># Scan weight: scalar 0.35 (global loads) vs tile 0.010 (shared-memory</span>
+        <span class="c1"># reuse). Output write weight: 2.0 scalar vs 1.5 tile.</span>
+        <span class="n">scalar_cost</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">0.35</span><span class="p">)</span> <span class="o">*</span> <span class="n">active_n_work</span> <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">shift_count</span><span class="p">)</span>
+            <span class="o">+</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span> <span class="o">*</span> <span class="n">expected_pairs</span>
+            <span class="o">+</span> <span class="n">naive_setup</span>
+        <span class="p">)</span>
+        <span class="n">tile_cost</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">0.010</span><span class="p">)</span> <span class="o">*</span> <span class="n">active_n_work</span> <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">shift_count</span><span class="p">)</span>
+            <span class="o">+</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">1.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">expected_pairs</span>
+            <span class="o">+</span> <span class="n">naive_setup</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="p">(</span>
+            <span class="p">(</span><span class="ow">not</span> <span class="n">has_cuda</span><span class="p">)</span>
+            <span class="ow">or</span> <span class="n">has_pair_outputs</span>
+            <span class="ow">or</span> <span class="p">(</span><span class="n">any_pbc</span> <span class="ow">and</span> <span class="n">is_batched</span> <span class="ow">and</span> <span class="n">wrap_positions_false</span><span class="p">)</span>
+        <span class="p">):</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">costs</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">scalar_cost</span><span class="p">)</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">costs</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">tile_cost</span><span class="p">)</span>
+
+        <span class="n">cells_per_dimension</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="n">ADAPTIVE_MIN_CELLS</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span>
+        <span class="c1"># Clamp the float-&gt;int cast so an extreme face_distance/cutoff ratio</span>
+        <span class="c1"># cannot overflow int32; the halving loop below reduces the count to</span>
+        <span class="c1"># &lt;= max_nbins regardless, so capping per axis here is lossless.</span>
+        <span class="n">max_cells_f</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">max_nbins</span><span class="p">)</span>
+        <span class="n">cells_per_dimension</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">face_distance_x</span> <span class="o">/</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">max_cells_f</span><span class="p">)),</span> <span class="mi">1</span>
+        <span class="p">)</span>
+        <span class="n">cells_per_dimension</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">face_distance_y</span> <span class="o">/</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">max_cells_f</span><span class="p">)),</span> <span class="mi">1</span>
+        <span class="p">)</span>
+        <span class="n">cells_per_dimension</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">face_distance_z</span> <span class="o">/</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">max_cells_f</span><span class="p">)),</span> <span class="mi">1</span>
+        <span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">dim</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>
+            <span class="n">pbc_dim</span> <span class="o">=</span> <span class="n">pbc_z</span>
+            <span class="k">if</span> <span class="n">dim</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="n">pbc_dim</span> <span class="o">=</span> <span class="n">pbc_x</span>
+            <span class="k">elif</span> <span class="n">dim</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+                <span class="n">pbc_dim</span> <span class="o">=</span> <span class="n">pbc_y</span>
+            <span class="k">if</span> <span class="n">pbc_dim</span> <span class="ow">or</span> <span class="n">cells_per_dimension</span><span class="p">[</span><span class="n">dim</span><span class="p">]</span> <span class="o">&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">):</span>
+                <span class="k">while</span> <span class="n">cells_per_dimension</span><span class="p">[</span><span class="n">dim</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">ADAPTIVE_MIN_CELLS</span><span class="p">:</span>
+                    <span class="n">cells_per_dimension</span><span class="p">[</span><span class="n">dim</span><span class="p">]</span> <span class="o">=</span> <span class="n">cells_per_dimension</span><span class="p">[</span><span class="n">dim</span><span class="p">]</span> <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+
+        <span class="c1"># Accumulate the cell-count product in int64 so a large grid cannot wrap</span>
+        <span class="c1"># around int32 and slip past the guards below; the halving loop reduces</span>
+        <span class="c1"># it to &lt;= max_nbins, which always fits int32.</span>
+        <span class="n">total_cells_i64</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="n">cells_per_dimension</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+            <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="n">cells_per_dimension</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+            <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="n">cells_per_dimension</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+        <span class="p">)</span>
+        <span class="k">while</span> <span class="n">total_cells_i64</span> <span class="o">&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="n">max_nbins</span><span class="p">):</span>
+            <span class="k">for</span> <span class="n">dim</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>
+                <span class="n">cells_per_dimension</span><span class="p">[</span><span class="n">dim</span><span class="p">]</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span>
+                    <span class="n">cells_per_dimension</span><span class="p">[</span><span class="n">dim</span><span class="p">]</span> <span class="o">//</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">2</span><span class="p">),</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+                <span class="p">)</span>
+            <span class="n">total_cells_i64</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="n">cells_per_dimension</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+                <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="n">cells_per_dimension</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+                <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="n">cells_per_dimension</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+            <span class="p">)</span>
+        <span class="n">total_cells_i32</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="n">total_cells_i64</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">total_cells_i32</span> <span class="o">&lt;=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">):</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+            <span class="n">total_cells_i32</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+        <span class="k">if</span> <span class="p">(</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="n">total_cells_i32</span><span class="p">)</span> <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="n">num_systems</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">)))</span>
+            <span class="o">&gt;</span> <span class="n">max_launch_size</span>
+        <span class="p">):</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+
+        <span class="c1"># cost_cells = grid cell count (volume / cutoff^3), clamped to</span>
+        <span class="c1"># [1, max_nbins]. grid_work is the pruned candidate count: naive</span>
+        <span class="c1"># active_n_work scanned over ``shell`` stencil cells (default 27 ~ 3x3x3).</span>
+        <span class="n">cost_cells</span> <span class="o">=</span> <span class="n">volume</span> <span class="o">/</span> <span class="n">cutoff_volume</span>
+        <span class="n">cost_cells</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">cost_cells</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">1.0</span><span class="p">))</span>
+        <span class="n">cost_cells</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">cost_cells</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">max_nbins</span><span class="p">))</span>
+        <span class="n">grid_work</span> <span class="o">=</span> <span class="n">shell</span> <span class="o">*</span> <span class="n">active_n_work</span> <span class="o">/</span> <span class="n">cost_cells</span>
+        <span class="c1"># Atom-centric: 2.0 per-candidate distance test + 0.8 output write,</span>
+        <span class="c1"># over the cell-grid build/sort floor ``setup``.</span>
+        <span class="n">cell_atom_cost</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">setup</span> <span class="o">+</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span> <span class="o">*</span> <span class="n">grid_work</span> <span class="o">+</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">0.8</span><span class="p">)</span> <span class="o">*</span> <span class="n">expected_pairs</span>
+        <span class="p">)</span>
+
+        <span class="n">radius_x</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">cutoff</span> <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">cells_per_dimension</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="o">/</span> <span class="n">face_distance_x</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="n">radius_y</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">cutoff</span> <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">cells_per_dimension</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span> <span class="o">/</span> <span class="n">face_distance_y</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="n">radius_z</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">cutoff</span> <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">cells_per_dimension</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span> <span class="o">/</span> <span class="n">face_distance_z</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="n">radius_x</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">radius_x</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+        <span class="n">radius_y</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">radius_y</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+        <span class="n">radius_z</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">radius_z</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+        <span class="n">n_outer</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">radius_x</span>
+            <span class="o">*</span> <span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span> <span class="o">*</span> <span class="n">radius_y</span> <span class="o">+</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+            <span class="o">*</span> <span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span> <span class="o">*</span> <span class="n">radius_z</span> <span class="o">+</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+            <span class="o">+</span> <span class="n">radius_y</span> <span class="o">*</span> <span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span> <span class="o">*</span> <span class="n">radius_z</span> <span class="o">+</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+            <span class="o">+</span> <span class="n">radius_z</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">half_fill</span><span class="p">:</span>
+            <span class="n">n_outer</span> <span class="o">=</span> <span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span> <span class="o">*</span> <span class="n">radius_x</span> <span class="o">+</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span> <span class="o">*</span> <span class="p">(</span>
+                <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span> <span class="o">*</span> <span class="n">radius_y</span> <span class="o">+</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+            <span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span> <span class="o">*</span> <span class="n">radius_z</span> <span class="o">+</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span> <span class="o">-</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+        <span class="c1"># Pair-centric launches one 64-thread block per (cell, neighbor-offset);</span>
+        <span class="c1"># n_outer = stencil offsets (forward half only when half_fill).</span>
+        <span class="c1"># pair_launch ~ total threads; pair_blocks ~ block count.</span>
+        <span class="n">pair_launch</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="n">total_cells_i32</span><span class="p">)</span> <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="n">n_outer</span> <span class="o">+</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span> <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="mi">64</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="n">atom_blocks</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="n">n_atoms</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span> <span class="o">+</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">63</span><span class="p">))</span> <span class="o">//</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="mi">64</span><span class="p">)</span>
+        <span class="n">pair_blocks</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="n">total_cells_i32</span><span class="p">)</span> <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="n">n_outer</span> <span class="o">+</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+        <span class="k">if</span> <span class="p">(</span><span class="ow">not</span> <span class="n">has_cuda</span><span class="p">)</span> <span class="ow">or</span> <span class="n">pair_blocks</span> <span class="o">&lt;</span> <span class="n">atom_blocks</span><span class="p">:</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">7</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+        <span class="n">pair_launch_effective</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">pair_launch</span><span class="p">,</span> <span class="n">max_launch_size</span><span class="p">)</span>
+        <span class="c1"># Pair-centric: cheaper per pair (0.55 write, 0.5 scan) but pays a</span>
+        <span class="c1"># per-block launch term (0.025 * pair_launch_effective) for its many</span>
+        <span class="c1"># small blocks (capped when coarsening is required).</span>
+        <span class="n">cell_pair_cost</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">setup</span>
+            <span class="o">+</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">0.55</span><span class="p">)</span> <span class="o">*</span> <span class="n">expected_pairs</span>
+            <span class="o">+</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">0.025</span><span class="p">)</span> <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">pair_launch_effective</span><span class="p">)</span>
+            <span class="o">+</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">grid_work</span>
+        <span class="p">)</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">costs</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="n">cell_atom_cost</span><span class="p">)</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">costs</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">cell_pair_cost</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="p">(</span>
+            <span class="n">half_fill</span>
+            <span class="ow">or</span> <span class="n">has_target_indices</span>
+            <span class="ow">or</span> <span class="n">use_pair_fn</span>
+            <span class="ow">or</span> <span class="n">has_rebuild_flags</span>
+            <span class="ow">or</span> <span class="p">(</span><span class="n">has_cutoff2</span> <span class="ow">and</span> <span class="p">(</span><span class="n">return_list</span> <span class="ow">or</span> <span class="n">has_vectors</span> <span class="ow">or</span> <span class="n">has_distances</span><span class="p">))</span>
+        <span class="p">):</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+        <span class="k">if</span> <span class="p">(</span><span class="ow">not</span> <span class="n">has_cuda</span><span class="p">)</span> <span class="ow">or</span> <span class="p">(</span><span class="ow">not</span> <span class="n">is_float32</span><span class="p">)</span> <span class="ow">or</span> <span class="p">(</span><span class="ow">not</span> <span class="n">all_pbc</span><span class="p">):</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">cutoff</span> <span class="o">&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">min_face_distance</span><span class="p">:</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">is_batched</span> <span class="ow">and</span> <span class="n">batch_idx_is_provided</span><span class="p">:</span>
+            <span class="c1"># The per-atom validation above sets flag 5 when the dense labels</span>
+            <span class="c1"># do not match the contiguous ranges implied by batch_ptr.</span>
+            <span class="k">pass</span>
+
+        <span class="n">cluster_large_enough</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">is_batched</span><span class="p">:</span>
+            <span class="n">cluster_large_enough</span> <span class="o">=</span> <span class="n">total_atoms</span> <span class="o">&gt;=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">4096</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">cluster_large_enough</span> <span class="o">=</span> <span class="n">expected_neighbors</span> <span class="o">&gt;=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">512.0</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">cluster_large_enough</span><span class="p">:</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">flags</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+
+        <span class="c1"># Cluster-tile one-time pipeline floor (Morton encode, sort, cluster</span>
+        <span class="c1"># build, tile scan), added once per batch rather than per-system.</span>
+        <span class="k">if</span> <span class="n">tid</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">costs</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">1200000.0</span><span class="p">))</span>
+        <span class="c1"># Per-atom build: 32 * n (radix sort + cluster assignment, modeled</span>
+        <span class="c1"># linearly over the large-N range cluster_tile runs in); the</span>
+        <span class="c1"># 0.35 * expected_pairs term is the tile query output write.</span>
+        <span class="n">cluster_cost</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">0.35</span><span class="p">)</span> <span class="o">*</span> <span class="n">expected_pairs</span> <span class="o">+</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">32.0</span><span class="p">)</span> <span class="o">*</span> <span class="n">n_float</span> <span class="o">+</span> <span class="n">setup</span>
+        <span class="p">)</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">costs</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="n">cluster_cost</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">_kernel</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_validate_selector_inputs</span><span class="p">(</span>
+    <span class="n">batch_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cutoff</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Validate shared selector inputs and return ``num_systems``.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">batch_ptr</span><span class="o">.</span><span class="n">dtype</span> <span class="o">!=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;batch_ptr must be a wp.array with dtype=wp.int32&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">batch_ptr</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;batch_ptr must be a 1-D wp.array&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">batch_ptr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;batch_ptr must have length at least 2&quot;</span><span class="p">)</span>
+    <span class="n">num_systems</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">batch_ptr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">cell</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">num_systems</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;cell must contain one matrix per system&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">pbc</span><span class="o">.</span><span class="n">dtype</span> <span class="o">!=</span> <span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;pbc must be a wp.array with dtype=wp.bool&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">pbc</span><span class="o">.</span><span class="n">ndim</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;pbc must have shape (3,) or (num_systems, 3)&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">pbc</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">1</span> <span class="ow">and</span> <span class="n">pbc</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="mi">3</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;pbc must have shape (3,) or (num_systems, 3)&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">pbc</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span> <span class="ow">and</span> <span class="p">(</span><span class="n">pbc</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="n">num_systems</span> <span class="ow">or</span> <span class="n">pbc</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">!=</span> <span class="mi">3</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;pbc must have shape (3,) or (num_systems, 3)&quot;</span><span class="p">)</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">batch_ptr</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="k">if</span> <span class="nb">str</span><span class="p">(</span><span class="n">cell</span><span class="o">.</span><span class="n">device</span><span class="p">)</span> <span class="o">!=</span> <span class="n">device</span> <span class="ow">or</span> <span class="nb">str</span><span class="p">(</span><span class="n">pbc</span><span class="o">.</span><span class="n">device</span><span class="p">)</span> <span class="o">!=</span> <span class="n">device</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;batch_ptr, cell, and pbc must be on the same device&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">batch_idx</span><span class="o">.</span><span class="n">dtype</span> <span class="o">!=</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span> <span class="ow">or</span> <span class="n">batch_idx</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;batch_idx must be a 1-D wp.array with dtype=wp.int32&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">str</span><span class="p">(</span><span class="n">batch_idx</span><span class="o">.</span><span class="n">device</span><span class="p">)</span> <span class="o">!=</span> <span class="n">device</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;batch_idx must be on the same device as batch_ptr&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">float</span><span class="p">(</span><span class="n">cutoff</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mf">0.0</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;cutoff must be positive&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">num_systems</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_default_feature_mask</span><span class="p">(</span><span class="n">batch_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span> <span class="n">cell</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span> <span class="n">num_systems</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return feature bits inferred by the shared Warp selector.&quot;&quot;&quot;</span>
+    <span class="n">mask</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">if</span> <span class="s2">&quot;cuda&quot;</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">batch_ptr</span><span class="o">.</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">():</span>
+        <span class="n">mask</span> <span class="o">|=</span> <span class="n">FEATURE_CUDA</span>
+    <span class="k">if</span> <span class="n">_wp_scalar_from_cell_dtype</span><span class="p">(</span><span class="n">cell</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span> <span class="o">==</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">:</span>
+        <span class="n">mask</span> <span class="o">|=</span> <span class="n">FEATURE_POSITIONS_FLOAT32</span>
+    <span class="k">if</span> <span class="n">num_systems</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">mask</span> <span class="o">|=</span> <span class="n">FEATURE_BATCHED</span>
+    <span class="k">return</span> <span class="n">mask</span>
+
+
+<div class="viewcode-block" id="estimate_neighbor_list_costs">
+<a class="viewcode-back" href="../../../modules/warp/neighbors.html#nvalchemiops.neighbors.estimate_neighbor_list_costs">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">estimate_neighbor_list_costs</span><span class="p">(</span>
+    <span class="n">batch_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cutoff</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">max_nbins</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">max_launch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">_MAX_WARP_LINEAR_LAUNCH</span><span class="p">,</span>
+    <span class="n">optional_outputs</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">option_mask</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+    <span class="n">feature_mask</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">target_count</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Report feasible neighbor-list strategies and their estimated cost.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    batch_ptr : wp.array, shape (num_systems + 1,), dtype=wp.int32</span>
+<span class="sd">        Cumulative atom counts. The final entry is the total atom count.</span>
+<span class="sd">    cell : wp.array, shape (num_systems,), dtype=wp.mat33*</span>
+<span class="sd">        Per-system cell matrices. Non-periodic callers should pass a</span>
+<span class="sd">        synthesized bounding-box cell.</span>
+<span class="sd">    pbc : wp.array, shape (3,) or (num_systems, 3), dtype=wp.bool</span>
+<span class="sd">        Shared or per-system periodic-boundary flags.</span>
+<span class="sd">    cutoff : float</span>
+<span class="sd">        Neighbor cutoff.  For dual-cutoff routing, pass the larger cutoff.</span>
+<span class="sd">    batch_idx : wp.array, optional</span>
+<span class="sd">        Dense per-atom batch ids.  When provided, the selector validates that</span>
+<span class="sd">        the labels match the contiguous ranges implied by ``batch_ptr`` before</span>
+<span class="sd">        allowing auto cluster-tile.</span>
+<span class="sd">    max_nbins : int, optional</span>
+<span class="sd">        Per-system cell-list cap. Defaults to the single-system cap when</span>
+<span class="sd">        ``num_systems == 1`` and the batched cap otherwise.</span>
+<span class="sd">    max_launch_size : int, default=2**31 - 1</span>
+<span class="sd">        Conservative launch-size guard used by current neighbor-list kernels.</span>
+<span class="sd">    optional_outputs : iterable of str, optional</span>
+<span class="sd">        Public-style neighbor-list option names, encoded with</span>
+<span class="sd">        :func:`optional_outputs_mask`.</span>
+<span class="sd">    option_mask : int, default=0</span>
+<span class="sd">        Pre-encoded option bits to OR with ``optional_outputs``.</span>
+<span class="sd">    feature_mask : int, optional</span>
+<span class="sd">        Device/dtype/frontend feature bits.  When omitted, CUDA and cell dtype</span>
+<span class="sd">        are inferred from the Warp arrays.</span>
+<span class="sd">    target_count : int, optional</span>
+<span class="sd">        Number of source rows requested by ``target_indices``.  When omitted,</span>
+<span class="sd">        the selector scores all atoms.  Frontends should pass</span>
+<span class="sd">        ``len(target_indices)`` when the public ``target_indices`` kwarg is</span>
+<span class="sd">        active.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    list of (str, float)</span>
+<span class="sd">        Feasible strategies (from :data:`NEIGHBOR_LIST_STRATEGIES`) and their</span>
+<span class="sd">        relative estimated cost (lower is faster), sorted cheapest-first.</span>
+<span class="sd">        Batched inputs (``num_systems &gt; 1``) return ``batch_`` prefixed names.</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    The returned costs are *relative* (arbitrary units): only their ordering is</span>
+<span class="sd">    meaningful, so compare them to each other, not to a wall-clock time.  The</span>
+<span class="sd">    model approximates algorithmic work (candidate pairs, neighbors written,</span>
+<span class="sd">    launch overhead) and is **hardware-independent** -- the true crossover</span>
+<span class="sd">    between strategies shifts with the device, so when the top costs are within a</span>
+<span class="sd">    small factor the predicted best may be marginally slower than a close</span>
+<span class="sd">    runner-up; benchmark the top few on your hardware in that case.</span>
+
+<span class="sd">    This launches one Warp kernel over systems (and over atoms when validating</span>
+<span class="sd">    ``batch_idx`` contiguity) and reads back five costs plus nine flags, so it</span>
+<span class="sd">    is **host-only**: call it outside ``torch.compile`` / ``jax.jit`` and pass</span>
+<span class="sd">    the chosen name as an explicit ``method=`` to run compiled.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">num_systems</span> <span class="o">=</span> <span class="n">_validate_selector_inputs</span><span class="p">(</span><span class="n">batch_ptr</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">max_nbins</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">max_nbins</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">DEFAULT_SINGLE_MAX_NBINS</span> <span class="k">if</span> <span class="n">num_systems</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">else</span> <span class="n">DEFAULT_BATCH_MAX_NBINS</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="nb">int</span><span class="p">(</span><span class="n">max_nbins</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;max_nbins must be positive&quot;</span><span class="p">)</span>
+
+    <span class="n">device</span> <span class="o">=</span> <span class="n">batch_ptr</span><span class="o">.</span><span class="n">device</span>
+    <span class="n">costs</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">5</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">flags</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">_FLAG_NAMES</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">shell</span><span class="p">,</span> <span class="n">setup</span> <span class="o">=</span> <span class="n">auto_base_constants</span><span class="p">()</span>
+    <span class="n">pbc_is_batched</span> <span class="o">=</span> <span class="n">pbc</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span>
+    <span class="n">pbc_single</span> <span class="o">=</span> <span class="n">pbc</span> <span class="k">if</span> <span class="ow">not</span> <span class="n">pbc_is_batched</span> <span class="k">else</span> <span class="n">empty_sentinel</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+    <span class="n">pbc_batch</span> <span class="o">=</span> <span class="n">pbc</span> <span class="k">if</span> <span class="n">pbc_is_batched</span> <span class="k">else</span> <span class="n">empty_sentinel</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+    <span class="n">batch_idx_is_provided</span> <span class="o">=</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+    <span class="n">batch_idx_arg</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">batch_idx</span> <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">empty_sentinel</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="n">wp_dtype</span> <span class="o">=</span> <span class="n">_wp_scalar_from_cell_dtype</span><span class="p">(</span><span class="n">cell</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+    <span class="n">feature_bits</span> <span class="o">=</span> <span class="n">_default_feature_mask</span><span class="p">(</span><span class="n">batch_ptr</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">num_systems</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">feature_mask</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">feature_bits</span> <span class="o">|=</span> <span class="nb">int</span><span class="p">(</span><span class="n">feature_mask</span><span class="p">)</span>
+    <span class="n">options</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">option_mask</span><span class="p">)</span> <span class="o">|</span> <span class="n">optional_outputs_mask</span><span class="p">(</span><span class="n">optional_outputs</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">options</span> <span class="o">&amp;</span> <span class="n">_OPTION_TARGET_INDICES</span> <span class="ow">and</span> <span class="n">target_count</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s2">&quot;target_count is required when target_indices is included in &quot;</span>
+            <span class="s2">&quot;optional_outputs&quot;</span>
+        <span class="p">)</span>
+    <span class="n">target_count_int</span> <span class="o">=</span> <span class="mi">0</span> <span class="k">if</span> <span class="n">target_count</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="nb">int</span><span class="p">(</span><span class="n">target_count</span><span class="p">)</span>
+    <span class="n">launch_dim</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span>
+        <span class="n">num_systems</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="n">batch_idx</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="mi">0</span>
+    <span class="p">)</span>
+
+    <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+        <span class="n">get_select_neighbor_list_method_cost_kernel</span><span class="p">(</span><span class="n">wp_dtype</span><span class="p">),</span>
+        <span class="n">dim</span><span class="o">=</span><span class="n">launch_dim</span><span class="p">,</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">batch_ptr</span><span class="p">,</span>
+            <span class="n">batch_idx_arg</span><span class="p">,</span>
+            <span class="n">batch_idx_is_provided</span><span class="p">,</span>
+            <span class="n">cell</span><span class="p">,</span>
+            <span class="n">pbc_single</span><span class="p">,</span>
+            <span class="n">pbc_batch</span><span class="p">,</span>
+            <span class="n">pbc_is_batched</span><span class="p">,</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">cutoff</span><span class="p">)),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">shell</span><span class="p">)),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">setup</span><span class="p">)),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">max_nbins</span><span class="p">)),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">int64</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">max_launch_size</span><span class="p">)),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="n">options</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="n">feature_bits</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="n">target_count_int</span><span class="p">),</span>
+            <span class="n">costs</span><span class="p">,</span>
+            <span class="n">flags</span><span class="p">,</span>
+        <span class="p">],</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">strategies</span> <span class="o">=</span> <span class="n">finalize_neighbor_list_method</span><span class="p">(</span><span class="n">costs</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span> <span class="n">flags</span><span class="o">.</span><span class="n">numpy</span><span class="p">())</span>
+    <span class="k">if</span> <span class="n">num_systems</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">strategies</span> <span class="o">=</span> <span class="p">[(</span><span class="s2">&quot;batch_&quot;</span> <span class="o">+</span> <span class="n">name</span><span class="p">,</span> <span class="n">cost</span><span class="p">)</span> <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">cost</span> <span class="ow">in</span> <span class="n">strategies</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">strategies</span></div>
+
+
+
+<div class="viewcode-block" id="suggest_neighbor_list_method">
+<a class="viewcode-back" href="../../../modules/warp/neighbors.html#nvalchemiops.neighbors.suggest_neighbor_list_method">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">suggest_neighbor_list_method</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the cheapest feasible neighbor-list strategy name.</span>
+
+<span class="sd">    Thin wrapper over :func:`estimate_neighbor_list_costs` that returns only the</span>
+<span class="sd">    top-ranked strategy name.  Accepts the same arguments and shares the same</span>
+<span class="sd">    host-only synchronization caveat (call outside ``torch.compile`` /</span>
+<span class="sd">    ``jax.jit``).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">estimate_neighbor_list_costs</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)[</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

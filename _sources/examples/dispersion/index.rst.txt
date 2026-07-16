@@ -24,6 +24,23 @@ These examples show how to:
 
 .. raw:: html
 
+    <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute the DFT-D3 dispersion energy and forces for a single molecular system using the JAX API with GPU-accelerated Warp kernels.">
+
+.. only:: html
+
+  .. image:: /examples/dispersion/images/thumb/sphx_glr_03_jax_dftd3_molecule_thumb.png
+    :alt:
+
+  :doc:`/examples/dispersion/03_jax_dftd3_molecule`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">JAX DFT-D3 Dispersion Correction for a Molecule</div>
+    </div>
+
+
+.. raw:: html
+
     <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute the DFT-D3 dispersion energy and forces for a single molecular system using GPU-accelerated kernels.">
 
 .. only:: html
@@ -56,23 +73,6 @@ These examples show how to:
     </div>
 
 
-.. raw:: html
-
-    <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute the DFT-D3 dispersion energy and forces for a single molecular system using the JAX API with GPU-accelerated Warp kernels.">
-
-.. only:: html
-
-  .. image:: /examples/dispersion/images/thumb/sphx_glr_03_jax_dftd3_molecule_thumb.png
-    :alt:
-
-  :doc:`/examples/dispersion/03_jax_dftd3_molecule`
-
-.. raw:: html
-
-      <div class="sphx-glr-thumbnail-title">JAX DFT-D3 Dispersion Correction for a Molecule</div>
-    </div>
-
-
 .. thumbnail-parent-div-close
 
 .. raw:: html
@@ -83,7 +83,7 @@ These examples show how to:
 .. toctree::
    :hidden:
 
+   /examples/dispersion/03_jax_dftd3_molecule
    /examples/dispersion/01_dftd3_molecule
    /examples/dispersion/02_dftd3_batch_crystals
-   /examples/dispersion/03_jax_dftd3_molecule
 

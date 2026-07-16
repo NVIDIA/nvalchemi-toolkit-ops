@@ -2,17 +2,17 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../../../../" >
+<html lang="en" data-content_root="../../../../" data-theme="light">
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>nvalchemiops.jax.neighbors.rebuild_detection &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>nvalchemiops.jax.neighbors.rebuild_detection &#8212; ALCHEMI Toolkit-Ops 0.4.0 documentation</title>
   
   
   
   <script data-cfasync="false">
-    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "light";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
   </script>
   
@@ -34,16 +34,17 @@
     <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
     <link rel="stylesheet" type="text/css" href="../../../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=0137b6d2" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/benchmark-docs.css?v=30688d9f" />
   
   <!-- Pre-loaded scripts that we'll load fully later -->
   <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
 <link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../../../_static/documentation_options.js?v=f129cdf0"></script>
-    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../../_static/documentation_options.js?v=1437fa6d"></script>
+    <script src="../../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -58,7 +59,7 @@
   </head>
   
   
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="light">
 
   
   
@@ -125,8 +126,6 @@
   
   
     
-    
-      
     
     
     <img src="../../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
@@ -436,13 +435,9 @@ document.write(`
 <span class="kn">import</span><span class="w"> </span><span class="nn">warp</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">wp</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">warp.jax_experimental</span><span class="w"> </span><span class="kn">import</span> <span class="n">jax_kernel</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighbors.rebuild_detection</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-    <span class="n">_check_atoms_changed_cells_overload</span><span class="p">,</span>
-    <span class="n">_check_atoms_moved_beyond_skin_overload</span><span class="p">,</span>
-    <span class="n">_check_atoms_moved_beyond_skin_pbc_overload</span><span class="p">,</span>
-    <span class="n">_check_batch_atoms_changed_cells_overload</span><span class="p">,</span>
-    <span class="n">_check_batch_atoms_moved_beyond_skin_overload</span><span class="p">,</span>
-    <span class="n">_check_batch_atoms_moved_beyond_skin_pbc_overload</span><span class="p">,</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighbors.rebuild</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">get_cell_list_rebuild_kernel</span><span class="p">,</span>
+    <span class="n">get_neighbor_list_rebuild_kernel</span><span class="p">,</span>
 <span class="p">)</span>
 
 <span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span>
@@ -462,41 +457,41 @@ document.write(`
 
 <span class="c1"># Cell list rebuild detection kernel wrappers</span>
 <span class="n">_jax_check_cells_f32</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
-    <span class="n">_check_atoms_changed_cells_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">],</span>
+    <span class="n">get_cell_list_rebuild_kernel</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">),</span>
     <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
-    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flag&quot;</span><span class="p">],</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flags&quot;</span><span class="p">],</span>
     <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="n">_jax_check_cells_f64</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
-    <span class="n">_check_atoms_changed_cells_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">],</span>
+    <span class="n">get_cell_list_rebuild_kernel</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
     <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
-    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flag&quot;</span><span class="p">],</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flags&quot;</span><span class="p">],</span>
     <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
 <span class="p">)</span>
 
 <span class="c1"># Neighbor list rebuild detection kernel wrappers</span>
 <span class="n">_jax_check_skin_f32</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
-    <span class="n">_check_atoms_moved_beyond_skin_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">],</span>
+    <span class="n">get_neighbor_list_rebuild_kernel</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">),</span>
     <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
-    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flag&quot;</span><span class="p">],</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flags&quot;</span><span class="p">],</span>
     <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="n">_jax_check_skin_f64</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
-    <span class="n">_check_atoms_moved_beyond_skin_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">],</span>
+    <span class="n">get_neighbor_list_rebuild_kernel</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
     <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
-    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flag&quot;</span><span class="p">],</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flags&quot;</span><span class="p">],</span>
     <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
 <span class="p">)</span>
 
 <span class="c1"># Batch neighbor list rebuild detection kernel wrappers</span>
 <span class="n">_jax_batch_check_skin_f32</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
-    <span class="n">_check_batch_atoms_moved_beyond_skin_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">],</span>
+    <span class="n">get_neighbor_list_rebuild_kernel</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">batched</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
     <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
     <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flags&quot;</span><span class="p">],</span>
     <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="n">_jax_batch_check_skin_f64</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
-    <span class="n">_check_batch_atoms_moved_beyond_skin_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">],</span>
+    <span class="n">get_neighbor_list_rebuild_kernel</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">batched</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
     <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
     <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flags&quot;</span><span class="p">],</span>
     <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
@@ -504,27 +499,27 @@ document.write(`
 
 <span class="c1"># MIC neighbor list rebuild detection kernel wrappers</span>
 <span class="n">_jax_check_skin_pbc_f32</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
-    <span class="n">_check_atoms_moved_beyond_skin_pbc_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">],</span>
+    <span class="n">get_neighbor_list_rebuild_kernel</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
     <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
-    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flag&quot;</span><span class="p">],</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flags&quot;</span><span class="p">],</span>
     <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="n">_jax_check_skin_pbc_f64</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
-    <span class="n">_check_atoms_moved_beyond_skin_pbc_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">],</span>
+    <span class="n">get_neighbor_list_rebuild_kernel</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
     <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
-    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flag&quot;</span><span class="p">],</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flags&quot;</span><span class="p">],</span>
     <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
 <span class="p">)</span>
 
 <span class="c1"># MIC batch neighbor list rebuild detection kernel wrappers</span>
 <span class="n">_jax_batch_check_skin_pbc_f32</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
-    <span class="n">_check_batch_atoms_moved_beyond_skin_pbc_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">],</span>
+    <span class="n">get_neighbor_list_rebuild_kernel</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">batched</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
     <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
     <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flags&quot;</span><span class="p">],</span>
     <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="n">_jax_batch_check_skin_pbc_f64</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
-    <span class="n">_check_batch_atoms_moved_beyond_skin_pbc_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">],</span>
+    <span class="n">get_neighbor_list_rebuild_kernel</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">batched</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
     <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
     <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flags&quot;</span><span class="p">],</span>
     <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
@@ -532,17 +527,42 @@ document.write(`
 
 <span class="c1"># Batch cell list rebuild detection kernel wrappers</span>
 <span class="n">_jax_batch_check_cells_f32</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
-    <span class="n">_check_batch_atoms_changed_cells_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">],</span>
+    <span class="n">get_cell_list_rebuild_kernel</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">batched</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
     <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
     <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flags&quot;</span><span class="p">],</span>
     <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="n">_jax_batch_check_cells_f64</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
-    <span class="n">_check_batch_atoms_changed_cells_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">],</span>
+    <span class="n">get_cell_list_rebuild_kernel</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">batched</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
     <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
     <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flags&quot;</span><span class="p">],</span>
     <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
 <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_empty_i32</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return a zero-size int32 sentinel for static factory axes.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="mi">0</span><span class="p">,),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_empty_vec3i</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return a zero-size vec3i-compatible sentinel.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_empty_bool</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return a zero-size bool sentinel for static factory axes.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="mi">0</span><span class="p">,),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_empty_bool2d</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return a zero-size 2D bool sentinel for static factory axes.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_empty_cell</span><span class="p">(</span><span class="n">dtype</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return a zero-size cell sentinel for static factory axes.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span>
 
 
 <span class="c1"># ==============================================================================</span>
@@ -594,7 +614,7 @@ document.write(`
     <span class="k">if</span> <span class="n">total_atoms</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="kc">False</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
 
-    <span class="c1"># Ensure cell dtype matches positions dtype so warp overload dispatch is consistent</span>
+    <span class="c1"># Ensure cell dtype matches positions dtype so Warp kernel dispatch is consistent</span>
     <span class="k">if</span> <span class="n">cell</span><span class="o">.</span><span class="n">dtype</span> <span class="o">!=</span> <span class="n">current_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">:</span>
         <span class="n">cell</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">current_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
 
@@ -623,8 +643,11 @@ document.write(`
         <span class="n">current_positions</span><span class="p">,</span>
         <span class="n">cell</span><span class="p">,</span>
         <span class="n">atom_to_cell_mapping</span><span class="p">,</span>
+        <span class="n">_empty_i32</span><span class="p">(),</span>
         <span class="n">cells_1d</span><span class="p">,</span>
+        <span class="n">_empty_vec3i</span><span class="p">(),</span>
         <span class="n">pbc</span><span class="p">,</span>
+        <span class="n">_empty_bool2d</span><span class="p">(),</span>
         <span class="n">rebuild_flag</span><span class="p">,</span>
         <span class="n">launch_dims</span><span class="o">=</span><span class="p">(</span><span class="n">total_atoms</span><span class="p">,),</span>
     <span class="p">)</span>
@@ -708,9 +731,11 @@ document.write(`
         <span class="p">(</span><span class="n">rebuild_flag</span><span class="p">,)</span> <span class="o">=</span> <span class="n">_jax_check</span><span class="p">(</span>
             <span class="n">reference_positions</span><span class="p">,</span>
             <span class="n">current_positions</span><span class="p">,</span>
+            <span class="n">_empty_i32</span><span class="p">(),</span>
             <span class="n">cell</span><span class="p">,</span>
             <span class="n">cell_inv</span><span class="p">,</span>
             <span class="n">pbc</span><span class="p">,</span>
+            <span class="n">_empty_bool2d</span><span class="p">(),</span>
             <span class="nb">float</span><span class="p">(</span><span class="n">skin_distance_threshold</span><span class="p">),</span>
             <span class="n">rebuild_flag</span><span class="p">,</span>
             <span class="n">launch_dims</span><span class="o">=</span><span class="p">(</span><span class="n">total_atoms</span><span class="p">,),</span>
@@ -726,6 +751,11 @@ document.write(`
         <span class="p">(</span><span class="n">rebuild_flag</span><span class="p">,)</span> <span class="o">=</span> <span class="n">_jax_check</span><span class="p">(</span>
             <span class="n">reference_positions</span><span class="p">,</span>
             <span class="n">current_positions</span><span class="p">,</span>
+            <span class="n">_empty_i32</span><span class="p">(),</span>
+            <span class="n">_empty_cell</span><span class="p">(</span><span class="n">reference_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">),</span>
+            <span class="n">_empty_cell</span><span class="p">(</span><span class="n">reference_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">),</span>
+            <span class="n">_empty_bool</span><span class="p">(),</span>
+            <span class="n">_empty_bool2d</span><span class="p">(),</span>
             <span class="nb">float</span><span class="p">(</span><span class="n">skin_distance_threshold</span><span class="p">),</span>
             <span class="n">rebuild_flag</span><span class="p">,</span>
             <span class="n">launch_dims</span><span class="o">=</span><span class="p">(</span><span class="n">total_atoms</span><span class="p">,),</span>
@@ -931,6 +961,7 @@ document.write(`
             <span class="n">batch_idx</span><span class="p">,</span>
             <span class="n">cell</span><span class="p">,</span>
             <span class="n">cell_inv</span><span class="p">,</span>
+            <span class="n">_empty_bool</span><span class="p">(),</span>
             <span class="n">pbc</span><span class="p">,</span>
             <span class="nb">float</span><span class="p">(</span><span class="n">skin_distance_threshold</span><span class="p">),</span>
             <span class="n">rebuild_flags</span><span class="p">,</span>
@@ -948,6 +979,10 @@ document.write(`
             <span class="n">reference_positions</span><span class="p">,</span>
             <span class="n">current_positions</span><span class="p">,</span>
             <span class="n">batch_idx</span><span class="p">,</span>
+            <span class="n">_empty_cell</span><span class="p">(</span><span class="n">reference_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">),</span>
+            <span class="n">_empty_cell</span><span class="p">(</span><span class="n">reference_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">),</span>
+            <span class="n">_empty_bool</span><span class="p">(),</span>
+            <span class="n">_empty_bool2d</span><span class="p">(),</span>
             <span class="nb">float</span><span class="p">(</span><span class="n">skin_distance_threshold</span><span class="p">),</span>
             <span class="n">rebuild_flags</span><span class="p">,</span>
             <span class="n">launch_dims</span><span class="o">=</span><span class="p">(</span><span class="n">total_atoms</span><span class="p">,),</span>
@@ -1023,7 +1058,9 @@ document.write(`
         <span class="n">cell</span><span class="p">,</span>
         <span class="n">atom_to_cell_mapping</span><span class="p">,</span>
         <span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">_empty_i32</span><span class="p">(),</span>
         <span class="n">cells_per_dimension</span><span class="p">,</span>
+        <span class="n">_empty_bool</span><span class="p">(),</span>
         <span class="n">pbc</span><span class="p">,</span>
         <span class="n">rebuild_flags</span><span class="p">,</span>
         <span class="n">launch_dims</span><span class="o">=</span><span class="p">(</span><span class="n">total_atoms</span><span class="p">,),</span>
@@ -1174,9 +1211,22 @@ document.write(`
     </div>
   </div>
   
+<script>
+(function () {
+  const sidebar = document.querySelector(".bd-sidebar-primary");
+  if (sidebar && !sidebar.querySelector('[id^="pst-nav-more-links"]')) {
+    const placeholder = document.createElement("div");
+    placeholder.id = "pst-nav-more-links-placeholder";
+    placeholder.hidden = true;
+    sidebar.appendChild(placeholder);
+  }
+})();
+</script>
+
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
   <script src="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
 <script src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
 
   <footer class="bd-footer">
 <div class="bd-footer__inner bd-page-width">
@@ -1196,7 +1246,7 @@ document.write(`
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     <br/>
   </p>
 </div>
