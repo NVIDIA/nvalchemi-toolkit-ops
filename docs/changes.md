@@ -2,7 +2,7 @@
 
 # Change Log
 
-## v0.4.0 (Unreleased)
+## v0.4.0 - 2026-07-13
 
 ### Added
 
@@ -97,8 +97,7 @@
 - `npt_barostat_half_step{,_aniso,_triclinic}` drop the `eta_dots` argument.
 - The internal `make_outer_neigh_offsets` helper was removed.
 
-
-## Version 0.3.0
+## Version 0.3.0 - 2026-03-16
 
 ### Breaking Changes
 

@@ -15,18 +15,23 @@ kernels are written in [NVIDIA `warp-lang`](https://github.com/NVIDIA/warp).
 
 ### Key Features
 
-- Molecular Dynamics kernels: Velocity Verlet (NVE), Langevin (NVT),
-  Nosé-Hoover Chain (NVT), NPT/NPH ensembles, velocity rescaling
-- Geometry optimization: FIRE and FIRE2 with optional unit cell
-  optimization
-- Neighbor lists: naive $O(N^2)$ and cell list $O(N)$ algorithms
-- Dispersion corrections via Becke-Johnson damped DFT-D3
-- Electrostatic interactions: Ewald, particle mesh Ewald (PME), and
-  damped shifted force (DSF) algorithms
-- Differentiable physics: analytical stress tensor (virial) support
-  for Ewald and PME, enabling stress-based MLIP training
-- NVIDIA Warp core with optional, JIT-compatible PyTorch and JAX
-  bindings, including autograd support
+- **Neighbor lists**
+  - Naive, cell-list, and tiled cluster-pair methods
+  - Matrix and COO formats
+  - Automatic method selection
+  - Custom pair functions
+- **Molecular dynamics**
+  - NVE, NVT, NPT, and NPH ensembles
+  - Langevin, Nosé-Hoover Chain, and velocity-rescaling thermostats
+- **Geometry optimization with FIRE and FIRE2**, supporting coordinate and
+  lattice relaxation
+- **Interatomic interactions**
+  - DFT-D3(BJ) dispersion
+  - DSF, Ewald, and PME electrostatics
+  - Ewald and PME for charges and multipoles (Warp/PyTorch)
+- **Differentiable electrostatics for PyTorch training**, with automatic
+  differentiation for forces, charge gradients, virials, and stress
+- **Core kernels written in `warp-lang`** with PyTorch and JAX bindings
 
 Kernels are naturally intended to be highly scalable (>100,000 atoms) and generally
 optimized for high throughput operations (on the order of several microseconds per
@@ -73,9 +78,9 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.set_default_device(device)
 
 NUM_ATOMS = 50_000
-# arbitrarily scale positions
-positions = torch.randn((NUM_ATOMS, 3)) * 10.0
-cell = torch.eye(3, dtype=torch.float32).unsqueeze(0)
+# distribute positions inside the cell
+positions = torch.rand((NUM_ATOMS, 3)) * 100.0
+cell = (torch.eye(3, dtype=torch.float32) * 100.0).unsqueeze(0)
 pbc = torch.tensor([True, True, False], dtype=torch.bool)
 cutoff = 6.0
 # use padded matrix representation for neighbors, optimal for
@@ -141,6 +146,7 @@ d3_energies, d3_forces, coord_nums, d3_virials = dftd3(
     neighbor_matrix=neighbor_matrix,
     neighbor_matrix_shifts=shift_matrix,
     batch_idx=batch_idx,
+    cell=cell,
     # functional specific DFT-D3 parameters (PBE shown)
     a1=0.4289, a2=4.4407, s8=0.7875,
     d3_params=d3_params,
@@ -218,15 +224,12 @@ for details.
 
 ## Roadmap
 
-Features planned for upcoming releases:
+Features planned for the next release:
 
-- Performance improvements for neighbor lists, DFT-D3, and
+- PME dispersion
+- Faster short-range calculations for small systems
+- Performance improvements for neighbor lists and multipole
   electrostatics
-- Batched Nudged Elastic Band (NEB)
-- Ewald dispersion
-- Improved pair potential coverage (e.g. ZBL, OQDO, Born-Mayer)
-- Basis functions and descriptors for MLIPs (e.g. spherical
-  harmonics, radial basis, Wigner D3 matrix)
 
 ## Contributions & Disclaimers
 
