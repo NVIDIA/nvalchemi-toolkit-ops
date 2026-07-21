@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import importlib
 from itertools import product
 
 import jax
@@ -28,12 +29,17 @@ from nvalchemiops.jax.neighbors.batch_cell_list import (
     batch_build_cell_list,
     batch_cell_list,
     batch_query_cell_list,
+    estimate_batch_cell_list_sizes,
 )
 from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
 
 from .conftest import requires_gpu
 
 pytestmark = requires_gpu
+
+batch_cell_list_module = importlib.import_module(
+    "nvalchemiops.jax.neighbors.batch_cell_list"
+)
 
 
 def _compact_pair_shift_set(neighbor_matrix, num_neighbors, shifts, targets):
@@ -403,6 +409,315 @@ class TestBatchCellListEdgeCases:
 
         np.testing.assert_array_equal(np.asarray(result[0]), [[1, 1, 1]])
         np.testing.assert_array_equal(np.asarray(result[6]), [[0, 0, 0]])
+
+
+class TestEstimateBatchCellListSizes:
+    """Tests for batch cell-list capacity strategies and metadata."""
+
+    @staticmethod
+    def _assert_metadata_matches_build(
+        positions,
+        cell,
+        pbc,
+        batch_idx,
+        batch_ptr,
+        cutoff,
+        *,
+        capacity_strategy="volume",
+    ):
+        """Assert estimator metadata equals the build for its capacity."""
+        max_total_cells, cells_per_dimension, neighbor_search_radius = (
+            estimate_batch_cell_list_sizes(
+                positions,
+                batch_ptr=batch_ptr,
+                batch_idx=batch_idx,
+                cell=cell,
+                cutoff=cutoff,
+                pbc=pbc,
+                capacity_strategy=capacity_strategy,
+            )
+        )
+        build_result = batch_build_cell_list(
+            positions,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cell=cell,
+            cutoff=cutoff,
+            pbc=pbc,
+            max_total_cells=max_total_cells,
+        )
+
+        np.testing.assert_array_equal(
+            np.asarray(cells_per_dimension),
+            np.asarray(build_result[0]),
+        )
+        np.testing.assert_array_equal(
+            np.asarray(neighbor_search_radius),
+            np.asarray(build_result[6]),
+        )
+        return max_total_cells, cells_per_dimension, neighbor_search_radius
+
+    def test_volume_default_preserves_capacity_and_matches_build(self):
+        """Default and explicit volume sizing match the constructed grid."""
+        positions = jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32)
+        cell = jnp.diag(jnp.array([3.9, 10.9, 10.9], dtype=jnp.float32)).reshape(
+            1, 3, 3
+        )
+        pbc = jnp.ones((1, 3), dtype=jnp.bool_)
+        batch_idx = jnp.zeros((1,), dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 1], dtype=jnp.int32)
+
+        default_result = self._assert_metadata_matches_build(
+            positions,
+            cell,
+            pbc,
+            batch_idx,
+            batch_ptr,
+            cutoff=1.0,
+        )
+        volume_result = self._assert_metadata_matches_build(
+            positions,
+            cell,
+            pbc,
+            batch_idx,
+            batch_ptr,
+            cutoff=1.0,
+            capacity_strategy="volume",
+        )
+
+        assert default_result[0] == volume_result[0] == 695
+        np.testing.assert_array_equal(default_result[1], [[6, 10, 10]])
+        np.testing.assert_array_equal(default_result[2], [[2, 1, 1]])
+
+    def test_geometry_retains_promoted_grid(self):
+        """Geometry capacity preserves the promoted periodic identity grid."""
+        positions = jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32)
+        cell = jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3)
+        pbc = jnp.ones((1, 3), dtype=jnp.bool_)
+        batch_idx = jnp.zeros((1,), dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 1], dtype=jnp.int32)
+
+        volume_result = self._assert_metadata_matches_build(
+            positions,
+            cell,
+            pbc,
+            batch_idx,
+            batch_ptr,
+            cutoff=1.0,
+            capacity_strategy="volume",
+        )
+        geometry_result = self._assert_metadata_matches_build(
+            positions,
+            cell,
+            pbc,
+            batch_idx,
+            batch_ptr,
+            cutoff=1.0,
+            capacity_strategy="geometry",
+        )
+
+        assert volume_result[0] == 8
+        np.testing.assert_array_equal(volume_result[1], [[2, 2, 2]])
+        np.testing.assert_array_equal(volume_result[2], [[2, 2, 2]])
+        assert geometry_result[0] == 96
+        np.testing.assert_array_equal(geometry_result[1], [[4, 4, 4]])
+        np.testing.assert_array_equal(geometry_result[2], [[4, 4, 4]])
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    @pytest.mark.parametrize("capacity_strategy", ["volume", "geometry"])
+    def test_metadata_matches_build_mixed_geometry(self, dtype, capacity_strategy):
+        """Both strategies match builds for mixed anisotropic cells."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.2, 0.1],
+                [0.1, 0.3, 0.2],
+                [0.6, 0.4, 0.7],
+            ],
+            dtype=dtype,
+        )
+        cell = jnp.array(
+            [
+                [[3.9, 0.0, 0.0], [0.0, 10.9, 0.0], [0.0, 0.0, 10.9]],
+                [[6.0, 0.2, 0.1], [0.4, 7.0, 0.3], [0.2, 0.5, 8.0]],
+            ],
+            dtype=dtype,
+        )
+        pbc = jnp.array([[True, True, True], [True, False, True]])
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+
+        self._assert_metadata_matches_build(
+            positions,
+            cell,
+            pbc,
+            batch_idx,
+            batch_ptr,
+            cutoff=1.0,
+            capacity_strategy=capacity_strategy,
+        )
+
+    def test_volume_halve_to_fit_radius(self):
+        """Volume sizing derives radius after adaptive promotion and halving."""
+        positions = jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32)
+        cell = (jnp.eye(3, dtype=jnp.float32) * 12.42).reshape(1, 3, 3)
+        pbc = jnp.ones((1, 3), dtype=jnp.bool_)
+        batch_idx = jnp.zeros((1,), dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 1], dtype=jnp.int32)
+
+        result = self._assert_metadata_matches_build(
+            positions,
+            cell,
+            pbc,
+            batch_idx,
+            batch_ptr,
+            cutoff=21.2,
+        )
+
+        assert result[0] == 8
+        np.testing.assert_array_equal(result[1], [[2, 2, 2]])
+        np.testing.assert_array_equal(result[2], [[4, 4, 4]])
+
+    @pytest.mark.parametrize("capacity_strategy", ["volume", "geometry"])
+    def test_empty_batch_has_minimum_capacity(self, capacity_strategy):
+        """Empty systems reserve one constructible cell per system."""
+        positions = jnp.zeros((0, 3), dtype=jnp.float32)
+        cell = jnp.broadcast_to(jnp.eye(3, dtype=jnp.float32), (2, 3, 3))
+        pbc = jnp.ones((2, 3), dtype=jnp.bool_)
+        batch_idx = jnp.zeros((0,), dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 0, 0], dtype=jnp.int32)
+
+        result = estimate_batch_cell_list_sizes(
+            positions,
+            batch_ptr=batch_ptr,
+            batch_idx=batch_idx,
+            cutoff=1.0,
+            cell=cell,
+            pbc=pbc,
+            capacity_strategy=capacity_strategy,
+        )
+
+        assert result[0] == 2
+        np.testing.assert_array_equal(result[1], [[1, 1, 1], [1, 1, 1]])
+        np.testing.assert_array_equal(result[2], [[1, 1, 1], [1, 1, 1]])
+
+    @pytest.mark.parametrize("capacity_strategy", ["volume", "geometry"])
+    def test_mixed_empty_batch_metadata_matches_build(self, capacity_strategy):
+        """Empty systems participate safely in mixed-batch construction."""
+        positions = jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32)
+        cell = jnp.broadcast_to(jnp.eye(3, dtype=jnp.float32), (2, 3, 3))
+        pbc = jnp.ones((2, 3), dtype=jnp.bool_)
+        batch_idx = jnp.array([1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 0, 1], dtype=jnp.int32)
+
+        result = self._assert_metadata_matches_build(
+            positions,
+            cell,
+            pbc,
+            batch_idx,
+            batch_ptr,
+            cutoff=1.0,
+            capacity_strategy=capacity_strategy,
+        )
+
+        assert result[0] >= 2
+
+    @pytest.mark.parametrize(
+        ("capacity_strategy", "expected_capacity"),
+        [("volume", 8), ("geometry", 128)],
+    )
+    def test_buffer_factor_scales_capacity(
+        self,
+        capacity_strategy,
+        expected_capacity,
+    ):
+        """Both capacity policies apply the requested buffer factor."""
+        positions = jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32)
+        cell = jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3)
+        pbc = jnp.ones((1, 3), dtype=jnp.bool_)
+        batch_idx = jnp.zeros((1,), dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 1], dtype=jnp.int32)
+
+        max_total_cells, cells_per_dimension, neighbor_search_radius = (
+            estimate_batch_cell_list_sizes(
+                positions,
+                batch_ptr=batch_ptr,
+                batch_idx=batch_idx,
+                cell=cell,
+                cutoff=1.0,
+                pbc=pbc,
+                buffer_factor=2.0,
+                capacity_strategy=capacity_strategy,
+            )
+        )
+        build_result = batch_build_cell_list(
+            positions,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cell=cell,
+            pbc=pbc,
+            cutoff=1.0,
+            max_total_cells=max_total_cells,
+        )
+
+        assert max_total_cells == expected_capacity
+        np.testing.assert_array_equal(
+            np.asarray(cells_per_dimension),
+            np.asarray(build_result[0]),
+        )
+        np.testing.assert_array_equal(
+            np.asarray(neighbor_search_radius),
+            np.asarray(build_result[6]),
+        )
+
+    def test_invalid_capacity_strategy(self):
+        """Unknown capacity strategies raise a clear error."""
+        positions = jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32)
+        cell = jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3)
+        pbc = jnp.ones((1, 3), dtype=jnp.bool_)
+        batch_idx = jnp.zeros((1,), dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 1], dtype=jnp.int32)
+
+        with pytest.raises(
+            ValueError,
+            match="capacity_strategy must be 'volume' or 'geometry'",
+        ):
+            estimate_batch_cell_list_sizes(
+                positions,
+                batch_ptr=batch_ptr,
+                batch_idx=batch_idx,
+                cell=cell,
+                cutoff=1.0,
+                pbc=pbc,
+                capacity_strategy="invalid",
+            )
+
+    def test_auto_build_construct_dispatches_once(self, monkeypatch):
+        """Automatic builds launch construct once after capacity sizing."""
+        calls = 0
+        original = batch_cell_list_module._construct_batch_cells_per_dimension
+
+        def counted_construct(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(
+            batch_cell_list_module,
+            "_construct_batch_cells_per_dimension",
+            counted_construct,
+        )
+        positions = jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32)
+        batch_build_cell_list(
+            positions,
+            batch_idx=jnp.zeros((1,), dtype=jnp.int32),
+            batch_ptr=jnp.array([0, 1], dtype=jnp.int32),
+            cell=jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3),
+            pbc=jnp.ones((1, 3), dtype=jnp.bool_),
+            cutoff=1.0,
+        )
+
+        assert calls == 1
 
 
 class TestBatchCellListJIT:

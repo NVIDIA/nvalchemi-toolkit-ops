@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- JAX batched cell-list sizing now returns the constructed cell grid and
+  search radius for its capacity. Its new
+  `capacity_strategy="geometry"` option estimates capacity from promoted
+  per-axis grids; volume-based sizing remains the default.
+
 ## 0.4.0 - 2026-07-13
 
 ### Added
