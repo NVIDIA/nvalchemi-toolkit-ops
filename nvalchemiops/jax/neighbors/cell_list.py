@@ -388,6 +388,39 @@ def _reset_query_outputs(
     neighbor_matrix_shifts.zero_()
 
 
+def _derive_neighbor_search_radius(
+    cell: jax.Array,
+    pbc: jax.Array,
+    cutoff: float,
+    cells_per_dimension: jax.Array,
+) -> jax.Array:
+    """Derive per-axis cell search radii from the realized cell grid."""
+    is_single = cells_per_dimension.ndim == 1
+    cell_batch = cell[jnp.newaxis, ...] if cell.ndim == 2 else cell
+    pbc_batch = pbc[jnp.newaxis, ...] if pbc.ndim == 1 else pbc
+    cpd_batch = (
+        cells_per_dimension[jnp.newaxis, ...] if is_single else cells_per_dimension
+    )
+    inverse_cell_transpose = jnp.swapaxes(
+        jnp.linalg.inv(cell_batch),
+        -1,
+        -2,
+    )
+    face_distances = 1.0 / jnp.linalg.norm(inverse_cell_transpose, axis=-1)
+    ratio = (
+        jnp.asarray(cutoff, dtype=face_distances.dtype)
+        * cpd_batch.astype(face_distances.dtype)
+        / face_distances
+    )
+    radius = jnp.ceil(ratio).astype(jnp.int32)
+    radius = jnp.where(
+        (cpd_batch == 1) & ~pbc_batch.astype(jnp.bool_),
+        jnp.int32(0),
+        radius,
+    )
+    return radius[0] if is_single else radius
+
+
 def _is_cpu_array(array: jax.Array) -> bool:
     """Return whether ``array`` is backed by a CPU device.
 
@@ -1728,22 +1761,16 @@ def estimate_cell_list_sizes(
 
     # ADAPTIVE_MIN_CELLS=4: promote each PBC axis (or any axis already > 1)
     # up to at least 4 cells so the atom-centric query has enough cell-level
-    # parallelism.  Open axes with a single cell are left alone.
+    # parallelism.  Open axes with a single cell are left alone.  Mirror the
+    # Warp ``construct_bin_size`` while-loop by repeatedly doubling.
     ADAPTIVE_MIN_CELLS = 4
     promote_mask = pbc_squeezed | (cells_per_dimension > 1)
-    # Bit-trick: smallest power-of-2 multiplier that brings cells_per_dim
-    # to >= ADAPTIVE_MIN_CELLS.  At cells_per_dim=1 -> multiplier=4; at 2 ->
-    # 2; at >= 4 -> 1.
-    needed_mult = jnp.where(
-        cells_per_dimension >= ADAPTIVE_MIN_CELLS,
-        1,
-        ADAPTIVE_MIN_CELLS // jnp.maximum(cells_per_dimension, 1),
-    )
-    cells_per_dimension = jnp.where(
-        promote_mask,
-        cells_per_dimension * needed_mult,
-        cells_per_dimension,
-    )
+    for _ in range(8):
+        cells_per_dimension = jnp.where(
+            promote_mask & (cells_per_dimension < ADAPTIVE_MIN_CELLS),
+            cells_per_dimension * 2,
+            cells_per_dimension,
+        )
 
     # Halve-to-fit: if total cells exceeds max_total_cells, halve each axis
     # (floor with min=1) repeatedly until total <= max.  Mirrors the kernel's
@@ -1758,10 +1785,11 @@ def estimate_cell_list_sizes(
     for _ in range(16):
         cells_per_dimension = _halve_to_fit(cells_per_dimension)
 
-    neighbor_search_radius = jnp.where(
-        (cells_per_dimension == 1) & ~pbc_squeezed,
-        jnp.zeros(3, dtype=jnp.int32),
-        jnp.int32(jnp.ceil(cutoff * cells_per_dimension / face_distances)),
+    neighbor_search_radius = _derive_neighbor_search_radius(
+        cell,
+        pbc_squeezed,
+        cutoff,
+        cells_per_dimension,
     )
 
     return max_total_cells, cells_per_dimension, neighbor_search_radius
@@ -2126,15 +2154,10 @@ def build_cell_list(
     if pbc.ndim == 1:
         pbc = pbc[jnp.newaxis, :]
 
+    derive_radius = neighbor_search_radius is None
+
     if max_total_cells is None:
-        max_total_cells, _, neighbor_search_radius_est = estimate_cell_list_sizes(
-            positions, cell, cutoff, pbc
-        )
-        if neighbor_search_radius is None:
-            neighbor_search_radius = neighbor_search_radius_est
-    else:
-        if neighbor_search_radius is None:
-            neighbor_search_radius = jnp.ones(3, dtype=jnp.int32)
+        max_total_cells, _, _ = estimate_cell_list_sizes(positions, cell, cutoff, pbc)
 
     # Allocate cell list tensors if not provided
     if cells_per_dimension is None:
@@ -2255,6 +2278,14 @@ def build_cell_list(
             cell_atom_start_indices,
             cell_atom_list,
             launch_dims=(total_atoms,),
+        )
+
+    if derive_radius:
+        neighbor_search_radius = _derive_neighbor_search_radius(
+            cell,
+            pbc_bool,
+            cutoff,
+            cells_per_dimension,
         )
 
     return (
@@ -3087,10 +3118,14 @@ def cell_list(
         max_total_cells, _, neighbor_search_radius_est = estimate_cell_list_sizes(
             positions, cell, cutoff, pbc
         )
-        if neighbor_search_radius is None:
+        if neighbor_search_radius is None and graph_mode == "warp":
             neighbor_search_radius = neighbor_search_radius_est
-    elif neighbor_search_radius is None:
-        neighbor_search_radius = jnp.ones(3, dtype=jnp.int32)
+    elif graph_mode == "warp" and neighbor_search_radius is None:
+        raise ValueError(
+            "neighbor_search_radius must be provided when graph_mode='warp' "
+            "and max_total_cells is set because the fused query needs concrete "
+            "search metadata before the build result is available."
+        )
 
     if cells_per_dimension is None:
         cells_per_dimension = jnp.ones(3, dtype=jnp.int32)

@@ -30,6 +30,7 @@ from nvalchemiops.jax.neighbors._autograd import (
     _route_pair_outputs,
 )
 from nvalchemiops.jax.neighbors.cell_list import (
+    _derive_neighbor_search_radius,
     _is_cpu_array,
     _resolve_cell_strategy,
     _validate_atom_centric_path,
@@ -980,7 +981,6 @@ def estimate_batch_cell_list_sizes(
     # Simple estimation per system
     max_total_cells = 0
     cells_per_dim_list = []
-    search_radius_list = []
 
     for sys_idx in range(num_systems):
         start_idx = batch_ptr[sys_idx]
@@ -989,7 +989,6 @@ def estimate_batch_cell_list_sizes(
 
         if num_atoms_in_sys == 0:
             cells_per_dim_list.append(jnp.ones(3, dtype=jnp.int32))
-            search_radius_list.append(jnp.ones(3, dtype=jnp.int32))
             continue
 
         # Volume estimation
@@ -1007,10 +1006,14 @@ def estimate_batch_cell_list_sizes(
 
         cells_per_dim = jnp.ceil(num_cells_est ** (1 / 3)).astype(jnp.int32)
         cells_per_dim_list.append(cells_per_dim * jnp.ones(3, dtype=jnp.int32))
-        search_radius_list.append(jnp.ones(3, dtype=jnp.int32))
 
     cells_per_dimension = jnp.stack(cells_per_dim_list, axis=0)
-    neighbor_search_radius = jnp.stack(search_radius_list, axis=0)
+    neighbor_search_radius = _derive_neighbor_search_radius(
+        cell,
+        _pbc_bool,
+        cutoff,
+        cells_per_dimension,
+    )
 
     return max_total_cells, cells_per_dimension, neighbor_search_radius
 
@@ -1117,15 +1120,14 @@ def batch_build_cell_list(
     )
 
     if max_total_cells is None:
-        max_total_cells, cells_per_dim_est, neighbor_search_radius = (
-            estimate_batch_cell_list_sizes(
-                positions, batch_ptr, batch_idx, cell, cutoff, pbc
-            )
+        max_total_cells, _, _ = estimate_batch_cell_list_sizes(
+            positions, batch_ptr, batch_idx, cell, cutoff, pbc
         )
-        # Ensure neighbor_search_radius is on the correct device
-        neighbor_search_radius = neighbor_search_radius
-    else:
-        neighbor_search_radius = jnp.ones((num_systems, 3), dtype=jnp.int32)
+
+    neighbor_search_radius = jnp.zeros(
+        (num_systems, 3),
+        dtype=jnp.int32,
+    )
 
     # Allocate cell list tensors
     (
@@ -1171,6 +1173,13 @@ def batch_build_cell_list(
         float(cutoff),
         int(max_total_cells),
         launch_dims=(num_systems,),
+    )
+
+    neighbor_search_radius = _derive_neighbor_search_radius(
+        cell,
+        pbc_bool,
+        cutoff,
+        cells_per_dimension,
     )
 
     # Step 2: Compute cells_per_system and cell_offsets

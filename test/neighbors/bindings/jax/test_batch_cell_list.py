@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+from itertools import product
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -27,10 +29,27 @@ from nvalchemiops.jax.neighbors.batch_cell_list import (
     batch_cell_list,
     batch_query_cell_list,
 )
+from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
 
 from .conftest import requires_gpu
 
 pytestmark = requires_gpu
+
+
+def _compact_pair_shift_set(neighbor_matrix, num_neighbors, shifts, targets):
+    nm = np.asarray(neighbor_matrix)
+    nn = np.asarray(num_neighbors)
+    nms = np.asarray(shifts)
+    target_values = np.asarray(targets)
+    return {
+        (
+            int(target_values[row]),
+            int(nm[row, slot]),
+            *(int(value) for value in nms[row, slot]),
+        )
+        for row in range(nm.shape[0])
+        for slot in range(int(nn[row]))
+    }
 
 
 class TestBatchCellList:
@@ -361,9 +380,107 @@ class TestBatchCellListEdgeCases:
         if int(jnp.sum(nn)) > 0:
             assert jnp.all(shifts == 0)
 
+    def test_static_max_nonperiodic_single_cell_has_zero_radius(self):
+        """Non-periodic single-cell grids should use zero search radius."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        cell = jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3)
+        pbc = jnp.array([[False, False, False]])
+        batch_idx = jnp.zeros((2,), dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2], dtype=jnp.int32)
+
+        result = batch_build_cell_list(
+            positions,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cell=cell,
+            pbc=pbc,
+            cutoff=2.0,
+            max_total_cells=1,
+        )
+
+        np.testing.assert_array_equal(np.asarray(result[0]), [[1, 1, 1]])
+        np.testing.assert_array_equal(np.asarray(result[6]), [[0, 0, 0]])
+
 
 class TestBatchCellListJIT:
     """Smoke tests for batch_cell_list compatibility with jax.jit."""
+
+    def test_jit_static_max_derives_search_radius(self):
+        """Static max_total_cells should derive search radius from realized bins."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        cell = jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3)
+        pbc = jnp.array([[True, True, True]])
+        batch_idx = jnp.zeros((2,), dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2], dtype=jnp.int32)
+
+        @jax.jit
+        def jitted_build(positions, cell, pbc, batch_idx, batch_ptr):
+            return batch_build_cell_list(
+                positions,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                cell=cell,
+                pbc=pbc,
+                cutoff=0.3,
+                max_total_cells=216,
+            )
+
+        result = jitted_build(positions, cell, pbc, batch_idx, batch_ptr)
+
+        np.testing.assert_array_equal(np.asarray(result[0]), [[6, 6, 6]])
+        np.testing.assert_array_equal(np.asarray(result[6]), [[2, 2, 2]])
+
+    def test_jit_static_max_target_indices_matches_naive_all_pbc_masks(self):
+        """Compact target_indices should match naive pairs for every PBC mask."""
+        rng = np.random.default_rng(128)
+        positions_np = rng.uniform(0.0, 1.0, (128, 3)).astype(np.float32)
+        positions = jnp.asarray(positions_np)
+        cell = jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3)
+        batch_idx = jnp.zeros((128,), dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 128], dtype=jnp.int32)
+        targets = jnp.arange(0, 128, 2, dtype=jnp.int32)
+
+        @jax.jit
+        def jitted_cell_list(positions, cell, pbc, batch_idx, batch_ptr, targets):
+            return batch_cell_list(
+                positions,
+                cutoff=0.3,
+                cell=cell,
+                pbc=pbc,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=128,
+                max_total_cells=216,
+                target_indices=targets,
+                strategy="atom_centric",
+            )
+
+        for mask in product((False, True), repeat=3):
+            pbc = jnp.array([list(mask)], dtype=jnp.bool_)
+            nm, nn, shifts = jitted_cell_list(
+                positions, cell, pbc, batch_idx, batch_ptr, targets
+            )
+            naive_nm, naive_nn, naive_shifts = batch_naive_neighbor_list(
+                positions,
+                cutoff=0.3,
+                cell=cell,
+                pbc=pbc,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=128,
+                target_indices=targets,
+            )
+            cell_set = _compact_pair_shift_set(nm, nn, shifts, targets)
+            naive_set = _compact_pair_shift_set(
+                naive_nm, naive_nn, naive_shifts, targets
+            )
+            assert cell_set == naive_set, f"PBC mask {mask} mismatch"
 
     def test_jit_with_pbc_requires_precomputed_sizing(self):
         """The traced sizing path should fail before allocating JAX buffers."""
