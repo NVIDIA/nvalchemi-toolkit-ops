@@ -25,6 +25,7 @@ import warp as wp
 from nvalchemiops.jax.neighbors._registration import (
     _ClusterTileBuildJaxSpec,
     _ClusterTileQueryJaxSpec,
+    _validate_cluster_tile_build_spec,
     _validate_cluster_tile_query_spec,
 )
 from nvalchemiops.neighbors.cluster_tile.kernels import (
@@ -66,13 +67,17 @@ def _preload_cluster_tile_build_module(device_alias: str) -> None:
     """Register every build variant, then load their shared module once."""
     kernels = [
         _get_build_cluster_tiles_kernel(
-            **_ClusterTileBuildJaxSpec(False, False, selective).__dict__,
+            batched=False,
+            segmented=False,
+            selective=selective,
         )
         for selective in (False, True)
     ]
     kernels.extend(
         _get_build_cluster_tiles_kernel(
-            **_ClusterTileBuildJaxSpec(True, segmented, selective).__dict__,
+            batched=True,
+            segmented=segmented,
+            selective=selective,
         )
         for segmented, selective in (
             (False, False),
@@ -94,10 +99,7 @@ def _preload_cluster_tile_build_kernel(
     spec: _ClusterTileBuildJaxSpec,
 ) -> None:
     """Construct and load a cluster-tile build specialization."""
-    if (not spec.batched and spec.segmented) or (
-        spec.batched and spec.selective and not spec.segmented
-    ):
-        raise ValueError("invalid cluster-tile build specialization")
+    _validate_cluster_tile_build_spec(spec)
     _preload_cluster_tile_build_module(_current_warp_device_alias())
 
 

@@ -1322,3 +1322,47 @@ class TestClusterTileJaxRegistration:
             getattr(preload, preload_name)(spec)
 
         assert side_effects == []
+
+    @pytest.mark.parametrize(
+        "spec",
+        [
+            _registration._ClusterTileBuildJaxSpec(False, True, False),
+            _registration._ClusterTileBuildJaxSpec(True, False, True),
+        ],
+    )
+    def test_build_preload_uses_canonical_validation_before_side_effects(
+        self, monkeypatch, spec
+    ) -> None:
+        """Build preload delegates invalid combinations to the shared validator."""
+        preload = importlib.import_module(
+            "nvalchemiops.jax.neighbors._cluster_tile_preload"
+        )
+        validated_specs = []
+        side_effects = []
+
+        def fail_validation(candidate_spec) -> None:
+            validated_specs.append(candidate_spec)
+            raise ValueError("canonical build validation")
+
+        monkeypatch.setattr(
+            preload,
+            "_validate_cluster_tile_build_spec",
+            fail_validation,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            preload,
+            "_current_warp_device_alias",
+            lambda: side_effects.append("device_alias") or "cpu",
+        )
+        monkeypatch.setattr(
+            preload,
+            "_preload_cluster_tile_build_module",
+            lambda *args: side_effects.append("build_module"),
+        )
+
+        with pytest.raises(ValueError, match="canonical build validation"):
+            preload._preload_cluster_tile_build_kernel(spec)
+
+        assert validated_specs == [spec]
+        assert side_effects == []

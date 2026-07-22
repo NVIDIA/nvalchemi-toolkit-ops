@@ -413,8 +413,6 @@ def _validate_cluster_tile_query_spec(spec: _ClusterTileQueryJaxSpec) -> None:
         )
     if not spec.batched and spec.tile_segmented:
         raise ValueError("Single-system cluster-tile queries cannot tile-segment.")
-    if spec.tile_segmented and not spec.batched:
-        raise ValueError("Cluster-tile tile segmentation is only batched.")
     if spec.output_format == "matrix":
         if spec.coo_segmented:
             raise ValueError("Matrix cluster-tile queries cannot use COO segments.")
