@@ -22,6 +22,11 @@ import functools
 import jax
 import warp as wp
 
+from nvalchemiops.jax.neighbors._registration import (
+    _ClusterTileBuildJaxSpec,
+    _ClusterTileQueryJaxSpec,
+    _validate_cluster_tile_query_spec,
+)
 from nvalchemiops.neighbors.cluster_tile.kernels import (
     TILE_GROUP_SIZE,
     _get_build_cluster_tiles_kernel,
@@ -61,17 +66,13 @@ def _preload_cluster_tile_build_module(device_alias: str) -> None:
     """Register every build variant, then load their shared module once."""
     kernels = [
         _get_build_cluster_tiles_kernel(
-            batched=False,
-            segmented=False,
-            selective=selective,
+            **_ClusterTileBuildJaxSpec(False, False, selective).__dict__,
         )
         for selective in (False, True)
     ]
     kernels.extend(
         _get_build_cluster_tiles_kernel(
-            batched=True,
-            segmented=segmented,
-            selective=selective,
+            **_ClusterTileBuildJaxSpec(True, segmented, selective).__dict__,
         )
         for segmented, selective in (
             (False, False),
@@ -90,39 +91,49 @@ def _preload_cluster_tile_build_module(device_alias: str) -> None:
 
 
 def _preload_cluster_tile_build_kernel(
-    *, batched: bool, segmented: bool, selective: bool
+    spec: _ClusterTileBuildJaxSpec,
 ) -> None:
     """Construct and load a cluster-tile build specialization."""
-    if (not batched and segmented) or (batched and selective and not segmented):
+    if (not spec.batched and spec.segmented) or (
+        spec.batched and spec.selective and not spec.segmented
+    ):
         raise ValueError("invalid cluster-tile build specialization")
     _preload_cluster_tile_build_module(_current_warp_device_alias())
+
+
+def _validate_cluster_tile_query_preload_spec(
+    spec: _ClusterTileQueryJaxSpec,
+    *,
+    output_format: str,
+) -> None:
+    """Validate a query preload spec for its concrete output format."""
+    _validate_cluster_tile_query_spec(spec)
+    if spec.output_format != output_format:
+        raise ValueError(
+            f"Cluster-tile {output_format} preload requires "
+            f"output_format={output_format!r}.",
+        )
 
 
 @functools.cache
 def _preload_cluster_tile_query_kernel_cached(
     device_alias: str,
-    *,
-    batched: bool,
-    tile_segmented: bool,
-    selective: bool,
-    dual_cutoff: bool,
-    return_vectors: bool,
-    return_distances: bool,
-    pair_fn: wp.Function | None,
+    spec: _ClusterTileQueryJaxSpec,
 ) -> None:
     """Load one matrix-query specialization once per device."""
+    _validate_cluster_tile_query_preload_spec(spec, output_format="matrix")
     getter = (
         get_batch_query_cluster_tile_kernel
-        if batched
+        if spec.batched
         else get_query_cluster_tile_kernel
     )
     kernel = getter(
-        tile_segmented=tile_segmented,
-        selective=selective,
-        dual_cutoff=dual_cutoff,
-        return_vectors=return_vectors,
-        return_distances=return_distances,
-        pair_fn=pair_fn,
+        tile_segmented=spec.tile_segmented,
+        selective=spec.selective,
+        dual_cutoff=spec.dual_cutoff,
+        return_vectors=spec.return_vectors,
+        return_distances=spec.return_distances,
+        pair_fn=spec.pair_fn,
     )
     device = wp.get_device(device_alias)
     empty_sentinel(1, wp.int32, device)
@@ -135,49 +146,34 @@ def _preload_cluster_tile_query_kernel_cached(
 
 
 def _preload_cluster_tile_query_kernel(
-    *,
-    batched: bool,
-    tile_segmented: bool,
-    selective: bool,
-    dual_cutoff: bool,
-    return_vectors: bool,
-    return_distances: bool,
-    pair_fn: wp.Function | None,
+    spec: _ClusterTileQueryJaxSpec,
 ) -> None:
     """Construct and load a cluster-tile matrix-query specialization."""
+    _validate_cluster_tile_query_preload_spec(spec, output_format="matrix")
     _preload_cluster_tile_query_kernel_cached(
         _current_warp_device_alias(),
-        batched=batched,
-        tile_segmented=tile_segmented,
-        selective=selective,
-        dual_cutoff=dual_cutoff,
-        return_vectors=return_vectors,
-        return_distances=return_distances,
-        pair_fn=pair_fn,
+        spec,
     )
 
 
 @functools.cache
 def _preload_cluster_tile_coo_kernel_cached(
     device_alias: str,
-    *,
-    batched: bool,
-    tile_segmented: bool,
-    coo_segmented: bool,
-    selective: bool,
+    spec: _ClusterTileQueryJaxSpec,
 ) -> None:
     """Load one COO-query specialization once per device."""
-    if coo_segmented:
+    _validate_cluster_tile_query_preload_spec(spec, output_format="coo")
+    if spec.coo_segmented:
         _preload_cluster_tile_build_module(device_alias)
     getter = (
         get_batch_query_cluster_tile_coo_kernel
-        if batched
+        if spec.batched
         else get_query_cluster_tile_coo_kernel
     )
     kernel = getter(
-        tile_segmented=tile_segmented,
-        coo_segmented=coo_segmented,
-        selective=selective,
+        tile_segmented=spec.tile_segmented,
+        coo_segmented=spec.coo_segmented,
+        selective=spec.selective,
     )
     device = wp.get_device(device_alias)
     empty_sentinel(1, wp.int32, device)
@@ -189,17 +185,11 @@ def _preload_cluster_tile_coo_kernel_cached(
 
 
 def _preload_cluster_tile_coo_kernel(
-    *,
-    batched: bool,
-    tile_segmented: bool,
-    coo_segmented: bool,
-    selective: bool,
+    spec: _ClusterTileQueryJaxSpec,
 ) -> None:
     """Construct and load a topology-only cluster-tile COO specialization."""
+    _validate_cluster_tile_query_preload_spec(spec, output_format="coo")
     _preload_cluster_tile_coo_kernel_cached(
         _current_warp_device_alias(),
-        batched=batched,
-        tile_segmented=tile_segmented,
-        coo_segmented=coo_segmented,
-        selective=selective,
+        spec,
     )

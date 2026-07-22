@@ -31,12 +31,17 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import warp as wp
-from warp.jax_experimental import GraphMode, jax_callable
 
 from nvalchemiops.jax.neighbors._cluster_tile_preload import (
     _preload_cluster_tile_build_kernel,
     _preload_cluster_tile_coo_kernel,
     _preload_cluster_tile_query_kernel,
+)
+from nvalchemiops.jax.neighbors._registration import (
+    _ClusterTileBuildJaxSpec,
+    _ClusterTileQueryJaxSpec,
+    _get_cluster_tile_build_jax_callable,
+    _get_cluster_tile_query_jax_callable,
 )
 from nvalchemiops.neighbors.cluster_tile import (
     TILE_GROUP_SIZE,
@@ -893,103 +898,71 @@ def _batch_query_cluster_tile_coo_segmented_callback(
     )
 
 
-_jax_batch_build_cluster_tile_list = jax_callable(
+_BATCH_CLUSTER_TILE_BUILD_SPEC = _ClusterTileBuildJaxSpec(
+    batched=True,
+    segmented=False,
+    selective=False,
+)
+_BATCH_CLUSTER_TILE_BUILD_SELECTIVE_SPEC = _ClusterTileBuildJaxSpec(
+    batched=True,
+    segmented=True,
+    selective=True,
+)
+
+_jax_batch_build_cluster_tile_list = _get_cluster_tile_build_jax_callable(
+    _BATCH_CLUSTER_TILE_BUILD_SPEC,
     _batch_build_cluster_tile_list_callback,
-    num_outputs=10,
-    in_out_argnames=[
-        "group_ctr_x",
-        "group_ctr_y",
-        "group_ctr_z",
-        "group_ext_x",
-        "group_ext_y",
-        "group_ext_z",
-        "num_tiles",
-        "tile_row_group",
-        "tile_col_group",
-        "tile_system",
-    ],
-    graph_mode=GraphMode.WARP,
 )
-
-_jax_batch_build_cluster_tile_list_selective = jax_callable(
+_jax_batch_build_cluster_tile_list_selective = _get_cluster_tile_build_jax_callable(
+    _BATCH_CLUSTER_TILE_BUILD_SELECTIVE_SPEC,
     _batch_build_cluster_tile_list_selective_callback,
-    num_outputs=11,
-    in_out_argnames=[
-        "group_ctr_x",
-        "group_ctr_y",
-        "group_ctr_z",
-        "group_ext_x",
-        "group_ext_y",
-        "group_ext_z",
-        "num_tiles",
-        "tile_counts",
-        "tile_row_group",
-        "tile_col_group",
-        "tile_system",
-    ],
-    graph_mode=GraphMode.WARP,
+)
+_BATCH_CLUSTER_TILE_QUERY_MATRIX_SPEC = _ClusterTileQueryJaxSpec(
+    True, "matrix", False, False, False, False, False, False, None
+)
+_BATCH_CLUSTER_TILE_QUERY_MATRIX_SELECTIVE_SPEC = _ClusterTileQueryJaxSpec(
+    True, "matrix", True, False, True, False, False, False, None
+)
+_BATCH_CLUSTER_TILE_QUERY_MATRIX_DUAL_SPEC = _ClusterTileQueryJaxSpec(
+    True, "matrix", False, False, False, True, False, False, None
+)
+_BATCH_CLUSTER_TILE_QUERY_MATRIX_DUAL_SELECTIVE_SPEC = _ClusterTileQueryJaxSpec(
+    True, "matrix", True, False, True, True, False, False, None
+)
+_BATCH_CLUSTER_TILE_QUERY_MATRIX_PAIR_SPEC = _ClusterTileQueryJaxSpec(
+    True, "matrix", False, False, False, False, True, True, None
+)
+_BATCH_CLUSTER_TILE_QUERY_COO_SPEC = _ClusterTileQueryJaxSpec(
+    True, "coo", False, False, False, False, False, False, None
+)
+_BATCH_CLUSTER_TILE_QUERY_COO_SEGMENTED_SPEC = _ClusterTileQueryJaxSpec(
+    True, "coo", True, True, True, False, False, False, None
 )
 
-
-_jax_batch_query_cluster_tile = jax_callable(
+_jax_batch_query_cluster_tile = _get_cluster_tile_query_jax_callable(
+    _BATCH_CLUSTER_TILE_QUERY_MATRIX_SPEC,
     _batch_query_cluster_tile_callback,
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix", "num_neighbors", "neighbor_matrix_shifts"],
-    graph_mode=GraphMode.WARP,
 )
-
-_jax_batch_query_cluster_tile_selective = jax_callable(
+_jax_batch_query_cluster_tile_selective = _get_cluster_tile_query_jax_callable(
+    _BATCH_CLUSTER_TILE_QUERY_MATRIX_SELECTIVE_SPEC,
     _batch_query_cluster_tile_selective_callback,
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix", "num_neighbors", "neighbor_matrix_shifts"],
-    graph_mode=GraphMode.WARP,
 )
-
-_jax_batch_query_cluster_tile_dual = jax_callable(
+_jax_batch_query_cluster_tile_dual = _get_cluster_tile_query_jax_callable(
+    _BATCH_CLUSTER_TILE_QUERY_MATRIX_DUAL_SPEC,
     _batch_query_cluster_tile_dual_callback,
-    num_outputs=6,
-    in_out_argnames=[
-        "neighbor_matrix",
-        "num_neighbors",
-        "neighbor_matrix_shifts",
-        "neighbor_matrix2",
-        "num_neighbors2",
-        "neighbor_matrix_shifts2",
-    ],
-    graph_mode=GraphMode.WARP,
 )
-
-_jax_batch_query_cluster_tile_dual_selective = jax_callable(
+_jax_batch_query_cluster_tile_dual_selective = _get_cluster_tile_query_jax_callable(
+    _BATCH_CLUSTER_TILE_QUERY_MATRIX_DUAL_SELECTIVE_SPEC,
     _batch_query_cluster_tile_dual_selective_callback,
-    num_outputs=6,
-    in_out_argnames=[
-        "neighbor_matrix",
-        "num_neighbors",
-        "neighbor_matrix_shifts",
-        "neighbor_matrix2",
-        "num_neighbors2",
-        "neighbor_matrix_shifts2",
-    ],
-    graph_mode=GraphMode.WARP,
 )
-
-
-_jax_batch_query_cluster_tile_pair = jax_callable(
+_jax_batch_query_cluster_tile_pair = _get_cluster_tile_query_jax_callable(
+    _BATCH_CLUSTER_TILE_QUERY_MATRIX_PAIR_SPEC,
     _batch_query_cluster_tile_pair_callback,
-    num_outputs=5,
-    in_out_argnames=[
-        "neighbor_matrix",
-        "num_neighbors",
-        "neighbor_matrix_shifts",
-        "neighbor_vectors",
-        "neighbor_distances",
-    ],
-    graph_mode=GraphMode.WARP,
 )
 
 
 @functools.cache
-def _get_jax_batch_cluster_tile_pair_fn_callable(pair_fn):
+def _get_jax_batch_cluster_tile_pair_fn_callable(spec: _ClusterTileQueryJaxSpec):
     """Build (and cache) a batched ``jax_callable`` closing over ``pair_fn`` for the
     cluster-tile pair-output -> matrix kernel.
 
@@ -1043,40 +1016,25 @@ def _get_jax_batch_cluster_tile_pair_fn_callable(pair_fn):
             return_distances=True,
             neighbor_vectors=neighbor_vectors,
             neighbor_distances=neighbor_distances,
-            pair_fn=pair_fn,
+            pair_fn=spec.pair_fn,
             pair_params=pair_params,
             pair_energies=pair_energies,
             pair_forces=pair_forces,
         )
 
-    return jax_callable(
+    return _get_cluster_tile_query_jax_callable(
+        spec,
         _callback,
-        num_outputs=7,
-        in_out_argnames=[
-            "neighbor_matrix",
-            "num_neighbors",
-            "neighbor_matrix_shifts",
-            "neighbor_vectors",
-            "neighbor_distances",
-            "pair_energies",
-            "pair_forces",
-        ],
-        graph_mode=GraphMode.WARP,
     )
 
 
-_jax_batch_query_cluster_tile_coo = jax_callable(
+_jax_batch_query_cluster_tile_coo = _get_cluster_tile_query_jax_callable(
+    _BATCH_CLUSTER_TILE_QUERY_COO_SPEC,
     _batch_query_cluster_tile_coo_callback,
-    num_outputs=3,
-    in_out_argnames=["pair_counter", "coo_list", "coo_shifts"],
-    graph_mode=GraphMode.WARP,
 )
-
-_jax_batch_query_cluster_tile_coo_segmented = jax_callable(
+_jax_batch_query_cluster_tile_coo_segmented = _get_cluster_tile_query_jax_callable(
+    _BATCH_CLUSTER_TILE_QUERY_COO_SEGMENTED_SPEC,
     _batch_query_cluster_tile_coo_segmented_callback,
-    num_outputs=4,
-    in_out_argnames=["pair_counter", "pair_counts", "coo_list", "coo_shifts"],
-    graph_mode=GraphMode.WARP,
 )
 
 
@@ -1224,9 +1182,7 @@ def batch_build_cluster_tile_list(
 
     if rebuild_flags is None:
         _preload_cluster_tile_build_kernel(
-            batched=True,
-            segmented=False,
-            selective=False,
+            _BATCH_CLUSTER_TILE_BUILD_SPEC,
         )
         (
             group_ctr_x,
@@ -1266,9 +1222,7 @@ def batch_build_cluster_tile_list(
                 "batched cluster_tile builds"
             )
         _preload_cluster_tile_build_kernel(
-            batched=True,
-            segmented=True,
-            selective=True,
+            _BATCH_CLUSTER_TILE_BUILD_SELECTIVE_SPEC,
         )
         rf = rebuild_flags.astype(jnp.bool_)
         (
@@ -1485,15 +1439,22 @@ def batch_query_cluster_tile(
             )
         if batch_idx is None:
             raise ValueError("batch_idx is required when rebuild_flags is provided")
-    _preload_cluster_tile_query_kernel(
-        batched=True,
-        tile_segmented=selective,
-        selective=selective,
-        dual_cutoff=dual_cutoff,
-        return_vectors=has_pair_outputs,
-        return_distances=has_pair_outputs,
-        pair_fn=pair_fn,
+    query_spec = (
+        _ClusterTileQueryJaxSpec(
+            True, "matrix", False, False, False, False, True, True, pair_fn
+        )
+        if pair_fn is not None
+        else _BATCH_CLUSTER_TILE_QUERY_MATRIX_PAIR_SPEC
+        if has_pair_outputs
+        else _BATCH_CLUSTER_TILE_QUERY_MATRIX_DUAL_SELECTIVE_SPEC
+        if dual_cutoff and selective
+        else _BATCH_CLUSTER_TILE_QUERY_MATRIX_DUAL_SPEC
+        if dual_cutoff
+        else _BATCH_CLUSTER_TILE_QUERY_MATRIX_SELECTIVE_SPEC
+        if selective
+        else _BATCH_CLUSTER_TILE_QUERY_MATRIX_SPEC
     )
+    _preload_cluster_tile_query_kernel(query_spec)
     if fill_value is None:
         fill_value = natom
     inv_cell_batch = jnp.linalg.inv(cell_batch)
@@ -1554,7 +1515,7 @@ def batch_query_cluster_tile(
             if pair_forces is None:
                 pair_forces = jnp.zeros((natom, max_neighbors, 3), dtype=jnp.float32)
             pair_params_arg = jnp.asarray(pair_params, dtype=jnp.float32)
-            pair_callable = _get_jax_batch_cluster_tile_pair_fn_callable(pair_fn)
+            pair_callable = _get_jax_batch_cluster_tile_pair_fn_callable(query_spec)
             (
                 neighbor_matrix,
                 num_neighbors,
@@ -1849,12 +1810,12 @@ def batch_query_cluster_tile_coo(
         raise ValueError("rebuild_flags requires pair_offsets and pair_counts")
     if rebuild_flags is not None and (tile_offsets is None or tile_counts is None):
         raise ValueError("rebuild_flags requires tile_offsets and tile_counts")
-    _preload_cluster_tile_coo_kernel(
-        batched=True,
-        tile_segmented=segmented,
-        coo_segmented=segmented,
-        selective=segmented,
+    query_spec = (
+        _BATCH_CLUSTER_TILE_QUERY_COO_SEGMENTED_SPEC
+        if segmented
+        else _BATCH_CLUSTER_TILE_QUERY_COO_SPEC
     )
+    _preload_cluster_tile_coo_kernel(query_spec)
 
     inv_cell_batch = jnp.linalg.inv(cell_batch)
     pair_counter = jnp.zeros(1, dtype=jnp.int32)

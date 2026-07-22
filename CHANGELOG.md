@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Consolidated JAX neighbor-list registration internals behind private,
+  schema-aware lazy registries. Naive, cell-list, and cluster-tile bindings
+  preserve their existing output ABI, graph-capture behavior, and framework
+  gradient paths while avoiding eager dtype-wrapper registration at import.
+
 ## 0.4.0 - 2026-07-13
 
 ### Added

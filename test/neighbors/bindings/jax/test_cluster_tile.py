@@ -22,6 +22,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from nvalchemiops.jax.neighbors import _cluster_tile_preload
 from nvalchemiops.jax.neighbors.cluster_tile import (
     TILE_GROUP_SIZE,
     cluster_tile_neighbor_list,
@@ -173,6 +174,37 @@ class TestTileNeighborListCorrectness:
         # Shape sanity; no negative counts.
         assert nm.shape == (33, 32)
         assert bool(jnp.all(nn >= 0))
+
+
+class TestClusterTileGraphPreload:
+    """Exercise the public WARP graph callback after its kernel preload."""
+
+    def test_jitted_matrix_query_preloads_and_executes_warp_graph_callback(self):
+        """A public matrix query preloads and executes under JAX graph capture."""
+        _cluster_tile_preload._preload_cluster_tile_query_kernel_cached.cache_clear()
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]] * 16,
+            dtype=jnp.float32,
+        )
+        cell = _orthorhombic_cell(4.0)
+
+        @jax.jit
+        def query(positions):
+            return cluster_tile_neighbor_list(
+                positions,
+                1.0,
+                cell,
+                max_neighbors=32,
+            )
+
+        neighbor_matrix, num_neighbors, _shifts = query(positions)
+        neighbor_matrix.block_until_ready()
+
+        assert (
+            _cluster_tile_preload._preload_cluster_tile_query_kernel_cached.cache_info().currsize
+            == 1
+        )
+        assert int(num_neighbors.sum()) > 0
 
 
 class TestTileNeighborListFormats:

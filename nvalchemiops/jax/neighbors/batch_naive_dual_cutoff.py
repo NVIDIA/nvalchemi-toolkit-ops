@@ -22,8 +22,12 @@ import jax.numpy as jnp
 import warp as wp
 from warp.jax_experimental import jax_kernel
 
+from nvalchemiops.jax.neighbors._registration import (
+    _get_naive_jax_kernel,
+    _LazyDtypeRegistrations,
+    _NaiveJaxKernelSpec,
+)
 from nvalchemiops.jax.neighbors.neighbor_utils import (
-    build_naive_kernel_tables,
     compute_naive_num_shifts,
     get_neighbor_list_from_neighbor_matrix,
     prepare_batch_idx_ptr,
@@ -33,185 +37,46 @@ from nvalchemiops.neighbors.neighbor_utils import (
     get_wrap_positions_kernel,
 )
 
-_DTYPE_TO_BATCH_NAIVE_DUAL_KERNELS = (wp.float32, wp.float64)
-(
-    _fill_batch_naive_neighbor_matrix_dual_cutoff_kernels,
-    _fill_batch_naive_neighbor_matrix_dual_cutoff_selective_kernels,
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_kernels,
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_selective_kernels,
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_prewrapped_kernels,
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_prewrapped_selective_kernels,
-) = build_naive_kernel_tables(
-    "dual_cutoff", batched=True, dtypes=_DTYPE_TO_BATCH_NAIVE_DUAL_KERNELS
-)
+_DIRECT_DTYPE_MAP = {jnp.float32: wp.float32, jnp.float64: wp.float64}
+
+
+def _direct_dual_registrations(
+    *, pbc_mode: str, selective: bool = False
+) -> _LazyDtypeRegistrations:
+    """Build lazy direct registrations for one dual-cutoff specialization."""
+    return _LazyDtypeRegistrations(
+        lambda wp_dtype: _get_naive_jax_kernel(
+            _NaiveJaxKernelSpec(
+                operation="dual_cutoff",
+                wp_dtype=wp_dtype,
+                batched=True,
+                pbc_mode=pbc_mode,
+                selective=selective,
+                partial=False,
+                half_fill=False,
+                return_vectors=False,
+                return_distances=False,
+                pair_fn=None,
+            )
+        ),
+        _DIRECT_DTYPE_MAP,
+    )
+
+
+_DIRECT_BATCH_NAIVE_DUAL_KERNELS = {
+    (pbc_mode, selective): _direct_dual_registrations(
+        pbc_mode=pbc_mode, selective=selective
+    )
+    for pbc_mode in ("none", "wrap_on_entry", "prewrapped")
+    for selective in (False, True)
+}
+
 
 __all__ = ["batch_naive_neighbor_list_dual_cutoff"]
 
 # ==============================================================================
 # JAX Kernel Wrappers
 # ==============================================================================
-
-# No-PBC batch naive dual cutoff neighbor matrix kernel wrappers
-_jax_fill_batch_dual_f32 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_dual_cutoff_kernels[wp.float32],
-    num_outputs=4,
-    in_out_argnames=[
-        "neighbor_matrix1",
-        "num_neighbors1",
-        "neighbor_matrix2",
-        "num_neighbors2",
-    ],
-    enable_backward=False,
-)
-_jax_fill_batch_dual_f64 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_dual_cutoff_kernels[wp.float64],
-    num_outputs=4,
-    in_out_argnames=[
-        "neighbor_matrix1",
-        "num_neighbors1",
-        "neighbor_matrix2",
-        "num_neighbors2",
-    ],
-    enable_backward=False,
-)
-
-# PBC batch naive dual cutoff neighbor matrix kernel wrappers
-_jax_fill_batch_dual_pbc_f32 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_kernels[wp.float32],
-    num_outputs=6,
-    in_out_argnames=[
-        "neighbor_matrix1",
-        "neighbor_matrix_shifts1",
-        "num_neighbors1",
-        "neighbor_matrix2",
-        "neighbor_matrix_shifts2",
-        "num_neighbors2",
-    ],
-    enable_backward=False,
-)
-_jax_fill_batch_dual_pbc_f64 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_kernels[wp.float64],
-    num_outputs=6,
-    in_out_argnames=[
-        "neighbor_matrix1",
-        "neighbor_matrix_shifts1",
-        "num_neighbors1",
-        "neighbor_matrix2",
-        "neighbor_matrix_shifts2",
-        "num_neighbors2",
-    ],
-    enable_backward=False,
-)
-
-# Selective batch dual cutoff neighbor matrix kernel wrappers
-_jax_fill_batch_dual_selective_f32 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_dual_cutoff_selective_kernels[wp.float32],
-    num_outputs=4,
-    in_out_argnames=[
-        "neighbor_matrix1",
-        "num_neighbors1",
-        "neighbor_matrix2",
-        "num_neighbors2",
-    ],
-    enable_backward=False,
-)
-_jax_fill_batch_dual_selective_f64 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_dual_cutoff_selective_kernels[wp.float64],
-    num_outputs=4,
-    in_out_argnames=[
-        "neighbor_matrix1",
-        "num_neighbors1",
-        "neighbor_matrix2",
-        "num_neighbors2",
-    ],
-    enable_backward=False,
-)
-
-# Selective PBC batch dual cutoff neighbor matrix kernel wrappers
-_jax_fill_batch_dual_pbc_selective_f32 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_selective_kernels[wp.float32],
-    num_outputs=6,
-    in_out_argnames=[
-        "neighbor_matrix1",
-        "neighbor_matrix_shifts1",
-        "num_neighbors1",
-        "neighbor_matrix2",
-        "neighbor_matrix_shifts2",
-        "num_neighbors2",
-    ],
-    enable_backward=False,
-)
-_jax_fill_batch_dual_pbc_selective_f64 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_selective_kernels[wp.float64],
-    num_outputs=6,
-    in_out_argnames=[
-        "neighbor_matrix1",
-        "neighbor_matrix_shifts1",
-        "num_neighbors1",
-        "neighbor_matrix2",
-        "neighbor_matrix_shifts2",
-        "num_neighbors2",
-    ],
-    enable_backward=False,
-)
-
-# Prewrapped PBC batch dual cutoff neighbor matrix kernel wrappers
-_jax_fill_batch_dual_pbc_prewrapped_f32 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_prewrapped_kernels[wp.float32],
-    num_outputs=6,
-    in_out_argnames=[
-        "neighbor_matrix1",
-        "neighbor_matrix_shifts1",
-        "num_neighbors1",
-        "neighbor_matrix2",
-        "neighbor_matrix_shifts2",
-        "num_neighbors2",
-    ],
-    enable_backward=False,
-)
-_jax_fill_batch_dual_pbc_prewrapped_f64 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_prewrapped_kernels[wp.float64],
-    num_outputs=6,
-    in_out_argnames=[
-        "neighbor_matrix1",
-        "neighbor_matrix_shifts1",
-        "num_neighbors1",
-        "neighbor_matrix2",
-        "neighbor_matrix_shifts2",
-        "num_neighbors2",
-    ],
-    enable_backward=False,
-)
-_jax_fill_batch_dual_pbc_prewrapped_selective_f32 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_prewrapped_selective_kernels[
-        wp.float32
-    ],
-    num_outputs=6,
-    in_out_argnames=[
-        "neighbor_matrix1",
-        "neighbor_matrix_shifts1",
-        "num_neighbors1",
-        "neighbor_matrix2",
-        "neighbor_matrix_shifts2",
-        "num_neighbors2",
-    ],
-    enable_backward=False,
-)
-_jax_fill_batch_dual_pbc_prewrapped_selective_f64 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_prewrapped_selective_kernels[
-        wp.float64
-    ],
-    num_outputs=6,
-    in_out_argnames=[
-        "neighbor_matrix1",
-        "neighbor_matrix_shifts1",
-        "num_neighbors1",
-        "neighbor_matrix2",
-        "neighbor_matrix_shifts2",
-        "num_neighbors2",
-    ],
-    enable_backward=False,
-)
 
 # Wrap positions batch kernel wrappers
 _jax_wrap_positions_batch_f32 = jax_kernel(
@@ -510,28 +375,29 @@ def batch_naive_neighbor_list_dual_cutoff(
                     num_neighbors2,
                 )
 
-    # Select kernel based on dtype
+    # Select lazy direct registrations by dtype. Public ``half_fill`` remains
+    # intentionally absent from dual low-level specializations.
     if positions.dtype == jnp.float64:
-        _jax_fill = _jax_fill_batch_dual_f64
-        _jax_fill_pbc = _jax_fill_batch_dual_pbc_f64
-        _jax_fill_selective = _jax_fill_batch_dual_selective_f64
-        _jax_fill_pbc_selective = _jax_fill_batch_dual_pbc_selective_f64
-        _jax_fill_pbc_prewrapped = _jax_fill_batch_dual_pbc_prewrapped_f64
-        _jax_fill_pbc_prewrapped_selective = (
-            _jax_fill_batch_dual_pbc_prewrapped_selective_f64
-        )
         _jax_wrap_batch = _jax_wrap_positions_batch_f64
     else:
-        _jax_fill = _jax_fill_batch_dual_f32
-        _jax_fill_pbc = _jax_fill_batch_dual_pbc_f32
-        _jax_fill_selective = _jax_fill_batch_dual_selective_f32
-        _jax_fill_pbc_selective = _jax_fill_batch_dual_pbc_selective_f32
-        _jax_fill_pbc_prewrapped = _jax_fill_batch_dual_pbc_prewrapped_f32
-        _jax_fill_pbc_prewrapped_selective = (
-            _jax_fill_batch_dual_pbc_prewrapped_selective_f32
-        )
         _jax_wrap_batch = _jax_wrap_positions_batch_f32
         positions = positions.astype(jnp.float32)
+    _jax_fill = _DIRECT_BATCH_NAIVE_DUAL_KERNELS[("none", False)][positions.dtype]
+    _jax_fill_pbc = _DIRECT_BATCH_NAIVE_DUAL_KERNELS[("wrap_on_entry", False)][
+        positions.dtype
+    ]
+    _jax_fill_selective = _DIRECT_BATCH_NAIVE_DUAL_KERNELS[("none", True)][
+        positions.dtype
+    ]
+    _jax_fill_pbc_selective = _DIRECT_BATCH_NAIVE_DUAL_KERNELS[("wrap_on_entry", True)][
+        positions.dtype
+    ]
+    _jax_fill_pbc_prewrapped = _DIRECT_BATCH_NAIVE_DUAL_KERNELS[("prewrapped", False)][
+        positions.dtype
+    ]
+    _jax_fill_pbc_prewrapped_selective = _DIRECT_BATCH_NAIVE_DUAL_KERNELS[
+        ("prewrapped", True)
+    ][positions.dtype]
 
     total_atoms = positions.shape[0]
     num_systems = batch_ptr.shape[0] - 1
