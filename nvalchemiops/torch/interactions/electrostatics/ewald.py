@@ -729,12 +729,11 @@ def ewald_real_space(
     Energies are always float64 for numerical stability during accumulation.
     Forces, virial, and charge gradients match the input dtype (float32 or float64).
 
-    When ``charges`` is a non-leaf tensor that may depend on ``positions``
-    (:math:`q = q(R)`), ordinary first-order losses may use cached partial
-    derivatives and let PyTorch apply
-    :math:`\partial E/\partial q \cdot \mathrm{d}q/\mathrm{d}R` once. Weighted
-    losses and higher-order derivatives recompute safe partials or connected
-    gradients as needed to avoid double-counting that chain term (issue #115).
+    When ``charges`` is a non-leaf tensor that depends on positions or cell
+    inputs, ordinary first-order losses may use cached partial derivatives and
+    let PyTorch apply the charge-model chain term once. Weighted losses and
+    higher-order derivatives recompute independent partials as needed to avoid
+    double-counting that chain term.
     Hybrid direct-output mode uses the same cached fallback connector so
     weighted :math:`q = q(R)` losses can recover a valid energy gradient when
     the forward energy was detached.
@@ -1051,12 +1050,11 @@ def ewald_reciprocal_space(
     ``k_vectors`` are setup metadata. Caller-supplied vectors are treated as
     static values that correspond to the current ``cell``.
 
-    When ``charges`` is a non-leaf tensor that may depend on ``positions``
-    (:math:`q = q(R)`), ordinary first-order losses may use cached partial
-    derivatives and let PyTorch apply
-    :math:`\partial E/\partial q \cdot \mathrm{d}q/\mathrm{d}R` once. Weighted
-    losses and higher-order derivatives recompute safe partials or connected
-    gradients as needed to avoid double-counting that chain term (issue #115).
+    When ``charges`` is a non-leaf tensor that depends on positions or cell
+    inputs, ordinary first-order losses may use cached partial derivatives and
+    let PyTorch apply the charge-model chain term once. Weighted losses and
+    higher-order derivatives recompute independent partials as needed to avoid
+    double-counting that chain term.
     """
     return _ewald_reciprocal_space(
         positions=positions,
@@ -1457,12 +1455,11 @@ def ewald_summation(
     direct forces, charge gradients, and virials match the input dtype where the
     underlying component path returns typed outputs.
 
-    When ``charges`` is a non-leaf tensor that may depend on ``positions``
-    (:math:`q = q(R)`), ordinary first-order losses may use cached partial
-    derivatives and let PyTorch apply
-    :math:`\partial E/\partial q \cdot \mathrm{d}q/\mathrm{d}R` once. Weighted
-    losses and higher-order derivatives recompute safe partials or connected
-    gradients as needed to avoid double-counting that chain term (issue #115).
+    When ``charges`` is a non-leaf tensor that depends on positions or cell
+    inputs, ordinary first-order losses may use cached partial derivatives and
+    let PyTorch apply the charge-model chain term once. Weighted losses and
+    higher-order derivatives recompute independent partials as needed to avoid
+    double-counting that chain term.
 
     Enabled output flags are appended in order: energies, [forces],
     [charge_gradients], [virial]. A single output is returned unwrapped;

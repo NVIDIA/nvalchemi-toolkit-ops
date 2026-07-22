@@ -8220,6 +8220,37 @@ class TestEwaldDoubleBackward:
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     @pytest.mark.parametrize("part", ["real", "recip", "summation"])
+    def test_qR_sibling_positions_force_matches_fd(self, device, part):
+        """Ewald energy derivatives preserve q(R) across sibling graphs."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        energy_fn, positions, _charges, cell = self._energy_fn(part, device)
+        positions = positions.detach().clone().requires_grad_(True)
+
+        def energy_of_base(base):
+            return energy_fn(base * 1.0, toy_charge_model(base), cell).sum()
+
+        (grad_positions,) = torch.autograd.grad(
+            energy_of_base(positions),
+            positions,
+            create_graph=True,
+        )
+        fd_grad = finite_difference_jacobian(
+            energy_of_base,
+            positions.detach(),
+            eps=1e-6,
+        )
+        max_abs, max_rel = max_abs_rel(grad_positions, fd_grad)
+        assert torch.allclose(
+            grad_positions,
+            fd_grad,
+            rtol=C_FORCE_RTOL,
+            atol=C_FORCE_ATOL,
+        ), f"{part} sibling q(R) force: max_abs={max_abs:.3e} max_rel={max_rel:.3e}"
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    @pytest.mark.parametrize("part", ["real", "recip", "summation"])
     def test_force_loss_double_backward(self, device, part):
         """Force-loss .backward(create_graph=True): grad to charges FD-matches."""
         if device == "cuda" and not torch.cuda.is_available():

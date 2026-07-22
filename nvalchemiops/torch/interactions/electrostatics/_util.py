@@ -33,6 +33,7 @@ __all__ = [
     "_build_electrostatic_result",
     "_combine_electrostatic_outputs",
     "_compiled_direct_output_deprecation_signal",
+    "_dechain_connected_input_grads",
     "_detach_setup_tensor",
     "_sum_charge_gradients",
     "_unpack_electrostatic_outputs",
@@ -53,29 +54,85 @@ def _has_potentially_geometry_dependent_charges(
 ) -> bool:
     """Return whether ``charges`` may carry a q(R) autograd path.
 
-    A non-leaf charge tensor may depend on positions, e.g. charges = q(positions).
-    Custom backwards must avoid differentiating a connected recompute with respect
-    to both positions and charges and then returning both gradients, because
-    PyTorch would apply dE/dq * dq/dR twice.
+    A non-leaf charge tensor may depend on positions or cell/strain inputs, e.g.
+    charges = q(positions) or charges = q(cell). Custom backwards must avoid
+    differentiating a connected recompute with respect to both geometry inputs and
+    charges and then returning both gradients, because PyTorch would apply
+    dE/dq * dq/dgeometry twice.
 
     Returns
     -------
     bool
-        True when ``positions`` and ``charges`` both require gradients and
-        ``charges`` is a non-leaf tensor that may depend on ``positions``.
+        True when ``charges`` requires gradients and is a non-leaf tensor that
+        may depend on one of the differentiable electrostatics inputs.
+
+    """
+    return bool(charges.requires_grad and charges.grad_fn is not None)
+
+
+_CONNECTED_INPUT_ORDER = ("charges", "positions", "cell", "alpha")
+
+
+def _dechain_connected_input_grads(
+    grad_map: dict[str, torch.Tensor | None],
+    input_map: dict[str, torch.Tensor],
+    *,
+    create_graph: bool,
+) -> dict[str, torch.Tensor | None]:
+    """Remove dependent-input paths from connected gradients.
+
+    Parameters
+    ----------
+    grad_map : dict[str, torch.Tensor or None]
+        Gradients of the recomputed energy with respect to differentiable inputs.
+    input_map : dict[str, torch.Tensor]
+        Differentiable inputs corresponding to ``grad_map``.
+    create_graph : bool
+        Whether the VJP corrections must remain differentiable.
+
+    Returns
+    -------
+    dict[str, torch.Tensor or None]
+        Independent partial gradients for the connected inputs.
 
     Notes
     -----
-    Issue #115 is prevented by routing these workloads through
-    :class:`_InjectChargeGrad`, eager electrostatics chains, or safe cached
-    fallback paths that recompute independent partial derivatives before PyTorch
-    applies the dE/dq * dq/dR chain term exactly once.
+    Inputs are processed downstream-to-upstream in the supported dependency
+    order ``charges -> positions -> cell -> alpha``. This removes each
+    child-input path from its upstream parent exactly once while preserving
+    sibling inputs that merely share an ultimate leaf.
     """
-    return bool(
-        positions.requires_grad
-        and charges.requires_grad
-        and charges.grad_fn is not None
-    )
+    result = dict(grad_map)
+    active_names = [name for name in _CONNECTED_INPUT_ORDER if name in input_map]
+    for index, child_name in enumerate(active_names):
+        child = input_map[child_name]
+        child_grad = result.get(child_name)
+        if child_grad is None or child.grad_fn is None:
+            continue
+
+        parent_names = [
+            name for name in active_names[index + 1 :] if result.get(name) is not None
+        ]
+        if not parent_names:
+            continue
+
+        parent_vjps = torch.autograd.grad(
+            child,
+            tuple(input_map[name] for name in parent_names),
+            grad_outputs=child_grad,
+            allow_unused=True,
+            create_graph=create_graph,
+            retain_graph=True,
+        )
+        for parent_name, parent_vjp in zip(
+            parent_names,
+            parent_vjps,
+            strict=True,
+        ):
+            parent_grad = result[parent_name]
+            if parent_vjp is not None and parent_grad is not None:
+                result[parent_name] = parent_grad - parent_vjp
+    return result
 
 
 def _detach_setup_tensor(tensor: torch.Tensor | None) -> torch.Tensor | None:
@@ -547,119 +604,37 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
         ) = ctx.saved_tensors
 
         if create_graph or not _is_uniform_cotangent(grad_energy):
-            # q(R) routing:
-            # - create_graph: return connected position/cell/alpha gradients only; do not
-            #   also return grad_charges from the same connected recompute.
-            # - first-order weighted loss: recompute position/cell/alpha partials with
-            #   charges detached, then return dE/dq separately so PyTorch chains q(R) once.
-            if _has_potentially_geometry_dependent_charges(positions, charges):
-                if create_graph:
-                    diff_inputs = []
-                    diff_names = []
-                    for name, tensor in (
-                        ("positions", positions),
-                        ("cell", cell),
-                    ):
-                        if tensor.requires_grad:
-                            diff_inputs.append(tensor)
-                            diff_names.append(name)
-                    with torch.enable_grad():
-                        recomputed = ctx.fallback_fn(positions, charges, cell)
-                        if diff_inputs:
-                            diff_grads = torch.autograd.grad(
-                                recomputed,
-                                tuple(diff_inputs),
-                                grad_outputs=grad_energy,
-                                allow_unused=True,
-                                create_graph=True,
-                            )
-                            grad_map = dict(zip(diff_names, diff_grads, strict=True))
-                        else:
-                            grad_map = {}
-                    return (
-                        None,
-                        grad_map.get("positions"),
-                        None,
-                        grad_map.get("cell"),
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                    )
+            diff_names = []
+            diff_inputs = []
+            for name, tensor in (
+                ("positions", positions),
+                ("charges", charges),
+                ("cell", cell),
+            ):
+                if tensor.requires_grad:
+                    diff_names.append(name)
+                    diff_inputs.append(tensor)
 
-                partial_inputs = []
-                partial_names = []
-                if positions.requires_grad:
-                    partial_inputs.append(positions)
-                    partial_names.append("positions")
-                if cell.requires_grad:
-                    partial_inputs.append(cell)
-                    partial_names.append("cell")
-
-                with torch.enable_grad():
-                    partial_map = {}
-                    if partial_inputs:
-                        recomputed_partial = ctx.fallback_fn(
-                            positions,
-                            charges.detach(),
-                            cell,
-                        )
-                        partial_grads = torch.autograd.grad(
-                            recomputed_partial,
-                            tuple(partial_inputs),
-                            grad_outputs=grad_energy,
-                            allow_unused=True,
-                            create_graph=create_graph,
-                        )
-                        partial_map = dict(
-                            zip(partial_names, partial_grads, strict=True)
-                        )
-
-                    grad_charges = None
-                    if charges.requires_grad:
-                        recomputed_charge = ctx.fallback_fn(positions, charges, cell)
-                        (grad_charges,) = torch.autograd.grad(
-                            recomputed_charge,
-                            charges,
-                            grad_outputs=grad_energy,
-                            allow_unused=True,
-                            create_graph=create_graph,
-                        )
-                return (
-                    None,
-                    partial_map.get("positions"),
-                    grad_charges,
-                    partial_map.get("cell"),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
             with torch.enable_grad():
                 recomputed = ctx.fallback_fn(positions, charges, cell)
-                diff_inputs = []
-                diff_names = []
-                for name, tensor in (
-                    ("positions", positions),
-                    ("charges", charges),
-                    ("cell", cell),
-                ):
-                    if tensor.requires_grad:
-                        diff_inputs.append(tensor)
-                        diff_names.append(name)
-                if not diff_inputs:
-                    grad_map = {}
-                else:
+                if diff_inputs:
                     diff_grads = torch.autograd.grad(
                         recomputed,
                         tuple(diff_inputs),
                         grad_outputs=grad_energy,
                         allow_unused=True,
                         create_graph=create_graph,
+                        retain_graph=True,
                     )
                     grad_map = dict(zip(diff_names, diff_grads, strict=True))
+                    input_map = dict(zip(diff_names, diff_inputs, strict=True))
+                    grad_map = _dechain_connected_input_grads(
+                        grad_map,
+                        input_map,
+                        create_graph=create_graph,
+                    )
+                else:
+                    grad_map = {}
             return (
                 None,
                 grad_map.get("positions"),

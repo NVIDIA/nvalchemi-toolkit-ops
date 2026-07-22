@@ -191,6 +191,152 @@ def test_cached_eval_qR_create_graph_second_order():
     )
 
 
+def test_cached_eval_qR_create_graph_sibling_positions():
+    """create_graph q(R) fallback preserves a sibling position charge chain."""
+    torch.manual_seed(0)
+    base_positions = torch.randn(3, 3, dtype=DT, requires_grad=True)
+    theta = torch.randn(3, dtype=DT, requires_grad=True)
+    positions_for_op = base_positions * 1.0
+    charges = base_positions[:, 0].square() + theta
+    cell = torch.eye(3, dtype=DT).unsqueeze(0)
+    energy = positions_for_op[:, 1].detach().clone()
+    pos_grad_state = torch.zeros_like(positions_for_op)
+    charge_grad_state = torch.zeros_like(charges)
+    cell_grad_state = torch.zeros_like(cell)
+
+    def fallback_fn(p, q, _cell):
+        return p[:, 1] * q + 0.5 * p[:, 2].square()
+
+    out = _InjectCachedEvalGradWithFallback.apply(
+        energy,
+        positions_for_op,
+        charges,
+        cell,
+        pos_grad_state,
+        charge_grad_state,
+        cell_grad_state,
+        None,
+        fallback_fn,
+    )
+
+    (grad_base,) = torch.autograd.grad(out.sum(), base_positions, create_graph=True)
+    expected_grad = torch.stack(
+        (
+            2.0 * base_positions[:, 0] * base_positions[:, 1],
+            charges,
+            base_positions[:, 2],
+        ),
+        dim=1,
+    )
+    torch.testing.assert_close(grad_base, expected_grad)
+
+    loss = grad_base.square().sum()
+    (grad_theta,) = torch.autograd.grad(loss, theta)
+
+    def loss_of_theta(theta_in: torch.Tensor) -> torch.Tensor:
+        p = base_positions.detach().clone().requires_grad_(True)
+        q = p[:, 0].square() + theta_in
+        e = fallback_fn(p * 1.0, q, cell)
+        (grad_p,) = torch.autograd.grad(e.sum(), p, create_graph=True)
+        return grad_p.square().sum()
+
+    grad_theta_fd = finite_difference_jacobian(
+        loss_of_theta,
+        theta.detach(),
+        eps=1e-6,
+    )
+    torch.testing.assert_close(grad_theta, grad_theta_fd, rtol=1e-5, atol=1e-7)
+
+
+def test_cached_eval_qR_create_graph_cell_dependent_charges():
+    """create_graph q(cell) fallback applies the cell charge chain once."""
+    positions = torch.randn(3, 3, dtype=DT)
+    cell = torch.eye(3, dtype=DT).unsqueeze(0).requires_grad_()
+    charges = cell[0, 0, :].clone()
+    energy = positions[:, 1].detach().clone()
+    pos_grad_state = torch.zeros_like(positions)
+    charge_grad_state = torch.zeros_like(charges)
+    cell_grad_state = torch.zeros_like(cell)
+
+    def fallback_fn(p, q, _cell):
+        return p[:, 1] * q + 0.5 * p[:, 2].square()
+
+    out = _InjectCachedEvalGradWithFallback.apply(
+        energy,
+        positions,
+        charges,
+        cell,
+        pos_grad_state,
+        charge_grad_state,
+        cell_grad_state,
+        None,
+        fallback_fn,
+    )
+
+    (grad_cell,) = torch.autograd.grad(out.sum(), cell, create_graph=True)
+    expected = torch.zeros_like(cell)
+    expected[0, 0, :] = positions[:, 1]
+    torch.testing.assert_close(grad_cell, expected)
+
+
+def test_cached_eval_create_graph_dechains_nested_inputs():
+    """create_graph fallback de-chains cell -> positions -> charges."""
+    cell = torch.tensor(2.0, dtype=DT, requires_grad=True)
+    positions = 3.0 * cell
+    charges = 5.0 * positions
+    energy = torch.zeros((), dtype=DT)
+    states = tuple(torch.zeros_like(value) for value in (positions, charges, cell))
+
+    def fallback_fn(p, q, c):
+        return p.square() + 2.0 * q + 7.0 * c
+
+    out = _InjectCachedEvalGradWithFallback.apply(
+        energy,
+        positions,
+        charges,
+        cell,
+        *states,
+        None,
+        fallback_fn,
+    )
+    (grad_cell,) = torch.autograd.grad(out, cell, create_graph=True)
+    (hvp,) = torch.autograd.grad(grad_cell, cell)
+
+    assert grad_cell.item() == pytest.approx(73.0)
+    assert hvp.item() == pytest.approx(18.0)
+
+
+def test_cached_eval_weighted_dechains_nested_inputs():
+    """Weighted fallback de-chains nested connected inputs without reuse errors."""
+    cell = torch.tensor(2.0, dtype=DT, requires_grad=True)
+    positions = 3.0 * cell
+    charges = 5.0 * positions
+    energy = torch.zeros(2, dtype=DT)
+    states = tuple(torch.zeros_like(value) for value in (positions, charges, cell))
+    weights = torch.tensor([1.0, 2.0], dtype=DT)
+
+    def fallback_fn(p, q, c):
+        return torch.stack(
+            (
+                p.square() + 2.0 * q + 7.0 * c,
+                2.0 * p.square() + 3.0 * q + 11.0 * c,
+            )
+        )
+
+    out = _InjectCachedEvalGradWithFallback.apply(
+        energy,
+        positions,
+        charges,
+        cell,
+        *states,
+        None,
+        fallback_fn,
+    )
+    (grad_cell,) = torch.autograd.grad(out, cell, grad_outputs=weights)
+
+    assert grad_cell.item() == pytest.approx(329.0)
+
+
 def _available_devices():
     """Devices available for cotangent predicate tests."""
     devices = ["cpu"]

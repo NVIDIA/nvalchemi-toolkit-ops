@@ -58,6 +58,8 @@ from test.interactions.electrostatics.bindings.jax.conftest import (
     fd_virial_full_jax,
     make_crystal_system_jax,
     make_virial_cscl_system_jax,
+    qr_manual_chain_jax,
+    toy_charge_model_jax,
 )
 
 # Try to import torchpme for reference calculations
@@ -1766,6 +1768,89 @@ class TestEdgeCases:
 
         assert energies.shape == (4,)
         assert jnp.all(jnp.isfinite(energies))
+
+
+class TestEwaldQRChainRule:
+    """q(R) chain-rule coverage for preprocessed full-Ewald positions."""
+
+    def test_qR_sibling_force_matches_manual_chain(self, device):
+        """Full Ewald preserves the charge chain for sibling expressions."""
+        (
+            positions,
+            _charges,
+            cell,
+            neighbor_matrix,
+            _num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system()
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
+
+        def energy_fn(pos, charges, cell_arg):
+            return ewald_summation(
+                positions=pos,
+                charges=charges,
+                cell=cell_arg,
+                alpha=0.3,
+                k_cutoff=8.0,
+                k_vectors=k_vectors,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+            )
+
+        full_grad, manual_grad = qr_manual_chain_jax(
+            energy_fn,
+            positions,
+            cell,
+        )
+        assert jnp.allclose(full_grad, manual_grad, rtol=1e-5, atol=1e-7)
+        jitted_grad = jax.jit(
+            lambda p: jax.grad(
+                lambda base: energy_fn(
+                    base * 1.0,
+                    toy_charge_model_jax(base),
+                    cell,
+                ).sum()
+            )(p)
+        )(positions)
+        assert jnp.allclose(jitted_grad, full_grad, rtol=1e-5, atol=1e-7)
+
+    def test_qR_sibling_position_hvp_matches_fd(self, device):
+        """Full-Ewald q(R) position HVPs match finite differences."""
+        (
+            positions,
+            _charges,
+            cell,
+            neighbor_matrix,
+            _num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system()
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
+
+        def energy_sum(base):
+            return ewald_summation(
+                positions=base * 1.0,
+                charges=toy_charge_model_jax(base),
+                cell=cell,
+                alpha=0.3,
+                k_cutoff=8.0,
+                k_vectors=k_vectors,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+            ).sum()
+
+        direction = jax.random.normal(
+            jax.random.PRNGKey(115),
+            positions.shape,
+            dtype=positions.dtype,
+        )
+        direction = direction / jnp.linalg.norm(direction)
+        grad_fn = jax.grad(energy_sum)
+        hvp = jax.grad(lambda p: jnp.vdot(grad_fn(p), direction))(positions)
+        eps = jnp.array(1e-5, dtype=positions.dtype)
+        fd = (
+            grad_fn(positions + eps * direction) - grad_fn(positions - eps * direction)
+        ) / (2.0 * eps)
+        assert jnp.allclose(hvp, fd, rtol=2e-3, atol=1e-6)
 
 
 class TestEwaldJIT:

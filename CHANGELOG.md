@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Torch PME and Ewald energy-only autograd now preserve charge-equilibration
+  terms for non-leaf position graphs and cell-dependent charges when
+  `create_graph=True`.
+
 ## 0.4.0 - 2026-07-13
 
 ### Added
