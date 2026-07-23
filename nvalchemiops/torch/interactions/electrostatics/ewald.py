@@ -86,6 +86,7 @@ Examples
 from __future__ import annotations
 
 import warnings
+from typing import Literal
 
 import torch
 
@@ -97,7 +98,12 @@ from nvalchemiops.torch.interactions.electrostatics._ewald_direct import (
     reciprocal_space_direct,
 )
 from nvalchemiops.torch.interactions.electrostatics._ewald_real_chain import (
+    _neighbor_edges,
+    _real_space_weighted_energy,
     real_space_cell_connect,
+)
+from nvalchemiops.torch.interactions.electrostatics._ewald_recip_chain import (
+    _recip_ksum_energy_torch,
 )
 from nvalchemiops.torch.interactions.electrostatics._registration import (
     ensure_electrostatics_ops_registered,
@@ -113,7 +119,9 @@ from nvalchemiops.torch.interactions.electrostatics._util import (
     _InjectCachedEvalGrad,
     _InjectCachedEvalGradWithFallback,
     _InjectChargeGrad,
+    _reduce_atom_energy,
     _unpack_electrostatic_outputs,
+    _validate_energy_reduction,
 )
 from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
     generate_k_vectors_ewald_summation,
@@ -541,6 +549,37 @@ def _apply_reciprocal_corrections(
     )
 
 
+def _reciprocal_system_energy_torch(
+    positions: torch.Tensor,
+    charges: torch.Tensor,
+    cell: torch.Tensor,
+    k_vectors_2d: torch.Tensor,
+    alpha: torch.Tensor,
+    batch_idx: torch.Tensor | None,
+    num_systems: int,
+) -> torch.Tensor:
+    """Return pure-Torch reciprocal system energies for terminal facades."""
+    cell_3d = cell if cell.dim() == 3 else cell.unsqueeze(0)
+    volume = torch.abs(torch.linalg.det(cell_3d)).to(torch.float64)
+    ksum = _recip_ksum_energy_torch(
+        positions,
+        charges,
+        k_vectors_2d,
+        volume,
+        alpha,
+        batch_idx,
+        num_systems,
+    )
+    energy = _apply_reciprocal_corrections(
+        ksum,
+        charges,
+        volume,
+        alpha,
+        batch_idx,
+    )
+    return _reduce_atom_energy(energy, batch_idx, num_systems)
+
+
 def _reciprocal_space_energy(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -550,6 +589,7 @@ def _reciprocal_space_energy(
     *,
     batch_idx: torch.Tensor | None,
     max_atoms_per_system: int | None = None,
+    energy_reduction: Literal["atom", "system"] = "atom",
 ) -> torch.Tensor:
     """Per-atom reciprocal-space Ewald energy, connected to autograd via the chain.
 
@@ -584,16 +624,18 @@ def _reciprocal_space_energy(
         volume = torch.abs(
             torch.det(cell.reshape(3, 3) if cell.dim() == 2 else cell[0])
         ).reshape(1)
-        e_ksum, _, _, _ = torch.ops.nvalchemiops.ewald_recip_energy_single(
-            positions,
-            charges,
-            cell,
-            k_vectors_2d,
-            volume.to(torch.float64),
-            alpha,
-            need_pos,
-            need_charge,
-            need_cell,
+        e_ksum, dEdR, dEdq, _cellgrad_cache = (
+            torch.ops.nvalchemiops.ewald_recip_energy_single(
+                positions,
+                charges,
+                cell,
+                k_vectors_2d,
+                volume.to(torch.float64),
+                alpha,
+                need_pos,
+                need_charge,
+                need_cell,
+            )
         )
     else:
         num_systems = cell.shape[0]
@@ -619,23 +661,79 @@ def _reciprocal_space_energy(
                 raise ValueError(
                     "max_atoms_per_system cannot exceed the total number of atoms"
                 )
-        e_ksum, _, _, _ = torch.ops.nvalchemiops.ewald_recip_energy_batch(
+        e_ksum, dEdR, dEdq, _cellgrad_cache = (
+            torch.ops.nvalchemiops.ewald_recip_energy_batch(
+                positions,
+                charges,
+                cell,
+                k_vectors_2d,
+                volume,
+                alpha,
+                batch_idx.to(torch.int32),
+                atom_start,
+                atom_end,
+                need_pos,
+                need_charge,
+                need_cell,
+                max_atoms_bound,
+            )
+        )
+
+    correction = _apply_reciprocal_corrections(
+        torch.zeros_like(e_ksum), charges, volume, alpha, batch_idx
+    )
+
+    def _system_fallback(p, q, c):
+        return _reciprocal_system_energy_torch(
+            p,
+            q,
+            c,
+            k_vectors_2d,
+            alpha,
+            batch_idx,
+            num_systems,
+        )
+
+    if energy_reduction == "system" and cell.requires_grad:
+        return _InjectCachedEvalGradWithFallback.apply(
+            (e_ksum + correction).detach(),
             positions,
             charges,
             cell,
-            k_vectors_2d,
-            volume,
-            alpha,
-            batch_idx.to(torch.int32),
-            atom_start,
-            atom_end,
-            need_pos,
-            need_charge,
-            need_cell,
-            max_atoms_bound,
+            None,
+            None,
+            None,
+            batch_idx,
+            _system_fallback,
+            "system",
+            num_systems,
+            True,
+            True,
         )
 
-    return _apply_reciprocal_corrections(e_ksum, charges, volume, alpha, batch_idx)
+    if (
+        energy_reduction == "system"
+        and not cell.requires_grad
+        and (positions.requires_grad or charges.requires_grad)
+    ):
+        e_ksum = _InjectCachedEvalGrad.apply(
+            e_ksum,
+            positions,
+            charges,
+            cell,
+            dEdR.detach() if positions.requires_grad else None,
+            dEdq.detach() if charges.requires_grad else None,
+            None,
+            batch_idx,
+            "system",
+            num_systems,
+        )
+        return e_ksum + _reduce_atom_energy(correction, batch_idx, num_systems)
+
+    energies = e_ksum + correction
+    if energy_reduction == "system":
+        return _reduce_atom_energy(energies, batch_idx, num_systems)
+    return energies
 
 
 ###########################################################################################
@@ -659,6 +757,8 @@ def ewald_real_space(
     compute_charge_gradients: bool = False,
     compute_virial: bool = False,
     hybrid_forces: bool = False,
+    *,
+    energy_reduction: Literal["atom", "system"] = "atom",
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
     r"""Compute real-space Ewald energy and optionally forces, charge gradients, and virial.
 
@@ -712,6 +812,8 @@ def ewald_real_space(
         :math:`\partial E/\partial R|_q` and autograd through the energy
         provides the charge chain-rule term
         :math:`\partial E/\partial q \cdot \mathrm{d}q/\mathrm{d}R`.
+    energy_reduction : {"atom", "system"}, default="atom"
+        Return per-atom energies ``(N,)`` or summed per-system energies ``(B,)``.
 
     Returns
     -------
@@ -740,6 +842,14 @@ def ewald_real_space(
     the forward energy was detached.
 
     """
+    _validate_energy_reduction(energy_reduction)
+    num_systems = int(cell.shape[0]) if cell.dim() == 3 else 1
+
+    def _select_energy(energy):
+        if energy_reduction == "system":
+            return _reduce_atom_energy(energy, batch_idx, num_systems)
+        return energy
+
     component_deprecated_flags = tuple(
         name
         for name, enabled in (
@@ -772,6 +882,43 @@ def ewald_real_space(
         raise ValueError("neighbor_ptr is required when using neighbor_list format")
 
     idx_j = neighbor_list[1] if neighbor_list is not None else None
+
+    def _system_fallback(p, q, c):
+        use_matrix = neighbor_matrix is not None
+        edge_i, edge_j, unit_shifts = _neighbor_edges(
+            use_matrix,
+            idx_j,
+            neighbor_ptr,
+            neighbor_shifts,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            mask_value,
+            p.shape[0],
+            p.device,
+        )
+        cell_3d = c if c.dim() == 3 else c.unsqueeze(0)
+        system_energies = []
+        for system_idx in range(num_systems):
+            if batch_idx is None:
+                atom_weights = torch.ones(
+                    p.shape[0], dtype=torch.float64, device=p.device
+                )
+            else:
+                atom_weights = (batch_idx == system_idx).to(torch.float64)
+            system_energies.append(
+                _real_space_weighted_energy(
+                    p,
+                    q,
+                    cell_3d,
+                    alpha,
+                    edge_i,
+                    edge_j,
+                    unit_shifts,
+                    batch_idx,
+                    atom_weights,
+                )
+            )
+        return torch.stack(system_energies)
 
     # Helper to build the return tuple from raw outputs using match dispatch.
     def _build_result(energies, forces=None, charge_grads=None, virial=None):
@@ -836,7 +983,7 @@ def ewald_real_space(
                 )
 
             energies = _InjectCachedEvalGradWithFallback.apply(
-                energies,
+                energies.detach(),
                 positions,
                 charges,
                 cell,
@@ -845,7 +992,11 @@ def ewald_real_space(
                 None,
                 batch_idx,
                 _fallback,
+                energy_reduction,
+                num_systems,
             )
+        else:
+            energies = _select_energy(energies)
         return _build_result(energies, forces, charge_grads.to(positions.dtype), virial)
 
     if (
@@ -891,7 +1042,7 @@ def ewald_real_space(
             )
 
         energies = _InjectCachedEvalGradWithFallback.apply(
-            energies,
+            energies.detach(),
             positions,
             charges,
             cell,
@@ -900,6 +1051,8 @@ def ewald_real_space(
             None,
             batch_idx,
             _fallback,
+            energy_reduction,
+            num_systems,
         )
         return energies
 
@@ -923,6 +1076,22 @@ def ewald_real_space(
     )
 
     if not want_direct:
+        if energy_reduction == "system":
+            return _InjectCachedEvalGradWithFallback.apply(
+                energies.detach(),
+                positions,
+                charges,
+                cell,
+                None,
+                None,
+                None,
+                batch_idx,
+                _system_fallback,
+                "system",
+                num_systems,
+                True,
+                True,
+            )
         return energies
 
     # The deprecated direct virial is differentiable w.r.t. charges; re-attach that
@@ -956,6 +1125,8 @@ def ewald_real_space(
         not cell.requires_grad
         and (positions.requires_grad or charges.requires_grad)
         and (forces is not None or charge_grads is not None)
+        and (not positions.requires_grad or forces is not None)
+        and (not charges.requires_grad or charge_grads is not None)
     ):
         energies = _InjectCachedEvalGrad.apply(
             energies,
@@ -970,7 +1141,29 @@ def ewald_real_space(
             else None,
             None,
             batch_idx,
+            energy_reduction,
+            num_systems,
         )
+    elif energy_reduction == "system" and (
+        positions.requires_grad or charges.requires_grad or cell.requires_grad
+    ):
+        energies = _InjectCachedEvalGradWithFallback.apply(
+            energies.detach(),
+            positions,
+            charges,
+            cell,
+            None,
+            None,
+            None,
+            batch_idx,
+            _system_fallback,
+            "system",
+            num_systems,
+            True,
+            True,
+        )
+    else:
+        energies = _select_energy(energies)
     return _build_result(energies, forces, charge_grads_out, virial)
 
 
@@ -987,6 +1180,7 @@ def ewald_reciprocal_space(
     hybrid_forces: bool = False,
     *,
     max_atoms_per_system: int | None = None,
+    energy_reduction: Literal["atom", "system"] = "atom",
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
     r"""Compute reciprocal-space Ewald energy and optionally forces, charge gradients, virial.
 
@@ -1032,6 +1226,8 @@ def ewald_reciprocal_space(
         Overestimates are safe but may launch extra blocks. When omitted, the
         bound is inferred from ``atom_start`` / ``atom_end`` and may
         synchronize on CUDA.
+    energy_reduction : {"atom", "system"}, default="atom"
+        Return per-atom energies ``(N,)`` or summed per-system energies ``(B,)``.
 
     Returns
     -------
@@ -1058,6 +1254,7 @@ def ewald_reciprocal_space(
     losses and higher-order derivatives recompute safe partials or connected
     gradients as needed to avoid double-counting that chain term (issue #115).
     """
+    _validate_energy_reduction(energy_reduction)
     return _ewald_reciprocal_space(
         positions=positions,
         charges=charges,
@@ -1071,6 +1268,7 @@ def ewald_reciprocal_space(
         hybrid_forces=hybrid_forces,
         allow_cell_grad_with_k_vectors=False,
         max_atoms_per_system=max_atoms_per_system,
+        energy_reduction=energy_reduction,
     )
 
 
@@ -1087,8 +1285,10 @@ def _ewald_reciprocal_space(
     hybrid_forces: bool = False,
     allow_cell_grad_with_k_vectors: bool = False,
     max_atoms_per_system: int | None = None,
+    energy_reduction: Literal["atom", "system"] = "atom",
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
     """Private reciprocal-space implementation with an internal cell-gradient path."""
+    _validate_energy_reduction(energy_reduction)
     component_deprecated_flags = tuple(
         name
         for name, enabled in (
@@ -1126,6 +1326,13 @@ def _ewald_reciprocal_space(
             k_vectors_2d = k_vectors[:1]
         else:
             k_vectors_2d = k_vectors.unsqueeze(0)
+    num_systems = int(k_vectors_2d.shape[0])
+
+    def _select_energy(energy):
+        if energy_reduction == "system":
+            return _reduce_atom_energy(energy, batch_idx, num_systems)
+        return energy
+
     if not allow_cell_grad_with_k_vectors:
         k_vectors_2d = k_vectors_2d.detach()
 
@@ -1163,7 +1370,6 @@ def _ewald_reciprocal_space(
     # self/background corrections below.
     num_atoms = positions.shape[0]
     if num_atoms == 0:
-        num_systems = k_vectors_2d.shape[0]
         zeros_e = torch.zeros(num_atoms, device=positions.device, dtype=torch.float64)
         zeros_f = torch.zeros(
             num_atoms, 3, device=positions.device, dtype=positions.dtype
@@ -1174,7 +1380,7 @@ def _ewald_reciprocal_space(
         zeros_v = torch.zeros(
             num_systems, 3, 3, device=positions.device, dtype=positions.dtype
         )
-        return _build_result(zeros_e, zeros_f, zeros_cg, zeros_v)
+        return _build_result(_select_energy(zeros_e), zeros_f, zeros_cg, zeros_v)
 
     if hybrid_forces:
         k_vectors_hybrid = k_vectors_2d.detach()
@@ -1223,7 +1429,11 @@ def _ewald_reciprocal_space(
                 None,
                 batch_idx,
                 _fallback,
+                energy_reduction,
+                num_systems,
             )
+        else:
+            energies = _select_energy(energies)
         return _build_result(energies, forces, charge_grads.to(positions.dtype), virial)
 
     differentiable_inputs = (
@@ -1255,7 +1465,7 @@ def _ewald_reciprocal_space(
         charge_grads_out = (
             charge_grads.to(positions.dtype) if charge_grads is not None else None
         )
-        return _build_result(energies, forces, charge_grads_out, virial)
+        return _build_result(_select_energy(energies), forces, charge_grads_out, virial)
 
     energies = _reciprocal_space_energy(
         positions,
@@ -1265,6 +1475,7 @@ def _ewald_reciprocal_space(
         alpha,
         batch_idx=batch_idx,
         max_atoms_per_system=max_atoms_per_system,
+        energy_reduction=energy_reduction if not want_direct else "atom",
     )
 
     if not want_direct:
@@ -1310,7 +1521,35 @@ def _ewald_reciprocal_space(
             k_vectors_2d=k_vectors_2d,
         )
 
-    if (
+    if energy_reduction == "system" and cell.requires_grad:
+
+        def _system_fallback(p, q, c):
+            return _reciprocal_system_energy_torch(
+                p,
+                q,
+                c,
+                k_vectors_2d,
+                alpha,
+                batch_idx,
+                num_systems,
+            )
+
+        energies = _InjectCachedEvalGradWithFallback.apply(
+            energies.detach(),
+            positions,
+            charges,
+            cell,
+            None,
+            None,
+            None,
+            batch_idx,
+            _system_fallback,
+            "system",
+            num_systems,
+            True,
+            True,
+        )
+    elif (
         not cell.requires_grad
         and (positions.requires_grad or charges.requires_grad)
         and (forces is not None or charge_grads is not None)
@@ -1328,7 +1567,11 @@ def _ewald_reciprocal_space(
             else None,
             None,
             batch_idx,
+            energy_reduction,
+            num_systems,
         )
+    else:
+        energies = _select_energy(energies)
 
     charge_grads_out = (
         charge_grads.to(positions.dtype) if charge_grads is not None else None
@@ -1360,6 +1603,7 @@ def ewald_summation(
     *,
     miller_bounds: tuple[int, int, int] | torch.Tensor | None = None,
     max_atoms_per_system: int | None = None,
+    energy_reduction: Literal["atom", "system"] = "atom",
 ) -> tuple[torch.Tensor, ...] | torch.Tensor:
     r"""Complete Ewald summation for long-range electrostatics.
 
@@ -1437,6 +1681,8 @@ def ewald_summation(
         Ballenegger et al. 2009 Eq. 29 non-neutral extension) to the total
         energy and to forces/charge_grads/virial when those are requested.
         Orthorhombic and triclinic slab cells are supported.
+    energy_reduction : {"atom", "system"}, default="atom"
+        Return per-atom energies ``(N,)`` or summed per-system energies ``(B,)``.
 
     Returns
     -------
@@ -1499,6 +1745,7 @@ def ewald_summation(
         ...     compute_forces=True,
         ... )
     """
+    _validate_energy_reduction(energy_reduction)
     if compute_forces or compute_virial or compute_charge_gradients or hybrid_forces:
         if torch.compiler.is_compiling():
             _compiled_direct_output_deprecation_signal("ewald_summation")
@@ -1553,6 +1800,7 @@ def ewald_summation(
             compute_charge_gradients=compute_charge_gradients,
             compute_virial=compute_virial,
             hybrid_forces=hybrid_forces,
+            energy_reduction=energy_reduction,
         )
 
         # Compute reciprocal-space
@@ -1569,6 +1817,7 @@ def ewald_summation(
             hybrid_forces=hybrid_forces,
             allow_cell_grad_with_k_vectors=generated_k_vectors,
             max_atoms_per_system=max_atoms_per_system,
+            energy_reduction=energy_reduction,
         )
         return real, reciprocal
 
@@ -1597,6 +1846,7 @@ def ewald_summation(
                 compute_forces=compute_forces,
                 compute_charge_gradients=True,
                 compute_virial=compute_virial,
+                energy_reduction=energy_reduction,
             )
             slab_energies, slab_forces, slab_charge_grads, slab_virial = (
                 _unpack_electrostatic_outputs(
@@ -1617,9 +1867,16 @@ def ewald_summation(
                     compute_forces=False,
                     compute_charge_gradients=False,
                     compute_virial=False,
+                    energy_reduction=energy_reduction,
                 )
                 slab_energies = _InjectChargeGrad.apply(
-                    slab_energies, charges, slab_charge_grads, batch_idx
+                    slab_energies,
+                    charges,
+                    slab_charge_grads,
+                    batch_idx,
+                    energy_reduction,
+                    num_systems,
+                    energy_reduction == "system",
                 )
 
             slab_result = _build_electrostatic_result(
@@ -1641,6 +1898,7 @@ def ewald_summation(
                 compute_forces=compute_forces,
                 compute_charge_gradients=compute_charge_gradients,
                 compute_virial=compute_virial,
+                energy_reduction=energy_reduction,
             )
 
     return _combine_electrostatic_outputs(

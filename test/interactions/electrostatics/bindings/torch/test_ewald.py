@@ -104,6 +104,276 @@ TIGHT_TOL = 1e-6
 LOOSE_TOL = 1e-4
 
 
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+@pytest.mark.parametrize("part", ["real", "reciprocal", "full"])
+def test_system_energy_matches_atom_reduction_and_weighted_gradient(device, part):
+    """System layout preserves values and arbitrary per-system cotangents."""
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+    dev = torch.device(device)
+    dtype = torch.float64
+    positions = torch.tensor(
+        [
+            [1.0, 2.0, 3.0],
+            [3.0, 2.0, 1.0],
+            [1.5, 2.5, 3.5],
+            [3.5, 2.5, 1.5],
+        ],
+        dtype=dtype,
+        device=dev,
+    )
+    charges = torch.tensor([0.7, -0.7, 0.4, -0.4], dtype=dtype, device=dev)
+    cell = torch.eye(3, dtype=dtype, device=dev).repeat(2, 1, 1) * 8.0
+    batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=dev)
+    neighbor_list = torch.tensor(
+        [[0, 1, 2, 3], [1, 0, 3, 2]], dtype=torch.int32, device=dev
+    )
+    neighbor_ptr = torch.tensor([0, 1, 2, 3, 4], dtype=torch.int32, device=dev)
+    shifts = torch.zeros(4, 3, dtype=torch.int32, device=dev)
+    alpha = torch.tensor([0.3, 0.35], dtype=dtype, device=dev)
+    k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=4.0)
+
+    def energy(pos, reduction):
+        common = {
+            "positions": pos,
+            "charges": charges + 0.01 * pos[:, 0],
+            "cell": cell,
+            "batch_idx": batch_idx,
+            "energy_reduction": reduction,
+        }
+        if part == "real":
+            return ewald_real_space(
+                alpha=alpha,
+                neighbor_list=neighbor_list,
+                neighbor_ptr=neighbor_ptr,
+                neighbor_shifts=shifts,
+                **common,
+            )
+        if part == "reciprocal":
+            return ewald_reciprocal_space(
+                k_vectors=k_vectors,
+                alpha=alpha,
+                **common,
+            )
+        return ewald_summation(
+            alpha=alpha,
+            k_vectors=k_vectors,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=shifts,
+            **common,
+        )
+
+    pos_atom = positions.clone().requires_grad_(True)
+    atom_energy = energy(pos_atom, "atom")
+    expected = torch.zeros(2, dtype=atom_energy.dtype, device=dev).index_add(
+        0, batch_idx.long(), atom_energy
+    )
+    pos_system = positions.clone().requires_grad_(True)
+    system_energy = energy(pos_system, "system")
+    weights = torch.tensor([1.7, -0.4], dtype=dtype, device=dev)
+
+    assert system_energy.shape == (2,)
+    torch.testing.assert_close(system_energy, expected)
+    grad_atom = torch.autograd.grad(
+        atom_energy, pos_atom, grad_outputs=weights.index_select(0, batch_idx.long())
+    )[0]
+    grad_system = torch.autograd.grad(system_energy, pos_system, grad_outputs=weights)[
+        0
+    ]
+    torch.testing.assert_close(grad_system, grad_atom, rtol=2e-6, atol=2e-7)
+
+
+@pytest.mark.parametrize("part", ["real", "full"])
+def test_system_qr_cell_backward_bypasses_atom_cotangent_inspection(monkeypatch, part):
+    """System Ewald facades consume (B,) cotangents before atom-major chains."""
+    dtype = torch.float64
+    positions = torch.tensor(
+        [
+            [1.0, 2.0, 3.0],
+            [3.0, 2.0, 1.0],
+            [1.5, 2.5, 3.5],
+            [3.5, 2.5, 1.5],
+        ],
+        dtype=dtype,
+        requires_grad=True,
+    )
+    base_charges = torch.tensor([0.7, -0.7, 0.4, -0.4], dtype=dtype)
+    charges = base_charges + 0.01 * positions[:, 0]
+    cell = (torch.eye(3, dtype=dtype).repeat(2, 1, 1) * 8.0).requires_grad_(True)
+    batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32)
+    neighbor_list = torch.tensor([[0, 1, 2, 3], [1, 0, 3, 2]], dtype=torch.int32)
+    neighbor_ptr = torch.tensor([0, 1, 2, 3, 4], dtype=torch.int32)
+    shifts = torch.zeros(4, 3, dtype=torch.int32)
+    alpha = torch.tensor([0.3, 0.35], dtype=dtype)
+    weights = torch.tensor([1.7, -0.4], dtype=dtype)
+
+    ref_positions = positions.detach().clone().requires_grad_(True)
+    ref_cell = cell.detach().clone().requires_grad_(True)
+    ref_common = {
+        "positions": ref_positions,
+        "charges": base_charges + 0.01 * ref_positions[:, 0],
+        "cell": ref_cell,
+        "alpha": alpha,
+        "batch_idx": batch_idx,
+        "neighbor_list": neighbor_list,
+        "neighbor_ptr": neighbor_ptr,
+        "neighbor_shifts": shifts,
+        "energy_reduction": "atom",
+    }
+    if part == "real":
+        ref_energy = ewald_real_space(**ref_common)
+    else:
+        ref_energy = ewald_summation(k_cutoff=4.0, **ref_common)
+    ref_grad_positions, ref_grad_cell = torch.autograd.grad(
+        ref_energy,
+        (ref_positions, ref_cell),
+        grad_outputs=weights.index_select(0, batch_idx.long()),
+        create_graph=True,
+    )
+
+    def _unexpected_atom_check(*_args):
+        raise AssertionError("system cotangent reached atom value inspection")
+
+    monkeypatch.setattr(
+        _ewald_real_chain,
+        "_is_per_system_uniform_cotangent",
+        _unexpected_atom_check,
+    )
+    monkeypatch.setattr(
+        _ewald_recip_chain,
+        "_is_per_system_uniform_cotangent",
+        _unexpected_atom_check,
+    )
+    common = {
+        "positions": positions,
+        "charges": charges,
+        "cell": cell,
+        "alpha": alpha,
+        "batch_idx": batch_idx,
+        "neighbor_list": neighbor_list,
+        "neighbor_ptr": neighbor_ptr,
+        "neighbor_shifts": shifts,
+        "energy_reduction": "system",
+    }
+    if part == "real":
+        energy = ewald_real_space(**common)
+    else:
+        energy = ewald_summation(k_cutoff=4.0, **common)
+
+    grad_positions, grad_cell = torch.autograd.grad(
+        energy, (positions, cell), grad_outputs=weights, create_graph=True
+    )
+    torch.testing.assert_close(grad_positions, ref_grad_positions)
+    torch.testing.assert_close(grad_cell, ref_grad_cell)
+    pos_direction = torch.arange(positions.numel(), dtype=dtype).reshape_as(positions)
+    cell_direction = torch.arange(cell.numel(), dtype=dtype).reshape_as(cell)
+    ref_hvp = torch.autograd.grad(
+        (ref_grad_positions * pos_direction).sum()
+        + (ref_grad_cell * cell_direction).sum(),
+        (ref_positions, ref_cell),
+    )
+    system_hvp = torch.autograd.grad(
+        (grad_positions * pos_direction).sum() + (grad_cell * cell_direction).sum(),
+        (positions, cell),
+    )
+    torch.testing.assert_close(system_hvp[0], ref_hvp[0])
+    torch.testing.assert_close(system_hvp[1], ref_hvp[1])
+
+
+@pytest.mark.parametrize("part", ["reciprocal", "full"])
+def test_system_direct_virial_cell_backward_bypasses_atom_cotangent_inspection(
+    monkeypatch, part
+):
+    """Direct virial tuples retain system cotangents before reciprocal backward."""
+    dtype = torch.float64
+    positions = torch.tensor(
+        [[1.0, 2.0, 3.0], [3.0, 2.0, 1.0], [1.5, 2.5, 3.5], [3.5, 2.5, 1.5]],
+        dtype=dtype,
+    )
+    charges = torch.tensor([0.7, -0.7, 0.4, -0.4], dtype=dtype)
+    cell = (torch.eye(3, dtype=dtype).repeat(2, 1, 1) * 8.0).requires_grad_(True)
+    batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32)
+    alpha = torch.tensor([0.3, 0.35], dtype=dtype)
+    neighbor_list = torch.tensor([[0, 1, 2, 3], [1, 0, 3, 2]], dtype=torch.int32)
+    neighbor_ptr = torch.tensor([0, 1, 2, 3, 4], dtype=torch.int32)
+    shifts = torch.zeros(4, 3, dtype=torch.int32)
+    weights = torch.tensor([1.7, -0.4], dtype=dtype)
+
+    ref_cell = cell.detach().clone().requires_grad_(True)
+    with pytest.warns(DeprecationWarning):
+        if part == "reciprocal":
+            ref_energy, _ref_virial = ewald_reciprocal_space(
+                positions,
+                charges,
+                ref_cell,
+                generate_k_vectors_ewald_summation(ref_cell.detach(), k_cutoff=4.0),
+                alpha,
+                batch_idx=batch_idx,
+                compute_virial=True,
+                energy_reduction="atom",
+            )
+        else:
+            ref_energy, _ref_virial = ewald_summation(
+                positions,
+                charges,
+                ref_cell,
+                alpha=alpha,
+                k_cutoff=4.0,
+                batch_idx=batch_idx,
+                neighbor_list=neighbor_list,
+                neighbor_ptr=neighbor_ptr,
+                neighbor_shifts=shifts,
+                compute_virial=True,
+                energy_reduction="atom",
+            )
+    (ref_cell_grad,) = torch.autograd.grad(
+        ref_energy,
+        ref_cell,
+        grad_outputs=weights.index_select(0, batch_idx.long()),
+    )
+
+    def _unexpected_atom_check(*_args):
+        raise AssertionError("system cotangent reached reciprocal atom inspection")
+
+    monkeypatch.setattr(
+        _ewald_recip_chain,
+        "_is_per_system_uniform_cotangent",
+        _unexpected_atom_check,
+    )
+    with pytest.warns(DeprecationWarning):
+        if part == "reciprocal":
+            energy, virial = ewald_reciprocal_space(
+                positions,
+                charges,
+                cell,
+                generate_k_vectors_ewald_summation(cell.detach(), k_cutoff=4.0),
+                alpha,
+                batch_idx=batch_idx,
+                compute_virial=True,
+                energy_reduction="system",
+            )
+        else:
+            energy, virial = ewald_summation(
+                positions,
+                charges,
+                cell,
+                alpha=alpha,
+                k_cutoff=4.0,
+                batch_idx=batch_idx,
+                neighbor_list=neighbor_list,
+                neighbor_ptr=neighbor_ptr,
+                neighbor_shifts=shifts,
+                compute_virial=True,
+                energy_reduction="system",
+            )
+    (cell_grad,) = torch.autograd.grad(energy, cell, grad_outputs=weights)
+
+    assert energy.shape == (2,)
+    assert virial.shape == (2, 3, 3)
+    torch.testing.assert_close(cell_grad, ref_cell_grad)
+
+
 def _torchpme_smearing(alpha: float | torch.Tensor) -> float:
     """Convert Ewald alpha to the scalar smearing parameter torchpme expects."""
     if isinstance(alpha, torch.Tensor):
@@ -7448,7 +7718,7 @@ class TestEwaldMillerBounds:
 
 
 class TestEwaldPerSystemUniformCotangentFastPath:
-    """CUDA cotangent routing stays sync-free for materialized weighted losses."""
+    """CUDA atom mode recognizes exact per-system-uniform materialized weights."""
 
     @staticmethod
     def _batch_inputs(device):
@@ -7481,10 +7751,10 @@ class TestEwaldPerSystemUniformCotangentFastPath:
         )
 
     @pytest.mark.parametrize("device", ["cuda"])
-    def test_real_space_cuda_materialized_per_system_weights_use_fallback(
+    def test_real_space_cuda_materialized_per_system_weights_use_cache(
         self, device, monkeypatch
     ):
-        """Materialized CUDA weights use the exact weighted recompute fallback."""
+        """Materialized CUDA per-system weights avoid weighted recompute."""
         if not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         device = torch.device(device)
@@ -7541,13 +7811,13 @@ class TestEwaldPerSystemUniformCotangentFastPath:
         )
         (actual,) = torch.autograd.grad((atom_weights * energy).sum(), test_pos)
         torch.testing.assert_close(actual, expected, rtol=2e-7, atol=3e-8)
-        assert call_count == 1
+        assert call_count == 0
 
     @pytest.mark.parametrize("device", ["cuda"])
-    def test_recip_cuda_materialized_per_system_weights_use_fallback(
+    def test_recip_cuda_materialized_per_system_weights_use_cache(
         self, device, monkeypatch
     ):
-        """Materialized CUDA reciprocal weights use the exact fallback."""
+        """Materialized CUDA reciprocal weights avoid weighted recompute."""
         if not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         device = torch.device(device)
@@ -7600,7 +7870,7 @@ class TestEwaldPerSystemUniformCotangentFastPath:
         )
         (actual,) = torch.autograd.grad((atom_weights * energy).sum(), test_pos)
         torch.testing.assert_close(actual, expected, rtol=1e-11, atol=1e-12)
-        assert call_count == 1
+        assert call_count == 0
 
 
 class TestEwaldEnergyDerivativeContract:

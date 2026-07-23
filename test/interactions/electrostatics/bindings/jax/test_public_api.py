@@ -67,6 +67,26 @@ def test_ewald_miller_bounds_is_keyword_only_after_legacy_slots() -> None:
 
 
 @pytest.mark.parametrize(
+    "name",
+    [
+        "ewald_real_space",
+        "ewald_reciprocal_space",
+        "ewald_summation",
+        "pme_reciprocal_space",
+        "particle_mesh_ewald",
+        "compute_slab_correction",
+    ],
+)
+def test_monopole_energy_reduction_is_keyword_only(name: str) -> None:
+    """Monopole APIs expose the compatible atom/system energy-layout option."""
+    parameter = inspect.signature(getattr(electrostatics, name)).parameters[
+        "energy_reduction"
+    ]
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameter.default == "atom"
+
+
+@pytest.mark.parametrize(
     ("public_name", "private_name"),
     [
         ("pme_green_structure_factor", "_pme_green_structure_factor"),

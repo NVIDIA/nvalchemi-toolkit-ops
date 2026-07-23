@@ -65,11 +65,14 @@ from nvalchemiops.jax.interactions.electrostatics._lazy_jax_kernels import (
     _make_jax_kernels,
 )
 from nvalchemiops.jax.interactions.electrostatics._utils import (
+    _apply_energy_reduction,
     _build_electrostatic_result,
     _component_direct_output_deprecation_msg,
     _direct_output_deprecation_msg,
     _normalize_dtype,
     _prepare_cell,
+    _system_sum_from_atoms,
+    _validate_energy_reduction,
 )
 from nvalchemiops.jax.interactions.electrostatics.ewald import (
     ewald_real_space,
@@ -1861,53 +1864,6 @@ def _unsupported_pme_cell_hvp_primal_jvp(
     )
 
 
-def _system_sum_from_atoms(
-    values: jax.Array,
-    batch_idx: jax.Array | None,
-    num_systems: int,
-) -> jax.Array:
-    """Sum per-atom scalar values into one scalar per system."""
-    if batch_idx is None:
-        return values.sum(keepdims=True)
-    return (
-        jnp.zeros((num_systems,), dtype=values.dtype)
-        .at[batch_idx.astype(jnp.int32)]
-        .add(values)
-    )
-
-
-def _per_system_atom_counts(
-    batch_idx: jax.Array | None,
-    num_systems: int,
-    num_atoms: int,
-) -> jax.Array:
-    """Return per-system atom counts as float64 for tangent redistribution."""
-    if batch_idx is None:
-        return jnp.full((num_systems,), float(num_atoms), dtype=jnp.float64)
-    return (
-        jnp.zeros((num_systems,), dtype=jnp.float64)
-        .at[batch_idx.astype(jnp.int32)]
-        .add(jnp.ones((num_atoms,), dtype=jnp.float64))
-    )
-
-
-def _distribute_system_values(
-    system_values: jax.Array,
-    batch_idx: jax.Array | None,
-    num_atoms: int,
-) -> jax.Array:
-    """Distribute per-system values uniformly over each system's atoms."""
-    if batch_idx is None:
-        if num_atoms == 0:
-            return jnp.zeros((0,), dtype=system_values.dtype)
-        return jnp.full(
-            (num_atoms,), system_values[0] / num_atoms, dtype=system_values.dtype
-        )
-
-    counts = _per_system_atom_counts(batch_idx, system_values.shape[0], num_atoms)
-    return (system_values / jnp.maximum(counts, 1.0))[batch_idx.astype(jnp.int32)]
-
-
 def _cell_tangent_system_values(
     grad_cell: jax.Array,
     tangent_cell,
@@ -2642,6 +2598,7 @@ def pme_reciprocal_space(
     compute_virial: bool = False,
     hybrid_forces: bool = False,
     *,
+    energy_reduction: str = "atom",
     cell_inv_t: jax.Array | None = None,
     volume: jax.Array | None = None,
     moduli_x: jax.Array | None = None,
@@ -2693,6 +2650,14 @@ def pme_reciprocal_space(
         are deprecated for differentiable training.
     hybrid_forces : bool, default=False
         Deprecated charge-gradient injection mode for compatibility.
+    energy_reduction : {"atom", "system"}, keyword-only, default="atom"
+        Public energy layout. ``"atom"`` returns per-atom energies of shape
+        (N,) (default, unchanged behavior). ``"system"`` returns per-system
+        energies of shape (B,) (or (1,) for a single system), computed as a
+        differentiable, uniform scatter-sum of the per-atom energies; it does
+        not support nonuniform per-atom weighting. Only the energy field of
+        the return value changes; forces, charge gradients, and the virial
+        keep their existing atom/system layouts.
     cell_inv_t, volume, moduli_x, moduli_y, moduli_z : jax.Array or None
         Optional precomputed PME intermediates. These are setup constants for
         JAX and are not differentiable inputs. Cell-derived metadata such as
@@ -2702,8 +2667,9 @@ def pme_reciprocal_space(
 
     Returns
     -------
-    energies : jax.Array, shape (N,)
-        Per-atom reciprocal-space energies.
+    energies : jax.Array, shape (N,) or (B,)
+        Reciprocal-space energies: per-atom when ``energy_reduction="atom"``,
+        per-system when ``energy_reduction="system"``.
     forces : jax.Array, shape (N, 3), optional
         Per-atom forces. Only present when ``compute_forces=True``.
     charge_gradients : jax.Array, shape (N,), optional
@@ -2725,6 +2691,7 @@ def pme_reciprocal_space(
     losses. Stress/cell/strain HVPs, alpha HVPs, and precomputed-metadata HVPs
     are unsupported until explicitly implemented and tested.
     """
+    _validate_energy_reduction(energy_reduction)
     _require_explicit_mesh_dimensions_in_tracing(
         mesh_dimensions=mesh_dimensions,
         cell=cell,
@@ -2750,7 +2717,7 @@ def pme_reciprocal_space(
         )
 
     if compute_forces or compute_charge_gradients or compute_virial or hybrid_forces:
-        return _pme_reciprocal_space_impl(
+        result = _pme_reciprocal_space_impl(
             positions=positions,
             charges=charges,
             cell=cell,
@@ -2771,10 +2738,11 @@ def pme_reciprocal_space(
             compute_virial=compute_virial,
             hybrid_forces=hybrid_forces,
         )
+        return _apply_energy_reduction(result, energy_reduction, batch_idx, cell)
     if mesh_dimensions is None and mesh_spacing is not None:
         mesh_dimensions = mesh_spacing_to_dimensions(cell, mesh_spacing)
         mesh_spacing = None
-    return _pme_reciprocal_energy_jvp(
+    result = _pme_reciprocal_energy_jvp(
         positions,
         charges,
         cell,
@@ -2791,6 +2759,7 @@ def pme_reciprocal_space(
         moduli_y,
         moduli_z,
     )
+    return _apply_energy_reduction(result, energy_reduction, batch_idx, cell)
 
 
 def _particle_mesh_ewald_impl(
@@ -3221,6 +3190,7 @@ def particle_mesh_ewald(
     pbc: jax.Array | None = None,
     slab_correction: bool = False,
     *,
+    energy_reduction: str = "atom",
     cell_inv_t: jax.Array | None = None,
     volume: jax.Array | None = None,
     moduli_x: jax.Array | None = None,
@@ -3281,6 +3251,14 @@ def particle_mesh_ewald(
         Per-system periodic boundary conditions for slab correction.
     slab_correction : bool, default=False
         If True, add the Yeh-Berkowitz/Ballenegger slab correction.
+    energy_reduction : {"atom", "system"}, keyword-only, default="atom"
+        Public energy layout. ``"atom"`` returns per-atom energies of shape
+        (N,) (default, unchanged behavior). ``"system"`` returns per-system
+        energies of shape (B,) (or (1,) for a single system), computed as a
+        differentiable, uniform scatter-sum of the per-atom energies; it does
+        not support nonuniform per-atom weighting. Only the energy field of
+        the return value changes; forces, charge gradients, and the virial
+        keep their existing atom/system layouts.
     volume, cell_inv_t, moduli_x, moduli_y, moduli_z : jax.Array or None
         Optional precomputed PME intermediates. Cell-derived values supplied
         while differentiating with respect to ``cell`` are treated as static
@@ -3288,8 +3266,10 @@ def particle_mesh_ewald(
 
     Returns
     -------
-    energies : jax.Array, shape (N,)
-        Per-atom total electrostatic energies (real + reciprocal + slab).
+    energies : jax.Array, shape (N,) or (B,)
+        Total electrostatic energies (real + reciprocal + slab): per-atom
+        when ``energy_reduction="atom"``, per-system when
+        ``energy_reduction="system"``.
     forces : jax.Array, shape (N, 3), optional
         Per-atom forces. Only present when ``compute_forces=True`` (deprecated).
     charge_gradients : jax.Array, shape (N,), optional
@@ -3307,6 +3287,7 @@ def particle_mesh_ewald(
     setup values. If ``alpha`` would otherwise be estimated from traced inputs,
     precompute it outside the transformation and pass it explicitly.
     """
+    _validate_energy_reduction(energy_reduction)
     if compute_forces or compute_virial or compute_charge_gradients or hybrid_forces:
         warnings.warn(
             _direct_output_deprecation_msg("particle_mesh_ewald"),
@@ -3315,7 +3296,7 @@ def particle_mesh_ewald(
         )
 
     if compute_forces or compute_charge_gradients or compute_virial or hybrid_forces:
-        return _particle_mesh_ewald_impl(
+        result = _particle_mesh_ewald_impl(
             positions=positions,
             charges=charges,
             cell=cell,
@@ -3345,6 +3326,7 @@ def particle_mesh_ewald(
             moduli_y=moduli_y,
             moduli_z=moduli_z,
         )
+        return _apply_energy_reduction(result, energy_reduction, batch_idx, cell)
 
     cell_3d, alpha_arr, mesh_dims = _resolve_particle_mesh_ewald_parameters(
         positions=positions,
@@ -3362,7 +3344,7 @@ def particle_mesh_ewald(
     # Energy-only path: call the impl directly so the full energy is the sum of
     # real-space and reciprocal terms. Component custom derivative rules provide
     # energy gradients and reverse-mode position/charge higher-order losses.
-    return _particle_mesh_ewald_impl(
+    result = _particle_mesh_ewald_impl(
         positions=positions,
         charges=charges,
         cell=cell_3d,
@@ -3391,3 +3373,4 @@ def particle_mesh_ewald(
         moduli_y=moduli_y,
         moduli_z=moduli_z,
     )
+    return _apply_energy_reduction(result, energy_reduction, batch_idx, cell_3d)

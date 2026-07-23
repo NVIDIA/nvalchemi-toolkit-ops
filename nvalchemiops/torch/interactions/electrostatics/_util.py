@@ -30,6 +30,8 @@ __all__ = [
     "_InjectCachedEvalGrad",
     "_InjectCachedEvalGradWithFallback",
     "_InjectChargeGrad",
+    "_reduce_atom_energy",
+    "_validate_energy_reduction",
     "_build_electrostatic_result",
     "_combine_electrostatic_outputs",
     "_compiled_direct_output_deprecation_signal",
@@ -37,6 +39,46 @@ __all__ = [
     "_sum_charge_gradients",
     "_unpack_electrostatic_outputs",
 ]
+
+
+def _validate_energy_reduction(energy_reduction: str) -> str:
+    """Validate and return the public electrostatics energy layout."""
+    if energy_reduction not in {"atom", "system"}:
+        raise ValueError(
+            "energy_reduction must be either 'atom' or 'system', "
+            f"got {energy_reduction!r}"
+        )
+    return energy_reduction
+
+
+def _reduce_atom_energy(
+    energy: torch.Tensor,
+    batch_idx: torch.Tensor | None,
+    num_systems: int,
+) -> torch.Tensor:
+    """Sum an atom-major energy tensor into an explicit system-major layout."""
+    flat = energy.reshape(-1)
+    result = flat.new_zeros((num_systems,))
+    if flat.numel() == 0 or num_systems == 0:
+        return result
+    if batch_idx is None:
+        result[0] = flat.sum()
+        return result
+    return result.index_add(0, batch_idx.to(device=flat.device, dtype=torch.long), flat)
+
+
+def _system_cotangent_to_atoms(
+    grad_system: torch.Tensor,
+    batch_idx: torch.Tensor | None,
+    num_atoms: int,
+) -> torch.Tensor:
+    """Broadcast an explicit system cotangent to atom-major layout."""
+    grad = grad_system.reshape(-1)
+    if num_atoms == 0:
+        return grad.new_zeros((0,))
+    if batch_idx is None:
+        return grad[0].expand(num_atoms)
+    return grad.index_select(0, batch_idx.to(device=grad.device, dtype=torch.long))
 
 
 def _sum_charge_gradients(
@@ -275,39 +317,6 @@ def _component_direct_output_deprecation_msg(fn: str, flags: tuple[str, ...]) ->
     )
 
 
-def _num_atoms_from_state(
-    pos_grad_state: torch.Tensor | None,
-    charge_grad_state: torch.Tensor | None,
-    batch_idx: torch.Tensor | None,
-) -> int:
-    """Infer the atom count for per-atom cotangent broadcasting."""
-    if charge_grad_state is not None:
-        return int(charge_grad_state.shape[0])
-    if pos_grad_state is not None:
-        return int(pos_grad_state.shape[0])
-    if batch_idx is not None:
-        return int(batch_idx.shape[0])
-    return 0
-
-
-def _num_systems_from_state(
-    grad_energy: torch.Tensor,
-    cell_grad_state: torch.Tensor | None,
-    batch_idx: torch.Tensor | None,
-    num_atoms: int,
-) -> int:
-    """Infer the system count for per-system cotangent reduction."""
-    if cell_grad_state is not None:
-        return int(cell_grad_state.shape[0])
-    if batch_idx is None:
-        return 1
-    if grad_energy.numel() != num_atoms:
-        return int(grad_energy.numel())
-    if batch_idx.numel() == 0:
-        return 0
-    return int(batch_idx.max().item()) + 1
-
-
 def _energy_cotangents(
     grad_energy: torch.Tensor,
     batch_idx: torch.Tensor | None,
@@ -355,7 +364,9 @@ def _is_uniform_cotangent(grad_energy: torch.Tensor) -> bool:
     if _is_sync_free_uniform_cotangent(grad_energy):
         return True
     grad = grad_energy.reshape(-1)
-    if grad.is_cuda:
+    if grad.numel() == 0:
+        return True
+    if not _can_inspect_cotangent_values(grad):
         return False
     return bool(torch.all(grad == grad[0]).item())
 
@@ -368,6 +379,18 @@ def _is_sync_free_uniform_cotangent(grad_energy: torch.Tensor) -> bool:
         size <= 1 or stride == 0
         for size, stride in zip(grad_energy.shape, grad_energy.stride(), strict=True)
     )
+
+
+def _can_inspect_cotangent_values(grad_energy: torch.Tensor) -> bool:
+    """Whether eager code may perform an exact device-value uniformity check."""
+    if not grad_energy.is_cuda:
+        return True
+    if torch.compiler.is_compiling():
+        return False
+    try:
+        return not torch.cuda.is_current_stream_capturing()
+    except RuntimeError:
+        return False
 
 
 def _is_per_system_uniform_cotangent(
@@ -384,7 +407,7 @@ def _is_per_system_uniform_cotangent(
         return True
     if grad.numel() == 1 or grad.numel() == num_systems:
         return True
-    if grad.is_cuda:
+    if not _can_inspect_cotangent_values(grad):
         return False
     if batch_idx is None:
         return bool(torch.all(grad == grad[0]).item())
@@ -424,48 +447,69 @@ class _InjectCachedEvalGrad(torch.autograd.Function):
         charge_grad_state,
         cell_grad_state,
         batch_idx,
+        energy_reduction="atom",
+        num_systems=None,
     ):
-        """Return energy unchanged."""
+        """Return energy in the requested public layout."""
+        if energy_reduction == "system":
+            count = int(cell.shape[0]) if num_systems is None else int(num_systems)
+            return _reduce_atom_energy(energy, batch_idx, count)
         return energy
 
     @staticmethod
     def setup_context(ctx, inputs, output):
         """Save detached direct-derivative caches for the eval branch."""
+        base_inputs = inputs[:8]
         (
             _energy,
-            _positions,
+            positions,
             _charges,
             cell,
             pos_grad_state,
             charge_grad_state,
             cell_grad_state,
             batch_idx,
-        ) = inputs
+        ) = base_inputs
         ctx.save_for_backward(pos_grad_state, charge_grad_state, cell_grad_state)
         ctx.batch_idx = batch_idx
-        ctx.num_systems = int(cell.shape[0]) if cell.dim() == 3 else 1
+        ctx.num_atoms = int(positions.shape[0])
+        ctx.energy_reduction = inputs[8] if len(inputs) > 8 else "atom"
+        ctx.num_systems = (
+            int(inputs[9])
+            if len(inputs) > 9 and inputs[9] is not None
+            else (int(cell.shape[0]) if cell.dim() == 3 else 1)
+        )
+        ctx.num_inputs = len(inputs)
 
     @staticmethod
     def backward(ctx, grad_energy):
         """Use cached derivatives for uniform eval, else pass to eager energy."""
         pos_grad_state, charge_grad_state, cell_grad_state = ctx.saved_tensors
+        num_atoms = ctx.num_atoms
 
-        if torch.is_grad_enabled() or not _is_uniform_cotangent(grad_energy):
-            return grad_energy, None, None, None, None, None, None, None
+        if ctx.energy_reduction == "system":
+            grad_system = grad_energy.reshape(-1)
+            atom_grad = _system_cotangent_to_atoms(
+                grad_system, ctx.batch_idx, num_atoms
+            )
+            if torch.is_grad_enabled():
+                result = (atom_grad, None, None, None, None, None, None, None)
+                return result + (None,) * (ctx.num_inputs - len(result))
+        elif torch.is_grad_enabled() or not _is_per_system_uniform_cotangent(
+            grad_energy, ctx.batch_idx, ctx.num_systems
+        ):
+            result = (grad_energy, None, None, None, None, None, None, None)
+            return result + (None,) * (ctx.num_inputs - len(result))
 
-        num_atoms = _num_atoms_from_state(
-            pos_grad_state, charge_grad_state, ctx.batch_idx
-        )
-        if grad_energy.numel() != 0 and _is_sync_free_uniform_cotangent(grad_energy):
+        if ctx.energy_reduction == "system":
+            pass
+        elif grad_energy.numel() != 0 and _is_sync_free_uniform_cotangent(grad_energy):
             scale = grad_energy.reshape(-1)[0]
             atom_grad = scale.expand(num_atoms)
             grad_system = scale.expand(ctx.num_systems)
         else:
-            num_systems = _num_systems_from_state(
-                grad_energy, cell_grad_state, ctx.batch_idx, num_atoms
-            )
             grad_system, atom_grad = _energy_cotangents(
-                grad_energy, ctx.batch_idx, num_atoms, num_systems
+                grad_energy, ctx.batch_idx, num_atoms, ctx.num_systems
             )
 
         grad_positions = None
@@ -480,7 +524,17 @@ class _InjectCachedEvalGrad(torch.autograd.Function):
         if cell_grad_state is not None:
             grad_cell = cell_grad_state * grad_system.view(-1, 1, 1)
 
-        return None, grad_positions, grad_charges, grad_cell, None, None, None, None
+        result = (
+            None,
+            grad_positions,
+            grad_charges,
+            grad_cell,
+            None,
+            None,
+            None,
+            None,
+        )
+        return result + (None,) * (ctx.num_inputs - len(result))
 
 
 class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
@@ -503,13 +557,21 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
         cell_grad_state,
         batch_idx,
         fallback_fn,
+        energy_reduction="atom",
+        num_systems=None,
+        force_fallback=False,
+        fallback_returns_system=False,
     ):
-        """Return energy unchanged."""
+        """Return energy in the requested public layout."""
+        if energy_reduction == "system":
+            count = int(cell.shape[0]) if num_systems is None else int(num_systems)
+            return _reduce_atom_energy(energy, batch_idx, count)
         return energy
 
     @staticmethod
     def setup_context(ctx, inputs, output):
         """Save inputs, caches, and the fallback callable."""
+        base_inputs = inputs[:9]
         (
             _energy,
             positions,
@@ -520,7 +582,7 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
             cell_grad_state,
             batch_idx,
             fallback_fn,
-        ) = inputs
+        ) = base_inputs
         ctx.save_for_backward(
             positions,
             charges,
@@ -531,7 +593,16 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
         )
         ctx.batch_idx = batch_idx
         ctx.fallback_fn = fallback_fn
-        ctx.num_systems = int(cell.shape[0]) if cell.dim() == 3 else 1
+        ctx.num_atoms = int(positions.shape[0])
+        ctx.energy_reduction = inputs[9] if len(inputs) > 9 else "atom"
+        ctx.num_systems = (
+            int(inputs[10])
+            if len(inputs) > 10 and inputs[10] is not None
+            else (int(cell.shape[0]) if cell.dim() == 3 else 1)
+        )
+        ctx.force_fallback = bool(inputs[11]) if len(inputs) > 11 else False
+        ctx.fallback_returns_system = bool(inputs[12]) if len(inputs) > 12 else False
+        ctx.num_inputs = len(inputs)
 
     @staticmethod
     def backward(ctx, grad_energy):
@@ -545,8 +616,28 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
             charge_grad_state,
             cell_grad_state,
         ) = ctx.saved_tensors
+        num_atoms = ctx.num_atoms
 
-        if create_graph or not _is_uniform_cotangent(grad_energy):
+        def _pad(result):
+            return result + (None,) * (ctx.num_inputs - len(result))
+
+        def _public_fallback_energy(recomputed):
+            if ctx.energy_reduction == "system" and not ctx.fallback_returns_system:
+                return _reduce_atom_energy(recomputed, ctx.batch_idx, ctx.num_systems)
+            return recomputed
+
+        if ctx.energy_reduction == "system":
+            grad_system = grad_energy.reshape(-1)
+            atom_grad = _system_cotangent_to_atoms(
+                grad_system, ctx.batch_idx, num_atoms
+            )
+            use_fallback = create_graph or ctx.force_fallback
+        else:
+            use_fallback = create_graph or not _is_per_system_uniform_cotangent(
+                grad_energy, ctx.batch_idx, ctx.num_systems
+            )
+
+        if use_fallback:
             # q(R) routing:
             # - create_graph: return connected position/cell/alpha gradients only; do not
             #   also return grad_charges from the same connected recompute.
@@ -564,7 +655,9 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
                             diff_inputs.append(tensor)
                             diff_names.append(name)
                     with torch.enable_grad():
-                        recomputed = ctx.fallback_fn(positions, charges, cell)
+                        recomputed = _public_fallback_energy(
+                            ctx.fallback_fn(positions, charges, cell)
+                        )
                         if diff_inputs:
                             diff_grads = torch.autograd.grad(
                                 recomputed,
@@ -576,16 +669,18 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
                             grad_map = dict(zip(diff_names, diff_grads, strict=True))
                         else:
                             grad_map = {}
-                    return (
-                        None,
-                        grad_map.get("positions"),
-                        None,
-                        grad_map.get("cell"),
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
+                    return _pad(
+                        (
+                            None,
+                            grad_map.get("positions"),
+                            None,
+                            grad_map.get("cell"),
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
                     )
 
                 partial_inputs = []
@@ -600,10 +695,12 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
                 with torch.enable_grad():
                     partial_map = {}
                     if partial_inputs:
-                        recomputed_partial = ctx.fallback_fn(
-                            positions,
-                            charges.detach(),
-                            cell,
+                        recomputed_partial = _public_fallback_energy(
+                            ctx.fallback_fn(
+                                positions,
+                                charges.detach(),
+                                cell,
+                            )
                         )
                         partial_grads = torch.autograd.grad(
                             recomputed_partial,
@@ -618,7 +715,9 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
 
                     grad_charges = None
                     if charges.requires_grad:
-                        recomputed_charge = ctx.fallback_fn(positions, charges, cell)
+                        recomputed_charge = _public_fallback_energy(
+                            ctx.fallback_fn(positions, charges, cell)
+                        )
                         (grad_charges,) = torch.autograd.grad(
                             recomputed_charge,
                             charges,
@@ -626,19 +725,23 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
                             allow_unused=True,
                             create_graph=create_graph,
                         )
-                return (
-                    None,
-                    partial_map.get("positions"),
-                    grad_charges,
-                    partial_map.get("cell"),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
+                return _pad(
+                    (
+                        None,
+                        partial_map.get("positions"),
+                        grad_charges,
+                        partial_map.get("cell"),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
                 )
             with torch.enable_grad():
-                recomputed = ctx.fallback_fn(positions, charges, cell)
+                recomputed = _public_fallback_energy(
+                    ctx.fallback_fn(positions, charges, cell)
+                )
                 diff_inputs = []
                 diff_names = []
                 for name, tensor in (
@@ -660,31 +763,29 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
                         create_graph=create_graph,
                     )
                     grad_map = dict(zip(diff_names, diff_grads, strict=True))
-            return (
-                None,
-                grad_map.get("positions"),
-                grad_map.get("charges"),
-                grad_map.get("cell"),
-                None,
-                None,
-                None,
-                None,
-                None,
+            return _pad(
+                (
+                    None,
+                    grad_map.get("positions"),
+                    grad_map.get("charges"),
+                    grad_map.get("cell"),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
             )
 
-        num_atoms = _num_atoms_from_state(
-            pos_grad_state, charge_grad_state, ctx.batch_idx
-        )
-        if grad_energy.numel() != 0 and _is_sync_free_uniform_cotangent(grad_energy):
+        if ctx.energy_reduction == "system":
+            pass
+        elif grad_energy.numel() != 0 and _is_sync_free_uniform_cotangent(grad_energy):
             scale = grad_energy.reshape(-1)[0]
             atom_grad = scale.expand(num_atoms)
             grad_system = scale.expand(ctx.num_systems)
         else:
-            num_systems = _num_systems_from_state(
-                grad_energy, cell_grad_state, ctx.batch_idx, num_atoms
-            )
             grad_system, atom_grad = _energy_cotangents(
-                grad_energy, ctx.batch_idx, num_atoms, num_systems
+                grad_energy, ctx.batch_idx, num_atoms, ctx.num_systems
             )
 
         grad_positions = None
@@ -699,21 +800,23 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
         if cell_grad_state is not None:
             grad_cell = cell_grad_state * grad_system.view(-1, 1, 1)
 
-        return (
-            None,
-            grad_positions,
-            grad_charges,
-            grad_cell,
-            None,
-            None,
-            None,
-            None,
-            None,
+        return _pad(
+            (
+                None,
+                grad_positions,
+                grad_charges,
+                grad_cell,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
         )
 
 
 class _InjectChargeGrad(torch.autograd.Function):
-    """Backward-compatible 4-argument charge-gradient entry point.
+    """Attach cached charge derivatives with an explicit energy layout.
 
     Uniform/per-system-uniform cotangents keep the historical direct-injection
     path. Non-uniform per-atom cotangents pass through to the input energy graph
@@ -733,16 +836,43 @@ class _InjectChargeGrad(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(energy, charges, charge_grad, batch_idx):
-        """Return energy unchanged."""
+    def forward(
+        energy,
+        charges,
+        charge_grad,
+        batch_idx,
+        energy_reduction="atom",
+        num_systems=None,
+        energy_is_system=False,
+    ):
+        """Return energy in the requested public layout."""
+        if energy_reduction == "system" and not energy_is_system:
+            count = 1 if num_systems is None else int(num_systems)
+            return _reduce_atom_energy(energy, batch_idx, count)
         return energy
 
     @staticmethod
     def setup_context(ctx, inputs, output):
         """Save detached charge-gradient state for backward."""
-        _energy, _charges, charge_grad, batch_idx = inputs
+        _energy, _charges, charge_grad, batch_idx = inputs[:4]
         ctx.save_for_backward(charge_grad)
         ctx.batch_idx = batch_idx
+        ctx.energy_reduction = inputs[4] if len(inputs) > 4 else "atom"
+        if len(inputs) > 5 and inputs[5] is not None:
+            ctx.num_systems = int(inputs[5])
+        elif inputs[5] is None and batch_idx is not None and batch_idx.numel() > 0:
+            # Legacy private 4-argument calls predate the explicit layout contract.
+            ctx.num_systems = int(batch_idx.max().item()) + 1
+        elif batch_idx is not None and _energy.numel() != charge_grad.shape[0]:
+            ctx.num_systems = int(_energy.numel())
+        else:
+            ctx.num_systems = 1
+        ctx.energy_is_system = (
+            bool(inputs[6])
+            if len(inputs) > 6
+            else bool(_energy.numel() != charge_grad.shape[0])
+        )
+        ctx.num_inputs = len(inputs)
 
     @staticmethod
     def backward(ctx, grad_energy):
@@ -750,24 +880,32 @@ class _InjectChargeGrad(torch.autograd.Function):
         (charge_grad_state,) = ctx.saved_tensors
         num_atoms = int(charge_grad_state.shape[0])
 
-        if torch.is_grad_enabled():
-            return grad_energy, None, None, None
+        if ctx.energy_reduction == "system":
+            grad_system = grad_energy.reshape(-1)
+            atom_grad = _system_cotangent_to_atoms(
+                grad_system, ctx.batch_idx, num_atoms
+            )
+            input_grad = grad_system if ctx.energy_is_system else atom_grad
+        else:
+            input_grad = grad_energy
 
-        if grad_energy.numel() != 0 and _is_sync_free_uniform_cotangent(grad_energy):
+        if torch.is_grad_enabled():
+            result = (input_grad, None, None, None)
+            return result + (None,) * (ctx.num_inputs - len(result))
+
+        if ctx.energy_reduction == "system":
+            pass
+        elif grad_energy.numel() != 0 and _is_sync_free_uniform_cotangent(grad_energy):
             atom_grad = grad_energy.reshape(-1)[0].expand(num_atoms)
         else:
-            grad = grad_energy.reshape(-1)
-            if grad.is_cuda and grad.numel() == num_atoms:
-                return grad_energy, None, None, None
-            num_systems = _num_systems_from_state(
-                grad_energy, None, ctx.batch_idx, num_atoms
-            )
             if not _is_per_system_uniform_cotangent(
-                grad_energy, ctx.batch_idx, num_systems
+                grad_energy, ctx.batch_idx, ctx.num_systems
             ):
-                return grad_energy, None, None, None
+                result = (grad_energy, None, None, None)
+                return result + (None,) * (ctx.num_inputs - len(result))
             _grad_system, atom_grad = _energy_cotangents(
-                grad_energy, ctx.batch_idx, num_atoms, num_systems
+                grad_energy, ctx.batch_idx, num_atoms, ctx.num_systems
             )
         grad_charges = charge_grad_state * atom_grad
-        return None, grad_charges, None, None
+        result = (None, grad_charges, None, None)
+        return result + (None,) * (ctx.num_inputs - len(result))

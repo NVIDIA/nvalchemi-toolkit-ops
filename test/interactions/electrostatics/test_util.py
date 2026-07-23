@@ -208,12 +208,11 @@ def test_uniform_cotangent_accepts_expanded_scalar(device):
 
 
 @pytest.mark.parametrize("device", _available_devices())
-def test_uniform_cotangent_keeps_cuda_contiguous_constants_conservative(device):
-    """Contiguous CUDA constants require value inspection, so stay on fallback."""
+def test_uniform_cotangent_accepts_eager_contiguous_constants(device):
+    """Eager mode checks materialized CPU and CUDA constants exactly."""
     grad = torch.ones(6, dtype=DT, device=device)
 
-    expected = device == "cpu"
-    assert _is_uniform_cotangent(grad) is expected
+    assert _is_uniform_cotangent(grad)
 
 
 @pytest.mark.parametrize("device", _available_devices())
@@ -233,8 +232,8 @@ def test_ewald_uniform_predicates_accept_expanded_scalar(device):
 
 
 @pytest.mark.parametrize("device", _available_devices())
-def test_ewald_uniform_predicates_keep_cuda_per_system_constants_conservative(device):
-    """Non-expanded CUDA constants stay exact by using the weighted fallback."""
+def test_ewald_uniform_predicates_accept_eager_per_system_constants(device):
+    """Eager mode recognizes materialized per-system-uniform cotangents exactly."""
     real_chain = pytest.importorskip(
         "nvalchemiops.torch.interactions.electrostatics._ewald_real_chain"
     )
@@ -244,6 +243,5 @@ def test_ewald_uniform_predicates_keep_cuda_per_system_constants_conservative(de
     grad = torch.tensor([2.0, 2.0, 3.0, 3.0], dtype=DT, device=device)
     batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
 
-    expected = device == "cpu"
-    assert real_chain._cotangent_per_system_uniform(grad, batch_idx, 2) is expected
-    assert recip_chain._cotangent_per_system_uniform(grad, batch_idx, 2) is expected
+    assert real_chain._cotangent_per_system_uniform(grad, batch_idx, 2)
+    assert recip_chain._cotangent_per_system_uniform(grad, batch_idx, 2)

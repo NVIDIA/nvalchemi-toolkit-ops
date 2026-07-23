@@ -166,6 +166,7 @@ References
 import math
 import warnings
 from contextlib import nullcontext
+from typing import Literal
 
 import torch
 import warp as wp
@@ -196,12 +197,15 @@ from nvalchemiops.torch.interactions.electrostatics._util import (
     _component_direct_output_deprecation_msg,
     _detach_setup_tensor,
     _direct_output_deprecation_msg,
+    _energy_cotangents,
     _has_potentially_geometry_dependent_charges,
     _InjectCachedEvalGrad,
     _InjectCachedEvalGradWithFallback,
     _InjectChargeGrad,
-    _is_uniform_cotangent,
+    _is_per_system_uniform_cotangent,
+    _reduce_atom_energy,
     _unpack_electrostatic_outputs,
+    _validate_energy_reduction,
 )
 from nvalchemiops.torch.interactions.electrostatics.ewald import (
     ewald_real_space,
@@ -2136,6 +2140,8 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
         need_pos,
         need_charge,
         need_cell,
+        energy_reduction,
+        num_systems,
     ):
         """Compute energy and direct first-derivative states."""
         need_forces = bool(need_pos) or bool(need_cell)
@@ -2203,6 +2209,10 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
         ctx.need_pos = bool(need_pos)
         ctx.need_charge = bool(need_charge)
         ctx.need_cell = bool(need_cell)
+        ctx.energy_reduction = energy_reduction
+        ctx.num_systems = int(num_systems)
+        if energy_reduction == "system":
+            return _reduce_atom_energy(energies, batch_idx, ctx.num_systems)
         return energies
 
     @staticmethod
@@ -2227,7 +2237,13 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
             cached_dEdcell,
         ) = ctx.saved_tensors
 
-        if create_graph or not _is_uniform_cotangent(grad_energy):
+        use_fallback = create_graph or (
+            ctx.energy_reduction == "atom"
+            and not _is_per_system_uniform_cotangent(
+                grad_energy, batch_idx, ctx.num_systems
+            )
+        )
+        if use_fallback:
             if _has_potentially_geometry_dependent_charges(positions, charges):
                 if create_graph:
                     diff_inputs = []
@@ -2263,6 +2279,10 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
                                 moduli_z=moduli_z,
                             )
                         )
+                        if ctx.energy_reduction == "system":
+                            recomputed = _reduce_atom_energy(
+                                recomputed, batch_idx, ctx.num_systems
+                            )
                         if diff_inputs:
                             diff_grads = torch.autograd.grad(
                                 recomputed,
@@ -2279,6 +2299,8 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
                         None,
                         grad_map.get("cell"),
                         grad_map.get("alpha"),
+                        None,
+                        None,
                         None,
                         None,
                         None,
@@ -2329,6 +2351,10 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
                                 moduli_z=moduli_z,
                             )
                         )
+                        if ctx.energy_reduction == "system":
+                            recomputed_partial = _reduce_atom_energy(
+                                recomputed_partial, batch_idx, ctx.num_systems
+                            )
                         partial_grads = torch.autograd.grad(
                             recomputed_partial,
                             tuple(partial_inputs),
@@ -2363,6 +2389,10 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
                                 moduli_z=moduli_z,
                             )
                         )
+                        if ctx.energy_reduction == "system":
+                            recomputed_charge = _reduce_atom_energy(
+                                recomputed_charge, batch_idx, ctx.num_systems
+                            )
                         (grad_charges,) = torch.autograd.grad(
                             recomputed_charge,
                             charges,
@@ -2375,6 +2405,8 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
                     grad_charges,
                     partial_map.get("cell"),
                     partial_map.get("alpha"),
+                    None,
+                    None,
                     None,
                     None,
                     None,
@@ -2412,6 +2444,10 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
                         moduli_z=moduli_z,
                     )
                 )
+                if ctx.energy_reduction == "system":
+                    recomputed = _reduce_atom_energy(
+                        recomputed, batch_idx, ctx.num_systems
+                    )
                 diff_inputs = []
                 diff_names = []
                 for name, tensor in (
@@ -2453,16 +2489,55 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
                 None,
                 None,
                 None,
+                None,
+                None,
             )
 
-        grad = grad_energy.reshape(-1)
-        atom_scale = grad[0]
-        if batch_idx is None:
-            system_scale = atom_scale
-        else:
-            system_scale = atom_scale
+        if grad_energy.numel() == 0:
+            grad_positions = torch.zeros_like(positions) if ctx.need_pos else None
+            grad_charges = torch.zeros_like(charges) if ctx.need_charge else None
+            grad_cell = torch.zeros_like(cell) if ctx.need_cell else None
+            return (
+                grad_positions,
+                grad_charges,
+                grad_cell,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
 
-        grad_positions = cached_dEdR * atom_scale if ctx.need_pos else None
+        if ctx.energy_reduction == "system":
+            grad_system = grad_energy.reshape(-1)
+        else:
+            grad_system, atom_scale = _energy_cotangents(
+                grad_energy,
+                batch_idx,
+                positions.shape[0],
+                ctx.num_systems,
+            )
+        if ctx.energy_reduction == "system":
+            if batch_idx is None:
+                atom_scale = grad_system[0].expand(positions.shape[0])
+            else:
+                atom_scale = grad_system.index_select(0, batch_idx.to(torch.long))
+        system_scale = grad_system.view(-1, 1, 1)
+
+        grad_positions = (
+            cached_dEdR * atom_scale.unsqueeze(-1) if ctx.need_pos else None
+        )
         grad_charges = cached_dEdq * atom_scale if ctx.need_charge else None
         grad_cell = cached_dEdcell * system_scale if ctx.need_cell else None
 
@@ -2470,6 +2545,8 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
             grad_positions,
             grad_charges,
             grad_cell,
+            None,
+            None,
             None,
             None,
             None,
@@ -2506,6 +2583,8 @@ def _pme_reciprocal_cached_first_grad(
     need_pos: bool,
     need_charge: bool,
     need_cell: bool,
+    energy_reduction: str,
+    num_systems: int,
 ) -> torch.Tensor:
     """Run the private first-order cached PME reciprocal energy path."""
     return _PMEReciprocalCachedFirstGrad.apply(
@@ -2526,6 +2605,8 @@ def _pme_reciprocal_cached_first_grad(
         need_pos,
         need_charge,
         need_cell,
+        energy_reduction,
+        num_systems,
     )
 
 
@@ -2910,6 +2991,8 @@ def _pme_reciprocal_space_impl(
             None,
             batch_idx,
             _fallback,
+            "atom",
+            cell.shape[0] if is_batch else 1,
         )
 
     if return_cell_inv_t:
@@ -2938,6 +3021,7 @@ def pme_reciprocal_space(
     moduli_x: torch.Tensor | None = None,
     moduli_y: torch.Tensor | None = None,
     moduli_z: torch.Tensor | None = None,
+    energy_reduction: Literal["atom", "system"] = "atom",
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
     """Compute PME reciprocal-space energy and optionally forces and/or charge gradients.
 
@@ -3026,6 +3110,8 @@ def pme_reciprocal_space(
         charge gradients are attached to the energy via a straight-through
         trick.  Forces and virial are forward-only (not differentiable).
         See :func:`ewald_real_space` for details.
+    energy_reduction : {"atom", "system"}, default="atom"
+        Return per-atom energies ``(N,)`` or summed per-system energies ``(B,)``.
 
     Returns
     -------
@@ -3110,6 +3196,7 @@ def pme_reciprocal_space(
     particle_mesh_ewald : Complete PME calculation (real + reciprocal).
     generate_k_vectors_pme : Generate k-vectors for this function.
     """
+    _validate_energy_reduction(energy_reduction)
     component_deprecated_flags = tuple(
         name
         for name, enabled in (
@@ -3130,6 +3217,12 @@ def pme_reciprocal_space(
 
     ensure_electrostatics_ops_registered()
     cell, num_systems = _prepare_cell(cell)
+
+    def _select_energy(energy):
+        if energy_reduction == "system":
+            return _reduce_atom_energy(energy, batch_idx, num_systems)
+        return energy
+
     alpha_tensor = _detach_setup_tensor(
         _prepare_alpha(alpha, num_systems, torch.float64, positions.device)
     )
@@ -3184,6 +3277,8 @@ def pme_reciprocal_space(
             need_pos=position_grad,
             need_charge=charge_grad,
             need_cell=cell_grad,
+            energy_reduction=energy_reduction,
+            num_systems=num_systems,
         )
 
     # Deprecated direct-output calls still return a differentiable energy. For
@@ -3256,7 +3351,11 @@ def pme_reciprocal_space(
             cached_dEdq,
             cached_dEdcell,
             batch_idx,
+            energy_reduction,
+            num_systems,
         )
+    else:
+        energies = _select_energy(energies)
 
     # Build return tuple based on flags
     match (compute_forces, compute_charge_gradients, compute_virial):
@@ -3313,6 +3412,7 @@ def particle_mesh_ewald(
     moduli_x: torch.Tensor | None = None,
     moduli_y: torch.Tensor | None = None,
     moduli_z: torch.Tensor | None = None,
+    energy_reduction: Literal["atom", "system"] = "atom",
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
     """Complete Particle Mesh Ewald (PME) calculation for long-range electrostatics.
 
@@ -3449,6 +3549,8 @@ def particle_mesh_ewald(
         correction to the 3D-periodic PME result. This is only available for
         the full PME interface; use :func:`compute_slab_correction` explicitly
         when manually composing ``ewald_real_space`` and ``pme_reciprocal_space``.
+    energy_reduction : {"atom", "system"}, default="atom"
+        Return per-atom energies ``(N,)`` or summed per-system energies ``(B,)``.
 
     Returns
     -------
@@ -3607,6 +3709,7 @@ def particle_mesh_ewald(
     estimate_pme_parameters : Automatic parameter estimation
     PMEParameters : Container for PME parameters
     """
+    _validate_energy_reduction(energy_reduction)
     if compute_forces or compute_virial or compute_charge_gradients or hybrid_forces:
         if torch.compiler.is_compiling():
             _compiled_direct_output_deprecation_signal("particle_mesh_ewald")
@@ -3806,6 +3909,8 @@ def particle_mesh_ewald(
             cached_dEdcell,
             batch_idx,
             _fallback,
+            energy_reduction,
+            num_systems,
         )
 
     if hybrid_forces and charges.requires_grad and not slab_correction:
@@ -3924,6 +4029,8 @@ def particle_mesh_ewald(
             None,
             batch_idx,
             _fallback,
+            energy_reduction,
+            num_systems,
         )
 
         return _build_electrostatic_result(
@@ -3954,6 +4061,7 @@ def particle_mesh_ewald(
             compute_charge_gradients=compute_charge_gradients,
             compute_virial=compute_virial,
             hybrid_forces=hybrid_forces,
+            energy_reduction=energy_reduction,
         )
 
         # Compute reciprocal-space contribution
@@ -3976,6 +4084,7 @@ def particle_mesh_ewald(
             moduli_y=moduli_y,
             moduli_z=moduli_z,
             hybrid_forces=hybrid_forces,
+            energy_reduction=energy_reduction,
         )
         return rs, rec
 
@@ -4005,6 +4114,7 @@ def particle_mesh_ewald(
                 compute_forces=compute_forces,
                 compute_charge_gradients=True,
                 compute_virial=compute_virial,
+                energy_reduction=energy_reduction,
             )
             slab_energies, slab_forces, slab_charge_grads, slab_virial = (
                 _unpack_electrostatic_outputs(
@@ -4025,9 +4135,16 @@ def particle_mesh_ewald(
                     compute_forces=False,
                     compute_charge_gradients=False,
                     compute_virial=False,
+                    energy_reduction=energy_reduction,
                 )
                 slab_energies = _InjectChargeGrad.apply(
-                    slab_energies, charges, slab_charge_grads, batch_idx
+                    slab_energies,
+                    charges,
+                    slab_charge_grads,
+                    batch_idx,
+                    energy_reduction,
+                    num_systems,
+                    energy_reduction == "system",
                 )
 
             slab_result = _build_electrostatic_result(
@@ -4049,6 +4166,7 @@ def particle_mesh_ewald(
                 compute_forces=compute_forces,
                 compute_charge_gradients=compute_charge_gradients,
                 compute_virial=compute_virial,
+                energy_reduction=energy_reduction,
             )
 
     return _combine_electrostatic_outputs(

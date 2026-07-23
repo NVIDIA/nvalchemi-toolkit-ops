@@ -610,7 +610,15 @@ def dsf_coulomb(
         )
 
     if compute_charge_grad:
-        energy = _InjectChargeGrad.apply(energy, charges, charge_grad_out, batch_idx)
+        energy = _InjectChargeGrad.apply(
+            energy,
+            charges,
+            charge_grad_out,
+            batch_idx,
+            "system",
+            num_systems,
+            True,
+        )
 
     # Build return tuple
     if not compute_forces:

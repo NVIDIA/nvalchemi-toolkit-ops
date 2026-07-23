@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Monopole Torch and JAX Ewald, PME, and slab entry points accept keyword-only
+  `energy_reduction="atom" | "system"` (default `"atom"`). `"atom"` returns
+  per-atom energies `(N,)`; `"system"` returns per-system totals `(B,)`.
+  Direct-output fields (forces, charge gradients, virials) keep their existing
+  shapes. Torch eager atom mode may synchronize once per participating component
+  when a materialized uniform cotangent is proven by value inspection; system
+  mode is structurally sync-free for arbitrary `(B,)` loss weights. JAX adds
+  API/layout parity only; underlying Warp kernels remain atom-buffer-oriented.
+
 ## 0.4.0 - 2026-07-13
 
 ### Added
