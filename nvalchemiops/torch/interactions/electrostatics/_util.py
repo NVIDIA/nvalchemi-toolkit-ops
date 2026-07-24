@@ -392,7 +392,7 @@ def _distribute_system_mean_cotangent_to_atoms(
         batch_idx,
         num_systems,
         num_atoms,
-    ).clone()
+    )
 
 
 def _energy_cotangents(
