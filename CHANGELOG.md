@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- JAX and Torch naive neighbor APIs now expose CUDA tiled topology-only compact
+  `target_indices` rows for no-PBC, wrapped PBC, and prewrapped PBC. Single-system
+  automatic dispatch selects tile at 256 atoms for float64 and 1,024 atoms for
+  float32 (float16 thresholds remain native policy); batched partial auto
+  dispatch remains scalar. Tiling does not support geometry/pair-function
+  outputs or selective rebuilds. Scalar and tiled results have the same per-row
+  neighbor and periodic-shift multisets, but their entry ordering may differ;
+  `max_neighbors` still caps stored entries, while counts remain uncapped and
+  COO conversion raises `NeighborOverflowError` when a row exceeds the cap.
+- JAX `naive_neighbor_list(..., graph_mode="warp")` supports opt-in replay for
+  topology-only tiled `target_indices` calls. Replays require caller-owned,
+  persistent compact output buffers (and, for wrapped PBC, persistent inverse
+  cell and wrapping scratch buffers); `GraphMode.NONE` remains the default.
+
 ## 0.4.0 - 2026-07-13
 
 ### Added

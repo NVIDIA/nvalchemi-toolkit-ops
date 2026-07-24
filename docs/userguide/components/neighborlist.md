@@ -987,7 +987,8 @@ neighbor_matrix_half, num_neighbors_half, shifts_half = neighbor_list(
 In JAX, `half_fill` and `fill_value` are supported by `naive`, `batch_naive`,
 `cell_list`, and `batch_cell_list` (the cell-list paths use `graph_mode="none"`
 for `half_fill`).  The `naive` tiled kernel (`strategy="tile"`) is
-CUDA-only and opt-in; JAX `naive` auto-selection still uses the scalar kernel.
+CUDA-only and opt-in; single-system JAX/Torch partial `auto` follows native
+thresholds while batched partial `auto` remains scalar.
 ```
 
 :::
@@ -1317,6 +1318,17 @@ PyTorch, and JAX, including low-level JAX cell-list query wrappers; `cluster_til
 does not support `target_indices`. On JAX, `cell_list` `target_indices` runs through
 the `atom_centric` strategy (`pair_centric` plus `target_indices` is rejected;
 identical results are available via `atom_centric`).
+
+For topology-only partial `naive` lists, `strategy="tile"` is CUDA-only and is
+available in both PyTorch and JAX for no-PBC, wrapped PBC, and prewrapped PBC.
+Single-system `strategy="auto"` follows the native dtype thresholds (256 atoms
+for float64 and 1,024 atoms for float32; float16 thresholds are a native policy).
+Batched partial `strategy="auto"` remains scalar, while explicit tile is opt-in.
+Geometry buffers, distances, vectors, pair functions, and pair energy/force
+outputs remain scalar-only. Scalar and tiled rows can differ in order; compare
+counts and sorted `(neighbor, periodic_shift)` multisets. JAX additionally
+supports the existing `graph_mode="warp"` replay for persistent tiled buffers;
+there is no corresponding Torch graph-replay API.
 
 ### Per-Pair Distances and Vectors
 

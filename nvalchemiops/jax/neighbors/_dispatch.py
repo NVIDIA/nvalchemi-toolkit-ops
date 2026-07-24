@@ -69,11 +69,23 @@ _jax_select_method_f64 = jax_kernel(
 
 
 def _is_jax_cpu_array(array: jax.Array) -> bool:
-    """Return whether ``array`` is backed by a CPU device."""
+    """Return whether ``array`` is backed by a CPU device.
+
+    During ``jax.jit`` tracing, an array tracer may not expose concrete device
+    placement yet. Use JAX's active backend in that case so CPU traces keep
+    the scalar fallback while CUDA traces can lower tile callables.
+    """
     try:
         return all(device.platform == "cpu" for device in array.devices())
-    except AttributeError:
-        return True
+    except (
+        AttributeError,
+        jax.errors.ConcretizationTypeError,
+        jax.errors.TracerIntegerConversionError,
+    ):
+        # JAX does not expose jit(backend=...) on the tracer. The active
+        # default backend is the only placement signal available here; callers
+        # selecting a non-default backend should place inputs on that device.
+        return jax.default_backend() == "cpu"
 
 
 def _jax_selector_cpu_fallback(

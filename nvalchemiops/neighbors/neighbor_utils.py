@@ -242,6 +242,7 @@ __all__ = [
     "kernel_specialization_name",
     "require_supported_dtype",
     "resolve_buffer_alias",
+    "selective_zero_partial_num_neighbors",
     "selective_zero_num_neighbors",
     "selective_zero_num_neighbors_single",
     "set_fn_name",
@@ -759,6 +760,57 @@ def selective_zero_num_neighbors(
         kernel=_get_selective_zero_num_neighbors_kernel(batched=True),
         dim=total_atoms,
         inputs=[num_neighbors, batch_idx, rebuild_flags],
+        device=device,
+    )
+
+
+@wp.kernel(enable_backward=False, module="unique")
+def _selective_zero_partial_num_neighbors_kernel(
+    num_neighbors: wp.array(dtype=wp.int32),
+    batch_idx: wp.array(dtype=wp.int32),
+    target_indices: wp.array(dtype=wp.int32),
+    rebuild_flags: wp.array(dtype=wp.bool),
+) -> None:
+    """Zero compact target rows belonging to rebuilt systems.
+
+    Notes
+    -----
+    - Thread launch: One thread per compact target row.
+    - Modifies: ``num_neighbors`` entries whose target atom belongs to a rebuilt
+      system.
+    """
+    row = wp.tid()
+    atom = target_indices[row]
+    if rebuild_flags[batch_idx[atom]]:
+        num_neighbors[row] = 0
+
+
+def selective_zero_partial_num_neighbors(
+    num_neighbors: wp.array,
+    batch_idx: wp.array,
+    target_indices: wp.array,
+    rebuild_flags: wp.array,
+    device: str,
+) -> None:
+    """Zero compact partial rows for systems selected by rebuild flags.
+
+    Parameters
+    ----------
+    num_neighbors : wp.array
+        OUTPUT: Neighbor counts indexed by compact target-row position.
+    batch_idx : wp.array
+        System index for every global atom.
+    target_indices : wp.array
+        Global source atom index for every compact output row.
+    rebuild_flags : wp.array
+        Per-system flags controlling which rows are reset.
+    device : str
+        Warp device string.
+    """
+    wp.launch(
+        kernel=_selective_zero_partial_num_neighbors_kernel,
+        dim=num_neighbors.shape[0],
+        inputs=[num_neighbors, batch_idx, target_indices, rebuild_flags],
         device=device,
     )
 

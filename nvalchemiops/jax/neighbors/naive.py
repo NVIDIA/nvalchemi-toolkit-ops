@@ -42,8 +42,10 @@ from nvalchemiops.neighbors.naive import (
     get_naive_neighbor_matrix_kernel as _get_naive_kernel,
 )
 from nvalchemiops.neighbors.naive.launchers import (
+    BLOCK_DIM,
     _launch_naive_neighbor_matrix_no_pbc,
     _launch_naive_neighbor_matrix_pbc,
+    _partial_tile_min_atoms,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
     DTYPE_INFO_ALL,
@@ -55,6 +57,13 @@ from nvalchemiops.neighbors.neighbor_utils import (
 )
 
 _DTYPE_TO_NAIVE_KERNELS = (wp.float32, wp.float64)
+
+
+def _is_jax_cpu_for_tile(array: jax.Array) -> bool:
+    """Return whether the concrete JAX array is CPU-backed for tile dispatch."""
+    return _is_jax_cpu_array(array)
+
+
 (
     _fill_naive_neighbor_matrix_kernels,
     _fill_naive_neighbor_matrix_selective_kernels,
@@ -1290,21 +1299,23 @@ _GRAPH_NAIVE_WARP_CALLABLES = _register_graph_naive_callables()
 # These run only on the eager (``graph_mode="none"``) path, where
 # ``naive_neighbor_list`` already pre-fills ``neighbor_matrix=fill_value`` and
 # zeroes ``num_neighbors`` / shifts before dispatch, so the bodies perform no
-# reset and take no ``fill_value`` argument.  ``graph_mode="warp"`` + tile is
-# rejected up-front (those pre-fills are skipped under warp).
+# reset and take no ``fill_value`` argument. Partial Warp-graph tiling uses a
+# separate callable family below that captures its own output resets.
 #
-# Tile supports no-PBC and PBC (wrapped + prewrapped) and ``half_fill``; it has
-# no pair-output / ``target_indices`` / selective specialization.  The static
-# scalars (``cutoff``, ``half_fill``, and ``num_shifts`` for PBC) are already
-# host-static in the existing naive graph path — no new host sync.
+# Tile supports no-PBC and PBC (wrapped + prewrapped), ``half_fill``, and
+# topology-only compact target rows. It has no geometry/pair-function output or
+# selective specialization. The scalars (``cutoff``, ``half_fill``, ``partial``,
+# and ``num_shifts`` for PBC) are host-static in the existing naive graph path.
 
 
 def _graph_naive_tile_no_pbc_f32(
     positions: wp.array(dtype=wp.vec3f),
+    target_indices: wp.array(dtype=wp.int32),
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
     num_neighbors: wp.array(dtype=wp.int32),
     cutoff: wp.float32,
     half_fill: wp.bool,
+    partial: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_no_pbc(
         positions,
@@ -1315,16 +1326,19 @@ def _graph_naive_tile_no_pbc_f32(
         str(positions.device),
         batched=False,
         half_fill=bool(half_fill),
+        target_indices=target_indices if bool(partial) else None,
         strategy="tile",
     )
 
 
 def _graph_naive_tile_no_pbc_f64(
     positions: wp.array(dtype=wp.vec3d),
+    target_indices: wp.array(dtype=wp.int32),
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
     num_neighbors: wp.array(dtype=wp.int32),
     cutoff: wp.float64,
     half_fill: wp.bool,
+    partial: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_no_pbc(
         positions,
@@ -1335,6 +1349,7 @@ def _graph_naive_tile_no_pbc_f64(
         str(positions.device),
         batched=False,
         half_fill=bool(half_fill),
+        target_indices=target_indices if bool(partial) else None,
         strategy="tile",
     )
 
@@ -1343,6 +1358,7 @@ def _graph_naive_tile_no_pbc_f64(
 # position wrapping, so these callables intentionally omit it.
 def _graph_naive_tile_pbc_prewrapped_f32(
     positions: wp.array(dtype=wp.vec3f),
+    target_indices: wp.array(dtype=wp.int32),
     cell: wp.array(dtype=wp.mat33f),
     shift_range: wp.array(dtype=wp.vec3i),
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
@@ -1351,6 +1367,7 @@ def _graph_naive_tile_pbc_prewrapped_f32(
     cutoff: wp.float32,
     num_shifts: wp.int32,
     half_fill: wp.bool,
+    partial: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_pbc(
         positions,
@@ -1367,12 +1384,14 @@ def _graph_naive_tile_pbc_prewrapped_f32(
         num_shifts=int(num_shifts),
         half_fill=bool(half_fill),
         wrap_positions=False,
+        target_indices=target_indices if bool(partial) else None,
         strategy="tile",
     )
 
 
 def _graph_naive_tile_pbc_prewrapped_f64(
     positions: wp.array(dtype=wp.vec3d),
+    target_indices: wp.array(dtype=wp.int32),
     cell: wp.array(dtype=wp.mat33d),
     shift_range: wp.array(dtype=wp.vec3i),
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
@@ -1381,6 +1400,7 @@ def _graph_naive_tile_pbc_prewrapped_f64(
     cutoff: wp.float64,
     num_shifts: wp.int32,
     half_fill: wp.bool,
+    partial: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_pbc(
         positions,
@@ -1397,12 +1417,14 @@ def _graph_naive_tile_pbc_prewrapped_f64(
         num_shifts=int(num_shifts),
         half_fill=bool(half_fill),
         wrap_positions=False,
+        target_indices=target_indices if bool(partial) else None,
         strategy="tile",
     )
 
 
 def _graph_naive_tile_pbc_wrapped_f32(
     positions: wp.array(dtype=wp.vec3f),
+    target_indices: wp.array(dtype=wp.int32),
     cell: wp.array(dtype=wp.mat33f),
     pbc: wp.array2d(dtype=wp.bool),
     shift_range: wp.array(dtype=wp.vec3i),
@@ -1412,6 +1434,7 @@ def _graph_naive_tile_pbc_wrapped_f32(
     cutoff: wp.float32,
     num_shifts: wp.int32,
     half_fill: wp.bool,
+    partial: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_pbc(
         positions,
@@ -1428,12 +1451,14 @@ def _graph_naive_tile_pbc_wrapped_f32(
         num_shifts=int(num_shifts),
         half_fill=bool(half_fill),
         wrap_positions=True,
+        target_indices=target_indices if bool(partial) else None,
         strategy="tile",
     )
 
 
 def _graph_naive_tile_pbc_wrapped_f64(
     positions: wp.array(dtype=wp.vec3d),
+    target_indices: wp.array(dtype=wp.int32),
     cell: wp.array(dtype=wp.mat33d),
     pbc: wp.array2d(dtype=wp.bool),
     shift_range: wp.array(dtype=wp.vec3i),
@@ -1443,6 +1468,7 @@ def _graph_naive_tile_pbc_wrapped_f64(
     cutoff: wp.float64,
     num_shifts: wp.int32,
     half_fill: wp.bool,
+    partial: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_pbc(
         positions,
@@ -1459,6 +1485,7 @@ def _graph_naive_tile_pbc_wrapped_f64(
         num_shifts=int(num_shifts),
         half_fill=bool(half_fill),
         wrap_positions=True,
+        target_indices=target_indices if bool(partial) else None,
         strategy="tile",
     )
 
@@ -1518,6 +1545,372 @@ def _register_graph_naive_tile_callables() -> dict[
 _GRAPH_NAIVE_TILE_CALLABLES = _register_graph_naive_tile_callables()
 
 
+def _run_graph_naive_partial_tile_no_pbc(
+    positions,
+    target_indices,
+    neighbor_matrix,
+    num_neighbors,
+    cutoff,
+    fill_value,
+    half_fill,
+    wp_dtype,
+) -> None:
+    """Reset compact outputs and launch the captured partial no-PBC tile kernel."""
+    (
+        empty_offsets,
+        empty_cell,
+        empty_shift_range,
+        empty_num_shifts,
+        empty_batch_idx,
+        empty_batch_ptr,
+        _empty_target_indices,
+        _empty_matrix,
+        empty_shifts,
+        _empty_num_neighbors,
+        _empty_vectors,
+        _empty_distances,
+        _empty_pair_params,
+        _empty_energies,
+        _empty_forces,
+        empty_rebuild_flags,
+    ) = _wp_scalar_sentinels(wp_dtype, num_neighbors.device)
+    _reset_graph_neighbor_outputs(neighbor_matrix, num_neighbors, fill_value)
+    wp.launch_tiled(
+        kernel=_get_naive_kernel(
+            wp_dtype,
+            pbc_mode="none",
+            partial=True,
+            half_fill=bool(half_fill),
+            strategy="tile",
+        ),
+        dim=[1, target_indices.shape[0]],
+        inputs=[
+            positions,
+            empty_offsets,
+            wp_dtype(float(cutoff) * float(cutoff)),
+            empty_cell,
+            empty_shift_range,
+            empty_num_shifts,
+            empty_batch_idx,
+            empty_batch_ptr,
+            target_indices,
+            neighbor_matrix,
+            empty_shifts,
+            num_neighbors,
+            empty_rebuild_flags,
+        ],
+        block_dim=BLOCK_DIM,
+        device=str(positions.device),
+    )
+
+
+def _run_graph_naive_partial_tile_pbc(
+    positions,
+    target_indices,
+    cell,
+    shift_range,
+    neighbor_matrix,
+    neighbor_matrix_shifts,
+    num_neighbors,
+    cutoff,
+    num_shifts,
+    fill_value,
+    half_fill,
+    wp_dtype,
+    *,
+    inv_cell=None,
+    pbc=None,
+    positions_wrapped=None,
+    per_atom_cell_offsets=None,
+) -> None:
+    """Reset compact outputs and launch a captured partial PBC tile kernel."""
+    (
+        empty_offsets,
+        _empty_cell,
+        _empty_shift_range,
+        empty_num_shifts,
+        empty_batch_idx,
+        empty_batch_ptr,
+        _empty_target_indices,
+        _empty_matrix,
+        _empty_shifts,
+        _empty_num_neighbors,
+        _empty_vectors,
+        _empty_distances,
+        _empty_pair_params,
+        _empty_energies,
+        _empty_forces,
+        empty_rebuild_flags,
+    ) = _wp_scalar_sentinels(wp_dtype, num_neighbors.device)
+    _reset_graph_neighbor_outputs(
+        neighbor_matrix,
+        num_neighbors,
+        fill_value,
+        neighbor_matrix_shifts,
+    )
+    pbc_mode = "prewrapped"
+    positions_work = positions
+    offsets = empty_offsets
+    if positions_wrapped is not None:
+        wp.launch(
+            kernel=get_wrap_positions_kernel(wp_dtype, pbc_aware=True),
+            dim=positions.shape[0],
+            inputs=[positions, cell, inv_cell, pbc, empty_batch_idx],
+            outputs=[positions_wrapped, per_atom_cell_offsets],
+        )
+        pbc_mode = "wrap_on_entry"
+        positions_work = positions_wrapped
+        offsets = per_atom_cell_offsets
+
+    active_shifts = int(num_shifts)
+    if not bool(half_fill):
+        active_shifts = 2 * active_shifts - 1
+    wp.launch_tiled(
+        kernel=_get_naive_kernel(
+            wp_dtype,
+            pbc_mode=pbc_mode,
+            partial=True,
+            half_fill=bool(half_fill),
+            strategy="tile",
+        ),
+        dim=[active_shifts, target_indices.shape[0]],
+        inputs=[
+            positions_work,
+            offsets,
+            wp_dtype(float(cutoff) * float(cutoff)),
+            cell,
+            shift_range,
+            empty_num_shifts,
+            empty_batch_idx,
+            empty_batch_ptr,
+            target_indices,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            num_neighbors,
+            empty_rebuild_flags,
+        ],
+        block_dim=BLOCK_DIM,
+        device=str(positions.device),
+    )
+
+
+def _graph_naive_partial_tile_no_pbc_f32(
+    positions: wp.array(dtype=wp.vec3f),
+    target_indices: wp.array(dtype=wp.int32),
+    neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
+    num_neighbors: wp.array(dtype=wp.int32),
+    cutoff: wp.float32,
+    fill_value: wp.int32,
+    half_fill: wp.bool,
+) -> None:
+    _run_graph_naive_partial_tile_no_pbc(
+        positions,
+        target_indices,
+        neighbor_matrix,
+        num_neighbors,
+        cutoff,
+        fill_value,
+        half_fill,
+        wp.float32,
+    )
+
+
+def _graph_naive_partial_tile_no_pbc_f64(
+    positions: wp.array(dtype=wp.vec3d),
+    target_indices: wp.array(dtype=wp.int32),
+    neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
+    num_neighbors: wp.array(dtype=wp.int32),
+    cutoff: wp.float64,
+    fill_value: wp.int32,
+    half_fill: wp.bool,
+) -> None:
+    _run_graph_naive_partial_tile_no_pbc(
+        positions,
+        target_indices,
+        neighbor_matrix,
+        num_neighbors,
+        cutoff,
+        fill_value,
+        half_fill,
+        wp.float64,
+    )
+
+
+def _graph_naive_partial_tile_pbc_prewrapped_f32(
+    positions: wp.array(dtype=wp.vec3f),
+    target_indices: wp.array(dtype=wp.int32),
+    cell: wp.array(dtype=wp.mat33f),
+    shift_range: wp.array(dtype=wp.vec3i),
+    neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
+    neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2),
+    num_neighbors: wp.array(dtype=wp.int32),
+    cutoff: wp.float32,
+    num_shifts: wp.int32,
+    fill_value: wp.int32,
+    half_fill: wp.bool,
+) -> None:
+    _run_graph_naive_partial_tile_pbc(
+        positions,
+        target_indices,
+        cell,
+        shift_range,
+        neighbor_matrix,
+        neighbor_matrix_shifts,
+        num_neighbors,
+        cutoff,
+        num_shifts,
+        fill_value,
+        half_fill,
+        wp.float32,
+    )
+
+
+def _graph_naive_partial_tile_pbc_prewrapped_f64(
+    positions: wp.array(dtype=wp.vec3d),
+    target_indices: wp.array(dtype=wp.int32),
+    cell: wp.array(dtype=wp.mat33d),
+    shift_range: wp.array(dtype=wp.vec3i),
+    neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
+    neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2),
+    num_neighbors: wp.array(dtype=wp.int32),
+    cutoff: wp.float64,
+    num_shifts: wp.int32,
+    fill_value: wp.int32,
+    half_fill: wp.bool,
+) -> None:
+    _run_graph_naive_partial_tile_pbc(
+        positions,
+        target_indices,
+        cell,
+        shift_range,
+        neighbor_matrix,
+        neighbor_matrix_shifts,
+        num_neighbors,
+        cutoff,
+        num_shifts,
+        fill_value,
+        half_fill,
+        wp.float64,
+    )
+
+
+def _graph_naive_partial_tile_pbc_wrapped_f32(
+    positions: wp.array(dtype=wp.vec3f),
+    target_indices: wp.array(dtype=wp.int32),
+    cell: wp.array(dtype=wp.mat33f),
+    inv_cell: wp.array(dtype=wp.mat33f),
+    pbc: wp.array2d(dtype=wp.bool),
+    shift_range: wp.array(dtype=wp.vec3i),
+    positions_wrapped: wp.array(dtype=wp.vec3f),
+    per_atom_cell_offsets: wp.array(dtype=wp.vec3i),
+    neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
+    neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2),
+    num_neighbors: wp.array(dtype=wp.int32),
+    cutoff: wp.float32,
+    num_shifts: wp.int32,
+    fill_value: wp.int32,
+    half_fill: wp.bool,
+) -> None:
+    _run_graph_naive_partial_tile_pbc(
+        positions,
+        target_indices,
+        cell,
+        shift_range,
+        neighbor_matrix,
+        neighbor_matrix_shifts,
+        num_neighbors,
+        cutoff,
+        num_shifts,
+        fill_value,
+        half_fill,
+        wp.float32,
+        inv_cell=inv_cell,
+        pbc=pbc,
+        positions_wrapped=positions_wrapped,
+        per_atom_cell_offsets=per_atom_cell_offsets,
+    )
+
+
+def _graph_naive_partial_tile_pbc_wrapped_f64(
+    positions: wp.array(dtype=wp.vec3d),
+    target_indices: wp.array(dtype=wp.int32),
+    cell: wp.array(dtype=wp.mat33d),
+    inv_cell: wp.array(dtype=wp.mat33d),
+    pbc: wp.array2d(dtype=wp.bool),
+    shift_range: wp.array(dtype=wp.vec3i),
+    positions_wrapped: wp.array(dtype=wp.vec3d),
+    per_atom_cell_offsets: wp.array(dtype=wp.vec3i),
+    neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
+    neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2),
+    num_neighbors: wp.array(dtype=wp.int32),
+    cutoff: wp.float64,
+    num_shifts: wp.int32,
+    fill_value: wp.int32,
+    half_fill: wp.bool,
+) -> None:
+    _run_graph_naive_partial_tile_pbc(
+        positions,
+        target_indices,
+        cell,
+        shift_range,
+        neighbor_matrix,
+        neighbor_matrix_shifts,
+        num_neighbors,
+        cutoff,
+        num_shifts,
+        fill_value,
+        half_fill,
+        wp.float64,
+        inv_cell=inv_cell,
+        pbc=pbc,
+        positions_wrapped=positions_wrapped,
+        per_atom_cell_offsets=per_atom_cell_offsets,
+    )
+
+
+_GRAPH_NAIVE_PARTIAL_TILE_WARP_SPECS = {
+    (False, False): {
+        "num_outputs": 2,
+        "in_out_argnames": _GRAPH_NAIVE_TILE_NO_PBC_IN_OUT_ARGS,
+        jnp.dtype(jnp.float32): _graph_naive_partial_tile_no_pbc_f32,
+        jnp.dtype(jnp.float64): _graph_naive_partial_tile_no_pbc_f64,
+    },
+    (True, False): {
+        "num_outputs": 3,
+        "in_out_argnames": _GRAPH_NAIVE_TILE_PBC_IN_OUT_ARGS,
+        jnp.dtype(jnp.float32): _graph_naive_partial_tile_pbc_prewrapped_f32,
+        jnp.dtype(jnp.float64): _graph_naive_partial_tile_pbc_prewrapped_f64,
+    },
+    (True, True): {
+        "num_outputs": 5,
+        "in_out_argnames": _GRAPH_NAIVE_PBC_WRAPPED_IN_OUT_ARGS,
+        jnp.dtype(jnp.float32): _graph_naive_partial_tile_pbc_wrapped_f32,
+        jnp.dtype(jnp.float64): _graph_naive_partial_tile_pbc_wrapped_f64,
+    },
+}
+
+
+def _register_graph_naive_partial_tile_callables() -> dict[
+    tuple[bool, bool, jnp.dtype], object
+]:
+    """Register GraphMode.WARP callables for compact partial tile paths."""
+    registered: dict[tuple[bool, bool, jnp.dtype], object] = {}
+    for (has_pbc, wrap_positions), spec in _GRAPH_NAIVE_PARTIAL_TILE_WARP_SPECS.items():
+        for dtype in (jnp.dtype(jnp.float32), jnp.dtype(jnp.float64)):
+            registered[(has_pbc, wrap_positions, dtype)] = jax_callable(
+                spec[dtype],
+                num_outputs=spec["num_outputs"],
+                in_out_argnames=spec["in_out_argnames"],
+                graph_mode=GraphMode.WARP,
+            )
+    return registered
+
+
+_GRAPH_NAIVE_PARTIAL_TILE_WARP_CALLABLES = (
+    _register_graph_naive_partial_tile_callables()
+)
+
+
 def _naive_pair_outputs_forward(
     positions: jax.Array,
     cell: jax.Array | None,
@@ -1538,6 +1931,12 @@ def _naive_pair_outputs_forward(
     pair_params: jax.Array | None = None,
     target_indices: jax.Array | None = None,
     half_fill: bool = False,
+    strategy: str = "scalar",
+    wrap_positions: bool = True,
+    graph_mode: str = "none",
+    inv_cell: jax.Array | None = None,
+    positions_wrapped: jax.Array | None = None,
+    per_atom_cell_offsets: jax.Array | None = None,
 ) -> _NeighborForwardOutput:
     """Forward closure for the naive autograd path.
 
@@ -1587,32 +1986,32 @@ def _naive_pair_outputs_forward(
     ) = _jax_scalar_sentinels(positions.dtype)
 
     ti_arg = target_indices if is_partial else empty_target_indices
+    has_pair_fn = pair_fn is not None
+    use_tile = strategy == "tile" and is_partial and not has_pair_fn
     if neighbor_matrix is None:
         nm = jnp.full((num_rows, max_neighbors), fill_value, dtype=jnp.int32)
+    elif graph_mode == "warp":
+        nm = neighbor_matrix
     else:
         nm = neighbor_matrix.at[:].set(jnp.int32(fill_value))
     if num_neighbors is None:
         nn = jnp.zeros(num_rows, dtype=jnp.int32)
+    elif graph_mode == "warp":
+        nn = num_neighbors
     else:
         nn = num_neighbors.at[:].set(jnp.int32(0))
-    if neighbor_matrix_shifts is None:
+    if pbc is None and use_tile:
+        nms = empty_shifts
+    elif neighbor_matrix_shifts is None:
         nms = jnp.zeros((num_rows, max_neighbors, 3), dtype=jnp.int32)
+    elif graph_mode == "warp":
+        nms = neighbor_matrix_shifts
     else:
         nms = neighbor_matrix_shifts.at[:].set(jnp.int32(0))
-    if neighbor_vectors is None:
-        nv = jnp.zeros((num_rows, max_neighbors, 3), dtype=positions.dtype)
-    else:
-        nv = neighbor_vectors.at[:].set(jnp.asarray(0.0, dtype=positions.dtype))
-    if neighbor_distances is None:
-        nd = jnp.zeros((num_rows, max_neighbors), dtype=positions.dtype)
-    else:
-        nd = neighbor_distances.at[:].set(jnp.asarray(0.0, dtype=positions.dtype))
-
     # ``pair_fn`` path: real per-atom params + auto-allocated energy/force buffers.
     # (JAX is functional, so user-supplied energy/force buffers cannot be written
     # in-place; we always allocate fresh and return them — the return contract
     # matches torch, the in-place-buffer aspect does not.)
-    has_pair_fn = pair_fn is not None
     if has_pair_fn:
         pp_arg = jnp.asarray(pair_params, dtype=positions.dtype)
         pe = jnp.zeros((num_rows, max_neighbors), dtype=positions.dtype)
@@ -1622,7 +2021,49 @@ def _naive_pair_outputs_forward(
         pe = None
         pf = None
 
-    if pbc is None:
+    if use_tile:
+        # Tile kernels write topology only and do not consume geometry buffers.
+        # Keep the zero-sized sentinels instead of materializing discarded
+        # ``(num_rows, max_neighbors, 3)`` and ``(num_rows, max_neighbors)``
+        # arrays for topology-only partial calls.
+        nv = empty_vectors
+        nd = empty_distances
+    else:
+        if neighbor_vectors is None:
+            nv = jnp.zeros((num_rows, max_neighbors, 3), dtype=positions.dtype)
+        else:
+            nv = neighbor_vectors.at[:].set(jnp.asarray(0.0, dtype=positions.dtype))
+        if neighbor_distances is None:
+            nd = jnp.zeros((num_rows, max_neighbors), dtype=positions.dtype)
+        else:
+            nd = neighbor_distances.at[:].set(jnp.asarray(0.0, dtype=positions.dtype))
+
+    if use_tile and pbc is None:
+        if graph_mode == "warp":
+            tile_callable = _GRAPH_NAIVE_PARTIAL_TILE_WARP_CALLABLES[
+                (False, False, positions.dtype)
+            ]
+            nm, nn = tile_callable(
+                positions,
+                ti_arg,
+                nm,
+                nn,
+                float(cutoff),
+                int(fill_value),
+                half_fill,
+            )
+        else:
+            tile_callable = _GRAPH_NAIVE_TILE_CALLABLES[(False, False, positions.dtype)]
+            nm, nn = tile_callable(
+                positions,
+                ti_arg,
+                nm,
+                nn,
+                float(cutoff),
+                half_fill,
+                True,
+            )
+    elif pbc is None:
         if has_pair_fn:
             kernel = _get_jax_naive_pair_fn_kernel(
                 pair_fn, wp_dtype, "none", half_fill, is_partial
@@ -1664,6 +2105,82 @@ def _naive_pair_outputs_forward(
             nm, nn, nv, nd, pe, pf = outs
         else:
             nm, nn, nv, nd = outs
+    elif use_tile:
+        if cell.ndim == 2:
+            cell = cell[jnp.newaxis, :, :]
+        if pbc.ndim == 1:
+            pbc = pbc[jnp.newaxis, :]
+        if (
+            shift_range_per_dimension is None
+            or num_shifts_per_system is None
+            or max_shifts_per_system is None
+        ):
+            (
+                shift_range_per_dimension,
+                num_shifts_per_system,
+                max_shifts_per_system,
+            ) = compute_naive_num_shifts(cell, cutoff, pbc)
+        if graph_mode == "warp":
+            tile_callable = _GRAPH_NAIVE_PARTIAL_TILE_WARP_CALLABLES[
+                (True, bool(wrap_positions), positions.dtype)
+            ]
+            if wrap_positions:
+                (
+                    positions_wrapped,
+                    per_atom_cell_offsets,
+                    nm,
+                    nms,
+                    nn,
+                ) = tile_callable(
+                    positions,
+                    ti_arg,
+                    cell,
+                    inv_cell,
+                    pbc,
+                    shift_range_per_dimension,
+                    positions_wrapped,
+                    per_atom_cell_offsets,
+                    nm,
+                    nms,
+                    nn,
+                    float(cutoff),
+                    int(max_shifts_per_system),
+                    int(fill_value),
+                    half_fill,
+                )
+            else:
+                nm, nms, nn = tile_callable(
+                    positions,
+                    ti_arg,
+                    cell,
+                    shift_range_per_dimension,
+                    nm,
+                    nms,
+                    nn,
+                    float(cutoff),
+                    int(max_shifts_per_system),
+                    int(fill_value),
+                    half_fill,
+                )
+        else:
+            tile_callable = _GRAPH_NAIVE_TILE_CALLABLES[
+                (True, bool(wrap_positions), positions.dtype)
+            ]
+            pbc_arg = (pbc,) if wrap_positions else ()
+            nm, nms, nn = tile_callable(
+                positions,
+                ti_arg,
+                cell,
+                *pbc_arg,
+                shift_range_per_dimension,
+                nm,
+                nms,
+                nn,
+                float(cutoff),
+                int(max_shifts_per_system),
+                half_fill,
+                True,
+            )
     else:
         if has_pair_fn:
             kernel = _get_jax_naive_pair_fn_kernel(
@@ -1702,12 +2219,38 @@ def _naive_pair_outputs_forward(
                 num_shifts_per_system,
                 max_shifts_per_system,
             ) = compute_naive_num_shifts(cell, cutoff, pbc)
+        positions_work = positions
         offs = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
+        if wrap_positions:
+            if inv_cell is None:
+                inv_cell = jnp.linalg.inv(cell)
+            if positions_wrapped is None:
+                positions_wrapped = jnp.zeros_like(positions)
+            if per_atom_cell_offsets is None:
+                per_atom_cell_offsets = jnp.zeros(
+                    (total_atoms, 3),
+                    dtype=jnp.int32,
+                )
+            wrap_kernel = (
+                _jax_wrap_positions_single_f64
+                if f64
+                else _jax_wrap_positions_single_f32
+            )
+            positions_work, offs = wrap_kernel(
+                positions,
+                cell,
+                inv_cell,
+                pbc,
+                empty_batch_idx,
+                positions_wrapped,
+                per_atom_cell_offsets,
+                launch_dims=(total_atoms,),
+            )
         active_shift_dim = int(max_shifts_per_system)
         if is_partial and not half_fill:
             active_shift_dim = 2 * active_shift_dim - 1
         outs = kernel(
-            positions,
+            positions_work,
             offs,
             cutoff_sq,
             zero_dt,
@@ -1736,12 +2279,21 @@ def _naive_pair_outputs_forward(
         else:
             nm, nms, nn, nv, nd = outs
 
-    i_idx, j_idx, shifts_ret, _, mask_ = _build_index_residuals(
-        nm,
-        nn,
-        nms,
-        target_indices=target_indices if is_partial else None,
-    )
+    if use_tile:
+        # The topology-only caller consumes only ``extra_outputs``. Avoid
+        # constructing the residual index matrices needed solely for the
+        # differentiable geometry reconstruction.
+        i_idx = j_idx = empty_matrix
+        shifts_ret = empty_shifts
+        mask_ = jnp.empty((0, 0), dtype=jnp.bool_)
+        batch_idx_ret = None
+    else:
+        i_idx, j_idx, shifts_ret, batch_idx_ret, mask_ = _build_index_residuals(
+            nm,
+            nn,
+            nms,
+            target_indices=target_indices if is_partial else None,
+        )
     K, M = nm.shape
     extra_outputs = (nm, nn, nms, pe, pf) if has_pair_fn else (nm, nn, nms)
     return _NeighborForwardOutput(
@@ -1751,7 +2303,7 @@ def _naive_pair_outputs_forward(
         i_idx=i_idx,
         j_idx=j_idx,
         shifts=shifts_ret,
-        batch_idx=None,
+        batch_idx=batch_idx_ret,
         active_mask=mask_,
         matrix_shape=(K, M),
     )
@@ -1890,14 +2442,14 @@ def naive_neighbor_list(
         Selects the underlying Warp kernel variant. ``"scalar"`` uses the
         per-atom scalar kernel. ``"tile"`` uses the tile-cooperative
         ``wp.launch_tiled`` kernel and is **CUDA-only**: requesting it on a
-        CPU device raises ``ValueError``. The tile path has no pair-output /
-        ``target_indices`` / selective (``rebuild_flags``) variant and is not
-        supported with ``graph_mode="warp"`` in this binding; requesting any
-        of those with ``strategy="tile"`` raises. ``"auto"`` preserves
-        the current JAX behavior (scalar dispatch) and never selects tile —
-        tile is opt-in in the JAX binding (unlike the torch single-system
-        binding, whose ``"auto"`` tiles by default). The tile and scalar
-        paths produce identical pair *sets* (per-row ordering may differ).
+        CPU device raises ``ValueError``. The tile path supports topology-only
+        compact ``target_indices``, but has no geometry/pair-function output or
+        selective (``rebuild_flags``) variant. Topology-only compact rows support
+        ``graph_mode="warp"`` when tile is selected. ``"auto"`` selects tile
+        only for topology-only ``target_indices`` on CUDA with at least 256
+        atoms for float64 or 1024 atoms for float32; other JAX calls retain
+        scalar dispatch. The tile and scalar paths produce identical pair
+        *multisets* (per-row ordering may differ).
     inv_cell : jax.Array, shape (1, 3, 3), dtype matches positions, optional
         Inverse cell matrix consumed by the wrap kernel. Only used when
         ``pbc`` is provided and ``wrap_positions=True``. Pass in a
@@ -1926,7 +2478,10 @@ def naive_neighbor_list(
         preserves the existing per-kernel ``jax_kernel`` dispatch path.
         ``"warp"`` uses fused ``jax_callable(..., graph_mode=GraphMode.WARP)``
         callbacks and is intended for ``jax.jit`` call sites that donate
-        reusable output buffers.
+        reusable output buffers. Topology-only ``target_indices`` calls are
+        supported when ``strategy="tile"`` or when ``"auto"`` selects tile,
+        but require ``return_neighbor_list=False`` because COO output has
+        data-dependent shape.
 
     Returns
     -------
@@ -2041,7 +2596,9 @@ def naive_neighbor_list(
     ``XLA_FLAGS=--xla_gpu_enable_command_buffer=CUSTOM_CALL`` before
     importing JAX can improve the steady-state ``graph_mode="none"`` and
     ``graph_mode="warp"`` paths. Advanced users can bound Warp's graph
-    cache via ``warp.jax_experimental.set_jax_callable_default_graph_cache_max(...)``.
+    cache via ``warp.jax_experimental.set_jax_callable_default_graph_cache_max(...)``;
+    set that default before importing this module because its callables are
+    registered at import time.
 
     For ``graph_mode="warp"`` to actually replay (rather than re-capture
     every call), every in/out buffer pointer the fused callable sees must
@@ -2056,6 +2613,11 @@ def naive_neighbor_list(
     Letting any of these allocate fresh inside ``naive_neighbor_list``
     silently degrades the wrapped path to cold-capture-per-call (correct,
     but significantly slower than the proposal's measured replay numbers).
+    The input pointers for ``positions``, ``cell``, ``pbc``, and supplied
+    shift metadata must also remain stable. Partial calls additionally require
+    a stable ``target_indices`` pointer. Reusing one persistent array is
+    sufficient when its values are fixed; changing targets in-place requires a
+    donated/round-tripped target buffer.
     """
     graph_mode = _validate_graph_mode(graph_mode)
 
@@ -2085,36 +2647,114 @@ def naive_neighbor_list(
     if pbc is not None and cell is None:
         raise ValueError("If pbc is provided, cell must also be provided")
 
+    if target_indices is not None and (
+        target_indices.ndim != 1 or target_indices.dtype != jnp.int32
+    ):
+        raise ValueError("target_indices must be a rank-one int32 array.")
+
+    topology_only_partial = (
+        target_indices is not None
+        and not bool(return_distances)
+        and not bool(return_vectors)
+        and neighbor_vectors is None
+        and neighbor_distances is None
+        and pair_fn is None
+    )
+    partial_tile_min_atoms = _partial_tile_min_atoms(
+        wp.float64 if positions.dtype == jnp.float64 else wp.float32
+    )
+    partial_tile_selected = topology_only_partial and (
+        strategy == "tile"
+        or (
+            strategy == "auto"
+            and not _is_jax_cpu_for_tile(positions)
+            and int(positions.shape[0]) >= partial_tile_min_atoms
+        )
+    )
+    partial_tile_warp = graph_mode == "warp" and partial_tile_selected
+    if partial_tile_warp:
+        if return_neighbor_list:
+            raise ValueError(
+                "graph_mode='warp' with topology-only target_indices requires "
+                "return_neighbor_list=False because COO output has dynamic shape."
+            )
+        if target_indices.ndim != 1 or target_indices.dtype != jnp.int32:
+            raise ValueError(
+                "graph_mode='warp' with topology-only target_indices requires "
+                "a rank-one int32 target_indices array."
+            )
+        missing_outputs = neighbor_matrix is None or num_neighbors is None
+        if pbc is not None:
+            missing_outputs = missing_outputs or neighbor_matrix_shifts is None
+        if missing_outputs:
+            raise ValueError(
+                "graph_mode='warp' with topology-only target_indices requires "
+                "caller-provided compact neighbor_matrix, num_neighbors, and "
+                "neighbor_matrix_shifts when PBC is enabled."
+            )
+        if pbc is not None:
+            if (
+                tuple(cell.shape) != (1, 3, 3)
+                or cell.dtype != positions.dtype
+                or tuple(pbc.shape) != (1, 3)
+                or pbc.dtype != jnp.bool_
+            ):
+                raise ValueError(
+                    "graph_mode='warp' with topology-only target_indices "
+                    "requires cell shape (1, 3, 3) with the positions dtype "
+                    "and bool pbc shape (1, 3)."
+                )
+            if (
+                shift_range_per_dimension is None
+                or num_shifts_per_system is None
+                or max_shifts_per_system is None
+            ):
+                raise ValueError(
+                    "graph_mode='warp' with topology-only target_indices and "
+                    "PBC requires precomputed shift_range_per_dimension, "
+                    "num_shifts_per_system, and max_shifts_per_system."
+                )
+            if (
+                tuple(shift_range_per_dimension.shape) != (1, 3)
+                or shift_range_per_dimension.dtype != jnp.int32
+                or tuple(num_shifts_per_system.shape) != (1,)
+                or num_shifts_per_system.dtype != jnp.int32
+            ):
+                raise ValueError(
+                    "Partial graph replay requires int32 shift metadata with "
+                    "shapes (1, 3) and (1,)."
+                )
+
     if strategy == "tile":
-        # The tile-cooperative kernel is CUDA-only and has no pair-output,
-        # selective (rebuild_flags), or CUDA-graph (graph_mode="warp") variant.
-        # Gate here, before any launch, mirroring the warp launcher CPU guard.
-        if _is_jax_cpu_array(positions):
+        # The tile-cooperative kernel is CUDA-only and has no geometry/pair_fn,
+        # selective (rebuild_flags), or full-row CUDA-graph variant. Compact
+        # topology-only rows use the partial Warp-graph callable family.
+        if _is_jax_cpu_for_tile(positions):
             raise ValueError(
                 "strategy='tile' requires CUDA; the tile-cooperative "
                 "naive kernel cannot run on a CPU device (Warp forces "
                 "block_dim=1). Use strategy='scalar' or 'auto' on CPU.",
             )
-        if bool(return_distances) or bool(return_vectors) or pair_fn is not None:
+        if (
+            bool(return_distances)
+            or bool(return_vectors)
+            or neighbor_vectors is not None
+            or neighbor_distances is not None
+            or pair_fn is not None
+        ):
             raise NotImplementedError(
                 "strategy='tile' has no pair-output (return_distances / "
                 "return_vectors / pair_fn) variant; use strategy='scalar'.",
-            )
-        if target_indices is not None:
-            raise NotImplementedError(
-                "strategy='tile' has no target_indices (partial "
-                "neighbor-list) variant; use strategy='scalar'.",
             )
         if rebuild_flags is not None:
             raise NotImplementedError(
                 "strategy='tile' has no selective (rebuild_flags) "
                 "variant; use strategy='scalar'.",
             )
-        if graph_mode != "none":
+        if graph_mode != "none" and not partial_tile_warp:
             raise NotImplementedError(
-                "strategy='tile' is only supported with "
-                "graph_mode='none'; CUDA-graph capture of the tile kernel is a "
-                "follow-up.",
+                "strategy='tile' with graph_mode='warp' requires "
+                "topology-only target_indices.",
             )
 
     has_pair_outputs = (
@@ -2124,9 +2764,13 @@ def naive_neighbor_list(
         or target_indices is not None
     )
     if has_pair_outputs:
-        if graph_mode != "none" or rebuild_flags is not None:
+        if (
+            graph_mode != "none" and not partial_tile_warp
+        ) or rebuild_flags is not None:
             raise NotImplementedError(
-                "Pair outputs require graph_mode='none' and no rebuild_flags.",
+                "Pair outputs require graph_mode='none' and no rebuild_flags; "
+                "graph_mode='warp' is limited to topology-only target_indices "
+                "using the tile strategy.",
             )
         num_rows = (
             int(target_indices.shape[0])
@@ -2179,6 +2823,12 @@ def naive_neighbor_list(
         pbc_norm = None
         if pbc is not None:
             pbc_norm = pbc if pbc.ndim == 2 else pbc[jnp.newaxis, :]
+        if partial_tile_warp and pbc_norm is not None:
+            if int(cell_norm.shape[0]) != 1 or int(pbc_norm.shape[0]) != 1:
+                raise ValueError(
+                    "graph_mode='warp' with topology-only target_indices "
+                    "supports exactly one system."
+                )
         if pbc_norm is not None:
             if (
                 shift_range_per_dimension is None
@@ -2205,6 +2855,56 @@ def naive_neighbor_list(
                     "calling naive_neighbor_list under jax.jit with PBC and "
                     "target_indices / pair outputs.",
                 ) from exc
+        partial_inv_cell = None
+        partial_positions_wrapped = None
+        partial_per_atom_cell_offsets = None
+        if partial_tile_warp and pbc_norm is not None and wrap_positions:
+            partial_inv_cell = resolve_buffer_alias(
+                "inv_cell_buffer",
+                inv_cell_buffer,
+                "inv_cell",
+                inv_cell,
+            )
+            partial_positions_wrapped = resolve_buffer_alias(
+                "positions_wrapped_buffer",
+                positions_wrapped_buffer,
+                "positions_wrapped",
+                positions_wrapped,
+            )
+            partial_per_atom_cell_offsets = resolve_buffer_alias(
+                "per_atom_cell_offsets_buffer",
+                per_atom_cell_offsets_buffer,
+                "per_atom_cell_offsets",
+                per_atom_cell_offsets,
+            )
+            if (
+                partial_inv_cell is None
+                or partial_positions_wrapped is None
+                or partial_per_atom_cell_offsets is None
+            ):
+                raise ValueError(
+                    "graph_mode='warp' with topology-only target_indices and "
+                    "wrap_positions=True requires caller-provided inv_cell, "
+                    "positions_wrapped, and per_atom_cell_offsets buffers."
+                )
+            _validate_pair_output_buffer(
+                "inv_cell",
+                partial_inv_cell,
+                (1, 3, 3),
+                positions.dtype,
+            )
+            _validate_pair_output_buffer(
+                "positions_wrapped",
+                partial_positions_wrapped,
+                (int(positions.shape[0]), 3),
+                positions.dtype,
+            )
+            _validate_pair_output_buffer(
+                "per_atom_cell_offsets",
+                partial_per_atom_cell_offsets,
+                (int(positions.shape[0]), 3),
+                jnp.int32,
+            )
         forward_kwargs = {
             "pbc": pbc_norm,
             "cutoff": float(cutoff),
@@ -2222,28 +2922,48 @@ def naive_neighbor_list(
             "pair_params": pair_params,
             "target_indices": target_indices,
             "half_fill": bool(half_fill),
+            "strategy": "tile" if partial_tile_selected else "scalar",
+            "wrap_positions": bool(wrap_positions),
+            "graph_mode": graph_mode,
+            "inv_cell": partial_inv_cell,
+            "positions_wrapped": partial_positions_wrapped,
+            "per_atom_cell_offsets": partial_per_atom_cell_offsets,
         }
-        route_out = _route_pair_outputs(
-            positions,
-            cell_norm,
-            _naive_pair_outputs_forward,
-            forward_kwargs,
-        )
-        # ``extra_outputs`` carries the per-pair energy/force tail only when
-        # ``pair_fn`` is set, so the route return is 5 elements (geometry only) or 7.
-        if pair_fn is not None:
-            (
-                distances_out,
-                vectors_out,
-                nm_out,
-                nn_out,
-                shifts_out,
-                pe_out,
-                pf_out,
-            ) = route_out
+        if topology_only_partial:
+            # Do not reconstruct the full compact ``(rows, max_neighbors)``
+            # geometry only to discard it. This keeps topology-only partial
+            # timing focused on the Warp search/callback and avoids unnecessary
+            # gathers, norms, and materialized vector/distance arrays.
+            forward_out = _naive_pair_outputs_forward(
+                positions,
+                cell_norm,
+                **forward_kwargs,
+            )
+            nm_out, nn_out, shifts_out = forward_out.extra_outputs
+            distances_out = vectors_out = pe_out = pf_out = None
         else:
-            distances_out, vectors_out, nm_out, nn_out, shifts_out = route_out
-            pe_out = pf_out = None
+            route_out = _route_pair_outputs(
+                positions,
+                cell_norm,
+                _naive_pair_outputs_forward,
+                forward_kwargs,
+            )
+            # ``extra_outputs`` carries the per-pair energy/force tail only when
+            # ``pair_fn`` is set, so the route return is 5 elements (geometry
+            # only) or 7.
+            if pair_fn is not None:
+                (
+                    distances_out,
+                    vectors_out,
+                    nm_out,
+                    nn_out,
+                    shifts_out,
+                    pe_out,
+                    pf_out,
+                ) = route_out
+            else:
+                distances_out, vectors_out, nm_out, nn_out, shifts_out = route_out
+                pe_out = pf_out = None
         if return_neighbor_list:
             if pbc is not None:
                 nl, nptr, nl_shifts = get_neighbor_list_from_neighbor_matrix(
@@ -2262,10 +2982,11 @@ def naive_neighbor_list(
                 base = (nl, nptr)
             # Repack per-pair geometry (and pair_fn outputs) into COO order aligned
             # with ``nl``.  Eager-only, like the index conversion.
-            active = nm_out != int(fill_value)
-            distances_out, vectors_out = coo_pack_pair_geometry(
-                active, distances_out, vectors_out
-            )
+            if distances_out is not None or vectors_out is not None:
+                active = nm_out != int(fill_value)
+                distances_out, vectors_out = coo_pack_pair_geometry(
+                    active, distances_out, vectors_out
+                )
             if pair_fn is not None:
                 pe_out, pf_out = coo_pack_pair_geometry(active, pe_out, pf_out)
         elif pbc is not None:
@@ -2509,10 +3230,12 @@ def naive_neighbor_list(
             tile_callable = _GRAPH_NAIVE_TILE_CALLABLES[(False, False, positions.dtype)]
             neighbor_matrix, num_neighbors = tile_callable(
                 positions,
+                empty_target_indices,
                 neighbor_matrix,
                 num_neighbors,
                 cutoff_static,
                 half_fill,
+                False,
             )
         else:
             if cell.dtype != positions.dtype:
@@ -2524,6 +3247,7 @@ def naive_neighbor_list(
             pbc_arg = (pbc,) if wrap_positions else ()
             neighbor_matrix, neighbor_matrix_shifts, num_neighbors = tile_callable(
                 positions,
+                empty_target_indices,
                 cell,
                 *pbc_arg,
                 shift_range_per_dimension,
@@ -2533,6 +3257,7 @@ def naive_neighbor_list(
                 cutoff_static,
                 num_shifts,
                 half_fill,
+                False,
             )
     elif graph_mode == "warp":
         has_pbc = pbc is not None

@@ -15,17 +15,25 @@
 
 """Tests for the public naive kernel kernel getter helper."""
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 import torch
 import warp as wp
 
+import nvalchemiops.neighbors.naive.launchers as naive_launchers
+import nvalchemiops.neighbors.neighbor_utils as neighbor_utils
 from nvalchemiops.neighbors.naive import (
     get_naive_neighbor_matrix_kernel,
     naive_neighbor_matrix,
     naive_neighbor_matrix_pbc,
 )
-from nvalchemiops.neighbors.naive.launchers import _reject_pair_fn_for_dual_cutoff
+from nvalchemiops.neighbors.naive.launchers import (
+    BLOCK_DIM,
+    _partial_tile_min_atoms,
+    _reject_pair_fn_for_dual_cutoff,
+)
 from nvalchemiops.torch.neighbors.neighbor_utils import compute_naive_num_shifts
 
 
@@ -103,6 +111,263 @@ def _skip_missing_cuda(device: str) -> None:
     """Skip CUDA cases when the local test host has no CUDA device."""
     if device.startswith("cuda") and not torch.cuda.is_available():
         pytest.skip("CUDA is required for this test parameter")
+
+
+@pytest.mark.parametrize(
+    ("wp_dtype", "expected"),
+    [
+        (wp.float16, 16 * BLOCK_DIM),
+        (wp.float32, 16 * BLOCK_DIM),
+        (wp.float64, 4 * BLOCK_DIM),
+    ],
+)
+def test_partial_tile_min_atoms_is_dtype_specific(wp_dtype, expected):
+    """Partial tile auto-dispatch uses the benchmarked threshold per dtype."""
+    assert _partial_tile_min_atoms(wp_dtype) == expected
+
+
+@pytest.mark.parametrize(
+    ("wp_dtype", "num_atoms", "strategy", "expected_launch"),
+    [
+        (wp.float16, 1023, "auto", "scalar"),
+        (wp.float16, 1024, "auto", "tile"),
+        (wp.float32, 1023, "auto", "scalar"),
+        (wp.float32, 1024, "auto", "tile"),
+        (wp.float64, 255, "auto", "scalar"),
+        (wp.float64, 256, "auto", "tile"),
+        (wp.float32, 1, "tile", "tile"),
+    ],
+)
+def test_partial_auto_dispatch_uses_dtype_threshold(
+    monkeypatch,
+    wp_dtype,
+    num_atoms,
+    strategy,
+    expected_launch,
+):
+    """Partial routing changes at each dtype threshold; explicit tile does not."""
+    launches = []
+    monkeypatch.setattr(naive_launchers, "_is_cpu_device", lambda _device: False)
+    monkeypatch.setattr(
+        naive_launchers,
+        "_scalar_sentinels",
+        lambda _dtype, _device: (None,) * 16,
+    )
+    monkeypatch.setattr(
+        naive_launchers,
+        "_prepare_pair_output_args",
+        lambda *_args, **_kwargs: (None,) * 5,
+    )
+    monkeypatch.setattr(
+        naive_launchers,
+        "get_naive_neighbor_matrix_kernel",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        naive_launchers.wp,
+        "launch",
+        lambda **_kwargs: launches.append("scalar"),
+    )
+    monkeypatch.setattr(
+        naive_launchers.wp,
+        "launch_tiled",
+        lambda **_kwargs: launches.append("tile"),
+    )
+
+    naive_launchers._launch_naive_neighbor_matrix_no_pbc(
+        SimpleNamespace(shape=(num_atoms, 3)),
+        1.0,
+        None,
+        None,
+        wp_dtype,
+        "cuda:0",
+        batched=False,
+        target_indices=SimpleNamespace(shape=(6,)),
+        strategy=strategy,
+    )
+
+    assert launches == [expected_launch]
+
+
+@pytest.mark.parametrize(
+    ("strategy", "expected_launch"),
+    [
+        ("auto", "scalar"),
+        ("scalar", "scalar"),
+        ("tile", "tile"),
+    ],
+)
+def test_batched_partial_dispatches_requested_strategy(
+    monkeypatch,
+    strategy,
+    expected_launch,
+):
+    """Batched partial routing is scalar by default but honors overrides."""
+    launches = []
+    monkeypatch.setattr(naive_launchers, "_is_cpu_device", lambda _device: False)
+    monkeypatch.setattr(
+        naive_launchers,
+        "_scalar_sentinels",
+        lambda _dtype, _device: (None,) * 16,
+    )
+    monkeypatch.setattr(
+        naive_launchers,
+        "get_naive_neighbor_matrix_kernel",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        naive_launchers.wp,
+        "launch",
+        lambda **_kwargs: launches.append("scalar"),
+    )
+    monkeypatch.setattr(
+        naive_launchers.wp,
+        "launch_tiled",
+        lambda **_kwargs: launches.append("tile"),
+    )
+
+    naive_launchers._launch_naive_neighbor_matrix_no_pbc(
+        SimpleNamespace(shape=(4096, 3)),
+        1.0,
+        None,
+        None,
+        wp.float64,
+        "cuda:0",
+        batched=True,
+        batch_idx=SimpleNamespace(shape=(4096,)),
+        batch_ptr=SimpleNamespace(shape=(1025,)),
+        target_indices=SimpleNamespace(shape=(6,)),
+        strategy=strategy,
+    )
+
+    assert launches == [expected_launch]
+
+
+@pytest.mark.parametrize(
+    ("strategy", "expected_launch"),
+    [
+        ("auto", "scalar"),
+        ("scalar", "scalar"),
+        ("tile", "tile"),
+    ],
+)
+def test_batched_pbc_partial_dispatches_requested_strategy(
+    monkeypatch,
+    strategy,
+    expected_launch,
+):
+    """Batched PBC partial routing is scalar by default but honors overrides."""
+    launches = []
+    monkeypatch.setattr(naive_launchers, "_is_cpu_device", lambda _device: False)
+    monkeypatch.setattr(
+        naive_launchers,
+        "_prepare_pbc_positions",
+        lambda *_args, **_kwargs: (None, None),
+    )
+    monkeypatch.setattr(
+        naive_launchers,
+        "_scalar_sentinels",
+        lambda _dtype, _device: (None,) * 16,
+    )
+    monkeypatch.setattr(
+        naive_launchers,
+        "get_naive_neighbor_matrix_kernel",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        naive_launchers.wp,
+        "launch",
+        lambda **_kwargs: launches.append("scalar"),
+    )
+    monkeypatch.setattr(
+        naive_launchers.wp,
+        "launch_tiled",
+        lambda **_kwargs: launches.append("tile"),
+    )
+
+    naive_launchers._launch_naive_neighbor_matrix_pbc(
+        SimpleNamespace(shape=(4096, 3)),
+        1.0,
+        SimpleNamespace(shape=(1024, 3, 3)),
+        None,
+        None,
+        None,
+        None,
+        None,
+        wp.float64,
+        "cuda:0",
+        batched=True,
+        batch_ptr=SimpleNamespace(shape=(1025,)),
+        batch_idx=SimpleNamespace(shape=(4096,)),
+        num_shifts_arr=SimpleNamespace(shape=(1024,)),
+        max_shifts_per_system=1,
+        max_atoms_per_system=4,
+        target_indices=SimpleNamespace(shape=(6,)),
+        strategy=strategy,
+    )
+
+    assert launches == [expected_launch]
+
+
+def test_batched_partial_selective_reset_uses_target_indices(monkeypatch):
+    """Selective compact-row reset derives each system from its target atom."""
+    captured_kwargs = {}
+    monkeypatch.setattr(
+        neighbor_utils.wp,
+        "launch",
+        lambda **kwargs: captured_kwargs.update(kwargs),
+    )
+    num_neighbors = SimpleNamespace(shape=(2,))
+    batch_idx = SimpleNamespace(shape=(4,))
+    target_indices = SimpleNamespace(shape=(2,))
+    rebuild_flags = SimpleNamespace(shape=(2,))
+
+    neighbor_utils.selective_zero_partial_num_neighbors(
+        num_neighbors,
+        batch_idx,
+        target_indices,
+        rebuild_flags,
+        "cuda:0",
+    )
+
+    assert captured_kwargs["dim"] == 2
+    assert captured_kwargs["inputs"] == [
+        num_neighbors,
+        batch_idx,
+        target_indices,
+        rebuild_flags,
+    ]
+
+
+def test_batch_pbc_partial_forwards_explicit_strategy(monkeypatch):
+    """Batched PBC partial calls preserve the caller's strategy selection."""
+    captured_kwargs = {}
+    monkeypatch.setattr(
+        naive_launchers,
+        "_launch_naive_neighbor_matrix_pbc",
+        lambda *_args, **kwargs: captured_kwargs.update(kwargs),
+    )
+
+    naive_launchers.batch_naive_neighbor_matrix_pbc(
+        None,
+        None,
+        1.0,
+        None,
+        None,
+        None,
+        None,
+        1,
+        None,
+        None,
+        None,
+        wp.float32,
+        "cuda:0",
+        1,
+        target_indices=SimpleNamespace(shape=(1,)),
+        strategy="scalar",
+    )
+
+    assert captured_kwargs["strategy"] == "scalar"
 
 
 def test_single_cutoff_kernel_uses_pair_fn_object_cache_key():
