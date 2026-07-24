@@ -35,12 +35,12 @@ def test_jitted_cpu_trace_preserves_cpu_dispatch():
 import jax
 import jax.numpy as jnp
 
-from nvalchemiops.jax.neighbors.naive import _is_jax_cpu_for_tile
+from nvalchemiops.jax.neighbors._dispatch import _is_jax_cpu_array
 
 
 @jax.jit
 def classify(positions):
-    return _is_jax_cpu_for_tile(positions)
+    return _is_jax_cpu_array(positions)
 
 
 assert bool(classify(jnp.zeros((2, 3), dtype=jnp.float32)))

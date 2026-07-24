@@ -1042,7 +1042,9 @@ def _make_tile_kernel(
                 shift = _decode_shift_index(ishift, shift_range[isys])
             current_cell = cell[isys]
             pos_i = positions[atom_i]
-            pos_i_image = _shifted_position(shift, current_cell, pos_i)
+            pos_i_image = pos_i
+            if not PARTIAL:
+                pos_i_image = _shifted_position(shift, current_cell, pos_i)
             atom_i_offset = wp.vec3i(0, 0, 0)
             if WRAP_ON_ENTRY:
                 atom_i_offset = per_atom_cell_offsets[atom_i]
@@ -1054,12 +1056,13 @@ def _make_tile_kernel(
             for chunk_start in range(j_start, j_end, BLOCK_DIM):
                 atom_j = chunk_start + lane
                 safe_j = wp.min(atom_j, positions.shape[0] - 1)
-                diff = pos_i_image - positions[safe_j]
                 if PARTIAL:
                     nbr_image = _shifted_position(
                         shift, current_cell, positions[safe_j]
                     )
                     diff = nbr_image - pos_i
+                else:
+                    diff = pos_i_image - positions[safe_j]
                 dist_sq = wp.dot(diff, diff)
                 active = atom_j < j_end and dist_sq < cutoff_sq
                 if PARTIAL and zero_shift and atom_j == atom_i:

@@ -59,11 +59,6 @@ from nvalchemiops.neighbors.neighbor_utils import (
 _DTYPE_TO_NAIVE_KERNELS = (wp.float32, wp.float64)
 
 
-def _is_jax_cpu_for_tile(array: jax.Array) -> bool:
-    """Return whether the concrete JAX array is CPU-backed for tile dispatch."""
-    return _is_jax_cpu_array(array)
-
-
 (
     _fill_naive_neighbor_matrix_kernels,
     _fill_naive_neighbor_matrix_selective_kernels,
@@ -2667,7 +2662,7 @@ def naive_neighbor_list(
         strategy == "tile"
         or (
             strategy == "auto"
-            and not _is_jax_cpu_for_tile(positions)
+            and not _is_jax_cpu_array(positions)
             and int(positions.shape[0]) >= partial_tile_min_atoms
         )
     )
@@ -2677,11 +2672,6 @@ def naive_neighbor_list(
             raise ValueError(
                 "graph_mode='warp' with topology-only target_indices requires "
                 "return_neighbor_list=False because COO output has dynamic shape."
-            )
-        if target_indices.ndim != 1 or target_indices.dtype != jnp.int32:
-            raise ValueError(
-                "graph_mode='warp' with topology-only target_indices requires "
-                "a rank-one int32 target_indices array."
             )
         missing_outputs = neighbor_matrix is None or num_neighbors is None
         if pbc is not None:
@@ -2729,7 +2719,7 @@ def naive_neighbor_list(
         # The tile-cooperative kernel is CUDA-only and has no geometry/pair_fn,
         # selective (rebuild_flags), or full-row CUDA-graph variant. Compact
         # topology-only rows use the partial Warp-graph callable family.
-        if _is_jax_cpu_for_tile(positions):
+        if _is_jax_cpu_array(positions):
             raise ValueError(
                 "strategy='tile' requires CUDA; the tile-cooperative "
                 "naive kernel cannot run on a CPU device (Warp forces "
