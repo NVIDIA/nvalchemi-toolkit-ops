@@ -912,19 +912,24 @@ def _bspline_via_convolution(u: np.ndarray, order: int, h: float = 1e-4) -> np.n
     Independent oracle for the analytical pieces — provides a check that
     the polynomial coefficients in :func:`bspline_weight` actually
     represent the n-fold convolution of ``χ_[0,1)`` rather than just
-    matching the closed-form truncated-power expression. With
-    ``h = 1e-4`` the trapezoidal-rule convolution converges to ~1e-8
-    accuracy, which is well below the breakpoint behavior we want to
-    detect (the cardinal pieces match to machine precision; if any
-    polynomial were wrong even by one term the residual would be O(1)).
+    matching the closed-form truncated-power expression.
+
+    Convolution with a sampled unit box is a moving sum. Prefix sums compute
+    that linear convolution in O(N) per fold, avoiding the O(N²)
+    ``np.convolve`` runtime and its sensitivity to thread oversubscription.
+    The rectangular-rule discretization converges with O(h) error; any wrong
+    polynomial piece would still give an O(1) residual.
     """
-    n = order
-    grid = np.arange(0, n + 1, h)
-    box = ((grid >= 0) & (grid < 1)).astype(np.float64)
-    spline = box.copy()
-    for _ in range(n - 1):
-        spline = np.convolve(spline, box) * h
-    out_grid = np.arange(0, len(spline)) * h
+    box_size = int(round(1.0 / h))
+    spline = np.ones(box_size, dtype=np.float64)
+    for _ in range(order - 1):
+        output_size = spline.size + box_size - 1
+        output_idx = np.arange(output_size)
+        prefix = np.concatenate((np.zeros(1, dtype=np.float64), np.cumsum(spline)))
+        start = np.maximum(output_idx - box_size + 1, 0)
+        stop = np.minimum(output_idx + 1, spline.size)
+        spline = (prefix[stop] - prefix[start]) * h
+    out_grid = np.arange(spline.size) * h
     return np.interp(u, out_grid, spline)
 
 

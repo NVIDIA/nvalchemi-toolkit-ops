@@ -201,6 +201,7 @@ from nvalchemiops.torch.interactions.electrostatics._util import (
     _InjectCachedEvalGradWithFallback,
     _InjectChargeGrad,
     _is_uniform_cotangent,
+    _sum_atom_values_by_system,
     _unpack_electrostatic_outputs,
 )
 from nvalchemiops.torch.interactions.electrostatics.ewald import (
@@ -1577,10 +1578,13 @@ def pme_energy_corrections(
             volumes = volume.to(input_dtype)
 
         # Compute total charge per system
-        total_charges = torch.zeros(
-            num_systems, dtype=input_dtype, device=raw_energies.device
-        )
-        total_charges.scatter_add_(0, batch_idx, charges.to(input_dtype))
+        if num_systems == 1:
+            total_charges = charges.to(input_dtype).sum().reshape(1)
+        else:
+            total_charges = torch.zeros(
+                num_systems, dtype=input_dtype, device=raw_energies.device
+            )
+            total_charges.scatter_add_(0, batch_idx, charges.to(input_dtype))
 
         result = _batch_pme_energy_corrections(
             raw_energies,
@@ -1670,10 +1674,13 @@ def pme_energy_corrections_with_charge_grad(
             volumes = volume.to(input_dtype)
 
         # Compute total charge per system
-        total_charges = torch.zeros(
-            num_systems, dtype=input_dtype, device=raw_energies.device
-        )
-        total_charges.scatter_add_(0, batch_idx, charges.to(input_dtype))
+        if num_systems == 1:
+            total_charges = charges.to(input_dtype).sum().reshape(1)
+        else:
+            total_charges = torch.zeros(
+                num_systems, dtype=input_dtype, device=raw_energies.device
+            )
+            total_charges.scatter_add_(0, batch_idx, charges.to(input_dtype))
 
         return _batch_pme_energy_corrections_with_charge_grad(
             raw_energies,
@@ -1813,7 +1820,9 @@ def register_pme_ops() -> None:
         n_forward_inputs=8,
         backward_args=lambda g, f: (
             f[0],
-            g[0],
+            # Materialize the cotangent before the opaque custom-op consumer so
+            # Inductor keeps Hermitian RFFT interior-frequency weighting ahead of it.
+            g[0] * 1.0,
             f[1],
             f[2],
             f[3],
@@ -2089,21 +2098,10 @@ def _pme_cell_grad_from_virial(
     """
     cell_3d = cell if cell.dim() == 3 else cell.unsqueeze(0)
     num_systems = cell_3d.shape[0]
-    pos_term = torch.zeros(
-        num_systems,
-        3,
-        3,
-        device=positions.device,
-        dtype=torch.float64,
-    )
     outer = positions.to(torch.float64).unsqueeze(2) * dEdR.to(torch.float64).unsqueeze(
         1
     )
-    if batch_idx is None:
-        if outer.numel():
-            pos_term[0] = outer.sum(dim=0)
-    else:
-        pos_term = pos_term.index_add(0, batch_idx.to(torch.long), outer)
+    pos_term = _sum_atom_values_by_system(outer, batch_idx, num_systems)
     target = -virial.to(torch.float64) - pos_term
     if cell_inv_t is not None:
         inv_t_3d = _normalize_cell_inv_t_cache(cell_inv_t).to(torch.float64)

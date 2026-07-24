@@ -308,6 +308,93 @@ def _num_systems_from_state(
     return int(batch_idx.max().item()) + 1
 
 
+def _sum_atom_values_by_system(
+    values: torch.Tensor,
+    batch_idx: torch.Tensor | None,
+    num_systems: int,
+) -> torch.Tensor:
+    """Reduce atom-major values to per-system sums."""
+    if num_systems == 1:
+        return values.sum(dim=0, keepdim=True)
+
+    if batch_idx is None:
+        raise RuntimeError("batch_idx is required for multi-system atom reduction")
+
+    result = values.new_zeros((num_systems, *values.shape[1:]))
+    return result.index_add(0, batch_idx, values)
+
+
+def _mean_atom_values_by_system(
+    values: torch.Tensor,
+    batch_idx: torch.Tensor | None,
+    num_systems: int,
+) -> torch.Tensor:
+    """Reduce atom-major values to guarded per-system means."""
+    if values.shape[0] == 0:
+        return values.new_zeros((num_systems, *values.shape[1:]))
+    if num_systems == 1:
+        return values.mean(dim=0, keepdim=True)
+
+    sums = _sum_atom_values_by_system(values, batch_idx, num_systems)
+    counts = _sum_atom_values_by_system(
+        values.new_ones((values.shape[0],)),
+        batch_idx,
+        num_systems,
+    )
+    count_shape = (num_systems, *([1] * (values.ndim - 1)))
+    return sums / counts.clamp_min(1).reshape(count_shape)
+
+
+def _broadcast_system_values_to_atoms(
+    per_system: torch.Tensor,
+    batch_idx: torch.Tensor | None,
+    num_systems: int,
+    num_atoms: int,
+) -> torch.Tensor:
+    """Broadcast per-system values to atom-major values."""
+    if num_atoms == 0:
+        return per_system.new_empty((0, *per_system.shape[1:]))
+    if num_systems == 1:
+        return per_system[0].expand((num_atoms, *per_system.shape[1:]))
+
+    if batch_idx is None:
+        raise RuntimeError("batch_idx is required for multi-system atom broadcast")
+
+    return per_system.index_select(0, batch_idx)
+
+
+def _distribute_system_mean_cotangent_to_atoms(
+    per_system: torch.Tensor,
+    batch_idx: torch.Tensor | None,
+    num_systems: int,
+    num_atoms: int,
+) -> torch.Tensor:
+    """Apply the adjoint of per-system mean reduction."""
+    if num_atoms == 0:
+        return per_system.new_empty((0, *per_system.shape[1:]))
+    if num_systems == 1:
+        return (
+            per_system[0]
+            .div(float(num_atoms))
+            .expand((num_atoms, *per_system.shape[1:]))
+            .clone()
+        )
+
+    counts = _sum_atom_values_by_system(
+        per_system.new_ones((num_atoms,)),
+        batch_idx,
+        num_systems,
+    )
+    count_shape = (num_systems, *([1] * (per_system.ndim - 1)))
+    scaled = per_system / counts.clamp_min(1).reshape(count_shape)
+    return _broadcast_system_values_to_atoms(
+        scaled,
+        batch_idx,
+        num_systems,
+        num_atoms,
+    ).clone()
+
+
 def _energy_cotangents(
     grad_energy: torch.Tensor,
     batch_idx: torch.Tensor | None,
@@ -334,11 +421,7 @@ def _energy_cotangents(
     if grad.numel() == num_systems:
         grad_system = grad
     elif grad.numel() == num_atoms:
-        sums = grad.new_zeros((num_systems,))
-        sums = sums.index_add(0, bidx, grad)
-        counts = grad.new_zeros((num_systems,))
-        counts = counts.index_add(0, bidx, torch.ones_like(grad))
-        grad_system = sums / counts.clamp_min(1)
+        grad_system = _mean_atom_values_by_system(grad, bidx, num_systems)
     elif grad.numel() == 1:
         grad_system = grad.expand(num_systems)
     else:
@@ -346,7 +429,12 @@ def _energy_cotangents(
             "Energy cotangent must be per-system, per-atom, or scalar for "
             "_InjectChargeGrad backward"
         )
-    atom_grad = grad_system.index_select(0, bidx)
+    atom_grad = _broadcast_system_values_to_atoms(
+        grad_system,
+        bidx,
+        num_systems,
+        num_atoms,
+    )
     return grad_system, atom_grad
 
 

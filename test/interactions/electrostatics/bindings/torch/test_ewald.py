@@ -38,6 +38,7 @@ import warnings
 import numpy as np
 import pytest
 import torch
+import warp as wp
 from torchpme.lib.kvectors import _generate_kvectors as _generate_kvectors_torchpme
 
 from nvalchemiops.interactions.electrostatics._factory_common import _DerivState
@@ -254,6 +255,54 @@ def create_dipole_system(
     neighbor_ptr = torch.tensor([0, 1, 2], dtype=torch.int32, device=device)
     neighbor_shifts = torch.zeros((2, 3), dtype=torch.int32, device=device)
     return positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts
+
+
+def _compile_ewald_setup(
+    device: torch.device,
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+]:
+    """Build fixed explicit-B=1 Ewald inputs outside compiled callables."""
+    positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts = (
+        create_dipole_system(device, dtype=torch.float64)
+    )
+    batch_idx = torch.zeros(positions.shape[0], dtype=torch.int32, device=device)
+    alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+    k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=3.0)
+    return (
+        positions,
+        charges,
+        cell,
+        batch_idx,
+        alpha,
+        k_vectors,
+        neighbor_list,
+        neighbor_ptr,
+        neighbor_shifts,
+    )
+
+
+def _ewald_energy_and_grads(
+    loss_fn,
+    positions: torch.Tensor,
+    charges: torch.Tensor,
+    cell: torch.Tensor,
+) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+    """Evaluate a scalar Ewald loss and its public first-order derivatives."""
+    positions = positions.clone().requires_grad_(True)
+    charges = charges.clone().requires_grad_(True)
+    cell = cell.clone().requires_grad_(True)
+    loss = loss_fn(positions, charges, cell)
+    gradients = torch.autograd.grad(loss, (positions, charges, cell))
+    return loss, gradients
 
 
 ###########################################################################################
@@ -6729,6 +6778,191 @@ class TestEwaldVirialTorchPMEParity:
 class TestEwaldTorchCompile:
     """Verify that ewald_summation under torch.compile matches eager mode."""
 
+    @pytest.mark.slow
+    @pytest.mark.parametrize("device", ["cpu", "cuda"])
+    @pytest.mark.parametrize("part", ["real", "recip", "summation"])
+    def test_explicit_batch_single_system_loss_compile_gradients(self, device, part):
+        """Compiled explicit-B=1 Ewald losses match eager energy gradients."""
+        if device == "cuda" and (
+            not torch.cuda.is_available() or not wp.is_cuda_available()
+        ):
+            pytest.skip("CUDA or Warp CUDA support unavailable")
+
+        torch_device = torch.device(device)
+        (
+            positions,
+            charges,
+            cell,
+            batch_idx,
+            alpha,
+            k_vectors,
+            neighbor_list,
+            neighbor_ptr,
+            neighbor_shifts,
+        ) = _compile_ewald_setup(torch_device)
+
+        def make_loss_fn(bidx: torch.Tensor | None):
+            def loss_fn(
+                pos: torch.Tensor, q: torch.Tensor, box: torch.Tensor
+            ) -> torch.Tensor:
+                if part == "real":
+                    energy = ewald_real_space(
+                        pos,
+                        q,
+                        box,
+                        alpha,
+                        neighbor_list=neighbor_list,
+                        neighbor_ptr=neighbor_ptr,
+                        neighbor_shifts=neighbor_shifts,
+                        batch_idx=bidx,
+                    )
+                elif part == "recip":
+                    energy = ewald_reciprocal_space(
+                        pos, q, box, k_vectors, alpha, batch_idx=bidx
+                    )
+                else:
+                    energy = ewald_summation(
+                        pos,
+                        q,
+                        box,
+                        alpha=alpha,
+                        k_vectors=k_vectors,
+                        neighbor_list=neighbor_list,
+                        neighbor_ptr=neighbor_ptr,
+                        neighbor_shifts=neighbor_shifts,
+                        batch_idx=bidx,
+                    )
+                return energy.sum()
+
+            return loss_fn
+
+        eager_explicit = _ewald_energy_and_grads(
+            make_loss_fn(batch_idx), positions, charges, cell
+        )
+        eager_unbatched = _ewald_energy_and_grads(
+            make_loss_fn(None), positions, charges, cell
+        )
+
+        torch._dynamo.reset()
+        try:
+            compiled_loss_fn = torch.compile(make_loss_fn(batch_idx), dynamic=True)
+            compiled_explicit = _ewald_energy_and_grads(
+                compiled_loss_fn, positions, charges, cell
+            )
+        finally:
+            torch._dynamo.reset()
+
+        for compiled, eager, unbatched in zip(
+            compiled_explicit, eager_explicit, eager_unbatched, strict=True
+        ):
+            if isinstance(compiled, tuple):
+                for grad_index, (
+                    compiled_grad,
+                    eager_grad,
+                    unbatched_grad,
+                ) in enumerate(zip(compiled, eager, unbatched, strict=True)):
+                    # Native erfc and eager float64 wp_erfc differ by ~1.33e-9.
+                    grad_atol = (
+                        1e-8
+                        if part == "real" and device == "cuda" and grad_index < 2
+                        else 1e-9
+                    )
+                    torch.testing.assert_close(
+                        compiled_grad, eager_grad, rtol=1e-7, atol=grad_atol
+                    )
+                    torch.testing.assert_close(
+                        compiled_grad, unbatched_grad, rtol=1e-7, atol=grad_atol
+                    )
+            else:
+                torch.testing.assert_close(compiled, eager, rtol=1e-7, atol=1e-9)
+                torch.testing.assert_close(compiled, unbatched, rtol=1e-7, atol=1e-9)
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("device", ["cpu", "cuda"])
+    def test_full_explicit_batch_direct_outputs_compile(self, device):
+        """Compiled explicit-B=1 Ewald direct outputs match eager references."""
+        if device == "cuda" and (
+            not torch.cuda.is_available() or not wp.is_cuda_available()
+        ):
+            pytest.skip("CUDA or Warp CUDA support unavailable")
+
+        torch_device = torch.device(device)
+        (
+            positions,
+            charges,
+            cell,
+            batch_idx,
+            alpha,
+            k_vectors,
+            neighbor_list,
+            neighbor_ptr,
+            neighbor_shifts,
+        ) = _compile_ewald_setup(torch_device)
+
+        def direct_outputs(
+            pos: torch.Tensor,
+            q: torch.Tensor,
+            box: torch.Tensor,
+            bidx: torch.Tensor | None,
+        ) -> tuple[torch.Tensor, ...]:
+            return ewald_summation(
+                pos,
+                q,
+                box,
+                alpha=alpha,
+                k_vectors=k_vectors,
+                neighbor_list=neighbor_list,
+                neighbor_ptr=neighbor_ptr,
+                neighbor_shifts=neighbor_shifts,
+                batch_idx=bidx,
+                compute_forces=True,
+                compute_charge_gradients=True,
+                compute_virial=True,
+            )
+
+        eager_explicit = _ewald_summation_without_direct_output_deprecation(
+            positions,
+            charges,
+            cell,
+            alpha=alpha,
+            k_vectors=k_vectors,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            batch_idx=batch_idx,
+            compute_forces=True,
+            compute_charge_gradients=True,
+            compute_virial=True,
+        )
+        eager_unbatched = _ewald_summation_without_direct_output_deprecation(
+            positions,
+            charges,
+            cell,
+            alpha=alpha,
+            k_vectors=k_vectors,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            batch_idx=None,
+            compute_forces=True,
+            compute_charge_gradients=True,
+            compute_virial=True,
+        )
+
+        torch._dynamo.reset()
+        try:
+            compiled_explicit = torch.compile(direct_outputs, dynamic=True)(
+                positions, charges, cell, batch_idx
+            )
+        finally:
+            torch._dynamo.reset()
+
+        for compiled, eager, unbatched in zip(
+            compiled_explicit, eager_explicit, eager_unbatched, strict=True
+        ):
+            torch.testing.assert_close(compiled, eager, rtol=1e-7, atol=1e-9)
+            torch.testing.assert_close(compiled, unbatched, rtol=1e-7, atol=1e-9)
+
     @pytest.mark.skipif(
         not torch.cuda.is_available(), reason="CUDA required for torch.compile"
     )
@@ -8165,7 +8399,7 @@ class TestEwaldQRGeometryFallback:
 class TestEwaldDoubleBackward:
     """Second-order contract: create_graph losses + gradgradcheck (real/recip/summation)."""
 
-    def _energy_fn(self, part, device, triclinic=False):
+    def _energy_fn(self, part, device, triclinic=False, explicit_batch=False):
         """Return (energy_fn, positions, charges, cell) for the requested part."""
         positions, charges, cell = _contract_dipole(device)
         if triclinic:
@@ -8176,15 +8410,33 @@ class TestEwaldDoubleBackward:
                 dtype=torch.float64,
                 device=device,
             )
-        nl, nptr, ns = cell_list(
-            positions,
-            5.0,
-            cell,
-            torch.tensor([[True, True, True]], device=device),
-            return_neighbor_list=True,
+        batch_idx = (
+            torch.zeros(positions.shape[0], dtype=torch.int32, device=device)
+            if explicit_batch
+            else None
         )
+        batch_kwargs = {"batch_idx": batch_idx} if explicit_batch else {}
+        if explicit_batch:
+            nl, nptr, ns = batch_cell_list(
+                positions,
+                5.0,
+                cell,
+                torch.tensor([[True, True, True]], device=device),
+                batch_idx=batch_idx,
+                return_neighbor_list=True,
+            )
+        else:
+            nl, nptr, ns = cell_list(
+                positions,
+                5.0,
+                cell,
+                torch.tensor([[True, True, True]], device=device),
+                return_neighbor_list=True,
+            )
         alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
-        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=2.0).squeeze(0)
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=2.0)
+        if not explicit_batch:
+            k_vectors = k_vectors.squeeze(0)
 
         if part == "real":
 
@@ -8197,11 +8449,19 @@ class TestEwaldDoubleBackward:
                     neighbor_list=nl,
                     neighbor_ptr=nptr,
                     neighbor_shifts=ns,
+                    **batch_kwargs,
                 )
         elif part == "recip":
 
             def energy_fn(p, q, c):
-                return ewald_reciprocal_space(p, q, c, k_vectors, alpha)
+                return ewald_reciprocal_space(
+                    p,
+                    q,
+                    c,
+                    k_vectors,
+                    alpha,
+                    **batch_kwargs,
+                )
         else:  # summation
 
             def energy_fn(p, q, c):
@@ -8214,6 +8474,7 @@ class TestEwaldDoubleBackward:
                     neighbor_list=nl,
                     neighbor_ptr=nptr,
                     neighbor_shifts=ns,
+                    **batch_kwargs,
                 )
 
         return energy_fn, positions, charges, cell
@@ -8326,6 +8587,31 @@ class TestEwaldDoubleBackward:
             cell,
             wrt=("positions", "cell"),
         )
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    @pytest.mark.parametrize(
+        ("part", "wrt", "triclinic"),
+        [
+            ("real", ("positions",), False),
+            ("real", ("positions", "cell"), True),
+            ("recip", ("charges",), False),
+            ("recip", ("cell",), False),
+            ("summation", ("positions",), False),
+        ],
+    )
+    def test_gradgradcheck_explicit_single_batch(self, device, part, wrt, triclinic):
+        """Explicit-B=1 public APIs retain focused float64 second derivatives."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        energy_fn, positions, charges, cell = self._energy_fn(
+            part,
+            device,
+            triclinic=triclinic,
+            explicit_batch=True,
+        )
+        assert gradgradcheck_energy(energy_fn, positions, charges, cell, wrt=wrt)
 
     @pytest.mark.slow
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
