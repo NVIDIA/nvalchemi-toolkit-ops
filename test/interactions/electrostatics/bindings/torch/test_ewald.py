@@ -6963,6 +6963,155 @@ class TestEwaldTorchCompile:
             torch.testing.assert_close(compiled, eager, rtol=1e-7, atol=1e-9)
             torch.testing.assert_close(compiled, unbatched, rtol=1e-7, atol=1e-9)
 
+    @pytest.mark.parametrize(
+        "device",
+        ["cpu", pytest.param("cuda", marks=pytest.mark.slow)],
+    )
+    def test_explicit_batch_non_neutral_reciprocal_corrections_compile(self, device):
+        """Compiled B=1 reciprocal corrections preserve non-neutral direct outputs."""
+        if device == "cuda" and (
+            not torch.cuda.is_available() or not wp.is_cuda_available()
+        ):
+            pytest.skip("CUDA or Warp CUDA support unavailable")
+
+        torch_device = torch.device(device)
+        positions = torch.tensor(
+            [[2.0, 5.0, 5.0], [8.0, 5.0, 5.0]],
+            dtype=torch.float64,
+            device=torch_device,
+        )
+        charges = torch.tensor([1.0, -0.25], dtype=torch.float64, device=torch_device)
+        cell = (
+            torch.eye(3, dtype=torch.float64, device=torch_device).unsqueeze(0) * 10.0
+        )
+        batch_idx = torch.zeros(2, dtype=torch.int32, device=torch_device)
+        alpha = torch.tensor([0.3], dtype=torch.float64, device=torch_device)
+        k_vectors = torch.zeros((0, 3), dtype=torch.float64, device=torch_device)
+
+        assert charges.sum().item() == pytest.approx(0.75)
+
+        def direct_outputs(
+            pos: torch.Tensor,
+            q: torch.Tensor,
+            box: torch.Tensor,
+            bidx: torch.Tensor | None,
+        ) -> tuple[torch.Tensor, ...]:
+            return ewald_reciprocal_space(
+                pos,
+                q,
+                box,
+                k_vectors,
+                alpha,
+                batch_idx=bidx,
+                compute_forces=True,
+                compute_charge_gradients=True,
+                compute_virial=True,
+            )
+
+        eager_explicit = direct_outputs(positions, charges, cell, batch_idx)
+        eager_unbatched = direct_outputs(positions, charges, cell, None)
+        expected_energy, expected_charge_grad, expected_virial = (
+            _expected_zero_k_reciprocal_corrections(
+                charges,
+                cell,
+                alpha,
+                batch_idx=batch_idx,
+            )
+        )
+        torch.testing.assert_close(eager_explicit[0], expected_energy)
+        torch.testing.assert_close(eager_explicit[1], torch.zeros_like(positions))
+        torch.testing.assert_close(eager_explicit[2], expected_charge_grad)
+        torch.testing.assert_close(eager_explicit[3], expected_virial)
+        assert torch.count_nonzero(expected_virial).item() > 0
+
+        def make_loss_fn(bidx: torch.Tensor | None):
+            def loss_fn(
+                pos: torch.Tensor, q: torch.Tensor, box: torch.Tensor
+            ) -> torch.Tensor:
+                return ewald_reciprocal_space(
+                    pos,
+                    q,
+                    box,
+                    k_vectors,
+                    alpha,
+                    batch_idx=bidx,
+                ).sum()
+
+            return loss_fn
+
+        eager_explicit_grads = _ewald_energy_and_grads(
+            make_loss_fn(batch_idx),
+            positions,
+            charges,
+            cell,
+        )
+        eager_unbatched_grads = _ewald_energy_and_grads(
+            make_loss_fn(None),
+            positions,
+            charges,
+            cell,
+        )
+        assert torch.count_nonzero(eager_explicit_grads[1][2]).item() > 0
+
+        torch._dynamo.reset()
+        try:
+            compiled_explicit = torch.compile(direct_outputs, dynamic=True)(
+                positions,
+                charges,
+                cell,
+                batch_idx,
+            )
+            compiled_explicit_grads = _ewald_energy_and_grads(
+                torch.compile(make_loss_fn(batch_idx), dynamic=True),
+                positions,
+                charges,
+                cell,
+            )
+        finally:
+            torch._dynamo.reset()
+
+        for compiled, eager, unbatched in zip(
+            compiled_explicit,
+            eager_explicit,
+            eager_unbatched,
+            strict=True,
+        ):
+            torch.testing.assert_close(compiled, eager, rtol=1e-7, atol=1e-9)
+            torch.testing.assert_close(compiled, unbatched, rtol=1e-7, atol=1e-9)
+        for compiled, eager, unbatched in zip(
+            compiled_explicit_grads,
+            eager_explicit_grads,
+            eager_unbatched_grads,
+            strict=True,
+        ):
+            if isinstance(compiled, tuple):
+                for compiled_grad, eager_grad, unbatched_grad in zip(
+                    compiled,
+                    eager,
+                    unbatched,
+                    strict=True,
+                ):
+                    torch.testing.assert_close(
+                        compiled_grad,
+                        eager_grad,
+                        rtol=1e-7,
+                        atol=1e-9,
+                    )
+                    torch.testing.assert_close(
+                        compiled_grad,
+                        unbatched_grad,
+                        rtol=1e-7,
+                        atol=1e-9,
+                    )
+            else:
+                torch.testing.assert_close(compiled, eager, rtol=1e-7, atol=1e-9)
+                torch.testing.assert_close(
+                    compiled,
+                    unbatched,
+                    rtol=1e-7,
+                    atol=1e-9,
+                )
+
     @pytest.mark.skipif(
         not torch.cuda.is_available(), reason="CUDA required for torch.compile"
     )

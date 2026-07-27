@@ -1204,8 +1204,10 @@ class TestSlabTorchCompile:
         for actual, expected in zip(compiled_grads, eager_grads, strict=True):
             torch.testing.assert_close(actual, expected, rtol=1e-10, atol=1e-12)
 
-    @pytest.mark.slow
-    @pytest.mark.parametrize("device", ["cpu", "cuda"])
+    @pytest.mark.parametrize(
+        "device",
+        ["cpu", pytest.param("cuda", marks=pytest.mark.slow)],
+    )
     def test_full_slab_explicit_batch_loss_compile_gradients(self, device):
         """Compiled explicit-B=1 slab Ewald losses match eager energy gradients."""
         if device == "cuda" and (

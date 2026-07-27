@@ -4084,8 +4084,10 @@ class TestPMEVirialTorchPMEParity:
 class TestPMETorchCompile:
     """Verify that PME functions work correctly under torch.compile."""
 
-    @pytest.mark.slow
-    @pytest.mark.parametrize("device", ["cpu", "cuda"])
+    @pytest.mark.parametrize(
+        "device",
+        ["cpu", pytest.param("cuda", marks=pytest.mark.slow)],
+    )
     def test_reciprocal_compile_specializations_preserve_rfft_cotangent(self, device):
         """Mesh-8 then mesh-32 compiled reciprocal gradients match eager PME."""
         if device == "cuda" and (
@@ -4405,8 +4407,10 @@ class TestPMETorchCompile:
                     atol=1e-9,
                 )
 
-    @pytest.mark.slow
-    @pytest.mark.parametrize("device", ["cpu", "cuda"])
+    @pytest.mark.parametrize(
+        "device",
+        ["cpu", pytest.param("cuda", marks=pytest.mark.slow)],
+    )
     def test_full_pme_explicit_batch_single_system_loss_compile_gradients(self, device):
         """Compiled explicit-B=1 full PME matches eager energy gradients."""
         if device == "cuda" and (
