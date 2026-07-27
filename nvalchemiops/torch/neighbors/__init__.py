@@ -225,8 +225,9 @@ def neighbor_list(
             cell list construction.
         max_atoms_per_system : int, optional
             Maximum number of atoms per system. Used in batch naive implementation
-            with PBC. If not provided, it will be computed automatically.
-            Can be provided to avoid CUDA synchronization.
+            with PBC for full-row launch sizing. Compact partial paths, including
+            geometry and pair-output paths, ignore this bound and do not require it.
+            Full-row calls infer it when omitted, which may synchronize.
         target_indices : torch.Tensor, optional
             Restrict the source rows of the neighbor list to this subset of atom
             indices (partial neighbor list). Matrix outputs use

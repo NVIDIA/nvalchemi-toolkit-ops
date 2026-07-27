@@ -17,14 +17,17 @@
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import warp as wp
 
 from nvalchemiops.neighbors.naive.dispatch import (
     _has_naive_pair_outputs,
     _is_cpu_device,
+    _NaiveWorkload,
     _pbc_mode_from_wrap,
+    _require_cuda_tile_device,
+    _resolve_naive_strategy,
 )
 from nvalchemiops.neighbors.naive.kernels import (
     BLOCK_DIM,
@@ -36,7 +39,6 @@ from nvalchemiops.neighbors.neighbor_utils import (
     compute_inv_cells,
     resolve_buffer_alias,
     selective_zero_num_neighbors,
-    selective_zero_partial_num_neighbors,
     wrap_positions_batch,
     wrap_positions_single,
 )
@@ -65,16 +67,6 @@ _SUPPORTED_DTYPES = (wp.float16, wp.float32, wp.float64)
 _DTYPE_INFO: dict[type, tuple[type, type]] = {
     dtype: DTYPE_INFO_ALL[dtype] for dtype in _SUPPORTED_DTYPES
 }
-_PARTIAL_TILE_MIN_ATOMS_BY_DTYPE = {
-    wp.float16: 16 * BLOCK_DIM,
-    wp.float32: 16 * BLOCK_DIM,
-    wp.float64: 4 * BLOCK_DIM,
-}
-
-
-def _partial_tile_min_atoms(wp_dtype: type) -> int:
-    """Return the auto-dispatch atom threshold for partial tiled kernels."""
-    return _PARTIAL_TILE_MIN_ATOMS_BY_DTYPE[wp_dtype]
 
 
 class _ScalarSentinels(NamedTuple):
@@ -98,6 +90,152 @@ class _ScalarSentinels(NamedTuple):
     rebuild_flags: wp.array
 
 
+def _launch_partial_tile_no_pbc(
+    positions: wp.array,
+    cutoff: float,
+    target_indices: wp.array,
+    neighbor_matrix: wp.array,
+    num_neighbors: wp.array,
+    wp_dtype: type,
+    device: str,
+    *,
+    half_fill: bool,
+    reset_outputs: bool = False,
+    fill_value: int | None = None,
+) -> None:
+    """Launch a single-system partial topology tile kernel without PBC."""
+    _require_cuda_tile_device(device)
+    if reset_outputs:
+        if fill_value is None:
+            raise ValueError("fill_value is required when resetting outputs")
+        neighbor_matrix.fill_(fill_value)
+        num_neighbors.zero_()
+    (
+        empty_offsets,
+        empty_cell,
+        empty_shift_range,
+        empty_num_shifts,
+        empty_batch_idx,
+        empty_batch_ptr,
+        _empty_target_indices,
+        empty_matrix,
+        empty_shifts,
+        _empty_num_neighbors,
+        _empty_vectors,
+        _empty_distances,
+        _empty_pair_params,
+        _empty_energies,
+        _empty_forces,
+        empty_rebuild_flags,
+    ) = _scalar_sentinels(wp_dtype, device)
+    wp.launch_tiled(
+        kernel=get_naive_neighbor_matrix_kernel(
+            wp_dtype,
+            pbc_mode="none",
+            batched=False,
+            half_fill=half_fill,
+            selective=False,
+            partial=True,
+            strategy="tile",
+        ),
+        dim=[1, target_indices.shape[0]],
+        inputs=[
+            positions,
+            empty_offsets,
+            wp_dtype(cutoff * cutoff),
+            empty_cell,
+            empty_shift_range,
+            empty_num_shifts,
+            empty_batch_idx,
+            empty_batch_ptr,
+            target_indices,
+            neighbor_matrix,
+            empty_shifts,
+            num_neighbors,
+            empty_rebuild_flags,
+        ],
+        block_dim=BLOCK_DIM,
+        device=device,
+    )
+
+
+def _launch_partial_tile_pbc_prepared(
+    positions_work: wp.array,
+    per_atom_cell_offsets: wp.array,
+    cutoff: float,
+    cell: wp.array,
+    shift_range: wp.array,
+    target_indices: wp.array,
+    neighbor_matrix: wp.array,
+    neighbor_matrix_shifts: wp.array,
+    num_neighbors: wp.array,
+    wp_dtype: type,
+    device: str,
+    *,
+    num_shifts: int,
+    half_fill: bool,
+    pbc_mode: Literal["prewrapped", "wrap_on_entry"],
+    reset_outputs: bool = False,
+    fill_value: int | None = None,
+) -> None:
+    """Launch a prepared single-system partial topology tile PBC kernel."""
+    _require_cuda_tile_device(device)
+    if reset_outputs:
+        if fill_value is None:
+            raise ValueError("fill_value is required when resetting outputs")
+        neighbor_matrix.fill_(fill_value)
+        neighbor_matrix_shifts.zero_()
+        num_neighbors.zero_()
+    (
+        empty_offsets,
+        _empty_cell,
+        _empty_shift_range,
+        empty_num_shifts,
+        empty_batch_idx,
+        empty_batch_ptr,
+        _empty_target_indices,
+        empty_matrix,
+        empty_shifts,
+        _empty_num_neighbors,
+        _empty_vectors,
+        _empty_distances,
+        _empty_pair_params,
+        _empty_energies,
+        _empty_forces,
+        empty_rebuild_flags,
+    ) = _scalar_sentinels(wp_dtype, device)
+    active_shifts = num_shifts if half_fill else 2 * num_shifts - 1
+    wp.launch_tiled(
+        kernel=get_naive_neighbor_matrix_kernel(
+            wp_dtype,
+            pbc_mode=pbc_mode,
+            batched=False,
+            half_fill=half_fill,
+            selective=False,
+            partial=True,
+            strategy="tile",
+        ),
+        dim=[active_shifts, target_indices.shape[0]],
+        inputs=[
+            positions_work,
+            per_atom_cell_offsets,
+            wp_dtype(cutoff * cutoff),
+            cell,
+            shift_range,
+            empty_num_shifts,
+            empty_batch_idx,
+            empty_batch_ptr,
+            target_indices,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            num_neighbors,
+            empty_rebuild_flags,
+        ],
+        block_dim=BLOCK_DIM,
+        device=device,
+    )
+
+
 def _reject_pair_fn_for_dual_cutoff(
     pair_fn: wp.Function | None, pair_params: wp.array | None
 ) -> None:
@@ -106,6 +244,17 @@ def _reject_pair_fn_for_dual_cutoff(
         raise ValueError("pair_fn is not supported with dual_cutoff=True")
     if pair_params is not None and not _is_empty_pair_params(pair_params):
         raise ValueError("pair_params is only valid when pair_fn is provided")
+
+
+def _reject_partial_rebuild(
+    target_indices: wp.array | None,
+    rebuild_flags: wp.array | None,
+) -> None:
+    """Reject unsupported compact selective rebuilds before mutation."""
+    if target_indices is not None and rebuild_flags is not None:
+        raise NotImplementedError(
+            "Partial neighbor lists do not support rebuild_flags",
+        )
 
 
 def _wrap_pbc_positions(
@@ -247,10 +396,11 @@ def _launch_naive_neighbor_matrix_no_pbc(
     strategy: str = "auto",
 ) -> None:
     """Launch the single-cutoff no-PBC naive neighbor-matrix path."""
+    _reject_partial_rebuild(target_indices, rebuild_flags)
     if batched and (batch_idx is None or batch_ptr is None):
         raise ValueError("batch_idx and batch_ptr are required for batched launch")
 
-    has_pair_outputs = _has_naive_pair_outputs(
+    uses_compact_pair_kernel = _has_naive_pair_outputs(
         target_indices,
         return_vectors,
         return_distances,
@@ -261,7 +411,7 @@ def _launch_naive_neighbor_matrix_no_pbc(
         pair_energies,
         pair_forces,
     )
-    has_geometry_outputs = _has_naive_pair_outputs(
+    has_geometry_or_pair_outputs = _has_naive_pair_outputs(
         None,
         return_vectors,
         return_distances,
@@ -273,48 +423,21 @@ def _launch_naive_neighbor_matrix_no_pbc(
         pair_forces,
     )
     partial = target_indices is not None
-    # Dispatch scalar vs tile-cooperative. Geometry/pair-function outputs have
-    # only a scalar specialization; topology-only partial rows can tile. CPU
-    # always uses scalar (Warp forces block_dim=1). The single-system path tiles
-    # on CUDA unconditionally except for small automatic partial launches, while
-    # the batched path applies the adaptive
-    # ``use_tiled`` heuristic: the tile-cooperative kernel wins for
-    # few-large-systems but the scalar thread-local-counter kernel wins for
-    # many-small-systems, so dispatch on the atoms-per-system density.
-    if strategy not in {"auto", "scalar", "tile"}:
-        raise ValueError(
-            f"strategy must be 'auto' | 'scalar' | 'tile', got {strategy!r}",
-        )
-    if strategy == "scalar":
-        strategy = "scalar"
-    elif strategy == "tile":
-        if has_geometry_outputs or _is_cpu_device(device):
-            raise ValueError(
-                "strategy='tile' requires CUDA and no geometry or pair_fn outputs",
-            )
-        strategy = "tile"
-    elif has_geometry_outputs or _is_cpu_device(device):
-        strategy = "scalar"
-    elif partial and not batched:
-        strategy = (
-            "tile"
-            if positions.shape[0] >= _partial_tile_min_atoms(wp_dtype)
-            else "scalar"
-        )
-    elif partial:
-        strategy = "scalar"
-    elif batched:
-        total_atoms = positions.shape[0]
-        if total_atoms < 2048:
-            use_tiled = False
-        else:
-            num_systems = batch_ptr.shape[0] - 1
-            use_tiled = total_atoms >= 256 * num_systems
-            if use_tiled and total_atoms > 12288:
-                use_tiled = total_atoms >= 512 * num_systems
-        strategy = "tile" if use_tiled else "scalar"
-    else:
-        strategy = "tile"
+    num_systems = int(batch_ptr.shape[0] - 1) if batched else 1
+    strategy = _resolve_naive_strategy(
+        strategy,
+        _NaiveWorkload(
+            device_kind="cpu" if _is_cpu_device(device) else "cuda",
+            wp_dtype=wp_dtype,
+            num_atoms=int(positions.shape[0]),
+            num_systems=num_systems,
+            partial=partial,
+            batched=batched,
+            pbc=False,
+            wrap_positions=True,
+            geometry_outputs=has_geometry_or_pair_outputs,
+        ),
+    )
 
     (
         empty_offsets,
@@ -345,6 +468,19 @@ def _launch_naive_neighbor_matrix_no_pbc(
     cutoff_sq = wp_dtype(cutoff * cutoff)
 
     if strategy == "tile":
+        if partial and not batched:
+            _launch_partial_tile_no_pbc(
+                positions,
+                cutoff,
+                target_indices,
+                neighbor_matrix,
+                num_neighbors,
+                wp_dtype,
+                device,
+                half_fill=half_fill,
+            )
+            return
+        _require_cuda_tile_device(device)
         wp.launch_tiled(
             kernel=get_naive_neighbor_matrix_kernel(
                 wp_dtype,
@@ -376,7 +512,7 @@ def _launch_naive_neighbor_matrix_no_pbc(
         )
         return
 
-    if has_pair_outputs:
+    if uses_compact_pair_kernel:
         (
             neighbor_vectors_arg,
             neighbor_distances_arg,
@@ -486,19 +622,24 @@ def _launch_naive_neighbor_matrix_pbc(
     strategy: str = "auto",
 ) -> None:
     """Launch the single-cutoff PBC naive neighbor-matrix path."""
+    _reject_partial_rebuild(target_indices, rebuild_flags)
+    partial = target_indices is not None
     if batched:
         if batch_ptr is None or batch_idx is None or num_shifts_arr is None:
             raise ValueError(
                 "batch_ptr, batch_idx, and num_shifts_arr are required for batched PBC"
             )
-        if max_shifts_per_system is None or max_atoms_per_system is None:
+        if max_shifts_per_system is None or (
+            not partial and max_atoms_per_system is None
+        ):
             raise ValueError(
-                "max_shifts_per_system and max_atoms_per_system are required for batched PBC"
+                "max_shifts_per_system is required for batched PBC; "
+                "max_atoms_per_system is also required for full-row launches",
             )
     elif num_shifts is None:
         raise ValueError("num_shifts is required for single-system PBC")
 
-    has_pair_outputs = _has_naive_pair_outputs(
+    uses_compact_pair_kernel = _has_naive_pair_outputs(
         target_indices,
         return_vectors,
         return_distances,
@@ -509,7 +650,7 @@ def _launch_naive_neighbor_matrix_pbc(
         pair_energies,
         pair_forces,
     )
-    has_geometry_outputs = _has_naive_pair_outputs(
+    has_geometry_or_pair_outputs = _has_naive_pair_outputs(
         None,
         return_vectors,
         return_distances,
@@ -520,33 +661,26 @@ def _launch_naive_neighbor_matrix_pbc(
         pair_energies,
         pair_forces,
     )
-    partial = target_indices is not None
     pbc_mode = _pbc_mode_from_wrap(wrap_positions)
     if strategy not in {"auto", "scalar", "tile"}:
         raise ValueError(
             f"strategy must be 'auto' | 'scalar' | 'tile', got {strategy!r}",
         )
-    can_tile = not has_geometry_outputs and not _is_cpu_device(device)
-    if strategy == "tile":
-        if not can_tile:
-            raise ValueError(
-                "strategy='tile' requires CUDA, no geometry or pair_fn outputs, "
-                "and supported topology-only PBC inputs",
-            )
-        strategy = "tile"
-    elif strategy == "scalar":
-        strategy = "scalar"
-    elif (
-        can_tile
-        and (not batched or wrap_positions)
-        and (
-            not partial
-            or (not batched and positions.shape[0] >= _partial_tile_min_atoms(wp_dtype))
-        )
-    ):
-        strategy = "tile"
-    else:
-        strategy = "scalar"
+    num_systems = int(batch_ptr.shape[0] - 1) if batched else 1
+    strategy = _resolve_naive_strategy(
+        strategy,
+        _NaiveWorkload(
+            device_kind="cpu" if _is_cpu_device(device) else "cuda",
+            wp_dtype=wp_dtype,
+            num_atoms=int(positions.shape[0]),
+            num_systems=num_systems,
+            partial=partial,
+            batched=batched,
+            pbc=True,
+            wrap_positions=wrap_positions,
+            geometry_outputs=has_geometry_or_pair_outputs,
+        ),
+    )
 
     positions_work, per_atom_cell_offsets = _prepare_pbc_positions(
         positions,
@@ -593,7 +727,7 @@ def _launch_naive_neighbor_matrix_pbc(
         launch_dim = (
             cell.shape[0],
             int(max_shifts_per_system),
-            int(max_atoms_per_system),
+            target_indices.shape[0] if partial else int(max_atoms_per_system),
         )
         num_shifts_arg = num_shifts_arr
         tile_shift_dim = int(max_shifts_per_system)
@@ -615,6 +749,25 @@ def _launch_naive_neighbor_matrix_pbc(
         ]
 
     if strategy == "tile":
+        if partial and not batched:
+            _launch_partial_tile_pbc_prepared(
+                positions_work,
+                per_atom_cell_offsets,
+                cutoff,
+                cell,
+                shift_range,
+                target_indices,
+                neighbor_matrix,
+                neighbor_matrix_shifts,
+                num_neighbors,
+                wp_dtype,
+                device,
+                num_shifts=int(num_shifts),
+                half_fill=half_fill,
+                pbc_mode=pbc_mode.value,
+            )
+            return
+        _require_cuda_tile_device(device)
         wp.launch_tiled(
             kernel=get_naive_neighbor_matrix_kernel(
                 wp_dtype,
@@ -646,7 +799,7 @@ def _launch_naive_neighbor_matrix_pbc(
         )
         return
 
-    if has_pair_outputs:
+    if uses_compact_pair_kernel:
         active_shift_dim = int(max_shifts_per_system) if batched else int(num_shifts)
         if partial and not half_fill:
             active_shift_dim = 2 * active_shift_dim - 1
@@ -1037,6 +1190,7 @@ def naive_neighbor_matrix(
     batch_naive_neighbor_matrix : Batched (multi-system) variant
     get_naive_neighbor_matrix_kernel : Low-level single-cutoff kernel accessor
     """
+    _reject_partial_rebuild(target_indices, rebuild_flags)
     if not _has_naive_pair_outputs(
         target_indices,
         return_vectors,
@@ -1189,6 +1343,7 @@ def batch_naive_neighbor_matrix(
     naive_neighbor_matrix : Single-system variant
     get_naive_neighbor_matrix_kernel : Low-level single-cutoff kernel accessor
     """
+    _reject_partial_rebuild(target_indices, rebuild_flags)
     if not _has_naive_pair_outputs(
         target_indices,
         return_vectors,
@@ -1219,21 +1374,12 @@ def batch_naive_neighbor_matrix(
         )
         return
     if rebuild_flags is not None:
-        if target_indices is None:
-            selective_zero_num_neighbors(
-                num_neighbors,
-                batch_idx,
-                rebuild_flags,
-                device,
-            )
-        else:
-            selective_zero_partial_num_neighbors(
-                num_neighbors,
-                batch_idx,
-                target_indices,
-                rebuild_flags,
-                device,
-            )
+        selective_zero_num_neighbors(
+            num_neighbors,
+            batch_idx,
+            rebuild_flags,
+            device,
+        )
     _launch_naive_neighbor_matrix_no_pbc(
         positions,
         cutoff,
@@ -1419,6 +1565,7 @@ def naive_neighbor_matrix_pbc(
         "inv_cell",
         inv_cell,
     )
+    _reject_partial_rebuild(target_indices, rebuild_flags)
     if not _has_naive_pair_outputs(
         target_indices,
         return_vectors,
@@ -1498,7 +1645,7 @@ def batch_naive_neighbor_matrix_pbc(
     num_neighbors: wp.array,
     wp_dtype: type,
     device: str,
-    max_atoms_per_system: int,
+    max_atoms_per_system: int | None = None,
     half_fill: bool = False,
     rebuild_flags: wp.array | None = None,
     wrap_positions: bool = True,
@@ -1554,8 +1701,9 @@ def batch_naive_neighbor_matrix_pbc(
         Warp dtype (wp.float32, wp.float64, or wp.float16).
     device : str
         Warp device string (e.g., 'cuda:0', 'cpu').
-    max_atoms_per_system : int
-        Maximum number of atoms in any single system.
+    max_atoms_per_system : int, optional
+        Maximum number of atoms in any single system. Required for full-row
+        batched launches and ignored for compact partial launches.
     half_fill : bool, default=False
         If True, only store half of the neighbor relationships.
     rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool, optional
@@ -1657,6 +1805,7 @@ def batch_naive_neighbor_matrix_pbc(
         "inv_cell",
         inv_cell,
     )
+    _reject_partial_rebuild(target_indices, rebuild_flags)
     if not _has_naive_pair_outputs(
         target_indices,
         return_vectors,
@@ -1698,21 +1847,12 @@ def batch_naive_neighbor_matrix_pbc(
         )
         return
     if rebuild_flags is not None:
-        if target_indices is None:
-            selective_zero_num_neighbors(
-                num_neighbors,
-                batch_idx,
-                rebuild_flags,
-                device,
-            )
-        else:
-            selective_zero_partial_num_neighbors(
-                num_neighbors,
-                batch_idx,
-                target_indices,
-                rebuild_flags,
-                device,
-            )
+        selective_zero_num_neighbors(
+            num_neighbors,
+            batch_idx,
+            rebuild_flags,
+            device,
+        )
     _launch_naive_neighbor_matrix_pbc(
         positions,
         cutoff,

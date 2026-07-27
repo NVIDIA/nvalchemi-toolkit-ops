@@ -811,7 +811,7 @@ class TestBatchNaiveCorrectness:
             target_indices=targets,
             strategy="auto",
         )
-        assert seen["strategy"] == "auto"
+        assert seen["strategy"] == "scalar"
         assert seen["target_indices"] is targets
 
     def test_basic_with_pbc(self, device, dtype, half_fill):
@@ -1302,6 +1302,34 @@ class TestBatchNaiveEdgeCases:
 class TestBatchNaiveErrors:
     """Input validation and error condition tests."""
 
+    def test_partial_rebuild_flags_are_rejected(self, device):
+        """Compact batch rows cannot be combined with selective rebuild flags."""
+        positions = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [10.0, 0.0, 0.0],
+                [10.5, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+            device=device,
+        )
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device=device)
+        with pytest.raises(
+            NotImplementedError,
+            match=r"^Partial neighbor lists do not support rebuild_flags$",
+        ):
+            batch_naive_neighbor_list(
+                positions,
+                1.0,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=4,
+                target_indices=torch.tensor([2, 0], dtype=torch.int32, device=device),
+                rebuild_flags=torch.ones(2, dtype=torch.bool, device=device),
+            )
+
     def test_mismatched_cell_pbc_cell_without_pbc(self, device, dtype, half_fill):
         """Test error when cell provided without pbc."""
         atoms_per_system = [4, 5]
@@ -1583,6 +1611,94 @@ class TestBatchNaiveAutograd:
             return_vectors=True,
         )
         assert d.requires_grad and v.requires_grad
+
+    @pytest.mark.slow
+    def test_partial_pbc_distance_gradcheck_matches_selected_full_rows(self, device):
+        """Compact PBC gradients gather cells through each target's batch index."""
+        positions = torch.tensor(
+            [
+                [0.2, 0.0, 0.0],
+                [3.7, 0.0, 0.0],
+                [1.8, 0.0, 0.0],
+                [0.3, 0.0, 0.0],
+                [5.4, 0.0, 0.0],
+                [2.5, 0.0, 0.0],
+            ],
+            dtype=torch.float64,
+            device=device,
+            requires_grad=True,
+        )
+        batch_idx = torch.tensor([0, 0, 0, 1, 1, 1], dtype=torch.int32, device=device)
+        batch_ptr = torch.tensor([0, 3, 6], dtype=torch.int32, device=device)
+        target_indices = torch.tensor([4, 1], dtype=torch.int32, device=device)
+        cell = torch.stack(
+            (
+                torch.eye(3, dtype=torch.float64, device=device) * 4.0,
+                torch.eye(3, dtype=torch.float64, device=device) * 6.0,
+            ),
+        )
+        pbc = torch.ones((2, 3), dtype=torch.bool, device=device)
+        assert torch.equal(
+            batch_idx[target_indices.long()],
+            torch.tensor([1, 0], dtype=torch.int32, device=device),
+        )
+
+        _, partial_counts, partial_shifts, _ = batch_naive_neighbor_list(
+            positions,
+            1.2,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=4,
+            max_atoms_per_system=3,
+            target_indices=target_indices,
+            return_distances=True,
+        )
+        for row, target in enumerate(target_indices):
+            count = int(partial_counts[row])
+            assert count > 0, f"target atom {int(target)} must have a PBC neighbor"
+            assert torch.any(partial_shifts[row, :count].any(dim=1))
+
+        def partial_loss(pos):
+            _, _, _, distances = batch_naive_neighbor_list(
+                pos,
+                1.2,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                cell=cell,
+                pbc=pbc,
+                max_neighbors=4,
+                max_atoms_per_system=3,
+                target_indices=target_indices,
+                return_distances=True,
+            )
+            return distances.sum()
+
+        assert torch.autograd.gradcheck(
+            partial_loss,
+            (positions,),
+            atol=1e-5,
+            eps=1e-6,
+            nondet_tol=1e-7,
+        )
+        partial_grad = torch.autograd.grad(partial_loss(positions), positions)[0]
+        _, _, _, full_distances = batch_naive_neighbor_list(
+            positions,
+            1.2,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=4,
+            max_atoms_per_system=3,
+            return_distances=True,
+        )
+        selected_full_loss = full_distances[target_indices.long()].sum()
+        selected_full_grad = torch.autograd.grad(selected_full_loss, positions)[0]
+
+        torch.testing.assert_close(partial_loss(positions), selected_full_loss)
+        torch.testing.assert_close(partial_grad, selected_full_grad)
 
     @pytest.mark.slow
     def test_gradcheck_distances_wrt_positions(self, device):

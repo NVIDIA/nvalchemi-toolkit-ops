@@ -986,9 +986,9 @@ neighbor_matrix_half, num_neighbors_half, shifts_half = neighbor_list(
 ```{note}
 In JAX, `half_fill` and `fill_value` are supported by `naive`, `batch_naive`,
 `cell_list`, and `batch_cell_list` (the cell-list paths use `graph_mode="none"`
-for `half_fill`).  The `naive` tiled kernel (`strategy="tile"`) is
-CUDA-only and opt-in; single-system JAX/Torch partial `auto` follows native
-thresholds while batched partial `auto` remains scalar.
+for `half_fill`). The topology-only `naive` tiled kernel
+(`strategy="tile"`) is CUDA-only. Explicit tile supports batched compact rows;
+batched partial `auto` remains scalar, and geometry/pair outputs use scalar.
 ```
 
 :::
@@ -1321,14 +1321,23 @@ identical results are available via `atom_centric`).
 
 For topology-only partial `naive` lists, `strategy="tile"` is CUDA-only and is
 available in both PyTorch and JAX for no-PBC, wrapped PBC, and prewrapped PBC.
-Single-system `strategy="auto"` follows the native dtype thresholds (256 atoms
-for float64 and 1,024 atoms for float32; float16 thresholds are a native policy).
-Batched partial `strategy="auto"` remains scalar, while explicit tile is opt-in.
+Explicit tile supports both single and batched compact rows; batched partial
+`strategy="auto"` remains scalar.
 Geometry buffers, distances, vectors, pair functions, and pair energy/force
 outputs remain scalar-only. Scalar and tiled rows can differ in order; compare
 counts and sorted `(neighbor, periodic_shift)` multisets. JAX additionally
-supports the existing `graph_mode="warp"` replay for persistent tiled buffers;
-there is no corresponding Torch graph-replay API.
+supports `graph_mode="warp"` replay with stable caller-owned output buffers
+donated through `jax.jit`. Wrapped PBC also requires stable inverse-cell and
+wrapping scratch buffers; cutoff, `half_fill`, and PBC shift metadata are
+statically specialized. There is no corresponding Torch graph-replay API.
+
+`target_indices` must contain unique, in-bounds global atom indices. Violating
+this precondition is undefined behavior. Naive partial lists do not support
+`rebuild_flags`; this restriction does not apply to cell-list APIs.
+
+For batched PBC naive lists, `max_atoms_per_system` is used only for full-row
+launch sizing. Every compact partial path, including geometry and pair-output
+paths, ignores it and does not require the caller to provide it.
 
 ### Per-Pair Distances and Vectors
 

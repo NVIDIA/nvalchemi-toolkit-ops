@@ -648,7 +648,7 @@ class TestBatchNaiveWpLaunchers:
                 num_neighbors=wp.from_torch(num_neighbors, dtype=wp.int32),
                 wp_dtype=get_wp_dtype(dtype),
                 device=device,
-                max_atoms_per_system=max(atoms_per_system),
+                max_atoms_per_system=None,
                 target_indices=wp.from_torch(target_indices, dtype=wp.int32),
                 strategy=strategy,
             )

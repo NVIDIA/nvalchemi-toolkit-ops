@@ -1191,6 +1191,10 @@ def get_naive_neighbor_matrix_kernel(
     if strat is _NaiveStrategy.TILE:
         if return_vectors or return_distances or pair_fn is not None:
             raise NotImplementedError("pair outputs currently use strategy='scalar'")
+        if partial and selective:
+            raise NotImplementedError(
+                "Partial tile kernels do not support selective rebuilds.",
+            )
         return _make_tile_kernel(
             wp_dtype,
             pbc_mode=mode,

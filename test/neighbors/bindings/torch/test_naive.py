@@ -21,7 +21,11 @@ import pytest
 import torch
 import warp as wp
 
-from nvalchemiops.torch.neighbors.naive import naive_neighbor_list
+from nvalchemiops.torch.neighbors.naive import (
+    _naive_neighbor_matrix_no_pbc,
+    _naive_neighbor_matrix_pbc,
+    naive_neighbor_list,
+)
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     NeighborOverflowError,
     compute_naive_num_shifts,
@@ -207,6 +211,11 @@ class TestNaiveCorrectness:
             0.75,
             max_neighbors=4,
             target_indices=target_indices,
+            neighbor_matrix_shifts=torch.zeros(
+                (target_indices.shape[0], 4, 3),
+                dtype=torch.int32,
+                device=device,
+            ),
         )
 
         assert partial_nm.shape == (2, 4)
@@ -593,8 +602,28 @@ class TestNaiveCorrectness:
                 strategy="scalar",
             )
 
+    @pytest.mark.gpu
+    def test_target_indices_geometry_rejects_cross_device_output_buffer(self, device):
+        """Partial geometry output buffers must share the positions device."""
+        if not str(device).startswith("cuda"):
+            pytest.skip("CUDA is required for cross-device coverage.")
+        positions = torch.zeros((3, 3), dtype=torch.float32, device=device)
+        targets = torch.tensor([0], dtype=torch.int32, device=device)
+        with pytest.raises(ValueError, match="same device"):
+            naive_neighbor_list(
+                positions,
+                1.0,
+                max_neighbors=4,
+                target_indices=targets,
+                neighbor_matrix=torch.empty((1, 4), dtype=torch.int32, device=device),
+                num_neighbors=torch.empty((1,), dtype=torch.int32, device=device),
+                neighbor_distances=torch.empty((1, 4), dtype=torch.float32),
+                return_distances=True,
+                strategy="scalar",
+            )
+
     def test_target_indices_auto_forwards_native_dispatch(self, device, monkeypatch):
-        """Topology-only auto preserves strategy and compact targets."""
+        """Topology-only auto resolves to scalar and preserves compact targets."""
         seen = {}
 
         def fake_launcher(**kwargs):
@@ -613,7 +642,7 @@ class TestNaiveCorrectness:
             target_indices=targets,
             strategy="auto",
         )
-        assert seen["strategy"] == "auto"
+        assert seen["strategy"] == "scalar"
         assert seen["target_indices"] is targets
 
     @pytest.mark.gpu
@@ -1331,6 +1360,81 @@ class TestNaivePerformance:
 class TestNaiveSelectiveRebuildFlags:
     """Test selective rebuild (rebuild_flags) for naive_neighbor_list torch binding."""
 
+    def test_partial_rebuild_flags_are_rejected(self, device):
+        """Compact rows cannot be combined with selective rebuild flags."""
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            dtype=torch.float32,
+            device=device,
+        )
+        with pytest.raises(
+            NotImplementedError,
+            match=r"^Partial neighbor lists do not support rebuild_flags$",
+        ):
+            naive_neighbor_list(
+                positions,
+                1.0,
+                max_neighbors=4,
+                target_indices=torch.tensor([0], dtype=torch.int32, device=device),
+                rebuild_flags=torch.ones(1, dtype=torch.bool, device=device),
+            )
+
+    def test_no_pbc_wrapper_rejects_partial_rebuild_before_mutation(self, device):
+        """The no-PBC custom op preserves counts on an unsupported request."""
+        positions = torch.zeros((2, 3), dtype=torch.float32, device=device)
+        neighbor_matrix = torch.full((1, 4), 2, dtype=torch.int32, device=device)
+        num_neighbors = torch.full((1,), 37, dtype=torch.int32, device=device)
+
+        with pytest.raises(
+            NotImplementedError,
+            match=r"^Partial neighbor lists do not support rebuild_flags$",
+        ):
+            _naive_neighbor_matrix_no_pbc(
+                positions=positions,
+                cutoff=1.0,
+                neighbor_matrix=neighbor_matrix,
+                num_neighbors=num_neighbors,
+                rebuild_flags=torch.ones(1, dtype=torch.bool, device=device),
+                target_indices=torch.tensor([0], dtype=torch.int32, device=device),
+            )
+
+        assert num_neighbors.tolist() == [37]
+
+    def test_pbc_wrapper_rejects_partial_rebuild_before_mutation(self, device):
+        """The PBC custom op preserves counts on an unsupported request."""
+        positions = torch.zeros((2, 3), dtype=torch.float32, device=device)
+        cell = torch.eye(3, dtype=torch.float32, device=device).unsqueeze(0)
+        pbc = torch.ones((1, 3), dtype=torch.bool, device=device)
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, 1.0, pbc)
+        neighbor_matrix = torch.full((1, 4), 2, dtype=torch.int32, device=device)
+        neighbor_matrix_shifts = torch.zeros(
+            (1, 4, 3),
+            dtype=torch.int32,
+            device=device,
+        )
+        num_neighbors = torch.full((1,), 37, dtype=torch.int32, device=device)
+
+        with pytest.raises(
+            NotImplementedError,
+            match=r"^Partial neighbor lists do not support rebuild_flags$",
+        ):
+            _naive_neighbor_matrix_pbc(
+                positions=positions,
+                cutoff=1.0,
+                cell=cell,
+                pbc=pbc,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                num_neighbors=num_neighbors,
+                shift_range_per_dimension=shift_range,
+                num_shifts_per_system=num_shifts,
+                max_shifts_per_system=max_shifts,
+                rebuild_flags=torch.ones(1, dtype=torch.bool, device=device),
+                target_indices=torch.tensor([0], dtype=torch.int32, device=device),
+            )
+
+        assert num_neighbors.tolist() == [37]
+
     def test_no_rebuild_preserves_data(self, device, dtype):
         """Flag=False: neighbor data should remain unchanged."""
         positions, _, _ = create_simple_cubic_system(
@@ -1455,6 +1559,52 @@ class TestNaiveAutograd:
             return_vectors=True,
         )
         assert d.requires_grad and v.requires_grad
+
+    @pytest.mark.slow
+    def test_partial_no_pbc_distance_gradcheck_matches_selected_full_rows(self, device):
+        """Compact no-PBC distance gradients use each target's source atom row."""
+        positions = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [0.7, 0.2, 0.0],
+                [2.4, 0.0, 0.0],
+                [3.2, -0.3, 0.0],
+            ],
+            dtype=torch.float64,
+            device=device,
+            requires_grad=True,
+        )
+        target_indices = torch.tensor([3, 0], dtype=torch.int32, device=device)
+
+        def partial_loss(pos):
+            _, _, distances = naive_neighbor_list(
+                pos,
+                1.1,
+                max_neighbors=4,
+                target_indices=target_indices,
+                return_distances=True,
+            )
+            return distances.sum()
+
+        assert torch.autograd.gradcheck(
+            partial_loss,
+            (positions,),
+            atol=1e-5,
+            eps=1e-6,
+            nondet_tol=1e-7,
+        )
+        partial_grad = torch.autograd.grad(partial_loss(positions), positions)[0]
+        _, _, full_distances = naive_neighbor_list(
+            positions,
+            1.1,
+            max_neighbors=4,
+            return_distances=True,
+        )
+        selected_full_loss = full_distances[target_indices.long()].sum()
+        selected_full_grad = torch.autograd.grad(selected_full_loss, positions)[0]
+
+        torch.testing.assert_close(partial_loss(positions), selected_full_loss)
+        torch.testing.assert_close(partial_grad, selected_full_grad)
 
     @pytest.mark.slow
     def test_gradcheck_distances_wrt_positions(self, device):

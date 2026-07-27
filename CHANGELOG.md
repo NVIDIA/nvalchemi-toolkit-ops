@@ -4,19 +4,24 @@
 
 ### Added
 
-- JAX and Torch naive neighbor APIs now expose CUDA tiled topology-only compact
-  `target_indices` rows for no-PBC, wrapped PBC, and prewrapped PBC. Single-system
-  automatic dispatch selects tile at 256 atoms for float64 and 1,024 atoms for
-  float32 (float16 thresholds remain native policy); batched partial auto
-  dispatch remains scalar. Tiling does not support geometry/pair-function
-  outputs or selective rebuilds. Scalar and tiled results have the same per-row
-  neighbor and periodic-shift multisets, but their entry ordering may differ;
-  `max_neighbors` still caps stored entries, while counts remain uncapped and
-  COO conversion raises `NeighborOverflowError` when a row exceeds the cap.
+- JAX and Torch naive neighbor APIs now expose CUDA-only topology-only tiled compact
+  `target_indices` rows for no-PBC, wrapped PBC, and prewrapped PBC. Explicit
+  tile supports single and batched compact rows; batched partial auto is scalar.
+  Geometry and pair outputs use scalar, and partial lists reject
+  `rebuild_flags` under every strategy. Scalar and tiled results have the same
+  per-row neighbor and periodic-shift multisets, but their entry ordering may
+  differ; `max_neighbors` still caps stored entries, while counts remain
+  uncapped and COO conversion raises `NeighborOverflowError` when a row exceeds
+  the cap.
 - JAX `naive_neighbor_list(..., graph_mode="warp")` supports opt-in replay for
-  topology-only tiled `target_indices` calls. Replays require caller-owned,
-  persistent compact output buffers (and, for wrapped PBC, persistent inverse
-  cell and wrapping scratch buffers); `GraphMode.NONE` remains the default.
+  topology-only tiled `target_indices` calls. Replay resets caller-owned,
+  persistent compact output buffers, which must be donated through `jax.jit`;
+  wrapped PBC also requires stable inverse-cell and wrapping scratch buffers.
+  Cutoff, `half_fill`, and PBC shift metadata are statically specialized.
+- Batched PBC `max_atoms_per_system` is required only for full-row launch sizing;
+  every compact partial path, including geometry and pair-output paths, ignores
+  it. Naive partial lists reject `target_indices` combined with
+  `rebuild_flags`; cell-list behavior is unchanged.
 
 ## 0.4.0 - 2026-07-13
 

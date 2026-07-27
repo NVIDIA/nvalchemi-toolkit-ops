@@ -23,17 +23,12 @@ import torch
 import warp as wp
 
 import nvalchemiops.neighbors.naive.launchers as naive_launchers
-import nvalchemiops.neighbors.neighbor_utils as neighbor_utils
 from nvalchemiops.neighbors.naive import (
     get_naive_neighbor_matrix_kernel,
     naive_neighbor_matrix,
     naive_neighbor_matrix_pbc,
 )
-from nvalchemiops.neighbors.naive.launchers import (
-    BLOCK_DIM,
-    _partial_tile_min_atoms,
-    _reject_pair_fn_for_dual_cutoff,
-)
+from nvalchemiops.neighbors.naive.launchers import _reject_pair_fn_for_dual_cutoff
 from nvalchemiops.torch.neighbors.neighbor_utils import compute_naive_num_shifts
 
 
@@ -111,19 +106,6 @@ def _skip_missing_cuda(device: str) -> None:
     """Skip CUDA cases when the local test host has no CUDA device."""
     if device.startswith("cuda") and not torch.cuda.is_available():
         pytest.skip("CUDA is required for this test parameter")
-
-
-@pytest.mark.parametrize(
-    ("wp_dtype", "expected"),
-    [
-        (wp.float16, 16 * BLOCK_DIM),
-        (wp.float32, 16 * BLOCK_DIM),
-        (wp.float64, 4 * BLOCK_DIM),
-    ],
-)
-def test_partial_tile_min_atoms_is_dtype_specific(wp_dtype, expected):
-    """Partial tile auto-dispatch uses the benchmarked threshold per dtype."""
-    assert _partial_tile_min_atoms(wp_dtype) == expected
 
 
 @pytest.mark.parametrize(
@@ -309,34 +291,89 @@ def test_batched_pbc_partial_dispatches_requested_strategy(
     assert launches == [expected_launch]
 
 
-def test_batched_partial_selective_reset_uses_target_indices(monkeypatch):
-    """Selective compact-row reset derives each system from its target atom."""
-    captured_kwargs = {}
-    monkeypatch.setattr(
-        neighbor_utils.wp,
-        "launch",
-        lambda **kwargs: captured_kwargs.update(kwargs),
-    )
-    num_neighbors = SimpleNamespace(shape=(2,))
-    batch_idx = SimpleNamespace(shape=(4,))
-    target_indices = SimpleNamespace(shape=(2,))
-    rebuild_flags = SimpleNamespace(shape=(2,))
+def test_partial_selective_tile_kernel_is_rejected():
+    """Partial tile kernels do not expose selective rebuild specialization."""
+    with pytest.raises(
+        NotImplementedError,
+        match="Partial tile kernels do not support selective rebuilds",
+    ):
+        get_naive_neighbor_matrix_kernel(
+            wp.float32,
+            partial=True,
+            selective=True,
+            strategy="tile",
+        )
 
-    neighbor_utils.selective_zero_partial_num_neighbors(
-        num_neighbors,
-        batch_idx,
-        target_indices,
-        rebuild_flags,
-        "cuda:0",
-    )
 
-    assert captured_kwargs["dim"] == 2
-    assert captured_kwargs["inputs"] == [
-        num_neighbors,
-        batch_idx,
-        target_indices,
-        rebuild_flags,
-    ]
+@pytest.mark.parametrize("pbc", [False, True], ids=["no_pbc", "pbc"])
+def test_private_partial_rebuild_rejects_before_allocation_or_launch(
+    monkeypatch,
+    pbc,
+):
+    """Private compact selective calls fail before changing sentinel outputs."""
+    positions = SimpleNamespace(shape=(2, 3))
+    target_indices = SimpleNamespace(shape=(1,))
+    rebuild_flags = SimpleNamespace(shape=(1,))
+    neighbor_matrix = torch.full((1, 4), 73, dtype=torch.int32)
+    num_neighbors = torch.full((1,), 29, dtype=torch.int32)
+    matrix_before = neighbor_matrix.clone()
+    counts_before = num_neighbors.clone()
+
+    def unexpected_boundary(*_args, **_kwargs):
+        raise AssertionError("private launcher must reject before allocation or launch")
+
+    monkeypatch.setattr(naive_launchers, "_scalar_sentinels", unexpected_boundary)
+    monkeypatch.setattr(naive_launchers.wp, "launch", unexpected_boundary)
+    monkeypatch.setattr(naive_launchers.wp, "launch_tiled", unexpected_boundary)
+
+    if pbc:
+        neighbor_matrix_shifts = torch.full((1, 4, 3), 17, dtype=torch.int32)
+        shifts_before = neighbor_matrix_shifts.clone()
+        monkeypatch.setattr(
+            naive_launchers,
+            "_prepare_pbc_positions",
+            unexpected_boundary,
+        )
+        with pytest.raises(
+            NotImplementedError,
+            match=r"^Partial neighbor lists do not support rebuild_flags$",
+        ):
+            naive_launchers._launch_naive_neighbor_matrix_pbc(
+                positions,
+                1.0,
+                SimpleNamespace(shape=(1, 3, 3)),
+                None,
+                SimpleNamespace(shape=(1, 3)),
+                neighbor_matrix,
+                neighbor_matrix_shifts,
+                num_neighbors,
+                wp.float32,
+                "cpu",
+                batched=False,
+                num_shifts=1,
+                target_indices=target_indices,
+                rebuild_flags=rebuild_flags,
+            )
+        assert torch.equal(neighbor_matrix_shifts, shifts_before)
+    else:
+        with pytest.raises(
+            NotImplementedError,
+            match=r"^Partial neighbor lists do not support rebuild_flags$",
+        ):
+            naive_launchers._launch_naive_neighbor_matrix_no_pbc(
+                positions,
+                1.0,
+                neighbor_matrix,
+                num_neighbors,
+                wp.float32,
+                "cpu",
+                batched=False,
+                target_indices=target_indices,
+                rebuild_flags=rebuild_flags,
+            )
+
+    assert torch.equal(neighbor_matrix, matrix_before)
+    assert torch.equal(num_neighbors, counts_before)
 
 
 def test_batch_pbc_partial_forwards_explicit_strategy(monkeypatch):

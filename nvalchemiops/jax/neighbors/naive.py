@@ -30,7 +30,9 @@ from nvalchemiops.jax.neighbors._autograd import (
     _NeighborForwardOutput,
     _route_pair_outputs,
 )
-from nvalchemiops.jax.neighbors._dispatch import _is_jax_cpu_array
+from nvalchemiops.jax.neighbors._dispatch import (
+    _jax_array_device_kind,
+)
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     _validate_graph_mode,
     build_naive_kernel_tables,
@@ -41,11 +43,16 @@ from nvalchemiops.jax.neighbors.neighbor_utils import (
 from nvalchemiops.neighbors.naive import (
     get_naive_neighbor_matrix_kernel as _get_naive_kernel,
 )
+from nvalchemiops.neighbors.naive.dispatch import (
+    _NaiveWorkload,
+    _require_cuda_tile_device,
+    _resolve_naive_strategy,
+)
 from nvalchemiops.neighbors.naive.launchers import (
-    BLOCK_DIM,
     _launch_naive_neighbor_matrix_no_pbc,
     _launch_naive_neighbor_matrix_pbc,
-    _partial_tile_min_atoms,
+    _launch_partial_tile_no_pbc,
+    _launch_partial_tile_pbc_prepared,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
     DTYPE_INFO_ALL,
@@ -1280,27 +1287,9 @@ _GRAPH_NAIVE_WARP_CALLABLES = _register_graph_naive_callables()
 # Tiled-kernel callables (``strategy="tile"``, CUDA-only)
 # ==============================================================================
 #
-# These wrap the *inner* warp launchers ``_launch_naive_neighbor_matrix_no_pbc``
-# / ``_launch_naive_neighbor_matrix_pbc`` inside a ``jax_callable`` body and
-# pass ``strategy="tile"`` explicitly, so the tile-cooperative
-# ``wp.launch_tiled`` kernel is honored unconditionally (unlike the high-level
-# ``naive_neighbor_matrix`` launchers, which drop ``strategy`` on the
-# non-pair branch and would only reach tile via the "auto" heuristic).
-#
-# The inner launchers own the 2D tile ``dim`` math (``[1, N]`` no-PBC,
-# ``[num_shifts, N]`` PBC), the BLOCK_DIM, the scalar sentinels, and the
-# internal wrap launch for the wrapped-PBC case, so the JAX bodies stay thin.
-#
-# These run only on the eager (``graph_mode="none"``) path, where
-# ``naive_neighbor_list`` already pre-fills ``neighbor_matrix=fill_value`` and
-# zeroes ``num_neighbors`` / shifts before dispatch, so the bodies perform no
-# reset and take no ``fill_value`` argument. Partial Warp-graph tiling uses a
-# separate callable family below that captures its own output resets.
-#
-# Tile supports no-PBC and PBC (wrapped + prewrapped), ``half_fill``, and
-# topology-only compact target rows. It has no geometry/pair-function output or
-# selective specialization. The scalars (``cutoff``, ``half_fill``, ``partial``,
-# and ``num_shifts`` for PBC) are host-static in the existing naive graph path.
+# These force ``strategy="tile"`` in the inner Warp launchers. Eager calls
+# pre-fill topology outputs; the replay callables below capture their resets.
+# Cutoff, ``half_fill``, ``partial``, and PBC shift count are static.
 
 
 def _graph_naive_tile_no_pbc_f32(
@@ -1551,51 +1540,17 @@ def _run_graph_naive_partial_tile_no_pbc(
     wp_dtype,
 ) -> None:
     """Reset compact outputs and launch the captured partial no-PBC tile kernel."""
-    (
-        empty_offsets,
-        empty_cell,
-        empty_shift_range,
-        empty_num_shifts,
-        empty_batch_idx,
-        empty_batch_ptr,
-        _empty_target_indices,
-        _empty_matrix,
-        empty_shifts,
-        _empty_num_neighbors,
-        _empty_vectors,
-        _empty_distances,
-        _empty_pair_params,
-        _empty_energies,
-        _empty_forces,
-        empty_rebuild_flags,
-    ) = _wp_scalar_sentinels(wp_dtype, num_neighbors.device)
-    _reset_graph_neighbor_outputs(neighbor_matrix, num_neighbors, fill_value)
-    wp.launch_tiled(
-        kernel=_get_naive_kernel(
-            wp_dtype,
-            pbc_mode="none",
-            partial=True,
-            half_fill=bool(half_fill),
-            strategy="tile",
-        ),
-        dim=[1, target_indices.shape[0]],
-        inputs=[
-            positions,
-            empty_offsets,
-            wp_dtype(float(cutoff) * float(cutoff)),
-            empty_cell,
-            empty_shift_range,
-            empty_num_shifts,
-            empty_batch_idx,
-            empty_batch_ptr,
-            target_indices,
-            neighbor_matrix,
-            empty_shifts,
-            num_neighbors,
-            empty_rebuild_flags,
-        ],
-        block_dim=BLOCK_DIM,
-        device=str(positions.device),
+    _launch_partial_tile_no_pbc(
+        positions,
+        float(cutoff),
+        target_indices,
+        neighbor_matrix,
+        num_neighbors,
+        wp_dtype,
+        str(positions.device),
+        half_fill=bool(half_fill),
+        reset_outputs=True,
+        fill_value=int(fill_value),
     )
 
 
@@ -1623,26 +1578,11 @@ def _run_graph_naive_partial_tile_pbc(
         empty_offsets,
         _empty_cell,
         _empty_shift_range,
-        empty_num_shifts,
+        _empty_num_shifts,
         empty_batch_idx,
-        empty_batch_ptr,
-        _empty_target_indices,
-        _empty_matrix,
-        _empty_shifts,
-        _empty_num_neighbors,
-        _empty_vectors,
-        _empty_distances,
-        _empty_pair_params,
-        _empty_energies,
-        _empty_forces,
-        empty_rebuild_flags,
+        *_unused,
     ) = _wp_scalar_sentinels(wp_dtype, num_neighbors.device)
-    _reset_graph_neighbor_outputs(
-        neighbor_matrix,
-        num_neighbors,
-        fill_value,
-        neighbor_matrix_shifts,
-    )
+    _require_cuda_tile_device(str(positions.device))
     pbc_mode = "prewrapped"
     positions_work = positions
     offsets = empty_offsets
@@ -1656,36 +1596,23 @@ def _run_graph_naive_partial_tile_pbc(
         pbc_mode = "wrap_on_entry"
         positions_work = positions_wrapped
         offsets = per_atom_cell_offsets
-
-    active_shifts = int(num_shifts)
-    if not bool(half_fill):
-        active_shifts = 2 * active_shifts - 1
-    wp.launch_tiled(
-        kernel=_get_naive_kernel(
-            wp_dtype,
-            pbc_mode=pbc_mode,
-            partial=True,
-            half_fill=bool(half_fill),
-            strategy="tile",
-        ),
-        dim=[active_shifts, target_indices.shape[0]],
-        inputs=[
-            positions_work,
-            offsets,
-            wp_dtype(float(cutoff) * float(cutoff)),
-            cell,
-            shift_range,
-            empty_num_shifts,
-            empty_batch_idx,
-            empty_batch_ptr,
-            target_indices,
-            neighbor_matrix,
-            neighbor_matrix_shifts,
-            num_neighbors,
-            empty_rebuild_flags,
-        ],
-        block_dim=BLOCK_DIM,
-        device=str(positions.device),
+    _launch_partial_tile_pbc_prepared(
+        positions_work,
+        offsets,
+        float(cutoff),
+        cell,
+        shift_range,
+        target_indices,
+        neighbor_matrix,
+        neighbor_matrix_shifts,
+        num_neighbors,
+        wp_dtype,
+        str(positions.device),
+        num_shifts=int(num_shifts),
+        half_fill=bool(half_fill),
+        pbc_mode=pbc_mode,
+        reset_outputs=True,
+        fill_value=int(fill_value),
     )
 
 
@@ -2437,14 +2364,11 @@ def naive_neighbor_list(
         Selects the underlying Warp kernel variant. ``"scalar"`` uses the
         per-atom scalar kernel. ``"tile"`` uses the tile-cooperative
         ``wp.launch_tiled`` kernel and is **CUDA-only**: requesting it on a
-        CPU device raises ``ValueError``. The tile path supports topology-only
-        compact ``target_indices``, but has no geometry/pair-function output or
-        selective (``rebuild_flags``) variant. Topology-only compact rows support
-        ``graph_mode="warp"`` when tile is selected. ``"auto"`` selects tile
-        only for topology-only ``target_indices`` on CUDA with at least 256
-        atoms for float64 or 1024 atoms for float32; other JAX calls retain
-        scalar dispatch. The tile and scalar paths produce identical pair
-        *multisets* (per-row ordering may differ).
+        CPU device raises ``ValueError``. Tile supports topology-only compact
+        ``target_indices`` rows; geometry and pair outputs use the scalar path.
+        Partial neighbor lists do not support ``rebuild_flags``. The tile and
+        scalar paths produce identical pair *multisets* (per-row ordering may
+        differ).
     inv_cell : jax.Array, shape (1, 3, 3), dtype matches positions, optional
         Inverse cell matrix consumed by the wrap kernel. Only used when
         ``pbc`` is provided and ``wrap_positions=True``. Pass in a
@@ -2595,24 +2519,11 @@ def naive_neighbor_list(
     set that default before importing this module because its callables are
     registered at import time.
 
-    For ``graph_mode="warp"`` to actually replay (rather than re-capture
-    every call), every in/out buffer pointer the fused callable sees must
-    be stable across calls. The output buffers (``neighbor_matrix``,
-    ``num_neighbors``, ``neighbor_matrix_shifts`` when applicable) must be
-    user-provided **and** included in ``donate_argnums`` of the enclosing
-    ``jax.jit`` so they round-trip across calls. On the wrapped path
-    (``pbc`` provided + ``wrap_positions=True``), ``inv_cell``,
-    ``positions_wrapped`` and ``per_atom_cell_offsets`` must also be passed
-    in with stable buffer pointers; the simplest way is to pre-allocate them
-    once and capture them in the jit'ed closure (see the example above).
-    Letting any of these allocate fresh inside ``naive_neighbor_list``
-    silently degrades the wrapped path to cold-capture-per-call (correct,
-    but significantly slower than the proposal's measured replay numbers).
-    The input pointers for ``positions``, ``cell``, ``pbc``, and supplied
-    shift metadata must also remain stable. Partial calls additionally require
-    a stable ``target_indices`` pointer. Reusing one persistent array is
-    sufficient when its values are fixed; changing targets in-place requires a
-    donated/round-tripped target buffer.
+    ``graph_mode="warp"`` replay requires stable input and output buffers.
+    Donate the returned output buffers through the enclosing ``jax.jit`` so
+    they round-trip between calls. Wrapped PBC also requires stable
+    ``inv_cell``, ``positions_wrapped``, and ``per_atom_cell_offsets`` buffers.
+    Cutoff, ``half_fill``, and PBC shift metadata are statically specialized.
     """
     graph_mode = _validate_graph_mode(graph_mode)
 
@@ -2646,26 +2557,48 @@ def naive_neighbor_list(
         target_indices.ndim != 1 or target_indices.dtype != jnp.int32
     ):
         raise ValueError("target_indices must be a rank-one int32 array.")
-
-    topology_only_partial = (
-        target_indices is not None
-        and not bool(return_distances)
-        and not bool(return_vectors)
-        and neighbor_vectors is None
-        and neighbor_distances is None
-        and pair_fn is None
-    )
-    partial_tile_min_atoms = _partial_tile_min_atoms(
-        wp.float64 if positions.dtype == jnp.float64 else wp.float32
-    )
-    partial_tile_selected = topology_only_partial and (
-        strategy == "tile"
-        or (
-            strategy == "auto"
-            and not _is_jax_cpu_array(positions)
-            and int(positions.shape[0]) >= partial_tile_min_atoms
+    if target_indices is not None and rebuild_flags is not None:
+        raise NotImplementedError(
+            "Partial neighbor lists do not support rebuild_flags",
         )
+
+    real_geometry_or_pair_outputs = (
+        bool(return_distances)
+        or bool(return_vectors)
+        or neighbor_vectors is not None
+        or neighbor_distances is not None
+        or pair_fn is not None
     )
+    compact_topology_partial = (
+        target_indices is not None and not real_geometry_or_pair_outputs
+    )
+    partial_tile_selected = False
+    if compact_topology_partial:
+        if graph_mode == "warp" and strategy == "scalar":
+            raise ValueError(
+                "Partial graph_mode='warp' requires strategy='auto' or "
+                "strategy='tile'.",
+            )
+        if graph_mode == "warp":
+            strategy = "tile"
+        else:
+            strategy = _resolve_naive_strategy(
+                strategy,
+                _NaiveWorkload(
+                    device_kind=_jax_array_device_kind(positions),
+                    wp_dtype=(
+                        wp.float64 if positions.dtype == jnp.float64 else wp.float32
+                    ),
+                    num_atoms=int(positions.shape[0]),
+                    num_systems=1,
+                    partial=True,
+                    batched=False,
+                    pbc=pbc is not None,
+                    wrap_positions=wrap_positions,
+                    geometry_outputs=False,
+                ),
+            )
+        partial_tile_selected = strategy == "tile"
     partial_tile_warp = graph_mode == "warp" and partial_tile_selected
     if partial_tile_warp:
         if return_neighbor_list:
@@ -2719,11 +2652,13 @@ def naive_neighbor_list(
         # The tile-cooperative kernel is CUDA-only and has no geometry/pair_fn,
         # selective (rebuild_flags), or full-row CUDA-graph variant. Compact
         # topology-only rows use the partial Warp-graph callable family.
-        if _is_jax_cpu_array(positions):
-            raise ValueError(
-                "strategy='tile' requires CUDA; the tile-cooperative "
-                "naive kernel cannot run on a CPU device (Warp forces "
-                "block_dim=1). Use strategy='scalar' or 'auto' on CPU.",
+        device_kind = _jax_array_device_kind(positions)
+        if device_kind == "cpu":
+            _require_cuda_tile_device("cpu")
+        elif device_kind == "unknown":
+            default_backend = jax.default_backend()
+            _require_cuda_tile_device(
+                "cuda" if default_backend in {"gpu", "cuda"} else default_backend,
             )
         if (
             bool(return_distances)
@@ -2747,13 +2682,10 @@ def naive_neighbor_list(
                 "topology-only target_indices.",
             )
 
-    has_pair_outputs = (
-        bool(return_distances)
-        or bool(return_vectors)
-        or pair_fn is not None
-        or target_indices is not None
+    uses_compact_pair_kernel = (
+        real_geometry_or_pair_outputs or target_indices is not None
     )
-    if has_pair_outputs:
+    if uses_compact_pair_kernel:
         if (
             graph_mode != "none" and not partial_tile_warp
         ) or rebuild_flags is not None:
@@ -2804,6 +2736,83 @@ def naive_neighbor_list(
             (num_rows, int(max_neighbors), 3),
             positions.dtype,
         )
+        if target_indices is not None and (cutoff <= 0 or num_rows == 0):
+            matrix_out = (
+                jnp.full((num_rows, max_neighbors), fill_value, dtype=jnp.int32)
+                if neighbor_matrix is None
+                else neighbor_matrix.at[:].set(jnp.int32(fill_value))
+            )
+            counts_out = (
+                jnp.zeros(num_rows, dtype=jnp.int32)
+                if num_neighbors is None
+                else num_neighbors.at[:].set(jnp.int32(0))
+            )
+            distances_out = (
+                jnp.zeros((num_rows, max_neighbors), dtype=positions.dtype)
+                if neighbor_distances is None
+                else neighbor_distances.at[:].set(
+                    jnp.asarray(0.0, dtype=positions.dtype)
+                )
+            )
+            vectors_out = (
+                jnp.zeros((num_rows, max_neighbors, 3), dtype=positions.dtype)
+                if neighbor_vectors is None
+                else neighbor_vectors.at[:].set(jnp.asarray(0.0, dtype=positions.dtype))
+            )
+            if pair_fn is not None:
+                energies_out = jnp.zeros(
+                    (num_rows, max_neighbors),
+                    dtype=positions.dtype,
+                )
+                forces_out = jnp.zeros(
+                    (num_rows, max_neighbors, 3),
+                    dtype=positions.dtype,
+                )
+
+            tail: list[jax.Array] = []
+            if return_distances:
+                tail.append(
+                    jnp.zeros((0,), dtype=positions.dtype)
+                    if return_neighbor_list
+                    else distances_out
+                )
+            if return_vectors:
+                tail.append(
+                    jnp.zeros((0, 3), dtype=positions.dtype)
+                    if return_neighbor_list
+                    else vectors_out
+                )
+            if pair_fn is not None:
+                if return_neighbor_list:
+                    tail.extend(
+                        (
+                            jnp.zeros((0,), dtype=positions.dtype),
+                            jnp.zeros((0, 3), dtype=positions.dtype),
+                        ),
+                    )
+                else:
+                    tail.extend((energies_out, forces_out))
+            if pbc is not None:
+                shifts_out = (
+                    jnp.zeros((num_rows, max_neighbors, 3), dtype=jnp.int32)
+                    if neighbor_matrix_shifts is None
+                    else neighbor_matrix_shifts.at[:].set(jnp.int32(0))
+                )
+                if return_neighbor_list:
+                    return (
+                        jnp.zeros((2, 0), dtype=jnp.int32),
+                        jnp.zeros((num_rows + 1,), dtype=jnp.int32),
+                        jnp.zeros((0, 3), dtype=jnp.int32),
+                        *tail,
+                    )
+                return matrix_out, counts_out, shifts_out, *tail
+            if return_neighbor_list:
+                return (
+                    jnp.zeros((2, 0), dtype=jnp.int32),
+                    jnp.zeros((num_rows + 1,), dtype=jnp.int32),
+                    *tail,
+                )
+            return matrix_out, counts_out, *tail
         if cell is not None and cell.ndim == 2:
             cell_norm = cell[jnp.newaxis, :, :]
         else:
@@ -2919,7 +2928,7 @@ def naive_neighbor_list(
             "positions_wrapped": partial_positions_wrapped,
             "per_atom_cell_offsets": partial_per_atom_cell_offsets,
         }
-        if topology_only_partial:
+        if compact_topology_partial:
             # Do not reconstruct the full compact ``(rows, max_neighbors)``
             # geometry only to discard it. This keeps topology-only partial
             # timing focused on the Warp search/callback and avoids unnecessary
@@ -3211,10 +3220,7 @@ def naive_neighbor_list(
     ) = _jax_scalar_sentinels(positions.dtype)
 
     if strategy == "tile":
-        # CUDA-only tile-cooperative path (eager / graph_mode="none" only).
-        # Output buffers were already pre-filled above; the callable bodies
-        # call the inner warp launchers with strategy="tile" and rely on
-        # the host-static cutoff / half_fill / num_shifts scalars (no new sync).
+        # Eager tile calls use pre-filled topology outputs and static launch scalars.
         cutoff_static = float(cutoff)
         if pbc is None:
             tile_callable = _GRAPH_NAIVE_TILE_CALLABLES[(False, False, positions.dtype)]

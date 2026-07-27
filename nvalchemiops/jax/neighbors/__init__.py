@@ -248,7 +248,8 @@ def neighbor_list(
             cell list construction.
         max_atoms_per_system : int, optional
             Maximum number of atoms per system. Used in batch naive implementation
-            with PBC. If not provided, it will be computed automatically.
+            with PBC for full-row launch sizing. Every compact partial path,
+            including geometry and pair-output paths, ignores this bound.
             Can be provided to avoid CUDA synchronization.
         return_distances : bool, default=False
             Also return per-pair distances ``|r_ij|``, differentiable w.r.t.

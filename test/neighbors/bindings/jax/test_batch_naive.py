@@ -358,7 +358,6 @@ class TestBatchNaiveNeighborList:
                 shift_range_per_dimension=shift_range,
                 num_shifts_per_system=num_shifts,
                 max_shifts_per_system=max_shifts,
-                max_atoms_per_system=2,
                 target_indices=target_indices,
             )
 
@@ -1042,6 +1041,33 @@ class TestBatchNaiveJIT:
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
 class TestBatchNaiveSelectiveRebuildFlags:
     """Test selective rebuild (rebuild_flags) for batch_naive_neighbor_list JAX binding."""
+
+    def test_partial_rebuild_flags_are_rejected(self, dtype):
+        """Compact batch rows cannot be combined with selective rebuild flags."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [10.0, 0.0, 0.0],
+                [10.5, 0.0, 0.0],
+            ],
+            dtype=dtype,
+        )
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+        with pytest.raises(
+            NotImplementedError,
+            match=r"^Partial neighbor lists do not support rebuild_flags$",
+        ):
+            batch_naive_neighbor_list(
+                positions,
+                1.0,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=4,
+                target_indices=jnp.array([2, 0], dtype=jnp.int32),
+                rebuild_flags=jnp.ones((2,), dtype=jnp.bool_),
+            )
 
     def test_no_rebuild_preserves_data(self, dtype):
         """All flags False: neighbor data should remain unchanged for all systems."""
