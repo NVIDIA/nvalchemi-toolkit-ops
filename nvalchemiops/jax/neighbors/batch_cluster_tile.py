@@ -918,25 +918,81 @@ _jax_batch_build_cluster_tile_list_selective = _get_cluster_tile_build_jax_calla
     _batch_build_cluster_tile_list_selective_callback,
 )
 _BATCH_CLUSTER_TILE_QUERY_MATRIX_SPEC = _ClusterTileQueryJaxSpec(
-    True, "matrix", False, False, False, False, False, False, None
+    batched=True,
+    output_format="matrix",
+    tile_segmented=False,
+    coo_segmented=False,
+    selective=False,
+    dual_cutoff=False,
+    return_vectors=False,
+    return_distances=False,
+    pair_fn=None,
 )
 _BATCH_CLUSTER_TILE_QUERY_MATRIX_SELECTIVE_SPEC = _ClusterTileQueryJaxSpec(
-    True, "matrix", True, False, True, False, False, False, None
+    batched=True,
+    output_format="matrix",
+    tile_segmented=True,
+    coo_segmented=False,
+    selective=True,
+    dual_cutoff=False,
+    return_vectors=False,
+    return_distances=False,
+    pair_fn=None,
 )
 _BATCH_CLUSTER_TILE_QUERY_MATRIX_DUAL_SPEC = _ClusterTileQueryJaxSpec(
-    True, "matrix", False, False, False, True, False, False, None
+    batched=True,
+    output_format="matrix",
+    tile_segmented=False,
+    coo_segmented=False,
+    selective=False,
+    dual_cutoff=True,
+    return_vectors=False,
+    return_distances=False,
+    pair_fn=None,
 )
 _BATCH_CLUSTER_TILE_QUERY_MATRIX_DUAL_SELECTIVE_SPEC = _ClusterTileQueryJaxSpec(
-    True, "matrix", True, False, True, True, False, False, None
+    batched=True,
+    output_format="matrix",
+    tile_segmented=True,
+    coo_segmented=False,
+    selective=True,
+    dual_cutoff=True,
+    return_vectors=False,
+    return_distances=False,
+    pair_fn=None,
 )
 _BATCH_CLUSTER_TILE_QUERY_MATRIX_PAIR_SPEC = _ClusterTileQueryJaxSpec(
-    True, "matrix", False, False, False, False, True, True, None
+    batched=True,
+    output_format="matrix",
+    tile_segmented=False,
+    coo_segmented=False,
+    selective=False,
+    dual_cutoff=False,
+    return_vectors=True,
+    return_distances=True,
+    pair_fn=None,
 )
 _BATCH_CLUSTER_TILE_QUERY_COO_SPEC = _ClusterTileQueryJaxSpec(
-    True, "coo", False, False, False, False, False, False, None
+    batched=True,
+    output_format="coo",
+    tile_segmented=False,
+    coo_segmented=False,
+    selective=False,
+    dual_cutoff=False,
+    return_vectors=False,
+    return_distances=False,
+    pair_fn=None,
 )
 _BATCH_CLUSTER_TILE_QUERY_COO_SEGMENTED_SPEC = _ClusterTileQueryJaxSpec(
-    True, "coo", True, True, True, False, False, False, None
+    batched=True,
+    output_format="coo",
+    tile_segmented=True,
+    coo_segmented=True,
+    selective=True,
+    dual_cutoff=False,
+    return_vectors=False,
+    return_distances=False,
+    pair_fn=None,
 )
 
 _jax_batch_query_cluster_tile = _get_cluster_tile_query_jax_callable(
@@ -1441,7 +1497,15 @@ def batch_query_cluster_tile(
             raise ValueError("batch_idx is required when rebuild_flags is provided")
     query_spec = (
         _ClusterTileQueryJaxSpec(
-            True, "matrix", False, False, False, False, True, True, pair_fn
+            batched=True,
+            output_format="matrix",
+            tile_segmented=False,
+            coo_segmented=False,
+            selective=False,
+            dual_cutoff=False,
+            return_vectors=True,
+            return_distances=True,
+            pair_fn=pair_fn,
         )
         if pair_fn is not None
         else _BATCH_CLUSTER_TILE_QUERY_MATRIX_PAIR_SPEC

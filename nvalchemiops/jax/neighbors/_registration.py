@@ -107,7 +107,7 @@ class _CellListBuildJaxSpec:
     batched: bool
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class _CellListQueryJaxSpec:
     """Describe one supported direct cell-list query JAX registration."""
 
@@ -131,7 +131,7 @@ class _ClusterTileBuildJaxSpec:
     selective: bool
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class _ClusterTileQueryJaxSpec:
     """Describe one supported cluster-tile query callback registration."""
 

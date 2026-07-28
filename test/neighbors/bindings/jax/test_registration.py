@@ -257,6 +257,28 @@ class TestJaxOutputSchema:
         with pytest.raises(AttributeError):
             schema.in_out_argnames = ("replacement",)
 
+    @pytest.mark.parametrize(
+        "spec_type, args",
+        [
+            (
+                _registration._CellListQueryJaxSpec,
+                (wp.float32, False, True, False, False, False, False, None, "sorted"),
+            ),
+            (
+                _registration._ClusterTileQueryJaxSpec,
+                (False, "matrix", False, False, False, False, False, False, None),
+            ),
+        ],
+    )
+    def test_boolean_heavy_query_specs_require_keyword_arguments(
+        self,
+        spec_type,
+        args,
+    ) -> None:
+        """Reject positional values for multi-axis query specializations."""
+        with pytest.raises(TypeError):
+            spec_type(*args)
+
 
 class TestNaiveJaxKernelRegistration:
     """Test lazy registration of direct naive JAX kernels."""
@@ -777,7 +799,15 @@ class TestCellListJaxKernelRegistration:
         )
         pair_fn = object()
         spec = module._CellListQueryJaxSpec(
-            wp.float64, False, True, True, True, True, True, pair_fn, "sorted"
+            wp_dtype=wp.float64,
+            batched=False,
+            selective=True,
+            partial=True,
+            half_fill=True,
+            return_vectors=True,
+            return_distances=True,
+            pair_fn=pair_fn,
+            atom_centric_path="sorted",
         )
 
         assert module._get_cell_list_query_jax_kernel(spec) == "jax"
@@ -828,7 +858,15 @@ class TestCellListJaxKernelRegistration:
         )
         monkeypatch.setattr(module, "_register_jax_kernel", lambda *args: object())
         valid = module._CellListQueryJaxSpec(
-            wp.float32, False, True, False, False, False, False, None, "direct"
+            wp_dtype=wp.float32,
+            batched=False,
+            selective=True,
+            partial=False,
+            half_fill=False,
+            return_vectors=False,
+            return_distances=False,
+            pair_fn=None,
+            atom_centric_path="direct",
         )
         assert module._get_cell_list_query_jax_kernel(
             valid
@@ -837,13 +875,37 @@ class TestCellListJaxKernelRegistration:
         for spec in (
             module._CellListBuildJaxSpec("estimate_sizes", wp.float32, False),
             module._CellListQueryJaxSpec(
-                wp.float32, True, True, False, False, False, False, None, "direct"
+                wp_dtype=wp.float32,
+                batched=True,
+                selective=True,
+                partial=False,
+                half_fill=False,
+                return_vectors=False,
+                return_distances=False,
+                pair_fn=None,
+                atom_centric_path="direct",
             ),
             module._CellListQueryJaxSpec(
-                wp.float32, False, True, False, False, True, False, None, "sorted"
+                wp_dtype=wp.float32,
+                batched=False,
+                selective=True,
+                partial=False,
+                half_fill=False,
+                return_vectors=True,
+                return_distances=False,
+                pair_fn=None,
+                atom_centric_path="sorted",
             ),
             module._CellListQueryJaxSpec(
-                wp.float32, False, True, False, False, False, False, object(), "sorted"
+                wp_dtype=wp.float32,
+                batched=False,
+                selective=True,
+                partial=False,
+                half_fill=False,
+                return_vectors=False,
+                return_distances=False,
+                pair_fn=object(),
+                atom_centric_path="sorted",
             ),
         ):
             with pytest.raises(ValueError):
@@ -1016,16 +1078,48 @@ class TestClusterTileJaxRegistration:
             _registration._ClusterTileBuildJaxSpec(False, True, False),
             _registration._ClusterTileBuildJaxSpec(True, False, True),
             _registration._ClusterTileQueryJaxSpec(
-                False, "matrix", True, False, False, False, False, False, None
+                batched=False,
+                output_format="matrix",
+                tile_segmented=True,
+                coo_segmented=False,
+                selective=False,
+                dual_cutoff=False,
+                return_vectors=False,
+                return_distances=False,
+                pair_fn=None,
             ),
             _registration._ClusterTileQueryJaxSpec(
-                False, "coo", False, False, False, True, False, False, None
+                batched=False,
+                output_format="coo",
+                tile_segmented=False,
+                coo_segmented=False,
+                selective=False,
+                dual_cutoff=True,
+                return_vectors=False,
+                return_distances=False,
+                pair_fn=None,
             ),
             _registration._ClusterTileQueryJaxSpec(
-                False, "coo", False, False, False, False, True, True, None
+                batched=False,
+                output_format="coo",
+                tile_segmented=False,
+                coo_segmented=False,
+                selective=False,
+                dual_cutoff=False,
+                return_vectors=True,
+                return_distances=True,
+                pair_fn=None,
             ),
             _registration._ClusterTileQueryJaxSpec(
-                False, "matrix", False, False, False, True, True, True, None
+                batched=False,
+                output_format="matrix",
+                tile_segmented=False,
+                coo_segmented=False,
+                selective=False,
+                dual_cutoff=True,
+                return_vectors=True,
+                return_distances=True,
+                pair_fn=None,
             ),
         ],
     )
@@ -1203,61 +1297,141 @@ class TestClusterTileJaxRegistration:
             (
                 "_preload_cluster_tile_query_kernel",
                 _registration._ClusterTileQueryJaxSpec(
-                    False, "coo", False, False, False, False, False, False, None
+                    batched=False,
+                    output_format="coo",
+                    tile_segmented=False,
+                    coo_segmented=False,
+                    selective=False,
+                    dual_cutoff=False,
+                    return_vectors=False,
+                    return_distances=False,
+                    pair_fn=None,
                 ),
             ),
             (
                 "_preload_cluster_tile_query_kernel",
                 _registration._ClusterTileQueryJaxSpec(
-                    False, "matrix", False, True, False, False, False, False, None
+                    batched=False,
+                    output_format="matrix",
+                    tile_segmented=False,
+                    coo_segmented=True,
+                    selective=False,
+                    dual_cutoff=False,
+                    return_vectors=False,
+                    return_distances=False,
+                    pair_fn=None,
                 ),
             ),
             (
                 "_preload_cluster_tile_query_kernel",
                 _registration._ClusterTileQueryJaxSpec(
-                    False, "matrix", True, False, False, False, False, False, None
+                    batched=False,
+                    output_format="matrix",
+                    tile_segmented=True,
+                    coo_segmented=False,
+                    selective=False,
+                    dual_cutoff=False,
+                    return_vectors=False,
+                    return_distances=False,
+                    pair_fn=None,
                 ),
             ),
             (
                 "_preload_cluster_tile_query_kernel",
                 _registration._ClusterTileQueryJaxSpec(
-                    False, "matrix", False, False, False, False, True, False, None
+                    batched=False,
+                    output_format="matrix",
+                    tile_segmented=False,
+                    coo_segmented=False,
+                    selective=False,
+                    dual_cutoff=False,
+                    return_vectors=True,
+                    return_distances=False,
+                    pair_fn=None,
                 ),
             ),
             (
                 "_preload_cluster_tile_query_kernel",
                 _registration._ClusterTileQueryJaxSpec(
-                    False, "matrix", False, False, True, True, True, True, None
+                    batched=False,
+                    output_format="matrix",
+                    tile_segmented=False,
+                    coo_segmented=False,
+                    selective=True,
+                    dual_cutoff=True,
+                    return_vectors=True,
+                    return_distances=True,
+                    pair_fn=None,
                 ),
             ),
             (
                 "_preload_cluster_tile_coo_kernel",
                 _registration._ClusterTileQueryJaxSpec(
-                    False, "matrix", False, False, False, False, False, False, None
+                    batched=False,
+                    output_format="matrix",
+                    tile_segmented=False,
+                    coo_segmented=False,
+                    selective=False,
+                    dual_cutoff=False,
+                    return_vectors=False,
+                    return_distances=False,
+                    pair_fn=None,
                 ),
             ),
             (
                 "_preload_cluster_tile_coo_kernel",
                 _registration._ClusterTileQueryJaxSpec(
-                    False, "coo", False, False, False, True, False, False, None
+                    batched=False,
+                    output_format="coo",
+                    tile_segmented=False,
+                    coo_segmented=False,
+                    selective=False,
+                    dual_cutoff=True,
+                    return_vectors=False,
+                    return_distances=False,
+                    pair_fn=None,
                 ),
             ),
             (
                 "_preload_cluster_tile_coo_kernel",
                 _registration._ClusterTileQueryJaxSpec(
-                    False, "coo", False, False, False, False, True, True, None
+                    batched=False,
+                    output_format="coo",
+                    tile_segmented=False,
+                    coo_segmented=False,
+                    selective=False,
+                    dual_cutoff=False,
+                    return_vectors=True,
+                    return_distances=True,
+                    pair_fn=None,
                 ),
             ),
             (
                 "_preload_cluster_tile_coo_kernel",
                 _registration._ClusterTileQueryJaxSpec(
-                    True, "coo", True, True, False, False, False, False, None
+                    batched=True,
+                    output_format="coo",
+                    tile_segmented=True,
+                    coo_segmented=True,
+                    selective=False,
+                    dual_cutoff=False,
+                    return_vectors=False,
+                    return_distances=False,
+                    pair_fn=None,
                 ),
             ),
             (
                 "_preload_cluster_tile_coo_kernel",
                 _registration._ClusterTileQueryJaxSpec(
-                    True, "coo", True, False, True, False, False, False, None
+                    batched=True,
+                    output_format="coo",
+                    tile_segmented=True,
+                    coo_segmented=False,
+                    selective=True,
+                    dual_cutoff=False,
+                    return_vectors=False,
+                    return_distances=False,
+                    pair_fn=None,
                 ),
             ),
         ],

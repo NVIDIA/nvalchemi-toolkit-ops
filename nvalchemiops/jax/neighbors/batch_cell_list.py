@@ -103,15 +103,15 @@ def _query_registry(
     return _LazyDtypeRegistrations(
         lambda wp_dtype: _get_cell_list_query_jax_kernel(
             _CellListQueryJaxSpec(
-                wp_dtype,
-                True,
-                True,
-                False,
-                half_fill,
-                return_geometry,
-                return_geometry,
-                None,
-                "sorted",
+                wp_dtype=wp_dtype,
+                batched=True,
+                selective=True,
+                partial=False,
+                half_fill=half_fill,
+                return_vectors=return_geometry,
+                return_distances=return_geometry,
+                pair_fn=None,
+                atom_centric_path="sorted",
             ),
         ),
         _DTYPE_MAP,
@@ -133,15 +133,15 @@ def _get_jax_batch_cell_list_pair_outputs_kernel(
     """Return a cached sorted direct registration for batched pair outputs."""
     return _get_cell_list_query_jax_kernel(
         _CellListQueryJaxSpec(
-            wp_dtype,
-            True,
-            True,
-            bool(partial),
-            bool(half_fill),
-            True,
-            True,
-            pair_fn,
-            "sorted",
+            wp_dtype=wp_dtype,
+            batched=True,
+            selective=True,
+            partial=bool(partial),
+            half_fill=bool(half_fill),
+            return_vectors=True,
+            return_distances=True,
+            pair_fn=pair_fn,
+            atom_centric_path="sorted",
         ),
     )
 
