@@ -26,7 +26,6 @@ from __future__ import annotations
 import torch
 
 __all__ = [
-    "_has_potentially_geometry_dependent_charges",
     "_InjectCachedEvalGrad",
     "_InjectCachedEvalGradWithFallback",
     "_InjectChargeGrad",
@@ -46,28 +45,6 @@ def _sum_charge_gradients(
 ) -> torch.Tensor:
     """Sum electrostatic charge gradients with traceable Torch arithmetic."""
     return real_space_charge_grads + reciprocal_charge_grads
-
-
-def _has_potentially_geometry_dependent_charges(
-    positions: torch.Tensor,
-    charges: torch.Tensor,
-) -> bool:
-    """Return whether ``charges`` may carry a q(R) autograd path.
-
-    A non-leaf charge tensor may depend on positions or cell/strain inputs, e.g.
-    charges = q(positions) or charges = q(cell). Custom backwards must avoid
-    differentiating a connected recompute with respect to both geometry inputs and
-    charges and then returning both gradients, because PyTorch would apply
-    dE/dq * dq/dgeometry twice.
-
-    Returns
-    -------
-    bool
-        True when ``charges`` requires gradients and is a non-leaf tensor that
-        may depend on one of the differentiable electrostatics inputs.
-
-    """
-    return bool(charges.requires_grad and charges.grad_fn is not None)
 
 
 _CONNECTED_INPUT_ORDER = ("charges", "positions", "cell", "alpha")

@@ -34,6 +34,7 @@ The unified API uses:
 
 import math
 import warnings
+from importlib import import_module
 
 import numpy as np
 import pytest
@@ -8038,6 +8039,284 @@ class TestEwaldEnergyDerivativeContract:
         assert torch.allclose(fd, ad, rtol=C_VIRIAL_RTOL, atol=C_VIRIAL_ATOL), (
             f"batch strain-virial FD vs autograd: max_abs={max_abs:.3e} max_rel={max_rel:.3e}"
         )
+
+
+class TestEwaldHybridConnectedInputFallback:
+    """Hybrid Ewald q(R) fallback preserves weighted and higher-order derivatives."""
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_qR_nonuniform_gradient_matches_manual_chain(self, device):
+        """Hybrid weighted q(R) gradients match an eager manual chain-rule oracle."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        ewald_module = import_module(
+            "nvalchemiops.torch.interactions.electrostatics.ewald"
+        )
+        positions, _, cell = _contract_dipole(device)
+        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
+            positions,
+            5.0,
+            cell,
+            torch.tensor([[True, True, True]], device=device),
+            return_neighbor_list=True,
+        )
+        alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+        weights = torch.tensor([1.2, 0.8], dtype=torch.float64, device=device)
+
+        def reference_energy_fn(p, q, c):
+            return ewald_module._real_space_energy(
+                p,
+                q,
+                c,
+                alpha,
+                batch_idx=None,
+                idx_j=neighbor_list[1],
+                neighbor_ptr=neighbor_ptr,
+                neighbor_shifts=neighbor_shifts,
+                neighbor_matrix=None,
+                neighbor_matrix_shifts=None,
+                mask_value=p.shape[0],
+            )
+
+        def hybrid_energy_fn(p, q, c):
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="The direct-output flags .* on ewald_real_space are deprecated",
+                    category=DeprecationWarning,
+                )
+                return ewald_real_space(
+                    p,
+                    q,
+                    c,
+                    alpha,
+                    neighbor_list=neighbor_list,
+                    neighbor_ptr=neighbor_ptr,
+                    neighbor_shifts=neighbor_shifts,
+                    hybrid_forces=True,
+                )
+
+        full_grad, manual_grad = qr_manual_chain_gradient(
+            reference_energy_fn,
+            positions,
+            cell,
+            per_atom_weights=weights,
+        )
+        assert torch.allclose(full_grad, manual_grad, rtol=1e-4, atol=1e-6)
+
+        positions_hybrid = positions.detach().clone().requires_grad_(True)
+        energies_hybrid = hybrid_energy_fn(
+            positions_hybrid,
+            toy_charge_model(positions_hybrid),
+            cell,
+        )
+        (hybrid_grad,) = torch.autograd.grad(
+            energies_hybrid,
+            positions_hybrid,
+            grad_outputs=weights,
+        )
+
+        max_abs, max_rel = max_abs_rel(hybrid_grad, manual_grad)
+        assert torch.allclose(hybrid_grad, manual_grad, rtol=1e-4, atol=1e-6), (
+            "hybrid q(R) weighted gradient: "
+            f"max_abs={max_abs:.3e} max_rel={max_rel:.3e}"
+        )
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_qR_weighted_hvp_matches_eager_oracle(self, device):
+        """Hybrid q(R) weighted HVP matches a finite-difference eager oracle."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        ewald_module = import_module(
+            "nvalchemiops.torch.interactions.electrostatics.ewald"
+        )
+        positions, _, cell = _contract_dipole(device)
+        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
+            positions,
+            5.0,
+            cell,
+            torch.tensor([[True, True, True]], device=device),
+            return_neighbor_list=True,
+        )
+        alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+        weights = torch.tensor([1.2, 0.8], dtype=torch.float64, device=device)
+        generator = torch.Generator(device=device)
+        generator.manual_seed(115)
+        direction = torch.randn_like(positions, generator=generator)
+        direction = direction / direction.norm()
+
+        def reference_energy_fn(p, q, c):
+            return ewald_module._real_space_energy(
+                p,
+                q,
+                c,
+                alpha,
+                batch_idx=None,
+                idx_j=neighbor_list[1],
+                neighbor_ptr=neighbor_ptr,
+                neighbor_shifts=neighbor_shifts,
+                neighbor_matrix=None,
+                neighbor_matrix_shifts=None,
+                mask_value=p.shape[0],
+            )
+
+        def hybrid_energy_fn(p, q, c):
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="The direct-output flags .* on ewald_real_space are deprecated",
+                    category=DeprecationWarning,
+                )
+                return ewald_real_space(
+                    p,
+                    q,
+                    c,
+                    alpha,
+                    neighbor_list=neighbor_list,
+                    neighbor_ptr=neighbor_ptr,
+                    neighbor_shifts=neighbor_shifts,
+                    hybrid_forces=True,
+                )
+
+        reference_hvp, finite_difference_hvp = qr_hvp_positions(
+            reference_energy_fn,
+            positions,
+            cell,
+            direction,
+            per_atom_weights=weights,
+        )
+        assert torch.allclose(
+            reference_hvp,
+            finite_difference_hvp,
+            rtol=1e-4,
+            atol=1e-5,
+        )
+
+        positions_hybrid = positions.detach().clone().requires_grad_(True)
+        energies_hybrid = hybrid_energy_fn(
+            positions_hybrid,
+            toy_charge_model(positions_hybrid),
+            cell,
+        )
+        (hybrid_grad,) = torch.autograd.grad(
+            (weights * energies_hybrid).sum(),
+            positions_hybrid,
+            create_graph=True,
+        )
+        (hybrid_hvp,) = torch.autograd.grad(
+            hybrid_grad,
+            positions_hybrid,
+            grad_outputs=direction,
+        )
+
+        max_abs, max_rel = max_abs_rel(hybrid_hvp, finite_difference_hvp)
+        assert torch.allclose(
+            hybrid_hvp,
+            finite_difference_hvp,
+            rtol=1e-4,
+            atol=1e-5,
+        ), f"hybrid q(R) weighted HVP: max_abs={max_abs:.3e} max_rel={max_rel:.3e}"
+
+
+class TestEwaldConnectedChargeCachedRouting:
+    """Connected charge models use the real-space cached first-gradient connector."""
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    @pytest.mark.parametrize("charge_graph", ["positions", "parameters"])
+    def test_connected_charges_uniform_sum_uses_cached_connector(
+        self,
+        device,
+        charge_graph,
+        monkeypatch,
+    ):
+        """Uniform q(R) and q(theta) gradients match eager real-space derivatives."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        ewald_module = import_module(
+            "nvalchemiops.torch.interactions.electrostatics.ewald"
+        )
+        positions, _, cell = _contract_dipole(device)
+        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
+            positions,
+            5.0,
+            cell,
+            torch.tensor([[True, True, True]], device=device),
+            return_neighbor_list=True,
+        )
+        alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+        cached_connector_calls = 0
+        original_apply = ewald_module._InjectCachedEvalGradWithFallback.apply
+
+        def counting_apply(*args, **kwargs):
+            nonlocal cached_connector_calls
+            cached_connector_calls += 1
+            return original_apply(*args, **kwargs)
+
+        monkeypatch.setattr(
+            ewald_module._InjectCachedEvalGradWithFallback,
+            "apply",
+            counting_apply,
+        )
+
+        def public_energy_fn(p, q):
+            return ewald_real_space(
+                p,
+                q,
+                cell,
+                alpha,
+                neighbor_list=neighbor_list,
+                neighbor_ptr=neighbor_ptr,
+                neighbor_shifts=neighbor_shifts,
+            )
+
+        def reference_energy_fn(p, q):
+            return ewald_module._real_space_energy(
+                p,
+                q,
+                cell,
+                alpha,
+                batch_idx=None,
+                idx_j=neighbor_list[1],
+                neighbor_ptr=neighbor_ptr,
+                neighbor_shifts=neighbor_shifts,
+                neighbor_matrix=None,
+                neighbor_matrix_shifts=None,
+                mask_value=p.shape[0],
+            )
+
+        if charge_graph == "positions":
+            positions_eval = positions.detach().clone().requires_grad_(True)
+            energy_eval = public_energy_fn(
+                positions_eval,
+                toy_charge_model(positions_eval),
+            )
+            (grad_eval,) = torch.autograd.grad(energy_eval.sum(), positions_eval)
+
+            positions_ref = positions.detach().clone().requires_grad_(True)
+            energy_ref = reference_energy_fn(
+                positions_ref,
+                toy_charge_model(positions_ref),
+            )
+            (grad_ref,) = torch.autograd.grad(energy_ref.sum(), positions_ref)
+        else:
+            theta_eval = torch.tensor(
+                [0.4, -0.2],
+                dtype=torch.float64,
+                device=device,
+                requires_grad=True,
+            )
+            energy_eval = public_energy_fn(positions, theta_eval - theta_eval.mean())
+            (grad_eval,) = torch.autograd.grad(energy_eval.sum(), theta_eval)
+
+            theta_ref = theta_eval.detach().clone().requires_grad_(True)
+            energy_ref = reference_energy_fn(positions, theta_ref - theta_ref.mean())
+            (grad_ref,) = torch.autograd.grad(energy_ref.sum(), theta_ref)
+
+        assert cached_connector_calls == 1
+        torch.testing.assert_close(grad_eval, grad_ref, rtol=1e-5, atol=1e-7)
 
 
 class TestEwaldQRGeometryFallback:

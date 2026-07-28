@@ -109,7 +109,6 @@ from nvalchemiops.torch.interactions.electrostatics._util import (
     _component_direct_output_deprecation_msg,
     _detach_setup_tensor,
     _direct_output_deprecation_msg,
-    _has_potentially_geometry_dependent_charges,
     _InjectCachedEvalGrad,
     _InjectCachedEvalGradWithFallback,
     _InjectChargeGrad,
@@ -852,7 +851,6 @@ def ewald_real_space(
         and not cell.requires_grad
         and not alpha.requires_grad
         and (positions.requires_grad or charges.requires_grad)
-        and not _has_potentially_geometry_dependent_charges(positions, charges)
     ):
         # Ordinary scalar first-derivative evaluations can use detached direct
         # caches. Weighted losses and create_graph=True rebuild the true energy

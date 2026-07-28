@@ -4,9 +4,9 @@
 
 ### Fixed
 
-- Torch PME and Ewald energy-only autograd now preserve charge-equilibration
-  terms for non-leaf position graphs and cell-dependent charges when
-  `create_graph=True`.
+- Fixed Torch PME and Ewald energy gradients for connected charge, position, and
+  cell inputs. Non-uniform or weighted energy losses and `create_graph=True`
+  higher-order derivatives no longer double-count upstream chain-rule terms.
 
 ## 0.4.0 - 2026-07-13
 
