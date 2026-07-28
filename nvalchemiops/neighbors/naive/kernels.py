@@ -505,7 +505,7 @@ def _make_scalar_kernel(
         batch_ptr : wp.array, shape (num_systems + 1,), dtype=wp.int32
             Prefix offsets delimiting atoms per system in batched modes.
         target_indices : wp.array, shape (n_targets,), dtype=wp.int32
-            Compact target rows for partial neighbor lists. Zero-size sentinel
+            Indices of central atoms for compact partial rows. Zero-size sentinel
             for full neighbor-list specializations.
         neighbor_matrix1 : wp.array, shape (rows, max_neighbors), dtype=wp.int32
             OUTPUT: Primary neighbor matrix.
@@ -983,7 +983,7 @@ def _make_tile_kernel(
         batch_ptr : wp.array, shape (num_systems + 1,), dtype=wp.int32
             Prefix offsets delimiting atoms per system in batched modes.
         target_indices : wp.array, shape (n_targets,), dtype=wp.int32
-            Compact target rows for partial neighbor lists. Zero-size sentinel
+            Indices of central atoms for compact partial rows. Zero-size sentinel
             for full neighbor-list specializations.
         neighbor_matrix : wp.array, shape (rows, max_neighbors), dtype=wp.int32
             OUTPUT: Neighbor matrix.

@@ -1135,9 +1135,9 @@ def naive_neighbor_matrix(
         When provided, the kernel checks this flag on the GPU and skips work
         when False (no CPU-GPU sync).
     target_indices : wp.array, shape (M,), dtype=wp.int32, optional
-        Unique, in-bounds global atom indices restricting which atoms act as
-        sources (rows) in the output.  Output rows correspond to
-        ``target_indices`` in order.  When omitted, all atoms are sources.
+        Unique, in-bounds global indices of the central atoms. Output row
+        ``r`` corresponds to ``target_indices[r]``. When omitted, every atom
+        has an output row.
     return_vectors : bool, default=False
         If True, write per-pair displacement vectors into ``neighbor_vectors``.
         Requires ``neighbor_vectors`` to be supplied.
@@ -1291,10 +1291,9 @@ def batch_naive_neighbor_matrix(
         GPU without CPU sync.  Per-system counters are reset via
         :func:`selective_zero_num_neighbors` internally.
     target_indices : wp.array, shape (M,), dtype=wp.int32, optional
-        Unique, in-bounds global atom indices restricting which atoms act as
-        sources.  In batched mode each target searches only atoms in its own
-        system (the system is resolved via ``batch_idx``).  Output rows follow
-        ``target_indices``.
+        Unique, in-bounds global indices of the central atoms. In batched mode
+        each central atom searches only atoms in its own system (resolved via
+        ``batch_idx``). Output row ``r`` corresponds to ``target_indices[r]``.
     return_vectors : bool, default=False
         If True, write per-pair displacement vectors into ``neighbor_vectors``.
     return_distances : bool, default=False
@@ -1334,8 +1333,8 @@ def batch_naive_neighbor_matrix(
         back to the scalar kernel.
     - Topology-only ``target_indices`` calls can tile when explicitly requested.
       Under ``strategy="auto"``, batched partial calls use the scalar factory
-      kernel until target-aware tile dispatch is benchmarked. Geometry and
-      pair-function output kwargs also use the scalar factory kernel.
+      kernel. Geometry and pair-function output kwargs also use the scalar
+      factory kernel.
 
     See Also
     --------
@@ -1479,8 +1478,8 @@ def naive_neighbor_matrix_pbc(
         neighbor search.  When False the positions are assumed to be already
         wrapped (e.g. by a preceding integration step).
     target_indices : wp.array, shape (M,), dtype=wp.int32, optional
-        Unique, in-bounds global atom indices restricting which atoms act as
-        sources.  Output rows follow ``target_indices``.
+        Unique, in-bounds global indices of the central atoms. Output row
+        ``r`` corresponds to ``target_indices[r]``.
     return_vectors : bool, default=False
         If True, write per-pair displacement vectors (including the periodic
         shift contribution) into ``neighbor_vectors``.
@@ -1711,10 +1710,9 @@ def batch_naive_neighbor_matrix_pbc(
     wrap_positions : bool, default=True
         If True, wrap input positions into the primary cell.
     target_indices : wp.array, shape (M,), dtype=wp.int32, optional
-        Unique, in-bounds global atom indices restricting which atoms act as
-        sources.  In batched mode each target searches only atoms in its own
-        system (resolved via ``batch_idx``).  Output rows follow
-        ``target_indices``.
+        Unique, in-bounds global indices of the central atoms. In batched mode
+        each central atom searches only atoms in its own system (resolved via
+        ``batch_idx``). Output row ``r`` corresponds to ``target_indices[r]``.
     return_vectors : bool, default=False
         If True, write per-pair displacement vectors (including the periodic
         shift contribution) into ``neighbor_vectors``.

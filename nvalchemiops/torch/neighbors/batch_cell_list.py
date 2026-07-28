@@ -30,8 +30,8 @@ The torch wrapper auto-selects between two batch query kernels:
 Auto-select uses sync-free quantities (``total_atoms``, ``num_systems``,
 ``cutoff``); the ``total_cells`` Python int is already paid by
 :func:`estimate_batch_cell_list_sizes` at allocation time.  Defaults
-are calibrated empirically; overrides are exposed via environment
-variables - see :func:`select_batch_cell_list_strategy`.
+can be overridden with environment variables; see
+:func:`select_batch_cell_list_strategy`.
 """
 
 from __future__ import annotations
@@ -895,9 +895,9 @@ def batch_query_cell_list(
         Selects the atom-centric implementation path. ``"auto"`` resolves to
         ``"direct"``.
     target_indices : torch.Tensor, shape (num_targets,), dtype=int32, optional
-        If provided, only query neighbors for the subset of atoms listed. The
-        output ``neighbor_matrix`` and ``num_neighbors`` will have ``num_targets``
-        rows rather than ``total_atoms`` rows.
+        Indices of the central atoms for compact partial rows. The output
+        ``neighbor_matrix`` and ``num_neighbors`` have ``num_targets`` rows
+        rather than ``total_atoms`` rows, in ``target_indices`` order.
     return_vectors : bool, default=False
         If True and ``neighbor_vectors`` is provided, write per-neighbor
         displacement vectors into ``neighbor_vectors``.

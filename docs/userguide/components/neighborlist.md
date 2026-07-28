@@ -1300,8 +1300,9 @@ cutoff1, cutoff2 = 3.0, 6.0
 
 Pass `target_indices` (an `int32` array of atom indices) to build neighbors only for a
 subset of *central* atoms. Output rows are **compact**: there are `num_targets` rows
-and row `r` corresponds to atom `target_indices[r]`. In COO output the source index
-`nl[0]` is the compact row in `[0, num_targets)` (map it back through `target_indices`):
+and row `r` corresponds to atom `target_indices[r]`. In COO output the central-row
+index `nl[0]` is the compact row in `[0, num_targets)` (map it back through
+`target_indices`):
 
 ```python
 from nvalchemiops.torch.neighbors import neighbor_list
@@ -1321,8 +1322,11 @@ identical results are available via `atom_centric`).
 
 For topology-only partial `naive` lists, `strategy="tile"` is CUDA-only and is
 available in both PyTorch and JAX for no-PBC, wrapped PBC, and prewrapped PBC.
-Explicit tile supports both single and batched compact rows; batched partial
-`strategy="auto"` remains scalar.
+For native, PyTorch, and eager JAX single-system CUDA calls, `strategy="auto"`
+selects a strategy from the dtype and atom count. JAX traced partial `auto`
+calls without `graph_mode="warp"` and batched partial `auto` calls remain
+scalar. `graph_mode="warp"` requires tile and routes `auto` to tile. Explicit
+tile supports both single and batched compact rows.
 Geometry buffers, distances, vectors, pair functions, and pair energy/force
 outputs remain scalar-only. Scalar and tiled rows can differ in order; compare
 counts and sorted `(neighbor, periodic_shift)` multisets. JAX additionally
@@ -1447,7 +1451,7 @@ the differentiable-geometry path — a traced (jit'd) cutoff is not yet supporte
 On JAX, `naive` / `batch_naive` and `cell_list` / `batch_cell_list` support
 `target_indices` (partial neighbor lists) combined with pair outputs: the
 compact output has `num_targets` rows (row `r` → atom `target_indices[r]`), and
-in COO mode the source index `nl[0]` is the compact row in `[0, num_targets)`
+in COO mode the central-row index `nl[0]` is the compact row in `[0, num_targets)`
 (mapped back via `target_indices`), matching the Torch contract.
 
 For PyTorch `torch.compile(fullgraph=True)`, pass a pre-specialized wrapper from

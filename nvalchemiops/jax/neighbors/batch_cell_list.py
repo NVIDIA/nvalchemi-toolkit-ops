@@ -1340,8 +1340,9 @@ def batch_query_cell_list(
         regardless of this value (a documented divergence from Torch, whose
         ``"auto"`` maps to a distinct ``"direct"`` kernel).
     target_indices : jax.Array, shape (num_targets,), dtype=int32, optional
-        Compact partial-list source rows. Output row ``r`` maps to atom
-        ``target_indices[r]``; COO source rows remain compact row ids.
+        Indices of the central atoms for compact partial rows. Output row ``r``
+        maps to atom ``target_indices[r]``. In COO output, the first row holds
+        compact row ids.
 
     Returns
     -------

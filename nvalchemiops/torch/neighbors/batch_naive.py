@@ -114,7 +114,7 @@ def _batch_naive_neighbor_matrix_no_pbc(
         is True are processed; others are skipped on the GPU without CPU sync.
         Call selective_zero_num_neighbors before this launcher to reset counts.
     target_indices : torch.Tensor, shape (num_targets,), dtype=torch.int32, optional
-        Compact source rows for a topology-only partial neighbor list.
+        Indices of the central atoms for compact topology-only partial rows.
     See Also
     --------
     nvalchemiops.neighbors.batch_naive.batch_naive_neighbor_matrix : Core warp launcher
@@ -221,7 +221,7 @@ def _batch_naive_neighbor_matrix_pbc(
     num_neighbors : torch.Tensor, shape (rows,), dtype=torch.int32
         OUTPUT: Number of neighbors per atom.
     target_indices : torch.Tensor, shape (num_targets,), dtype=torch.int32, optional
-        Compact source rows for a topology-only partial neighbor list.
+        Indices of the central atoms for compact topology-only partial rows.
     shift_range_per_dimension : torch.Tensor, shape (num_systems, 3), dtype=torch.int32
         Shift range in each dimension for each system.
     num_shifts_per_system : torch.Tensor, shape (num_systems,), dtype=torch.int32
@@ -1363,9 +1363,10 @@ def batch_naive_neighbor_list(
         wrapped (e.g. by a preceding integration step) to save two
         GPU kernel launches per call.
     target_indices : torch.Tensor, shape (num_targets,), dtype=torch.int32, optional
-        Compact partial-list source rows. Output row ``r`` maps to atom
-        ``target_indices[r]``; COO source rows remain compact row ids. User
-        buffers must be compact-row shaped, not full atom-row shaped.
+        Indices of the central atoms for compact partial rows. Output row ``r``
+        maps to atom ``target_indices[r]``. In COO output, the first row holds
+        compact row ids. User buffers must be compact-row shaped, not full
+        atom-row shaped. Values must be unique and in bounds.
     strategy : {"auto", "scalar", "tile"}, default="auto"
         ``"auto"`` keeps batched topology-only partial rows on the scalar
         kernel, while ``"scalar"`` is a deterministic opt-out and ``"tile"``

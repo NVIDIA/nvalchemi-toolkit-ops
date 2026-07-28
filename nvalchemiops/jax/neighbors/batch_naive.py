@@ -1214,9 +1214,10 @@ def batch_naive_neighbor_list(
     neighbor_vectors : jax.Array, shape (num_rows, max_neighbors, 3), optional
         Pre-shaped vector output for ``return_vectors=True`` or ``pair_fn``.
     target_indices : jax.Array, shape (num_targets,), dtype=int32, optional
-        Compact partial-list source rows. Output row ``r`` maps to atom
-        ``target_indices[r]``; COO source rows remain compact row ids. User
-        buffers must be compact-row shaped, not full atom-row shaped.
+        Indices of the central atoms for compact partial rows. Output row ``r``
+        maps to atom ``target_indices[r]``. In COO output, the first row holds
+        compact row ids. User buffers must be compact-row shaped, not full
+        atom-row shaped. Values must be unique and in bounds.
 
     Returns
     -------

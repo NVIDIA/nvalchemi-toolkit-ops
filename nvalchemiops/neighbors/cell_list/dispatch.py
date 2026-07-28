@@ -274,7 +274,7 @@ def is_pair_centric_parallelism_sufficient(
     Parameters
     ----------
     total_atoms : int
-        Number of source atoms in the query.
+        Number of central atoms in the query.
     total_cells : int
         Number of source cells in the pair-centric launch.
     n_outer : int
@@ -316,11 +316,6 @@ def select_cell_list_strategy(
 
     To pin a strategy, pass it explicitly (``cell_list(..., strategy=...)`` or a
     fine-grained ``method=`` name) rather than via an environment variable.
-
-    Calibrated on GB10 sm_121.  Cross-GPU sensitivity is real but
-    bounded (<= ~35 % wallclock penalty per cell, <= ~3 % mean) - recalibrate
-    by sweeping ``benchmark_neighborlist.py --methods
-    cell_list_atom_centric cell_list_pair_centric`` and editing the rule above.
     """
     n = int(natom)
     c = float(cutoff)
@@ -369,12 +364,6 @@ def select_batch_cell_list_strategy(
 
     To pin a strategy, pass it explicitly rather than via an environment
     variable.
-
-    Calibrated on Blackwell GB10.  The thresholds are env-tunable; the
-    cost of picking wrong is bounded (<= ~20 % mean wallclock penalty on
-    cross-GPU measurements).  Recalibrate by sweeping
-    ``benchmark_neighborlist.py --methods batch_cell_list_atom_centric
-    batch_cell_list_pair_centric`` and resetting the threshold env vars above.
     """
 
     def _i(name: str) -> int:

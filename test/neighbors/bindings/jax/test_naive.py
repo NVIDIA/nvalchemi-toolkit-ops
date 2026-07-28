@@ -24,6 +24,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import nvalchemiops.jax.neighbors.naive as naive_module
 from nvalchemiops.jax.neighbors.naive import naive_neighbor_list
 from nvalchemiops.jax.neighbors.neighbor_utils import compute_naive_num_shifts
 
@@ -34,6 +35,72 @@ pytestmark = requires_gpu
 
 class TestNaiveNeighborList:
     """Test naive_neighbor_list function."""
+
+    @pytest.mark.parametrize(
+        ("dtype", "num_atoms", "expected_strategy"),
+        [
+            (jnp.float32, 1023, "scalar"),
+            (jnp.float32, 1024, "tile"),
+            (jnp.float64, 255, "scalar"),
+            (jnp.float64, 256, "tile"),
+        ],
+    )
+    def test_target_indices_auto_routes_eager_cuda(
+        self,
+        monkeypatch,
+        dtype,
+        num_atoms,
+        expected_strategy,
+    ):
+        """Concrete CUDA partial auto uses the shared dtype threshold."""
+        seen = []
+        device = jax.local_devices(backend="gpu")[0]
+
+        def fake_forward(positions, _cell, **kwargs):
+            """Record resolved routing without launching a Warp kernel."""
+            seen.append(kwargs["strategy"])
+            num_rows = int(kwargs["target_indices"].shape[0])
+            max_neighbors = kwargs["max_neighbors"]
+            neighbor_matrix = jnp.full(
+                (num_rows, max_neighbors),
+                kwargs["fill_value"],
+                dtype=jnp.int32,
+            )
+            num_neighbors = jnp.zeros((num_rows,), dtype=jnp.int32)
+            shifts = jnp.empty((0, 3), dtype=jnp.int32)
+            distances = jnp.zeros((num_rows, max_neighbors), dtype=positions.dtype)
+            vectors = jnp.zeros(
+                (num_rows, max_neighbors, 3),
+                dtype=positions.dtype,
+            )
+            return naive_module._NeighborForwardOutput(
+                distances=distances,
+                vectors=vectors,
+                extra_outputs=(neighbor_matrix, num_neighbors, shifts),
+                i_idx=neighbor_matrix,
+                j_idx=neighbor_matrix,
+                shifts=jnp.zeros((num_rows, max_neighbors, 3), dtype=jnp.int32),
+                batch_idx=None,
+                active_mask=jnp.zeros((num_rows, max_neighbors), dtype=jnp.bool_),
+                matrix_shape=(num_rows, max_neighbors),
+            )
+
+        monkeypatch.setattr(naive_module, "_naive_pair_outputs_forward", fake_forward)
+        positions = jax.device_put(jnp.zeros((num_atoms, 3), dtype=dtype), device)
+        targets = jax.device_put(
+            jnp.array([num_atoms - 1, 0], dtype=jnp.int32),
+            device,
+        )
+
+        naive_neighbor_list(
+            positions,
+            1.0,
+            max_neighbors=4,
+            target_indices=targets,
+            strategy="auto",
+        )
+
+        assert seen == [expected_strategy]
 
     def test_single_atom_no_neighbors(self):
         """Test with single atom (should have no neighbors)."""
@@ -259,7 +326,7 @@ class TestNaiveNeighborList:
             )
 
     def test_target_indices_coo_uses_compact_source_rows(self):
-        """COO source rows are compact target rows, not original atom ids."""
+        """COO central rows are compact row ids, not original atom ids."""
         positions = jnp.array(
             [
                 [0.0, 0.0, 0.0],

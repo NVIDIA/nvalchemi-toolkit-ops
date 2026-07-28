@@ -2352,9 +2352,10 @@ def naive_neighbor_list(
     neighbor_vectors : jax.Array, shape (num_rows, max_neighbors, 3), optional
         Pre-shaped vector output for ``return_vectors=True`` or ``pair_fn``.
     target_indices : jax.Array, shape (num_targets,), dtype=int32, optional
-        Compact partial-list source rows. Output row ``r`` maps to atom
-        ``target_indices[r]``; COO source rows remain compact row ids. User
-        buffers must be compact-row shaped, not full atom-row shaped.
+        Indices of the central atoms for compact partial rows. Output row ``r``
+        maps to atom ``target_indices[r]``. In COO output, the first row holds
+        compact row ids. User buffers must be compact-row shaped, not full
+        atom-row shaped. Values must be unique and in bounds.
     wrap_positions : bool, default=True
         If True, wrap input positions into the primary cell before
         neighbor search. Set to False when positions are already
@@ -2366,9 +2367,13 @@ def naive_neighbor_list(
         ``wp.launch_tiled`` kernel and is **CUDA-only**: requesting it on a
         CPU device raises ``ValueError``. Tile supports topology-only compact
         ``target_indices`` rows; geometry and pair outputs use the scalar path.
-        Partial neighbor lists do not support ``rebuild_flags``. The tile and
-        scalar paths produce identical pair *multisets* (per-row ordering may
-        differ).
+        For concrete eager CUDA arrays, topology-only single-system partial
+        ``"auto"`` selects a strategy from the dtype and atom count. Non-replay
+        traced and batched partial ``"auto"`` remain scalar.
+        ``graph_mode="warp"`` requires tile and therefore routes ``"auto"`` to
+        tile. Partial neighbor lists do not support ``rebuild_flags``. The tile
+        and scalar paths produce identical pair *multisets* (per-row ordering
+        may differ).
     inv_cell : jax.Array, shape (1, 3, 3), dtype matches positions, optional
         Inverse cell matrix consumed by the wrap kernel. Only used when
         ``pbc`` is provided and ``wrap_positions=True``. Pass in a
@@ -2421,8 +2426,8 @@ def naive_neighbor_list(
               neighbors for atom ``r`` or ``target_indices[r]`` when partial rows
               are requested.
             * If ``return_neighbor_list=True``: Returns ``neighbor_list`` with shape
-              (2, num_pairs), dtype int32, in COO format [source_rows, target_atoms].
-              With ``target_indices``, source rows are compact row ids.
+              (2, num_pairs), dtype int32, in COO format [central_rows, neighbor_atoms].
+              With ``target_indices``, central rows are compact row ids.
 
         - **num_neighbor_data** (array): Information about the number of neighbors for each atom,
           format depends on ``return_neighbor_list``:
@@ -2655,11 +2660,6 @@ def naive_neighbor_list(
         device_kind = _jax_array_device_kind(positions)
         if device_kind == "cpu":
             _require_cuda_tile_device("cpu")
-        elif device_kind == "unknown":
-            default_backend = jax.default_backend()
-            _require_cuda_tile_device(
-                "cuda" if default_backend in {"gpu", "cuda"} else default_backend,
-            )
         if (
             bool(return_distances)
             or bool(return_vectors)

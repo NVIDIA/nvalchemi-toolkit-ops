@@ -133,6 +133,51 @@ assert (num_neighbors == 0).all()
     assert result.returncode == 0, result.stderr
 
 
+def test_jitted_gpu_partial_auto_does_not_query_default_backend():
+    """Traced CUDA partial auto remains scalar without backend inference."""
+    if not any(device.platform == "gpu" for device in jax.devices()):
+        pytest.skip("Mixed CPU/GPU JAX backends are required.")
+    script = """
+import jax
+import jax.numpy as jnp
+
+from nvalchemiops.jax.neighbors.naive import naive_neighbor_list
+
+gpu = jax.local_devices(backend="gpu")[0]
+targets = jax.device_put(jnp.array([0, 1023], dtype=jnp.int32), gpu)
+positions = jax.device_put(
+    jnp.arange(1024 * 3, dtype=jnp.float32).reshape(1024, 3),
+    gpu,
+)
+
+def run(pos):
+    return naive_neighbor_list(
+        pos,
+        0.0,
+        max_neighbors=4,
+        target_indices=targets,
+        strategy="auto",
+    )
+
+jax.default_backend = lambda: (_ for _ in ()).throw(AssertionError("backend queried"))
+neighbor_matrix, num_neighbors = jax.jit(run, backend="gpu")(positions)
+neighbor_matrix.block_until_ready()
+assert neighbor_matrix.shape == (2, 4)
+assert num_neighbors.shape == (2,)
+assert (num_neighbors == 0).all()
+"""
+    env = os.environ.copy()
+    env["JAX_PLATFORMS"] = "cuda,cpu"
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_jitted_cpu_tile_rejects_before_launch():
     """An explicit tiled CPU request fails while JAX traces the call."""
     script = """
@@ -155,13 +200,132 @@ def run(positions):
 
 try:
     run(jnp.zeros((4, 3), dtype=jnp.float32))
-except ValueError as exc:
-    assert "requires CUDA" in str(exc)
+except jax.errors.JaxRuntimeError as exc:
+    assert "No FFI handler registered" in str(exc)
+    assert "Host" in str(exc)
 else:
-    raise AssertionError("expected explicit tile to reject CPU")
+    raise AssertionError("expected CPU-targeted tile lowering to fail")
 """
     env = os.environ.copy()
     env["JAX_PLATFORMS"] = "cpu"
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    ("graph_mode", "strategy"),
+    [("none", "tile"), ("warp", "auto")],
+)
+@pytest.mark.parametrize("target_backend", ["gpu", "cpu"])
+def test_jitted_tile_uses_target_backend_not_process_default(
+    graph_mode,
+    strategy,
+    target_backend,
+):
+    """JIT tile routing ignores the process default backend."""
+    if not any(device.platform == "gpu" for device in jax.devices()):
+        pytest.skip("Mixed CPU/GPU JAX backends are required.")
+    script = f"""
+import numpy as np
+
+import jax
+import jax.numpy as jnp
+import warp as wp
+
+from nvalchemiops.jax.neighbors.naive import naive_neighbor_list
+
+gpu = jax.local_devices(backend="gpu")[0]
+targets = jax.device_put(jnp.array([2, 0], dtype=jnp.int32), gpu)
+positions = jax.device_put(
+    jnp.array(
+        [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [2.0, 0.0, 0.0], [2.5, 0.0, 0.0]],
+        dtype=jnp.float32,
+    ),
+    gpu,
+)
+
+def run_no_graph(pos):
+    return naive_neighbor_list(
+        pos,
+        0.75,
+        max_neighbors=4,
+        target_indices=targets,
+        strategy="{strategy}",
+        graph_mode="{graph_mode}",
+    )
+
+def run_warp(pos, matrix, counts):
+    return naive_neighbor_list(
+        pos,
+        0.75,
+        max_neighbors=4,
+        target_indices=targets,
+        neighbor_matrix=matrix,
+        num_neighbors=counts,
+        return_neighbor_list=False,
+        strategy="{strategy}",
+        graph_mode="{graph_mode}",
+    )
+
+jax.default_backend = lambda: "cpu"
+
+if "{target_backend}" == "gpu":
+    scalar = naive_neighbor_list(
+        positions,
+        0.75,
+        max_neighbors=4,
+        target_indices=targets,
+        strategy="scalar",
+    )
+    if "{graph_mode}" == "none":
+        tiled = jax.jit(run_no_graph, backend="gpu")(positions)
+    else:
+        matrix = jax.device_put(jnp.full((2, 4), 4, dtype=jnp.int32), gpu)
+        counts = jax.device_put(jnp.zeros((2,), dtype=jnp.int32), gpu)
+        tiled = jax.jit(run_warp, backend="gpu", donate_argnums=(1, 2))(
+            positions,
+            matrix,
+            counts,
+        )
+    for scalar_array, tiled_array in zip(scalar, tiled):
+        np.testing.assert_array_equal(np.asarray(scalar_array), np.asarray(tiled_array))
+else:
+    if "{graph_mode}" == "none":
+        call = jax.jit(run_no_graph, backend="cpu")
+        args = (jnp.zeros((4, 3), dtype=jnp.float32),)
+    else:
+        call = jax.jit(run_warp, backend="cpu", donate_argnums=(1, 2))
+        args = (
+            jnp.zeros((4, 3), dtype=jnp.float32),
+            jnp.full((2, 4), 4, dtype=jnp.int32),
+            jnp.zeros((2,), dtype=jnp.int32),
+        )
+    launch_tiled_called = False
+    real_launch_tiled = wp.launch_tiled
+    def checked_launch_tiled(*args, **kwargs):
+        global launch_tiled_called
+        launch_tiled_called = True
+        return real_launch_tiled(*args, **kwargs)
+    wp.launch_tiled = checked_launch_tiled
+    try:
+        call(*args)
+    except jax.errors.JaxRuntimeError as exc:
+        assert "No FFI handler registered" in str(exc)
+        assert "Host" in str(exc)
+    else:
+        raise AssertionError("expected CPU-targeted tile lowering to fail")
+    finally:
+        wp.launch_tiled = real_launch_tiled
+    assert not launch_tiled_called
+"""
+    env = os.environ.copy()
+    env["JAX_PLATFORMS"] = "cuda,cpu"
     result = subprocess.run(  # noqa: S603
         [sys.executable, "-c", script],
         check=False,

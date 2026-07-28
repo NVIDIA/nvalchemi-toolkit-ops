@@ -135,7 +135,7 @@ def test_partial_thresholds_are_dtype_specific(wp_dtype, small, large):
 
 
 def test_batched_partial_auto_is_scalar():
-    """Batched partial auto remains scalar until benchmarked."""
+    """Batched partial auto resolves to scalar."""
     assert (
         _resolve_naive_strategy(
             "auto",

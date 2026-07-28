@@ -228,7 +228,7 @@ class TestNaiveCorrectness:
             )
 
     def test_target_indices_coo_uses_compact_source_rows(self, device):
-        """COO source rows are compact target rows, not original atom ids."""
+        """COO central rows are compact row ids, not original atom ids."""
         positions = torch.tensor(
             [
                 [0.0, 0.0, 0.0],
@@ -622,8 +622,24 @@ class TestNaiveCorrectness:
                 strategy="scalar",
             )
 
-    def test_target_indices_auto_forwards_native_dispatch(self, device, monkeypatch):
-        """Topology-only auto resolves to scalar and preserves compact targets."""
+    @pytest.mark.parametrize(
+        ("dtype", "num_atoms", "expected_cuda_strategy"),
+        [
+            (torch.float32, 1023, "scalar"),
+            (torch.float32, 1024, "tile"),
+            (torch.float64, 255, "scalar"),
+            (torch.float64, 256, "tile"),
+        ],
+    )
+    def test_target_indices_auto_forwards_native_dispatch(
+        self,
+        device,
+        monkeypatch,
+        dtype,
+        num_atoms,
+        expected_cuda_strategy,
+    ):
+        """Topology-only auto uses CUDA dtype thresholds and preserves targets."""
         seen = {}
 
         def fake_launcher(**kwargs):
@@ -633,8 +649,8 @@ class TestNaiveCorrectness:
             "nvalchemiops.torch.neighbors.naive._naive_neighbor_matrix_no_pbc",
             fake_launcher,
         )
-        positions = torch.zeros((3, 3), dtype=torch.float32, device=device)
-        targets = torch.tensor([2, 0], dtype=torch.int32, device=device)
+        positions = torch.zeros((num_atoms, 3), dtype=dtype, device=device)
+        targets = torch.tensor([num_atoms - 1, 0], dtype=torch.int32, device=device)
         naive_neighbor_list(
             positions,
             1.0,
@@ -642,8 +658,66 @@ class TestNaiveCorrectness:
             target_indices=targets,
             strategy="auto",
         )
-        assert seen["strategy"] == "scalar"
+        expected_strategy = (
+            expected_cuda_strategy if str(device).startswith("cuda") else "scalar"
+        )
+        assert seen["strategy"] == expected_strategy
         assert seen["target_indices"] is targets
+
+    @pytest.mark.gpu
+    @pytest.mark.parametrize(
+        ("dtype", "num_atoms"),
+        [
+            (torch.float32, 1024),
+            (torch.float64, 256),
+        ],
+    )
+    def test_target_indices_auto_compile_fullgraph_uses_tile_threshold(
+        self,
+        dtype,
+        num_atoms,
+    ):
+        """Compiled partial auto retains the eager CUDA tile routing decision."""
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA is required for torch.compile coverage.")
+        device = "cuda:0"
+        positions = (
+            torch.arange(num_atoms, dtype=dtype, device=device)[:, None]
+            .expand(num_atoms, 3)
+            .mul(2.0)
+            .contiguous()
+        )
+        targets = torch.tensor([num_atoms - 1, 0], dtype=torch.int32, device=device)
+
+        @torch.compile(fullgraph=True)
+        def run(pos, matrix, counts, runtime_targets):
+            return naive_neighbor_list(
+                pos,
+                1.0,
+                max_neighbors=4,
+                neighbor_matrix=matrix,
+                num_neighbors=counts,
+                target_indices=runtime_targets,
+                strategy="auto",
+            )
+
+        def outputs():
+            return (
+                torch.full((2, 4), num_atoms, dtype=torch.int32, device=device),
+                torch.zeros((2,), dtype=torch.int32, device=device),
+            )
+
+        matrix, counts = outputs()
+        explanation = torch._dynamo.explain(run)(positions, matrix, counts, targets)
+        assert explanation.graph_break_count == 0, explanation.break_reasons
+        graph_text = "\n".join(graph.code for graph in explanation.graphs)
+        assert "nvalchemiops._naive_neighbor_matrix_no_pbc" in graph_text
+        assert "tile" in graph_text
+
+        matrix, counts = outputs()
+        neighbor_matrix, num_neighbors = run(positions, matrix, counts, targets)
+        torch.testing.assert_close(neighbor_matrix, matrix)
+        torch.testing.assert_close(num_neighbors, torch.zeros_like(num_neighbors))
 
     @pytest.mark.gpu
     def test_target_indices_tile_overflow_contract(self, device):

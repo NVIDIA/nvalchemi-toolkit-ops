@@ -377,7 +377,7 @@ def test_naive_pair_fn_optional_buffers_and_returned(device):
 
 
 def test_naive_pair_fn_target_indices_compact_rows(device):
-    """Torch naive ``target_indices + pair_fn`` uses compact source rows."""
+    """Torch naive ``target_indices + pair_fn`` uses compact central rows."""
     positions = torch.tensor(
         [
             [0.0, 0.0, 0.0],
@@ -1242,7 +1242,7 @@ def test_batch_naive_pair_fn_optional_buffers_and_returned(device):
 
 
 def test_batch_naive_pair_fn_target_indices_compact_rows(device):
-    """Torch batch_naive ``target_indices + pair_fn`` uses compact source rows."""
+    """Torch batch_naive ``target_indices + pair_fn`` uses compact central rows."""
     positions = torch.tensor(
         [
             [0.0, 0.0, 0.0],

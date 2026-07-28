@@ -420,7 +420,7 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
         feature_mask : int
             Device/dtype/frontend feature bits.
         target_count : int
-            Number of targeted source rows when ``target_indices`` is active.
+            Number of compact central rows when ``target_indices`` is active.
             Zero means "all atoms".
         costs : wp.array, shape (5,), dtype=wp.float32
             OUTPUT: ``(naive_scalar, naive_tile, cell_atom, cell_pair,
@@ -538,7 +538,7 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
             active_atoms = min(active_atoms, n_atoms)
         active_float = wp.float32(active_atoms)
         n_sq = n_float * n_float
-        # Naive candidate count: each of ``active`` source atoms is tested against
+        # Naive candidate count: each active central atom is tested against
         # all ``n`` atoms, so active_n_work ~ N^2 distance checks. n_pairs_cap =
         # n*(n-1) is the exact upper bound on real pairs.
         active_n_work = active_float * n_float
@@ -626,7 +626,7 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
         cutoff_volume = wp.max(cutoff_volume, wp.float32(_EPS))
         density = n_float / wp.max(volume, wp.float32(_EPS))
         # Expected output work, shared by every method: neighbors per atom
-        # (density * cutoff-sphere volume) times the active source atoms,
+        # (density * cutoff-sphere volume) times the active central atoms,
         # capped by the exact pair count for non-periodic and halved for half_fill.
         expected_neighbors = density * wp.float32(_SPHERE_VOLUME_FACTOR) * cutoff_volume
         expected_pairs = active_float * expected_neighbors
@@ -909,8 +909,8 @@ def estimate_neighbor_list_costs(
         Device/dtype/frontend feature bits.  When omitted, CUDA and cell dtype
         are inferred from the Warp arrays.
     target_count : int, optional
-        Number of source rows requested by ``target_indices``.  When omitted,
-        the selector scores all atoms.  Frontends should pass
+        Number of compact central rows requested by ``target_indices``. When
+        omitted, the selector scores all atoms. Frontends should pass
         ``len(target_indices)`` when the public ``target_indices`` kwarg is
         active.
 

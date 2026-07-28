@@ -105,7 +105,7 @@ def _naive_neighbor_matrix_no_pbc(
         is True are processed; others are skipped on the GPU without CPU sync.
         Call selective_zero_num_neighbors before this launcher to reset counts.
     target_indices : torch.Tensor, shape (num_targets,), dtype=torch.int32, optional
-        Compact source rows for a topology-only partial neighbor list.
+        Indices of the central atoms for compact topology-only partial rows.
     See Also
     --------
     nvalchemiops.neighbors.naive.naive_neighbor_matrix : Core warp launcher
@@ -206,7 +206,7 @@ def _naive_neighbor_matrix_pbc(
     num_neighbors : torch.Tensor, shape (rows,), dtype=torch.int32
         OUTPUT: Number of neighbors found for each atom.
     target_indices : torch.Tensor, shape (num_targets,), dtype=torch.int32, optional
-        Compact source rows for a topology-only partial neighbor list.
+        Indices of the central atoms for compact topology-only partial rows.
     shift_range_per_dimension : torch.Tensor, shape (1, 3), dtype=torch.int32
         Shift range in each dimension.
     num_shifts_per_system : torch.Tensor, shape (1,), dtype=torch.int32
@@ -1224,12 +1224,14 @@ def naive_neighbor_list(
         We recommend using the neighbor matrix format,
         and only convert to a neighbor list format if absolutely necessary.
     target_indices : torch.Tensor, shape (num_targets,), dtype=torch.int32, optional
-        Compact partial-list source rows. Output row ``r`` maps to atom
-        ``target_indices[r]``; COO source rows remain compact row ids. User
-        buffers must be compact-row shaped, not full atom-row shaped.
+        Indices of the central atoms for compact partial rows. Output row ``r``
+        maps to atom ``target_indices[r]``. In COO output, the first row holds
+        compact row ids. User buffers must be compact-row shaped, not full
+        atom-row shaped. Values must be unique and in bounds.
     strategy : {"auto", "scalar", "tile"}, default="auto"
-        ``"auto"`` resolves to scalar for topology-only partial rows.
-        ``"scalar"`` is a deterministic explicit choice.
+        For topology-only single-system partial rows on CUDA, ``"auto"``
+        selects a strategy from the dtype and atom count; it remains scalar on
+        CPU. ``"scalar"`` is a deterministic explicit choice.
         ``"tile"`` is CUDA-only and supports topology-only partial rows,
         including wrapped and prewrapped PBC. Geometry, pair-function outputs,
         and partial selective rebuilds remain scalar-only or unsupported.
@@ -1253,8 +1255,8 @@ def naive_neighbor_list(
               neighbors for atom ``r`` or ``target_indices[r]`` when partial rows
               are requested.
             * If ``return_neighbor_list=True``: Returns ``neighbor_list`` with shape
-              (2, num_pairs), dtype int32, in COO format [source_rows, target_atoms].
-              With ``target_indices``, source rows are compact row ids.
+              (2, num_pairs), dtype int32, in COO format [central_rows, neighbor_atoms].
+              With ``target_indices``, central rows are compact row ids.
 
         - **num_neighbor_data** (tensor): Information about the number of neighbors for each atom,
           format depends on ``return_neighbor_list``:
@@ -1344,7 +1346,6 @@ def naive_neighbor_list(
         )
 
     if topology_only_partial:
-        strategy = "scalar" if strategy == "auto" else strategy
         strategy = _resolve_naive_strategy(
             strategy,
             _NaiveWorkload(

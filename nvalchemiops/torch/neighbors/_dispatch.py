@@ -193,7 +193,7 @@ def estimate_neighbor_list_costs(
     optional_outputs : iterable of str, optional
         Public neighbor-list option names to include in feasibility checks.
     target_indices : torch.Tensor, optional
-        Public partial-row source indices.  Its length is used to score
+        Public central-atom indices for compact partial rows. Its length is used to score
         targeted naive/cell-list work.
     positions_dtype : torch.dtype, optional
         Position dtype used for feature feasibility.  Standalone calls default

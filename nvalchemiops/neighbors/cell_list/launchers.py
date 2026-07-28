@@ -361,7 +361,7 @@ def query_cell_list_atom_centric_sorted(
         provided so the central-atom read does not need to invert the
         sorted layout.
     target_indices : wp.array, shape (num_targets,), dtype=wp.int32, optional
-        Restrict source atoms to a subset.  Switches the kernel to a
+        Select central atoms for a compact partial list. Switches the kernel to a
         per-row iteration over ``target_indices`` and consults ``positions``
         / ``atom_periodic_shifts`` for central-atom reads.
     return_vectors, return_distances : bool, default ``False``

@@ -153,7 +153,7 @@ class TestReportNeighborListCosts:
                 target_indices=torch.arange(100, dtype=torch.int32),
             )
         )
-        # Fewer source rows -> cheaper naive estimate.
+        # Fewer central rows -> cheaper naive estimate.
         assert partial["naive_scalar"] < full["naive_scalar"]
         # target_indices is incompatible with cluster_tile auto.
         assert "cluster_tile" not in partial
