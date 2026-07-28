@@ -32,6 +32,7 @@ from nvalchemiops.jax.neighbors._autograd import (
 )
 from nvalchemiops.jax.neighbors.cell_list import (
     _derive_neighbor_search_radius,
+    _derive_promoted_cells_per_dimension,
     _is_cpu_array,
     _resolve_cell_strategy,
     _validate_atom_centric_path,
@@ -389,28 +390,6 @@ def _normalize_batch_cell_pbc(
     return cell_out, pbc_out
 
 
-def _derive_batch_promoted_cells_per_dimension(
-    cell: jax.Array,
-    pbc: jax.Array,
-    cutoff: float,
-) -> jax.Array:
-    """Derive uncapped per-axis grids for geometry capacity sizing."""
-    inverse_cell_transpose = jnp.swapaxes(jnp.linalg.inv(cell), -1, -2)
-    face_distances = 1.0 / jnp.linalg.norm(inverse_cell_transpose, axis=-1)
-    cells_per_dimension = jnp.maximum(
-        (face_distances / cutoff).astype(jnp.int32),
-        1,
-    )
-    promote_mask = pbc | (cells_per_dimension > 1)
-    for _ in range(8):
-        cells_per_dimension = jnp.where(
-            promote_mask & (cells_per_dimension < 4),
-            cells_per_dimension * 2,
-            cells_per_dimension,
-        )
-    return cells_per_dimension
-
-
 def _estimate_batch_max_total_cells(
     batch_ptr: jax.Array,
     cell: jax.Array,
@@ -428,7 +407,7 @@ def _estimate_batch_max_total_cells(
 
     num_systems = batch_ptr.shape[0] - 1
     promoted_cells_per_dimension = (
-        _derive_batch_promoted_cells_per_dimension(cell, pbc, cutoff)
+        _derive_promoted_cells_per_dimension(cell, pbc, cutoff)
         if capacity_strategy == "geometry"
         else None
     )
@@ -451,8 +430,14 @@ def _estimate_batch_max_total_cells(
                 * buffer_factor
             )
 
-        max_total_cells += max(num_cells_est, 8)
+        system_capacity = max(num_cells_est, 8)
+        if capacity_strategy == "geometry":
+            max_total_cells = max(max_total_cells, system_capacity)
+        else:
+            max_total_cells += system_capacity
 
+    if capacity_strategy == "geometry":
+        return max(max_total_cells * num_systems, num_systems)
     return max(max_total_cells, num_systems)
 
 
@@ -1048,7 +1033,8 @@ def estimate_batch_cell_list_sizes(
     capacity_strategy : {"volume", "geometry"}, optional
         Capacity estimation policy. ``"volume"`` (default) estimates capacity
         from each cell's volume and the cutoff. ``"geometry"`` estimates
-        capacity from the promoted per-axis cell grid.
+        capacity from the largest promoted per-axis grid among non-empty
+        systems, scaled by the number of systems.
 
     Returns
     -------
@@ -1063,10 +1049,14 @@ def estimate_batch_cell_list_sizes(
     -----
     The volume policy sums ``max(int(abs(det(cell)) / cutoff**3 *
     buffer_factor), 8)`` for non-empty systems. The geometry policy derives
-    per-axis face-distance cells, applies adaptive promotion, and sums the
-    promoted cell products scaled by ``buffer_factor``. Geometry can reserve
-    more memory and can still halve a large system in a heterogeneous batch
-    because construction applies an equal per-system capacity bound.
+    per-axis face-distance cells, applies adaptive promotion, then allocates
+    ``num_systems`` times the largest non-empty promoted-grid capacity. This
+    matches construction's equal per-system capacity bound, so every non-empty
+    system retains its promoted grid. Empty systems count toward the
+    per-system allocation multiplier but do not determine the largest capacity;
+    an all-empty batch allocates one cell per system. Geometry can therefore
+    reserve substantially more memory than volume sizing for heterogeneous
+    batches.
 
     The returned cells and radii match ``batch_build_cell_list`` when called
     with the returned ``max_total_cells``. To use geometry sizing for a build,

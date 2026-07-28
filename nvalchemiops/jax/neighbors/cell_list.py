@@ -375,6 +375,9 @@ __all__ = [
     "estimate_cell_list_sizes",
 ]
 
+ADAPTIVE_MIN_CELLS = 4
+_MAX_ADAPTIVE_PROMOTION_STEPS = 8
+
 
 def _reset_query_outputs(
     neighbor_matrix,
@@ -419,6 +422,28 @@ def _derive_neighbor_search_radius(
         radius,
     )
     return radius[0] if is_single else radius
+
+
+def _derive_promoted_cells_per_dimension(
+    cell: jax.Array,
+    pbc: jax.Array,
+    cutoff: float,
+) -> jax.Array:
+    """Derive uncapped promoted grids for one or more cell geometries."""
+    inverse_cell_transpose = jnp.swapaxes(jnp.linalg.inv(cell), -1, -2)
+    face_distances = 1.0 / jnp.linalg.norm(inverse_cell_transpose, axis=-1)
+    cells_per_dimension = jnp.maximum(
+        (face_distances / cutoff).astype(jnp.int32),
+        1,
+    )
+    promote_mask = pbc.astype(jnp.bool_) | (cells_per_dimension > 1)
+    for _ in range(_MAX_ADAPTIVE_PROMOTION_STEPS):
+        cells_per_dimension = jnp.where(
+            promote_mask & (cells_per_dimension < ADAPTIVE_MIN_CELLS),
+            cells_per_dimension * 2,
+            cells_per_dimension,
+        )
+    return cells_per_dimension
 
 
 def _is_cpu_array(array: jax.Array) -> bool:
@@ -1748,29 +1773,14 @@ def estimate_cell_list_sizes(
     num_cells_est = jnp.int32(volume / cell_volume * buffer_factor)
     max_total_cells = jnp.max(jnp.array([num_cells_est, 8]))  # Minimum 8 cells
 
-    # Compute cells_per_dimension and neighbor_search_radius from cell geometry,
-    # mirroring the Warp _estimate_cell_list_sizes kernel used by the Torch
-    # path: natural cell count, ADAPTIVE_MIN_CELLS=4 promotion on PBC axes,
-    # halve-to-fit when total cells > max_total_cells, then compute
-    # neighbor_search_radius against the FINAL cells_per_dimension.
-    inverse_cell_transpose = jnp.linalg.inv(cell[0]).T
-    face_distances = 1.0 / jnp.linalg.norm(inverse_cell_transpose, axis=1)
-    cells_per_dimension = jnp.maximum(jnp.int32(face_distances / cutoff), 1)
-
     pbc_squeezed = pbc.squeeze()[:3] if pbc.ndim > 1 else pbc[:3]
-
-    # ADAPTIVE_MIN_CELLS=4: promote each PBC axis (or any axis already > 1)
-    # up to at least 4 cells so the atom-centric query has enough cell-level
-    # parallelism.  Open axes with a single cell are left alone.  Mirror the
-    # Warp ``construct_bin_size`` while-loop by repeatedly doubling.
-    ADAPTIVE_MIN_CELLS = 4
-    promote_mask = pbc_squeezed | (cells_per_dimension > 1)
-    for _ in range(8):
-        cells_per_dimension = jnp.where(
-            promote_mask & (cells_per_dimension < ADAPTIVE_MIN_CELLS),
-            cells_per_dimension * 2,
-            cells_per_dimension,
-        )
+    # Match Warp's natural-grid calculation and repeated-doubling promotion,
+    # then apply the single-system capacity clamp below.
+    cells_per_dimension = _derive_promoted_cells_per_dimension(
+        cell,
+        pbc,
+        cutoff,
+    )[0]
 
     # Halve-to-fit: if total cells exceeds max_total_cells, halve each axis
     # (floor with min=1) repeatedly until total <= max.  Mirrors the kernel's
@@ -2084,9 +2094,11 @@ def build_cell_list(
     pbc : jax.Array, shape (3,) or (1, 3), dtype=bool
         Periodic boundary condition flags.
     cells_per_dimension : jax.Array, shape (3,), dtype=int32, optional
-        OUTPUT: Number of cells in x, y, z directions. If None, allocated.
+        OUTPUT: Number of cells in x, y, z directions. If None, an output
+        buffer is allocated and populated with the constructed grid.
     neighbor_search_radius : jax.Array, shape (3,), dtype=int32, optional
-        Search radius in neighboring cells. If None, allocated.
+        Search radius in neighboring cells. If None, it is derived from the
+        constructed grid and cell face distances after construction.
     atom_periodic_shifts : jax.Array, shape (total_atoms, 3), dtype=int32, optional
         OUTPUT: Periodic boundary crossings for each atom. If None, allocated.
     atom_to_cell_mapping : jax.Array, shape (total_atoms, 3), dtype=int32, optional
@@ -2121,6 +2133,10 @@ def build_cell_list(
     -----
     When calling inside ``jax.jit``, ``max_total_cells`` **must** be provided
     to avoid calling ``estimate_cell_list_sizes``, which is not JIT-compatible.
+
+    The constructed grid may differ from the initial output buffer because
+    capacity can reduce it. When ``neighbor_search_radius`` is omitted, this
+    function derives it from that realized grid before returning.
 
     ``graph_mode="warp"`` uses a fused ``jax_callable`` that captures the full
     Warp-side build sequence. For replay-friendly usage inside ``jax.jit``,
@@ -2941,7 +2957,14 @@ def cell_list(
     max_neighbors : int, optional
         Maximum number of neighbors per atom. If None, will be estimated.
     max_total_cells : int, optional
-        Maximum number of cells to allocate. If None, will be estimated.
+        Maximum number of cells to allocate. If None, it will be estimated.
+        With ``graph_mode="warp"``, an explicit value requires an explicit
+        ``neighbor_search_radius`` because the fused query cannot inspect the
+        constructed grid between build and query.
+    neighbor_search_radius : jax.Array, shape (3,), dtype=int32, optional
+        Per-axis search radius. Normal build/query paths derive it from the
+        realized grid when omitted. Provide it when ``graph_mode="warp"`` and
+        ``max_total_cells`` is explicit.
     return_neighbor_list : bool, optional
         If True, convert result to COO neighbor list format. Default is False.
     strategy : {"auto", "atom_centric", "pair_centric"}, default "auto"
@@ -2962,7 +2985,9 @@ def cell_list(
     graph_mode : {"none", "warp"}, default="none"
         Execution mode for the underlying Warp launches. ``"warp"`` is
         intended for jitted call sites that donate and reuse the optional
-        cell-list caches and output buffers.
+        cell-list caches and output buffers. When combined with explicit
+        ``max_total_cells``, it requires a concrete
+        ``neighbor_search_radius`` because build and query are fused.
 
     Returns
     -------

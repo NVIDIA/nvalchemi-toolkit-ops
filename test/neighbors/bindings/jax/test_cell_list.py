@@ -542,22 +542,70 @@ class TestEstimateCellListSizes:
         )
 
     def test_estimate_adaptive_promotion_doubles_three_to_six(self):
-        """A natural 3-cell PBC axis must promote to 6, not stop at 4."""
+        """JAX estimates and Warp construction promote a natural three to six."""
         positions = jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32)
         cell = jnp.diag(jnp.array([3.9, 10.9, 10.9], dtype=jnp.float32)).reshape(
             1, 3, 3
         )
         pbc = jnp.array([[True, True, True]])
 
-        _, cells_per_dimension, neighbor_search_radius = estimate_cell_list_sizes(
+        max_total_cells, cells_per_dimension, neighbor_search_radius = (
+            estimate_cell_list_sizes(
+                positions,
+                cell,
+                cutoff=1.0,
+                pbc=pbc,
+            )
+        )
+
+        build_result = build_cell_list(
             positions,
-            cell,
             cutoff=1.0,
+            cell=cell,
             pbc=pbc,
+            max_total_cells=max_total_cells,
         )
 
         np.testing.assert_array_equal(np.asarray(cells_per_dimension), [6, 10, 10])
         np.testing.assert_array_equal(np.asarray(neighbor_search_radius), [2, 1, 1])
+        np.testing.assert_array_equal(
+            np.asarray(build_result[0]),
+            cells_per_dimension,
+        )
+        np.testing.assert_array_equal(
+            np.asarray(build_result[6]),
+            neighbor_search_radius,
+        )
+
+    def test_search_radius_float32_nextafter_integer_boundary(self):
+        """Float32 radius increments immediately above an exact integer ratio."""
+        positions = jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32)
+        cell = jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3)
+        pbc = jnp.array([[True, True, True]])
+        cutoffs = (
+            jnp.float32(0.5),
+            jnp.nextafter(jnp.float32(0.5), jnp.float32(jnp.inf)),
+        )
+
+        exact_result = build_cell_list(
+            positions,
+            cutoff=cutoffs[0],
+            cell=cell,
+            pbc=pbc,
+            max_total_cells=64,
+        )
+        above_result = build_cell_list(
+            positions,
+            cutoff=cutoffs[1],
+            cell=cell,
+            pbc=pbc,
+            max_total_cells=64,
+        )
+
+        np.testing.assert_array_equal(np.asarray(exact_result[0]), [4, 4, 4])
+        np.testing.assert_array_equal(np.asarray(above_result[0]), [4, 4, 4])
+        np.testing.assert_array_equal(np.asarray(exact_result[6]), [2, 2, 2])
+        np.testing.assert_array_equal(np.asarray(above_result[6]), [3, 3, 3])
 
     def test_auto_sized_derives_radius_after_construct(self):
         """Auto-sized builds must derive radius from realized bins, not estimate."""

@@ -523,6 +523,128 @@ class TestEstimateBatchCellListSizes:
         np.testing.assert_array_equal(geometry_result[1], [[4, 4, 4]])
         np.testing.assert_array_equal(geometry_result[2], [[4, 4, 4]])
 
+    def test_geometry_retains_each_nonempty_promoted_grid(self):
+        """Geometry sizing gives every non-empty system its promoted grid."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [0.1, 0.0, 0.0],
+                [0.6, 0.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+        cell = jnp.array(
+            [
+                [[3.9, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 5.0]],
+                [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            ],
+            dtype=jnp.float32,
+        )
+        pbc = jnp.array([[True, False, True], [False, False, False]])
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+
+        max_total_cells, cells_per_dimension, neighbor_search_radius = (
+            estimate_batch_cell_list_sizes(
+                positions,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                cell=cell,
+                cutoff=1.0,
+                pbc=pbc,
+                capacity_strategy="geometry",
+            )
+        )
+
+        assert max_total_cells == 90
+        np.testing.assert_array_equal(
+            np.asarray(cells_per_dimension),
+            [[6, 1, 5], [1, 1, 1]],
+        )
+        np.testing.assert_array_equal(
+            np.asarray(neighbor_search_radius),
+            [[2, 0, 1], [0, 0, 0]],
+        )
+
+        cell_cache = batch_build_cell_list(
+            positions,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cell=cell,
+            cutoff=1.0,
+            pbc=pbc,
+            max_total_cells=max_total_cells,
+        )
+        neighbor_matrix, num_neighbors, shifts = batch_query_cell_list(
+            positions,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cell=cell,
+            cutoff=1.0,
+            pbc=pbc,
+            cells_per_dimension=cell_cache[0],
+            atom_periodic_shifts=cell_cache[1],
+            atom_to_cell_mapping=cell_cache[2],
+            atoms_per_cell_count=cell_cache[3],
+            cell_atom_start_indices=cell_cache[4],
+            cell_atom_list=cell_cache[5],
+            neighbor_search_radius=cell_cache[6],
+            max_neighbors=4,
+            strategy="atom_centric",
+        )
+        naive_matrix, naive_num_neighbors, naive_shifts = batch_naive_neighbor_list(
+            positions,
+            cutoff=1.0,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=4,
+        )
+        targets = jnp.arange(positions.shape[0], dtype=jnp.int32)
+        assert _compact_pair_shift_set(
+            neighbor_matrix,
+            num_neighbors,
+            shifts,
+            targets,
+        ) == _compact_pair_shift_set(
+            naive_matrix,
+            naive_num_neighbors,
+            naive_shifts,
+            targets,
+        )
+
+    def test_geometry_ignores_empty_system_geometry_for_capacity(self):
+        """Geometry sizing does not let an empty system increase capacity."""
+        positions = jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32)
+        cell = jnp.array(
+            [
+                [[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]],
+                [[3.9, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 5.0]],
+            ],
+            dtype=jnp.float32,
+        )
+        pbc = jnp.array([[True, True, True], [True, False, True]])
+        batch_idx = jnp.array([1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 0, 1], dtype=jnp.int32)
+
+        max_total_cells, cells_per_dimension, neighbor_search_radius = (
+            estimate_batch_cell_list_sizes(
+                positions,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                cell=cell,
+                cutoff=1.0,
+                pbc=pbc,
+                capacity_strategy="geometry",
+            )
+        )
+
+        assert max_total_cells == 90
+        np.testing.assert_array_equal(cells_per_dimension[1], [6, 1, 5])
+        np.testing.assert_array_equal(neighbor_search_radius[1], [2, 0, 1])
+
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
     @pytest.mark.parametrize("capacity_strategy", ["volume", "geometry"])
     def test_metadata_matches_build_mixed_geometry(self, dtype, capacity_strategy):
