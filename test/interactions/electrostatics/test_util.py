@@ -23,6 +23,8 @@ torch = pytest.importorskip("torch")
 _util = pytest.importorskip("nvalchemiops.torch.interactions.electrostatics._util")
 _InjectChargeGrad = _util._InjectChargeGrad
 _InjectCachedEvalGradWithFallback = _util._InjectCachedEvalGradWithFallback
+_energy_cotangents = _util._energy_cotangents
+_is_per_system_uniform_cotangent = _util._is_per_system_uniform_cotangent
 _is_uniform_cotangent = _util._is_uniform_cotangent
 
 from test.interactions.electrostatics._deriv_check import (  # noqa: E402
@@ -213,6 +215,50 @@ def test_uniform_cotangent_accepts_eager_contiguous_constants(device):
     grad = torch.ones(6, dtype=DT, device=device)
 
     assert _is_uniform_cotangent(grad)
+
+
+@pytest.mark.parametrize("device", _available_devices())
+def test_energy_cotangents_disambiguate_equal_atom_and_system_lengths(device):
+    """Explicit layout distinguishes N == B when one system has no atoms."""
+    batch_idx = torch.tensor([0, 0], dtype=torch.int32, device=device)
+    grad = torch.tensor([1.0, 2.0], dtype=DT, device=device)
+
+    atom_system, atom_grad = _energy_cotangents(
+        grad,
+        batch_idx,
+        num_atoms=2,
+        num_systems=2,
+        layout="atom",
+    )
+    system_system, system_grad = _energy_cotangents(
+        grad,
+        batch_idx,
+        num_atoms=2,
+        num_systems=2,
+        layout="system",
+    )
+
+    torch.testing.assert_close(
+        atom_system,
+        torch.tensor([1.5, 0.0], dtype=DT, device=device),
+    )
+    torch.testing.assert_close(atom_grad, grad)
+    torch.testing.assert_close(system_system, grad)
+    torch.testing.assert_close(
+        system_grad,
+        torch.tensor([1.0, 1.0], dtype=DT, device=device),
+    )
+
+
+@pytest.mark.parametrize("device", _available_devices())
+def test_partial_empty_batch_atom_uniformity(device):
+    """Atom-mode inspection rejects nonuniform weights when N equals B."""
+    batch_idx = torch.tensor([0, 0], dtype=torch.int32, device=device)
+    nonuniform = torch.tensor([1.0, 2.0], dtype=DT, device=device)
+    uniform = torch.tensor([3.0, 3.0], dtype=DT, device=device)
+
+    assert not _is_per_system_uniform_cotangent(nonuniform, batch_idx, 2)
+    assert _is_per_system_uniform_cotangent(uniform, batch_idx, 2)
 
 
 @pytest.mark.parametrize("device", _available_devices())

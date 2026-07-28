@@ -6,7 +6,7 @@
 
 This guide lists user-visible migrations by release.
 
-## v0.4.0: Electrostatics
+## Unreleased
 
 ### Energy Output Layout (`energy_reduction`)
 
@@ -54,6 +54,8 @@ or CUDA graph capture, only metadata-proven atom cotangents use the fast path;
 system mode is the guaranteed sync-free layout. JAX adds API/layout parity
 only; underlying Warp kernels remain atom-buffer-oriented.
 
+## v0.4.0: Electrostatics
+
 ### Energy-Derivative Training
 
 For full Ewald/PME APIs, prefer deriving training quantities from the returned
@@ -78,13 +80,12 @@ This support is exposed through standard autograd on scalar losses; the
 electrostatics APIs do not expose public Hessian or Jacobian tensors/functions.
 
 JAX full Ewald/PME supports first-order energy derivatives for positions,
-charges, and row-vector displacement virials using the same energy-cotangent
-reducer as Torch (per-atom by default, or per-system with
-`energy_reduction="system"`). Higher-order JAX support is limited to tested
-position and charge scalar losses. JAX PME stress/cell/strain, alpha, and
-precomputed-metadata higher-order paths are unsupported until implemented and
-tested. JAX direct-output flags remain functional for compatibility in v0.4.0
-but are deprecated for differentiable training.
+charges, and row-vector displacement virials using the same per-system
+energy-cotangent reducer as Torch. Higher-order JAX support is limited to
+tested position and charge scalar losses. JAX PME stress/cell/strain, alpha,
+and precomputed-metadata higher-order paths are unsupported until implemented
+and tested. JAX direct-output flags remain functional for compatibility in
+v0.4.0 but are deprecated for differentiable training.
 
 ### Precomputed Electrostatics Metadata
 

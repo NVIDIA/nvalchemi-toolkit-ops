@@ -2519,20 +2519,13 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
                 None,
             )
 
-        if ctx.energy_reduction == "system":
-            grad_system = grad_energy.reshape(-1)
-        else:
-            grad_system, atom_scale = _energy_cotangents(
-                grad_energy,
-                batch_idx,
-                positions.shape[0],
-                ctx.num_systems,
-            )
-        if ctx.energy_reduction == "system":
-            if batch_idx is None:
-                atom_scale = grad_system[0].expand(positions.shape[0])
-            else:
-                atom_scale = grad_system.index_select(0, batch_idx.to(torch.long))
+        grad_system, atom_scale = _energy_cotangents(
+            grad_energy,
+            batch_idx,
+            positions.shape[0],
+            ctx.num_systems,
+            ctx.energy_reduction,
+        )
         system_scale = grad_system.view(-1, 1, 1)
 
         grad_positions = (

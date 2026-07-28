@@ -105,6 +105,77 @@ LOOSE_TOL = 1e-4
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_partial_empty_batch_nonuniform_atom_cotangent_uses_fallback(
+    device, monkeypatch
+):
+    """Atom-mode weights remain per-atom when N equals B."""
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+    dev = torch.device(device)
+    dtype = torch.float64
+    positions = torch.tensor(
+        [[4.0, 5.0, 5.0], [6.0, 5.5, 5.0]],
+        dtype=dtype,
+        device=dev,
+    )
+    charges = torch.tensor([0.8, -0.8], dtype=dtype, device=dev)
+    cell = torch.eye(3, dtype=dtype, device=dev).repeat(2, 1, 1) * 10.0
+    alpha = torch.tensor([0.3, 0.35], dtype=dtype, device=dev)
+    batch_idx = torch.tensor([0, 0], dtype=torch.int32, device=dev)
+    neighbor_list = torch.tensor([[0, 1], [1, 0]], dtype=torch.int32, device=dev)
+    neighbor_ptr = torch.tensor([0, 1, 2], dtype=torch.int32, device=dev)
+    shifts = torch.zeros(2, 3, dtype=torch.int32, device=dev)
+    weights = torch.tensor([1.0, 2.0], dtype=dtype, device=dev)
+
+    def energy(pos, q, alpha_arg):
+        return ewald_real_space(
+            pos,
+            q,
+            cell,
+            alpha_arg,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=shifts,
+            batch_idx=batch_idx,
+        )
+
+    ref_position_grad = finite_difference_jacobian(
+        lambda pos: (weights * energy(pos, charges, alpha)).sum(),
+        positions,
+    )
+    ref_charge_grad = finite_difference_jacobian(
+        lambda q: (weights * energy(positions, q, alpha)).sum(),
+        charges,
+    )
+
+    call_count = 0
+    original = _ewald_real_chain._real_space_weighted_energy
+
+    def _counting_weighted_energy(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        _ewald_real_chain,
+        "_real_space_weighted_energy",
+        _counting_weighted_energy,
+    )
+    test_positions = positions.clone().requires_grad_(True)
+    test_charges = charges.clone().requires_grad_(True)
+    actual = energy(test_positions, test_charges, alpha)
+    position_grad, charge_grad = torch.autograd.grad(
+        actual,
+        (test_positions, test_charges),
+        grad_outputs=weights,
+    )
+
+    assert call_count == 1
+    torch.testing.assert_close(position_grad, ref_position_grad, rtol=1e-5, atol=1e-7)
+    torch.testing.assert_close(charge_grad, ref_charge_grad, rtol=1e-5, atol=1e-7)
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
 @pytest.mark.parametrize("part", ["real", "reciprocal", "full"])
 def test_system_energy_matches_atom_reduction_and_weighted_gradient(device, part):
     """System layout preserves values and arbitrary per-system cotangents."""
