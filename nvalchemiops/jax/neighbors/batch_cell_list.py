@@ -416,13 +416,16 @@ def _estimate_batch_max_total_cells(
 
     for sys_idx in range(num_systems):
         num_atoms_in_sys = batch_ptr[sys_idx + 1] - batch_ptr[sys_idx]
+        # Empty systems do not determine the required per-system capacity.
         if num_atoms_in_sys == 0:
             continue
 
         if capacity_strategy == "volume":
+            # Sum each non-empty system's density-based capacity estimate.
             volume = jnp.abs(jnp.linalg.det(cell[sys_idx]))
             num_cells_est = int(volume / cutoff**3 * buffer_factor)
         else:
+            # Track the largest promoted grid for equal per-system allocation.
             cells_per_dimension = promoted_cells_per_dimension[sys_idx]
             num_cells_est = int(
                 cells_per_dimension[0]
@@ -438,6 +441,7 @@ def _estimate_batch_max_total_cells(
             max_total_cells += system_capacity
 
     if capacity_strategy == "geometry":
+        # Construction divides the total capacity evenly across all systems.
         max_total_cells *= num_systems
     return max(max_total_cells, num_systems)
 
