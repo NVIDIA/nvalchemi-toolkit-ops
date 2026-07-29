@@ -31,6 +31,7 @@ from nvalchemiops.jax.neighbors._autograd import (
     _route_pair_outputs,
 )
 from nvalchemiops.jax.neighbors.cell_list import (
+    _DEFAULT_CELL_LIST_BUFFER_FACTOR,
     _derive_neighbor_search_radius,
     _derive_promoted_cells_per_dimension,
     _is_cpu_array,
@@ -1008,7 +1009,7 @@ def estimate_batch_cell_list_sizes(
     cell: jax.Array | None = None,
     cutoff: float = 5.0,
     pbc: jax.Array | None = None,
-    buffer_factor: float = 1.5,
+    buffer_factor: float = _DEFAULT_CELL_LIST_BUFFER_FACTOR,
     *,
     capacity_strategy: Literal["volume", "geometry"] = "volume",
 ) -> tuple[int, jax.Array, jax.Array]:
@@ -1218,7 +1219,7 @@ def batch_build_cell_list(
             cell,
             pbc_bool,
             cutoff,
-            1.5,
+            _DEFAULT_CELL_LIST_BUFFER_FACTOR,
             "volume",
         )
 

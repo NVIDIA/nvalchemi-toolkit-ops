@@ -376,6 +376,7 @@ __all__ = [
 ]
 
 ADAPTIVE_MIN_CELLS = 4
+_DEFAULT_CELL_LIST_BUFFER_FACTOR = 1.5
 _MAX_ADAPTIVE_PROMOTION_STEPS = 8
 
 
@@ -1713,7 +1714,7 @@ def estimate_cell_list_sizes(
     cell: jax.Array,
     cutoff: float,
     pbc: jax.Array | None = None,
-    buffer_factor: float = 1.5,
+    buffer_factor: float = _DEFAULT_CELL_LIST_BUFFER_FACTOR,
 ) -> tuple[int, jax.Array, jax.Array]:
     """Estimate required cell list sizes based on atomic density.
 
