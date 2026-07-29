@@ -438,7 +438,7 @@ def _estimate_batch_max_total_cells(
             max_total_cells += system_capacity
 
     if capacity_strategy == "geometry":
-        return max(max_total_cells * num_systems, num_systems)
+        max_total_cells *= num_systems
     return max(max_total_cells, num_systems)
 
 
