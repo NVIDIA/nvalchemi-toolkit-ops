@@ -7163,8 +7163,9 @@ class TestEwaldTorchCompile:
     @pytest.mark.skipif(
         not torch.cuda.is_available(), reason="CUDA required for torch.compile"
     )
-    def test_compiled_real_space_system_energy_weighted_backward(self):
-        """Compiled fused system energies match eager weighted position gradients."""
+    @pytest.mark.parametrize("part", ["real", "reciprocal", "full"])
+    def test_compiled_system_energy_weighted_backward(self, part):
+        """Compiled system energies match eager weighted position and charge gradients."""
         device = torch.device("cuda")
         dtype = torch.float64
         positions = torch.tensor(
@@ -7181,19 +7182,38 @@ class TestEwaldTorchCompile:
         neighbor_ptr = torch.tensor([0, 1, 2, 3, 4], dtype=torch.int32, device=device)
         shifts = torch.zeros(4, 3, dtype=torch.int32, device=device)
         alpha = torch.tensor([0.3, 0.35], dtype=dtype, device=device)
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=4.0)
         weights = torch.tensor([1.7, -0.4], dtype=dtype, device=device)
 
         def system_energy(pos, q):
-            return ewald_real_space(
-                pos,
-                q,
-                cell,
-                alpha,
+            common = {
+                "positions": pos,
+                "charges": q,
+                "cell": cell,
+                "batch_idx": batch_idx,
+                "energy_reduction": "system",
+            }
+            if part == "real":
+                return ewald_real_space(
+                    alpha=alpha,
+                    neighbor_list=neighbor_list,
+                    neighbor_ptr=neighbor_ptr,
+                    neighbor_shifts=shifts,
+                    **common,
+                )
+            if part == "reciprocal":
+                return ewald_reciprocal_space(
+                    k_vectors=k_vectors,
+                    alpha=alpha,
+                    **common,
+                )
+            return ewald_summation(
+                alpha=alpha,
+                k_vectors=k_vectors,
                 neighbor_list=neighbor_list,
                 neighbor_ptr=neighbor_ptr,
                 neighbor_shifts=shifts,
-                batch_idx=batch_idx,
-                energy_reduction="system",
+                **common,
             )
 
         eager_pos = positions.clone().requires_grad_(True)
