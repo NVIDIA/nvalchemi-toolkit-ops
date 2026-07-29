@@ -379,11 +379,12 @@ def compute_slab_correction(
     """Yeh-Berkowitz slab correction for 2D periodic electrostatics, with the
     Ballenegger et al. (2009) Eq. 29 extension for non-neutral systems.
 
-    Returns the slab-correction contribution (per-atom energy and optionally
-    per-atom force, charge gradient, and per-system virial). The caller adds
-    these to the corresponding 3D Ewald/PME quantities; in normal usage the
-    correction is invoked through ``ewald_summation(..., slab_correction=True)``
-    or ``particle_mesh_ewald(..., slab_correction=True)``.
+    Returns the slab-correction contribution (energy in the requested atom/system
+    layout and optionally per-atom force, charge gradient, and per-system virial).
+    The caller adds these to the corresponding 3D Ewald/PME quantities; in normal
+    usage the correction is invoked through
+    ``ewald_summation(..., slab_correction=True)`` or
+    ``particle_mesh_ewald(..., slab_correction=True)``.
 
     Background-charge convention
     ----------------------------
@@ -428,8 +429,9 @@ def compute_slab_correction(
 
     Returns
     -------
-    energies : torch.Tensor, shape (N,), dtype=float64
-        Per-atom slab correction energy.
+    energies : torch.Tensor, shape (N,) or (B,), dtype=float64
+        Slab correction energy: per-atom when ``energy_reduction="atom"``,
+        per-system when ``energy_reduction="system"``.
     forces : torch.Tensor, shape (N, 3), dtype matches positions, optional
         Per-atom slab force (only returned if compute_forces=True).
     charge_grads : torch.Tensor, shape (N,), dtype=float64, optional

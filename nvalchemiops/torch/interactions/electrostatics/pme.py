@@ -3108,8 +3108,10 @@ def pme_reciprocal_space(
 
     Returns
     -------
-    energies : torch.Tensor, shape (N,)
-        Per-atom reciprocal-space energy (includes self and background corrections).
+    energies : torch.Tensor, shape (N,) or (B,)
+        Reciprocal-space energy, including self and background corrections:
+        per-atom when ``energy_reduction="atom"``, per-system when
+        ``energy_reduction="system"``.
     forces : torch.Tensor, shape (N, 3), optional
         Direct reciprocal-space forces. Only returned if compute_forces=True.
     charge_gradients : torch.Tensor, shape (N,), optional
@@ -3547,8 +3549,9 @@ def particle_mesh_ewald(
 
     Returns
     -------
-    energies : torch.Tensor, shape (N,)
-        Per-atom contribution to total PME energy. Sum gives total energy.
+    energies : torch.Tensor, shape (N,) or (B,)
+        Total PME energy: per-atom when ``energy_reduction="atom"``,
+        per-system when ``energy_reduction="system"``.
     forces : torch.Tensor, shape (N, 3), optional
         .. deprecated:: 0.4.0
             Deprecated direct forces. Only returned if compute_forces=True.

@@ -817,8 +817,9 @@ def ewald_real_space(
 
     Returns
     -------
-    energies : torch.Tensor, shape (N,)
-        Per-atom real-space energy.
+    energies : torch.Tensor, shape (N,) or (B,)
+        Real-space Ewald energy: per-atom when ``energy_reduction="atom"``,
+        per-system when ``energy_reduction="system"``.
     forces : torch.Tensor, shape (N, 3), optional
         Direct component forces (if compute_forces=True).
     charge_gradients : torch.Tensor, shape (N,), optional
@@ -1231,8 +1232,10 @@ def ewald_reciprocal_space(
 
     Returns
     -------
-    energies : torch.Tensor, shape (N,)
-        Per-atom reciprocal-space energy.
+    energies : torch.Tensor, shape (N,) or (B,)
+        Reciprocal-space Ewald energy: per-atom when
+        ``energy_reduction="atom"``, per-system when
+        ``energy_reduction="system"``.
     forces : torch.Tensor, shape (N, 3), optional
         Direct component forces (if compute_forces=True).
     charge_gradients : torch.Tensor, shape (N,), optional
@@ -1686,8 +1689,9 @@ def ewald_summation(
 
     Returns
     -------
-    energies : torch.Tensor, shape (N,)
-        Per-atom total Ewald energy.
+    energies : torch.Tensor, shape (N,) or (B,)
+        Total Ewald energy: per-atom when ``energy_reduction="atom"``,
+        per-system when ``energy_reduction="system"``.
     forces : torch.Tensor, shape (N, 3), optional
         .. deprecated:: 0.4.0
             Deprecated direct forces (if compute_forces=True).
