@@ -43,6 +43,7 @@ from __future__ import annotations
 import functools
 import math
 import warnings
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -2598,7 +2599,7 @@ def pme_reciprocal_space(
     compute_virial: bool = False,
     hybrid_forces: bool = False,
     *,
-    energy_reduction: str = "atom",
+    energy_reduction: Literal["atom", "system"] = "atom",
     cell_inv_t: jax.Array | None = None,
     volume: jax.Array | None = None,
     moduli_x: jax.Array | None = None,
@@ -3190,7 +3191,7 @@ def particle_mesh_ewald(
     pbc: jax.Array | None = None,
     slab_correction: bool = False,
     *,
-    energy_reduction: str = "atom",
+    energy_reduction: Literal["atom", "system"] = "atom",
     cell_inv_t: jax.Array | None = None,
     volume: jax.Array | None = None,
     moduli_x: jax.Array | None = None,

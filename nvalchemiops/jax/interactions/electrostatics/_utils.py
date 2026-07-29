@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 import jax
 import jax.numpy as jnp
 
@@ -53,7 +55,7 @@ def _prepare_cell(cell: jax.Array) -> tuple[jax.Array, int]:
 _ENERGY_REDUCTIONS = ("atom", "system")
 
 
-def _validate_energy_reduction(energy_reduction: str) -> None:
+def _validate_energy_reduction(energy_reduction: Literal["atom", "system"]) -> None:
     """Validate the public ``energy_reduction`` keyword-only option.
 
     Parameters
@@ -129,7 +131,7 @@ def _distribute_system_values(
 
 def _apply_energy_reduction(
     result: jax.Array | tuple[jax.Array, ...],
-    energy_reduction: str,
+    energy_reduction: Literal["atom", "system"],
     batch_idx: jax.Array | None,
     cell: jax.Array,
 ) -> jax.Array | tuple[jax.Array, ...]:

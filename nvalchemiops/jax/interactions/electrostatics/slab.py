@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 import jax
 import jax.numpy as jnp
 from jax.interpreters import ad as jax_ad
@@ -1013,7 +1015,7 @@ def compute_slab_correction(
     compute_charge_gradients: bool = False,
     compute_virial: bool = False,
     *,
-    energy_reduction: str = "atom",
+    energy_reduction: Literal["atom", "system"] = "atom",
 ) -> jax.Array | tuple[jax.Array, ...]:
     """Yeh-Berkowitz/Ballenegger slab correction for 2D periodic systems.
 

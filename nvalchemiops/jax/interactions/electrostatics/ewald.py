@@ -30,6 +30,7 @@ from __future__ import annotations
 import functools
 import math
 import warnings
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -874,7 +875,7 @@ def ewald_real_space(
     compute_charge_gradients: bool = False,
     compute_virial: bool = False,
     *,
-    energy_reduction: str = "atom",
+    energy_reduction: Literal["atom", "system"] = "atom",
 ) -> jax.Array | tuple[jax.Array, ...]:
     """Compute real-space Ewald energy and optional direct derivative outputs.
 
@@ -1421,7 +1422,7 @@ def ewald_reciprocal_space(
     compute_charge_gradients: bool = False,
     compute_virial: bool = False,
     *,
-    energy_reduction: str = "atom",
+    energy_reduction: Literal["atom", "system"] = "atom",
 ) -> jax.Array | tuple[jax.Array, ...]:
     """Compute reciprocal-space Ewald energy and optional direct outputs.
 
@@ -3060,7 +3061,7 @@ def ewald_summation(
     slab_correction: bool = False,
     *,
     miller_bounds: tuple[int, int, int] | None = None,
-    energy_reduction: str = "atom",
+    energy_reduction: Literal["atom", "system"] = "atom",
 ) -> jax.Array | tuple[jax.Array, ...]:
     """Compute complete Ewald summation.
 

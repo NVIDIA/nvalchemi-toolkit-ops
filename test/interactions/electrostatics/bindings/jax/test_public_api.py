@@ -17,6 +17,7 @@
 
 import inspect
 from pathlib import Path
+from typing import Literal, get_type_hints
 
 import pytest
 
@@ -79,11 +80,11 @@ def test_ewald_miller_bounds_is_keyword_only_after_legacy_slots() -> None:
 )
 def test_monopole_energy_reduction_is_keyword_only(name: str) -> None:
     """Monopole APIs expose the compatible atom/system energy-layout option."""
-    parameter = inspect.signature(getattr(electrostatics, name)).parameters[
-        "energy_reduction"
-    ]
+    function = getattr(electrostatics, name)
+    parameter = inspect.signature(function).parameters["energy_reduction"]
     assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
     assert parameter.default == "atom"
+    assert get_type_hints(function)["energy_reduction"] == Literal["atom", "system"]
 
 
 @pytest.mark.parametrize(
