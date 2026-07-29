@@ -414,6 +414,22 @@ class TestBatchCellListEdgeCases:
 class TestEstimateBatchCellListSizes:
     """Tests for batch cell-list capacity strategies and metadata."""
 
+    def test_construct_rejects_capacity_smaller_than_system_count(self):
+        """Construction rejects capacities that cannot assign one cell per system."""
+        cell = jnp.broadcast_to(jnp.eye(3, dtype=jnp.float32), (2, 3, 3))
+        pbc = jnp.ones((2, 3), dtype=jnp.bool_)
+
+        with pytest.raises(
+            ValueError,
+            match="max_total_cells must be at least num_systems",
+        ):
+            batch_cell_list_module._construct_batch_cells_per_dimension(
+                cell,
+                pbc,
+                cutoff=1.0,
+                max_total_cells=1,
+            )
+
     @staticmethod
     def _assert_metadata_matches_build(
         positions,

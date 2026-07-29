@@ -450,6 +450,12 @@ def _construct_batch_cells_per_dimension(
 ) -> jax.Array:
     """Run the authoritative construct kernel and return realized bins."""
     num_systems = cell.shape[0]
+    if max_total_cells < num_systems:
+        raise ValueError(
+            "max_total_cells must be at least num_systems "
+            f"(got max_total_cells={max_total_cells}, num_systems={num_systems})."
+        )
+
     cells_per_dimension = jnp.zeros((num_systems, 3), dtype=jnp.int32)
     empty_bool1d = jnp.zeros((0,), dtype=jnp.bool_)
     empty_i32 = jnp.zeros((0,), dtype=jnp.int32)
