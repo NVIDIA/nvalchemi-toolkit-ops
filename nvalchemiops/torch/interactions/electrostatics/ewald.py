@@ -98,8 +98,6 @@ from nvalchemiops.torch.interactions.electrostatics._ewald_direct import (
     reciprocal_space_direct,
 )
 from nvalchemiops.torch.interactions.electrostatics._ewald_real_chain import (
-    _neighbor_edges,
-    _real_space_weighted_energy,
     real_space_cell_connect,
 )
 from nvalchemiops.torch.interactions.electrostatics._ewald_recip_chain import (
@@ -329,6 +327,7 @@ def _real_space_energy_outputs(
     want_forces: bool = False,
     want_charge_grad: bool = False,
     want_virial: bool = False,
+    energy_layout: Literal["atom", "system"] = "atom",
 ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
     """Per-atom real-space Ewald energy plus optional deprecated direct outputs.
 
@@ -342,7 +341,11 @@ def _real_space_energy_outputs(
     use_matrix = neighbor_matrix is not None
 
     if num_atoms == 0:
-        energy = torch.zeros(num_atoms, device=device, dtype=torch.float64)
+        energy = torch.zeros(
+            num_atoms if energy_layout == "atom" else cell.shape[0],
+            device=device,
+            dtype=torch.float64,
+        )
         forces = (
             torch.zeros(num_atoms, 3, device=device, dtype=positions.dtype)
             if want_forces
@@ -395,45 +398,51 @@ def _real_space_energy_outputs(
     need_cell = bool(cell.requires_grad)
     ensure_electrostatics_ops_registered()
     if batch_idx is None:
-        energy, dEdR, dEdq, dedcell, direct_virial = (
-            torch.ops.nvalchemiops.ewald_real_energy_single(
-                positions,
-                charges,
-                cell,
-                alpha,
-                idx_j_t,
-                neighbor_ptr_t,
-                neighbor_shifts_t,
-                neighbor_matrix_t,
-                neighbor_matrix_shifts_t,
-                int(mask_value),
-                use_matrix,
-                need_pos,
-                need_charge,
-                need_cell,
-                want_virial,
-            )
+        real_op = (
+            torch.ops.nvalchemiops.ewald_real_energy_single
+            if energy_layout == "atom"
+            else torch.ops.nvalchemiops.ewald_real_system_energy_single
+        )
+        energy, dEdR, dEdq, dedcell, direct_virial = real_op(
+            positions,
+            charges,
+            cell,
+            alpha,
+            idx_j_t,
+            neighbor_ptr_t,
+            neighbor_shifts_t,
+            neighbor_matrix_t,
+            neighbor_matrix_shifts_t,
+            int(mask_value),
+            use_matrix,
+            need_pos,
+            need_charge,
+            need_cell,
+            want_virial,
         )
     else:
-        energy, dEdR, dEdq, dedcell, direct_virial = (
-            torch.ops.nvalchemiops.ewald_real_energy_batch(
-                positions,
-                charges,
-                cell,
-                alpha,
-                batch_idx.to(torch.int32),
-                idx_j_t,
-                neighbor_ptr_t,
-                neighbor_shifts_t,
-                neighbor_matrix_t,
-                neighbor_matrix_shifts_t,
-                int(mask_value),
-                use_matrix,
-                need_pos,
-                need_charge,
-                need_cell,
-                want_virial,
-            )
+        real_op = (
+            torch.ops.nvalchemiops.ewald_real_energy_batch
+            if energy_layout == "atom"
+            else torch.ops.nvalchemiops.ewald_real_system_energy_batch
+        )
+        energy, dEdR, dEdq, dedcell, direct_virial = real_op(
+            positions,
+            charges,
+            cell,
+            alpha,
+            batch_idx.to(torch.int32),
+            idx_j_t,
+            neighbor_ptr_t,
+            neighbor_shifts_t,
+            neighbor_matrix_t,
+            neighbor_matrix_shifts_t,
+            int(mask_value),
+            use_matrix,
+            need_pos,
+            need_charge,
+            need_cell,
+            want_virial,
         )
 
     forces = -dEdR.to(positions.dtype) if want_forces else None
@@ -482,6 +491,7 @@ def _real_space_energy_outputs(
             nm_for_grad,
             nms_for_grad,
             int(mask_value),
+            energy_layout,
         )
     return energy, forces, charge_grads, virial
 
@@ -884,43 +894,6 @@ def ewald_real_space(
 
     idx_j = neighbor_list[1] if neighbor_list is not None else None
 
-    def _system_fallback(p, q, c):
-        use_matrix = neighbor_matrix is not None
-        edge_i, edge_j, unit_shifts = _neighbor_edges(
-            use_matrix,
-            idx_j,
-            neighbor_ptr,
-            neighbor_shifts,
-            neighbor_matrix,
-            neighbor_matrix_shifts,
-            mask_value,
-            p.shape[0],
-            p.device,
-        )
-        cell_3d = c if c.dim() == 3 else c.unsqueeze(0)
-        system_energies = []
-        for system_idx in range(num_systems):
-            if batch_idx is None:
-                atom_weights = torch.ones(
-                    p.shape[0], dtype=torch.float64, device=p.device
-                )
-            else:
-                atom_weights = (batch_idx == system_idx).to(torch.float64)
-            system_energies.append(
-                _real_space_weighted_energy(
-                    p,
-                    q,
-                    cell_3d,
-                    alpha,
-                    edge_i,
-                    edge_j,
-                    unit_shifts,
-                    batch_idx,
-                    atom_weights,
-                )
-            )
-        return torch.stack(system_energies)
-
     # Helper to build the return tuple from raw outputs using match dispatch.
     def _build_result(energies, forces=None, charge_grads=None, virial=None):
         match (
@@ -946,6 +919,51 @@ def ewald_real_space(
                 return energies
 
     want_direct = compute_forces or compute_charge_gradients or compute_virial
+
+    if energy_reduction == "system":
+        system_positions = positions.detach() if hybrid_forces else positions
+        system_cell = cell.detach() if hybrid_forces else cell
+        energies, forces, charge_grads, virial = _real_space_energy_outputs(
+            system_positions,
+            charges,
+            system_cell,
+            alpha,
+            batch_idx=batch_idx,
+            idx_j=idx_j,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            mask_value=mask_value,
+            want_forces=compute_forces,
+            want_charge_grad=compute_charge_gradients or charges.requires_grad,
+            want_virial=compute_virial,
+            energy_layout="system",
+        )
+        if compute_virial and charges.requires_grad and not hybrid_forces:
+
+            def _rs_energy_fn(p, q, c):
+                return _real_space_energy(
+                    p,
+                    q,
+                    c,
+                    alpha,
+                    batch_idx=batch_idx,
+                    idx_j=idx_j,
+                    neighbor_ptr=neighbor_ptr,
+                    neighbor_shifts=neighbor_shifts,
+                    neighbor_matrix=neighbor_matrix,
+                    neighbor_matrix_shifts=neighbor_matrix_shifts,
+                    mask_value=mask_value,
+                )
+
+            virial = _attach_virial_charge_grad(
+                virial, charges, _rs_energy_fn, positions, cell, batch_idx
+            )
+        charge_grads_out = (
+            charge_grads.to(positions.dtype) if charge_grads is not None else None
+        )
+        return _build_result(energies, forces, charge_grads_out, virial)
 
     if hybrid_forces:
         # Positions/cell detached from the graph; charge gradients attached via the
@@ -1077,22 +1095,6 @@ def ewald_real_space(
     )
 
     if not want_direct:
-        if energy_reduction == "system":
-            return _InjectCachedEvalGradWithFallback.apply(
-                energies.detach(),
-                positions,
-                charges,
-                cell,
-                None,
-                None,
-                None,
-                batch_idx,
-                _system_fallback,
-                "system",
-                num_systems,
-                True,
-                True,
-            )
         return energies
 
     # The deprecated direct virial is differentiable w.r.t. charges; re-attach that
@@ -1144,24 +1146,6 @@ def ewald_real_space(
             batch_idx,
             energy_reduction,
             num_systems,
-        )
-    elif energy_reduction == "system" and (
-        positions.requires_grad or charges.requires_grad or cell.requires_grad
-    ):
-        energies = _InjectCachedEvalGradWithFallback.apply(
-            energies.detach(),
-            positions,
-            charges,
-            cell,
-            None,
-            None,
-            None,
-            batch_idx,
-            _system_fallback,
-            "system",
-            num_systems,
-            True,
-            True,
         )
     else:
         energies = _select_energy(energies)

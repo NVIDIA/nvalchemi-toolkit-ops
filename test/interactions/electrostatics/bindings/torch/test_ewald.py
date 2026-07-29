@@ -255,9 +255,50 @@ def test_system_energy_matches_atom_reduction_and_weighted_gradient(device, part
     torch.testing.assert_close(grad_system, grad_atom, rtol=2e-6, atol=2e-7)
 
 
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_real_space_system_energy_empty_neighbors_returns_zero_gradients(device):
+    """Fused system output preserves empty-neighbor values and derivatives."""
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+    dev = torch.device(device)
+    positions = torch.tensor(
+        [[1.0, 2.0, 3.0], [3.0, 2.0, 1.0]],
+        dtype=torch.float64,
+        device=dev,
+        requires_grad=True,
+    )
+    charges = torch.tensor(
+        [0.7, -0.7], dtype=torch.float64, device=dev, requires_grad=True
+    )
+    cell = torch.eye(3, dtype=torch.float64, device=dev).repeat(2, 1, 1) * 8.0
+    cell.requires_grad_(True)
+    batch_idx = torch.tensor([0, 0], dtype=torch.int32, device=dev)
+    neighbor_list = torch.zeros((2, 0), dtype=torch.int32, device=dev)
+    neighbor_ptr = torch.zeros(3, dtype=torch.int32, device=dev)
+    neighbor_shifts = torch.zeros((0, 3), dtype=torch.int32, device=dev)
+
+    energy = ewald_real_space(
+        positions,
+        charges,
+        cell,
+        alpha=torch.tensor([0.3, 0.4], dtype=torch.float64, device=dev),
+        neighbor_list=neighbor_list,
+        neighbor_ptr=neighbor_ptr,
+        neighbor_shifts=neighbor_shifts,
+        batch_idx=batch_idx,
+        energy_reduction="system",
+    )
+    gradients = torch.autograd.grad(energy.sum(), (positions, charges, cell))
+
+    assert energy.shape == (2,)
+    torch.testing.assert_close(energy, torch.zeros_like(energy))
+    for gradient in gradients:
+        torch.testing.assert_close(gradient, torch.zeros_like(gradient))
+
+
 @pytest.mark.parametrize("part", ["real", "full"])
-def test_system_qr_cell_backward_bypasses_atom_cotangent_inspection(monkeypatch, part):
-    """System Ewald facades consume (B,) cotangents before atom-major chains."""
+def test_system_qr_cell_gradients_and_hvp_match_atom_layout(part):
+    """System q(R) cell gradients and HVPs match atom-layout reduction."""
     dtype = torch.float64
     positions = torch.tensor(
         [
@@ -303,19 +344,6 @@ def test_system_qr_cell_backward_bypasses_atom_cotangent_inspection(monkeypatch,
         create_graph=True,
     )
 
-    def _unexpected_atom_check(*_args):
-        raise AssertionError("system cotangent reached atom value inspection")
-
-    monkeypatch.setattr(
-        _ewald_real_chain,
-        "_is_per_system_uniform_cotangent",
-        _unexpected_atom_check,
-    )
-    monkeypatch.setattr(
-        _ewald_recip_chain,
-        "_is_per_system_uniform_cotangent",
-        _unexpected_atom_check,
-    )
     common = {
         "positions": positions,
         "charges": charges,
@@ -7131,6 +7159,62 @@ class TestEwaldTorchCompile:
         torch.testing.assert_close(forces_compiled, forces_eager, rtol=1e-4, atol=1e-4)
         torch.testing.assert_close(grad_compiled, grad_eager, rtol=1e-3, atol=1e-3)
         torch.testing.assert_close(dq_compiled, dq_eager, rtol=1e-3, atol=1e-3)
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_compiled_real_space_system_energy_weighted_backward(self):
+        """Compiled fused system energies match eager weighted position gradients."""
+        device = torch.device("cuda")
+        dtype = torch.float64
+        positions = torch.tensor(
+            [[1.0, 2.0, 3.0], [3.0, 2.0, 1.0], [1.5, 2.5, 3.5], [3.5, 2.5, 1.5]],
+            dtype=dtype,
+            device=device,
+        )
+        charges = torch.tensor([0.7, -0.7, 0.4, -0.4], dtype=dtype, device=device)
+        cell = torch.eye(3, dtype=dtype, device=device).repeat(2, 1, 1) * 8.0
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        neighbor_list = torch.tensor(
+            [[0, 1, 2, 3], [1, 0, 3, 2]], dtype=torch.int32, device=device
+        )
+        neighbor_ptr = torch.tensor([0, 1, 2, 3, 4], dtype=torch.int32, device=device)
+        shifts = torch.zeros(4, 3, dtype=torch.int32, device=device)
+        alpha = torch.tensor([0.3, 0.35], dtype=dtype, device=device)
+        weights = torch.tensor([1.7, -0.4], dtype=dtype, device=device)
+
+        def system_energy(pos, q):
+            return ewald_real_space(
+                pos,
+                q,
+                cell,
+                alpha,
+                neighbor_list=neighbor_list,
+                neighbor_ptr=neighbor_ptr,
+                neighbor_shifts=shifts,
+                batch_idx=batch_idx,
+                energy_reduction="system",
+            )
+
+        eager_pos = positions.clone().requires_grad_(True)
+        eager_q = charges.clone().requires_grad_(True)
+        eager_energy = system_energy(eager_pos, eager_q)
+        eager_grad = torch.autograd.grad(
+            eager_energy, (eager_pos, eager_q), grad_outputs=weights
+        )
+
+        compiled_pos = positions.clone().requires_grad_(True)
+        compiled_q = charges.clone().requires_grad_(True)
+        compiled_energy = torch.compile(system_energy, dynamic=True)(
+            compiled_pos, compiled_q
+        )
+        compiled_grad = torch.autograd.grad(
+            compiled_energy, (compiled_pos, compiled_q), grad_outputs=weights
+        )
+
+        torch.testing.assert_close(compiled_energy, eager_energy)
+        torch.testing.assert_close(compiled_grad[0], eager_grad[0])
+        torch.testing.assert_close(compiled_grad[1], eager_grad[1])
 
 
 ###########################################################################################
