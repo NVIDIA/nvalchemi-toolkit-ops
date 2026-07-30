@@ -30,12 +30,28 @@ from nvalchemiops.jax.neighbors.cell_list import (
     estimate_cell_list_sizes,
     query_cell_list,
 )
+from nvalchemiops.jax.neighbors.naive import naive_neighbor_list
 
 from .conftest import requires_gpu, requires_vesin
 
 pytestmark = requires_gpu
 
 cell_list_module = import_module("nvalchemiops.jax.neighbors.cell_list")
+
+
+def _pair_shift_set(neighbor_matrix, num_neighbors, shifts):
+    nm = np.asarray(neighbor_matrix)
+    nn = np.asarray(num_neighbors)
+    nms = np.asarray(shifts)
+    return {
+        (
+            row,
+            int(nm[row, slot]),
+            *(int(value) for value in nms[row, slot]),
+        )
+        for row in range(nm.shape[0])
+        for slot in range(int(nn[row]))
+    }
 
 
 class TestCellList:
@@ -476,6 +492,188 @@ class TestEstimateCellListSizes:
                 f"got {int(neighbor_search_radius[i])}"
             )
 
+    def test_build_static_max_derives_search_radius(self):
+        """Static max_total_cells should derive search radius from realized bins."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        cell = jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3)
+        pbc = jnp.array([[True, True, True]])
+
+        @jax.jit
+        def jitted_build(positions, cell, pbc):
+            return build_cell_list(
+                positions,
+                cutoff=0.3,
+                cell=cell,
+                pbc=pbc,
+                max_total_cells=216,
+            )
+
+        result = jitted_build(positions, cell, pbc)
+
+        np.testing.assert_array_equal(np.asarray(result[0]), [6, 6, 6])
+        np.testing.assert_array_equal(np.asarray(result[6]), [2, 2, 2])
+
+    def test_cell_list_static_max_matches_naive(self):
+        """Cell list with static sizing should match naive neighbor pairs."""
+        rng = np.random.default_rng(128)
+        positions_np = rng.uniform(0.0, 1.0, (128, 3)).astype(np.float32)
+        positions = jnp.asarray(positions_np)
+        cell = jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3)
+        pbc = jnp.array([[False, False, False]])
+
+        nm, nn, shifts = cell_list(
+            positions,
+            cutoff=0.3,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=128,
+            max_total_cells=216,
+            strategy="atom_centric",
+        )
+        naive_nm, naive_nn, naive_shifts = naive_neighbor_list(
+            positions,
+            cutoff=0.3,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=128,
+        )
+
+        assert _pair_shift_set(nm, nn, shifts) == _pair_shift_set(
+            naive_nm, naive_nn, naive_shifts
+        )
+
+    def test_estimate_adaptive_promotion_doubles_three_to_six(self):
+        """JAX estimates and Warp construction promote a natural three to six."""
+        positions = jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32)
+        cell = jnp.diag(jnp.array([3.9, 10.9, 10.9], dtype=jnp.float32)).reshape(
+            1, 3, 3
+        )
+        pbc = jnp.array([[True, True, True]])
+
+        max_total_cells, cells_per_dimension, neighbor_search_radius = (
+            estimate_cell_list_sizes(
+                positions,
+                cell,
+                cutoff=1.0,
+                pbc=pbc,
+            )
+        )
+
+        build_result = build_cell_list(
+            positions,
+            cutoff=1.0,
+            cell=cell,
+            pbc=pbc,
+            max_total_cells=max_total_cells,
+        )
+
+        np.testing.assert_array_equal(np.asarray(cells_per_dimension), [6, 10, 10])
+        np.testing.assert_array_equal(np.asarray(neighbor_search_radius), [2, 1, 1])
+        np.testing.assert_array_equal(
+            np.asarray(build_result[0]),
+            cells_per_dimension,
+        )
+        np.testing.assert_array_equal(
+            np.asarray(build_result[6]),
+            neighbor_search_radius,
+        )
+
+    def test_search_radius_float32_nextafter_integer_boundary(self):
+        """Float32 radius increments immediately above an exact integer ratio."""
+        positions = jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32)
+        cell = jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3)
+        pbc = jnp.array([[True, True, True]])
+        cutoffs = (
+            jnp.float32(0.5),
+            jnp.nextafter(jnp.float32(0.5), jnp.float32(jnp.inf)),
+        )
+
+        exact_result = build_cell_list(
+            positions,
+            cutoff=cutoffs[0],
+            cell=cell,
+            pbc=pbc,
+            max_total_cells=64,
+        )
+        above_result = build_cell_list(
+            positions,
+            cutoff=cutoffs[1],
+            cell=cell,
+            pbc=pbc,
+            max_total_cells=64,
+        )
+
+        np.testing.assert_array_equal(np.asarray(exact_result[0]), [4, 4, 4])
+        np.testing.assert_array_equal(np.asarray(above_result[0]), [4, 4, 4])
+        np.testing.assert_array_equal(np.asarray(exact_result[6]), [2, 2, 2])
+        np.testing.assert_array_equal(np.asarray(above_result[6]), [3, 3, 3])
+
+    def test_auto_sized_derives_radius_after_construct(self):
+        """Auto-sized builds must derive radius from realized bins, not estimate."""
+        positions = jnp.array([[0.0, 0.0, 0.0], [0.67, 0.0, 0.0]], dtype=jnp.float32)
+        cell = jnp.diag(jnp.array([3.9, 10.9, 10.9], dtype=jnp.float32)).reshape(
+            1, 3, 3
+        )
+        pbc = jnp.array([[True, True, True]])
+
+        build_result = build_cell_list(
+            positions,
+            cutoff=1.0,
+            cell=cell,
+            pbc=pbc,
+        )
+        np.testing.assert_array_equal(np.asarray(build_result[0]), [6, 10, 10])
+        np.testing.assert_array_equal(np.asarray(build_result[6]), [2, 1, 1])
+
+        nm, nn, shifts = cell_list(
+            positions,
+            cutoff=1.0,
+            cell=cell,
+            pbc=pbc,
+            strategy="atom_centric",
+        )
+        naive_nm, naive_nn, naive_shifts = naive_neighbor_list(
+            positions,
+            cutoff=1.0,
+            cell=cell,
+            pbc=pbc,
+        )
+
+        assert _pair_shift_set(nm, nn, shifts) == _pair_shift_set(
+            naive_nm, naive_nn, naive_shifts
+        )
+
+    def test_auto_sized_warp_graph_matches_default(self):
+        """Fused warp graph must use estimator radius aligned with construct."""
+        positions = jnp.array([[0.0, 0.0, 0.0], [0.67, 0.0, 0.0]], dtype=jnp.float32)
+        cell = jnp.diag(jnp.array([3.9, 10.9, 10.9], dtype=jnp.float32)).reshape(
+            1, 3, 3
+        )
+        pbc = jnp.array([[True, True, True]])
+
+        warp_nm, warp_nn, warp_shifts = cell_list(
+            positions,
+            cutoff=1.0,
+            cell=cell,
+            pbc=pbc,
+            graph_mode="warp",
+            strategy="atom_centric",
+        )
+        default_nm, default_nn, default_shifts = cell_list(
+            positions,
+            cutoff=1.0,
+            cell=cell,
+            pbc=pbc,
+            strategy="atom_centric",
+        )
+
+        assert _pair_shift_set(warp_nm, warp_nn, warp_shifts) == _pair_shift_set(
+            default_nm, default_nn, default_shifts
+        )
+
 
 def _vesin_brute_force(positions_np, cell_np, pbc_np, cutoff):
     """Compute reference neighbor list using vesin.
@@ -854,6 +1052,28 @@ class TestCellListAtomCentricDirect:
 
 class TestCellListGraphMode:
     """Graph-mode coverage for JAX cell-list bindings."""
+
+    def test_top_level_static_max_requires_explicit_radius(self):
+        """Fused warp graph mode needs explicit radius with static capacity."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        cell = jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3)
+        pbc = jnp.array([[True, True, True]])
+
+        with pytest.raises(
+            ValueError,
+            match="neighbor_search_radius must be provided",
+        ):
+            cell_list(
+                positions,
+                cutoff=0.3,
+                cell=cell,
+                pbc=pbc,
+                max_total_cells=216,
+                graph_mode="warp",
+            )
 
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
     def test_build_matches_default(self, dtype):
