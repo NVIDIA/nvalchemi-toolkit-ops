@@ -28,6 +28,13 @@ deprecated and emit a ``DeprecationWarning``. They remain available for
 compatibility in v0.4.0, so this example also checks that the autograd results
 match the legacy direct outputs, which is the migration check.
 
+Monopole Ewald/PME/slab entry points accept ``energy_reduction="atom"`` (default)
+or ``"system"``. Atom mode returns per-atom energies ``(N,)``; system mode
+returns per-system totals ``(B,)`` for batched per-system losses. Direct-output
+fields (forces, charge gradients, virials) keep their existing shapes. On Torch
+CUDA, eager atom mode may synchronize when proving a materialized uniform
+cotangent; ``energy_reduction="system"`` is structurally sync-free.
+
 In this example you will learn:
 
 - Forces from energy autograd: ``F = -grad(E.sum(), positions)``
@@ -36,6 +43,7 @@ In this example you will learn:
   ``dE/dq . dq/dR`` charge-model chain-rule term
 - Strain-first virial/stress and stress-loss training
 - Charge gradients from energy autograd: ``dE/dq = grad(E.sum(), charges)``
+- ``energy_reduction="system"`` for batched per-system energy layout ``(B,)``
 
 .. important::
     This script is intended as an API demonstration. Do not use this script
@@ -135,7 +143,7 @@ pme_kwargs = dict(
 
 positions_f = positions.detach().requires_grad_(True)
 energy = particle_mesh_ewald(positions_f, charges, cell, **pme_kwargs)
-print(f"\nenergy shape: {tuple(energy.shape)}  (per-atom)")
+print(f"\nenergy shape: {tuple(energy.shape)}  (per-atom, energy_reduction='atom')")
 
 forces = -torch.autograd.grad(energy.sum(), positions_f)[0]
 print(f"forces shape: {tuple(forces.shape)}")
@@ -365,6 +373,8 @@ if cg_diff >= 1e-6:
 # 5. **Combined E + F + stress loss** -- take forces and virial from a single
 #    ``torch.autograd.grad(E.sum(), (positions, strain), create_graph=True)`` call,
 #    not two separate calls, so the reciprocal double-backward runs once.
+# 6. **Batched per-system layout** -- pass ``energy_reduction="system"`` to get
+#    ``(B,)`` energies for per-system losses without manual ``scatter_add``.
 #
 # Each autograd result matched the corresponding (deprecated) direct kernel
 # output, confirming the migration is numerically exact.

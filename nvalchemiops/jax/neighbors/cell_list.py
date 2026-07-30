@@ -23,12 +23,16 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 import warp as wp
-from warp.jax_experimental import GraphMode, jax_callable, jax_kernel
+from warp.jax_experimental import GraphMode, jax_callable
 
 from nvalchemiops.jax.neighbors._autograd import (
     _build_index_residuals,
     _NeighborForwardOutput,
     _route_pair_outputs,
+)
+from nvalchemiops.jax.neighbors._registration import (
+    _lazy_cell_list_build_kernel,
+    _lazy_cell_list_query_kernel,
 )
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     _validate_graph_mode,
@@ -40,8 +44,6 @@ from nvalchemiops.neighbors.cell_list import (
 )
 from nvalchemiops.neighbors.cell_list import (
     compute_batch_pair_centric_n_outer,
-    get_build_cell_list_kernel,
-    get_query_cell_list_kernel,
     is_pair_centric_parallelism_sufficient,
     select_cell_list_strategy,
 )
@@ -50,7 +52,6 @@ from nvalchemiops.neighbors.cell_list import (
 )
 from nvalchemiops.neighbors.neighbor_utils import (
     estimate_max_neighbors,
-    get_gather_positions_and_shifts_kernel,
     selective_zero_num_neighbors_single,
 )
 from nvalchemiops.neighbors.output_args import (
@@ -61,311 +62,70 @@ from nvalchemiops.neighbors.output_args import (
 # JAX Kernel Wrappers
 # ==============================================================================
 
-# Build step 1: Construct bin sizes
-_jax_construct_bin_size_f32 = jax_kernel(
-    get_build_cell_list_kernel("construct_bin_size", wp.float32),
-    num_outputs=1,
-    in_out_argnames=["cells_per_dimension_single"],
-    enable_backward=False,
-)
-_jax_construct_bin_size_f64 = jax_kernel(
-    get_build_cell_list_kernel("construct_bin_size", wp.float64),
-    num_outputs=1,
-    in_out_argnames=["cells_per_dimension_single"],
-    enable_backward=False,
-)
 
-# Build step 2: Count atoms per bin
-_jax_count_atoms_per_bin_f32 = jax_kernel(
-    get_build_cell_list_kernel("count_atoms", wp.float32),
-    num_outputs=2,
-    in_out_argnames=["atoms_per_cell_count", "atom_periodic_shifts"],
-    enable_backward=False,
-)
-_jax_count_atoms_per_bin_f64 = jax_kernel(
-    get_build_cell_list_kernel("count_atoms", wp.float64),
-    num_outputs=2,
-    in_out_argnames=["atoms_per_cell_count", "atom_periodic_shifts"],
-    enable_backward=False,
-)
-
-# Build step 3: Bin atoms into cells
-_jax_bin_atoms_f32 = jax_kernel(
-    get_build_cell_list_kernel("bin_atoms", wp.float32),
-    num_outputs=3,
-    in_out_argnames=["atom_to_cell_mapping", "atoms_per_cell_count", "cell_atom_list"],
-    enable_backward=False,
-)
-_jax_bin_atoms_f64 = jax_kernel(
-    get_build_cell_list_kernel("bin_atoms", wp.float64),
-    num_outputs=3,
-    in_out_argnames=["atom_to_cell_mapping", "atoms_per_cell_count", "cell_atom_list"],
-    enable_backward=False,
-)
-
-# Gather: pack positions + atom_periodic_shifts into per-cell-contiguous layout
-# (cell_atom_list permutation) for coalesced reads by the sorted-build kernel.
-_jax_gather_fused_f32 = jax_kernel(
-    get_gather_positions_and_shifts_kernel(wp.float32),
-    num_outputs=2,
-    in_out_argnames=["dst_pos", "dst_shifts"],
-    enable_backward=False,
-)
-_jax_gather_fused_f64 = jax_kernel(
-    get_gather_positions_and_shifts_kernel(wp.float64),
-    num_outputs=2,
-    in_out_argnames=["dst_pos", "dst_shifts"],
-    enable_backward=False,
-)
-
-# Query: sorted-reads atom-centric neighbor matrix kernel.  The selective
-# kernel is the same Warp kernel; selective callers pass a non-trivial
-# ``rebuild_flags``, non-selective callers pass a 1-element always-True flag.
-_jax_build_neighbor_matrix_local_count_sorted_f32 = jax_kernel(
-    get_query_cell_list_kernel(
-        wp.float32,
-        strategy="atom_centric",
-        batched=False,
-        selective=True,
-        partial=False,
-        return_vectors=False,
-        return_distances=False,
-        pair_fn=None,
-    ),
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
-    enable_backward=False,
-)
-_jax_build_neighbor_matrix_local_count_sorted_f64 = jax_kernel(
-    get_query_cell_list_kernel(
-        wp.float64,
-        strategy="atom_centric",
-        batched=False,
-        selective=True,
-        partial=False,
-        return_vectors=False,
-        return_distances=False,
-        pair_fn=None,
-    ),
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
-    enable_backward=False,
-)
-
-# Direct-reads atom-centric query kernel (``atom_centric_path="direct"``).  Reads
-# ``positions`` in original order and skips the sorted gather; the kernel ignores the
-# ``sorted_positions`` / ``sorted_atom_periodic_shifts`` arrays (pass 0-length sentinels).
-# Full-fill only -- the symmetric-full-fill optimization does not apply to half_fill or
-# pair outputs, which keep the sorted kernel.
-_jax_build_neighbor_matrix_local_count_direct_f32 = jax_kernel(
-    get_query_cell_list_kernel(
-        wp.float32,
-        strategy="atom_centric",
-        batched=False,
-        selective=True,
-        partial=False,
-        return_vectors=False,
-        return_distances=False,
-        pair_fn=None,
-        atom_centric_path="direct",
-    ),
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
-    enable_backward=False,
-)
-_jax_build_neighbor_matrix_local_count_direct_f64 = jax_kernel(
-    get_query_cell_list_kernel(
-        wp.float64,
-        strategy="atom_centric",
-        batched=False,
-        selective=True,
-        partial=False,
-        return_vectors=False,
-        return_distances=False,
-        pair_fn=None,
-        atom_centric_path="direct",
-    ),
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
-    enable_backward=False,
-)
-
-# Half-fill variants of the sorted-build kernel.  ``half_fill`` is a compile-time
-# specialization in the Warp factory (the runtime ``half_fill`` arg is an ignored
-# ABI placeholder), so honoring ``half_fill=True`` requires a distinct kernel.
-_jax_build_neighbor_matrix_local_count_sorted_half_f32 = jax_kernel(
-    get_query_cell_list_kernel(
-        wp.float32,
-        strategy="atom_centric",
-        batched=False,
-        selective=True,
-        partial=False,
-        half_fill=True,
-        return_vectors=False,
-        return_distances=False,
-        pair_fn=None,
-    ),
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
-    enable_backward=False,
-)
-_jax_build_neighbor_matrix_local_count_sorted_half_f64 = jax_kernel(
-    get_query_cell_list_kernel(
-        wp.float64,
-        strategy="atom_centric",
-        batched=False,
-        selective=True,
-        partial=False,
-        half_fill=True,
-        return_vectors=False,
-        return_distances=False,
-        pair_fn=None,
-    ),
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
-    enable_backward=False,
-)
+def _build_registry(stage: str):
+    """Create lazy dtype registrations for a single-system build stage."""
+    return _lazy_cell_list_build_kernel(stage=stage, batched=False)
 
 
-# Pair-output variants of the sorted-build kernel.  Used by the autograd path
-# when ``return_distances`` / ``return_vectors`` is set; the bytes the kernel
-# writes into ``neighbor_vectors`` / ``neighbor_distances`` are consumed by
-# the JAX autograd primitive in :mod:`nvalchemiops.jax.neighbors._autograd`.
-_jax_build_neighbor_matrix_local_count_sorted_pair_f32 = jax_kernel(
-    get_query_cell_list_kernel(
-        wp.float32,
-        strategy="atom_centric",
-        batched=False,
-        selective=True,
-        partial=False,
-        return_vectors=True,
-        return_distances=True,
-        pair_fn=None,
-    ),
-    num_outputs=5,
-    in_out_argnames=[
-        "neighbor_matrix",
-        "neighbor_matrix_shifts",
-        "num_neighbors",
-        "neighbor_vectors",
-        "neighbor_distances",
-    ],
-    enable_backward=False,
-)
-_jax_build_neighbor_matrix_local_count_sorted_pair_f64 = jax_kernel(
-    get_query_cell_list_kernel(
-        wp.float64,
-        strategy="atom_centric",
-        batched=False,
-        selective=True,
-        partial=False,
-        return_vectors=True,
-        return_distances=True,
-        pair_fn=None,
-    ),
-    num_outputs=5,
-    in_out_argnames=[
-        "neighbor_matrix",
-        "neighbor_matrix_shifts",
-        "num_neighbors",
-        "neighbor_vectors",
-        "neighbor_distances",
-    ],
-    enable_backward=False,
-)
+_CELL_LIST_BUILD_REGISTRATIONS = {
+    stage: _build_registry(stage)
+    for stage in ("construct_bin_size", "count_atoms", "bin_atoms", "gather")
+}
 
-# Half-fill specializations of the atom-centric geometry pair-output kernel
-# (``half_fill`` is a compile-time constant; selected when ``half_fill=True``).
-_jax_build_neighbor_matrix_local_count_sorted_pair_half_f32 = jax_kernel(
-    get_query_cell_list_kernel(
-        wp.float32,
-        strategy="atom_centric",
+
+def _query_registry(
+    *,
+    half_fill: bool,
+    geometry: bool,
+    atom_centric_path: Literal["sorted", "direct"],
+):
+    """Create lazy direct registrations for a static atom-centric query."""
+    return _lazy_cell_list_query_kernel(
         batched=False,
         selective=True,
         partial=False,
-        return_vectors=True,
-        return_distances=True,
+        half_fill=half_fill,
+        geometry=geometry,
         pair_fn=None,
-        half_fill=True,
+        atom_centric_path=atom_centric_path,
+    )
+
+
+_CELL_LIST_QUERY_REGISTRATIONS = {
+    (False, False, "sorted"): _query_registry(
+        half_fill=False, geometry=False, atom_centric_path="sorted"
     ),
-    num_outputs=5,
-    in_out_argnames=[
-        "neighbor_matrix",
-        "neighbor_matrix_shifts",
-        "num_neighbors",
-        "neighbor_vectors",
-        "neighbor_distances",
-    ],
-    enable_backward=False,
-)
-_jax_build_neighbor_matrix_local_count_sorted_pair_half_f64 = jax_kernel(
-    get_query_cell_list_kernel(
-        wp.float64,
-        strategy="atom_centric",
-        batched=False,
-        selective=True,
-        partial=False,
-        return_vectors=True,
-        return_distances=True,
-        pair_fn=None,
-        half_fill=True,
+    (True, False, "sorted"): _query_registry(
+        half_fill=True, geometry=False, atom_centric_path="sorted"
     ),
-    num_outputs=5,
-    in_out_argnames=[
-        "neighbor_matrix",
-        "neighbor_matrix_shifts",
-        "num_neighbors",
-        "neighbor_vectors",
-        "neighbor_distances",
-    ],
-    enable_backward=False,
-)
+    (False, False, "direct"): _query_registry(
+        half_fill=False, geometry=False, atom_centric_path="direct"
+    ),
+    (False, True, "sorted"): _query_registry(
+        half_fill=False, geometry=True, atom_centric_path="sorted"
+    ),
+    (True, True, "sorted"): _query_registry(
+        half_fill=True, geometry=True, atom_centric_path="sorted"
+    ),
+}
 
 
 @functools.cache
 def _get_jax_cell_list_pair_outputs_kernel(
     pair_fn, wp_dtype, partial, half_fill: bool = False
 ):
-    """Build (and cache) a ``jax_kernel`` for a cell-list atom-centric ``sorted``
-    pair-output kernel.
-
-    Mirrors the module-level geometry registration above, optionally with
-    ``pair_fn`` set (so the kernel's ``HAS_PAIR_FN`` body runs and
-    ``pair_energies`` / ``pair_forces`` are registered as additional outputs)
-    and/or ``partial=True`` (the ``target_indices`` path: output row ``r`` maps
-    to atom ``target_indices[r]``, launched ``(num_targets,)``).  Cached by
-    ``(pair_fn identity, wp_dtype, partial)``; one recompile per distinct
-    ``(pair_fn, partial)`` combination.
-
-    With ``pair_fn`` the kernel has 7 outputs (geometry + ``pe`` / ``pf``);
-    without it, 5 (geometry only).
-    """
-    kernel = get_query_cell_list_kernel(
-        wp_dtype,
-        strategy="atom_centric",
+    """Return a cached sorted direct registration for pair-output queries."""
+    jax_dtype = jnp.float64 if wp_dtype == wp.float64 else jnp.float32
+    return _lazy_cell_list_query_kernel(
         batched=False,
         selective=True,
         partial=bool(partial),
-        return_vectors=True,
-        return_distances=True,
-        pair_fn=pair_fn,
         half_fill=bool(half_fill),
-    )
-    in_out_argnames = [
-        "neighbor_matrix",
-        "neighbor_matrix_shifts",
-        "num_neighbors",
-        "neighbor_vectors",
-        "neighbor_distances",
-    ]
-    if pair_fn is not None:
-        in_out_argnames += ["pair_energies", "pair_forces"]
-    return jax_kernel(
-        kernel,
-        num_outputs=len(in_out_argnames),
-        in_out_argnames=in_out_argnames,
-        enable_backward=False,
-    )
+        geometry=True,
+        pair_fn=pair_fn,
+        atom_centric_path="sorted",
+    )[jax_dtype]
 
 
 __all__ = [
@@ -374,6 +134,10 @@ __all__ = [
     "query_cell_list",
     "estimate_cell_list_sizes",
 ]
+
+ADAPTIVE_MIN_CELLS = 4
+_DEFAULT_CELL_LIST_BUFFER_FACTOR = 1.5
+_MAX_ADAPTIVE_PROMOTION_STEPS = 8
 
 
 def _reset_query_outputs(
@@ -386,6 +150,61 @@ def _reset_query_outputs(
     neighbor_matrix.fill_(fill_value)
     num_neighbors.zero_()
     neighbor_matrix_shifts.zero_()
+
+
+def _derive_neighbor_search_radius(
+    cell: jax.Array,
+    pbc: jax.Array,
+    cutoff: float,
+    cells_per_dimension: jax.Array,
+) -> jax.Array:
+    """Derive per-axis cell search radii from the realized cell grid."""
+    is_single = cells_per_dimension.ndim == 1
+    cell_batch = cell[jnp.newaxis, ...] if cell.ndim == 2 else cell
+    pbc_batch = pbc[jnp.newaxis, ...] if pbc.ndim == 1 else pbc
+    cpd_batch = (
+        cells_per_dimension[jnp.newaxis, ...] if is_single else cells_per_dimension
+    )
+    inverse_cell_transpose = jnp.swapaxes(
+        jnp.linalg.inv(cell_batch),
+        -1,
+        -2,
+    )
+    face_distances = 1.0 / jnp.linalg.norm(inverse_cell_transpose, axis=-1)
+    ratio = (
+        jnp.asarray(cutoff, dtype=face_distances.dtype)
+        * cpd_batch.astype(face_distances.dtype)
+        / face_distances
+    )
+    radius = jnp.ceil(ratio).astype(jnp.int32)
+    radius = jnp.where(
+        (cpd_batch == 1) & ~pbc_batch.astype(jnp.bool_),
+        jnp.int32(0),
+        radius,
+    )
+    return radius[0] if is_single else radius
+
+
+def _derive_promoted_cells_per_dimension(
+    cell: jax.Array,
+    pbc: jax.Array,
+    cutoff: float,
+) -> jax.Array:
+    """Derive uncapped promoted grids for one or more cell geometries."""
+    inverse_cell_transpose = jnp.swapaxes(jnp.linalg.inv(cell), -1, -2)
+    face_distances = 1.0 / jnp.linalg.norm(inverse_cell_transpose, axis=-1)
+    cells_per_dimension = jnp.maximum(
+        (face_distances / cutoff).astype(jnp.int32),
+        1,
+    )
+    promote_mask = pbc.astype(jnp.bool_) | (cells_per_dimension > 1)
+    for _ in range(_MAX_ADAPTIVE_PROMOTION_STEPS):
+        cells_per_dimension = jnp.where(
+            promote_mask & (cells_per_dimension < ADAPTIVE_MIN_CELLS),
+            cells_per_dimension * 2,
+            cells_per_dimension,
+        )
+    return cells_per_dimension
 
 
 def _is_cpu_array(array: jax.Array) -> bool:
@@ -1655,7 +1474,7 @@ def estimate_cell_list_sizes(
     cell: jax.Array,
     cutoff: float,
     pbc: jax.Array | None = None,
-    buffer_factor: float = 1.5,
+    buffer_factor: float = _DEFAULT_CELL_LIST_BUFFER_FACTOR,
 ) -> tuple[int, jax.Array, jax.Array]:
     """Estimate required cell list sizes based on atomic density.
 
@@ -1715,35 +1534,14 @@ def estimate_cell_list_sizes(
     num_cells_est = jnp.int32(volume / cell_volume * buffer_factor)
     max_total_cells = jnp.max(jnp.array([num_cells_est, 8]))  # Minimum 8 cells
 
-    # Compute cells_per_dimension and neighbor_search_radius from cell geometry,
-    # mirroring the Warp _estimate_cell_list_sizes kernel used by the Torch
-    # path: natural cell count, ADAPTIVE_MIN_CELLS=4 promotion on PBC axes,
-    # halve-to-fit when total cells > max_total_cells, then compute
-    # neighbor_search_radius against the FINAL cells_per_dimension.
-    inverse_cell_transpose = jnp.linalg.inv(cell[0]).T
-    face_distances = 1.0 / jnp.linalg.norm(inverse_cell_transpose, axis=1)
-    cells_per_dimension = jnp.maximum(jnp.int32(face_distances / cutoff), 1)
-
     pbc_squeezed = pbc.squeeze()[:3] if pbc.ndim > 1 else pbc[:3]
-
-    # ADAPTIVE_MIN_CELLS=4: promote each PBC axis (or any axis already > 1)
-    # up to at least 4 cells so the atom-centric query has enough cell-level
-    # parallelism.  Open axes with a single cell are left alone.
-    ADAPTIVE_MIN_CELLS = 4
-    promote_mask = pbc_squeezed | (cells_per_dimension > 1)
-    # Bit-trick: smallest power-of-2 multiplier that brings cells_per_dim
-    # to >= ADAPTIVE_MIN_CELLS.  At cells_per_dim=1 -> multiplier=4; at 2 ->
-    # 2; at >= 4 -> 1.
-    needed_mult = jnp.where(
-        cells_per_dimension >= ADAPTIVE_MIN_CELLS,
-        1,
-        ADAPTIVE_MIN_CELLS // jnp.maximum(cells_per_dimension, 1),
-    )
-    cells_per_dimension = jnp.where(
-        promote_mask,
-        cells_per_dimension * needed_mult,
-        cells_per_dimension,
-    )
+    # Match Warp's natural-grid calculation and repeated-doubling promotion,
+    # then apply the single-system capacity clamp below.
+    cells_per_dimension = _derive_promoted_cells_per_dimension(
+        cell,
+        pbc,
+        cutoff,
+    )[0]
 
     # Halve-to-fit: if total cells exceeds max_total_cells, halve each axis
     # (floor with min=1) repeatedly until total <= max.  Mirrors the kernel's
@@ -1758,10 +1556,11 @@ def estimate_cell_list_sizes(
     for _ in range(16):
         cells_per_dimension = _halve_to_fit(cells_per_dimension)
 
-    neighbor_search_radius = jnp.where(
-        (cells_per_dimension == 1) & ~pbc_squeezed,
-        jnp.zeros(3, dtype=jnp.int32),
-        jnp.int32(jnp.ceil(cutoff * cells_per_dimension / face_distances)),
+    neighbor_search_radius = _derive_neighbor_search_radius(
+        cell,
+        pbc_squeezed,
+        cutoff,
+        cells_per_dimension,
     )
 
     return max_total_cells, cells_per_dimension, neighbor_search_radius
@@ -1818,7 +1617,7 @@ def _cell_list_pair_outputs_forward(
     cell = jax.lax.stop_gradient(cell)
 
     f64 = positions.dtype == jnp.float64
-    gather_kernel = _jax_gather_fused_f64 if f64 else _jax_gather_fused_f32
+    wp_dtype = wp.float64 if f64 else wp.float32
 
     total_atoms = positions.shape[0]
     # Output rows: ``num_targets`` for the partial (``target_indices``) path,
@@ -1832,7 +1631,6 @@ def _cell_list_pair_outputs_forward(
     has_pair_fn = pair_fn is not None
     is_partial = target_indices is not None
     is_pair_centric = strategy == "pair_centric"
-    wp_dtype = wp.float64 if f64 else wp.float32
     if has_pair_fn:
         pp_arg = jnp.asarray(pair_params, dtype=positions.dtype)
         pe = jnp.zeros((num_rows, max_neighbors), dtype=positions.dtype)
@@ -1921,22 +1719,19 @@ def _cell_list_pair_outputs_forward(
                 pair_fn, wp_dtype, is_partial, half_fill
             )
         elif half_fill:
-            pair_kernel = (
-                _jax_build_neighbor_matrix_local_count_sorted_pair_half_f64
-                if f64
-                else _jax_build_neighbor_matrix_local_count_sorted_pair_half_f32
-            )
+            pair_kernel = _CELL_LIST_QUERY_REGISTRATIONS[(True, True, "sorted")][
+                positions.dtype
+            ]
         else:
-            pair_kernel = (
-                _jax_build_neighbor_matrix_local_count_sorted_pair_f64
-                if f64
-                else _jax_build_neighbor_matrix_local_count_sorted_pair_f32
-            )
+            pair_kernel = _CELL_LIST_QUERY_REGISTRATIONS[(False, True, "sorted")][
+                positions.dtype
+            ]
         ti_arg = (
             jnp.asarray(target_indices, dtype=jnp.int32)
             if is_partial
             else jnp.zeros((0,), dtype=jnp.int32)
         )
+        gather_kernel = _CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
         sorted_positions = jnp.zeros((total_atoms, 3), dtype=positions.dtype)
         sorted_atom_periodic_shifts = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
         sorted_positions, sorted_atom_periodic_shifts = gather_kernel(
@@ -2056,9 +1851,11 @@ def build_cell_list(
     pbc : jax.Array, shape (3,) or (1, 3), dtype=bool
         Periodic boundary condition flags.
     cells_per_dimension : jax.Array, shape (3,), dtype=int32, optional
-        OUTPUT: Number of cells in x, y, z directions. If None, allocated.
+        OUTPUT: Number of cells in x, y, z directions. If None, an output
+        buffer is allocated and populated with the constructed grid.
     neighbor_search_radius : jax.Array, shape (3,), dtype=int32, optional
-        Search radius in neighboring cells. If None, allocated.
+        Search radius in neighboring cells. If None, it is derived from the
+        constructed grid and cell face distances after construction.
     atom_periodic_shifts : jax.Array, shape (total_atoms, 3), dtype=int32, optional
         OUTPUT: Periodic boundary crossings for each atom. If None, allocated.
     atom_to_cell_mapping : jax.Array, shape (total_atoms, 3), dtype=int32, optional
@@ -2094,6 +1891,10 @@ def build_cell_list(
     When calling inside ``jax.jit``, ``max_total_cells`` **must** be provided
     to avoid calling ``estimate_cell_list_sizes``, which is not JIT-compatible.
 
+    The constructed grid may differ from the initial output buffer because
+    capacity can reduce it. When ``neighbor_search_radius`` is omitted, this
+    function derives it from that realized grid before returning.
+
     ``graph_mode="warp"`` uses a fused ``jax_callable`` that captures the full
     Warp-side build sequence. For replay-friendly usage inside ``jax.jit``,
     donate and reuse the optional cell-list buffers.
@@ -2126,15 +1927,10 @@ def build_cell_list(
     if pbc.ndim == 1:
         pbc = pbc[jnp.newaxis, :]
 
+    derive_radius = neighbor_search_radius is None
+
     if max_total_cells is None:
-        max_total_cells, _, neighbor_search_radius_est = estimate_cell_list_sizes(
-            positions, cell, cutoff, pbc
-        )
-        if neighbor_search_radius is None:
-            neighbor_search_radius = neighbor_search_radius_est
-    else:
-        if neighbor_search_radius is None:
-            neighbor_search_radius = jnp.ones(3, dtype=jnp.int32)
+        max_total_cells, _, _ = estimate_cell_list_sizes(positions, cell, cutoff, pbc)
 
     # Allocate cell list tensors if not provided
     if cells_per_dimension is None:
@@ -2152,15 +1948,8 @@ def build_cell_list(
     if cell_atom_list is None:
         cell_atom_list = jnp.zeros(positions.shape[0], dtype=jnp.int32)
 
-    # Select kernels based on dtype
-    if positions.dtype == jnp.float64:
-        _construct_bin_size = _jax_construct_bin_size_f64
-        _count_atoms = _jax_count_atoms_per_bin_f64
-        _bin_atoms = _jax_bin_atoms_f64
-    else:
-        _construct_bin_size = _jax_construct_bin_size_f32
-        _count_atoms = _jax_count_atoms_per_bin_f32
-        _bin_atoms = _jax_bin_atoms_f32
+    # Select kernels based on dtype.
+    if positions.dtype != jnp.float64:
         positions = positions.astype(jnp.float32)
 
     # Ensure cell dtype matches positions dtype so Warp kernel dispatch is consistent
@@ -2202,6 +1991,11 @@ def build_cell_list(
             float(cutoff),
         )
     else:
+        _construct_bin_size = _CELL_LIST_BUILD_REGISTRATIONS["construct_bin_size"][
+            positions.dtype
+        ]
+        _count_atoms = _CELL_LIST_BUILD_REGISTRATIONS["count_atoms"][positions.dtype]
+        _bin_atoms = _CELL_LIST_BUILD_REGISTRATIONS["bin_atoms"][positions.dtype]
         # Step 1: Construct bin sizes
         (cells_per_dimension,) = _construct_bin_size(
             cell,
@@ -2255,6 +2049,14 @@ def build_cell_list(
             cell_atom_start_indices,
             cell_atom_list,
             launch_dims=(total_atoms,),
+        )
+
+    if derive_radius:
+        neighbor_search_radius = _derive_neighbor_search_radius(
+            cell,
+            pbc_bool,
+            cutoff,
+            cells_per_dimension,
         )
 
     return (
@@ -2634,22 +2436,7 @@ def query_cell_list(
     use_direct = (
         atom_centric_path == "direct" and not half_fill and graph_mode == "none"
     )
-    if positions.dtype == jnp.float64:
-        _gather_kernel = _jax_gather_fused_f64
-        if use_direct:
-            _build_kernel = _jax_build_neighbor_matrix_local_count_direct_f64
-        elif half_fill:
-            _build_kernel = _jax_build_neighbor_matrix_local_count_sorted_half_f64
-        else:
-            _build_kernel = _jax_build_neighbor_matrix_local_count_sorted_f64
-    else:
-        _gather_kernel = _jax_gather_fused_f32
-        if use_direct:
-            _build_kernel = _jax_build_neighbor_matrix_local_count_direct_f32
-        elif half_fill:
-            _build_kernel = _jax_build_neighbor_matrix_local_count_sorted_half_f32
-        else:
-            _build_kernel = _jax_build_neighbor_matrix_local_count_sorted_f32
+    if positions.dtype != jnp.float64:
         positions = positions.astype(jnp.float32)
 
     # Ensure cell dtype matches positions dtype so Warp kernel dispatch is consistent
@@ -2814,6 +2601,7 @@ def query_cell_list(
             # Sorted path: gather positions/shifts into cell order for coalesced
             # reads.  The direct kernel reads ``positions`` directly and ignores the
             # sorted arrays, so it skips the gather (matching the Torch binding).
+            _gather_kernel = _CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
             sorted_positions, sorted_atom_periodic_shifts = _gather_kernel(
                 positions,
                 atom_periodic_shifts,
@@ -2822,6 +2610,13 @@ def query_cell_list(
                 sorted_atom_periodic_shifts,
                 launch_dims=(total_atoms,),
             )
+        _build_kernel = _CELL_LIST_QUERY_REGISTRATIONS[
+            (
+                bool(half_fill),
+                False,
+                "direct" if use_direct else "sorted",
+            )
+        ][positions.dtype]
         neighbor_matrix, neighbor_matrix_shifts, num_neighbors = _build_kernel(
             positions,
             atom_periodic_shifts,
@@ -2910,7 +2705,14 @@ def cell_list(
     max_neighbors : int, optional
         Maximum number of neighbors per atom. If None, will be estimated.
     max_total_cells : int, optional
-        Maximum number of cells to allocate. If None, will be estimated.
+        Maximum number of cells to allocate. If None, it will be estimated.
+        With ``graph_mode="warp"``, an explicit value requires an explicit
+        ``neighbor_search_radius`` because the fused query cannot inspect the
+        constructed grid between build and query.
+    neighbor_search_radius : jax.Array, shape (3,), dtype=int32, optional
+        Per-axis search radius. Normal build/query paths derive it from the
+        realized grid when omitted. Provide it when ``graph_mode="warp"`` and
+        ``max_total_cells`` is explicit.
     return_neighbor_list : bool, optional
         If True, convert result to COO neighbor list format. Default is False.
     strategy : {"auto", "atom_centric", "pair_centric"}, default "auto"
@@ -2931,7 +2733,9 @@ def cell_list(
     graph_mode : {"none", "warp"}, default="none"
         Execution mode for the underlying Warp launches. ``"warp"`` is
         intended for jitted call sites that donate and reuse the optional
-        cell-list caches and output buffers.
+        cell-list caches and output buffers. When combined with explicit
+        ``max_total_cells``, it requires a concrete
+        ``neighbor_search_radius`` because build and query are fused.
 
     Returns
     -------
@@ -3087,10 +2891,14 @@ def cell_list(
         max_total_cells, _, neighbor_search_radius_est = estimate_cell_list_sizes(
             positions, cell, cutoff, pbc
         )
-        if neighbor_search_radius is None:
+        if neighbor_search_radius is None and graph_mode == "warp":
             neighbor_search_radius = neighbor_search_radius_est
-    elif neighbor_search_radius is None:
-        neighbor_search_radius = jnp.ones(3, dtype=jnp.int32)
+    elif graph_mode == "warp" and neighbor_search_radius is None:
+        raise ValueError(
+            "neighbor_search_radius must be provided when graph_mode='warp' "
+            "and max_total_cells is set because the fused query needs concrete "
+            "search metadata before the build result is available."
+        )
 
     if cells_per_dimension is None:
         cells_per_dimension = jnp.ones(3, dtype=jnp.int32)

@@ -30,6 +30,7 @@ from __future__ import annotations
 import functools
 import math
 import warnings
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -62,11 +63,15 @@ from nvalchemiops.jax.interactions.electrostatics._lazy_jax_kernels import (
     _make_jax_kernel_factory,
 )
 from nvalchemiops.jax.interactions.electrostatics._utils import (
+    _apply_energy_reduction,
     _build_electrostatic_result,
     _component_direct_output_deprecation_msg,
     _direct_output_deprecation_msg,
+    _distribute_system_values,
     _normalize_dtype,
     _prepare_cell,
+    _system_sum_from_atoms,
+    _validate_energy_reduction,
 )
 from nvalchemiops.jax.interactions.electrostatics.k_vectors import (
     generate_k_vectors_ewald_summation,
@@ -869,6 +874,8 @@ def ewald_real_space(
     compute_forces: bool = False,
     compute_charge_gradients: bool = False,
     compute_virial: bool = False,
+    *,
+    energy_reduction: Literal["atom", "system"] = "atom",
 ) -> jax.Array | tuple[jax.Array, ...]:
     """Compute real-space Ewald energy and optional direct derivative outputs.
 
@@ -916,11 +923,21 @@ def ewald_real_space(
         .. deprecated:: 0.4.0
             Deprecated. Return explicit virial tensor. Raises
             ``DeprecationWarning`` when True.
+    energy_reduction : {"atom", "system"}, keyword-only, default="atom"
+        Public energy layout. ``"atom"`` returns per-atom energies of shape
+        (N,) (default, unchanged behavior). ``"system"`` returns per-system
+        energies of shape (B,) (or (1,) for a single system), computed as a
+        differentiable, uniform scatter-sum of the per-atom energies; it does
+        not support nonuniform per-atom weighting. Only the energy field of
+        the return value changes; forces, charge gradients, and the virial
+        keep their existing atom/system layouts.
 
     Returns
     -------
-    jax.Array, shape (N,)
-        Per-atom real-space Ewald energy when no derivative flags are set.
+    jax.Array, shape (N,) or (B,)
+        Real-space Ewald energy when no derivative flags are set: per-atom
+        when ``energy_reduction="atom"``, per-system when
+        ``energy_reduction="system"``.
     tuple[jax.Array, ...]
         ``(energies, forces)`` when ``compute_forces=True``;
         ``(energies, forces, charge_gradients)`` when
@@ -932,6 +949,7 @@ def ewald_real_space(
     :func:`nvalchemiops.jax.interactions.electrostatics.ewald.ewald_reciprocal_space` : Reciprocal-space Ewald contribution.
     :func:`nvalchemiops.jax.interactions.electrostatics.ewald.ewald_summation` : Complete Ewald summation combining both components.
     """
+    _validate_energy_reduction(energy_reduction)
     component_deprecated_flags = tuple(
         name
         for name, enabled in (
@@ -950,7 +968,7 @@ def ewald_real_space(
         )
 
     if compute_forces or compute_charge_gradients or compute_virial:
-        return _ewald_real_space_impl(
+        result = _ewald_real_space_impl(
             positions=positions,
             charges=charges,
             cell=cell,
@@ -966,11 +984,12 @@ def ewald_real_space(
             compute_charge_gradients=compute_charge_gradients,
             compute_virial=compute_virial,
         )
+        return _apply_energy_reduction(result, energy_reduction, batch_idx, cell)
 
     if mask_value is None:
         mask_value = positions.shape[0]
     use_matrix = neighbor_matrix is not None and neighbor_matrix_shifts is not None
-    return _ewald_real_space_energy_jvp(
+    result = _ewald_real_space_energy_jvp(
         positions,
         charges,
         cell,
@@ -984,6 +1003,7 @@ def ewald_real_space(
         mask_value,
         use_matrix,
     )
+    return _apply_energy_reduction(result, energy_reduction, batch_idx, cell)
 
 
 def _ewald_reciprocal_space_impl(
@@ -1401,6 +1421,8 @@ def ewald_reciprocal_space(
     compute_forces: bool = False,
     compute_charge_gradients: bool = False,
     compute_virial: bool = False,
+    *,
+    energy_reduction: Literal["atom", "system"] = "atom",
 ) -> jax.Array | tuple[jax.Array, ...]:
     """Compute reciprocal-space Ewald energy and optional direct outputs.
 
@@ -1441,12 +1463,22 @@ def ewald_reciprocal_space(
     compute_virial : bool, default=False
         Deprecated. Return explicit virial tensor. Raises
         ``DeprecationWarning`` when True.
+    energy_reduction : {"atom", "system"}, keyword-only, default="atom"
+        Public energy layout. ``"atom"`` returns per-atom energies of shape
+        (N,) (default, unchanged behavior). ``"system"`` returns per-system
+        energies of shape (B,) (or (1,) for a single system), computed as a
+        differentiable, uniform scatter-sum of the per-atom energies; it does
+        not support nonuniform per-atom weighting. Only the energy field of
+        the return value changes; forces, charge gradients, and the virial
+        keep their existing atom/system layouts.
 
     Returns
     -------
-    jax.Array, shape (N,)
-        Per-atom reciprocal-space Ewald energy (with self and background
-        corrections) when no derivative flags are set.
+    jax.Array, shape (N,) or (B,)
+        Reciprocal-space Ewald energy (with self and background corrections)
+        when no derivative flags are set: per-atom when
+        ``energy_reduction="atom"``, per-system when
+        ``energy_reduction="system"``.
     tuple[jax.Array, ...]
         ``(energies, forces)`` when ``compute_forces=True``;
         ``(energies, forces, charge_gradients)`` when
@@ -1459,6 +1491,7 @@ def ewald_reciprocal_space(
     :func:`nvalchemiops.jax.interactions.electrostatics.ewald.ewald_summation` : Complete Ewald summation combining both components.
     :func:`nvalchemiops.jax.interactions.electrostatics.k_vectors.generate_k_vectors_ewald_summation` : Generates ``k_vectors`` from a cell and cutoff.
     """
+    _validate_energy_reduction(energy_reduction)
     component_deprecated_flags = tuple(
         name
         for name, enabled in (
@@ -1479,7 +1512,7 @@ def ewald_reciprocal_space(
     k_vectors = jax.lax.stop_gradient(k_vectors)
 
     if compute_forces or compute_charge_gradients or compute_virial:
-        return _ewald_reciprocal_space_impl(
+        result = _ewald_reciprocal_space_impl(
             positions=positions,
             charges=charges,
             cell=cell,
@@ -1491,8 +1524,9 @@ def ewald_reciprocal_space(
             compute_charge_gradients=compute_charge_gradients,
             compute_virial=compute_virial,
         )
+        return _apply_energy_reduction(result, energy_reduction, batch_idx, cell)
 
-    return _ewald_reciprocal_space_energy_jvp(
+    result = _ewald_reciprocal_space_energy_jvp(
         positions,
         charges,
         cell,
@@ -1501,6 +1535,7 @@ def ewald_reciprocal_space(
         batch_idx,
         max_atoms_per_system,
     )
+    return _apply_energy_reduction(result, energy_reduction, batch_idx, cell)
 
 
 def _tangent_or_zeros(tangent, primal: jax.Array, dtype=None) -> jax.Array:
@@ -1558,55 +1593,6 @@ def _kvector_tangent_from_cell(
     if k_vectors.ndim == 2:
         return tangent[0]
     return tangent
-
-
-def _per_system_atom_counts(
-    batch_idx: jax.Array | None,
-    num_systems: int,
-    num_atoms: int,
-) -> jax.Array:
-    """Return per-system atom counts as float64 for tangent redistribution."""
-    if batch_idx is None:
-        return jnp.full((num_systems,), float(num_atoms), dtype=jnp.float64)
-    bidx = batch_idx.astype(jnp.int32)
-    return (
-        jnp.zeros((num_systems,), dtype=jnp.float64)
-        .at[bidx]
-        .add(jnp.ones((num_atoms,), dtype=jnp.float64))
-    )
-
-
-def _system_sum_from_atoms(
-    values: jax.Array,
-    batch_idx: jax.Array | None,
-    num_systems: int,
-) -> jax.Array:
-    """Sum per-atom scalar values into one scalar per system."""
-    if batch_idx is None:
-        return values.sum(keepdims=True)
-    return (
-        jnp.zeros((num_systems,), dtype=values.dtype)
-        .at[batch_idx.astype(jnp.int32)]
-        .add(values)
-    )
-
-
-def _distribute_system_values(
-    system_values: jax.Array,
-    batch_idx: jax.Array | None,
-    num_atoms: int,
-) -> jax.Array:
-    """Distribute per-system values uniformly over each system's atoms."""
-    if batch_idx is None:
-        if num_atoms == 0:
-            return jnp.zeros((0,), dtype=system_values.dtype)
-        return jnp.full(
-            (num_atoms,), system_values[0] / num_atoms, dtype=system_values.dtype
-        )
-
-    bidx = batch_idx.astype(jnp.int32)
-    counts = _per_system_atom_counts(batch_idx, system_values.shape[0], num_atoms)
-    return (system_values / jnp.maximum(counts, 1.0))[bidx]
 
 
 def _real_space_energy_reference(
@@ -3075,6 +3061,7 @@ def ewald_summation(
     slab_correction: bool = False,
     *,
     miller_bounds: tuple[int, int, int] | None = None,
+    energy_reduction: Literal["atom", "system"] = "atom",
 ) -> jax.Array | tuple[jax.Array, ...]:
     """Compute complete Ewald summation.
 
@@ -3125,13 +3112,22 @@ def ewald_summation(
         Per-system periodic boundary conditions for slab correction.
     slab_correction : bool, default=False
         If True, add the Yeh-Berkowitz/Ballenegger slab correction.
+    energy_reduction : {"atom", "system"}, keyword-only, default="atom"
+        Public energy layout. ``"atom"`` returns per-atom energies of shape
+        (N,) (default, unchanged behavior). ``"system"`` returns per-system
+        energies of shape (B,) (or (1,) for a single system), computed as a
+        differentiable, uniform scatter-sum of the per-atom energies; it does
+        not support nonuniform per-atom weighting. Only the energy field of
+        the return value changes; forces, charge gradients, and the virial
+        keep their existing atom/system layouts.
 
     Returns
     -------
-    jax.Array, shape (N,)
-        Per-atom total Ewald energy when no deprecated direct-output flags are
-        set. Gradients flow through positions, charges, and cell via the
-        registered custom-JVP rules.
+    jax.Array, shape (N,) or (B,)
+        Total Ewald energy when no deprecated direct-output flags are set:
+        per-atom when ``energy_reduction="atom"``, per-system when
+        ``energy_reduction="system"``. Gradients flow through positions,
+        charges, and cell via the registered custom-JVP rules.
     tuple[jax.Array, ...]
         When any deprecated flag is True: ``(energies,)`` extended by the
         requested outputs in order — forces of shape (N, 3),
@@ -3146,6 +3142,7 @@ def ewald_summation(
     :func:`nvalchemiops.jax.interactions.electrostatics.parameters.estimate_ewald_parameters` : Automatic alpha and k-cutoff estimation.
     :func:`nvalchemiops.jax.interactions.electrostatics.k_vectors.generate_k_vectors_ewald_summation` : Generates k-vectors from cell and cutoff.
     """
+    _validate_energy_reduction(energy_reduction)
     if compute_forces or compute_virial or compute_charge_gradients or hybrid_forces:
         warnings.warn(
             _direct_output_deprecation_msg("ewald_summation"),
@@ -3197,10 +3194,11 @@ def ewald_summation(
             pbc_prepared,
             batch_idx=batch_idx,
         )
-        return base_energy + slab_energy
+        result = base_energy + slab_energy
+        return _apply_energy_reduction(result, energy_reduction, batch_idx, cell_3d)
 
     if compute_forces or compute_charge_gradients or compute_virial or hybrid_forces:
-        return _ewald_summation_impl(
+        result = _ewald_summation_impl(
             positions=positions,
             charges=charges,
             cell=cell,
@@ -3224,6 +3222,7 @@ def ewald_summation(
             pbc=pbc,
             slab_correction=slab_correction,
         )
+        return _apply_energy_reduction(result, energy_reduction, batch_idx, cell)
 
     generated_k_vectors = k_vectors is None
     alpha_resolved, k_vectors_resolved = _resolve_ewald_summation_parameters(
@@ -3243,7 +3242,7 @@ def ewald_summation(
     if mask_value is None:
         mask_value = positions.shape[0]
 
-    return _ewald_summation_energy_jvp(
+    result = _ewald_summation_energy_jvp(
         positions,
         charges,
         cell,
@@ -3259,3 +3258,4 @@ def ewald_summation(
         max_atoms_per_system,
         mask_value,
     )
+    return _apply_energy_reduction(result, energy_reduction, batch_idx, cell)

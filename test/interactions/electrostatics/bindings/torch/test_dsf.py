@@ -659,6 +659,46 @@ class TestDSFVirial:
 class TestAutograd:
     """Test autograd support for charge gradients."""
 
+    def test_one_atom_per_system_uses_explicit_system_layout(self, device):
+        """Arbitrary system cotangents are not confused with atom layout when N == B."""
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [4.0, 0.0, 0.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        charges = torch.tensor(
+            [0.8, -0.3], dtype=torch.float64, device=device, requires_grad=True
+        )
+        batch_idx = torch.tensor([0, 1], dtype=torch.int32, device=device)
+        neighbor_matrix = torch.full((2, 1), 2, dtype=torch.int32, device=device)
+        (energy,) = dsf_coulomb(
+            positions,
+            charges,
+            cutoff=6.0,
+            batch_idx=batch_idx,
+            neighbor_matrix=neighbor_matrix,
+            fill_value=2,
+            compute_forces=False,
+            num_systems=2,
+        )
+        weights = torch.tensor([1.7, -0.4], dtype=torch.float64, device=device)
+        (actual,) = torch.autograd.grad(energy, charges, grad_outputs=weights)
+
+        ref = dsf_reference(
+            positions,
+            charges.detach(),
+            cutoff=6.0,
+            alpha=0.2,
+            neighbor_matrix=neighbor_matrix,
+            fill_value=2,
+            batch_idx=batch_idx,
+            num_systems=2,
+            compute_forces=False,
+        )
+        torch.testing.assert_close(
+            actual, ref["charge_grad"] * weights.index_select(0, batch_idx.long())
+        )
+
     def test_energy_differentiable_wrt_charges(self, two_charge_pair):
         """energy.backward() populates charges.grad."""
         positions, charges, nl, ptr = two_charge_pair
