@@ -470,12 +470,15 @@ def _pme_convolve_forward(
     alpha: torch.Tensor,
     volume: torch.Tensor,
     is_batch: bool,
+    is_compiled: bool,
 ) -> torch.Tensor:
     """Run the fused Warp convolve kernel on ``mesh_fft``. No autograd here —
     callers wrap this in ``_PMEFusedConvolve`` for the autograd-aware version.
 
     ``moduli_x/y/z`` are precomputed 1D B-spline modulus LUTs
     (``sinc(m/N)^spline_order`` per axis); see ``compute_bspline_moduli_1d``.
+    ``is_compiled`` is registered-autograd metadata and does not affect the
+    numerical forward.
     """
     from nvalchemiops.interactions.electrostatics.pme_kernels import (
         batch_pme_convolve as _batch_pme_convolve,
@@ -1803,6 +1806,60 @@ def _virial_bg_correction_backward_launch(
     return grad_charges, grad_cell, grad_alpha, grad_virial.clone()
 
 
+def _pme_convolve_backward_args(
+    grad_outputs: tuple[torch.Tensor, ...],
+    forward_inputs: tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        bool,
+        bool,
+    ],
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    bool,
+]:
+    """Order fused-convolve backward inputs with a compiled-only cotangent copy."""
+    (
+        mesh_fft,
+        k_squared,
+        moduli_x,
+        moduli_y,
+        moduli_z,
+        alpha,
+        volume,
+        is_batch,
+        is_compiled,
+    ) = forward_inputs
+    grad_convolved = grad_outputs[0]
+    if is_compiled:
+        # Materialize before the opaque custom-op consumer so Inductor keeps
+        # Hermitian RFFT interior-frequency weighting ahead of it.
+        grad_convolved = grad_convolved * 1.0
+    return (
+        mesh_fft,
+        grad_convolved,
+        k_squared,
+        moduli_x,
+        moduli_y,
+        moduli_z,
+        alpha,
+        volume,
+        is_batch,
+    )
+
+
 def register_pme_ops() -> None:
     """Register PME Torch custom ops once."""
     global _PME_OPS_REGISTERED
@@ -1817,20 +1874,8 @@ def register_pme_ops() -> None:
         backward_fake=_convolve_backward_fake,
         backward_return_arity=4,
         diff_input_positions=(0, 5, 6, 1),
-        n_forward_inputs=8,
-        backward_args=lambda g, f: (
-            f[0],
-            # Materialize the cotangent before the opaque custom-op consumer so
-            # Inductor keeps Hermitian RFFT interior-frequency weighting ahead of it.
-            g[0] * 1.0,
-            f[1],
-            f[2],
-            f[3],
-            f[4],
-            f[5],
-            f[6],
-            f[7],
-        ),
+        n_forward_inputs=9,
+        backward_args=_pme_convolve_backward_args,
         double_backward=_pme_convolve_double_backward,
         double_backward_fake=_convolve_double_backward_fake,
         double_backward_return_arity=5,
@@ -2706,8 +2751,9 @@ def _pme_reciprocal_space_impl(
     #
     # cuFFT emits non-contiguous output; under torch.compile we must copy
     # to match the convolve launcher's stride contract, in eager we don't.
+    is_compiled = torch.compiler.is_compiling()
     mesh_fft = torch.fft.rfftn(mesh_grid, norm="backward", dim=fft_dims)
-    if torch.compiler.is_compiling():
+    if is_compiled:
         mesh_fft = mesh_fft.contiguous()
     need_virial_output = compute_virial or cache_virial
     mesh_fft_raw = mesh_fft if need_virial_output else None
@@ -2721,6 +2767,7 @@ def _pme_reciprocal_space_impl(
         alpha_gsf,
         volume,
         is_batch,
+        is_compiled,
     )
     potential_mesh = torch.fft.irfftn(
         convolved_mesh, norm="forward", s=mesh_dimensions, dim=fft_dims

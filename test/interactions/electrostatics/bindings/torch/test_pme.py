@@ -45,6 +45,7 @@ from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
     generate_k_vectors_pme,
 )
 from nvalchemiops.torch.interactions.electrostatics.pme import (
+    _pme_convolve_backward_args,
     _pme_reciprocal_space_impl,
     _prepare_alpha,
     pme_energy_corrections,
@@ -4083,6 +4084,36 @@ class TestPMEVirialTorchPMEParity:
 
 class TestPMETorchCompile:
     """Verify that PME functions work correctly under torch.compile."""
+
+    @pytest.mark.parametrize("dtype", [torch.complex64, torch.complex128])
+    def test_convolve_backward_args_materializes_only_compiled_cotangent(self, dtype):
+        """Eager routing preserves its cotangent while compiled routing clones it."""
+        cotangent = torch.arange(24, dtype=torch.float64).reshape(2, 3, 4).to(dtype)
+        forward_inputs = tuple(
+            torch.full((1,), index, dtype=torch.float64) for index in range(8)
+        )
+
+        eager_args = _pme_convolve_backward_args(
+            (cotangent,),
+            (*forward_inputs, False),
+        )
+        compiled_args = _pme_convolve_backward_args(
+            (cotangent,),
+            (*forward_inputs, True),
+        )
+
+        assert len(eager_args) == len(compiled_args) == 9
+        assert eager_args[0] is compiled_args[0] is forward_inputs[0]
+        for index, forward_input in enumerate(forward_inputs[1:], start=2):
+            assert eager_args[index] is compiled_args[index] is forward_input
+
+        assert eager_args[1] is cotangent
+        assert compiled_args[1] is not cotangent
+        torch.testing.assert_close(compiled_args[1], cotangent, rtol=0.0, atol=0.0)
+        assert (
+            compiled_args[1].untyped_storage().data_ptr()
+            != cotangent.untyped_storage().data_ptr()
+        )
 
     @pytest.mark.parametrize(
         "device",
