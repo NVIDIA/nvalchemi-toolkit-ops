@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+from importlib import import_module
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -31,6 +33,8 @@ from .conftest import (
 )
 
 pytestmark = requires_gpu
+
+dual_module = import_module("nvalchemiops.jax.neighbors.batch_naive_dual_cutoff")
 
 
 def _active_neighbor_shift_rows(
@@ -457,3 +461,53 @@ class TestBatchNaiveDualCutoffSelectiveRebuildFlags:
             assert _active_neighbor_shift_rows(
                 out_nm2, out_shifts2, ref_nn2, atom_index
             ) == _active_neighbor_shift_rows(ref_nm2, ref_shifts2, ref_nn2, atom_index)
+
+
+class TestRegistrationLaziness:
+    """Regression tests for lazy direct batched dual-cutoff registry construction."""
+
+    @staticmethod
+    def _direct_registrations():
+        """Return every direct batched dual-cutoff lazy registration."""
+        return tuple(dual_module._DIRECT_BATCH_NAIVE_DUAL_KERNELS.values())
+
+    @pytest.fixture(autouse=True)
+    def _restore_direct_caches(self):
+        """Restore process-global direct caches after each laziness test."""
+        snapshots = [
+            (registration, dict(registration._cache))
+            for registration in self._direct_registrations()
+        ]
+        try:
+            yield
+        finally:
+            for registration, cache in snapshots:
+                registration._cache.clear()
+                registration._cache.update(cache)
+
+    def _clear_direct_caches(self) -> None:
+        """Clear lazy direct batched dual-cutoff wrapper caches before each check."""
+        for registration in self._direct_registrations():
+            registration._cache.clear()
+
+    def test_direct_no_pbc_caches_one_wrapper(self) -> None:
+        """Direct scalar no-PBC should register exactly one dtype wrapper."""
+        self._clear_direct_caches()
+        positions = jnp.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=jnp.float32)
+        batch_idx = jnp.array([0, 0], dtype=jnp.int32)
+        batch_naive_neighbor_list_dual_cutoff(
+            positions,
+            0.75,
+            1.0,
+            batch_idx=batch_idx,
+            max_neighbors1=4,
+            max_neighbors2=4,
+        )
+
+        assert (
+            len(dual_module._DIRECT_BATCH_NAIVE_DUAL_KERNELS[("none", False)]._cache)
+            == 1
+        )
+        for key, registration in dual_module._DIRECT_BATCH_NAIVE_DUAL_KERNELS.items():
+            if key != ("none", False):
+                assert len(registration._cache) == 0
