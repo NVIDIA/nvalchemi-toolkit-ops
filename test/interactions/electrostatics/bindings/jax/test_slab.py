@@ -1520,3 +1520,121 @@ class TestJaxPMESlabIntegration:
         _assert_close(slab_outputs[1][3:], jnp.zeros_like(slab_outputs[1][3:]))
         _assert_close(slab_outputs[2][3:], jnp.zeros_like(slab_outputs[2][3:]))
         _assert_close(slab_outputs[3][1], jnp.zeros_like(slab_outputs[3][1]))
+
+
+class TestSlabEnergyReduction:
+    """Tests for the ``energy_reduction`` public atom/system layout option."""
+
+    def test_invalid_energy_reduction_raises(self, device):
+        """compute_slab_correction rejects an unsupported energy_reduction value."""
+        positions, charges, cell, pbc = _make_slab_system()
+
+        with pytest.raises(ValueError, match="energy_reduction"):
+            compute_slab_correction(
+                positions, charges, cell, pbc, energy_reduction="bogus"
+            )
+
+    def test_system_reduction_single_system_shape_and_value(self, device):
+        """System reduction returns shape (1,) equal to the atom-mode sum."""
+        positions, charges, cell, pbc = _make_slab_system()
+
+        atom_energies = compute_slab_correction(positions, charges, cell, pbc)
+        system_energies = compute_slab_correction(
+            positions, charges, cell, pbc, energy_reduction="system"
+        )
+
+        assert system_energies.shape == (1,)
+        assert jnp.allclose(system_energies, atom_energies.sum(keepdims=True))
+
+    def test_system_reduction_batched_matches_manual_scatter(self, device):
+        """Batched system reduction matches a manual per-system scatter-sum."""
+        positions, charges, cell, batch_idx, pbc = _make_batched_system()
+
+        atom_energies = compute_slab_correction(
+            positions, charges, cell, pbc, batch_idx=batch_idx
+        )
+        system_energies = compute_slab_correction(
+            positions,
+            charges,
+            cell,
+            pbc,
+            batch_idx=batch_idx,
+            energy_reduction="system",
+        )
+
+        expected = (
+            jnp.zeros((2,), dtype=atom_energies.dtype).at[batch_idx].add(atom_energies)
+        )
+        assert system_energies.shape == (2,)
+        assert jnp.allclose(system_energies, expected)
+
+    def test_system_reduction_gradients_match_atom_mode(self, device):
+        """Position gradients are identical whether summed pre- or post-scatter."""
+        positions, charges, cell, pbc = _make_slab_system()
+
+        def atom_loss(pos):
+            return compute_slab_correction(pos, charges, cell, pbc).sum()
+
+        def system_loss(pos):
+            return compute_slab_correction(
+                pos, charges, cell, pbc, energy_reduction="system"
+            ).sum()
+
+        grad_atom = jax.grad(atom_loss)(positions)
+        grad_system = jax.grad(system_loss)(positions)
+        assert jnp.allclose(grad_atom, grad_system, rtol=1e-10, atol=1e-12)
+
+    def test_direct_tuple_only_energy_changes(self, device):
+        """Direct-output tuples keep atom-layout forces; only energy reduces."""
+        positions, charges, cell, pbc = _make_slab_system()
+
+        atom_energies, atom_forces, atom_charge_grads, atom_virial = (
+            compute_slab_correction(
+                positions,
+                charges,
+                cell,
+                pbc,
+                compute_forces=True,
+                compute_charge_gradients=True,
+                compute_virial=True,
+            )
+        )
+        (
+            system_energies,
+            system_forces,
+            system_charge_grads,
+            system_virial,
+        ) = compute_slab_correction(
+            positions,
+            charges,
+            cell,
+            pbc,
+            compute_forces=True,
+            compute_charge_gradients=True,
+            compute_virial=True,
+            energy_reduction="system",
+        )
+
+        assert system_energies.shape == (1,)
+        assert jnp.allclose(system_energies, atom_energies.sum(keepdims=True))
+        assert jnp.allclose(system_forces, atom_forces)
+        assert jnp.allclose(system_charge_grads, atom_charge_grads)
+        assert jnp.allclose(system_virial, atom_virial)
+
+    def test_energy_reduction_under_jit(self, device):
+        """energy_reduction is usable as a static string under jax.jit."""
+        positions, charges, cell, pbc = _make_slab_system()
+
+        jitted = jax.jit(
+            lambda pos, chg, cell_in, pbc_in, reduction: compute_slab_correction(
+                pos, chg, cell_in, pbc_in, energy_reduction=reduction
+            ),
+            static_argnames=("reduction",),
+        )
+
+        atom_energies = jitted(positions, charges, cell, pbc, "atom")
+        system_energies = jitted(positions, charges, cell, pbc, "system")
+
+        assert atom_energies.shape == (3,)
+        assert system_energies.shape == (1,)
+        assert jnp.allclose(system_energies, atom_energies.sum(keepdims=True))

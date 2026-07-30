@@ -46,6 +46,7 @@ from nvalchemiops.torch.interactions.electrostatics import (
 from nvalchemiops.torch.interactions.electrostatics import (
     pme_reciprocal_space as _pme_reciprocal_space,
 )
+from nvalchemiops.torch.interactions.electrostatics._slab_chain import register_slab_ops
 from nvalchemiops.torch.interactions.electrostatics.ewald import (
     ewald_summation as _ewald_summation,
 )
@@ -76,6 +77,17 @@ SLAB_CHARGE_GRAD_RTOL = 2e-7
 SLAB_CHARGE_GRAD_ATOL = 5e-8
 PME_SLAB_GRADCHECK_RTOL = 1e-6
 PME_SLAB_GRADCHECK_ATOL = 1e-9
+
+
+def test_slab_registered_energy_schema_keeps_five_inputs():
+    """The established atom-major torch.library op remains schema-compatible."""
+    register_slab_ops()
+
+    assert str(torch.ops.nvalchemiops.slab_correction_energy.default._schema) == (
+        "nvalchemiops::slab_correction_energy("
+        "Tensor positions, Tensor charges, Tensor cell, Tensor pbc, Tensor batch_idx"
+        ") -> Tensor"
+    )
 
 
 def _call_without_direct_output_deprecation(api_name, api, *args, **kwargs):
@@ -159,6 +171,51 @@ def _make_cscl_slab_system(dtype=torch.float64, device="cpu"):
     ).unsqueeze(0)  # (1, 3, 3)
     pbc = torch.tensor([True, True, False], device=device)  # (3,)
     return positions, charges, cell, pbc
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_slab_system_energy_weighted_gradient_and_tuple_layout(device):
+    """Slab facade keeps system cotangents and only reduces tuple energy."""
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+    pos, charge, cell, _pbc = _make_cscl_slab_system(device=device)
+    positions = torch.cat([pos, pos + torch.tensor([0.2, 0.1, 0.3], device=device)])
+    charges = torch.cat([charge, charge * 0.7])
+    cells = cell.repeat(2, 1, 1)
+    pbc = torch.tensor([[True, True, False], [True, True, False]], device=device)
+    batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+
+    pos_atom = positions.clone().requires_grad_(True)
+    atom_energy = compute_slab_correction(
+        pos_atom, charges, cells, pbc, batch_idx=batch_idx
+    )
+    pos_system = positions.clone().requires_grad_(True)
+    system_energy, forces = compute_slab_correction(
+        pos_system,
+        charges,
+        cells,
+        pbc,
+        batch_idx=batch_idx,
+        compute_forces=True,
+        energy_reduction="system",
+    )
+    expected = torch.zeros(2, dtype=atom_energy.dtype, device=device).index_add(
+        0, batch_idx.long(), atom_energy
+    )
+    weights = torch.tensor([1.3, -0.6], dtype=torch.float64, device=device)
+
+    assert system_energy.shape == (2,)
+    assert forces.shape == (4, 3)
+    torch.testing.assert_close(system_energy, expected)
+    grad_atom = torch.autograd.grad(
+        atom_energy,
+        pos_atom,
+        grad_outputs=weights.index_select(0, batch_idx.long()),
+    )[0]
+    grad_system = torch.autograd.grad(system_energy, pos_system, grad_outputs=weights)[
+        0
+    ]
+    torch.testing.assert_close(grad_system, grad_atom, rtol=2e-7, atol=2e-8)
 
 
 def _make_triclinic_slab_system(dtype=torch.float64, device="cpu"):
