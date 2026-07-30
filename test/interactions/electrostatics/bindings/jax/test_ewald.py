@@ -2532,3 +2532,379 @@ class TestEwaldVirialJIT:
         energies, virial = result
         assert virial.shape == (1, 3, 3)
         assert jnp.all(jnp.isfinite(virial))
+
+
+class TestEwaldEnergyReduction:
+    """Tests for the ``energy_reduction`` public atom/system layout option."""
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda positions, charges, cell, nm, nms: ewald_real_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=0.3,
+                neighbor_matrix=nm,
+                neighbor_matrix_shifts=nms,
+                energy_reduction="bogus",
+            ),
+            lambda positions, charges, cell, nm, nms: ewald_reciprocal_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                k_vectors=generate_k_vectors_ewald_summation(cell, k_cutoff=8.0),
+                alpha=0.3,
+                energy_reduction="bogus",
+            ),
+            lambda positions, charges, cell, nm, nms: ewald_summation(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=0.3,
+                k_cutoff=8.0,
+                neighbor_matrix=nm,
+                neighbor_matrix_shifts=nms,
+                energy_reduction="bogus",
+            ),
+        ],
+        ids=["real_space", "reciprocal_space", "summation"],
+    )
+    def test_invalid_energy_reduction_raises(self, device, call):
+        """An unsupported energy_reduction value raises ValueError early."""
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            _num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system()
+
+        with pytest.raises(ValueError, match="energy_reduction"):
+            call(positions, charges, cell, neighbor_matrix, neighbor_matrix_shifts)
+
+    def test_real_space_system_reduction_single_system_shape_and_value(self, device):
+        """System reduction returns shape (1,) equal to the atom-mode sum."""
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            _num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system()
+
+        atom_energies = ewald_real_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=0.3,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+        )
+        system_energies = ewald_real_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=0.3,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            energy_reduction="system",
+        )
+
+        assert system_energies.shape == (1,)
+        assert jnp.allclose(system_energies, atom_energies.sum(keepdims=True))
+
+    def test_reciprocal_space_system_reduction_batched_matches_manual_scatter(
+        self, device
+    ):
+        """Batched system reduction matches a manual per-system scatter-sum."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+            ],
+            dtype=jnp.float64,
+        )
+        charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
+        cell_single = cubic_cell_jax(10.0, dtype=jnp.float64)
+        cell = jnp.concatenate([cell_single, cell_single], axis=0)
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        alpha = jnp.array([0.3, 0.3])
+        k_vectors = generate_k_vectors_ewald_summation(cell_single, k_cutoff=8.0)
+
+        atom_energies = ewald_reciprocal_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            k_vectors=k_vectors,
+            alpha=alpha,
+            batch_idx=batch_idx,
+        )
+        system_energies = ewald_reciprocal_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            k_vectors=k_vectors,
+            alpha=alpha,
+            batch_idx=batch_idx,
+            energy_reduction="system",
+        )
+
+        expected = (
+            jnp.zeros((2,), dtype=atom_energies.dtype).at[batch_idx].add(atom_energies)
+        )
+        assert system_energies.shape == (2,)
+        assert jnp.allclose(system_energies, expected)
+
+    def test_summation_system_reduction_batched_matches_manual_scatter(self, device):
+        """Full Ewald summation system reduction matches manual scatter-sum."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+            ],
+            dtype=jnp.float64,
+        )
+        charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
+        cell_single = cubic_cell_jax(10.0, dtype=jnp.float64)
+        cell = jnp.concatenate([cell_single, cell_single], axis=0)
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+        pbc = jnp.array([[True, True, True], [True, True, True]])
+        neighbor_matrix, _num_neighbors, neighbor_matrix_shifts = batch_cell_list(
+            positions,
+            5.0,
+            cell,
+            pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=32,
+        )
+
+        atom_energies = ewald_summation(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=jnp.array([0.3, 0.3]),
+            k_cutoff=8.0,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            batch_idx=batch_idx,
+        )
+        system_energies = ewald_summation(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=jnp.array([0.3, 0.3]),
+            k_cutoff=8.0,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            batch_idx=batch_idx,
+            energy_reduction="system",
+        )
+
+        expected = (
+            jnp.zeros((2,), dtype=atom_energies.dtype).at[batch_idx].add(atom_energies)
+        )
+        assert system_energies.shape == (2,)
+        assert jnp.allclose(system_energies, expected)
+
+    def test_summation_system_reduction_with_slab_correction(self, device):
+        """System reduction composes with the slab-correction energy path."""
+        positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
+        charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
+        cell = cubic_cell_jax(10.0, dtype=jnp.float64)
+        pbc = jnp.array([[True, True, False]])
+        neighbor_matrix, _num_neighbors, neighbor_matrix_shifts = cell_list(
+            positions, 5.0, cell, pbc
+        )
+
+        atom_energies = ewald_summation(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=0.3,
+            k_cutoff=8.0,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            pbc=pbc,
+            slab_correction=True,
+        )
+        system_energies = ewald_summation(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=0.3,
+            k_cutoff=8.0,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            pbc=pbc,
+            slab_correction=True,
+            energy_reduction="system",
+        )
+
+        assert system_energies.shape == (1,)
+        assert jnp.allclose(system_energies, atom_energies.sum(keepdims=True))
+
+    def test_real_space_system_reduction_gradients_match_atom_mode(self, device):
+        """Position gradients are identical whether summed pre- or post-scatter."""
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            _num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system()
+
+        def atom_loss(pos):
+            return ewald_real_space(
+                positions=pos,
+                charges=charges,
+                cell=cell,
+                alpha=0.3,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+            ).sum()
+
+        def system_loss(pos):
+            return ewald_real_space(
+                positions=pos,
+                charges=charges,
+                cell=cell,
+                alpha=0.3,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                energy_reduction="system",
+            ).sum()
+
+        grad_atom = jax.grad(atom_loss)(positions)
+        grad_system = jax.grad(system_loss)(positions)
+        assert jnp.allclose(grad_atom, grad_system, rtol=1e-10, atol=1e-12)
+
+    def test_real_space_system_reduction_direct_tuple_only_energy_changes(self, device):
+        """Direct-output tuples keep atom-layout forces; only energy reduces."""
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            _num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system()
+
+        atom_energies, atom_forces = ewald_real_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=0.3,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            compute_forces=True,
+        )
+        system_energies, system_forces = ewald_real_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=0.3,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            compute_forces=True,
+            energy_reduction="system",
+        )
+
+        assert system_energies.shape == (1,)
+        assert jnp.allclose(system_energies, atom_energies.sum(keepdims=True))
+        assert system_forces.shape == atom_forces.shape
+        assert jnp.allclose(system_forces, atom_forces)
+
+    def test_summation_direct_output_tuple_energy_reduced_others_unchanged(
+        self, device
+    ):
+        """ewald_summation's deprecated direct-output tuple also reduces only energy."""
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            _num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system()
+
+        with pytest.warns(DeprecationWarning):
+            atom_out = ewald_summation(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=0.3,
+                k_cutoff=8.0,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                compute_forces=True,
+                compute_charge_gradients=True,
+                compute_virial=True,
+            )
+        with pytest.warns(DeprecationWarning):
+            system_out = ewald_summation(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=0.3,
+                k_cutoff=8.0,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                compute_forces=True,
+                compute_charge_gradients=True,
+                compute_virial=True,
+                energy_reduction="system",
+            )
+
+        atom_energies, atom_forces, atom_charge_grads, atom_virial = atom_out
+        system_energies, system_forces, system_charge_grads, system_virial = system_out
+
+        assert system_energies.shape == (1,)
+        assert jnp.allclose(system_energies, atom_energies.sum(keepdims=True))
+        assert jnp.allclose(system_forces, atom_forces)
+        assert jnp.allclose(system_charge_grads, atom_charge_grads)
+        assert jnp.allclose(system_virial, atom_virial)
+
+    def test_real_space_energy_reduction_under_jit(self, device):
+        """energy_reduction is usable as a static string under jax.jit."""
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            _num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system()
+
+        jitted = jax.jit(
+            lambda pos, chg, cell, nm, nms, reduction: ewald_real_space(
+                positions=pos,
+                charges=chg,
+                cell=cell,
+                alpha=0.3,
+                neighbor_matrix=nm,
+                neighbor_matrix_shifts=nms,
+                energy_reduction=reduction,
+            ),
+            static_argnames=("reduction",),
+        )
+
+        atom_energies = jitted(
+            positions, charges, cell, neighbor_matrix, neighbor_matrix_shifts, "atom"
+        )
+        system_energies = jitted(
+            positions, charges, cell, neighbor_matrix, neighbor_matrix_shifts, "system"
+        )
+
+        assert atom_energies.shape == (2,)
+        assert system_energies.shape == (1,)
+        assert jnp.allclose(system_energies, atom_energies.sum(keepdims=True))

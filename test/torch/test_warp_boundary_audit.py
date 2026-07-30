@@ -233,8 +233,9 @@ APPROVED_RAW_WARP_FUNCTIONS = {
     "nvalchemiops/torch/interactions/electrostatics/_slab_chain.py::_run_moments",
     "nvalchemiops/torch/interactions/electrostatics/_slab_chain.py::_scoped_stream",
     "nvalchemiops/torch/interactions/electrostatics/_slab_chain.py::_slab_backward_values",
-    "nvalchemiops/torch/interactions/electrostatics/_slab_chain.py::_slab_double_backward_launch",
-    "nvalchemiops/torch/interactions/electrostatics/_slab_chain.py::_slab_forward_launch",
+    # Shared runtime bodies for the registered atom- and system-layout op chains.
+    "nvalchemiops/torch/interactions/electrostatics/_slab_chain.py::_slab_double_backward_layout",
+    "nvalchemiops/torch/interactions/electrostatics/_slab_chain.py::_slab_forward_layout",
     "nvalchemiops/torch/interactions/electrostatics/_slab_chain.py::_slab_weighted_backward_values",
     "nvalchemiops/torch/interactions/electrostatics/_slab_chain.py::_slab_weighted_double_backward_values",
     "nvalchemiops/torch/interactions/electrostatics/_slab_chain.py::_wp_from_torch",

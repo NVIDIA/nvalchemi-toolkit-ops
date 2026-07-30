@@ -24,13 +24,15 @@ import warp as wp
 
 from nvalchemiops.torch._warp_op_helpers import register_warp_op_chain
 from nvalchemiops.torch.interactions.electrostatics._util import (
-    _is_sync_free_uniform_cotangent,
+    _is_per_system_uniform_cotangent,
+    _reduce_atom_energy,
 )
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 __all__ = ["register_slab_ops", "slab_correction_energy"]
 
 _SLAB_CHAIN: dict[str, object] | None = None
+_SLAB_SYSTEM_CHAIN: dict[str, object] | None = None
 _SLAB_OPS_REGISTERED = False
 
 
@@ -70,23 +72,7 @@ def _cotangent_per_system_uniform(
     num_systems: int,
 ) -> bool:
     """Whether the per-atom energy cotangent is constant within each system."""
-    if _is_sync_free_uniform_cotangent(grad_energy_atom):
-        return True
-    g = grad_energy_atom.reshape(-1)
-    if g.numel() == 0:
-        return True
-    if g.numel() == 1 or g.numel() == num_systems:
-        return True
-    if g.numel() != batch_idx.numel():
-        return False
-    if g.is_cuda:
-        return False
-    idx = batch_idx.to(device=g.device, dtype=torch.long)
-    g64 = g.to(torch.float64)
-    sys_max = torch.full(
-        (num_systems,), float("-inf"), dtype=torch.float64, device=g.device
-    ).scatter_reduce(0, idx, g64, reduce="amax", include_self=False)
-    return bool(torch.all(g64 == sys_max.index_select(0, idx)).item())
+    return _is_per_system_uniform_cotangent(grad_energy_atom, batch_idx, num_systems)
 
 
 def _distribute_system_values(
@@ -391,12 +377,13 @@ def _slab_weighted_double_backward_values(
     return grad_grad_energy, grad_positions, grad_charges, grad_cell
 
 
-def _slab_forward_launch(
+def _slab_forward_layout(
     positions: torch.Tensor,
     charges: torch.Tensor,
     cell: torch.Tensor,
     pbc: torch.Tensor,
     batch_idx: torch.Tensor,
+    system_energy: bool,
 ) -> torch.Tensor:
     from nvalchemiops.interactions.electrostatics.slab_kernels import (
         _launch_slab_correction,
@@ -405,7 +392,11 @@ def _slab_forward_launch(
     num_atoms = positions.shape[0]
     energies = torch.zeros(num_atoms, device=positions.device, dtype=torch.float64)
     if num_atoms == 0:
-        return energies
+        return (
+            _reduce_atom_energy(energies, batch_idx, cell.shape[0])
+            if system_energy
+            else energies
+        )
 
     mz, mz2, qtotal = _run_moments(positions, charges, cell, pbc, batch_idx)
     slab_axis, slab_normal, slab_volume, slab_height_sq = _run_geometry(
@@ -434,17 +425,29 @@ def _slab_forward_launch(
             wp_dtype=wp_dtype,
             device=device,
         )
+    if system_energy:
+        return _reduce_atom_energy(energies, batch_idx, cell.shape[0])
     return energies
 
 
-def _slab_backward_launch(
+def _slab_backward_layout(
     grad_energy: torch.Tensor,
     positions: torch.Tensor,
     charges: torch.Tensor,
     cell: torch.Tensor,
     pbc: torch.Tensor,
     batch_idx: torch.Tensor,
+    system_energy: bool,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if system_energy:
+        return _slab_backward_values(
+            positions,
+            charges,
+            cell,
+            pbc,
+            batch_idx,
+            grad_energy.reshape(-1).to(torch.float64),
+        )
     if not _cotangent_per_system_uniform(grad_energy, batch_idx, cell.shape[0]):
         return _slab_weighted_backward_values(
             positions,
@@ -458,7 +461,7 @@ def _slab_backward_launch(
     return _slab_backward_values(positions, charges, cell, pbc, batch_idx, grad_system)
 
 
-def _slab_double_backward_launch(
+def _slab_double_backward_layout(
     h_pos: torch.Tensor,
     h_charge: torch.Tensor,
     h_cell: torch.Tensor,
@@ -468,8 +471,11 @@ def _slab_double_backward_launch(
     cell: torch.Tensor,
     pbc: torch.Tensor,
     batch_idx: torch.Tensor,
+    system_energy: bool,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    if not _cotangent_per_system_uniform(grad_energy, batch_idx, cell.shape[0]):
+    if not system_energy and not _cotangent_per_system_uniform(
+        grad_energy, batch_idx, cell.shape[0]
+    ):
         return _slab_weighted_double_backward_values(
             h_pos,
             h_charge,
@@ -484,7 +490,11 @@ def _slab_double_backward_launch(
 
     num_atoms = positions.shape[0]
     num_systems = cell.shape[0]
-    grad_system = _per_system_cotangent(grad_energy, batch_idx, num_systems)
+    grad_system = (
+        grad_energy.reshape(-1).to(torch.float64)
+        if system_energy
+        else _per_system_cotangent(grad_energy, batch_idx, num_systems)
+    )
     ones_system = torch.ones(num_systems, device=positions.device, dtype=torch.float64)
 
     base_pos, base_q, base_cell = _slab_backward_values(
@@ -502,7 +512,11 @@ def _slab_double_backward_launch(
     system_dot = system_dot + (
         base_cell.to(torch.float64) * h_cell.to(torch.float64)
     ).sum(dim=(1, 2))
-    grad_grad_energy = _distribute_system_values(system_dot, batch_idx, num_atoms)
+    grad_grad_energy = (
+        system_dot
+        if system_energy
+        else _distribute_system_values(system_dot, batch_idx, num_atoms)
+    )
 
     grad_positions = torch.zeros_like(positions)
     grad_charges = torch.zeros(num_atoms, device=positions.device, dtype=torch.float64)
@@ -566,26 +580,29 @@ def _slab_double_backward_launch(
     return grad_grad_energy, grad_positions, grad_charges, grad_cell
 
 
-def _slab_forward_fake(
+def _slab_forward_fake_layout(
     positions: torch.Tensor,
     charges: torch.Tensor,
     cell: torch.Tensor,
     pbc: torch.Tensor,
     batch_idx: torch.Tensor,
+    system_energy: bool,
 ) -> torch.Tensor:
-    del charges, cell, pbc, batch_idx
-    return torch.empty(positions.shape[0], device=positions.device, dtype=torch.float64)
+    del charges, pbc, batch_idx
+    size = cell.shape[0] if system_energy else positions.shape[0]
+    return torch.empty(size, device=positions.device, dtype=torch.float64)
 
 
-def _slab_backward_fake(
+def _slab_backward_fake_layout(
     grad_energy: torch.Tensor,
     positions: torch.Tensor,
     charges: torch.Tensor,
     cell: torch.Tensor,
     pbc: torch.Tensor,
     batch_idx: torch.Tensor,
+    system_energy: bool,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    del grad_energy, charges, pbc, batch_idx
+    del grad_energy, charges, pbc, batch_idx, system_energy
     return (
         torch.empty_like(positions),
         torch.empty(positions.shape[0], device=positions.device, dtype=torch.float64),
@@ -593,7 +610,83 @@ def _slab_backward_fake(
     )
 
 
-def _slab_double_backward_fake(
+def _slab_double_backward_fake_layout(
+    h_pos: torch.Tensor,
+    h_charge: torch.Tensor,
+    h_cell: torch.Tensor,
+    grad_energy: torch.Tensor,
+    positions: torch.Tensor,
+    charges: torch.Tensor,
+    cell: torch.Tensor,
+    pbc: torch.Tensor,
+    batch_idx: torch.Tensor,
+    system_energy: bool,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    del h_pos, h_charge, h_cell, grad_energy, charges, pbc, batch_idx
+    energy_size = cell.shape[0] if system_energy else positions.shape[0]
+    return (
+        torch.empty(energy_size, device=positions.device, dtype=torch.float64),
+        torch.empty_like(positions),
+        torch.empty(positions.shape[0], device=positions.device, dtype=torch.float64),
+        torch.empty_like(cell),
+    )
+
+
+def _slab_forward_launch(
+    positions: torch.Tensor,
+    charges: torch.Tensor,
+    cell: torch.Tensor,
+    pbc: torch.Tensor,
+    batch_idx: torch.Tensor,
+) -> torch.Tensor:
+    """Run the established atom-major five-input forward op."""
+    return _slab_forward_layout(
+        positions, charges, cell, pbc, batch_idx, system_energy=False
+    )
+
+
+def _slab_system_forward_launch(
+    positions: torch.Tensor,
+    charges: torch.Tensor,
+    cell: torch.Tensor,
+    pbc: torch.Tensor,
+    batch_idx: torch.Tensor,
+) -> torch.Tensor:
+    """Run the internal system-major five-input forward op."""
+    return _slab_forward_layout(
+        positions, charges, cell, pbc, batch_idx, system_energy=True
+    )
+
+
+def _slab_backward_launch(
+    grad_energy: torch.Tensor,
+    positions: torch.Tensor,
+    charges: torch.Tensor,
+    cell: torch.Tensor,
+    pbc: torch.Tensor,
+    batch_idx: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Run the established atom-major backward op."""
+    return _slab_backward_layout(
+        grad_energy, positions, charges, cell, pbc, batch_idx, system_energy=False
+    )
+
+
+def _slab_system_backward_launch(
+    grad_energy: torch.Tensor,
+    positions: torch.Tensor,
+    charges: torch.Tensor,
+    cell: torch.Tensor,
+    pbc: torch.Tensor,
+    batch_idx: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Run the internal system-major backward op."""
+    return _slab_backward_layout(
+        grad_energy, positions, charges, cell, pbc, batch_idx, system_energy=True
+    )
+
+
+def _slab_double_backward_launch(
     h_pos: torch.Tensor,
     h_charge: torch.Tensor,
     h_cell: torch.Tensor,
@@ -604,18 +697,130 @@ def _slab_double_backward_fake(
     pbc: torch.Tensor,
     batch_idx: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    del h_pos, h_charge, h_cell, grad_energy, charges, pbc, batch_idx
-    return (
-        torch.empty(positions.shape[0], device=positions.device, dtype=torch.float64),
-        torch.empty_like(positions),
-        torch.empty(positions.shape[0], device=positions.device, dtype=torch.float64),
-        torch.empty_like(cell),
+    """Run the established atom-major double-backward op."""
+    return _slab_double_backward_layout(
+        h_pos,
+        h_charge,
+        h_cell,
+        grad_energy,
+        positions,
+        charges,
+        cell,
+        pbc,
+        batch_idx,
+        system_energy=False,
+    )
+
+
+def _slab_system_double_backward_launch(
+    h_pos: torch.Tensor,
+    h_charge: torch.Tensor,
+    h_cell: torch.Tensor,
+    grad_energy: torch.Tensor,
+    positions: torch.Tensor,
+    charges: torch.Tensor,
+    cell: torch.Tensor,
+    pbc: torch.Tensor,
+    batch_idx: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Run the internal system-major double-backward op."""
+    return _slab_double_backward_layout(
+        h_pos,
+        h_charge,
+        h_cell,
+        grad_energy,
+        positions,
+        charges,
+        cell,
+        pbc,
+        batch_idx,
+        system_energy=True,
+    )
+
+
+def _slab_forward_fake(positions, charges, cell, pbc, batch_idx):
+    """Fake atom-major forward output."""
+    return _slab_forward_fake_layout(
+        positions, charges, cell, pbc, batch_idx, system_energy=False
+    )
+
+
+def _slab_system_forward_fake(positions, charges, cell, pbc, batch_idx):
+    """Fake system-major forward output."""
+    return _slab_forward_fake_layout(
+        positions, charges, cell, pbc, batch_idx, system_energy=True
+    )
+
+
+def _slab_backward_fake(grad_energy, positions, charges, cell, pbc, batch_idx):
+    """Fake atom-major backward outputs."""
+    return _slab_backward_fake_layout(
+        grad_energy, positions, charges, cell, pbc, batch_idx, system_energy=False
+    )
+
+
+def _slab_system_backward_fake(grad_energy, positions, charges, cell, pbc, batch_idx):
+    """Fake system-major backward outputs."""
+    return _slab_backward_fake_layout(
+        grad_energy, positions, charges, cell, pbc, batch_idx, system_energy=True
+    )
+
+
+def _slab_double_backward_fake(
+    h_pos,
+    h_charge,
+    h_cell,
+    grad_energy,
+    positions,
+    charges,
+    cell,
+    pbc,
+    batch_idx,
+):
+    """Fake atom-major double-backward outputs."""
+    return _slab_double_backward_fake_layout(
+        h_pos,
+        h_charge,
+        h_cell,
+        grad_energy,
+        positions,
+        charges,
+        cell,
+        pbc,
+        batch_idx,
+        system_energy=False,
+    )
+
+
+def _slab_system_double_backward_fake(
+    h_pos,
+    h_charge,
+    h_cell,
+    grad_energy,
+    positions,
+    charges,
+    cell,
+    pbc,
+    batch_idx,
+):
+    """Fake system-major double-backward outputs."""
+    return _slab_double_backward_fake_layout(
+        h_pos,
+        h_charge,
+        h_cell,
+        grad_energy,
+        positions,
+        charges,
+        cell,
+        pbc,
+        batch_idx,
+        system_energy=True,
     )
 
 
 def register_slab_ops() -> None:
     """Register the slab-correction Torch custom-op chain once."""
-    global _SLAB_CHAIN, _SLAB_OPS_REGISTERED
+    global _SLAB_CHAIN, _SLAB_OPS_REGISTERED, _SLAB_SYSTEM_CHAIN
     if _SLAB_OPS_REGISTERED:
         return
 
@@ -633,12 +838,34 @@ def register_slab_ops() -> None:
         double_backward_fake=_slab_double_backward_fake,
         double_backward_return_arity=4,
     )
+    _SLAB_SYSTEM_CHAIN = register_warp_op_chain(
+        name="nvalchemiops::slab_correction_system_energy",
+        forward=_slab_system_forward_launch,
+        backward=_slab_system_backward_launch,
+        double_backward=_slab_system_double_backward_launch,
+        diff_input_positions=(0, 1, 2),
+        n_forward_inputs=5,
+        second_order_diff_positions=(0, 1, 2, 3),
+        n_backward_inputs=6,
+        forward_fake=_slab_system_forward_fake,
+        backward_fake=_slab_system_backward_fake,
+        double_backward_fake=_slab_system_double_backward_fake,
+        double_backward_return_arity=4,
+    )
     _SLAB_OPS_REGISTERED = True
 
 
-def slab_correction_energy(*args, **kwargs):
-    """Call the registered slab-correction energy op."""
+def slab_correction_energy(
+    positions,
+    charges,
+    cell,
+    pbc,
+    batch_idx,
+    system_energy=False,
+):
+    """Call the atom- or system-layout registered slab facade."""
     register_slab_ops()
-    if _SLAB_CHAIN is None:
+    chain = _SLAB_SYSTEM_CHAIN if system_energy else _SLAB_CHAIN
+    if chain is None:
         raise RuntimeError("Slab correction op registration failed")
-    return _SLAB_CHAIN["forward"](*args, **kwargs)
+    return chain["forward"](positions, charges, cell, pbc, batch_idx)

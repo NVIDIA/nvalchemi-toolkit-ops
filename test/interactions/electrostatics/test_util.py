@@ -27,6 +27,8 @@ _util = pytest.importorskip("nvalchemiops.torch.interactions.electrostatics._uti
 _InjectChargeGrad = _util._InjectChargeGrad
 _InjectCachedEvalGrad = _util._InjectCachedEvalGrad
 _InjectCachedEvalGradWithFallback = _util._InjectCachedEvalGradWithFallback
+_energy_cotangents = _util._energy_cotangents
+_is_per_system_uniform_cotangent = _util._is_per_system_uniform_cotangent
 _is_uniform_cotangent = _util._is_uniform_cotangent
 
 from test.interactions.electrostatics._deriv_check import (  # noqa: E402
@@ -129,6 +131,10 @@ def test_cached_eval_qR_nonuniform_fallback_uses_partial_derivatives():
         cell_grad_state,
         None,
         fallback_fn,
+        "atom",
+        1,
+        False,
+        False,
     )
 
     out.backward(grad_energy)
@@ -171,6 +177,10 @@ def test_cached_eval_qR_create_graph_second_order():
         cell_grad_state,
         None,
         fallback_fn,
+        "atom",
+        1,
+        False,
+        False,
     )
 
     grad_pos = torch.autograd.grad(out.sum(), positions, create_graph=True)[0]
@@ -221,6 +231,10 @@ def test_cached_eval_qR_create_graph_sibling_positions():
         cell_grad_state,
         None,
         fallback_fn,
+        "atom",
+        1,
+        False,
+        False,
     )
 
     (grad_base,) = torch.autograd.grad(out.sum(), base_positions, create_graph=True)
@@ -275,6 +289,10 @@ def test_cached_eval_qR_create_graph_cell_dependent_charges():
         cell_grad_state,
         None,
         fallback_fn,
+        "atom",
+        1,
+        False,
+        False,
     )
 
     (grad_cell,) = torch.autograd.grad(out.sum(), cell, create_graph=True)
@@ -302,6 +320,10 @@ def test_cached_eval_create_graph_dechains_nested_inputs():
         *states,
         None,
         fallback_fn,
+        "atom",
+        1,
+        False,
+        False,
     )
     (grad_cell,) = torch.autograd.grad(out, cell, create_graph=True)
     (hvp,) = torch.autograd.grad(grad_cell, cell)
@@ -335,6 +357,10 @@ def test_cached_eval_weighted_dechains_nested_inputs():
         *states,
         None,
         fallback_fn,
+        "atom",
+        1,
+        False,
+        False,
     )
     (grad_cell,) = torch.autograd.grad(out, cell, grad_outputs=weights)
 
@@ -363,6 +389,10 @@ def test_cached_eval_releases_fallback_state_after_uniform_backward():
         None,
         None,
         fallback_fn,
+        "atom",
+        1,
+        False,
+        False,
         fallback_state,
     )
     del fallback_state
@@ -395,6 +425,10 @@ def test_cached_eval_releases_fallback_state_after_weighted_backward():
         None,
         None,
         fallback_fn,
+        "atom",
+        1,
+        False,
+        False,
         fallback_state,
     )
     del fallback_state
@@ -427,6 +461,10 @@ def test_cached_eval_retains_fallback_state_until_final_backward():
         None,
         None,
         fallback_fn,
+        "atom",
+        1,
+        False,
+        False,
         fallback_state,
     )
     del fallback_state
@@ -484,12 +522,55 @@ def test_uniform_cotangent_accepts_expanded_scalar(device):
 
 
 @pytest.mark.parametrize("device", _available_devices())
-def test_uniform_cotangent_keeps_cuda_contiguous_constants_conservative(device):
-    """Contiguous CUDA constants require value inspection, so stay on fallback."""
+def test_uniform_cotangent_accepts_eager_contiguous_constants(device):
+    """Eager mode checks materialized CPU and CUDA constants exactly."""
     grad = torch.ones(6, dtype=DT, device=device)
 
-    expected = device == "cpu"
-    assert _is_uniform_cotangent(grad) is expected
+    assert _is_uniform_cotangent(grad)
+
+
+@pytest.mark.parametrize("device", _available_devices())
+def test_energy_cotangents_disambiguate_equal_atom_and_system_lengths(device):
+    """Explicit layout distinguishes N == B when one system has no atoms."""
+    batch_idx = torch.tensor([0, 0], dtype=torch.int32, device=device)
+    grad = torch.tensor([1.0, 2.0], dtype=DT, device=device)
+
+    atom_system, atom_grad = _energy_cotangents(
+        grad,
+        batch_idx,
+        num_atoms=2,
+        num_systems=2,
+        layout="atom",
+    )
+    system_system, system_grad = _energy_cotangents(
+        grad,
+        batch_idx,
+        num_atoms=2,
+        num_systems=2,
+        layout="system",
+    )
+
+    torch.testing.assert_close(
+        atom_system,
+        torch.tensor([1.5, 0.0], dtype=DT, device=device),
+    )
+    torch.testing.assert_close(atom_grad, grad)
+    torch.testing.assert_close(system_system, grad)
+    torch.testing.assert_close(
+        system_grad,
+        torch.tensor([1.0, 1.0], dtype=DT, device=device),
+    )
+
+
+@pytest.mark.parametrize("device", _available_devices())
+def test_partial_empty_batch_atom_uniformity(device):
+    """Atom-mode inspection rejects nonuniform weights when N equals B."""
+    batch_idx = torch.tensor([0, 0], dtype=torch.int32, device=device)
+    nonuniform = torch.tensor([1.0, 2.0], dtype=DT, device=device)
+    uniform = torch.tensor([3.0, 3.0], dtype=DT, device=device)
+
+    assert not _is_per_system_uniform_cotangent(nonuniform, batch_idx, 2)
+    assert _is_per_system_uniform_cotangent(uniform, batch_idx, 2)
 
 
 @pytest.mark.parametrize("device", _available_devices())
@@ -509,8 +590,8 @@ def test_ewald_uniform_predicates_accept_expanded_scalar(device):
 
 
 @pytest.mark.parametrize("device", _available_devices())
-def test_ewald_uniform_predicates_keep_cuda_per_system_constants_conservative(device):
-    """Non-expanded CUDA constants stay exact by using the weighted fallback."""
+def test_ewald_uniform_predicates_accept_eager_per_system_constants(device):
+    """Eager mode recognizes materialized per-system-uniform cotangents exactly."""
     real_chain = pytest.importorskip(
         "nvalchemiops.torch.interactions.electrostatics._ewald_real_chain"
     )
@@ -520,6 +601,5 @@ def test_ewald_uniform_predicates_keep_cuda_per_system_constants_conservative(de
     grad = torch.tensor([2.0, 2.0, 3.0, 3.0], dtype=DT, device=device)
     batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
 
-    expected = device == "cpu"
-    assert real_chain._cotangent_per_system_uniform(grad, batch_idx, 2) is expected
-    assert recip_chain._cotangent_per_system_uniform(grad, batch_idx, 2) is expected
+    assert real_chain._cotangent_per_system_uniform(grad, batch_idx, 2)
+    assert recip_chain._cotangent_per_system_uniform(grad, batch_idx, 2)

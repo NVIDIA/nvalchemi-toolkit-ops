@@ -3598,5 +3598,302 @@ class TestDirectOutputDeprecation:
         assert jnp.all(jnp.isfinite(energy))
 
 
+class TestPMEEnergyReduction:
+    """Tests for the ``energy_reduction`` public atom/system layout option."""
+
+    mesh_dimensions = (16, 16, 16)
+
+    def test_invalid_energy_reduction_raises_reciprocal(self, device):
+        """pme_reciprocal_space rejects an unsupported energy_reduction value."""
+        positions, charges, cell = create_dipole_system()
+
+        with pytest.raises(ValueError, match="energy_reduction"):
+            pme_reciprocal_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=jnp.array([0.3]),
+                mesh_dimensions=self.mesh_dimensions,
+                energy_reduction="bogus",
+            )
+
+    def test_invalid_energy_reduction_raises_full(self, device):
+        """particle_mesh_ewald rejects an unsupported energy_reduction value."""
+        positions, charges, cell = create_dipole_system()
+
+        with pytest.raises(ValueError, match="energy_reduction"):
+            particle_mesh_ewald(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=0.3,
+                mesh_dimensions=self.mesh_dimensions,
+                energy_reduction="bogus",
+            )
+
+    def test_reciprocal_system_reduction_single_system_shape_and_value(self, device):
+        """System reduction returns shape (1,) equal to the atom-mode sum."""
+        positions, charges, cell = create_simple_system(num_atoms=5)
+
+        atom_energies = pme_reciprocal_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=jnp.array([0.3]),
+            mesh_dimensions=self.mesh_dimensions,
+        )
+        system_energies = pme_reciprocal_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=jnp.array([0.3]),
+            mesh_dimensions=self.mesh_dimensions,
+            energy_reduction="system",
+        )
+
+        assert system_energies.shape == (1,)
+        assert jnp.allclose(system_energies, atom_energies.sum(keepdims=True))
+
+    def test_reciprocal_system_reduction_batched_matches_manual_scatter(self, device):
+        """Batched system reduction matches a manual per-system scatter-sum."""
+        positions = jnp.array(
+            [
+                [1.0, 1.0, 1.0],
+                [3.0, 1.0, 1.0],
+                [5.0, 1.0, 1.0],
+                [1.0, 5.0, 5.0],
+                [3.0, 5.0, 5.0],
+                [5.0, 5.0, 5.0],
+                [7.0, 5.0, 5.0],
+            ],
+            dtype=jnp.float64,
+        )
+        charges = jnp.array([1.0, -1.0, 0.0, 0.5, -0.5, 0.5, -0.5], dtype=jnp.float64)
+        batch_idx = jnp.array([0, 0, 0, 1, 1, 1, 1], dtype=jnp.int32)
+        cells = jnp.stack([jnp.eye(3, dtype=jnp.float64) * 10.0] * 2, axis=0)
+
+        atom_energies = pme_reciprocal_space(
+            positions=positions,
+            charges=charges,
+            cell=cells,
+            alpha=jnp.array([0.3, 0.3]),
+            mesh_dimensions=self.mesh_dimensions,
+            batch_idx=batch_idx,
+        )
+        system_energies = pme_reciprocal_space(
+            positions=positions,
+            charges=charges,
+            cell=cells,
+            alpha=jnp.array([0.3, 0.3]),
+            mesh_dimensions=self.mesh_dimensions,
+            batch_idx=batch_idx,
+            energy_reduction="system",
+        )
+
+        expected = (
+            jnp.zeros((2,), dtype=atom_energies.dtype).at[batch_idx].add(atom_energies)
+        )
+        assert system_energies.shape == (2,)
+        assert jnp.allclose(system_energies, expected)
+
+    def test_full_pme_system_reduction_matches_manual_sum(self, device):
+        """particle_mesh_ewald system reduction matches the atom-mode sum."""
+        positions, charges, cell = create_simple_system(num_atoms=4)
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _num_neighbors, neighbor_matrix_shifts = cell_list(
+            positions, cutoff=5.0, cell=cell, pbc=pbc
+        )
+
+        atom_energies = particle_mesh_ewald(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=0.3,
+            mesh_dimensions=self.mesh_dimensions,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+        )
+        system_energies = particle_mesh_ewald(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=0.3,
+            mesh_dimensions=self.mesh_dimensions,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            energy_reduction="system",
+        )
+
+        assert system_energies.shape == (1,)
+        assert jnp.allclose(system_energies, atom_energies.sum(keepdims=True))
+
+    def test_full_pme_system_reduction_with_slab_correction(self, device):
+        """System reduction composes with the PME slab-correction energy path."""
+        positions, charges, cell = create_simple_system(num_atoms=4)
+        pbc = jnp.array([[True, True, False]])
+        neighbor_matrix, _num_neighbors, neighbor_matrix_shifts = cell_list(
+            positions, cutoff=5.0, cell=cell, pbc=pbc
+        )
+
+        atom_energies = particle_mesh_ewald(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=0.3,
+            mesh_dimensions=self.mesh_dimensions,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            pbc=pbc,
+            slab_correction=True,
+        )
+        system_energies = particle_mesh_ewald(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=0.3,
+            mesh_dimensions=self.mesh_dimensions,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            pbc=pbc,
+            slab_correction=True,
+            energy_reduction="system",
+        )
+
+        assert system_energies.shape == (1,)
+        assert jnp.allclose(system_energies, atom_energies.sum(keepdims=True))
+
+    def test_reciprocal_system_reduction_gradients_match_atom_mode(self, device):
+        """Position gradients are identical whether summed pre- or post-scatter."""
+        positions, charges, cell = create_simple_system(num_atoms=5)
+
+        def atom_loss(pos):
+            return pme_reciprocal_space(
+                positions=pos,
+                charges=charges,
+                cell=cell,
+                alpha=jnp.array([0.3]),
+                mesh_dimensions=self.mesh_dimensions,
+            ).sum()
+
+        def system_loss(pos):
+            return pme_reciprocal_space(
+                positions=pos,
+                charges=charges,
+                cell=cell,
+                alpha=jnp.array([0.3]),
+                mesh_dimensions=self.mesh_dimensions,
+                energy_reduction="system",
+            ).sum()
+
+        grad_atom = jax.grad(atom_loss)(positions)
+        grad_system = jax.grad(system_loss)(positions)
+        assert jnp.allclose(grad_atom, grad_system, rtol=1e-10, atol=1e-12)
+
+    def test_reciprocal_direct_tuple_only_energy_changes(self, device):
+        """Direct-output tuples keep atom-layout forces; only energy reduces."""
+        positions, charges, cell = create_dipole_system()
+
+        atom_energies, atom_forces = pme_reciprocal_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=jnp.array([0.3]),
+            mesh_dimensions=self.mesh_dimensions,
+            compute_forces=True,
+        )
+        system_energies, system_forces = pme_reciprocal_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=jnp.array([0.3]),
+            mesh_dimensions=self.mesh_dimensions,
+            compute_forces=True,
+            energy_reduction="system",
+        )
+
+        assert system_energies.shape == (1,)
+        assert jnp.allclose(system_energies, atom_energies.sum(keepdims=True))
+        assert jnp.allclose(system_forces, atom_forces)
+
+    def test_full_pme_direct_output_tuple_energy_reduced_others_unchanged(self, device):
+        """particle_mesh_ewald's deprecated direct tuple also reduces only energy."""
+        positions, charges, cell = create_simple_system(num_atoms=4)
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _num_neighbors, neighbor_matrix_shifts = cell_list(
+            positions, cutoff=5.0, cell=cell, pbc=pbc
+        )
+
+        with pytest.warns(DeprecationWarning):
+            atom_out = particle_mesh_ewald(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=0.3,
+                mesh_dimensions=self.mesh_dimensions,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                compute_forces=True,
+                compute_charge_gradients=True,
+                compute_virial=True,
+            )
+        with pytest.warns(DeprecationWarning):
+            system_out = particle_mesh_ewald(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=0.3,
+                mesh_dimensions=self.mesh_dimensions,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                compute_forces=True,
+                compute_charge_gradients=True,
+                compute_virial=True,
+                energy_reduction="system",
+            )
+
+        atom_energies, atom_forces, atom_charge_grads, atom_virial = atom_out
+        system_energies, system_forces, system_charge_grads, system_virial = system_out
+
+        assert system_energies.shape == (1,)
+        assert jnp.allclose(system_energies, atom_energies.sum(keepdims=True))
+        assert jnp.allclose(system_forces, atom_forces)
+        assert jnp.allclose(system_charge_grads, atom_charge_grads)
+        assert jnp.allclose(system_virial, atom_virial)
+
+    def test_reciprocal_energy_reduction_under_jit(self, device):
+        """energy_reduction is usable as a static string under jax.jit."""
+        positions = jnp.array([[4.0, 5.0, 5.0], [6.0, 5.0, 5.0]], dtype=jnp.float64)
+        charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
+        cell = cubic_cell_jax(10.0)
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+
+        jitted = jax.jit(
+            partial(
+                pme_reciprocal_space,
+                mesh_dimensions=self.mesh_dimensions,
+            ),
+            static_argnames=("energy_reduction",),
+        )
+
+        atom_energies = jitted(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=alpha,
+            energy_reduction="atom",
+        )
+        system_energies = jitted(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=alpha,
+            energy_reduction="system",
+        )
+
+        assert atom_energies.shape == (2,)
+        assert system_energies.shape == (1,)
+        assert jnp.allclose(system_energies, atom_energies.sum(keepdims=True))
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

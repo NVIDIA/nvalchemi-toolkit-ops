@@ -57,7 +57,11 @@ All methods support:
 ```{important}
 For MLIP training with the full Ewald/PME APIs, call the function without
 direct-output flags and derive forces, stress, and charge gradients from the
-returned energy tensor. The full-api flags `compute_forces`,
+returned energy tensor. The default `energy_reduction="atom"` returns per-atom
+energies `(N,)`; pass `energy_reduction="system"` for per-system totals `(B,)`
+in batched per-system losses. Direct-output fields (forces, charge gradients,
+virials) keep their existing shapes regardless of the energy layout. The
+full-api flags `compute_forces`,
 `compute_charge_gradients`, `compute_virial`, and `hybrid_forces` are deprecated
 and emit `DeprecationWarning`; component APIs such as `ewald_real_space`,
 `ewald_reciprocal_space`, and `pme_reciprocal_space` keep direct outputs as
@@ -414,9 +418,11 @@ E_{\text{background}} = \frac{\pi}{2\alpha^2 V} Q_{\text{total}}^2
 
 ### Usage Examples
 
-The full Ewald API returns per-atom energy by default. Derive training forces
-from that energy; direct-output flags are legacy compatibility outputs and emit
-`DeprecationWarning`. Snippets in this section that still request
+The full Ewald API returns per-atom energy by default (`energy_reduction="atom"`).
+Pass `energy_reduction="system"` for per-system totals `(B,)` in batched
+workflows. Derive training forces from the returned energy; direct-output flags
+are legacy compatibility outputs and emit `DeprecationWarning`. Snippets in
+this section that still request
 `compute_forces=True`, `compute_charge_gradients=True`, or `compute_virial=True`
 show the legacy direct-output tuple contract.
 
@@ -1984,8 +1990,10 @@ energies, forces = ewald_summation(
     max_atoms_per_system=max_atoms_per_system,
 )
 
-# energies: (total_atoms,) - per-atom energies
-# Sum per system:
+# energies: (total_atoms,) - per-atom energies (default energy_reduction="atom")
+# For per-system totals (B,), pass energy_reduction="system" instead:
+# energies = ewald_summation(..., batch_idx=batch_idx, energy_reduction="system")
+# Sum per system (atom mode only):
 energy_per_system = torch.zeros(3, device=positions.device)
 energy_per_system.scatter_add_(0, batch_idx.long(), energies)
 ```
@@ -2045,8 +2053,10 @@ energies, forces = ewald_summation(
     compute_forces=True,
 )
 
-# energies: (total_atoms,) - per-atom energies
-# Sum per system using segment_sum:
+# energies: (total_atoms,) - per-atom energies (default energy_reduction="atom")
+# For per-system totals (B,), pass energy_reduction="system" instead:
+# energies = ewald_summation(..., batch_idx=batch_idx, energy_reduction="system")
+# Sum per system (atom mode only):
 energy_per_system = jax.ops.segment_sum(energies, batch_idx, num_segments=3)
 ```
 
@@ -2190,10 +2200,15 @@ explicitly:
 
 ```python
 charges.requires_grad_(True)
-energies = ewald_summation(...)
-energy_per_system = torch.zeros(3, device=positions.device)
-# scatter add based on the system index mapping
-energy_per_system.scatter_add_(0, batch_idx.long(), energies)
+# Atom mode (default): reduce manually, or use system mode directly:
+energies = ewald_summation(
+    ..., batch_idx=batch_idx, energy_reduction="system",
+)
+energy_per_system = energies  # already (B,)
+# Atom-mode alternative:
+# energies = ewald_summation(..., batch_idx=batch_idx)
+# energy_per_system = torch.zeros(3, device=positions.device)
+# energy_per_system.scatter_add_(0, batch_idx.long(), energies)
 # now compute the derivatives
 (charge_gradients,) = torch.autograd.grad(
   outputs=[energy_per_system],
@@ -2217,11 +2232,10 @@ def batch_energy_fn(charges):
         positions, charges, cell, alpha=0.3, k_cutoff=8.0,
         neighbor_list=nl, neighbor_ptr=nl_ptr, neighbor_shifts=shifts,
         batch_idx=batch_idx,
+        energy_reduction="system",  # (B,) without manual segment_sum
         compute_forces=False,
     )
-    # Sum per system using segment_sum
-    energy_per_system = jax.ops.segment_sum(energies, batch_idx, num_segments=3)
-    return jnp.sum(energy_per_system)
+    return jnp.sum(energies)
 
 charge_gradients = jax.grad(batch_energy_fn)(charges)
 ```
@@ -2247,12 +2261,21 @@ potentials (MLIPs) with learned charge models (`q = q(R)`) -- computing total fo
   the Ewald/PME kernel (`compute_forces=True`)
 - **Charge chain-rule forces** `-(dE/dq)(dq/dR)`, computed via PyTorch autograd through the charge model
 
-The legacy `hybrid_forces=True` path computes both contributions without adding
-the fixed-charge positional term twice. In standard mode, `energy.backward()`
-already includes both position and charge terms, so adding explicit forces would
-**double-count** the positional contribution. `hybrid_forces=True` detaches
-positions and cell from the autograd graph and makes energy differentiable only
-through the charges via a straight-through estimator.
+When `charges.requires_grad=True`, ordinary first-order losses whose energy
+cotangent is uniform within each system (for example, `energy.sum()`) use the
+legacy `hybrid_forces=True` cached charge-gradient path. It detaches positions
+and cell and injects charge gradients through a straight-through estimator. Its
+energy therefore contributes only the charge chain-rule term, which can be
+combined with the explicit fixed-charge force without double-counting.
+
+For a weighted per-system objective, first multiply each direct per-atom force
+by `weights[batch_idx]`; raw direct forces are complementary only to unit
+weights.
+
+Non-uniform per-atom energy losses and calls with `create_graph=True` instead
+reconstruct the eager energy graph. They include both the fixed-charge geometry
+term and the charge chain-rule term, just like standard energy autograd. Do not
+add direct analytical forces to those fallback-derived geometry gradients.
 
 ```{important}
 Do not combine explicit forces (`compute_forces=True`) with full autograd
@@ -2284,8 +2307,9 @@ cell_scaled = cell @ scaling
 # Geometry-dependent charges from scaled positions
 q = charge_model(positions_scaled, Z)
 
-# hybrid_forces=True: explicit forces + virial are analytical (forward-only),
-# energy is differentiable w.r.t. charges only (via straight-through trick)
+# For a uniform first-order loss, hybrid_forces=True keeps direct forces and
+# virial forward-only while energy differentiates through the cached charge path.
+# Weighted per-atom losses and create_graph=True use the full eager fallback.
 energies, direct_forces, direct_virial = particle_mesh_ewald(
     positions_scaled, q, cell_scaled,
     neighbor_list=nl, neighbor_ptr=nl_ptr, neighbor_shifts=shifts,
@@ -2293,8 +2317,8 @@ energies, direct_forces, direct_virial = particle_mesh_ewald(
     hybrid_forces=True,
 )
 
-# Differentiate energy w.r.t. positions and scaling.
-# In hybrid mode only the charge pathway is in the autograd graph.
+# Differentiate energy w.r.t. positions and scaling. This uniform first-order
+# loss uses the cached charge pathway in hybrid mode.
 dE_dpos, dE_dscaling = torch.autograd.grad(
     energies.sum(), [positions, scaling],
 )
@@ -2582,7 +2606,10 @@ of the full
 {func}`~nvalchemiops.torch.interactions.electrostatics.particle_mesh_ewald`
 APIs, with matching first-order support on the full JAX Ewald/PME APIs**.
 Forces, virial/stress, and charge gradients are derivatives of that energy.
-With no direct-output flags set, the call returns the per-atom energy tensor only.
+With no direct-output flags set, the call returns the per-atom energy tensor
+only (`energy_reduction="atom"`, the default). Pass `energy_reduction="system"`
+for per-system totals `(B,)`; direct-output fields (forces, charge gradients,
+virials) keep their existing shapes regardless of the energy layout.
 
 Only `positions`, `charges`, and `cell` are differentiable inputs in this
 contract. Setup values such as `alpha`, cutoffs, accuracy, mesh spacing or
@@ -2618,6 +2645,53 @@ Second-order support means differentiating scalar losses through these energy
 paths with Torch/JAX autograd. Electrostatics does not expose public Hessian or
 Jacobian tensors/functions.
 
+(energy-reduction)=
+
+### Energy Output Layout (`energy_reduction`)
+
+Monopole Torch and JAX Ewald, PME, and slab entry points accept keyword-only
+`energy_reduction="atom" | "system"` (default `"atom"`).
+
+| Mode | Energy shape | Typical use |
+|------|--------------|-------------|
+| `"atom"` (default) | `(N,)` per-atom | Weighted atom losses, `E.sum()` force/stress recipes |
+| `"system"` | `(B,)` per-system | Batched per-system losses, sync-free Torch CUDA routing |
+
+`B` follows the normalized cell batch shape. A single `(3, 3)` cell yields
+`B == 1` and system-mode energy shape `(1,)`, never a scalar. In direct-output
+tuples, only the first energy field changes shape; forces remain `(N, 3)`,
+charge gradients remain `(N,)`, and virials remain `(B, 3, 3)`.
+
+Composite Ewald/PME calls apply the requested public layout to their combined
+energy. Torch real-space can write system-major energy directly through
+system-layout Warp/custom-op specializations. Reciprocal, correction, and slab
+components, as well as JAX bindings, may reduce atom-major component outputs
+before composition. Direct derivative fields retain their established shapes.
+
+For batched per-system losses, prefer `energy_reduction="system"` over manually
+reducing per-atom energies:
+
+```python
+energy = particle_mesh_ewald(
+    positions, charges, cell,
+    batch_idx=batch_idx,
+    energy_reduction="system",
+    neighbor_list=nl, neighbor_ptr=nl_ptr, neighbor_shifts=shifts,
+)  # (B,)
+loss = (weights * energy).sum()
+```
+
+On Torch CUDA, eager atom mode may synchronize once per participating terminal
+component when a materialized uniform cotangent must be proven by value
+inspection (for example `grad_outputs=torch.ones_like(energy)` on a contiguous
+per-atom energy tensor). System mode is structurally sync-free: arbitrary
+`(B,)` cotangents reach the cached backward without inspecting atom values.
+Under `torch.compile` or CUDA graph capture, only metadata-proven atom
+cotangents use the fast cached path; system mode is the guaranteed sync-free
+layout. JAX adds API/layout parity only; it does not change the Torch cotangent
+routing behavior or broaden JAX support for arbitrary non-uniform per-atom
+output cotangents.
+
 (sync-free-electrostatics)=
 
 ### Sync-Free Electrostatics Calls
@@ -2629,6 +2703,9 @@ user-side logging never synchronize internally. The guidance below applies to
 energy-returning autograd paths unless stated otherwise; deprecated full-API
 direct-output flags and component direct outputs are compatibility or
 MD/inference paths, not the primary differentiable sync-free contract.
+For batched per-system losses on Torch CUDA, prefer
+`energy_reduction="system"` so arbitrary `(B,)` cotangents reach the cached
+backward without atom-value inspection.
 
 For Torch batched Ewald reciprocal calls, pass a host-known
 `max_atoms_per_system` upper bound to `ewald_reciprocal_space` or
@@ -2735,13 +2812,17 @@ positions = positions.detach().requires_grad_(True)
 energy = particle_mesh_ewald(
     positions, charges, cell,
     neighbor_list=nl, neighbor_ptr=nl_ptr, neighbor_shifts=shifts,
-)  # returns the per-atom energy tensor only
+)  # returns the per-atom energy tensor only (energy_reduction="atom")
+
+# Batched per-system layout:
+# energy = particle_mesh_ewald(..., batch_idx=batch_idx, energy_reduction="system")
 
 forces = -torch.autograd.grad(energy.sum(), positions)[0]  # (N, 3)
 ```
 
-`energy.sum()` is the scalar total energy whose derivative is the full force for
-the graph that produced `energy`.
+`energy.sum()` (atom mode) or `(weights * energy).sum()` (system mode) is the
+scalar total energy whose derivative is the full force for the graph that
+produced `energy`.
 
 ### Force-Loss Training
 
@@ -2888,10 +2969,11 @@ deprecated flags remain available for compatibility in v0.4.0 but emit a
 
 | Deprecated flag | Replacement |
 |-----------------|-------------|
-| `compute_forces=True` | `forces = -torch.autograd.grad(E.sum(), positions)[0]` |
+| `compute_forces=True` | `forces = -torch.autograd.grad(E.sum(), positions)[0]` in either layout; `-torch.autograd.grad((weights * E).sum(), positions)[0]` is the force of a weighted objective and matches deprecated unweighted direct output only when all participating weights are one |
 | `compute_virial=True` | `grad_u = torch.autograd.grad(E.sum(), displacement)[0]` with the row-vector displacement recipe; `virial = -grad_u`, `stress = grad_u / V` |
-| `compute_charge_gradients=True` | `dEdq = torch.autograd.grad(E.sum(), charges)[0]` |
+| `compute_charge_gradients=True` | `dEdq = torch.autograd.grad(E.sum(), charges)[0]` in either layout; `torch.autograd.grad((weights * E).sum(), charges)[0]` is the gradient of a weighted objective and matches deprecated unweighted direct output only when all participating weights are one |
 | `hybrid_forces=True` | Keep `charges = charge_model(positions)` in the graph; derive the force from energy (full `q(R)` force) |
+| Manual `scatter_add` / `segment_sum` on atom energy | `energy_reduction="system"` on the monopole Ewald/PME/slab APIs |
 
 ```{note}
 These deprecations apply to the **full** APIs only. `ewald_real_space`,
@@ -2902,7 +2984,8 @@ the differentiable training contract.
 
 ```{note}
 JAX full Ewald/PME follows the same first-order energy-derivative contract
-for positions, charges, and row-vector displacement virials. Higher-order JAX
+for positions, charges, and row-vector displacement virials, with matching
+`energy_reduction` output layouts. Higher-order JAX
 support is limited to tested position and charge scalar losses; PME reciprocal
 terms use the native PME mesh HVP path. JAX PME stress/cell/strain, alpha, and
 precomputed-metadata higher-order paths are

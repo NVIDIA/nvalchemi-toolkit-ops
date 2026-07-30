@@ -2,7 +2,25 @@
 
 ## Unreleased
 
+### Added
+
+- Monopole Torch and JAX Ewald, PME, and slab entry points accept keyword-only
+  `energy_reduction="atom" | "system"` (default `"atom"`). `"atom"` returns
+  per-atom energies `(N,)`; `"system"` returns per-system totals `(B,)`.
+  Direct-output fields (forces, charge gradients, virials) keep their existing
+  shapes. Torch eager atom mode may synchronize once per participating component
+  when a materialized uniform cotangent is proven by value inspection; system
+  mode is structurally sync-free for arbitrary `(B,)` loss weights. JAX adds
+  API/layout parity only; underlying Warp kernels remain atom-buffer-oriented.
+
 ### Fixed
+
+- JAX cell-list builds now derive search radii from their realized grids,
+  preventing missed neighbors when static capacity changes the constructed
+  grid. Batched `capacity_strategy="geometry"` preserves promoted grids for
+  all non-empty systems by reserving an equal per-system capacity; volume-based
+  sizing remains the default. Fused Warp graph calls with explicit
+  `max_total_cells` now require an explicit `neighbor_search_radius`.
 
 - Fixed Torch PME and Ewald energy gradients for connected charge, position, and
   cell inputs. Non-uniform or weighted energy losses and `create_graph=True`

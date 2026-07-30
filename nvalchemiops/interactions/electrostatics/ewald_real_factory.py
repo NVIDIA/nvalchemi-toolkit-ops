@@ -70,7 +70,7 @@ Equivalently, ``d Phi / d cell`` is the outer product of ``n`` and
 """
 
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 
 import warp as wp
 
@@ -182,6 +182,7 @@ def _ewald_real_module_name(
     order: str = "forward",
     tiled: bool = False,
     cell_literal: bool = False,
+    energy_layout: Literal["atom", "system"] = "atom",
 ) -> str:
     """Deterministic Warp ``module=`` name for one ``ewald_real`` specialization.
 
@@ -198,6 +199,8 @@ def _ewald_real_module_name(
         parts.append("tiled" if order == "forward" else f"{order}_tiled")
     if cell_literal:
         parts.append("cellliteral")
+    if energy_layout == "system":
+        parts.append("systemenergy")
     suffix = "_".join(parts) if parts else None
     return _make_specialization_module_name(
         "ewald_real",
@@ -221,6 +224,7 @@ def _name_and_document(
     order: str,
     tiled: bool = False,
     cell_literal: bool = False,
+    energy_layout: Literal["atom", "system"] = "atom",
 ) -> None:
     """Give a generated ``ewald_real`` kernel a descriptive name + spec docstring."""
     features = [
@@ -231,6 +235,7 @@ def _name_and_document(
         neighbor_input,
         "" if order == "forward" else order,
         "tiled" if tiled else "",
+        "systemenergy" if energy_layout == "system" else "",
     ]
     _name_and_document_kernel(
         kernel,
@@ -243,6 +248,7 @@ def _name_and_document(
             ("deriv_state", deriv_state.name),
             ("cell_grad", bool(cell_grad)),
             ("order", order),
+            ("energy_layout", energy_layout),
         ],
     )
 
@@ -635,6 +641,7 @@ def _validate_axes(
     order: str,
     tiled: bool = False,
     cell_literal: bool = False,
+    energy_layout: Literal["atom", "system"] = "atom",
 ) -> None:
     """Raise for unsupported / invalid component-axis combinations.
 
@@ -656,6 +663,16 @@ def _validate_axes(
         order=order,
         component="ewald_real",
     )
+    if energy_layout not in {"atom", "system"}:
+        raise NotImplementedError(
+            "ewald_real factory supports energy_layout in ('atom', 'system'); "
+            f"got {energy_layout!r}"
+        )
+    if energy_layout == "system" and order != "forward":
+        raise NotImplementedError(
+            "ewald_real system energy_layout is only implemented for "
+            f"order='forward'; got order={order!r}"
+        )
     if neighbor_input not in ("list", "matrix"):
         raise NotImplementedError(
             f"ewald_real factory supports neighbor_input in ('list', 'matrix'); "
@@ -712,6 +729,7 @@ def make_ewald_real_kernel(
     order: str = "forward",
     tiled: bool = False,
     cell_literal: bool = False,
+    energy_layout: Literal["atom", "system"] = "atom",
 ) -> wp.Kernel:
     """Return a cached, specialized ``ewald_real`` Warp kernel.
 
@@ -751,12 +769,16 @@ def make_ewald_real_kernel(
         ``dE/dcell`` block (``wp.array(dtype=wp.mat33d)``, shape ``(N,)``). Requires
         ``order="forward"`` and ``deriv_state`` in ``{E_F, E_F_dQ}``. Restricted to
         ``neighbor_input="list"`` (non-tiled) or ``neighbor_input="matrix"`` (tiled).
+    energy_layout : {"atom", "system"}
+        Forward energy layout. ``"atom"`` writes atom-major energy; ``"system"``
+        writes system-major energy and is valid only for ``order="forward"``.
 
     Returns
     -------
     wp.Kernel
         Cached, specialized Warp kernel for the requested ``(wp_dtype, batched,
-        neighbor_input, deriv_state, cell_grad, order, tiled, cell_literal)``
+        neighbor_input, deriv_state, cell_grad, order, tiled, cell_literal,
+        energy_layout)``
         combination. The same object is returned on repeated calls with identical
         arguments (``@lru_cache``).
 
@@ -774,23 +796,29 @@ def make_ewald_real_kernel(
         order,
         tiled,
         cell_literal,
+        energy_layout,
     )
 
     if order == "forward":
         if tiled:
             if cell_literal:
                 return _make_forward_kernel_tiled_cell_literal(
-                    wp_dtype, batched, neighbor_input, deriv_state, cell_grad
+                    wp_dtype,
+                    batched,
+                    neighbor_input,
+                    deriv_state,
+                    cell_grad,
+                    energy_layout,
                 )
             return _make_forward_kernel_tiled(
-                wp_dtype, batched, neighbor_input, deriv_state, cell_grad
+                wp_dtype, batched, neighbor_input, deriv_state, cell_grad, energy_layout
             )
         if cell_literal:
             return _make_forward_kernel_cell_literal(
-                wp_dtype, batched, neighbor_input, deriv_state, cell_grad
+                wp_dtype, batched, neighbor_input, deriv_state, cell_grad, energy_layout
             )
         return _make_forward_kernel(
-            wp_dtype, batched, neighbor_input, deriv_state, cell_grad
+            wp_dtype, batched, neighbor_input, deriv_state, cell_grad, energy_layout
         )
     if order == "backward":
         return _make_backward_kernel(
@@ -815,6 +843,7 @@ def get_ewald_real_kernel(
     order: str = "forward",
     tiled: bool = False,
     cell_literal: bool = False,
+    energy_layout: Literal["atom", "system"] = "atom",
     component: str = "ewald_real",
 ) -> wp.Kernel:
     """Return a cached ``ewald_real`` kernel, validating dtype + component.
@@ -844,6 +873,10 @@ def get_ewald_real_kernel(
         Cooperative-block matrix variant; requires ``neighbor_input="matrix"``.
     cell_literal : bool
         Forward-only variant that also emits the literal ``dE/dcell`` per-atom output.
+    energy_layout : {"atom", "system"}
+        Forward energy layout. ``"system"`` writes system-major energy and is
+        valid only for ``order="forward"``. This is forwarded to
+        :func:`make_ewald_real_kernel` as a specialization and cache axis.
     component : str
         Must be ``"ewald_real"``; validated before delegating to
         :func:`make_ewald_real_kernel`.
@@ -851,7 +884,8 @@ def get_ewald_real_kernel(
     Returns
     -------
     wp.Kernel
-        Cached, specialized Warp kernel for the requested combination.
+        Cached, specialized Warp kernel for the requested combination, including
+        ``energy_layout``.
 
     See Also
     --------
@@ -869,6 +903,7 @@ def get_ewald_real_kernel(
         order=order,
         tiled=tiled,
         cell_literal=cell_literal,
+        energy_layout=energy_layout,
     )
 
 
@@ -881,6 +916,7 @@ def _make_forward_kernel(
     neighbor_input: str,
     deriv_state: _DerivState,
     cell_grad: bool,
+    energy_layout: Literal["atom", "system"],
 ) -> wp.Kernel:
     """Build the forward kernel: energy (+forces +charge-grad +virial)."""
     info = _DTYPE_INFO[wp_dtype]
@@ -892,8 +928,11 @@ def _make_forward_kernel(
     HAS_FORCE = deriv_state in {_DerivState.E_F, _DerivState.E_F_dQ}
     HAS_CHARGE = deriv_state in {_DerivState.E_dQ, _DerivState.E_F_dQ}
     CELL_GRAD = bool(cell_grad)
+    SYSTEM_ENERGY = energy_layout == "system"
 
-    module_name = _ewald_real_module_name(wp_dtype, BATCHED, neighbor_input, "forward")
+    module_name = _ewald_real_module_name(
+        wp_dtype, BATCHED, neighbor_input, "forward", energy_layout=energy_layout
+    )
     accumulate_pair = _make_forward_pair_fn(
         wp_dtype, deriv_state=deriv_state, cell_grad=cell_grad
     )
@@ -992,7 +1031,10 @@ def _make_forward_kernel(
                     charge_gradients,
                 )
 
-        wp.atomic_add(pair_energies, atom_i, energy_acc)
+        if SYSTEM_ENERGY:
+            wp.atomic_add(pair_energies, isys, energy_acc)
+        else:
+            wp.atomic_add(pair_energies, atom_i, energy_acc)
         if HAS_FORCE:
             wp.atomic_add(atomic_forces, atom_i, force_i_acc)
             if CELL_GRAD:
@@ -1009,6 +1051,7 @@ def _make_forward_kernel(
         deriv_state=deriv_state,
         cell_grad=cell_grad,
         order="forward",
+        energy_layout=energy_layout,
     )
     return _ewald_real
 
@@ -1022,6 +1065,7 @@ def _make_forward_kernel_cell_literal(
     neighbor_input: str,
     deriv_state: _DerivState,
     cell_grad: bool,
+    energy_layout: Literal["atom", "system"],
 ) -> wp.Kernel:
     """Build the CSR/list forward kernel that also emits literal ``dE/dcell``.
 
@@ -1037,9 +1081,15 @@ def _make_forward_kernel_cell_literal(
     HAS_FORCE = deriv_state in {_DerivState.E_F, _DerivState.E_F_dQ}
     HAS_CHARGE = deriv_state in {_DerivState.E_dQ, _DerivState.E_F_dQ}
     CELL_GRAD = bool(cell_grad)
+    SYSTEM_ENERGY = energy_layout == "system"
 
     module_name = _ewald_real_module_name(
-        wp_dtype, BATCHED, neighbor_input, "forward", cell_literal=True
+        wp_dtype,
+        BATCHED,
+        neighbor_input,
+        "forward",
+        cell_literal=True,
+        energy_layout=energy_layout,
     )
     accumulate_pair = _make_forward_pair_fn(
         wp_dtype, deriv_state=deriv_state, cell_grad=cell_grad, cell_literal=True
@@ -1114,7 +1164,10 @@ def _make_forward_kernel_cell_literal(
                 charge_gradients,
             )
 
-        wp.atomic_add(pair_energies, atom_i, energy_acc)
+        if SYSTEM_ENERGY:
+            wp.atomic_add(pair_energies, isys, energy_acc)
+        else:
+            wp.atomic_add(pair_energies, atom_i, energy_acc)
         if HAS_FORCE:
             wp.atomic_add(atomic_forces, atom_i, force_i_acc)
             wp.atomic_add(dedcell_atom, atom_i, dedcell_acc)
@@ -1133,6 +1186,7 @@ def _make_forward_kernel_cell_literal(
         cell_grad=cell_grad,
         order="forward",
         cell_literal=True,
+        energy_layout=energy_layout,
     )
     return _ewald_real_cell_literal
 
@@ -1146,6 +1200,7 @@ def _make_forward_kernel_tiled(
     neighbor_input: str,
     deriv_state: _DerivState,
     cell_grad: bool,
+    energy_layout: Literal["atom", "system"],
 ) -> wp.Kernel:
     """Build the cooperative-block forward kernel for the neighbor-matrix layout.
 
@@ -1172,9 +1227,15 @@ def _make_forward_kernel_tiled(
     HAS_FORCE = deriv_state in {_DerivState.E_F, _DerivState.E_F_dQ}
     HAS_CHARGE = deriv_state in {_DerivState.E_dQ, _DerivState.E_F_dQ}
     CELL_GRAD = bool(cell_grad)
+    SYSTEM_ENERGY = energy_layout == "system"
 
     module_name = _ewald_real_module_name(
-        wp_dtype, BATCHED, neighbor_input, "forward", tiled=True
+        wp_dtype,
+        BATCHED,
+        neighbor_input,
+        "forward",
+        tiled=True,
+        energy_layout=energy_layout,
     )
     accumulate_pair = _make_forward_pair_fn(
         wp_dtype, deriv_state=deriv_state, cell_grad=cell_grad
@@ -1255,7 +1316,10 @@ def _make_forward_kernel_tiled(
             cg_sum = wp.tile_sum(wp.tile(cg_i_acc))
 
         if lane == 0:
-            wp.tile_atomic_add(pair_energies, energy_sum, offset=(atom_i,))
+            if SYSTEM_ENERGY:
+                wp.tile_atomic_add(pair_energies, energy_sum, offset=(isys,))
+            else:
+                wp.tile_atomic_add(pair_energies, energy_sum, offset=(atom_i,))
             if HAS_FORCE:
                 wp.tile_atomic_add(atomic_forces, force_sum, offset=(atom_i,))
                 if CELL_GRAD:
@@ -1275,6 +1339,7 @@ def _make_forward_kernel_tiled(
         cell_grad=cell_grad,
         order="forward",
         tiled=True,
+        energy_layout=energy_layout,
     )
     return _ewald_real_tiled
 
@@ -1288,6 +1353,7 @@ def _make_forward_kernel_tiled_cell_literal(
     neighbor_input: str,
     deriv_state: _DerivState,
     cell_grad: bool,
+    energy_layout: Literal["atom", "system"],
 ) -> wp.Kernel:
     """Cooperative-block forward kernel that also emits the literal ``dE/dcell``.
 
@@ -1309,9 +1375,16 @@ def _make_forward_kernel_tiled_cell_literal(
     HAS_FORCE = deriv_state in {_DerivState.E_F, _DerivState.E_F_dQ}
     HAS_CHARGE = deriv_state in {_DerivState.E_dQ, _DerivState.E_F_dQ}
     CELL_GRAD = bool(cell_grad)
+    SYSTEM_ENERGY = energy_layout == "system"
 
     module_name = _ewald_real_module_name(
-        wp_dtype, BATCHED, neighbor_input, "forward", tiled=True, cell_literal=True
+        wp_dtype,
+        BATCHED,
+        neighbor_input,
+        "forward",
+        tiled=True,
+        cell_literal=True,
+        energy_layout=energy_layout,
     )
     accumulate_pair = _make_forward_pair_fn(
         wp_dtype, deriv_state=deriv_state, cell_grad=cell_grad, cell_literal=True
@@ -1399,7 +1472,10 @@ def _make_forward_kernel_tiled_cell_literal(
             cg_sum = wp.tile_sum(wp.tile(cg_i_acc))
 
         if lane == 0:
-            wp.tile_atomic_add(pair_energies, energy_sum, offset=(atom_i,))
+            if SYSTEM_ENERGY:
+                wp.tile_atomic_add(pair_energies, energy_sum, offset=(isys,))
+            else:
+                wp.tile_atomic_add(pair_energies, energy_sum, offset=(atom_i,))
             if HAS_FORCE:
                 wp.tile_atomic_add(atomic_forces, force_sum, offset=(atom_i,))
                 # Per-atom mat33d write: one owner per atom_i, so plain atomic_add
@@ -1423,6 +1499,7 @@ def _make_forward_kernel_tiled_cell_literal(
         order="forward",
         tiled=True,
         cell_literal=True,
+        energy_layout=energy_layout,
     )
     return _ewald_real_tiled_cell_literal
 
