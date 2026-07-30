@@ -818,18 +818,29 @@ def ewald_real_space(
         )
         if charges.requires_grad:
 
-            def _fallback(p, q, c):
+            def _fallback(
+                p,
+                q,
+                c,
+                fallback_batch_idx,
+                fallback_alpha,
+                fallback_idx_j,
+                fallback_neighbor_ptr,
+                fallback_neighbor_shifts,
+                fallback_neighbor_matrix,
+                fallback_neighbor_matrix_shifts,
+            ):
                 return _real_space_energy(
                     p,
                     q,
                     c,
-                    alpha,
-                    batch_idx=batch_idx,
-                    idx_j=idx_j,
-                    neighbor_ptr=neighbor_ptr,
-                    neighbor_shifts=neighbor_shifts,
-                    neighbor_matrix=neighbor_matrix,
-                    neighbor_matrix_shifts=neighbor_matrix_shifts,
+                    fallback_alpha,
+                    batch_idx=fallback_batch_idx,
+                    idx_j=fallback_idx_j,
+                    neighbor_ptr=fallback_neighbor_ptr,
+                    neighbor_shifts=fallback_neighbor_shifts,
+                    neighbor_matrix=fallback_neighbor_matrix,
+                    neighbor_matrix_shifts=fallback_neighbor_matrix_shifts,
                     mask_value=mask_value,
                 )
 
@@ -843,6 +854,12 @@ def ewald_real_space(
                 None,
                 batch_idx,
                 _fallback,
+                alpha,
+                idx_j,
+                neighbor_ptr,
+                neighbor_shifts,
+                neighbor_matrix,
+                neighbor_matrix_shifts,
             )
         return _build_result(energies, forces, charge_grads.to(positions.dtype), virial)
 
@@ -872,18 +889,29 @@ def ewald_real_space(
             want_virial=False,
         )
 
-        def _fallback(p, q, c):
+        def _fallback(
+            p,
+            q,
+            c,
+            fallback_batch_idx,
+            fallback_alpha,
+            fallback_idx_j,
+            fallback_neighbor_ptr,
+            fallback_neighbor_shifts,
+            fallback_neighbor_matrix,
+            fallback_neighbor_matrix_shifts,
+        ):
             return _real_space_energy(
                 p,
                 q,
                 c,
-                alpha,
-                batch_idx=batch_idx,
-                idx_j=idx_j,
-                neighbor_ptr=neighbor_ptr,
-                neighbor_shifts=neighbor_shifts,
-                neighbor_matrix=neighbor_matrix,
-                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                fallback_alpha,
+                batch_idx=fallback_batch_idx,
+                idx_j=fallback_idx_j,
+                neighbor_ptr=fallback_neighbor_ptr,
+                neighbor_shifts=fallback_neighbor_shifts,
+                neighbor_matrix=fallback_neighbor_matrix,
+                neighbor_matrix_shifts=fallback_neighbor_matrix_shifts,
                 mask_value=mask_value,
             )
 
@@ -897,6 +925,12 @@ def ewald_real_space(
             None,
             batch_idx,
             _fallback,
+            alpha,
+            idx_j,
+            neighbor_ptr,
+            neighbor_shifts,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
         )
         return energies
 
@@ -1198,14 +1232,21 @@ def _ewald_reciprocal_space(
         )
         if charges.requires_grad:
 
-            def _fallback(p, q, c):
+            def _fallback(
+                p,
+                q,
+                c,
+                fallback_batch_idx,
+                fallback_k_vectors,
+                fallback_alpha,
+            ):
                 return _reciprocal_space_energy(
                     p,
                     q,
                     c,
-                    k_vectors_hybrid,
-                    alpha,
-                    batch_idx=batch_idx,
+                    fallback_k_vectors,
+                    fallback_alpha,
+                    batch_idx=fallback_batch_idx,
                     max_atoms_per_system=max_atoms_per_system,
                 )
 
@@ -1219,6 +1260,8 @@ def _ewald_reciprocal_space(
                 None,
                 batch_idx,
                 _fallback,
+                k_vectors_hybrid,
+                alpha,
             )
         return _build_result(energies, forces, charge_grads.to(positions.dtype), virial)
 

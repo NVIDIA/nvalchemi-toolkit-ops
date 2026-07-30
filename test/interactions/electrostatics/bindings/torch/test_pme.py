@@ -26,8 +26,10 @@ This test suite validates the correctness of the unified PME API:
 5. Conservation Laws - Momentum and energy properties
 """
 
+import gc
 import math
 import warnings
+import weakref
 from importlib import import_module
 
 import pytest
@@ -4927,6 +4929,49 @@ class TestPMECachedEvalFastPath:
         torch.autograd.grad(energy.sum(), positions)
 
         assert call_count == 1
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_full_pme_releases_explicit_fallback_state_after_weighted_backward(
+        self, device
+    ):
+        """Full PME releases saved neighbor state after weighted fallback backward."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, _charges, cell = _pme_contract_dipole(device)
+        neighbor_list, neighbor_ptr, neighbor_shifts = _pme_full_neighbors(
+            positions,
+            cell,
+            device,
+        )
+        neighbor_refs = tuple(
+            weakref.ref(tensor)
+            for tensor in (neighbor_list, neighbor_ptr, neighbor_shifts)
+        )
+        positions = positions.detach().clone().requires_grad_(True)
+        energies = particle_mesh_ewald(
+            positions,
+            toy_charge_model(positions),
+            cell,
+            alpha=0.3,
+            mesh_dimensions=_MESH,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+        )
+        del neighbor_list, neighbor_ptr, neighbor_shifts
+        gc.collect()
+
+        assert all(reference() is not None for reference in neighbor_refs)
+
+        torch.autograd.grad(
+            energies,
+            positions,
+            grad_outputs=torch.tensor([1.0, 2.0], dtype=positions.dtype, device=device),
+        )
+        gc.collect()
+
+        assert all(reference() is None for reference in neighbor_refs)
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_full_qR_create_graph_fallback_avoids_nested_cached_first(

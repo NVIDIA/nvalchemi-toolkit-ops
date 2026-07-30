@@ -17,11 +17,15 @@
 
 from __future__ import annotations
 
+import gc
+import weakref
+
 import pytest
 
 torch = pytest.importorskip("torch")
 _util = pytest.importorskip("nvalchemiops.torch.interactions.electrostatics._util")
 _InjectChargeGrad = _util._InjectChargeGrad
+_InjectCachedEvalGrad = _util._InjectCachedEvalGrad
 _InjectCachedEvalGradWithFallback = _util._InjectCachedEvalGradWithFallback
 _is_uniform_cotangent = _util._is_uniform_cotangent
 
@@ -112,7 +116,7 @@ def test_cached_eval_qR_nonuniform_fallback_uses_partial_derivatives():
     cell_grad_state = torch.zeros_like(cell)
     grad_energy = torch.tensor([1.0, 2.0, 4.0], dtype=DT)
 
-    def fallback_fn(p, q, _cell):
+    def fallback_fn(p, q, _cell, *_state):
         return p[:, 1] * q + 0.5 * p[:, 2].square()
 
     out = _InjectCachedEvalGradWithFallback.apply(
@@ -154,7 +158,7 @@ def test_cached_eval_qR_create_graph_second_order():
     charge_grad_state = torch.zeros_like(charges)
     cell_grad_state = torch.zeros_like(cell)
 
-    def fallback_fn(p, q, _cell):
+    def fallback_fn(p, q, _cell, *_state):
         return p[:, 1] * q + 0.5 * p[:, 2].square()
 
     out = _InjectCachedEvalGradWithFallback.apply(
@@ -204,7 +208,7 @@ def test_cached_eval_qR_create_graph_sibling_positions():
     charge_grad_state = torch.zeros_like(charges)
     cell_grad_state = torch.zeros_like(cell)
 
-    def fallback_fn(p, q, _cell):
+    def fallback_fn(p, q, _cell, *_state):
         return p[:, 1] * q + 0.5 * p[:, 2].square()
 
     out = _InjectCachedEvalGradWithFallback.apply(
@@ -258,7 +262,7 @@ def test_cached_eval_qR_create_graph_cell_dependent_charges():
     charge_grad_state = torch.zeros_like(charges)
     cell_grad_state = torch.zeros_like(cell)
 
-    def fallback_fn(p, q, _cell):
+    def fallback_fn(p, q, _cell, *_state):
         return p[:, 1] * q + 0.5 * p[:, 2].square()
 
     out = _InjectCachedEvalGradWithFallback.apply(
@@ -287,7 +291,7 @@ def test_cached_eval_create_graph_dechains_nested_inputs():
     energy = torch.zeros((), dtype=DT)
     states = tuple(torch.zeros_like(value) for value in (positions, charges, cell))
 
-    def fallback_fn(p, q, c):
+    def fallback_fn(p, q, c, *_state):
         return p.square() + 2.0 * q + 7.0 * c
 
     out = _InjectCachedEvalGradWithFallback.apply(
@@ -315,7 +319,7 @@ def test_cached_eval_weighted_dechains_nested_inputs():
     states = tuple(torch.zeros_like(value) for value in (positions, charges, cell))
     weights = torch.tensor([1.0, 2.0], dtype=DT)
 
-    def fallback_fn(p, q, c):
+    def fallback_fn(p, q, c, *_state):
         return torch.stack(
             (
                 p.square() + 2.0 * q + 7.0 * c,
@@ -335,6 +339,132 @@ def test_cached_eval_weighted_dechains_nested_inputs():
     (grad_cell,) = torch.autograd.grad(out, cell, grad_outputs=weights)
 
     assert grad_cell.item() == pytest.approx(329.0)
+
+
+def test_cached_eval_releases_fallback_state_after_uniform_backward():
+    """Saved fallback state is released after uniform cached backward."""
+    positions = torch.zeros((2, 3), dtype=DT, requires_grad=True)
+    charges = torch.zeros(2, dtype=DT)
+    cell = torch.eye(3, dtype=DT).unsqueeze(0)
+    energy = torch.zeros(2, dtype=DT)
+    fallback_state = torch.ones(2, dtype=DT)
+    state_ref = weakref.ref(fallback_state)
+
+    def fallback_fn(*_args):
+        raise AssertionError("uniform cached backward must not call the fallback")
+
+    out = _InjectCachedEvalGradWithFallback.apply(
+        energy,
+        positions,
+        charges,
+        cell,
+        torch.zeros_like(positions),
+        None,
+        None,
+        None,
+        fallback_fn,
+        fallback_state,
+    )
+    del fallback_state
+
+    out.sum().backward()
+    gc.collect()
+
+    assert state_ref() is None
+
+
+def test_cached_eval_releases_fallback_state_after_weighted_backward():
+    """Saved fallback state is released after weighted fallback backward."""
+    positions = torch.zeros((2, 3), dtype=DT, requires_grad=True)
+    charges = torch.zeros(2, dtype=DT)
+    cell = torch.eye(3, dtype=DT).unsqueeze(0)
+    energy = torch.zeros(2, dtype=DT)
+    fallback_state = torch.tensor([2.0, 3.0], dtype=DT)
+    state_ref = weakref.ref(fallback_state)
+
+    def fallback_fn(p, _q, _c, _batch_idx, state):
+        return p[:, 0] * state
+
+    out = _InjectCachedEvalGradWithFallback.apply(
+        energy,
+        positions,
+        charges,
+        cell,
+        torch.zeros_like(positions),
+        None,
+        None,
+        None,
+        fallback_fn,
+        fallback_state,
+    )
+    del fallback_state
+
+    out.backward(torch.tensor([1.0, 2.0], dtype=DT))
+    gc.collect()
+
+    assert state_ref() is None
+
+
+def test_cached_eval_retains_fallback_state_until_final_backward():
+    """Saved fallback state survives retained backward then releases finally."""
+    positions = torch.zeros((2, 3), dtype=DT, requires_grad=True)
+    charges = torch.zeros(2, dtype=DT)
+    cell = torch.eye(3, dtype=DT).unsqueeze(0)
+    energy = torch.zeros(2, dtype=DT)
+    fallback_state = torch.tensor([2.0, 3.0], dtype=DT)
+    state_ref = weakref.ref(fallback_state)
+
+    def fallback_fn(p, _q, _c, _batch_idx, state):
+        return p[:, 0] * state
+
+    out = _InjectCachedEvalGradWithFallback.apply(
+        energy,
+        positions,
+        charges,
+        cell,
+        torch.zeros_like(positions),
+        None,
+        None,
+        None,
+        fallback_fn,
+        fallback_state,
+    )
+    del fallback_state
+    weights = torch.tensor([1.0, 2.0], dtype=DT)
+
+    out.backward(weights, retain_graph=True)
+    gc.collect()
+    assert state_ref() is not None
+
+    out.backward(weights)
+    gc.collect()
+    assert state_ref() is None
+
+
+def test_cached_eval_without_fallback_releases_batch_idx_after_backward():
+    """Cached direct-gradient state releases tensor-valued batch indices."""
+    positions = torch.zeros((2, 3), dtype=DT, requires_grad=True)
+    charges = torch.zeros(2, dtype=DT)
+    cell = torch.eye(3, dtype=DT).unsqueeze(0)
+    batch_idx = torch.tensor([0, 0], dtype=torch.int32)
+    batch_idx_ref = weakref.ref(batch_idx)
+
+    out = _InjectCachedEvalGrad.apply(
+        torch.zeros(1, dtype=DT),
+        positions,
+        charges,
+        cell,
+        torch.zeros_like(positions),
+        None,
+        None,
+        batch_idx,
+    )
+    del batch_idx
+
+    out.sum().backward()
+    gc.collect()
+
+    assert batch_idx_ref() is None
 
 
 def _available_devices():

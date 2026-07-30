@@ -2208,7 +2208,7 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_energy):
         """Return cached first gradients or recompute for higher-order fallback."""
-        create_graph = torch.is_grad_enabled()
+        create_vjp_graph = torch.is_grad_enabled()
         (
             positions,
             charges,
@@ -2227,7 +2227,7 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
             cached_dEdcell,
         ) = ctx.saved_tensors
 
-        if create_graph or not _is_uniform_cotangent(grad_energy):
+        if create_vjp_graph or not _is_uniform_cotangent(grad_energy):
             diff_inputs = []
             diff_names = []
             for name, tensor in (
@@ -2267,7 +2267,7 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
                         tuple(diff_inputs),
                         grad_outputs=grad_energy,
                         allow_unused=True,
-                        create_graph=create_graph,
+                        create_graph=create_vjp_graph,
                         retain_graph=True,
                     )
                     grad_map = dict(zip(diff_names, diff_grads, strict=True))
@@ -2275,7 +2275,7 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
                     grad_map = _dechain_connected_input_grads(
                         grad_map,
                         input_map,
-                        create_graph=create_graph,
+                        create_vjp_graph=create_vjp_graph,
                     )
                 else:
                     grad_map = {}
@@ -2719,26 +2719,39 @@ def _pme_reciprocal_space_impl(
 
     if hybrid_forces and charges.requires_grad:
 
-        def _fallback(p, q, c):
+        def _fallback(
+            p,
+            q,
+            c,
+            fallback_batch_idx,
+            fallback_alpha,
+            fallback_k_vectors,
+            fallback_k_squared,
+            fallback_volume,
+            fallback_cell_inv_t,
+            fallback_moduli_x,
+            fallback_moduli_y,
+            fallback_moduli_z,
+        ):
             fallback_energies, _forces, _charge_grads, _virial = (
                 _pme_reciprocal_space_impl(
                     p,
                     q,
                     c,
-                    alpha,
+                    fallback_alpha,
                     mesh_dimensions,
                     spline_order,
-                    batch_idx,
+                    fallback_batch_idx,
                     compute_forces=False,
                     compute_charge_gradients=False,
                     compute_virial=False,
-                    k_vectors=k_vectors,
-                    k_squared=k_squared,
-                    volume=volume,
-                    cell_inv_t=cell_inv_t,
-                    moduli_x=moduli_x,
-                    moduli_y=moduli_y,
-                    moduli_z=moduli_z,
+                    k_vectors=fallback_k_vectors,
+                    k_squared=fallback_k_squared,
+                    volume=fallback_volume,
+                    cell_inv_t=fallback_cell_inv_t,
+                    moduli_x=fallback_moduli_x,
+                    moduli_y=fallback_moduli_y,
+                    moduli_z=fallback_moduli_z,
                     hybrid_forces=False,
                 )
             )
@@ -2754,6 +2767,14 @@ def _pme_reciprocal_space_impl(
             None,
             batch_idx,
             _fallback,
+            alpha,
+            k_vectors,
+            k_squared,
+            volume,
+            cell_inv_t,
+            moduli_x,
+            moduli_y,
+            moduli_z,
         )
 
     if return_cell_inv_t:
@@ -3608,19 +3629,38 @@ def particle_mesh_ewald(
             positions.device,
         )
 
-        def _fallback(p, q, c):
+        def _fallback(
+            p,
+            q,
+            c,
+            fallback_batch_idx,
+            fallback_alpha,
+            fallback_neighbor_list,
+            fallback_neighbor_ptr,
+            fallback_neighbor_shifts,
+            fallback_neighbor_matrix,
+            fallback_neighbor_matrix_shifts,
+            fallback_reciprocal_alpha,
+            fallback_k_vectors,
+            fallback_k_squared,
+            fallback_volume,
+            fallback_cell_inv_t,
+            fallback_moduli_x,
+            fallback_moduli_y,
+            fallback_moduli_z,
+        ):
             rs_energy = ewald_real_space(
                 positions=p,
                 charges=q,
                 cell=c,
-                alpha=alpha,
-                neighbor_list=neighbor_list,
-                neighbor_ptr=neighbor_ptr,
-                neighbor_shifts=neighbor_shifts,
-                neighbor_matrix=neighbor_matrix,
-                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                alpha=fallback_alpha,
+                neighbor_list=fallback_neighbor_list,
+                neighbor_ptr=fallback_neighbor_ptr,
+                neighbor_shifts=fallback_neighbor_shifts,
+                neighbor_matrix=fallback_neighbor_matrix,
+                neighbor_matrix_shifts=fallback_neighbor_matrix_shifts,
                 mask_value=mask_value,
-                batch_idx=batch_idx,
+                batch_idx=fallback_batch_idx,
             )
             # Avoid nesting the reciprocal cached-first connector while the
             # full-PME connector lazily recomputes connected partials.
@@ -3628,20 +3668,20 @@ def particle_mesh_ewald(
                 p,
                 q,
                 c,
-                reciprocal_alpha,
+                fallback_reciprocal_alpha,
                 mesh_dimensions,
                 spline_order,
-                batch_idx,
+                fallback_batch_idx,
                 compute_forces=False,
                 compute_charge_gradients=False,
                 compute_virial=False,
-                k_vectors=k_vectors,
-                k_squared=k_squared,
-                volume=volume,
-                cell_inv_t=cell_inv_t,
-                moduli_x=moduli_x,
-                moduli_y=moduli_y,
-                moduli_z=moduli_z,
+                k_vectors=fallback_k_vectors,
+                k_squared=fallback_k_squared,
+                volume=fallback_volume,
+                cell_inv_t=fallback_cell_inv_t,
+                moduli_x=fallback_moduli_x,
+                moduli_y=fallback_moduli_y,
+                moduli_z=fallback_moduli_z,
                 hybrid_forces=False,
                 cache_forces=False,
                 cache_charge_gradients=False,
@@ -3662,6 +3702,20 @@ def particle_mesh_ewald(
             cached_dEdcell,
             batch_idx,
             _fallback,
+            alpha,
+            neighbor_list,
+            neighbor_ptr,
+            neighbor_shifts,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            reciprocal_alpha,
+            k_vectors,
+            k_squared,
+            volume,
+            cell_inv_t,
+            moduli_x,
+            moduli_y,
+            moduli_z,
         )
 
     if hybrid_forces and charges.requires_grad and not slab_correction:
@@ -3738,35 +3792,53 @@ def particle_mesh_ewald(
             else None
         )
 
-        def _fallback(p, q, c):
+        def _fallback(
+            p,
+            q,
+            c,
+            fallback_batch_idx,
+            fallback_alpha,
+            fallback_neighbor_list,
+            fallback_neighbor_ptr,
+            fallback_neighbor_shifts,
+            fallback_neighbor_matrix,
+            fallback_neighbor_matrix_shifts,
+            fallback_k_vectors,
+            fallback_k_squared,
+            fallback_cell_inv_t,
+            fallback_volume,
+            fallback_moduli_x,
+            fallback_moduli_y,
+            fallback_moduli_z,
+        ):
             rs_energy = ewald_real_space(
                 positions=p,
                 charges=q,
                 cell=c,
-                alpha=alpha,
-                neighbor_list=neighbor_list,
-                neighbor_ptr=neighbor_ptr,
-                neighbor_shifts=neighbor_shifts,
-                neighbor_matrix=neighbor_matrix,
-                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                alpha=fallback_alpha,
+                neighbor_list=fallback_neighbor_list,
+                neighbor_ptr=fallback_neighbor_ptr,
+                neighbor_shifts=fallback_neighbor_shifts,
+                neighbor_matrix=fallback_neighbor_matrix,
+                neighbor_matrix_shifts=fallback_neighbor_matrix_shifts,
                 mask_value=mask_value,
-                batch_idx=batch_idx,
+                batch_idx=fallback_batch_idx,
             )
             rec_energy = pme_reciprocal_space(
                 positions=p,
                 charges=q,
                 cell=c,
-                alpha=alpha,
+                alpha=fallback_alpha,
                 mesh_dimensions=mesh_dimensions,
                 spline_order=spline_order,
-                batch_idx=batch_idx,
-                k_vectors=k_vectors,
-                k_squared=k_squared,
-                cell_inv_t=cell_inv_t,
-                volume=volume,
-                moduli_x=moduli_x,
-                moduli_y=moduli_y,
-                moduli_z=moduli_z,
+                batch_idx=fallback_batch_idx,
+                k_vectors=fallback_k_vectors,
+                k_squared=fallback_k_squared,
+                cell_inv_t=fallback_cell_inv_t,
+                volume=fallback_volume,
+                moduli_x=fallback_moduli_x,
+                moduli_y=fallback_moduli_y,
+                moduli_z=fallback_moduli_z,
             )
             return rs_energy + rec_energy
 
@@ -3780,6 +3852,19 @@ def particle_mesh_ewald(
             None,
             batch_idx,
             _fallback,
+            alpha,
+            neighbor_list,
+            neighbor_ptr,
+            neighbor_shifts,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            k_vectors,
+            k_squared,
+            cell_inv_t,
+            volume,
+            moduli_x,
+            moduli_y,
+            moduli_z,
         )
 
         return _build_electrostatic_result(
