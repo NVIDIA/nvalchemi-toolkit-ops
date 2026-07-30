@@ -1154,8 +1154,10 @@ def query_cluster_tile(
     neighbor_matrix_shifts2 : jax.Array, shape (natom, max_neighbors, 3), dtype=int32, optional
         Second shift buffer for dual-cutoff mode.
     rebuild_flags : jax.Array, shape (1,), dtype=bool, optional
-        When set, skips atoms flagged as unchanged; requires all
-        ``previous_*`` buffers to be passed.
+        When set, requires all ``previous_*`` buffers. For an empty system a
+        false flag preserves the previous active counts and tile state, while
+        a true flag clears the active pair and tile counts without rewriting
+        fixed-capacity topology storage.
     return_vectors : bool, optional
         If True, also fill and return per-pair displacement vectors.
     return_distances : bool, optional
@@ -1920,6 +1922,26 @@ def cluster_tile_neighbor_list(
         nn0 = jnp.empty(0, dtype=jnp.int32)
         ns0 = jnp.empty((0, int(max_neighbors), 3), dtype=jnp.int32)
         if format == "coo":
+            if selective:
+                empty_pair_counts = jnp.where(
+                    rebuild_flags,
+                    jnp.zeros_like(previous_pair_counts),
+                    previous_pair_counts,
+                )
+                empty_num_tiles = jnp.where(
+                    rebuild_flags,
+                    jnp.zeros_like(previous_num_tiles),
+                    previous_num_tiles,
+                )
+                return (
+                    previous_neighbor_list,
+                    pair_offsets,
+                    empty_pair_counts,
+                    previous_neighbor_list_shifts,
+                    empty_num_tiles,
+                    previous_tile_row_group,
+                    previous_tile_col_group,
+                )
             coo_base = (
                 jnp.empty((2, 0), dtype=jnp.int32),
                 jnp.zeros(1, dtype=jnp.int32),
@@ -1981,7 +2003,11 @@ def cluster_tile_neighbor_list(
         if selective:
             return (
                 *matrix_out,
-                previous_num_tiles,
+                jnp.where(
+                    rebuild_flags,
+                    jnp.zeros_like(previous_num_tiles),
+                    previous_num_tiles,
+                ),
                 previous_tile_row_group,
                 previous_tile_col_group,
             )

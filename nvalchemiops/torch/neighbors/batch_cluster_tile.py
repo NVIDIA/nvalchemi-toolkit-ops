@@ -60,6 +60,7 @@ from nvalchemiops.neighbors.neighbor_utils import (
     selective_zero_num_neighbors as wp_selective_zero_num_neighbors,
 )
 from nvalchemiops.neighbors.output_args import _has_partial_or_pair_outputs
+from nvalchemiops.torch.neighbors.neighbor_utils import _validate_segmented_coo_state
 from nvalchemiops.torch.types import get_wp_dtype
 
 if TYPE_CHECKING:
@@ -1624,6 +1625,25 @@ def batch_query_cluster_tile_coo(
         Output pair forces; modified in-place when ``pair_fn`` is set.
     """
 
+    if rebuild_flags is not None and pair_offsets is not None:
+        if pair_counts is None:
+            raise ValueError("pair_counts is required with pair_offsets")
+        _validate_segmented_coo_state(
+            device=coo_list.device,
+            num_systems=int(pair_offsets.shape[0]) - 1,
+            neighbor_list=coo_list.transpose(0, 1),
+            neighbor_list_shifts=coo_shifts,
+            pair_offsets=pair_offsets,
+            pair_counts=pair_counts,
+            rebuild_flags=rebuild_flags,
+            tile_offsets=tile_offsets,
+            tile_counts=tile_counts,
+            num_tiles=num_tiles,
+            tile_row_group=tile_row_group,
+            tile_col_group=tile_col_group,
+            tile_system=tile_system,
+        )
+
     if inv_cell_batch is None:
         inv_cell_batch = torch.linalg.inv(cell_batch).contiguous()
     pair_counter.zero_()
@@ -1862,6 +1882,7 @@ def batch_cluster_tile_neighbor_list(
     max_pairs: int | None = None,
     cutoff2: float | None = None,
     rebuild_flags: torch.Tensor | None = None,
+    return_state: bool = False,
     # matrix-format outputs
     neighbor_matrix: torch.Tensor | None = None,
     neighbor_matrix_shifts: torch.Tensor | None = None,
@@ -1949,6 +1970,12 @@ def batch_cluster_tile_neighbor_list(
     rebuild_flags : torch.Tensor, shape (num_systems,), dtype=torch.bool, optional
         Per-system selective rebuild flags. Supported for matrix output and
         segmented COO output.
+    return_state : bool, default=False
+        When used with ``rebuild_flags``, append the reusable tile state
+        ``(tile_offsets, tile_counts, num_tiles, tile_row_group,
+        tile_col_group, tile_system)`` to matrix or segmented-COO output.
+        These are the same tensor objects as caller-supplied state buffers.
+        Requires ``rebuild_flags``.
     tile_offsets, tile_counts : torch.Tensor, optional
         Fixed per-system tile offsets and OUTPUT tile counters for segmented
         tile-list state. Use ``estimate_batch_cluster_tile_segments`` to size
@@ -1956,6 +1983,10 @@ def batch_cluster_tile_neighbor_list(
     pair_offsets, pair_counts : torch.Tensor, optional
         Fixed per-system COO offsets and OUTPUT pair counters for segmented
         COO output. Compact COO cannot be combined with ``rebuild_flags``.
+        Before launch, offsets, counts, topology buffers, and tile state are
+        validated against their physical capacities. Eager calls containing a
+        false flag require caller-owned topology and tile state; batched
+        ``torch.compile(fullgraph=True)`` selective COO is not supported.
     neighbor_matrix, num_neighbors, neighbor_matrix_shifts : torch.Tensor, optional
         Pre-allocated matrix-format outputs. All-or-nothing across the trio.
     neighbor_list, neighbor_list_shifts, pair_counter : torch.Tensor, optional
@@ -1994,13 +2025,18 @@ def batch_cluster_tile_neighbor_list(
           neighbor_matrix_shifts)``, with optional ``(*, distances)``
           and/or ``(*, vectors)`` appended when ``return_distances`` /
           ``return_vectors`` is True, and optional ``(*, pair_energies,
-          pair_forces)`` when ``pair_fn`` is set.
+          pair_forces)`` when ``pair_fn`` is set. Selective calls with
+          ``return_state=True`` append ``(tile_offsets, tile_counts,
+          num_tiles, tile_row_group, tile_col_group, tile_system)``, yielding
+          nine tensors for one cutoff or twelve for two cutoffs.
         - ``"coo"``: ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)``
           via the direct ``batch_query_cluster_tile_coo`` path (no
           matrix intermediate). ``neighbor_ptr`` is reconstructed from
           ``bincount(neighbor_list[0])``. With segmented COO, returns
           ``(neighbor_list, pair_offsets, pair_counts, neighbor_list_shifts)``
-          without trimming the caller-owned fixed segments.
+          without trimming the caller-owned fixed segments; selective calls
+          with ``return_state=True`` append the six state tensors above,
+          yielding ten tensors.
         - ``"tile"``: 11-tuple ``(num_tiles, tile_row_group,
           tile_col_group, tile_system, sorted_atom_index, sorted_pos_x,
           sorted_pos_y, sorted_pos_z, batch_idx_sorted, batch_ptr_padded,
@@ -2043,6 +2079,8 @@ def batch_cluster_tile_neighbor_list(
         or pair_energies is not None
         or pair_forces is not None
     )
+    if return_state and rebuild_flags is None:
+        raise ValueError("return_state=True requires rebuild_flags")
     if has_pair_outputs and format == "tile":
         raise NotImplementedError(
             "Pair outputs (return_vectors / return_distances / pair_fn) "
@@ -2078,6 +2116,32 @@ def batch_cluster_tile_neighbor_list(
         raise ValueError("batch_ptr must have length at least 2")
     device = positions.device
     N = int(batch_ptr[-1].item())
+    num_systems = int(batch_ptr.shape[0]) - 1
+
+    if (
+        rebuild_flags is not None
+        and format == "coo"
+        and not torch.compiler.is_compiling()
+        and not bool(rebuild_flags.all().item())
+    ):
+        required_state = {
+            "neighbor_list": neighbor_list,
+            "neighbor_list_shifts": neighbor_list_shifts,
+            "num_tiles": num_tiles,
+            "tile_row_group": tile_row_group,
+            "tile_col_group": tile_col_group,
+            "tile_system": tile_system,
+            "tile_offsets": tile_offsets,
+            "tile_counts": tile_counts,
+        }
+        missing_state = [
+            name for name, value in required_state.items() if value is None
+        ]
+        if missing_state:
+            raise ValueError(
+                "selective segmented COO with rebuild_flags=False requires "
+                "caller-owned topology and tile state: " + ", ".join(missing_state)
+            )
 
     if max_neighbors is None:
         max_neighbors = max(
@@ -2147,6 +2211,12 @@ def batch_cluster_tile_neighbor_list(
     build_cutoff = cutoff if cutoff2 is None else max(float(cutoff), float(cutoff2))
 
     if sorted_atom_index is None:
+        previous_tile_state = (
+            num_tiles,
+            tile_row_group,
+            tile_col_group,
+            tile_system,
+        )
         if max_tiles_per_group is None:
             max_tiles_per_group = estimate_batch_max_tiles_per_group(
                 batch_ptr, build_cutoff, cell_batch
@@ -2177,6 +2247,52 @@ def batch_cluster_tile_neighbor_list(
             dtype=positions.dtype,
             max_tiles_per_group=max_tiles_per_group,
         )
+        (
+            previous_num_tiles,
+            previous_tile_row_group,
+            previous_tile_col_group,
+            previous_tile_system,
+        ) = previous_tile_state
+        if previous_num_tiles is not None:
+            num_tiles = previous_num_tiles
+        if previous_tile_row_group is not None:
+            tile_row_group = previous_tile_row_group
+        if previous_tile_col_group is not None:
+            tile_col_group = previous_tile_col_group
+        if previous_tile_system is not None:
+            tile_system = previous_tile_system
+
+    segmented_pair_capacity: int | None = None
+    if format == "coo" and pair_offsets is not None:
+        if neighbor_list is None:
+            capacity = int(pair_offsets[-1].item())
+            neighbor_list = torch.empty(
+                (2, capacity),
+                dtype=torch.int32,
+                device=device,
+            )
+        if neighbor_list_shifts is None:
+            neighbor_list_shifts = torch.empty(
+                (neighbor_list.shape[1], 3),
+                dtype=torch.int32,
+                device=device,
+            )
+        segmented_pair_capacity = _validate_segmented_coo_state(
+            device=device,
+            num_systems=num_systems,
+            neighbor_list=neighbor_list,
+            neighbor_list_shifts=neighbor_list_shifts,
+            pair_offsets=pair_offsets,
+            pair_counts=pair_counts,
+            rebuild_flags=rebuild_flags,
+            tile_offsets=tile_offsets,
+            tile_counts=tile_counts,
+            num_tiles=num_tiles,
+            tile_row_group=tile_row_group,
+            tile_col_group=tile_col_group,
+            tile_system=tile_system,
+        )
+
     batch_build_cluster_tile_list(
         positions,
         build_cutoff,
@@ -2231,7 +2347,9 @@ def batch_cluster_tile_neighbor_list(
     if format == "coo":
         segmented_coo = pair_offsets is not None
         if segmented_coo:
-            max_pairs = int(pair_offsets[-1].item())
+            if segmented_pair_capacity is None:
+                raise RuntimeError("segmented COO state was not validated")
+            max_pairs = segmented_pair_capacity
         elif max_pairs is None:
             max_pairs = N * max_neighbors
         if neighbor_list is None:
@@ -2295,12 +2413,23 @@ def batch_cluster_tile_neighbor_list(
                     int(pair_counts[isys].item()),
                     system_index=isys,
                 )
-            return (
+            outputs = (
                 coo_buf.transpose(0, 1).contiguous(),
                 pair_offsets,
                 pair_counts,
                 neighbor_list_shifts,
             )
+            if return_state:
+                return (
+                    *outputs,
+                    tile_offsets,
+                    tile_counts,
+                    num_tiles,
+                    tile_row_group,
+                    tile_col_group,
+                    tile_system,
+                )
+            return outputs
 
         npairs = int(pair_counter.item())
         if npairs > int(max_pairs):
@@ -2441,7 +2570,7 @@ def batch_cluster_tile_neighbor_list(
             )
 
     if cutoff2 is not None:
-        return (
+        outputs = (
             neighbor_matrix,
             num_neighbors,
             neighbor_matrix_shifts,
@@ -2449,4 +2578,16 @@ def batch_cluster_tile_neighbor_list(
             num_neighbors2,
             neighbor_matrix_shifts2,
         )
-    return neighbor_matrix, num_neighbors, neighbor_matrix_shifts
+    else:
+        outputs = (neighbor_matrix, num_neighbors, neighbor_matrix_shifts)
+    if return_state:
+        return (
+            *outputs,
+            tile_offsets,
+            tile_counts,
+            num_tiles,
+            tile_row_group,
+            tile_col_group,
+            tile_system,
+        )
+    return outputs

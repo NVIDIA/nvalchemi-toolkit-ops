@@ -1409,7 +1409,9 @@ def batch_query_cluster_tile(
         with pair outputs.
     rebuild_flags : jax.Array, shape (S,), dtype=bool, optional
         Per-system selective rebuild flags. Requires ``tile_offsets``,
-        ``tile_counts``, and ``batch_idx``.
+        ``tile_counts``, and ``batch_idx``. For an empty batch, false-flag
+        segments retain their active pair and tile counts while true-flag
+        segments clear them; fixed-capacity arrays remain unchanged.
     tile_offsets : jax.Array, shape (S + 1,), dtype=int32, optional
         Per-system tile segment offsets. Required with ``rebuild_flags``.
     tile_counts : jax.Array, shape (S,), dtype=int32, optional
@@ -2162,6 +2164,29 @@ def batch_cluster_tile_neighbor_list(
         nn0 = jnp.empty(0, dtype=jnp.int32)
         ns0 = jnp.empty((0, int(max_neighbors), 3), dtype=jnp.int32)
         if format == "coo":
+            if selective:
+                empty_pair_counts = jnp.where(
+                    rebuild_flags,
+                    jnp.zeros_like(previous_pair_counts),
+                    previous_pair_counts,
+                )
+                empty_tile_counts = jnp.where(
+                    rebuild_flags,
+                    jnp.zeros_like(previous_tile_counts),
+                    previous_tile_counts,
+                )
+                return (
+                    previous_neighbor_list,
+                    pair_offsets,
+                    empty_pair_counts,
+                    previous_neighbor_list_shifts,
+                    tile_offsets,
+                    empty_tile_counts,
+                    previous_num_tiles,
+                    previous_tile_row_group,
+                    previous_tile_col_group,
+                    previous_tile_system,
+                )
             coo_base = (
                 jnp.empty((2, 0), dtype=jnp.int32),
                 jnp.zeros(1, dtype=jnp.int32),
@@ -2231,7 +2256,11 @@ def batch_cluster_tile_neighbor_list(
             return (
                 *matrix_out,
                 tile_offsets,
-                previous_tile_counts,
+                jnp.where(
+                    rebuild_flags,
+                    jnp.zeros_like(previous_tile_counts),
+                    previous_tile_counts,
+                ),
                 previous_num_tiles,
                 previous_tile_row_group,
                 previous_tile_col_group,

@@ -389,10 +389,10 @@ def _reject_unsupported_cluster_tile_combo(
             "are not supported.  Use method='naive' or 'cell_list', "
             "or pass a cell with fully periodic pbc."
         )
-    try:
-        all_periodic = bool(pbc.all().item())
-    except RuntimeError:
+    if torch.compiler.is_compiling():
         all_periodic = True
+    else:
+        all_periodic = bool(pbc.all().item())
     if not all_periodic:
         raise NotImplementedError(
             "method='cluster_tile' / 'batch_cluster_tile' is "

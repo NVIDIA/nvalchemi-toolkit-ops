@@ -33,6 +33,7 @@ from nvalchemiops.torch.neighbors.batch_cluster_tile import (
     batch_cluster_tile_neighbor_list,
     batch_query_cluster_tile,
     estimate_batch_cluster_tile_list_sizes,
+    estimate_batch_cluster_tile_segments,
     estimate_batch_max_tiles_per_group,
 )
 
@@ -77,6 +78,34 @@ def _make_batch(
         bp.append(bp[-1] + sz)
     batch_ptr = torch.tensor(bp, dtype=torch.int32, device=device)
     return positions, cell_batch, batch_ptr
+
+
+def _scratch_kwargs(
+    scratch: tuple[torch.Tensor, ...],
+) -> dict[str, torch.Tensor]:
+    """Map allocator outputs to one-shot API keyword arguments."""
+    names = (
+        "sorted_atom_index",
+        "sort_inv",
+        "sorted_pos_x",
+        "sorted_pos_y",
+        "sorted_pos_z",
+        "batch_idx_sorted",
+        "batch_ptr_padded",
+        "group_system",
+        "group_ptr",
+        "group_ctr_x",
+        "group_ctr_y",
+        "group_ctr_z",
+        "group_ext_x",
+        "group_ext_y",
+        "group_ext_z",
+        "num_tiles",
+        "tile_row_group",
+        "tile_col_group",
+        "tile_system",
+    )
+    return dict(zip(names, scratch))
 
 
 class TestBatchClusterTileValidation:
@@ -155,6 +184,146 @@ class TestBatchClusterTileValidation:
                 rebuild_flags=torch.ones(1, dtype=torch.bool),
                 tile_offsets=offsets,
                 tile_counts=counts,
+            )
+
+    def test_return_state_requires_rebuild_flags(self):
+        """State return is rejected without selective-rebuild inputs."""
+        positions, cell_batch, batch_ptr = _make_batch([32], [8.0], device="cpu")
+
+        with pytest.raises(ValueError, match="requires rebuild_flags"):
+            batch_cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell_batch,
+                batch_ptr,
+                return_state=True,
+            )
+
+    def test_segmented_coo_rejects_undersized_topology_before_build(self, monkeypatch):
+        """Segmented COO capacity mismatches fail before a Warp build launch."""
+        positions, cell_batch, batch_ptr = _make_batch([32], [8.0], device="cpu")
+        pair_offsets = torch.tensor([0, 64], dtype=torch.int32)
+        tile_offsets = torch.tensor([0, 4], dtype=torch.int32)
+
+        def fail_build(*args, **kwargs):
+            del args, kwargs
+            raise AssertionError("segmented COO validation must run before build")
+
+        monkeypatch.setattr(
+            batch_cluster_tile_module,
+            "batch_build_cluster_tile_list",
+            fail_build,
+        )
+
+        with pytest.raises(ValueError, match="neighbor_list.*capacity"):
+            batch_cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell_batch,
+                batch_ptr,
+                format="coo",
+                rebuild_flags=torch.ones(1, dtype=torch.bool),
+                neighbor_list=torch.empty((2, 1), dtype=torch.int32),
+                neighbor_list_shifts=torch.empty((64, 3), dtype=torch.int32),
+                pair_offsets=pair_offsets,
+                pair_counts=torch.zeros(1, dtype=torch.int32),
+                tile_offsets=tile_offsets,
+                tile_counts=torch.zeros(1, dtype=torch.int32),
+            )
+
+    def test_segmented_coo_false_flag_requires_prior_state(self, monkeypatch):
+        """A skipped system cannot preserve implicitly allocated COO state."""
+        positions, cell_batch, batch_ptr = _make_batch([32], [8.0], device="cpu")
+
+        def fail_build(*args, **kwargs):
+            del args, kwargs
+            raise AssertionError("selective state validation must run before build")
+
+        monkeypatch.setattr(
+            batch_cluster_tile_module,
+            "batch_build_cluster_tile_list",
+            fail_build,
+        )
+
+        with pytest.raises(ValueError, match="caller-owned"):
+            batch_cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell_batch,
+                batch_ptr,
+                format="coo",
+                rebuild_flags=torch.zeros(1, dtype=torch.bool),
+                pair_offsets=torch.tensor([0, 64], dtype=torch.int32),
+                pair_counts=torch.zeros(1, dtype=torch.int32),
+                tile_offsets=torch.tensor([0, 4], dtype=torch.int32),
+                tile_counts=torch.zeros(1, dtype=torch.int32),
+            )
+
+    @pytest.mark.parametrize(
+        ("mutate", "message"),
+        [
+            (
+                lambda kwargs: kwargs.update(
+                    pair_offsets=torch.tensor([1, 64], dtype=torch.int32),
+                ),
+                "pair_offsets must start",
+            ),
+            (
+                lambda kwargs: kwargs.update(
+                    pair_counts=torch.tensor([65], dtype=torch.int32),
+                ),
+                "pair_counts must lie",
+            ),
+            (
+                lambda kwargs: kwargs.update(
+                    neighbor_list_shifts=torch.empty((63, 3), dtype=torch.int32),
+                ),
+                "neighbor_list_shifts",
+            ),
+            (
+                lambda kwargs: kwargs.update(
+                    rebuild_flags=torch.ones(1, dtype=torch.int32),
+                ),
+                "rebuild_flags",
+            ),
+        ],
+    )
+    def test_segmented_coo_rejects_malformed_state_before_build(
+        self,
+        monkeypatch,
+        mutate,
+        message,
+    ):
+        """Malformed segmented metadata is rejected before any Warp launch."""
+        positions, cell_batch, batch_ptr = _make_batch([32], [8.0], device="cpu")
+        kwargs = {
+            "format": "coo",
+            "rebuild_flags": torch.ones(1, dtype=torch.bool),
+            "neighbor_list": torch.empty((2, 64), dtype=torch.int32),
+            "neighbor_list_shifts": torch.empty((64, 3), dtype=torch.int32),
+            "pair_offsets": torch.tensor([0, 64], dtype=torch.int32),
+            "pair_counts": torch.zeros(1, dtype=torch.int32),
+            "tile_offsets": torch.tensor([0, 4], dtype=torch.int32),
+            "tile_counts": torch.zeros(1, dtype=torch.int32),
+        }
+        mutate(kwargs)
+
+        def fail_build(*args, **kwargs):
+            del args, kwargs
+            raise AssertionError("segmented COO validation must run before build")
+
+        monkeypatch.setattr(
+            batch_cluster_tile_module,
+            "batch_build_cluster_tile_list",
+            fail_build,
+        )
+        with pytest.raises(ValueError, match=message):
+            batch_cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell_batch,
+                batch_ptr,
+                **kwargs,
             )
 
 
@@ -770,6 +939,294 @@ class TestBatchTileNeighborListFormats:
         assert batch_ptr_padded.shape == (len(sizes) + 1,)
         assert group_ptr.shape[0] == len(sizes) + 1
         assert n_padded >= N
+
+    def test_selective_matrix_return_state_appends_batched_state(self, device, dtype):
+        """Selective matrix calls can return reusable batched tile state."""
+        positions, cell_batch, batch_ptr = _make_batch(
+            [64], [8.0], device=device, dtype=dtype, seed=43
+        )
+
+        out = batch_cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell_batch,
+            batch_ptr,
+            max_neighbors=64,
+            rebuild_flags=torch.ones(1, dtype=torch.bool, device=device),
+            return_state=True,
+        )
+
+        assert len(out) == 9
+        neighbor_matrix, num_neighbors, shifts, *state = out
+        assert neighbor_matrix.shape == (64, 64)
+        assert num_neighbors.shape == (64,)
+        assert shifts.shape == (64, 64, 3)
+        tile_offsets, tile_counts, num_tiles, row, col, system = state
+        assert tile_offsets.shape == (2,)
+        assert tile_counts.shape == (1,)
+        assert num_tiles.shape == (1,)
+        assert row.ndim == col.ndim == system.ndim == 1
+
+    def test_selective_matrix_default_arity_is_unchanged(self, device, dtype):
+        """Selective matrix calls keep the three-array default return."""
+        positions, cell_batch, batch_ptr = _make_batch(
+            [64], [8.0], device=device, dtype=dtype, seed=44
+        )
+
+        out = batch_cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell_batch,
+            batch_ptr,
+            max_neighbors=64,
+            rebuild_flags=torch.ones(1, dtype=torch.bool, device=device),
+        )
+
+        assert len(out) == 3
+
+    @pytest.mark.parametrize("rebuild_flag", [False, True])
+    def test_returned_matrix_state_can_be_passed_to_next_call(
+        self, device, dtype, rebuild_flag
+    ):
+        """The public state suffix is sufficient for the next selective call."""
+        positions, cell_batch, batch_ptr = _make_batch(
+            [64], [8.0], device=device, dtype=dtype, seed=48
+        )
+        first = batch_cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell_batch,
+            batch_ptr,
+            max_neighbors=64,
+            rebuild_flags=torch.ones(1, dtype=torch.bool, device=device),
+            return_state=True,
+        )
+        matrix, counts, shifts, *state = first
+        tile_offsets, tile_counts, num_tiles, row, col, system = state
+
+        second = batch_cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell_batch,
+            batch_ptr,
+            max_neighbors=64,
+            rebuild_flags=torch.tensor([rebuild_flag], dtype=torch.bool, device=device),
+            neighbor_matrix=matrix,
+            num_neighbors=counts,
+            neighbor_matrix_shifts=shifts,
+            tile_offsets=tile_offsets,
+            tile_counts=tile_counts,
+            num_tiles=num_tiles,
+            tile_row_group=row,
+            tile_col_group=col,
+            tile_system=system,
+            return_state=True,
+        )
+
+        for returned, supplied in zip(second[-6:], state):
+            assert returned is supplied
+
+    def test_return_state_mixed_flags_preserve_unflagged_system(self, device, dtype):
+        """Mixed flags keep unflagged rows while returning reusable state."""
+        positions, cell_batch, batch_ptr = _make_batch(
+            [64, 64], [8.0, 8.0], device=device, dtype=dtype, seed=49
+        )
+        first = batch_cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell_batch,
+            batch_ptr,
+            max_neighbors=64,
+            rebuild_flags=torch.ones(2, dtype=torch.bool, device=device),
+            return_state=True,
+        )
+        matrix, counts, shifts, *state = first
+        system0_matrix = matrix[:64].clone()
+        system0_counts = counts[:64].clone()
+        system0_shifts = shifts[:64].clone()
+        system0_tile_count = state[1][0].clone()
+        moved = positions.clone()
+        moved[:64] = torch.roll(moved[:64], shifts=1, dims=0)
+        moved[64:, 0] += 0.2
+
+        second = batch_cluster_tile_neighbor_list(
+            moved,
+            2.0,
+            cell_batch,
+            batch_ptr,
+            max_neighbors=64,
+            rebuild_flags=torch.tensor([False, True], dtype=torch.bool, device=device),
+            neighbor_matrix=matrix,
+            num_neighbors=counts,
+            neighbor_matrix_shifts=shifts,
+            tile_offsets=state[0],
+            tile_counts=state[1],
+            num_tiles=state[2],
+            tile_row_group=state[3],
+            tile_col_group=state[4],
+            tile_system=state[5],
+            return_state=True,
+        )
+
+        assert len(second) == 9
+        torch.testing.assert_close(second[0][:64], system0_matrix)
+        torch.testing.assert_close(second[1][:64], system0_counts)
+        torch.testing.assert_close(second[2][:64], system0_shifts)
+        torch.testing.assert_close(second[4][0], system0_tile_count)
+        for returned, supplied in zip(second[-6:], state):
+            assert returned is supplied
+
+    @pytest.mark.parametrize("rebuild_flag", [False, True])
+    def test_selective_matrix_state_aliases_caller_buffers(
+        self, device, dtype, rebuild_flag
+    ):
+        """Returned matrix state aliases explicitly supplied scratch buffers."""
+        positions, cell_batch, batch_ptr = _make_batch(
+            [64], [8.0], device=device, dtype=dtype, seed=45
+        )
+        scratch_kwargs = _scratch_kwargs(
+            allocate_batch_cluster_tile_list(
+                batch_ptr, torch.device(device), dtype=dtype
+            )
+        )
+        _tile_caps, tile_offsets, _pair_caps, _pair_offsets = (
+            estimate_batch_cluster_tile_segments(batch_ptr, max_neighbors=64)
+        )
+        tile_counts = torch.zeros(1, dtype=torch.int32, device=device)
+        matrix = torch.full((64, 64), 64, dtype=torch.int32, device=device)
+        counts = torch.zeros(64, dtype=torch.int32, device=device)
+        shifts = torch.zeros((64, 64, 3), dtype=torch.int32, device=device)
+
+        out = batch_cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell_batch,
+            batch_ptr,
+            max_neighbors=64,
+            rebuild_flags=torch.tensor([rebuild_flag], dtype=torch.bool, device=device),
+            neighbor_matrix=matrix,
+            num_neighbors=counts,
+            neighbor_matrix_shifts=shifts,
+            tile_offsets=tile_offsets,
+            tile_counts=tile_counts,
+            return_state=True,
+            **scratch_kwargs,
+        )
+
+        assert len(out) == 9
+        for returned, supplied in zip(
+            out[-6:],
+            (
+                tile_offsets,
+                tile_counts,
+                scratch_kwargs["num_tiles"],
+                scratch_kwargs["tile_row_group"],
+                scratch_kwargs["tile_col_group"],
+                scratch_kwargs["tile_system"],
+            ),
+        ):
+            assert returned is supplied
+
+    @pytest.mark.parametrize("rebuild_flag", [False, True])
+    def test_selective_segmented_coo_return_state(self, device, dtype, rebuild_flag):
+        """Segmented COO appends six caller-owned batched state buffers."""
+        positions, cell_batch, batch_ptr = _make_batch(
+            [64], [8.0], device=device, dtype=dtype, seed=46
+        )
+        scratch_kwargs = _scratch_kwargs(
+            allocate_batch_cluster_tile_list(
+                batch_ptr, torch.device(device), dtype=dtype
+            )
+        )
+        _tile_caps, tile_offsets, _pair_caps, pair_offsets = (
+            estimate_batch_cluster_tile_segments(batch_ptr, max_neighbors=64)
+        )
+        max_pairs = int(pair_offsets[-1].item())
+        tile_counts = torch.zeros(1, dtype=torch.int32, device=device)
+        pair_counts = torch.zeros(1, dtype=torch.int32, device=device)
+
+        out = batch_cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell_batch,
+            batch_ptr,
+            max_neighbors=64,
+            format="coo",
+            rebuild_flags=torch.tensor([rebuild_flag], dtype=torch.bool, device=device),
+            neighbor_list=torch.empty((2, max_pairs), dtype=torch.int32, device=device),
+            neighbor_list_shifts=torch.empty(
+                (max_pairs, 3), dtype=torch.int32, device=device
+            ),
+            pair_counter=torch.zeros(1, dtype=torch.int32, device=device),
+            tile_offsets=tile_offsets,
+            tile_counts=tile_counts,
+            pair_offsets=pair_offsets,
+            pair_counts=pair_counts,
+            return_state=True,
+            **scratch_kwargs,
+        )
+
+        assert len(out) == 10
+        assert out[1] is pair_offsets
+        assert out[2] is pair_counts
+        for returned, supplied in zip(
+            out[-6:],
+            (
+                tile_offsets,
+                tile_counts,
+                scratch_kwargs["num_tiles"],
+                scratch_kwargs["tile_row_group"],
+                scratch_kwargs["tile_col_group"],
+                scratch_kwargs["tile_system"],
+            ),
+        ):
+            assert returned is supplied
+
+    def test_selective_dual_cutoff_return_state(self, device, dtype):
+        """Dual-cutoff matrix output appends state after both matrix triples."""
+        positions, cell_batch, batch_ptr = _make_batch(
+            [64], [8.0], device=device, dtype=dtype, seed=47
+        )
+        scratch_kwargs = _scratch_kwargs(
+            allocate_batch_cluster_tile_list(
+                batch_ptr, torch.device(device), dtype=dtype
+            )
+        )
+        _tile_caps, tile_offsets, _pair_caps, _pair_offsets = (
+            estimate_batch_cluster_tile_segments(batch_ptr, max_neighbors=64)
+        )
+        tile_counts = torch.zeros(1, dtype=torch.int32, device=device)
+        matrix1 = torch.full((64, 64), 64, dtype=torch.int32, device=device)
+        counts1 = torch.zeros(64, dtype=torch.int32, device=device)
+        shifts1 = torch.zeros((64, 64, 3), dtype=torch.int32, device=device)
+        matrix2 = matrix1.clone()
+        counts2 = counts1.clone()
+        shifts2 = shifts1.clone()
+
+        out = batch_cluster_tile_neighbor_list(
+            positions,
+            1.5,
+            cell_batch,
+            batch_ptr,
+            cutoff2=2.0,
+            max_neighbors=64,
+            rebuild_flags=torch.ones(1, dtype=torch.bool, device=device),
+            neighbor_matrix=matrix1,
+            num_neighbors=counts1,
+            neighbor_matrix_shifts=shifts1,
+            neighbor_matrix2=matrix2,
+            num_neighbors2=counts2,
+            neighbor_matrix_shifts2=shifts2,
+            tile_offsets=tile_offsets,
+            tile_counts=tile_counts,
+            return_state=True,
+            **scratch_kwargs,
+        )
+
+        assert len(out) == 12
+        assert out[6] is tile_offsets
+        assert out[7] is tile_counts
+        assert out[8] is scratch_kwargs["num_tiles"]
 
     def test_format_coo_returns_three_tuple(self, device, dtype):
         sizes = [64, 64]

@@ -246,6 +246,15 @@ def neighbor_list(
             Boolean flags selecting which systems to re-enumerate; systems whose
             flag is ``False`` keep their previous output (per-system skip for the
             batched methods, whole-list flag for single-system methods).
+        pair_offsets, pair_counts : torch.Tensor, optional
+            Fixed segmented COO metadata for explicit
+            ``method="cluster_tile"`` with ``return_neighbor_list=True`` and
+            ``rebuild_flags``. Single-system tensors have shapes ``(2,)`` and
+            ``(1,)`` int32 and are returned with the fixed-capacity COO buffers.
+        return_state : bool, default=False
+            With ``rebuild_flags`` and an explicit ``method="cluster_tile"`` or
+            ``method="batch_cluster_tile"``, append reusable tile state to the
+            result. See the selected method's return contract for exact tensors.
         pair_fn : warp.Function or CompiledPairFn, optional
             Inline Warp pair potential evaluated as neighbors are enumerated;
             requires ``pair_params`` and fills ``pair_energies`` / ``pair_forces``.
@@ -305,6 +314,14 @@ def neighbor_list(
 
         When ``cutoff2`` is provided, the pattern repeats for the second cutoff with interleaved
         components (neighbor_data2, num_neighbor_data2, neighbor_shift_data2) appended to the tuple.
+        Explicit cluster-tile methods append their documented tile-state suffix
+        when ``return_state=True``.
+
+        Single-system selective COO calls to explicit ``method="cluster_tile"``
+        return ``(neighbor_list, pair_offsets, pair_counts,
+        neighbor_list_shifts)`` instead of the compact COO pointer tuple. With
+        ``return_state=True``, ``(num_tiles, tile_row_group, tile_col_group)``
+        is appended.
 
     Examples
     --------
@@ -352,6 +369,12 @@ def neighbor_list(
         or kwargs.get("pair_forces") is not None
     )
     rebuild_flags = kwargs.get("rebuild_flags")
+    return_state = bool(kwargs.get("return_state", False))
+    if return_state and method is None:
+        raise ValueError(
+            "return_state=True requires an explicit cluster_tile method "
+            "(method='cluster_tile' or method='batch_cluster_tile')"
+        )
     selected_naive_strategy = "auto"
     selected_cell_strategy = "auto"
 
@@ -426,6 +449,10 @@ def neighbor_list(
                 method
             )
             _apply_auto_suboptions(fg_native, fg_cell, fg_path)
+    if return_state and method not in ("cluster_tile", "batch_cluster_tile"):
+        raise ValueError(
+            "return_state=True is supported only by explicit cluster_tile methods"
+        )
     match method:
         case "naive":
             return naive_neighbor_list(

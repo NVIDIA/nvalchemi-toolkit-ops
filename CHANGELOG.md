@@ -2,12 +2,21 @@
 
 ## Unreleased
 
+### Added
+
+- PyTorch cluster-tile selective calls can append caller-owned tile state with
+  `return_state=True`, without changing the default neighbor-list return arity.
+
 ### Fixed
 
 - Unbatched JAX naive dual-cutoff PBC neighbor lists now populate both cutoff
   outputs when using the default `wrap_positions=True`. Previously this path
   wrapped positions but skipped the fill kernel, leaving zero counts and padded
   matrices.
+- Batched PyTorch cluster-tile segmented COO validates fixed topology, offsets,
+  counts, and tile-state capacities before launching Warp kernels.
+- JAX cluster-tile empty selective rebuilds now preserve false-flag state and
+  clear true-flag pair and tile counts while retaining fixed-capacity storage.
 
 ## 0.4.0 - 2026-07-13
 
