@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import functools
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -30,6 +31,9 @@ from nvalchemiops.jax.neighbors._autograd import (
     _route_pair_outputs,
 )
 from nvalchemiops.jax.neighbors.cell_list import (
+    _DEFAULT_CELL_LIST_BUFFER_FACTOR,
+    _derive_neighbor_search_radius,
+    _derive_promoted_cells_per_dimension,
     _is_cpu_array,
     _resolve_cell_strategy,
     _validate_atom_centric_path,
@@ -385,6 +389,96 @@ def _normalize_batch_cell_pbc(
         pbc_out = pbc_out.astype(jnp.bool_)
 
     return cell_out, pbc_out
+
+
+def _estimate_batch_max_total_cells(
+    batch_ptr: jax.Array,
+    cell: jax.Array,
+    pbc: jax.Array,
+    cutoff: float,
+    buffer_factor: float,
+    capacity_strategy: Literal["volume", "geometry"],
+) -> int:
+    """Estimate allocation capacity without materializing construct metadata."""
+    if capacity_strategy not in ("volume", "geometry"):
+        raise ValueError(
+            "capacity_strategy must be 'volume' or 'geometry', "
+            f"got {capacity_strategy!r}."
+        )
+
+    num_systems = batch_ptr.shape[0] - 1
+    promoted_cells_per_dimension = (
+        _derive_promoted_cells_per_dimension(cell, pbc, cutoff)
+        if capacity_strategy == "geometry"
+        else None
+    )
+    max_total_cells = 0
+
+    for sys_idx in range(num_systems):
+        num_atoms_in_sys = batch_ptr[sys_idx + 1] - batch_ptr[sys_idx]
+        # Empty systems do not determine the required per-system capacity.
+        if num_atoms_in_sys == 0:
+            continue
+
+        if capacity_strategy == "volume":
+            # Sum each non-empty system's density-based capacity estimate.
+            volume = jnp.abs(jnp.linalg.det(cell[sys_idx]))
+            num_cells_est = int(volume / cutoff**3 * buffer_factor)
+        else:
+            # Track the largest promoted grid for equal per-system allocation.
+            cells_per_dimension = promoted_cells_per_dimension[sys_idx]
+            num_cells_est = int(
+                cells_per_dimension[0]
+                * cells_per_dimension[1]
+                * cells_per_dimension[2]
+                * buffer_factor
+            )
+
+        system_capacity = max(num_cells_est, 8)
+        if capacity_strategy == "geometry":
+            max_total_cells = max(max_total_cells, system_capacity)
+        else:
+            max_total_cells += system_capacity
+
+    if capacity_strategy == "geometry":
+        # Construction divides the total capacity evenly across all systems.
+        max_total_cells *= num_systems
+    return max(max_total_cells, num_systems)
+
+
+def _construct_batch_cells_per_dimension(
+    cell: jax.Array,
+    pbc: jax.Array,
+    cutoff: float,
+    max_total_cells: int,
+) -> jax.Array:
+    """Run the authoritative construct kernel and return realized bins."""
+    num_systems = cell.shape[0]
+    if max_total_cells < num_systems:
+        raise ValueError(
+            "max_total_cells must be at least num_systems "
+            f"(got max_total_cells={max_total_cells}, num_systems={num_systems})."
+        )
+
+    cells_per_dimension = jnp.zeros((num_systems, 3), dtype=jnp.int32)
+    empty_bool1d = jnp.zeros((0,), dtype=jnp.bool_)
+    empty_i32 = jnp.zeros((0,), dtype=jnp.int32)
+    construct = (
+        _jax_batch_construct_bin_size_f64
+        if cell.dtype == jnp.float64
+        else _jax_batch_construct_bin_size_f32
+    )
+    (cells_per_dimension,) = construct(
+        cell,
+        empty_bool1d,
+        pbc,
+        empty_i32,
+        cells_per_dimension,
+        float(cutoff),
+        int(max_total_cells),
+        launch_dims=(num_systems,),
+    )
+    return cells_per_dimension
 
 
 # ==============================================================================
@@ -925,7 +1019,9 @@ def estimate_batch_cell_list_sizes(
     cell: jax.Array | None = None,
     cutoff: float = 5.0,
     pbc: jax.Array | None = None,
-    buffer_factor: float = 1.5,
+    buffer_factor: float = _DEFAULT_CELL_LIST_BUFFER_FACTOR,
+    *,
+    capacity_strategy: Literal["volume", "geometry"] = "volume",
 ) -> tuple[int, jax.Array, jax.Array]:
     """Estimate required batch cell list sizes.
 
@@ -945,15 +1041,40 @@ def estimate_batch_cell_list_sizes(
         PBC flags.
     buffer_factor : float, optional
         Buffer multiplier. Default is 1.5.
+    capacity_strategy : {"volume", "geometry"}, optional
+        Capacity estimation policy. ``"volume"`` (default) estimates capacity
+        from each cell's volume and the cutoff. ``"geometry"`` estimates
+        capacity from the largest promoted per-axis grid among non-empty
+        systems, scaled by the number of systems.
 
     Returns
     -------
     max_total_cells : int
         Maximum total cells to allocate.
     cells_per_dimension : jax.Array, shape (num_systems, 3)
-        Cells per dimension for each system.
+        Realized cells per dimension for each system at ``max_total_cells``.
     neighbor_search_radius : jax.Array, shape (num_systems, 3)
-        Search radius for each system.
+        Search radius derived from the realized cells per dimension.
+
+    Notes
+    -----
+    The volume policy sums ``max(int(abs(det(cell)) / cutoff**3 *
+    buffer_factor), 8)`` for non-empty systems. The geometry policy derives
+    per-axis face-distance cells, applies adaptive promotion, then allocates
+    ``num_systems`` times the largest non-empty promoted-grid capacity. This
+    matches construction's equal per-system capacity bound, so every non-empty
+    system retains its promoted grid. Empty systems count toward the
+    per-system allocation multiplier but do not determine the largest capacity;
+    an all-empty batch allocates one cell per system. Geometry can therefore
+    reserve substantially more memory than volume sizing for heterogeneous
+    batches.
+
+    The returned cells and radii match ``batch_build_cell_list`` when called
+    with the returned ``max_total_cells``. To use geometry sizing for a build,
+    call this estimator with ``capacity_strategy="geometry"`` and pass its
+    capacity to ``batch_build_cell_list``. That explicit estimator-then-build
+    flow dispatches construction once per call, whereas automatic builds use
+    the private volume capacity helper and dispatch construction only once.
 
     .. warning::
 
@@ -977,40 +1098,26 @@ def estimate_batch_cell_list_sizes(
         dtype=cell_dtype,
     )
 
-    # Simple estimation per system
-    max_total_cells = 0
-    cells_per_dim_list = []
-    search_radius_list = []
-
-    for sys_idx in range(num_systems):
-        start_idx = batch_ptr[sys_idx]
-        end_idx = batch_ptr[sys_idx + 1]
-        num_atoms_in_sys = end_idx - start_idx
-
-        if num_atoms_in_sys == 0:
-            cells_per_dim_list.append(jnp.ones(3, dtype=jnp.int32))
-            search_radius_list.append(jnp.ones(3, dtype=jnp.int32))
-            continue
-
-        # Volume estimation
-        det = jnp.linalg.det(cell[sys_idx])
-        volume = jnp.abs(det)
-
-        cell_volume = cutoff**3
-        # TODO: This estimation derives array sizes from traced input data (cell
-        # geometry), which is fundamentally incompatible with jax.jit compilation.
-        # The JAX bindings need a refactored usage pattern where sizing is always
-        # performed outside the JIT boundary, or a fixed upper-bound allocation
-        # strategy is adopted.
-        num_cells_est = max(int(volume / cell_volume * buffer_factor), 8)
-        max_total_cells += num_cells_est
-
-        cells_per_dim = jnp.ceil(num_cells_est ** (1 / 3)).astype(jnp.int32)
-        cells_per_dim_list.append(cells_per_dim * jnp.ones(3, dtype=jnp.int32))
-        search_radius_list.append(jnp.ones(3, dtype=jnp.int32))
-
-    cells_per_dimension = jnp.stack(cells_per_dim_list, axis=0)
-    neighbor_search_radius = jnp.stack(search_radius_list, axis=0)
+    max_total_cells = _estimate_batch_max_total_cells(
+        batch_ptr,
+        cell,
+        _pbc_bool,
+        cutoff,
+        buffer_factor,
+        capacity_strategy,
+    )
+    cells_per_dimension = _construct_batch_cells_per_dimension(
+        cell,
+        _pbc_bool,
+        cutoff,
+        max_total_cells,
+    )
+    neighbor_search_radius = _derive_neighbor_search_radius(
+        cell,
+        _pbc_bool,
+        cutoff,
+        cells_per_dimension,
+    )
 
     return max_total_cells, cells_per_dimension, neighbor_search_radius
 
@@ -1130,15 +1237,19 @@ def batch_build_cell_list(
     )
 
     if max_total_cells is None:
-        max_total_cells, cells_per_dim_est, neighbor_search_radius = (
-            estimate_batch_cell_list_sizes(
-                positions, batch_ptr, batch_idx, cell, cutoff, pbc
-            )
+        max_total_cells = _estimate_batch_max_total_cells(
+            batch_ptr,
+            cell,
+            pbc_bool,
+            cutoff,
+            _DEFAULT_CELL_LIST_BUFFER_FACTOR,
+            "volume",
         )
-        # Ensure neighbor_search_radius is on the correct device
-        neighbor_search_radius = neighbor_search_radius
-    else:
-        neighbor_search_radius = jnp.ones((num_systems, 3), dtype=jnp.int32)
+
+    neighbor_search_radius = jnp.zeros(
+        (num_systems, 3),
+        dtype=jnp.int32,
+    )
 
     # Allocate cell list tensors
     (
@@ -1157,11 +1268,9 @@ def batch_build_cell_list(
 
     # Select kernels based on dtype
     if positions.dtype == jnp.float64:
-        _construct = _jax_batch_construct_bin_size_f64
         _count = _jax_batch_count_atoms_per_bin_f64
         _bin = _jax_batch_bin_atoms_f64
     else:
-        _construct = _jax_batch_construct_bin_size_f32
         _count = _jax_batch_count_atoms_per_bin_f32
         _bin = _jax_batch_bin_atoms_f32
         positions = positions.astype(jnp.float32)
@@ -1175,15 +1284,18 @@ def batch_build_cell_list(
     total_atoms = positions.shape[0]
 
     # Step 1: Construct bin sizes (one thread per system)
-    (cells_per_dimension,) = _construct(
+    cells_per_dimension = _construct_batch_cells_per_dimension(
         cell,
-        empty_bool1d,
         pbc_bool,
-        empty_i32,
-        cells_per_dimension,
         float(cutoff),
-        int(max_total_cells),
-        launch_dims=(num_systems,),
+        max_total_cells,
+    )
+
+    neighbor_search_radius = _derive_neighbor_search_radius(
+        cell,
+        pbc_bool,
+        cutoff,
+        cells_per_dimension,
     )
 
     # Step 2: Compute cells_per_system and cell_offsets

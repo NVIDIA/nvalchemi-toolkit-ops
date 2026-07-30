@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- JAX cell-list builds now derive search radii from their realized grids,
+  preventing missed neighbors when static capacity changes the constructed
+  grid. Batched `capacity_strategy="geometry"` preserves promoted grids for
+  all non-empty systems by reserving an equal per-system capacity; volume-based
+  sizing remains the default. Fused Warp graph calls with explicit
+  `max_total_cells` now require an explicit `neighbor_search_radius`.
+
 ## 0.4.0 - 2026-07-13
 
 ### Added
