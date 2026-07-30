@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- Torch DFT-D3 custom operators now zero caller-owned energy, forces,
+  coordination-number, and virial buffers before empty-system or zero-edge
+  early returns, so reused output tensors cannot retain stale values.
+- JAX DFT-D3 CSR calls with atoms but no edges return zero-filled per-atom
+  forces and coordination numbers with shapes ``(N, 3)`` and ``(N,)``, matching
+  the neighbor-matrix contract and preserving per-system energy and virial axes.
 - JAX cell-list builds now derive search radii from their realized grids,
   preventing missed neighbors when static capacity changes the constructed
   grid. Batched `capacity_strategy="geometry"` preserves promoted grids for
