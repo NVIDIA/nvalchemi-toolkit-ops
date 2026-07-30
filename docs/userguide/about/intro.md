@@ -366,7 +366,9 @@ energies = ewald_summation(
 forces = -torch.autograd.grad(energies.sum(), positions)[0]
 ```
 
-Returns per-atom energies; sum by system using `batch_idx`.
+Returns per-atom energies by default (`energy_reduction="atom"`). For
+per-system totals with shape `(num_systems,)`, pass
+`energy_reduction="system"` instead of reducing with `batch_idx`.
 :::
 
 ::::

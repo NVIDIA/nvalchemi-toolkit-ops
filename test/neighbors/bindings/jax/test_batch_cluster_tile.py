@@ -17,15 +17,20 @@
 
 from __future__ import annotations
 
+import functools
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from nvalchemiops.jax.neighbors import _cluster_tile_preload
 from nvalchemiops.jax.neighbors.batch_cluster_tile import (
+    _BATCH_CLUSTER_TILE_QUERIES,
     TILE_GROUP_SIZE,
     _batch_tile_buffer_max_tiles_per_group,
     allocate_batch_cluster_tile_list,
+    batch_build_cluster_tile_list,
     batch_cluster_tile_neighbor_list,
     estimate_batch_cluster_tile_list_sizes,
     estimate_batch_cluster_tile_segments,
@@ -55,6 +60,15 @@ def _make_batch(
         bp.append(bp[-1] + sz)
     batch_ptr = jnp.array(bp, dtype=jnp.int32)
     return positions, cell_batch, batch_ptr
+
+
+def _traced_preload_device_count() -> int:
+    """Return how many local devices a traced graph callback must preload."""
+    local_devices = tuple(jax.local_devices())
+    accelerators = tuple(
+        device for device in local_devices if device.platform in {"gpu", "cuda", "rocm"}
+    )
+    return len(accelerators or local_devices)
 
 
 class TestJaxBatchClusterTileValidation:
@@ -234,6 +248,213 @@ class TestBatchTileNeighborListFormats:
         assert len(out) == 11
         num_tiles = out[0]
         assert int(num_tiles[0]) > 0
+
+
+class TestBatchClusterTileGraphPreload:
+    """Exercise batched WARP graph callbacks after kernel preload."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_preload_caches(self, monkeypatch) -> None:
+        """Keep graph-preload cache entries local to each regression test."""
+        for cache_name in (
+            "_preload_cluster_tile_query_kernel_cached",
+            "_preload_cluster_tile_coo_kernel_cached",
+        ):
+            original = getattr(_cluster_tile_preload, cache_name)
+            monkeypatch.setattr(
+                _cluster_tile_preload,
+                cache_name,
+                functools.cache(original.__wrapped__),
+            )
+
+    def test_jitted_matrix_query_preloads_and_executes_warp_graph_callback(self):
+        """A public batched matrix query preloads and executes under JIT."""
+        _cluster_tile_preload._preload_cluster_tile_query_kernel_cached.cache_clear()
+        positions, cell_batch, batch_ptr = _make_batch([32], [4.0], seed=5)
+
+        @jax.jit
+        def query(positions):
+            return batch_cluster_tile_neighbor_list(
+                positions,
+                1.0,
+                cell_batch,
+                batch_ptr,
+                max_neighbors=32,
+            )
+
+        neighbor_matrix, num_neighbors, _shifts = query(positions)
+        neighbor_matrix.block_until_ready()
+        assert (
+            _cluster_tile_preload._preload_cluster_tile_query_kernel_cached.cache_info().currsize
+            == _traced_preload_device_count()
+        )
+        assert int(num_neighbors.sum()) > 0
+
+        second = query(positions)
+        second[0].block_until_ready()
+        assert (
+            _cluster_tile_preload._preload_cluster_tile_query_kernel_cached.cache_info().currsize
+            == _traced_preload_device_count()
+        )
+
+    def test_jitted_segmented_coo_registration_preloads_and_executes(self):
+        """Segmented batched COO graph callback executes under JIT with fixed buffers."""
+        _cluster_tile_preload._preload_cluster_tile_coo_kernel_cached.cache_clear()
+        positions, cell_batch, batch_ptr = _make_batch([32, 64], [6.0, 6.0], seed=36)
+        cutoff = 2.0
+        max_neighbors = 64
+        tile_state = batch_cluster_tile_neighbor_list(
+            positions,
+            cutoff,
+            cell_batch,
+            batch_ptr,
+            format="tile",
+        )
+        (
+            num_tiles,
+            tile_row_group,
+            tile_col_group,
+            tile_system,
+            sorted_atom_index,
+            sorted_pos_x,
+            sorted_pos_y,
+            sorted_pos_z,
+            _batch_idx_sorted,
+            _batch_ptr_padded,
+            _group_ptr,
+        ) = tile_state
+        _tile_caps, tile_offsets, _pair_caps, pair_offsets = (
+            estimate_batch_cluster_tile_segments(batch_ptr, max_neighbors=max_neighbors)
+        )
+        max_pairs = int(pair_offsets[-1])
+        rebuild_flags = jnp.array([True, True], dtype=jnp.bool_)
+        tile_counts = jnp.zeros(2, dtype=jnp.int32)
+        (
+            sorted_atom_index,
+            _sort_inv,
+            sorted_pos_x,
+            sorted_pos_y,
+            sorted_pos_z,
+            _batch_idx_sorted,
+            _batch_ptr_padded,
+            _group_system,
+            _group_ptr,
+            _group_ctr_x,
+            _group_ctr_y,
+            _group_ctr_z,
+            _group_ext_x,
+            _group_ext_y,
+            _group_ext_z,
+            num_tiles,
+            tile_row_group,
+            tile_col_group,
+            tile_system,
+            tile_counts,
+        ) = batch_build_cluster_tile_list(
+            positions,
+            cutoff,
+            cell_batch,
+            batch_ptr,
+            rebuild_flags=rebuild_flags,
+            tile_offsets=tile_offsets,
+            tile_counts=tile_counts,
+            num_tiles=num_tiles,
+            tile_row_group=tile_row_group,
+            tile_col_group=tile_col_group,
+            tile_system=tile_system,
+        )
+        pair_counts = jnp.zeros(2, dtype=jnp.int32)
+        pair_counter = jnp.zeros(1, dtype=jnp.int32)
+        neighbor_list = jnp.zeros((2, max_pairs), dtype=jnp.int32)
+        coo_list = neighbor_list.T.copy()
+        coo_shifts = jnp.zeros((max_pairs, 3), dtype=jnp.int32)
+        inv_cell_batch = jnp.linalg.inv(cell_batch)
+        registration = _BATCH_CLUSTER_TILE_QUERIES["coo_segmented"]
+
+        @jax.jit
+        def query(
+            sorted_atom_index,
+            sorted_pos_x,
+            sorted_pos_y,
+            sorted_pos_z,
+            num_tiles,
+            tile_row_group,
+            tile_col_group,
+            tile_system,
+            pair_counter,
+            pair_offsets,
+            pair_counts,
+            coo_list,
+            coo_shifts,
+        ):
+            registration.preload()
+            return registration.callable(
+                sorted_atom_index,
+                sorted_pos_x,
+                sorted_pos_y,
+                sorted_pos_z,
+                cell_batch,
+                inv_cell_batch,
+                num_tiles,
+                tile_offsets,
+                tile_counts,
+                rebuild_flags,
+                tile_row_group,
+                tile_col_group,
+                tile_system,
+                pair_counter,
+                pair_offsets,
+                pair_counts,
+                coo_list,
+                coo_shifts,
+                cutoff,
+                positions.shape[0],
+                max_pairs,
+            )
+
+        pair_counter, pair_counts, coo_list, coo_shifts = query(
+            sorted_atom_index,
+            sorted_pos_x,
+            sorted_pos_y,
+            sorted_pos_z,
+            num_tiles,
+            tile_row_group,
+            tile_col_group,
+            tile_system,
+            pair_counter,
+            pair_offsets,
+            pair_counts,
+            coo_list,
+            coo_shifts,
+        )
+        pair_counts.block_until_ready()
+        assert (
+            _cluster_tile_preload._preload_cluster_tile_coo_kernel_cached.cache_info().currsize
+            == 1
+        )
+        assert pair_counts.shape == (2,)
+        assert int(pair_counts.sum()) > 0
+
+        pair_counter2, pair_counts2, coo_list2, coo_shifts2 = query(
+            sorted_atom_index,
+            sorted_pos_x,
+            sorted_pos_y,
+            sorted_pos_z,
+            num_tiles,
+            tile_row_group,
+            tile_col_group,
+            tile_system,
+            pair_counter,
+            pair_offsets,
+            pair_counts,
+            coo_list,
+            coo_shifts,
+        )
+        pair_counts2.block_until_ready()
+        assert (
+            _cluster_tile_preload._preload_cluster_tile_coo_kernel_cached.cache_info().currsize
+            == 1
+        )
 
 
 class TestBatchTileNeighborListErrors:
