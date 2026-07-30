@@ -163,6 +163,33 @@ def test_compiled_ewald_first_order_gradients_match_eager() -> None:
     for compiled_grad, eager_grad in zip(compiled_grads, eager_grads, strict=True):
         torch.testing.assert_close(compiled_grad, eager_grad, rtol=5e-7, atol=5e-8)
 
+    def reciprocal_loss_fn(
+        pos: torch.Tensor,
+        q: torch.Tensor,
+        lattice: torch.Tensor,
+    ) -> torch.Tensor:
+        k_vectors = generate_k_vectors_ewald_summation(
+            lattice,
+            k_cutoff=5.0,
+            miller_bounds=(5, 5, 5),
+        )
+        return ewald_reciprocal_space(pos, q, lattice, k_vectors, alpha).sum()
+
+    reciprocal_loss_fn(positions, charges, cell).detach()
+    eager_inputs = (
+        positions.detach().requires_grad_(True),
+        charges.detach().requires_grad_(True),
+        cell.detach().requires_grad_(True),
+    )
+    compiled_inputs = tuple(t.detach().requires_grad_(True) for t in eager_inputs)
+    eager_loss = reciprocal_loss_fn(*eager_inputs)
+    eager_grads = torch.autograd.grad(eager_loss, eager_inputs)
+    compiled_loss = torch.compile(reciprocal_loss_fn)(*compiled_inputs)
+    compiled_grads = torch.autograd.grad(compiled_loss, compiled_inputs)
+    torch.testing.assert_close(compiled_loss, eager_loss)
+    for compiled_grad, eager_grad in zip(compiled_grads, eager_grads, strict=True):
+        torch.testing.assert_close(compiled_grad, eager_grad, rtol=5e-7, atol=5e-8)
+
 
 def test_ewald_alpha_is_setup_constant() -> None:
     """Ewald real, reciprocal, and full APIs do not differentiate alpha."""
@@ -237,8 +264,8 @@ def test_pme_alpha_is_setup_constant() -> None:
     _assert_alpha_has_no_grad(full, alpha)
 
 
-def test_ewald_silently_accepts_k_vectors_when_cell_requires_grad() -> None:
-    """Caller-supplied Ewald k-vectors are static cell-gradient caches."""
+def test_ewald_component_leaf_k_vectors_warn_and_preserve_grad_k() -> None:
+    """Component leaf vectors warn for cell gradients and preserve dE/dk."""
     positions, charges, cell = _system()
     cell = cell.detach().requires_grad_(True)
     alpha = torch.tensor([0.35], dtype=torch.float64, device=positions.device)
@@ -251,14 +278,15 @@ def test_ewald_silently_accepts_k_vectors_when_cell_requires_grad() -> None:
     with warnings.catch_warnings(record=True) as records:
         warnings.simplefilter("always")
         reciprocal = ewald_reciprocal_space(positions, charges, cell, k_vectors, alpha)
-    _assert_no_cache_warning(records)
+    assert any("fixed Cartesian" in str(record.message) for record in records)
     grad_cell, grad_k = torch.autograd.grad(
         reciprocal.sum(),
         (cell, k_vectors),
         allow_unused=True,
     )
     assert torch.isfinite(grad_cell).all()
-    assert grad_k is None
+    assert grad_k is not None
+    assert torch.isfinite(grad_k).all()
 
     neighbor_list, neighbor_ptr, shifts = _neighbor_list()
     with warnings.catch_warnings(record=True) as records:
@@ -283,8 +311,8 @@ def test_ewald_silently_accepts_k_vectors_when_cell_requires_grad() -> None:
     assert grad_k is None
 
 
-def test_ewald_k_vector_source_cell_is_static_metadata() -> None:
-    """Gradients do not flow through the cell that produced supplied k-vectors."""
+def test_ewald_component_preserves_supplied_k_vector_graph() -> None:
+    """The component preserves a caller-supplied differentiable vector graph."""
     positions, charges, cell = _system()
     current_cell = cell.detach().requires_grad_(True)
     cache_cell = (cell.detach() * 1.02).requires_grad_(True)
@@ -304,7 +332,8 @@ def test_ewald_k_vector_source_cell_is_static_metadata() -> None:
         allow_unused=True,
     )
     assert torch.isfinite(grad_current).all()
-    assert grad_cache_cell is None
+    assert grad_cache_cell is not None
+    assert torch.isfinite(grad_cache_cell).all()
 
 
 def test_ewald_public_reciprocal_exposes_no_cache_bypass_keyword() -> None:

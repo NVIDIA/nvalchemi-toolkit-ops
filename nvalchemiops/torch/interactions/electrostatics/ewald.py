@@ -554,9 +554,9 @@ def _reciprocal_space_energy(
     """Per-atom reciprocal-space Ewald energy, connected to autograd via the chain.
 
     Energy = k-sum (explicit chain, differentiable in positions / charges and,
-    for internally generated reciprocal geometry, cell) minus the Torch-native
-    self + background corrections. Public k-vector leaf gradients are outside
-    the electrostatics contract.
+    through a preserved reciprocal-vector graph, cell) minus the Torch-native
+    self + background corrections. Leaf k-vector gradients are available only
+    while a cell-gradient path requests the reciprocal k-space VJP.
     """
     num_atoms = positions.shape[0]
     device = positions.device
@@ -634,7 +634,6 @@ def _reciprocal_space_energy(
             need_cell,
             max_atoms_bound,
         )
-
     return _apply_reciprocal_corrections(e_ksum, charges, volume, alpha, batch_idx)
 
 
@@ -1003,6 +1002,11 @@ def ewald_reciprocal_space(
         Unit cell matrices.
     k_vectors : torch.Tensor
         Reciprocal lattice vectors. Shape (K, 3) for single system, (B, K, 3) for batch.
+        When both ``cell`` and ``k_vectors`` require gradients, the supplied
+        k-vector graph is preserved. Physical strain derivatives require vectors
+        generated from the same differentiable cell. Non-differentiable vectors,
+        and grad-bearing leaf vectors without a cell edge, are fixed Cartesian
+        metadata for cell derivatives.
     alpha : torch.Tensor, shape (1,) or (B,)
         Ewald splitting parameter(s).
     batch_idx : torch.Tensor, shape (N,), optional
@@ -1048,8 +1052,11 @@ def ewald_reciprocal_space(
     ----
     Energies are always float64 for numerical stability during accumulation.
     Forces, virial, and charge gradients match the input dtype (float32 or float64).
-    ``k_vectors`` are setup metadata. Caller-supplied vectors are treated as
-    static values that correspond to the current ``cell``.
+    For eager execution, a differentiable ``cell`` paired with fixed Cartesian
+    ``k_vectors`` emits a warning because its cell derivative is not the physical
+    Ewald strain virial. This advisory warning is suppressed under
+    ``torch.compile``. Generate vectors from the differentiable cell with fixed
+    Miller bounds for physical strain derivatives.
 
     When ``charges`` is a non-leaf tensor that may depend on ``positions``
     (:math:`q = q(R)`), ordinary first-order losses may use cached partial
@@ -1058,6 +1065,26 @@ def ewald_reciprocal_space(
     losses and higher-order derivatives recompute safe partials or connected
     gradients as needed to avoid double-counting that chain term (issue #115).
     """
+    allow_cell_grad_with_k_vectors = bool(
+        cell.requires_grad and k_vectors.requires_grad
+    )
+    k_vectors_fixed_for_cell = bool(not k_vectors.requires_grad or k_vectors.is_leaf)
+    if (
+        torch.is_grad_enabled()
+        and cell.requires_grad
+        and k_vectors_fixed_for_cell
+        and not hybrid_forces
+        and not torch.compiler.is_compiling()
+    ):
+        warnings.warn(
+            "ewald_reciprocal_space received k_vectors that are fixed Cartesian "
+            "metadata for cell derivatives. If differentiated with respect to "
+            "cell or strain, this call does not produce the physical Ewald strain "
+            "virial. Generate k_vectors from the differentiable cell with fixed "
+            "miller_bounds, or use ewald_summation with k_cutoff.",
+            UserWarning,
+            stacklevel=2,
+        )
     return _ewald_reciprocal_space(
         positions=positions,
         charges=charges,
@@ -1069,7 +1096,7 @@ def ewald_reciprocal_space(
         compute_charge_gradients=compute_charge_gradients,
         compute_virial=compute_virial,
         hybrid_forces=hybrid_forces,
-        allow_cell_grad_with_k_vectors=False,
+        allow_cell_grad_with_k_vectors=allow_cell_grad_with_k_vectors,
         max_atoms_per_system=max_atoms_per_system,
     )
 

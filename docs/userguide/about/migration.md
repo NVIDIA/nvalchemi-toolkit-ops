@@ -52,10 +52,16 @@ entry points instead of regenerating it inside hot loops.
 
 These inputs are caches, not differentiable parameters. `alpha`, cutoffs,
 mesh controls, batch metadata, neighbor topology, and PME B-spline moduli are
-treated as constants even if supplied as grad-bearing tensors. Cell-derived
-caches such as `k_vectors`, `k_squared`, `volume`, and `cell_inv_t` remain
-accepted when cell derivatives are requested, but they are static metadata
-assumed to correspond to the current `cell`.
+treated as constants even if supplied as grad-bearing tensors. For
+`ewald_summation`, caller-supplied `k_vectors` remain static metadata assumed
+to correspond to the current `cell`.
+
+The lower-level Torch `ewald_reciprocal_space` component preserves a supplied
+`k_vectors` autograd graph when the cell also requires gradients. Generate those
+vectors from the same differentiable cell to obtain a physical strain
+derivative. Detached Cartesian vectors instead define a fixed-k cell
+derivative; eager execution warns, while the advisory warning is suppressed
+under `torch.compile`.
 
 For fixed-cell loops, build metadata once from a detached or stopped-gradient
 cell and reuse it while the cell is unchanged:

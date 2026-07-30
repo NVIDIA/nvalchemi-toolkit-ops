@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Torch `ewald_reciprocal_space` now preserves graph-connected reciprocal
+  vectors for cell/strain autograd, restoring the physical reciprocal Ewald
+  virial when vectors are regenerated from the differentiable cell.
+
 ## 0.4.0 - 2026-07-13
 
 ### Added
