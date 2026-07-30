@@ -1,0 +1,163 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Runs one tier of the test suite on a GPU runner. Called by ci.yml; not
+# independently runnable, which is what the `reusable-` prefix marks.
+
+name: "GPU tests (reusable)"
+
+on:
+  workflow_call:
+    inputs:
+      suite:
+        description: "minimal | impacted | full"
+        required: true
+        type: string
+      python-version:
+        required: false
+        type: string
+        default: "3.12"
+      cuda-major:
+        required: false
+        type: string
+        default: "13"
+      torch-extra:
+        required: false
+        type: string
+        default: "torch"
+      jax-extra:
+        required: false
+        type: string
+        default: "jax"
+      shard:
+        description: "Shard index for the minimal suite; 0 runs every group"
+        required: false
+        type: number
+        default: 0
+      save-warp-cache:
+        description: >-
+          Publish this job's Warp cache. Only one job per lane should, to keep
+          the repository inside its 10 GB cache budget.
+        required: false
+        type: boolean
+        default: false
+      timeout-minutes:
+        required: false
+        type: number
+        default: 60
+
+defaults:
+  run:
+    shell: bash -x -e -u -o pipefail {0}
+
+jobs:
+  test:
+    runs-on: linux-amd64-gpu-h100-latest-1
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    container:
+      image: nvcr.io/nvidia/cuda:${{ inputs.cuda-major == '12' && '12.8.2' || '13.1.0' }}-runtime-ubuntu24.04
+      options: --gpus all
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up test environment
+        uses: ./.github/actions/setup-env
+        with:
+          python-version: ${{ inputs.python-version }}
+          torch-extra: ${{ inputs.torch-extra }}
+          jax-extra: ${{ inputs.jax-extra }}
+
+      - name: Restore Warp kernel cache
+        id: warp
+        uses: ./.github/actions/warp-cache
+        with:
+          python-version: ${{ inputs.python-version }}
+          cuda-major: ${{ inputs.cuda-major }}
+
+      # The impacted tier needs the database cache-warm.yml publishes. Without
+      # it testmon deselects nothing, so the tier would quietly become a full
+      # suite run; the step below skips it instead.
+      - name: Restore testmon database
+        id: testmon
+        if: inputs.suite == 'impacted'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .testmondata
+            .testmondata-shm
+            .testmondata-wal
+          key: testmon-main-py${{ inputs.python-version }}-cuda${{ inputs.cuda-major }}-${{ github.run_id }}
+          restore-keys: |
+            testmon-main-py${{ inputs.python-version }}-cuda${{ inputs.cuda-major }}-
+
+      - name: Run minimal suite
+        if: inputs.suite == 'minimal'
+        run: |
+          if [ "${{ inputs.shard }}" = "0" ]; then
+            make test-minimal
+          else
+            make test-minimal-shard SHARD=${{ inputs.shard }}
+          fi
+
+      - name: Run impacted tests
+        if: inputs.suite == 'impacted' && steps.testmon.outputs.cache-matched-key != ''
+        run: make test-impacted
+
+      - name: Skip impacted tests (no testmon database)
+        if: inputs.suite == 'impacted' && steps.testmon.outputs.cache-matched-key == ''
+        run: |
+          echo "::warning title=No testmon database::Skipping the impacted-tests tier. Without a database testmon deselects nothing, so this would run the entire suite. The nightly cache-warm.yml publishes it."
+          echo "Impacted tier skipped: no testmon database." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run full suite
+        if: inputs.suite == 'full'
+        run: make test-full
+
+      # Rotate before saving, so a failed save leaves the previous cache in place
+      # rather than nothing. See the script for why this is not `gh`.
+      - name: Prune superseded Warp caches
+        if: inputs.save-warp-cache && !cancelled() && github.event_name != 'merge_group'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREFIX: warp-${{ steps.warp.outputs.scope-key }}-py${{ inputs.python-version }}-cuda${{ inputs.cuda-major }}-
+        run: bash .github/scripts/prune-caches.sh
+
+      - name: Save Warp cache
+        if: inputs.save-warp-cache && !cancelled() && github.event_name != 'merge_group'
+        uses: actions/cache/save@v4
+        with:
+          path: .warp-cache
+          key: warp-${{ steps.warp.outputs.scope-key }}-py${{ inputs.python-version }}-cuda${{ inputs.cuda-major }}-${{ github.run_id }}
+
+      # Shards cover a fraction of the code by construction, so the threshold is
+      # applied once by ci.yml after their data is combined. Publish raw data.
+      - name: Upload coverage data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-data-${{ inputs.suite }}-${{ inputs.python-version }}-cuda${{ inputs.cuda-major }}-shard${{ inputs.shard }}
+          path: .coverage.*
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 1
+
+      - name: Upload coverage report
+        if: inputs.suite == 'full'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-py${{ inputs.python-version }}-cuda${{ inputs.cuda-major }}
+          path: nvalchemiops.coverage.xml
+          retention-days: 7
