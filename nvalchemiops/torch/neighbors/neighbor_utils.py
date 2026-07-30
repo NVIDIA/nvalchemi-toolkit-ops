@@ -81,9 +81,13 @@ def _validate_segmented_coo_state(
     """Validate fixed-capacity segmented COO state before a kernel launch.
 
     The returned value is the physical topology capacity, derived from
-    ``neighbor_list`` rather than caller-provided offset values. Value checks
-    that require a device-to-host read intentionally run only outside
-    ``torch.compile``.
+    ``neighbor_list`` rather than caller-provided offset values. Eager calls
+    validate offset starts, monotonicity, final capacities, and active counts
+    before launching Warp. Value checks that require a device-to-host read
+    intentionally run only outside ``torch.compile``; compiled steady-state
+    callers must reuse eagerly validated metadata. The Warp COO kernel still
+    bounds writes by the physical topology capacity as defense in depth, but
+    this does not make malformed metadata supported.
     """
     tensors = {
         "neighbor_list": neighbor_list,

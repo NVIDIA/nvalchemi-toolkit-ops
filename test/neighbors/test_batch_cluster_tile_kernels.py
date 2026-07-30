@@ -30,6 +30,7 @@ from nvalchemiops.neighbors.cluster_tile import (
     TILE_GROUP_SIZE,
     batch_build_cluster_tile_list,
     batch_query_cluster_tile,
+    batch_query_cluster_tile_coo,
 )
 
 pytestmark = pytest.mark.gpu
@@ -437,3 +438,148 @@ class TestBatchTileToMatrixLauncher:
                 if j == N:  # sentinel padding
                     continue
                 assert bi_cpu[i] == bi_cpu[j], f"Cross-system pair ({i}, {j}) emitted"
+
+
+class TestBatchSegmentedCooPhysicalBounds:
+    """Ensure per-system segmented COO offsets respect physical storage."""
+
+    def test_oversized_system_segment_preserves_canary(self, device):
+        """An invalid batched segment cannot write beyond max_pairs."""
+        natom_per_system = TILE_GROUP_SIZE
+        natom = 2 * natom_per_system
+        max_pairs = 16
+        backing_capacity = 2048
+        sorted_positions = torch.zeros(
+            natom,
+            dtype=torch.float32,
+            device=device,
+        )
+        sorted_atom_index = torch.arange(natom, dtype=torch.int32, device=device)
+        cell_batch = (
+            torch.eye(
+                3,
+                dtype=torch.float32,
+                device=device,
+            ).repeat(2, 1, 1)
+            * 8.0
+        )
+        inv_cell_batch = torch.linalg.inv(cell_batch).contiguous()
+        num_tiles = torch.tensor([2], dtype=torch.int32, device=device)
+        tile_row_group = torch.tensor([0, 1], dtype=torch.int32, device=device)
+        tile_col_group = torch.tensor([0, 1], dtype=torch.int32, device=device)
+        tile_system = torch.tensor([0, 1], dtype=torch.int32, device=device)
+        tile_offsets = torch.tensor([0, 1, 2], dtype=torch.int32, device=device)
+        tile_counts = torch.ones(2, dtype=torch.int32, device=device)
+        rebuild_flags = torch.ones(2, dtype=torch.bool, device=device)
+        pair_offsets = torch.tensor(
+            [0, 8, backing_capacity],
+            dtype=torch.int32,
+            device=device,
+        )
+        pair_counts = torch.zeros(2, dtype=torch.int32, device=device)
+        pair_counter = torch.zeros(1, dtype=torch.int32, device=device)
+        coo_list = torch.full(
+            (backing_capacity, 2),
+            -77,
+            dtype=torch.int32,
+            device=device,
+        )
+        coo_shifts = torch.full(
+            (backing_capacity, 3),
+            -77,
+            dtype=torch.int32,
+            device=device,
+        )
+
+        batch_query_cluster_tile_coo(
+            sorted_atom_index=wp.from_torch(
+                sorted_atom_index,
+                dtype=wp.int32,
+                return_ctype=True,
+            ),
+            sorted_pos_x=wp.from_torch(
+                sorted_positions,
+                dtype=wp.float32,
+                return_ctype=True,
+            ),
+            sorted_pos_y=wp.from_torch(
+                sorted_positions,
+                dtype=wp.float32,
+                return_ctype=True,
+            ),
+            sorted_pos_z=wp.from_torch(
+                sorted_positions,
+                dtype=wp.float32,
+                return_ctype=True,
+            ),
+            cell_batch=wp.from_torch(
+                cell_batch,
+                dtype=wp.mat33f,
+                return_ctype=True,
+            ),
+            inv_cell_batch=wp.from_torch(
+                inv_cell_batch,
+                dtype=wp.mat33f,
+                return_ctype=True,
+            ),
+            num_tiles=wp.from_torch(num_tiles, dtype=wp.int32, return_ctype=True),
+            tile_row_group=wp.from_torch(
+                tile_row_group,
+                dtype=wp.int32,
+                return_ctype=True,
+            ),
+            tile_col_group=wp.from_torch(
+                tile_col_group,
+                dtype=wp.int32,
+                return_ctype=True,
+            ),
+            tile_system=wp.from_torch(tile_system, dtype=wp.int32, return_ctype=True),
+            cutoff=2.0,
+            natom=natom,
+            max_pairs=max_pairs,
+            pair_counter=wp.from_torch(
+                pair_counter,
+                dtype=wp.int32,
+                return_ctype=True,
+            ),
+            coo_list=wp.from_torch(coo_list, dtype=wp.int32, return_ctype=True),
+            coo_shifts=wp.from_torch(
+                coo_shifts,
+                dtype=wp.int32,
+                return_ctype=True,
+            ),
+            wp_dtype=wp.float32,
+            device=device,
+            n_tiles=2,
+            rebuild_flags=wp.from_torch(
+                rebuild_flags,
+                dtype=wp.bool,
+                return_ctype=True,
+            ),
+            tile_offsets=wp.from_torch(
+                tile_offsets,
+                dtype=wp.int32,
+                return_ctype=True,
+            ),
+            tile_counts=wp.from_torch(
+                tile_counts,
+                dtype=wp.int32,
+                return_ctype=True,
+            ),
+            pair_offsets=wp.from_torch(
+                pair_offsets,
+                dtype=wp.int32,
+                return_ctype=True,
+            ),
+            pair_counts=wp.from_torch(
+                pair_counts,
+                dtype=wp.int32,
+                return_ctype=True,
+            ),
+        )
+
+        assert int(pair_counts[0].item()) > 0
+        assert int(pair_counts[1].item()) > 0
+        assert torch.all(coo_list[:8] != -77)
+        assert torch.all(coo_list[max_pairs:] == -77)
+        assert torch.all(coo_shifts[max_pairs:] == -77)

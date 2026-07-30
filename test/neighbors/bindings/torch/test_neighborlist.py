@@ -853,6 +853,45 @@ class TestNeighborListAutoSelection:
             )
 
     @pytest.mark.parametrize("dtype", [torch.float32])
+    def test_explicit_cluster_tile_rejects_partial_pbc(self, dtype):
+        """Explicit cluster-tile rejects any non-periodic dimension."""
+        positions = torch.zeros((64, 3), dtype=dtype)
+        cell = torch.eye(3, dtype=dtype) * 8.0
+        pbc = torch.tensor([True, True, False], dtype=torch.bool)
+
+        with pytest.raises(NotImplementedError, match="pbc with any False"):
+            neighbor_list(
+                positions,
+                cutoff=2.0,
+                cell=cell,
+                pbc=pbc,
+                method="cluster_tile",
+                return_neighbor_list=True,
+            )
+
+    @pytest.mark.parametrize("dtype", [torch.float32])
+    def test_explicit_batch_cluster_tile_rejects_partial_pbc(self, dtype):
+        """Explicit batch cluster-tile rejects any non-periodic dimension."""
+        positions = torch.zeros((128, 3), dtype=dtype)
+        cell = torch.eye(3, dtype=dtype).expand(2, -1, -1).contiguous() * 8.0
+        pbc = torch.tensor(
+            [[True, True, True], [True, False, True]],
+            dtype=torch.bool,
+        )
+        batch_ptr = torch.tensor([0, 64, 128], dtype=torch.int32)
+
+        with pytest.raises(NotImplementedError, match="pbc with any False"):
+            neighbor_list(
+                positions,
+                cutoff=2.0,
+                cell=cell,
+                pbc=pbc,
+                batch_ptr=batch_ptr,
+                method="batch_cluster_tile",
+                return_neighbor_list=True,
+            )
+
+    @pytest.mark.parametrize("dtype", [torch.float32])
     def test_explicit_cluster_tile_accepts_cutoff2(self, dtype):
         """method='cluster_tile' accepts cutoff2 on matrix output."""
         if not torch.cuda.is_available():

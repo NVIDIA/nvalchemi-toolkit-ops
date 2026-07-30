@@ -1344,9 +1344,13 @@ The single-system explicit `cluster_tile` route also supports
 `torch.compile(fullgraph=True)` for this steady-state phase. Bootstrap and validate
 capacities eagerly, then compile a function that accepts fixed-shape buffers and
 `rebuild_flags`; compiled calls preserve false-flag data and rebuild true-flag data.
-Compiled calls intentionally omit host-synchronized offset and overflow diagnostics,
-so retain the eagerly validated capacities. Batched cluster-tile fullgraph support
-is not provided.
+The explicit `pbc` tensor must likewise be eagerly validated as fully periodic and
+left unchanged for the compiled loop: cluster-tile is PBC-implicit and compiled
+calls intentionally do not host-synchronize PBC values. Compiled calls also omit
+host-synchronized offset and overflow diagnostics, so retain the eagerly validated
+capacities. The Warp COO query enforces physical output-buffer bounds as defense in
+depth, but mutated or malformed metadata remains unsupported. Batched cluster-tile
+fullgraph support is not provided.
 
 ### Dual Cutoff
 

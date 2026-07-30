@@ -390,6 +390,9 @@ def _reject_unsupported_cluster_tile_combo(
             "or pass a cell with fully periodic pbc."
         )
     if torch.compiler.is_compiling():
+        # ``pbc`` must be eagerly validated as fully periodic before entering
+        # a compiled cluster-tile steady-state loop. Tensor-value checks are
+        # not fullgraph-compatible without a host synchronization.
         all_periodic = True
     else:
         all_periodic = bool(pbc.all().item())
