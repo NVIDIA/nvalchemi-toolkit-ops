@@ -6,9 +6,9 @@
 
 - Improved JAX neighbor-list import performance by deferring dtype-specific
   direct naive and cell-list Warp wrapper registration until first use.
-  Centralized and cached private cluster-tile callback and graph-preload
-  schemas and validation while preserving the public output ABI, graph-capture
-  behavior, and framework gradient paths.
+  Cluster-tile graph callbacks now use bundled callback/preload registrations
+  with lazy direct kernels for naive and cell-list paths. Public behavior is
+  unchanged.
 
 ## 0.4.0 - 2026-07-13
 

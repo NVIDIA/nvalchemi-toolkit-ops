@@ -32,16 +32,11 @@ import jax.numpy as jnp
 import numpy as np
 import warp as wp
 
-from nvalchemiops.jax.neighbors._cluster_tile_preload import (
-    _preload_cluster_tile_build_kernel,
-    _preload_cluster_tile_coo_kernel,
-    _preload_cluster_tile_query_kernel,
-)
 from nvalchemiops.jax.neighbors._registration import (
-    _ClusterTileBuildJaxSpec,
-    _ClusterTileQueryJaxSpec,
-    _get_cluster_tile_build_jax_callable,
-    _get_cluster_tile_query_jax_callable,
+    _cluster_tile_build_registration,
+    _cluster_tile_coo_registration,
+    _cluster_tile_matrix_registration,
+    _GraphRegistration,
 )
 from nvalchemiops.neighbors.cluster_tile import (
     TILE_GROUP_SIZE,
@@ -898,135 +893,66 @@ def _batch_query_cluster_tile_coo_segmented_callback(
     )
 
 
-_BATCH_CLUSTER_TILE_BUILD_SPEC = _ClusterTileBuildJaxSpec(
-    batched=True,
-    segmented=False,
-    selective=False,
-)
-_BATCH_CLUSTER_TILE_BUILD_SELECTIVE_SPEC = _ClusterTileBuildJaxSpec(
-    batched=True,
-    segmented=True,
-    selective=True,
-)
+_BATCH_CLUSTER_TILE_BUILDS: dict[str, _GraphRegistration] = {
+    "full": _cluster_tile_build_registration(
+        _batch_build_cluster_tile_list_callback,
+        batched=True,
+        segmented=False,
+        selective=False,
+    ),
+    "selective": _cluster_tile_build_registration(
+        _batch_build_cluster_tile_list_selective_callback,
+        batched=True,
+        segmented=True,
+        selective=True,
+    ),
+}
 
-_jax_batch_build_cluster_tile_list = _get_cluster_tile_build_jax_callable(
-    _BATCH_CLUSTER_TILE_BUILD_SPEC,
-    _batch_build_cluster_tile_list_callback,
-)
-_jax_batch_build_cluster_tile_list_selective = _get_cluster_tile_build_jax_callable(
-    _BATCH_CLUSTER_TILE_BUILD_SELECTIVE_SPEC,
-    _batch_build_cluster_tile_list_selective_callback,
-)
-_BATCH_CLUSTER_TILE_QUERY_MATRIX_SPEC = _ClusterTileQueryJaxSpec(
-    batched=True,
-    output_format="matrix",
-    tile_segmented=False,
-    coo_segmented=False,
-    selective=False,
-    dual_cutoff=False,
-    return_vectors=False,
-    return_distances=False,
-    pair_fn=None,
-)
-_BATCH_CLUSTER_TILE_QUERY_MATRIX_SELECTIVE_SPEC = _ClusterTileQueryJaxSpec(
-    batched=True,
-    output_format="matrix",
-    tile_segmented=True,
-    coo_segmented=False,
-    selective=True,
-    dual_cutoff=False,
-    return_vectors=False,
-    return_distances=False,
-    pair_fn=None,
-)
-_BATCH_CLUSTER_TILE_QUERY_MATRIX_DUAL_SPEC = _ClusterTileQueryJaxSpec(
-    batched=True,
-    output_format="matrix",
-    tile_segmented=False,
-    coo_segmented=False,
-    selective=False,
-    dual_cutoff=True,
-    return_vectors=False,
-    return_distances=False,
-    pair_fn=None,
-)
-_BATCH_CLUSTER_TILE_QUERY_MATRIX_DUAL_SELECTIVE_SPEC = _ClusterTileQueryJaxSpec(
-    batched=True,
-    output_format="matrix",
-    tile_segmented=True,
-    coo_segmented=False,
-    selective=True,
-    dual_cutoff=True,
-    return_vectors=False,
-    return_distances=False,
-    pair_fn=None,
-)
-_BATCH_CLUSTER_TILE_QUERY_MATRIX_PAIR_SPEC = _ClusterTileQueryJaxSpec(
-    batched=True,
-    output_format="matrix",
-    tile_segmented=False,
-    coo_segmented=False,
-    selective=False,
-    dual_cutoff=False,
-    return_vectors=True,
-    return_distances=True,
-    pair_fn=None,
-)
-_BATCH_CLUSTER_TILE_QUERY_COO_SPEC = _ClusterTileQueryJaxSpec(
-    batched=True,
-    output_format="coo",
-    tile_segmented=False,
-    coo_segmented=False,
-    selective=False,
-    dual_cutoff=False,
-    return_vectors=False,
-    return_distances=False,
-    pair_fn=None,
-)
-_BATCH_CLUSTER_TILE_QUERY_COO_SEGMENTED_SPEC = _ClusterTileQueryJaxSpec(
-    batched=True,
-    output_format="coo",
-    tile_segmented=True,
-    coo_segmented=True,
-    selective=True,
-    dual_cutoff=False,
-    return_vectors=False,
-    return_distances=False,
-    pair_fn=None,
-)
-
-_jax_batch_query_cluster_tile = _get_cluster_tile_query_jax_callable(
-    _BATCH_CLUSTER_TILE_QUERY_MATRIX_SPEC,
-    _batch_query_cluster_tile_callback,
-)
-_jax_batch_query_cluster_tile_selective = _get_cluster_tile_query_jax_callable(
-    _BATCH_CLUSTER_TILE_QUERY_MATRIX_SELECTIVE_SPEC,
-    _batch_query_cluster_tile_selective_callback,
-)
-_jax_batch_query_cluster_tile_dual = _get_cluster_tile_query_jax_callable(
-    _BATCH_CLUSTER_TILE_QUERY_MATRIX_DUAL_SPEC,
-    _batch_query_cluster_tile_dual_callback,
-)
-_jax_batch_query_cluster_tile_dual_selective = _get_cluster_tile_query_jax_callable(
-    _BATCH_CLUSTER_TILE_QUERY_MATRIX_DUAL_SELECTIVE_SPEC,
-    _batch_query_cluster_tile_dual_selective_callback,
-)
-_jax_batch_query_cluster_tile_pair = _get_cluster_tile_query_jax_callable(
-    _BATCH_CLUSTER_TILE_QUERY_MATRIX_PAIR_SPEC,
-    _batch_query_cluster_tile_pair_callback,
-)
+_BATCH_CLUSTER_TILE_QUERIES: dict[str, _GraphRegistration] = {
+    "matrix": _cluster_tile_matrix_registration(
+        _batch_query_cluster_tile_callback,
+        batched=True,
+    ),
+    "matrix_selective": _cluster_tile_matrix_registration(
+        _batch_query_cluster_tile_selective_callback,
+        batched=True,
+        tile_segmented=True,
+        selective=True,
+    ),
+    "matrix_dual": _cluster_tile_matrix_registration(
+        _batch_query_cluster_tile_dual_callback,
+        batched=True,
+        dual_cutoff=True,
+    ),
+    "matrix_dual_selective": _cluster_tile_matrix_registration(
+        _batch_query_cluster_tile_dual_selective_callback,
+        batched=True,
+        tile_segmented=True,
+        selective=True,
+        dual_cutoff=True,
+    ),
+    "matrix_geometry": _cluster_tile_matrix_registration(
+        _batch_query_cluster_tile_pair_callback,
+        batched=True,
+        geometry=True,
+    ),
+    "coo": _cluster_tile_coo_registration(
+        _batch_query_cluster_tile_coo_callback,
+        batched=True,
+    ),
+    "coo_segmented": _cluster_tile_coo_registration(
+        _batch_query_cluster_tile_coo_segmented_callback,
+        batched=True,
+        tile_segmented=True,
+        coo_segmented=True,
+        selective=True,
+    ),
+}
 
 
 @functools.cache
-def _get_jax_batch_cluster_tile_pair_fn_callable(spec: _ClusterTileQueryJaxSpec):
-    """Build (and cache) a batched ``jax_callable`` closing over ``pair_fn`` for the
-    cluster-tile pair-output -> matrix kernel.
-
-    Batched analogue of
-    ``cluster_tile._get_jax_cluster_tile_pair_fn_callable``: adds the ``pair_params``
-    input + ``pair_energies`` / ``pair_forces`` outputs.  Cached by ``pair_fn``
-    identity; fp32-only.
-    """
+def _get_jax_batch_cluster_tile_pair_fn_registration(pair_fn) -> _GraphRegistration:
+    """Build (and cache) a batched graph registration closing over ``pair_fn``."""
 
     def _callback(
         sorted_atom_index: wp.array(dtype=wp.int32),
@@ -1072,26 +998,18 @@ def _get_jax_batch_cluster_tile_pair_fn_callable(spec: _ClusterTileQueryJaxSpec)
             return_distances=True,
             neighbor_vectors=neighbor_vectors,
             neighbor_distances=neighbor_distances,
-            pair_fn=spec.pair_fn,
+            pair_fn=pair_fn,
             pair_params=pair_params,
             pair_energies=pair_energies,
             pair_forces=pair_forces,
         )
 
-    return _get_cluster_tile_query_jax_callable(
-        spec,
+    return _cluster_tile_matrix_registration(
         _callback,
+        batched=True,
+        geometry=True,
+        pair_fn=pair_fn,
     )
-
-
-_jax_batch_query_cluster_tile_coo = _get_cluster_tile_query_jax_callable(
-    _BATCH_CLUSTER_TILE_QUERY_COO_SPEC,
-    _batch_query_cluster_tile_coo_callback,
-)
-_jax_batch_query_cluster_tile_coo_segmented = _get_cluster_tile_query_jax_callable(
-    _BATCH_CLUSTER_TILE_QUERY_COO_SEGMENTED_SPEC,
-    _batch_query_cluster_tile_coo_segmented_callback,
-)
 
 
 # =============================================================================
@@ -1237,9 +1155,8 @@ def batch_build_cluster_tile_list(
         tile_system = jnp.zeros(max_tiles, dtype=jnp.int32)
 
     if rebuild_flags is None:
-        _preload_cluster_tile_build_kernel(
-            _BATCH_CLUSTER_TILE_BUILD_SPEC,
-        )
+        build_registration = _BATCH_CLUSTER_TILE_BUILDS["full"]
+        build_registration.preload(device_source=sorted_pos_x)
         (
             group_ctr_x,
             group_ctr_y,
@@ -1251,7 +1168,7 @@ def batch_build_cluster_tile_list(
             tile_row_group,
             tile_col_group,
             tile_system,
-        ) = _jax_batch_build_cluster_tile_list(
+        ) = build_registration.callable(
             sorted_pos_x,
             sorted_pos_y,
             sorted_pos_z,
@@ -1277,9 +1194,8 @@ def batch_build_cluster_tile_list(
                 "rebuild_flags requires tile_offsets and tile_counts for "
                 "batched cluster_tile builds"
             )
-        _preload_cluster_tile_build_kernel(
-            _BATCH_CLUSTER_TILE_BUILD_SELECTIVE_SPEC,
-        )
+        build_registration = _BATCH_CLUSTER_TILE_BUILDS["selective"]
+        build_registration.preload(device_source=sorted_pos_x)
         rf = rebuild_flags.astype(jnp.bool_)
         (
             group_ctr_x,
@@ -1293,7 +1209,7 @@ def batch_build_cluster_tile_list(
             tile_row_group,
             tile_col_group,
             tile_system,
-        ) = _jax_batch_build_cluster_tile_list_selective(
+        ) = build_registration.callable(
             sorted_pos_x,
             sorted_pos_y,
             sorted_pos_z,
@@ -1495,30 +1411,19 @@ def batch_query_cluster_tile(
             )
         if batch_idx is None:
             raise ValueError("batch_idx is required when rebuild_flags is provided")
-    query_spec = (
-        _ClusterTileQueryJaxSpec(
-            batched=True,
-            output_format="matrix",
-            tile_segmented=False,
-            coo_segmented=False,
-            selective=False,
-            dual_cutoff=False,
-            return_vectors=True,
-            return_distances=True,
-            pair_fn=pair_fn,
-        )
-        if pair_fn is not None
-        else _BATCH_CLUSTER_TILE_QUERY_MATRIX_PAIR_SPEC
-        if has_pair_outputs
-        else _BATCH_CLUSTER_TILE_QUERY_MATRIX_DUAL_SELECTIVE_SPEC
-        if dual_cutoff and selective
-        else _BATCH_CLUSTER_TILE_QUERY_MATRIX_DUAL_SPEC
-        if dual_cutoff
-        else _BATCH_CLUSTER_TILE_QUERY_MATRIX_SELECTIVE_SPEC
-        if selective
-        else _BATCH_CLUSTER_TILE_QUERY_MATRIX_SPEC
-    )
-    _preload_cluster_tile_query_kernel(query_spec)
+    if pair_fn is not None:
+        query_registration = _get_jax_batch_cluster_tile_pair_fn_registration(pair_fn)
+    elif has_pair_outputs:
+        query_registration = _BATCH_CLUSTER_TILE_QUERIES["matrix_geometry"]
+    elif dual_cutoff and selective:
+        query_registration = _BATCH_CLUSTER_TILE_QUERIES["matrix_dual_selective"]
+    elif dual_cutoff:
+        query_registration = _BATCH_CLUSTER_TILE_QUERIES["matrix_dual"]
+    elif selective:
+        query_registration = _BATCH_CLUSTER_TILE_QUERIES["matrix_selective"]
+    else:
+        query_registration = _BATCH_CLUSTER_TILE_QUERIES["matrix"]
+    query_registration.preload(device_source=sorted_pos_x)
     if fill_value is None:
         fill_value = natom
     inv_cell_batch = jnp.linalg.inv(cell_batch)
@@ -1579,7 +1484,6 @@ def batch_query_cluster_tile(
             if pair_forces is None:
                 pair_forces = jnp.zeros((natom, max_neighbors, 3), dtype=jnp.float32)
             pair_params_arg = jnp.asarray(pair_params, dtype=jnp.float32)
-            pair_callable = _get_jax_batch_cluster_tile_pair_fn_callable(query_spec)
             (
                 neighbor_matrix,
                 num_neighbors,
@@ -1588,7 +1492,7 @@ def batch_query_cluster_tile(
                 neighbor_distances,
                 pair_energies,
                 pair_forces,
-            ) = pair_callable(
+            ) = query_registration.callable(
                 sorted_atom_index,
                 sorted_pos_x,
                 sorted_pos_y,
@@ -1628,7 +1532,7 @@ def batch_query_cluster_tile(
             neighbor_matrix_shifts,
             neighbor_vectors,
             neighbor_distances,
-        ) = _jax_batch_query_cluster_tile_pair(
+        ) = query_registration.callable(
             sorted_atom_index,
             sorted_pos_x,
             sorted_pos_y,
@@ -1666,7 +1570,7 @@ def batch_query_cluster_tile(
             neighbor_matrix2,
             num_neighbors2,
             neighbor_matrix_shifts2,
-        ) = _jax_batch_query_cluster_tile_dual_selective(
+        ) = query_registration.callable(
             sorted_atom_index,
             sorted_pos_x,
             sorted_pos_y,
@@ -1698,7 +1602,7 @@ def batch_query_cluster_tile(
             neighbor_matrix2,
             num_neighbors2,
             neighbor_matrix_shifts2,
-        ) = _jax_batch_query_cluster_tile_dual(
+        ) = query_registration.callable(
             sorted_atom_index,
             sorted_pos_x,
             sorted_pos_y,
@@ -1721,7 +1625,7 @@ def batch_query_cluster_tile(
         )
     elif selective:
         neighbor_matrix, num_neighbors, neighbor_matrix_shifts = (
-            _jax_batch_query_cluster_tile_selective(
+            query_registration.callable(
                 sorted_atom_index,
                 sorted_pos_x,
                 sorted_pos_y,
@@ -1744,7 +1648,7 @@ def batch_query_cluster_tile(
         )
     else:
         neighbor_matrix, num_neighbors, neighbor_matrix_shifts = (
-            _jax_batch_query_cluster_tile(
+            query_registration.callable(
                 sorted_atom_index,
                 sorted_pos_x,
                 sorted_pos_y,
@@ -1874,12 +1778,10 @@ def batch_query_cluster_tile_coo(
         raise ValueError("rebuild_flags requires pair_offsets and pair_counts")
     if rebuild_flags is not None and (tile_offsets is None or tile_counts is None):
         raise ValueError("rebuild_flags requires tile_offsets and tile_counts")
-    query_spec = (
-        _BATCH_CLUSTER_TILE_QUERY_COO_SEGMENTED_SPEC
-        if segmented
-        else _BATCH_CLUSTER_TILE_QUERY_COO_SPEC
-    )
-    _preload_cluster_tile_coo_kernel(query_spec)
+    coo_registration = _BATCH_CLUSTER_TILE_QUERIES[
+        "coo_segmented" if segmented else "coo"
+    ]
+    coo_registration.preload(device_source=sorted_pos_x)
 
     inv_cell_batch = jnp.linalg.inv(cell_batch)
     pair_counter = jnp.zeros(1, dtype=jnp.int32)
@@ -1897,37 +1799,35 @@ def batch_query_cluster_tile_coo(
             if rebuild_flags is not None
             else jnp.ones_like(pair_counts, dtype=jnp.bool_)
         )
-        pair_counter, pair_counts, coo_list, coo_shifts = (
-            _jax_batch_query_cluster_tile_coo_segmented(
-                sorted_atom_index,
-                sorted_pos_x,
-                sorted_pos_y,
-                sorted_pos_z,
-                cell_batch,
-                inv_cell_batch,
-                num_tiles,
-                tile_offsets.astype(jnp.int32),
-                tile_counts.astype(jnp.int32),
-                rf,
-                tile_row_group,
-                tile_col_group,
-                tile_system,
-                pair_counter,
-                pair_offsets.astype(jnp.int32),
-                pair_counts.astype(jnp.int32),
-                coo_list,
-                coo_shifts,
-                float(cutoff),
-                int(natom),
-                int(max_pairs),
-            )
+        pair_counter, pair_counts, coo_list, coo_shifts = coo_registration.callable(
+            sorted_atom_index,
+            sorted_pos_x,
+            sorted_pos_y,
+            sorted_pos_z,
+            cell_batch,
+            inv_cell_batch,
+            num_tiles,
+            tile_offsets.astype(jnp.int32),
+            tile_counts.astype(jnp.int32),
+            rf,
+            tile_row_group,
+            tile_col_group,
+            tile_system,
+            pair_counter,
+            pair_offsets.astype(jnp.int32),
+            pair_counts.astype(jnp.int32),
+            coo_list,
+            coo_shifts,
+            float(cutoff),
+            int(natom),
+            int(max_pairs),
         )
         del pair_counter
         return coo_list.T, pair_offsets, pair_counts, coo_shifts
 
     coo_list = jnp.zeros((max_pairs, 2), dtype=jnp.int32)
     coo_shifts = jnp.zeros((max_pairs, 3), dtype=jnp.int32)
-    pair_counter, coo_list, coo_shifts = _jax_batch_query_cluster_tile_coo(
+    pair_counter, coo_list, coo_shifts = coo_registration.callable(
         sorted_atom_index,
         sorted_pos_x,
         sorted_pos_y,

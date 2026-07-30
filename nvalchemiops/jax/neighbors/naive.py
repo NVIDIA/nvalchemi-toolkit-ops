@@ -31,11 +31,7 @@ from nvalchemiops.jax.neighbors._autograd import (
     _route_pair_outputs,
 )
 from nvalchemiops.jax.neighbors._dispatch import _is_jax_cpu_array
-from nvalchemiops.jax.neighbors._registration import (
-    _get_naive_jax_kernel,
-    _LazyDtypeRegistrations,
-    _NaiveJaxKernelSpec,
-)
+from nvalchemiops.jax.neighbors._registration import _lazy_naive_kernel
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     _validate_graph_mode,
     build_naive_kernel_tables,
@@ -84,7 +80,6 @@ _DTYPE_TO_NAIVE_KERNELS = (wp.float32, wp.float64)
 
 # Direct jax_kernel registrations are constructed lazily.  The retained
 # build_naive_kernel_tables tables below remain for GraphMode.WARP callbacks.
-_DIRECT_DTYPE_MAP = {jnp.float32: wp.float32, jnp.float64: wp.float64}
 
 
 def _direct_naive_kernel_registrations(
@@ -93,26 +88,18 @@ def _direct_naive_kernel_registrations(
     selective: bool = False,
     half_fill: bool = False,
     partial: bool = False,
-    return_vectors: bool = False,
-    return_distances: bool = False,
-) -> _LazyDtypeRegistrations:
+    geometry: bool = False,
+):
     """Build lazy direct registrations for one static naive specialization."""
-    return _LazyDtypeRegistrations(
-        lambda wp_dtype: _get_naive_jax_kernel(
-            _NaiveJaxKernelSpec(
-                operation="single_cutoff",
-                wp_dtype=wp_dtype,
-                batched=False,
-                pbc_mode=pbc_mode,
-                selective=selective,
-                partial=partial,
-                half_fill=half_fill,
-                return_vectors=return_vectors,
-                return_distances=return_distances,
-                pair_fn=None,
-            )
-        ),
-        _DIRECT_DTYPE_MAP,
+    return _lazy_naive_kernel(
+        operation="single_cutoff",
+        batched=False,
+        pbc_mode=pbc_mode,
+        selective=selective,
+        partial=partial,
+        half_fill=half_fill,
+        geometry=geometry,
+        pair_fn=None,
     )
 
 
@@ -128,8 +115,7 @@ _DIRECT_NAIVE_GEOMETRY_KERNELS = {
     (pbc_mode, half_fill): _direct_naive_kernel_registrations(
         pbc_mode=pbc_mode,
         half_fill=half_fill,
-        return_vectors=True,
-        return_distances=True,
+        geometry=True,
     )
     for pbc_mode in ("none", "wrap_on_entry")
     for half_fill in (False, True)
@@ -141,20 +127,17 @@ def _get_jax_naive_pair_kernel(
     wp_dtype, pbc_mode: str, half_fill: bool = False, partial: bool = False
 ):
     """Return a cached direct geometry registration for optional partial rows."""
-    return _get_naive_jax_kernel(
-        _NaiveJaxKernelSpec(
-            operation="single_cutoff",
-            wp_dtype=wp_dtype,
-            batched=False,
-            pbc_mode=pbc_mode,
-            selective=False,
-            partial=partial,
-            half_fill=half_fill,
-            return_vectors=True,
-            return_distances=True,
-            pair_fn=None,
-        )
-    )
+    jax_dtype = jnp.float64 if wp_dtype == wp.float64 else jnp.float32
+    return _lazy_naive_kernel(
+        operation="single_cutoff",
+        batched=False,
+        pbc_mode=pbc_mode,
+        selective=False,
+        partial=partial,
+        half_fill=half_fill,
+        geometry=True,
+        pair_fn=None,
+    )[jax_dtype]
 
 
 @functools.cache
@@ -166,20 +149,17 @@ def _get_jax_naive_pair_fn_kernel(
     partial: bool = False,
 ):
     """Return a cached pair-function direct naive registration."""
-    return _get_naive_jax_kernel(
-        _NaiveJaxKernelSpec(
-            operation="single_cutoff",
-            wp_dtype=wp_dtype,
-            batched=False,
-            pbc_mode=pbc_mode,
-            selective=False,
-            partial=partial,
-            half_fill=half_fill,
-            return_vectors=True,
-            return_distances=True,
-            pair_fn=pair_fn,
-        )
-    )
+    jax_dtype = jnp.float64 if wp_dtype == wp.float64 else jnp.float32
+    return _lazy_naive_kernel(
+        operation="single_cutoff",
+        batched=False,
+        pbc_mode=pbc_mode,
+        selective=False,
+        partial=partial,
+        half_fill=half_fill,
+        geometry=True,
+        pair_fn=pair_fn,
+    )[jax_dtype]
 
 
 __all__ = ["naive_neighbor_list"]
@@ -2103,28 +2083,12 @@ def naive_neighbor_list(
             else:
                 return neighbor_matrix, num_neighbors
 
-    # Select lazy direct registrations by dtype and static specialization.
+    # Select wrap kernel by dtype; direct naive registrations resolve at launch.
     if positions.dtype == jnp.float64:
         _jax_wrap_single = _jax_wrap_positions_single_f64
     else:
         _jax_wrap_single = _jax_wrap_positions_single_f32
         positions = positions.astype(jnp.float32)
-    _jax_fill = _DIRECT_NAIVE_KERNELS[("none", False, bool(half_fill))][positions.dtype]
-    _jax_fill_pbc = _DIRECT_NAIVE_KERNELS[("wrap_on_entry", False, bool(half_fill))][
-        positions.dtype
-    ]
-    _jax_fill_pbc_prewrapped = _DIRECT_NAIVE_KERNELS[
-        ("prewrapped", False, bool(half_fill))
-    ][positions.dtype]
-    _jax_fill_selective = _DIRECT_NAIVE_KERNELS[("none", True, bool(half_fill))][
-        positions.dtype
-    ]
-    _jax_fill_pbc_selective = _DIRECT_NAIVE_KERNELS[
-        ("wrap_on_entry", True, bool(half_fill))
-    ][positions.dtype]
-    _jax_fill_pbc_prewrapped_selective = _DIRECT_NAIVE_KERNELS[
-        ("prewrapped", True, bool(half_fill))
-    ][positions.dtype]
 
     positions = jax.lax.stop_gradient(positions)
     if cell is not None:
@@ -2323,7 +2287,9 @@ def naive_neighbor_list(
             num_neighbors = jnp.where(
                 rf[0], jnp.zeros_like(num_neighbors), num_neighbors
             )
-            neighbor_matrix, num_neighbors = _jax_fill_selective(
+            neighbor_matrix, num_neighbors = _DIRECT_NAIVE_KERNELS[
+                ("none", True, bool(half_fill))
+            ][positions.dtype](
                 positions,
                 empty_offsets,
                 cutoff_sq,
@@ -2349,7 +2315,9 @@ def naive_neighbor_list(
                 launch_dims=(1, 1, total_atoms),
             )
         else:
-            neighbor_matrix, num_neighbors = _jax_fill(
+            neighbor_matrix, num_neighbors = _DIRECT_NAIVE_KERNELS[
+                ("none", False, bool(half_fill))
+            ][positions.dtype](
                 positions,
                 empty_offsets,
                 cutoff_sq,
@@ -2402,7 +2370,9 @@ def naive_neighbor_list(
                     rf[0], jnp.zeros_like(num_neighbors), num_neighbors
                 )
                 neighbor_matrix, neighbor_matrix_shifts, num_neighbors = (
-                    _jax_fill_pbc_selective(
+                    _DIRECT_NAIVE_KERNELS[("wrap_on_entry", True, bool(half_fill))][
+                        positions.dtype
+                    ](
                         positions_wrapped,
                         per_atom_cell_offsets,
                         cutoff_sq,
@@ -2429,30 +2399,34 @@ def naive_neighbor_list(
                     )
                 )
             else:
-                neighbor_matrix, neighbor_matrix_shifts, num_neighbors = _jax_fill_pbc(
-                    positions_wrapped,
-                    per_atom_cell_offsets,
-                    cutoff_sq,
-                    0.0,
-                    cell,
-                    shift_range_per_dimension,
-                    empty_num_shifts,
-                    empty_batch_idx,
-                    empty_batch_ptr,
-                    empty_target_indices,
-                    neighbor_matrix,
-                    neighbor_matrix_shifts,
-                    num_neighbors,
-                    empty_matrix,
-                    empty_shifts,
-                    empty_num_neighbors,
-                    empty_vectors,
-                    empty_distances,
-                    empty_pair_params,
-                    empty_energies,
-                    empty_forces,
-                    empty_rebuild_flags,
-                    launch_dims=(1, max_shifts_per_system, total_atoms),
+                neighbor_matrix, neighbor_matrix_shifts, num_neighbors = (
+                    _DIRECT_NAIVE_KERNELS[("wrap_on_entry", False, bool(half_fill))][
+                        positions.dtype
+                    ](
+                        positions_wrapped,
+                        per_atom_cell_offsets,
+                        cutoff_sq,
+                        0.0,
+                        cell,
+                        shift_range_per_dimension,
+                        empty_num_shifts,
+                        empty_batch_idx,
+                        empty_batch_ptr,
+                        empty_target_indices,
+                        neighbor_matrix,
+                        neighbor_matrix_shifts,
+                        num_neighbors,
+                        empty_matrix,
+                        empty_shifts,
+                        empty_num_neighbors,
+                        empty_vectors,
+                        empty_distances,
+                        empty_pair_params,
+                        empty_energies,
+                        empty_forces,
+                        empty_rebuild_flags,
+                        launch_dims=(1, max_shifts_per_system, total_atoms),
+                    )
                 )
         else:
             if rebuild_flags is not None:
@@ -2461,7 +2435,9 @@ def naive_neighbor_list(
                     rf[0], jnp.zeros_like(num_neighbors), num_neighbors
                 )
                 neighbor_matrix, neighbor_matrix_shifts, num_neighbors = (
-                    _jax_fill_pbc_prewrapped_selective(
+                    _DIRECT_NAIVE_KERNELS[("prewrapped", True, bool(half_fill))][
+                        positions.dtype
+                    ](
                         positions,
                         empty_offsets,
                         cutoff_sq,
@@ -2489,7 +2465,9 @@ def naive_neighbor_list(
                 )
             else:
                 neighbor_matrix, neighbor_matrix_shifts, num_neighbors = (
-                    _jax_fill_pbc_prewrapped(
+                    _DIRECT_NAIVE_KERNELS[("prewrapped", False, bool(half_fill))][
+                        positions.dtype
+                    ](
                         positions,
                         empty_offsets,
                         cutoff_sq,

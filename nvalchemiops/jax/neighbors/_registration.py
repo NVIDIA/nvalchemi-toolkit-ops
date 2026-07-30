@@ -26,6 +26,14 @@ import jax.numpy as jnp
 import warp as wp
 from warp.jax_experimental import GraphMode, jax_callable, jax_kernel
 
+from nvalchemiops.jax.neighbors._cluster_tile_preload import (
+    _preload_cluster_tile_build_kernel,
+    _preload_cluster_tile_coo_kernel,
+    _preload_cluster_tile_query_kernel,
+    _validate_cluster_tile_build_options,
+    _validate_cluster_tile_coo_options,
+    _validate_cluster_tile_matrix_options,
+)
 from nvalchemiops.neighbors.cell_list import (
     get_build_cell_list_kernel,
     get_cell_list_cells_per_system_kernel,
@@ -41,6 +49,12 @@ from nvalchemiops.neighbors.neighbor_utils import (
 )
 
 __all__: list[str] = []
+
+_Outputs = tuple[str, ...]
+
+_NAIVE_DTYPE_MAP = {jnp.float32: wp.float32, jnp.float64: wp.float64}
+_CELL_LIST_DTYPE_MAP = {jnp.float32: wp.float32, jnp.float64: wp.float64}
+_CELLS_PER_SYSTEM_CACHE_KEY = "cells_per_system"
 
 _SINGLE_NO_PBC_OUTPUTS = ("neighbor_matrix1", "num_neighbors1")
 _SINGLE_PBC_OUTPUTS = (
@@ -64,317 +78,95 @@ _DUAL_PBC_OUTPUTS = (
 )
 
 
-@dataclass(frozen=True)
-class _JaxOutputSchema:
-    """Describe the ordered in-place outputs of a JAX Warp registration."""
+def _register_jax_kernel(kernel: Any, outputs: _Outputs) -> Any:
+    """Register a Warp kernel using a shared output tuple.
 
-    in_out_argnames: tuple[str, ...]
+    Parameters
+    ----------
+    kernel : Any
+        Warp kernel to expose to JAX.
+    outputs : tuple[str, ...]
+        Ordered names of the kernel's in-place output arguments.
 
-    @property
-    def num_outputs(self) -> int:
-        """Return the number of in-place outputs."""
-        return len(self.in_out_argnames)
-
-
-@dataclass(frozen=True)
-class _NaiveJaxKernelSpec:
-    """Describe one supported direct naive JAX kernel registration."""
-
-    operation: Literal["single_cutoff", "dual_cutoff"]
-    wp_dtype: type
-    batched: bool
-    pbc_mode: Literal["none", "wrap_on_entry", "prewrapped"]
-    selective: bool
-    partial: bool
-    half_fill: bool
-    return_vectors: bool
-    return_distances: bool
-    pair_fn: Any | None
-
-
-@dataclass(frozen=True)
-class _CellListBuildJaxSpec:
-    """Describe one supported direct cell-list build JAX registration."""
-
-    stage: Literal[
-        "construct_bin_size",
-        "count_atoms",
-        "bin_atoms",
-        "gather",
-        "cells_per_system",
-    ]
-    wp_dtype: type
-    batched: bool
-
-
-@dataclass(frozen=True, kw_only=True)
-class _CellListQueryJaxSpec:
-    """Describe one supported direct cell-list query JAX registration."""
-
-    wp_dtype: type
-    batched: bool
-    selective: bool
-    partial: bool
-    half_fill: bool
-    return_vectors: bool
-    return_distances: bool
-    pair_fn: Any | None
-    atom_centric_path: Literal["sorted", "direct"]
-
-
-@dataclass(frozen=True)
-class _ClusterTileBuildJaxSpec:
-    """Describe one supported cluster-tile build callback registration."""
-
-    batched: bool
-    segmented: bool
-    selective: bool
-
-
-@dataclass(frozen=True, kw_only=True)
-class _ClusterTileQueryJaxSpec:
-    """Describe one supported cluster-tile query callback registration."""
-
-    batched: bool
-    output_format: Literal["matrix", "coo"]
-    tile_segmented: bool
-    coo_segmented: bool
-    selective: bool
-    dual_cutoff: bool
-    return_vectors: bool
-    return_distances: bool
-    pair_fn: Any | None
-
-
-def _register_jax_kernel(kernel: Any, output_schema: _JaxOutputSchema) -> Any:
-    """Register a Warp kernel using a shared output schema."""
+    Returns
+    -------
+    Any
+        The registered JAX kernel wrapper.
+    """
     return jax_kernel(
         kernel,
-        num_outputs=output_schema.num_outputs,
-        in_out_argnames=list(output_schema.in_out_argnames),
+        num_outputs=len(outputs),
+        in_out_argnames=list(outputs),
         enable_backward=False,
     )
 
 
 def _register_jax_callable(
     callable_obj: Callable[..., Any],
-    output_schema: _JaxOutputSchema,
+    outputs: _Outputs,
     *,
     graph_mode: GraphMode,
 ) -> Any:
-    """Register a Warp callable using a shared output schema."""
+    """Register a Warp callable using a shared output tuple.
+
+    Parameters
+    ----------
+    callable_obj : Callable[..., Any]
+        Warp callable to expose to JAX.
+    outputs : tuple[str, ...]
+        Ordered names of the callable's in-place output arguments.
+    graph_mode : GraphMode
+        Execution mode used by Warp graph capture.
+
+    Returns
+    -------
+    Any
+        The registered JAX callable wrapper.
+    """
     return jax_callable(
         callable_obj,
-        num_outputs=output_schema.num_outputs,
-        in_out_argnames=list(output_schema.in_out_argnames),
+        num_outputs=len(outputs),
+        in_out_argnames=list(outputs),
         graph_mode=graph_mode,
     )
 
 
-def _validate_spec(spec: _NaiveJaxKernelSpec) -> None:
-    """Reject unsupported direct naive JAX registration combinations."""
-    if spec.operation not in {"single_cutoff", "dual_cutoff"}:
-        raise ValueError(f"Unsupported naive operation: {spec.operation!r}.")
-    if spec.wp_dtype not in {wp.float32, wp.float64}:
-        raise ValueError(f"Unsupported naive Warp dtype: {spec.wp_dtype!r}.")
-    if spec.pbc_mode not in {"none", "wrap_on_entry", "prewrapped"}:
-        raise ValueError(f"Unsupported naive PBC mode: {spec.pbc_mode!r}.")
-    if spec.return_vectors != spec.return_distances:
-        raise ValueError(
-            "Direct naive registrations require return_vectors and "
-            "return_distances together.",
-        )
-    if spec.pair_fn is not None and not spec.return_vectors:
-        raise ValueError("pair_fn requires direct pair-geometry outputs.")
-    if spec.partial and (
-        spec.operation != "single_cutoff" or not spec.return_vectors or spec.selective
-    ):
-        raise ValueError(
-            "partial direct registrations require single-cutoff non-selective "
-            "pair geometry.",
-        )
-    if spec.operation == "dual_cutoff" and (
-        spec.return_vectors
-        or spec.pair_fn is not None
-        or spec.partial
-        or spec.half_fill
-    ):
-        raise ValueError(
-            "Dual-cutoff direct registrations do not support geometry, pair_fn, "
-            "partial rows, or half_fill.",
-        )
+@dataclass(frozen=True)
+class _GraphRegistration:
+    """Bundle one Warp graph callable with its matching preload operation.
+
+    Parameters
+    ----------
+    callable : Any
+        Registered JAX callable for the graph operation.
+    preload : Callable[..., None]
+        Callable that loads the operation's Warp modules before graph capture.
+    """
+
+    callable: Any
+    preload: Callable[..., None]
 
 
-def _output_schema(spec: _NaiveJaxKernelSpec) -> _JaxOutputSchema:
-    """Return the ordered direct JAX output schema for ``spec``."""
-    if spec.operation == "dual_cutoff":
-        outputs = _DUAL_NO_PBC_OUTPUTS if spec.pbc_mode == "none" else _DUAL_PBC_OUTPUTS
-    else:
-        outputs = (
-            _SINGLE_NO_PBC_OUTPUTS if spec.pbc_mode == "none" else _SINGLE_PBC_OUTPUTS
-        )
-        if spec.return_vectors:
-            outputs += ("neighbor_vectors", "neighbor_distances")
-        if spec.pair_fn is not None:
-            outputs += ("pair_energies", "pair_forces")
-    return _JaxOutputSchema(outputs)
+def _cluster_tile_build_outputs(
+    *,
+    batched: bool,
+    selective: bool,
+) -> _Outputs:
+    """Return the ordered in-place ABI for a cluster-tile build callback.
 
+    Parameters
+    ----------
+    batched : bool
+        Whether the callback operates on multiple systems.
+    selective : bool
+        Whether the callback produces per-tile counts.
 
-def _validate_cell_list_build_spec(spec: _CellListBuildJaxSpec) -> None:
-    """Reject unsupported direct cell-list build registrations."""
-    if spec.wp_dtype not in {wp.float32, wp.float64}:
-        raise ValueError(f"Unsupported cell-list Warp dtype: {spec.wp_dtype!r}.")
-    if spec.stage not in {
-        "construct_bin_size",
-        "count_atoms",
-        "bin_atoms",
-        "gather",
-        "cells_per_system",
-    }:
-        raise ValueError(f"Unsupported cell-list build stage: {spec.stage!r}.")
-    if spec.stage == "cells_per_system" and not spec.batched:
-        raise ValueError("cells_per_system is only registered for batch cell lists.")
-
-
-def _cell_list_build_output_schema(spec: _CellListBuildJaxSpec) -> _JaxOutputSchema:
-    """Return the ordered in-place output schema for a build stage."""
-    if spec.stage == "construct_bin_size":
-        return _JaxOutputSchema(
-            (
-                "cells_per_dimension_batch"
-                if spec.batched
-                else "cells_per_dimension_single",
-            ),
-        )
-    if spec.stage == "count_atoms":
-        return _JaxOutputSchema(("atoms_per_cell_count", "atom_periodic_shifts"))
-    if spec.stage == "bin_atoms":
-        return _JaxOutputSchema(
-            ("atom_to_cell_mapping", "atoms_per_cell_count", "cell_atom_list"),
-        )
-    if spec.stage == "gather":
-        return _JaxOutputSchema(
-            ("sorted_positions", "sorted_shifts")
-            if spec.batched
-            else ("dst_pos", "dst_shifts"),
-        )
-    return _JaxOutputSchema(("cells_per_system",))
-
-
-@functools.cache
-def _get_cell_list_build_jax_kernel(spec: _CellListBuildJaxSpec) -> Any:
-    """Return a cached direct JAX registration for a cell-list build stage."""
-    _validate_cell_list_build_spec(spec)
-    if spec.stage == "cells_per_system":
-        kernel = get_cell_list_cells_per_system_kernel()
-    elif spec.stage == "gather":
-        kernel = (
-            get_cell_list_gather_kernel(spec.wp_dtype)
-            if spec.batched
-            else get_gather_positions_and_shifts_kernel(spec.wp_dtype)
-        )
-    else:
-        kernel = get_build_cell_list_kernel(
-            spec.stage,
-            spec.wp_dtype,
-            batched=spec.batched,
-        )
-    return _register_jax_kernel(kernel, _cell_list_build_output_schema(spec))
-
-
-def _validate_cell_list_query_spec(spec: _CellListQueryJaxSpec) -> None:
-    """Reject unsupported direct cell-list query registrations."""
-    if spec.wp_dtype not in {wp.float32, wp.float64}:
-        raise ValueError(f"Unsupported cell-list Warp dtype: {spec.wp_dtype!r}.")
-    if spec.atom_centric_path not in {"sorted", "direct"}:
-        raise ValueError(
-            f"Unsupported atom-centric cell-list path: {spec.atom_centric_path!r}.",
-        )
-    if spec.batched and spec.atom_centric_path == "direct":
-        raise ValueError("The direct atom-centric path is only available unbatched.")
-    if spec.return_vectors != spec.return_distances:
-        raise ValueError(
-            "Direct cell-list registrations require return_vectors and "
-            "return_distances together.",
-        )
-    if spec.pair_fn is not None and not spec.return_vectors:
-        raise ValueError("pair_fn requires direct pair-geometry outputs.")
-
-
-def _cell_list_query_output_schema(spec: _CellListQueryJaxSpec) -> _JaxOutputSchema:
-    """Return the ordered in-place output schema for a query stage."""
-    outputs = (
-        "neighbor_matrix",
-        "neighbor_matrix_shifts",
-        "num_neighbors",
-    )
-    if spec.return_vectors:
-        outputs += ("neighbor_vectors", "neighbor_distances")
-    if spec.pair_fn is not None:
-        outputs += ("pair_energies", "pair_forces")
-    return _JaxOutputSchema(outputs)
-
-
-@functools.cache
-def _get_cell_list_query_jax_kernel(spec: _CellListQueryJaxSpec) -> Any:
-    """Return a cached direct JAX registration for a cell-list query."""
-    _validate_cell_list_query_spec(spec)
-    kernel = get_query_cell_list_kernel(
-        spec.wp_dtype,
-        strategy="atom_centric",
-        batched=spec.batched,
-        selective=spec.selective,
-        partial=spec.partial,
-        half_fill=spec.half_fill,
-        return_vectors=spec.return_vectors,
-        return_distances=spec.return_distances,
-        pair_fn=spec.pair_fn,
-        atom_centric_path=spec.atom_centric_path,
-    )
-    return _register_jax_kernel(kernel, _cell_list_query_output_schema(spec))
-
-
-@functools.cache
-def _get_naive_jax_kernel(spec: _NaiveJaxKernelSpec) -> Any:
-    """Return a cached direct JAX registration for a supported naive spec."""
-    _validate_spec(spec)
-    if spec.operation == "dual_cutoff":
-        kernel = get_naive_neighbor_matrix_dual_cutoff_kernel(
-            spec.wp_dtype,
-            pbc_mode=spec.pbc_mode,
-            batched=spec.batched,
-            selective=spec.selective,
-        )
-    else:
-        kernel = get_naive_neighbor_matrix_kernel(
-            spec.wp_dtype,
-            pbc_mode=spec.pbc_mode,
-            batched=spec.batched,
-            selective=spec.selective,
-            partial=spec.partial,
-            half_fill=spec.half_fill,
-            return_vectors=spec.return_vectors,
-            return_distances=spec.return_distances,
-            pair_fn=spec.pair_fn,
-        )
-    return _register_jax_kernel(kernel, _output_schema(spec))
-
-
-def _validate_cluster_tile_build_spec(spec: _ClusterTileBuildJaxSpec) -> None:
-    """Reject unsupported cluster-tile build callback combinations."""
-    if not spec.batched and spec.segmented:
-        raise ValueError("Single-system cluster-tile builds cannot be segmented.")
-    if spec.batched and spec.selective and not spec.segmented:
-        raise ValueError(
-            "Selective batched cluster-tile builds must be segmented.",
-        )
-
-
-def _cluster_tile_build_output_schema(
-    spec: _ClusterTileBuildJaxSpec,
-) -> _JaxOutputSchema:
-    """Return the ordered in-place ABI for a cluster-tile build callback."""
-    outputs = (
+    Returns
+    -------
+    tuple[str, ...]
+        Ordered names of the callback's in-place output arguments.
+    """
+    outputs: _Outputs = (
         "group_ctr_x",
         "group_ctr_y",
         "group_ctr_z",
@@ -383,115 +175,223 @@ def _cluster_tile_build_output_schema(
         "group_ext_z",
         "num_tiles",
     )
-    if spec.batched and spec.selective:
+    if batched and selective:
         outputs += ("tile_counts",)
     outputs += ("tile_row_group", "tile_col_group")
-    if spec.batched:
+    if batched:
         outputs += ("tile_system",)
-    return _JaxOutputSchema(outputs)
+    return outputs
 
 
-@functools.cache
-def _get_cluster_tile_build_jax_callable(
-    spec: _ClusterTileBuildJaxSpec,
-    callback: Callable[..., Any],
-) -> Any:
-    """Return a cached WARP graph callback for a cluster-tile build."""
-    _validate_cluster_tile_build_spec(spec)
-    return _register_jax_callable(
-        callback,
-        _cluster_tile_build_output_schema(spec),
-        graph_mode=GraphMode.WARP,
+def _cluster_tile_matrix_outputs(
+    *,
+    dual_cutoff: bool,
+    geometry: bool,
+    pair_fn: Any | None,
+) -> _Outputs:
+    """Return the ordered in-place ABI for a cluster-tile matrix callback.
+
+    Parameters
+    ----------
+    dual_cutoff : bool
+        Whether the callback emits a second neighbor matrix.
+    geometry : bool
+        Whether the callback emits pair vectors and distances.
+    pair_fn : Any or None
+        Pair callback whose energy and force outputs are emitted when supplied.
+
+    Returns
+    -------
+    tuple[str, ...]
+        Ordered names of the callback's in-place output arguments.
+    """
+    outputs: _Outputs = (
+        "neighbor_matrix",
+        "num_neighbors",
+        "neighbor_matrix_shifts",
     )
-
-
-def _validate_cluster_tile_query_spec(spec: _ClusterTileQueryJaxSpec) -> None:
-    """Reject unsupported cluster-tile query callback combinations."""
-    if spec.output_format not in {"matrix", "coo"}:
-        raise ValueError(
-            f"Unsupported cluster-tile output format: {spec.output_format!r}."
-        )
-    if not spec.batched and spec.tile_segmented:
-        raise ValueError("Single-system cluster-tile queries cannot tile-segment.")
-    if spec.output_format == "matrix":
-        if spec.coo_segmented:
-            raise ValueError("Matrix cluster-tile queries cannot use COO segments.")
-        if spec.return_vectors != spec.return_distances:
-            raise ValueError(
-                "Cluster-tile geometry requires vectors and distances together.",
-            )
-        if (spec.return_vectors or spec.pair_fn is not None) and (
-            spec.dual_cutoff or spec.selective
-        ):
-            raise ValueError(
-                "Cluster-tile geometry and pair_fn require non-dual, non-selective "
-                "matrix queries.",
-            )
-        return
-    if (
-        spec.dual_cutoff
-        or spec.return_vectors
-        or spec.return_distances
-        or spec.pair_fn is not None
-    ):
-        raise ValueError("COO cluster-tile callbacks support topology output only.")
-    if spec.coo_segmented and not spec.selective:
-        raise ValueError(
-            "Segmented COO requires selective cluster-tile queries.",
-        )
-    if spec.selective and not spec.coo_segmented:
-        raise ValueError("Selective COO requires segmented COO output.")
-
-
-def _cluster_tile_query_output_schema(
-    spec: _ClusterTileQueryJaxSpec,
-) -> _JaxOutputSchema:
-    """Return the ordered in-place ABI for a cluster-tile query callback."""
-    if spec.output_format == "coo":
-        outputs = ("pair_counter",)
-        if spec.coo_segmented:
-            outputs += ("pair_counts",)
-        return _JaxOutputSchema(outputs + ("coo_list", "coo_shifts"))
-
-    outputs = ("neighbor_matrix", "num_neighbors", "neighbor_matrix_shifts")
-    if spec.dual_cutoff:
+    if dual_cutoff:
         outputs += (
             "neighbor_matrix2",
             "num_neighbors2",
             "neighbor_matrix_shifts2",
         )
-    if spec.return_vectors:
+    if geometry:
         outputs += ("neighbor_vectors", "neighbor_distances")
-    if spec.pair_fn is not None:
+    if pair_fn is not None:
         outputs += ("pair_energies", "pair_forces")
-    return _JaxOutputSchema(outputs)
+    return outputs
 
 
-@functools.cache
-def _get_cluster_tile_query_jax_callable(
-    spec: _ClusterTileQueryJaxSpec,
+def _cluster_tile_coo_outputs(*, coo_segmented: bool) -> _Outputs:
+    """Return the ordered in-place ABI for a cluster-tile COO callback.
+
+    Parameters
+    ----------
+    coo_segmented : bool
+        Whether the callback emits per-segment pair counts.
+
+    Returns
+    -------
+    tuple[str, ...]
+        Ordered names of the callback's in-place output arguments.
+    """
+    outputs: _Outputs = ("pair_counter",)
+    if coo_segmented:
+        outputs += ("pair_counts",)
+    return outputs + ("coo_list", "coo_shifts")
+
+
+def _cluster_tile_build_registration(
     callback: Callable[..., Any],
-) -> Any:
-    """Return a cached WARP graph callback for a cluster-tile query."""
-    _validate_cluster_tile_query_spec(spec)
-    return _register_jax_callable(
+    *,
+    batched: bool,
+    segmented: bool,
+    selective: bool,
+) -> _GraphRegistration:
+    """Build a Warp graph registration for a cluster-tile build callback.
+
+    Parameters
+    ----------
+    callback : Callable[..., Any]
+        Warp callback to register.
+    batched : bool
+        Whether the callback operates on multiple systems.
+    segmented : bool
+        Whether the tile storage is segmented by system.
+    selective : bool
+        Whether the callback operates on a selected subset of atoms.
+
+    Returns
+    -------
+    _GraphRegistration
+        Registered callback and its matching preload operation.
+    """
+    _validate_cluster_tile_build_options(
+        batched=batched,
+        segmented=segmented,
+        selective=selective,
+    )
+    registered = _register_jax_callable(
         callback,
-        _cluster_tile_query_output_schema(spec),
+        _cluster_tile_build_outputs(batched=batched, selective=selective),
         graph_mode=GraphMode.WARP,
+    )
+    return _GraphRegistration(
+        callable=registered,
+        preload=_preload_cluster_tile_build_kernel,
     )
 
 
-class _LazyDtypeRegistrations:
+def _cluster_tile_matrix_registration(
+    callback: Callable[..., Any],
+    *,
+    batched: bool,
+    tile_segmented: bool = False,
+    selective: bool = False,
+    dual_cutoff: bool = False,
+    geometry: bool = False,
+    pair_fn: Any | None = None,
+) -> _GraphRegistration:
+    """Build a Warp graph registration for a cluster-tile matrix query.
+
+    Parameters
+    ----------
+    callback : Callable[..., Any]
+        Warp callback to register.
+    batched, tile_segmented, selective, dual_cutoff, geometry : bool
+        Static kernel specialization options.
+    pair_fn : Any or None
+        Optional pair callback used by the query specialization.
+
+    Returns
+    -------
+    _GraphRegistration
+        Registered callback and its matching preload operation.
+    """
+    _validate_cluster_tile_matrix_options(
+        batched=batched,
+        tile_segmented=tile_segmented,
+        selective=selective,
+        dual_cutoff=dual_cutoff,
+        geometry=geometry,
+        pair_fn=pair_fn,
+    )
+    registered = _register_jax_callable(
+        callback,
+        _cluster_tile_matrix_outputs(
+            dual_cutoff=dual_cutoff,
+            geometry=geometry,
+            pair_fn=pair_fn,
+        ),
+        graph_mode=GraphMode.WARP,
+    )
+    preload = functools.partial(
+        _preload_cluster_tile_query_kernel,
+        batched=batched,
+        tile_segmented=tile_segmented,
+        selective=selective,
+        dual_cutoff=dual_cutoff,
+        geometry=geometry,
+        pair_fn=pair_fn,
+    )
+    return _GraphRegistration(callable=registered, preload=preload)
+
+
+def _cluster_tile_coo_registration(
+    callback: Callable[..., Any],
+    *,
+    batched: bool,
+    tile_segmented: bool = False,
+    coo_segmented: bool = False,
+    selective: bool = False,
+) -> _GraphRegistration:
+    """Build a Warp graph registration for a cluster-tile COO query.
+
+    Parameters
+    ----------
+    callback : Callable[..., Any]
+        Warp callback to register.
+    batched, tile_segmented, coo_segmented, selective : bool
+        Static kernel specialization options.
+
+    Returns
+    -------
+    _GraphRegistration
+        Registered callback and its matching preload operation.
+    """
+    _validate_cluster_tile_coo_options(
+        batched=batched,
+        tile_segmented=tile_segmented,
+        coo_segmented=coo_segmented,
+        selective=selective,
+    )
+    registered = _register_jax_callable(
+        callback,
+        _cluster_tile_coo_outputs(coo_segmented=coo_segmented),
+        graph_mode=GraphMode.WARP,
+    )
+    preload = functools.partial(
+        _preload_cluster_tile_coo_kernel,
+        batched=batched,
+        tile_segmented=tile_segmented,
+        coo_segmented=coo_segmented,
+        selective=selective,
+    )
+    return _GraphRegistration(callable=registered, preload=preload)
+
+
+class _LazyJaxKernel:
     """Lazily construct JAX wrappers for declared JAX-to-Warp dtype mappings."""
 
     def __init__(
         self,
-        factory: Callable[[Any], Any],
-        dtype_map: Mapping[object, Any],
+        build: Callable[[type], tuple[Any, _Outputs]],
+        dtype_map: Mapping[object, type],
         *,
-        cache_key: Callable[[Any], object] | None = None,
+        cache_key: Callable[[type], object] | None = None,
     ) -> None:
-        self._factory = factory
+        self._build = build
         self._dtype_map = {
             jnp.dtype(jax_dtype): wp_dtype for jax_dtype, wp_dtype in dtype_map.items()
         }
@@ -512,8 +412,288 @@ class _LazyDtypeRegistrations:
         except (TypeError, ValueError) as error:
             raise KeyError(jax_dtype) from error
 
+        if normalized_dtype not in self._dtype_map:
+            raise KeyError(jax_dtype)
+
         wp_dtype = self._dtype_map[normalized_dtype]
-        cache_key = self._cache_key(wp_dtype)
-        if cache_key not in self._cache:
-            self._cache[cache_key] = self._factory(wp_dtype)
-        return self._cache[cache_key]
+        key = self._cache_key(wp_dtype)
+        if key not in self._cache:
+            kernel, outputs = self._build(wp_dtype)
+            self._cache[key] = _register_jax_kernel(kernel, outputs)
+        return self._cache[key]
+
+
+def _naive_outputs(
+    *,
+    operation: Literal["single_cutoff", "dual_cutoff"],
+    pbc_mode: Literal["none", "wrap_on_entry", "prewrapped"],
+    geometry: bool,
+    pair_fn: Any | None,
+) -> _Outputs:
+    """Return the ordered direct naive JAX output tuple for static options."""
+    if operation == "dual_cutoff":
+        outputs = _DUAL_NO_PBC_OUTPUTS if pbc_mode == "none" else _DUAL_PBC_OUTPUTS
+    else:
+        outputs = _SINGLE_NO_PBC_OUTPUTS if pbc_mode == "none" else _SINGLE_PBC_OUTPUTS
+        if geometry:
+            outputs += ("neighbor_vectors", "neighbor_distances")
+        if pair_fn is not None:
+            outputs += ("pair_energies", "pair_forces")
+    return outputs
+
+
+def _validate_lazy_naive_options(
+    *,
+    operation: Literal["single_cutoff", "dual_cutoff"],
+    pbc_mode: Literal["none", "wrap_on_entry", "prewrapped"],
+    selective: bool,
+    partial: bool,
+    half_fill: bool,
+    geometry: bool,
+    pair_fn: Any | None,
+) -> None:
+    """Reject unsupported direct naive JAX registration combinations."""
+    if operation not in {"single_cutoff", "dual_cutoff"}:
+        raise ValueError(f"Unsupported naive operation: {operation!r}.")
+    if pbc_mode not in {"none", "wrap_on_entry", "prewrapped"}:
+        raise ValueError(f"Unsupported naive PBC mode: {pbc_mode!r}.")
+    if pair_fn is not None and not geometry:
+        raise ValueError("pair_fn requires direct pair-geometry outputs.")
+    if partial and (operation != "single_cutoff" or not geometry or selective):
+        raise ValueError(
+            "partial direct registrations require single-cutoff non-selective "
+            "pair geometry.",
+        )
+    if operation == "dual_cutoff" and (
+        geometry or pair_fn is not None or partial or half_fill
+    ):
+        raise ValueError(
+            "Dual-cutoff direct registrations do not support geometry, pair_fn, "
+            "partial rows, or half_fill.",
+        )
+
+
+def _lazy_naive_kernel(
+    *,
+    operation: Literal["single_cutoff", "dual_cutoff"],
+    batched: bool,
+    pbc_mode: Literal["none", "wrap_on_entry", "prewrapped"],
+    selective: bool = False,
+    partial: bool = False,
+    half_fill: bool = False,
+    geometry: bool = False,
+    pair_fn: Any | None = None,
+) -> _LazyJaxKernel:
+    """Return a lazy direct naive JAX registration for static options."""
+
+    def build(wp_dtype: type) -> tuple[Any, _Outputs]:
+        _validate_lazy_naive_options(
+            operation=operation,
+            pbc_mode=pbc_mode,
+            selective=selective,
+            partial=partial,
+            half_fill=half_fill,
+            geometry=geometry,
+            pair_fn=pair_fn,
+        )
+        if wp_dtype not in {wp.float32, wp.float64}:
+            raise ValueError(f"Unsupported naive Warp dtype: {wp_dtype!r}.")
+        if operation == "dual_cutoff":
+            kernel = get_naive_neighbor_matrix_dual_cutoff_kernel(
+                wp_dtype,
+                pbc_mode=pbc_mode,
+                batched=batched,
+                selective=selective,
+            )
+        else:
+            kernel = get_naive_neighbor_matrix_kernel(
+                wp_dtype,
+                pbc_mode=pbc_mode,
+                batched=batched,
+                selective=selective,
+                partial=partial,
+                half_fill=half_fill,
+                return_vectors=geometry,
+                return_distances=geometry,
+                pair_fn=pair_fn,
+            )
+        outputs = _naive_outputs(
+            operation=operation,
+            pbc_mode=pbc_mode,
+            geometry=geometry,
+            pair_fn=pair_fn,
+        )
+        return kernel, outputs
+
+    return _LazyJaxKernel(build, _NAIVE_DTYPE_MAP)
+
+
+def _cell_list_build_outputs(
+    stage: Literal[
+        "construct_bin_size",
+        "count_atoms",
+        "bin_atoms",
+        "gather",
+        "cells_per_system",
+    ],
+    batched: bool,
+) -> _Outputs:
+    """Return the ordered in-place output tuple for a build stage."""
+    if stage == "construct_bin_size":
+        return (
+            "cells_per_dimension_batch" if batched else "cells_per_dimension_single",
+        )
+    if stage == "count_atoms":
+        return ("atoms_per_cell_count", "atom_periodic_shifts")
+    if stage == "bin_atoms":
+        return ("atom_to_cell_mapping", "atoms_per_cell_count", "cell_atom_list")
+    if stage == "gather":
+        return (
+            ("sorted_positions", "sorted_shifts")
+            if batched
+            else ("dst_pos", "dst_shifts")
+        )
+    return ("cells_per_system",)
+
+
+def _validate_lazy_cell_list_build_options(
+    *,
+    stage: Literal[
+        "construct_bin_size",
+        "count_atoms",
+        "bin_atoms",
+        "gather",
+        "cells_per_system",
+    ],
+    batched: bool,
+) -> None:
+    """Reject unsupported direct cell-list build registrations."""
+    if stage not in {
+        "construct_bin_size",
+        "count_atoms",
+        "bin_atoms",
+        "gather",
+        "cells_per_system",
+    }:
+        raise ValueError(f"Unsupported cell-list build stage: {stage!r}.")
+    if stage == "cells_per_system" and not batched:
+        raise ValueError("cells_per_system is only registered for batch cell lists.")
+
+
+def _lazy_cell_list_build_kernel(
+    *,
+    stage: Literal[
+        "construct_bin_size",
+        "count_atoms",
+        "bin_atoms",
+        "gather",
+        "cells_per_system",
+    ],
+    batched: bool,
+) -> _LazyJaxKernel:
+    """Return a lazy direct cell-list build JAX registration."""
+    cache_key = (
+        (lambda wp_dtype: _CELLS_PER_SYSTEM_CACHE_KEY)
+        if stage == "cells_per_system"
+        else None
+    )
+
+    def build(wp_dtype: type) -> tuple[Any, _Outputs]:
+        _validate_lazy_cell_list_build_options(stage=stage, batched=batched)
+        if wp_dtype not in {wp.float32, wp.float64}:
+            raise ValueError(f"Unsupported cell-list Warp dtype: {wp_dtype!r}.")
+        if stage == "cells_per_system":
+            kernel = get_cell_list_cells_per_system_kernel()
+        elif stage == "gather":
+            kernel = (
+                get_cell_list_gather_kernel(wp_dtype)
+                if batched
+                else get_gather_positions_and_shifts_kernel(wp_dtype)
+            )
+        else:
+            kernel = get_build_cell_list_kernel(
+                stage,
+                wp_dtype,
+                batched=batched,
+            )
+        return kernel, _cell_list_build_outputs(stage, batched)
+
+    return _LazyJaxKernel(
+        build,
+        _CELL_LIST_DTYPE_MAP,
+        cache_key=cache_key,
+    )
+
+
+def _cell_list_query_outputs(
+    *,
+    geometry: bool,
+    pair_fn: Any | None,
+) -> _Outputs:
+    """Return the ordered in-place output tuple for a query registration."""
+    outputs: _Outputs = (
+        "neighbor_matrix",
+        "neighbor_matrix_shifts",
+        "num_neighbors",
+    )
+    if geometry:
+        outputs += ("neighbor_vectors", "neighbor_distances")
+    if pair_fn is not None:
+        outputs += ("pair_energies", "pair_forces")
+    return outputs
+
+
+def _validate_lazy_cell_list_query_options(
+    *,
+    batched: bool,
+    geometry: bool,
+    pair_fn: Any | None,
+    atom_centric_path: Literal["sorted", "direct"],
+) -> None:
+    """Reject unsupported direct cell-list query registrations."""
+    if atom_centric_path not in {"sorted", "direct"}:
+        raise ValueError(
+            f"Unsupported atom-centric cell-list path: {atom_centric_path!r}.",
+        )
+    if batched and atom_centric_path == "direct":
+        raise ValueError("The direct atom-centric path is only available unbatched.")
+    if pair_fn is not None and not geometry:
+        raise ValueError("pair_fn requires direct pair-geometry outputs.")
+
+
+def _lazy_cell_list_query_kernel(
+    *,
+    batched: bool,
+    selective: bool = True,
+    partial: bool = False,
+    half_fill: bool = False,
+    geometry: bool = False,
+    pair_fn: Any | None = None,
+    atom_centric_path: Literal["sorted", "direct"] = "sorted",
+) -> _LazyJaxKernel:
+    """Return a lazy direct cell-list query JAX registration."""
+
+    def build(wp_dtype: type) -> tuple[Any, _Outputs]:
+        _validate_lazy_cell_list_query_options(
+            batched=batched,
+            geometry=geometry,
+            pair_fn=pair_fn,
+            atom_centric_path=atom_centric_path,
+        )
+        if wp_dtype not in {wp.float32, wp.float64}:
+            raise ValueError(f"Unsupported cell-list Warp dtype: {wp_dtype!r}.")
+        kernel = get_query_cell_list_kernel(
+            wp_dtype,
+            strategy="atom_centric",
+            batched=batched,
+            selective=selective,
+            partial=partial,
+            half_fill=half_fill,
+            return_vectors=geometry,
+            return_distances=geometry,
+            pair_fn=pair_fn,
+            atom_centric_path=atom_centric_path,
+        )
+        return kernel, _cell_list_query_outputs(geometry=geometry, pair_fn=pair_fn)
+
+    return _LazyJaxKernel(build, _CELL_LIST_DTYPE_MAP)

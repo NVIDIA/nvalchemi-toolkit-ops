@@ -22,11 +22,7 @@ import jax.numpy as jnp
 import warp as wp
 from warp.jax_experimental import jax_kernel
 
-from nvalchemiops.jax.neighbors._registration import (
-    _get_naive_jax_kernel,
-    _LazyDtypeRegistrations,
-    _NaiveJaxKernelSpec,
-)
+from nvalchemiops.jax.neighbors._registration import _lazy_naive_kernel
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     compute_naive_num_shifts,
     get_neighbor_list_from_neighbor_matrix,
@@ -36,29 +32,14 @@ from nvalchemiops.neighbors.neighbor_utils import (
     get_wrap_positions_kernel,
 )
 
-_DIRECT_DTYPE_MAP = {jnp.float32: wp.float32, jnp.float64: wp.float64}
 
-
-def _direct_dual_registrations(
-    *, pbc_mode: str, selective: bool = False
-) -> _LazyDtypeRegistrations:
+def _direct_dual_registrations(*, pbc_mode: str, selective: bool = False):
     """Build lazy direct registrations for one dual-cutoff specialization."""
-    return _LazyDtypeRegistrations(
-        lambda wp_dtype: _get_naive_jax_kernel(
-            _NaiveJaxKernelSpec(
-                operation="dual_cutoff",
-                wp_dtype=wp_dtype,
-                batched=False,
-                pbc_mode=pbc_mode,
-                selective=selective,
-                partial=False,
-                half_fill=False,
-                return_vectors=False,
-                return_distances=False,
-                pair_fn=None,
-            )
-        ),
-        _DIRECT_DTYPE_MAP,
+    return _lazy_naive_kernel(
+        operation="dual_cutoff",
+        batched=False,
+        pbc_mode=pbc_mode,
+        selective=selective,
     )
 
 
@@ -348,27 +329,12 @@ def naive_neighbor_list_dual_cutoff(
                     num_neighbors2,
                 )
 
-    # Select lazy direct registrations by dtype. Public ``half_fill`` remains
-    # intentionally absent from dual low-level specializations.
+    # Select wrap kernel by dtype; direct naive registrations resolve at launch.
     if positions.dtype == jnp.float64:
         _jax_wrap_single = _jax_wrap_positions_single_f64
     else:
         _jax_wrap_single = _jax_wrap_positions_single_f32
         positions = positions.astype(jnp.float32)
-    _jax_fill = _DIRECT_NAIVE_DUAL_KERNELS[("none", False)][positions.dtype]
-    _jax_fill_pbc = _DIRECT_NAIVE_DUAL_KERNELS[("wrap_on_entry", False)][
-        positions.dtype
-    ]
-    _jax_fill_selective = _DIRECT_NAIVE_DUAL_KERNELS[("none", True)][positions.dtype]
-    _jax_fill_pbc_selective = _DIRECT_NAIVE_DUAL_KERNELS[("wrap_on_entry", True)][
-        positions.dtype
-    ]
-    _jax_fill_pbc_prewrapped = _DIRECT_NAIVE_DUAL_KERNELS[("prewrapped", False)][
-        positions.dtype
-    ]
-    _jax_fill_pbc_prewrapped_selective = _DIRECT_NAIVE_DUAL_KERNELS[
-        ("prewrapped", True)
-    ][positions.dtype]
 
     total_atoms = positions.shape[0]
     (
@@ -400,7 +366,7 @@ def naive_neighbor_list_dual_cutoff(
                 rf[0], jnp.zeros_like(num_neighbors2), num_neighbors2
             )
             neighbor_matrix1, num_neighbors1, neighbor_matrix2, num_neighbors2 = (
-                _jax_fill_selective(
+                _DIRECT_NAIVE_DUAL_KERNELS[("none", True)][positions.dtype](
                     positions,
                     empty_offsets,
                     float(cutoff1 * cutoff1),
@@ -428,7 +394,7 @@ def naive_neighbor_list_dual_cutoff(
             )
         else:
             neighbor_matrix1, num_neighbors1, neighbor_matrix2, num_neighbors2 = (
-                _jax_fill(
+                _DIRECT_NAIVE_DUAL_KERNELS[("none", False)][positions.dtype](
                     positions,
                     empty_offsets,
                     float(cutoff1 * cutoff1),
@@ -498,7 +464,7 @@ def naive_neighbor_list_dual_cutoff(
                     neighbor_matrix2,
                     neighbor_matrix_shifts2,
                     num_neighbors2,
-                ) = _jax_fill_pbc_prewrapped_selective(
+                ) = _DIRECT_NAIVE_DUAL_KERNELS[("prewrapped", True)][positions.dtype](
                     positions,
                     empty_offsets,
                     float(cutoff1 * cutoff1),
@@ -531,7 +497,7 @@ def naive_neighbor_list_dual_cutoff(
                     neighbor_matrix2,
                     neighbor_matrix_shifts2,
                     num_neighbors2,
-                ) = _jax_fill_pbc_prewrapped(
+                ) = _DIRECT_NAIVE_DUAL_KERNELS[("prewrapped", False)][positions.dtype](
                     positions,
                     empty_offsets,
                     float(cutoff1 * cutoff1),

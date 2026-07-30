@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+import functools
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -24,7 +26,9 @@ import pytest
 
 from nvalchemiops.jax.neighbors import _cluster_tile_preload
 from nvalchemiops.jax.neighbors.cluster_tile import (
+    _CLUSTER_TILE_QUERIES,
     TILE_GROUP_SIZE,
+    build_cluster_tile_list,
     cluster_tile_neighbor_list,
     estimate_cluster_tile_list_sizes,
 )
@@ -36,6 +40,15 @@ pytestmark = requires_gpu
 
 def _orthorhombic_cell(cell_size: float, dtype=jnp.float32) -> jax.Array:
     return jnp.eye(3, dtype=dtype) * cell_size
+
+
+def _traced_preload_device_count() -> int:
+    """Return how many local devices a traced graph callback must preload."""
+    local_devices = tuple(jax.local_devices())
+    accelerators = tuple(
+        device for device in local_devices if device.platform in {"gpu", "cuda", "rocm"}
+    )
+    return len(accelerators or local_devices)
 
 
 def _row_neighbor_set(row: jax.Array, n: int) -> set[int]:
@@ -179,6 +192,20 @@ class TestTileNeighborListCorrectness:
 class TestClusterTileGraphPreload:
     """Exercise the public WARP graph callback after its kernel preload."""
 
+    @pytest.fixture(autouse=True)
+    def _isolate_preload_caches(self, monkeypatch) -> None:
+        """Keep graph-preload cache entries local to each regression test."""
+        for cache_name in (
+            "_preload_cluster_tile_query_kernel_cached",
+            "_preload_cluster_tile_coo_kernel_cached",
+        ):
+            original = getattr(_cluster_tile_preload, cache_name)
+            monkeypatch.setattr(
+                _cluster_tile_preload,
+                cache_name,
+                functools.cache(original.__wrapped__),
+            )
+
     def test_jitted_matrix_query_preloads_and_executes_warp_graph_callback(self):
         """A public matrix query preloads and executes under JAX graph capture."""
         _cluster_tile_preload._preload_cluster_tile_query_kernel_cached.cache_clear()
@@ -202,9 +229,141 @@ class TestClusterTileGraphPreload:
 
         assert (
             _cluster_tile_preload._preload_cluster_tile_query_kernel_cached.cache_info().currsize
-            == 1
+            == _traced_preload_device_count()
         )
         assert int(num_neighbors.sum()) > 0
+
+    def test_jitted_matrix_query_reuses_preload_cache(self):
+        """Repeated jitted matrix queries keep one preload cache entry."""
+        _cluster_tile_preload._preload_cluster_tile_query_kernel_cached.cache_clear()
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]] * 16,
+            dtype=jnp.float32,
+        )
+        cell = _orthorhombic_cell(4.0)
+
+        @jax.jit
+        def query(positions):
+            return cluster_tile_neighbor_list(
+                positions,
+                1.0,
+                cell,
+                max_neighbors=32,
+            )
+
+        first = query(positions)
+        first[0].block_until_ready()
+        second = query(positions)
+        second[0].block_until_ready()
+
+        assert (
+            _cluster_tile_preload._preload_cluster_tile_query_kernel_cached.cache_info().currsize
+            == _traced_preload_device_count()
+        )
+        assert int(second[1].sum()) > 0
+
+    def test_jitted_compact_coo_registration_preloads_and_executes(self):
+        """Compact COO graph callback executes under JIT with fixed buffers."""
+        _cluster_tile_preload._preload_cluster_tile_coo_kernel_cached.cache_clear()
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]] * 16,
+            dtype=jnp.float32,
+        )
+        cell = _orthorhombic_cell(4.0)
+        (
+            sorted_atom_index,
+            _morton,
+            sorted_pos_x,
+            sorted_pos_y,
+            sorted_pos_z,
+            _group_ctr_x,
+            _group_ctr_y,
+            _group_ctr_z,
+            _group_ext_x,
+            _group_ext_y,
+            _group_ext_z,
+            num_tiles,
+            tile_row_group,
+            tile_col_group,
+        ) = build_cluster_tile_list(positions, 1.0, cell)
+        max_pairs = 256
+        pair_counter = jnp.zeros(1, dtype=jnp.int32)
+        coo_list = jnp.zeros((max_pairs, 2), dtype=jnp.int32)
+        coo_shifts = jnp.zeros((max_pairs, 3), dtype=jnp.int32)
+        registration = _CLUSTER_TILE_QUERIES["coo"]
+
+        cell_n = cell[jnp.newaxis, :, :]
+        inv_cell_n = jnp.linalg.inv(cell_n[0])[jnp.newaxis, :, :]
+
+        @jax.jit
+        def query(
+            sorted_atom_index,
+            sorted_pos_x,
+            sorted_pos_y,
+            sorted_pos_z,
+            num_tiles,
+            tile_row_group,
+            tile_col_group,
+            pair_counter,
+            coo_list,
+            coo_shifts,
+        ):
+            registration.preload()
+            return registration.callable(
+                sorted_atom_index,
+                sorted_pos_x,
+                sorted_pos_y,
+                sorted_pos_z,
+                num_tiles,
+                tile_row_group,
+                tile_col_group,
+                cell_n,
+                inv_cell_n,
+                pair_counter,
+                coo_list,
+                coo_shifts,
+                1.0,
+                positions.shape[0],
+                max_pairs,
+            )
+
+        pair_counter, coo_list, coo_shifts = query(
+            sorted_atom_index,
+            sorted_pos_x,
+            sorted_pos_y,
+            sorted_pos_z,
+            num_tiles,
+            tile_row_group,
+            tile_col_group,
+            pair_counter,
+            coo_list,
+            coo_shifts,
+        )
+        coo_list.block_until_ready()
+        assert (
+            _cluster_tile_preload._preload_cluster_tile_coo_kernel_cached.cache_info().currsize
+            == 1
+        )
+        assert int(pair_counter[0]) > 0
+
+        pair_counter2, coo_list2, coo_shifts2 = query(
+            sorted_atom_index,
+            sorted_pos_x,
+            sorted_pos_y,
+            sorted_pos_z,
+            num_tiles,
+            tile_row_group,
+            tile_col_group,
+            pair_counter,
+            coo_list,
+            coo_shifts,
+        )
+        coo_list2.block_until_ready()
+        assert (
+            _cluster_tile_preload._preload_cluster_tile_coo_kernel_cached.cache_info().currsize
+            == 1
+        )
+        assert int(pair_counter2[0]) > 0
 
 
 class TestTileNeighborListFormats:

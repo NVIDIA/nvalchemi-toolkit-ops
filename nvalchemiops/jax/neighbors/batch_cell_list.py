@@ -30,11 +30,8 @@ from nvalchemiops.jax.neighbors._autograd import (
     _route_pair_outputs,
 )
 from nvalchemiops.jax.neighbors._registration import (
-    _CellListBuildJaxSpec,
-    _CellListQueryJaxSpec,
-    _get_cell_list_build_jax_kernel,
-    _get_cell_list_query_jax_kernel,
-    _LazyDtypeRegistrations,
+    _lazy_cell_list_build_kernel,
+    _lazy_cell_list_query_kernel,
 )
 from nvalchemiops.jax.neighbors.cell_list import (
     _is_cpu_array,
@@ -65,23 +62,10 @@ from nvalchemiops.neighbors.output_args import (
 # JAX Kernel Wrappers
 # ==============================================================================
 
-_DTYPE_MAP = {jnp.float32: wp.float32, jnp.float64: wp.float64}
 
-
-def _cells_per_system_cache_key(_: type) -> str:
-    """Return the shared cache key for the dtype-independent build kernel."""
-    return "cells_per_system"
-
-
-def _build_registry(stage: str) -> _LazyDtypeRegistrations:
+def _build_registry(stage: str):
     """Create lazy dtype registrations for one batched build stage."""
-    return _LazyDtypeRegistrations(
-        lambda wp_dtype: _get_cell_list_build_jax_kernel(
-            _CellListBuildJaxSpec(stage, wp_dtype, True),
-        ),
-        _DTYPE_MAP,
-        cache_key=_cells_per_system_cache_key if stage == "cells_per_system" else None,
-    )
+    return _lazy_cell_list_build_kernel(stage=stage, batched=True)
 
 
 _BATCH_CELL_LIST_BUILD_REGISTRATIONS = {
@@ -96,33 +80,24 @@ _BATCH_CELL_LIST_BUILD_REGISTRATIONS = {
 }
 
 
-def _query_registry(
-    *, half_fill: bool, return_geometry: bool
-) -> _LazyDtypeRegistrations:
+def _query_registry(*, half_fill: bool, geometry: bool):
     """Create lazy direct registrations for a static batched query."""
-    return _LazyDtypeRegistrations(
-        lambda wp_dtype: _get_cell_list_query_jax_kernel(
-            _CellListQueryJaxSpec(
-                wp_dtype=wp_dtype,
-                batched=True,
-                selective=True,
-                partial=False,
-                half_fill=half_fill,
-                return_vectors=return_geometry,
-                return_distances=return_geometry,
-                pair_fn=None,
-                atom_centric_path="sorted",
-            ),
-        ),
-        _DTYPE_MAP,
+    return _lazy_cell_list_query_kernel(
+        batched=True,
+        selective=True,
+        partial=False,
+        half_fill=half_fill,
+        geometry=geometry,
+        pair_fn=None,
+        atom_centric_path="sorted",
     )
 
 
 _BATCH_CELL_LIST_QUERY_REGISTRATIONS = {
-    (False, False): _query_registry(half_fill=False, return_geometry=False),
-    (True, False): _query_registry(half_fill=True, return_geometry=False),
-    (False, True): _query_registry(half_fill=False, return_geometry=True),
-    (True, True): _query_registry(half_fill=True, return_geometry=True),
+    (False, False): _query_registry(half_fill=False, geometry=False),
+    (True, False): _query_registry(half_fill=True, geometry=False),
+    (False, True): _query_registry(half_fill=False, geometry=True),
+    (True, True): _query_registry(half_fill=True, geometry=True),
 }
 
 
@@ -131,19 +106,16 @@ def _get_jax_batch_cell_list_pair_outputs_kernel(
     pair_fn, wp_dtype, partial, half_fill: bool = False
 ):
     """Return a cached sorted direct registration for batched pair outputs."""
-    return _get_cell_list_query_jax_kernel(
-        _CellListQueryJaxSpec(
-            wp_dtype=wp_dtype,
-            batched=True,
-            selective=True,
-            partial=bool(partial),
-            half_fill=bool(half_fill),
-            return_vectors=True,
-            return_distances=True,
-            pair_fn=pair_fn,
-            atom_centric_path="sorted",
-        ),
-    )
+    jax_dtype = jnp.float64 if wp_dtype == wp.float64 else jnp.float32
+    return _lazy_cell_list_query_kernel(
+        batched=True,
+        selective=True,
+        partial=bool(partial),
+        half_fill=bool(half_fill),
+        geometry=True,
+        pair_fn=pair_fn,
+        atom_centric_path="sorted",
+    )[jax_dtype]
 
 
 __all__ = [
@@ -1261,10 +1233,6 @@ def batch_query_cell_list(
     # and non-selective (controlled by ``rebuild_flags``).
     if positions.dtype != jnp.float64:
         positions = positions.astype(jnp.float32)
-    _gather_kernel = _BATCH_CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
-    _sorted_build_kernel = _BATCH_CELL_LIST_QUERY_REGISTRATIONS[
-        (bool(half_fill), False)
-    ][positions.dtype]
 
     if cell.dtype != positions.dtype:
         cell = cell.astype(positions.dtype)
@@ -1474,6 +1442,10 @@ def batch_query_cell_list(
         )
         return neighbor_matrix, num_neighbors, neighbor_matrix_shifts
 
+    _gather_kernel = _BATCH_CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
+    _sorted_build_kernel = _BATCH_CELL_LIST_QUERY_REGISTRATIONS[
+        (bool(half_fill), False)
+    ][positions.dtype]
     sorted_positions = jnp.zeros((total_atoms, 3), dtype=positions.dtype)
     sorted_atom_periodic_shifts = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
     sorted_positions, sorted_atom_periodic_shifts = _gather_kernel(
@@ -1574,7 +1546,6 @@ def _batch_cell_list_pair_outputs_forward(
     cell = jax.lax.stop_gradient(cell)
 
     f64 = positions.dtype == jnp.float64
-    gather_kernel = _BATCH_CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
 
     total_atoms = positions.shape[0]
     num_systems = pbc_bool.shape[0]
@@ -1713,6 +1684,7 @@ def _batch_cell_list_pair_outputs_forward(
             else jnp.zeros((0,), dtype=jnp.int32)
         )
 
+        gather_kernel = _BATCH_CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
         sorted_positions = jnp.zeros((total_atoms, 3), dtype=positions.dtype)
         sorted_atom_periodic_shifts = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
         sorted_positions, sorted_atom_periodic_shifts = gather_kernel(

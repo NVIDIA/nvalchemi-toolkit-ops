@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+from importlib import import_module
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -32,6 +34,8 @@ from nvalchemiops.jax.neighbors.cell_list import (
 from .conftest import requires_gpu, requires_vesin
 
 pytestmark = requires_gpu
+
+cell_list_module = import_module("nvalchemiops.jax.neighbors.cell_list")
 
 
 class TestCellList:
@@ -1701,3 +1705,145 @@ class TestJaxCellListAutograd:
                 return_distances=True,
                 graph_mode="warp",
             )
+
+
+class TestRegistrationLaziness:
+    """Test public cell-list registration cache materialization."""
+
+    @staticmethod
+    def _registrations():
+        """Return every lazy cell-list registration."""
+        return tuple(
+            registration
+            for registrations in (
+                cell_list_module._CELL_LIST_BUILD_REGISTRATIONS,
+                cell_list_module._CELL_LIST_QUERY_REGISTRATIONS,
+            )
+            for registration in registrations.values()
+        )
+
+    @pytest.fixture(autouse=True)
+    def _restore_registration_caches(self):
+        """Restore process-global registration caches after each laziness test."""
+        snapshots = [
+            (registration, dict(registration._cache))
+            for registration in self._registrations()
+        ]
+        try:
+            yield
+        finally:
+            for registration, cache in snapshots:
+                registration._cache.clear()
+                registration._cache.update(cache)
+
+    def _clear_registration_caches(self) -> None:
+        """Clear lazy cell-list registration caches before each assertion."""
+        for registration in self._registrations():
+            registration._cache.clear()
+
+    def test_atom_centric_direct_populates_selected_registries(self) -> None:
+        """Public direct dispatch materializes only its required wrappers."""
+        self._clear_registration_caches()
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        cell = jnp.eye(3, dtype=jnp.float32)
+        pbc = jnp.ones(3, dtype=jnp.bool_)
+
+        _neighbor_matrix, num_neighbors, _shifts = cell_list(
+            positions,
+            1.0,
+            cell,
+            pbc,
+            max_neighbors=4,
+            max_total_cells=8,
+            strategy="atom_centric",
+            atom_centric_path="direct",
+        )
+
+        assert int(num_neighbors.sum()) > 0
+        assert {
+            stage
+            for stage, registration in cell_list_module._CELL_LIST_BUILD_REGISTRATIONS.items()
+            if len(registration._cache) == 1
+        } == {"construct_bin_size", "count_atoms", "bin_atoms"}
+        assert {
+            key
+            for key, registration in cell_list_module._CELL_LIST_QUERY_REGISTRATIONS.items()
+            if len(registration._cache) == 1
+        } == {(False, False, "direct")}
+
+    def test_pair_centric_leaves_direct_registration_caches_empty(self) -> None:
+        """Pair-centric dispatch does not construct atom-centric wrappers."""
+        self._clear_registration_caches()
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        cell = jnp.eye(3, dtype=jnp.float32)
+        pbc = jnp.ones(3, dtype=jnp.bool_)
+
+        _neighbor_matrix, num_neighbors, _shifts = cell_list(
+            positions,
+            1.0,
+            cell,
+            pbc,
+            max_neighbors=4,
+            max_total_cells=8,
+            strategy="pair_centric",
+        )
+
+        assert int(num_neighbors.sum()) > 0
+        assert cell_list_module._CELL_LIST_BUILD_REGISTRATIONS["gather"]._cache == {}
+        for registration in cell_list_module._CELL_LIST_QUERY_REGISTRATIONS.values():
+            assert registration._cache == {}
+
+    def test_pair_centric_pair_outputs_leave_direct_caches_empty(self) -> None:
+        """Pair-centric pair-output dispatch does not construct gather wrappers."""
+        self._clear_registration_caches()
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        cell = jnp.eye(3, dtype=jnp.float32)
+        pbc = jnp.ones(3, dtype=jnp.bool_)
+
+        *_outputs, distances = cell_list(
+            positions,
+            1.0,
+            cell,
+            pbc,
+            max_neighbors=4,
+            max_total_cells=8,
+            strategy="pair_centric",
+            return_distances=True,
+        )
+
+        distances.block_until_ready()
+        assert cell_list_module._CELL_LIST_BUILD_REGISTRATIONS["gather"]._cache == {}
+        for registration in cell_list_module._CELL_LIST_QUERY_REGISTRATIONS.values():
+            assert registration._cache == {}
+
+    def test_warp_graph_path_leaves_direct_registration_caches_empty(self) -> None:
+        """WARP graph dispatch does not construct direct build/query wrappers."""
+        self._clear_registration_caches()
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        cell = jnp.eye(3, dtype=jnp.float32)
+        pbc = jnp.ones(3, dtype=jnp.bool_)
+
+        outputs = build_cell_list(
+            positions,
+            1.0,
+            cell,
+            pbc,
+            max_total_cells=8,
+            graph_mode="warp",
+        )
+
+        outputs[0].block_until_ready()
+        for registration in self._registrations():
+            assert registration._cache == {}

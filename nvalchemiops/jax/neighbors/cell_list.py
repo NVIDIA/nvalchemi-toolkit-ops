@@ -31,11 +31,8 @@ from nvalchemiops.jax.neighbors._autograd import (
     _route_pair_outputs,
 )
 from nvalchemiops.jax.neighbors._registration import (
-    _CellListBuildJaxSpec,
-    _CellListQueryJaxSpec,
-    _get_cell_list_build_jax_kernel,
-    _get_cell_list_query_jax_kernel,
-    _LazyDtypeRegistrations,
+    _lazy_cell_list_build_kernel,
+    _lazy_cell_list_query_kernel,
 )
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     _validate_graph_mode,
@@ -65,17 +62,10 @@ from nvalchemiops.neighbors.output_args import (
 # JAX Kernel Wrappers
 # ==============================================================================
 
-_DTYPE_MAP = {jnp.float32: wp.float32, jnp.float64: wp.float64}
 
-
-def _build_registry(stage: str) -> _LazyDtypeRegistrations:
+def _build_registry(stage: str):
     """Create lazy dtype registrations for a single-system build stage."""
-    return _LazyDtypeRegistrations(
-        lambda wp_dtype: _get_cell_list_build_jax_kernel(
-            _CellListBuildJaxSpec(stage, wp_dtype, False),
-        ),
-        _DTYPE_MAP,
-    )
+    return _lazy_cell_list_build_kernel(stage=stage, batched=False)
 
 
 _CELL_LIST_BUILD_REGISTRATIONS = {
@@ -87,43 +77,36 @@ _CELL_LIST_BUILD_REGISTRATIONS = {
 def _query_registry(
     *,
     half_fill: bool,
-    return_geometry: bool,
+    geometry: bool,
     atom_centric_path: Literal["sorted", "direct"],
-) -> _LazyDtypeRegistrations:
+):
     """Create lazy direct registrations for a static atom-centric query."""
-    return _LazyDtypeRegistrations(
-        lambda wp_dtype: _get_cell_list_query_jax_kernel(
-            _CellListQueryJaxSpec(
-                wp_dtype=wp_dtype,
-                batched=False,
-                selective=True,
-                partial=False,
-                half_fill=half_fill,
-                return_vectors=return_geometry,
-                return_distances=return_geometry,
-                pair_fn=None,
-                atom_centric_path=atom_centric_path,
-            ),
-        ),
-        _DTYPE_MAP,
+    return _lazy_cell_list_query_kernel(
+        batched=False,
+        selective=True,
+        partial=False,
+        half_fill=half_fill,
+        geometry=geometry,
+        pair_fn=None,
+        atom_centric_path=atom_centric_path,
     )
 
 
 _CELL_LIST_QUERY_REGISTRATIONS = {
     (False, False, "sorted"): _query_registry(
-        half_fill=False, return_geometry=False, atom_centric_path="sorted"
+        half_fill=False, geometry=False, atom_centric_path="sorted"
     ),
     (True, False, "sorted"): _query_registry(
-        half_fill=True, return_geometry=False, atom_centric_path="sorted"
+        half_fill=True, geometry=False, atom_centric_path="sorted"
     ),
     (False, False, "direct"): _query_registry(
-        half_fill=False, return_geometry=False, atom_centric_path="direct"
+        half_fill=False, geometry=False, atom_centric_path="direct"
     ),
     (False, True, "sorted"): _query_registry(
-        half_fill=False, return_geometry=True, atom_centric_path="sorted"
+        half_fill=False, geometry=True, atom_centric_path="sorted"
     ),
     (True, True, "sorted"): _query_registry(
-        half_fill=True, return_geometry=True, atom_centric_path="sorted"
+        half_fill=True, geometry=True, atom_centric_path="sorted"
     ),
 }
 
@@ -133,19 +116,16 @@ def _get_jax_cell_list_pair_outputs_kernel(
     pair_fn, wp_dtype, partial, half_fill: bool = False
 ):
     """Return a cached sorted direct registration for pair-output queries."""
-    return _get_cell_list_query_jax_kernel(
-        _CellListQueryJaxSpec(
-            wp_dtype=wp_dtype,
-            batched=False,
-            selective=True,
-            partial=bool(partial),
-            half_fill=bool(half_fill),
-            return_vectors=True,
-            return_distances=True,
-            pair_fn=pair_fn,
-            atom_centric_path="sorted",
-        ),
-    )
+    jax_dtype = jnp.float64 if wp_dtype == wp.float64 else jnp.float32
+    return _lazy_cell_list_query_kernel(
+        batched=False,
+        selective=True,
+        partial=bool(partial),
+        half_fill=bool(half_fill),
+        geometry=True,
+        pair_fn=pair_fn,
+        atom_centric_path="sorted",
+    )[jax_dtype]
 
 
 __all__ = [
@@ -1599,7 +1579,6 @@ def _cell_list_pair_outputs_forward(
 
     f64 = positions.dtype == jnp.float64
     wp_dtype = wp.float64 if f64 else wp.float32
-    gather_kernel = _CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
 
     total_atoms = positions.shape[0]
     # Output rows: ``num_targets`` for the partial (``target_indices``) path,
@@ -1713,6 +1692,7 @@ def _cell_list_pair_outputs_forward(
             if is_partial
             else jnp.zeros((0,), dtype=jnp.int32)
         )
+        gather_kernel = _CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
         sorted_positions = jnp.zeros((total_atoms, 3), dtype=positions.dtype)
         sorted_atom_periodic_shifts = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
         sorted_positions, sorted_atom_periodic_shifts = gather_kernel(
@@ -1931,11 +1911,6 @@ def build_cell_list(
     # Select kernels based on dtype.
     if positions.dtype != jnp.float64:
         positions = positions.astype(jnp.float32)
-    _construct_bin_size = _CELL_LIST_BUILD_REGISTRATIONS["construct_bin_size"][
-        positions.dtype
-    ]
-    _count_atoms = _CELL_LIST_BUILD_REGISTRATIONS["count_atoms"][positions.dtype]
-    _bin_atoms = _CELL_LIST_BUILD_REGISTRATIONS["bin_atoms"][positions.dtype]
 
     # Ensure cell dtype matches positions dtype so Warp kernel dispatch is consistent
     if cell.dtype != positions.dtype:
@@ -1976,6 +1951,11 @@ def build_cell_list(
             float(cutoff),
         )
     else:
+        _construct_bin_size = _CELL_LIST_BUILD_REGISTRATIONS["construct_bin_size"][
+            positions.dtype
+        ]
+        _count_atoms = _CELL_LIST_BUILD_REGISTRATIONS["count_atoms"][positions.dtype]
+        _bin_atoms = _CELL_LIST_BUILD_REGISTRATIONS["bin_atoms"][positions.dtype]
         # Step 1: Construct bin sizes
         (cells_per_dimension,) = _construct_bin_size(
             cell,
@@ -2410,14 +2390,6 @@ def query_cell_list(
     )
     if positions.dtype != jnp.float64:
         positions = positions.astype(jnp.float32)
-    _gather_kernel = _CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
-    _build_kernel = _CELL_LIST_QUERY_REGISTRATIONS[
-        (
-            bool(half_fill),
-            False,
-            "direct" if use_direct else "sorted",
-        )
-    ][positions.dtype]
 
     # Ensure cell dtype matches positions dtype so Warp kernel dispatch is consistent
     if cell.dtype != positions.dtype:
@@ -2581,6 +2553,7 @@ def query_cell_list(
             # Sorted path: gather positions/shifts into cell order for coalesced
             # reads.  The direct kernel reads ``positions`` directly and ignores the
             # sorted arrays, so it skips the gather (matching the Torch binding).
+            _gather_kernel = _CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
             sorted_positions, sorted_atom_periodic_shifts = _gather_kernel(
                 positions,
                 atom_periodic_shifts,
@@ -2589,6 +2562,13 @@ def query_cell_list(
                 sorted_atom_periodic_shifts,
                 launch_dims=(total_atoms,),
             )
+        _build_kernel = _CELL_LIST_QUERY_REGISTRATIONS[
+            (
+                bool(half_fill),
+                False,
+                "direct" if use_direct else "sorted",
+            )
+        ][positions.dtype]
         neighbor_matrix, neighbor_matrix_shifts, num_neighbors = _build_kernel(
             positions,
             atom_periodic_shifts,
