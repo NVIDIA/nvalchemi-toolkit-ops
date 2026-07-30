@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed (neighbors)
+
+- Improved JAX neighbor-list import performance by deferring dtype-specific
+  direct naive and cell-list Warp wrapper registration until first use.
+  Cluster-tile graph callbacks now use bundled callback/preload registrations
+  with lazy direct kernels for naive and cell-list paths. Public behavior is
+  unchanged.
+
 ### Added
 
 - Monopole Torch and JAX Ewald, PME, and slab entry points accept keyword-only
