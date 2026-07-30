@@ -13,21 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# NValchemi Toolkit Ops CI Workflow
+# Orchestrator. Decides which test tier runs and aggregates status; the tiers
+# themselves live in reusable-gpu-tests.yml and the caches they consume are
+# published by cache-warm.yml.
 #
-# This workflow runs linting, pytest unit testing, and coverage reporting.
+# See .github/workflows/README.md for the full semantics: tier definitions,
+# cache lifecycle, and the four traps in this repository that behave unlike
+# their defaults.
 #
-# TRIGGERS:
-# - Push to main branch or pull-request branches
-# - Merge group events (when PRs are merged via merge queue)
-# - Scheduled runs (daily at 7 AM UTC)
-#
-# WORKFLOW OVERVIEW:
-# 1. changed-files: Detects which files have changed compared to main branch
-# 2. lint: Runs static code checks and linting via pre-commit
-# 3. get-pr-labels: Retrieves PR labels for conditional job execution
-# 4. test: Runs pytest unit tests with coverage (on GPU runner)
-# 5. verify-status: Verifies all jobs completed successfully
+# PULL REQUESTS run two tiers in parallel, whose union is what gets gated:
+#   test-minimal   3 shards, no testmon, always runs in full  -> the floor
+#   test-impacted  testmon-selected, everything else it touches
+# MAIN AND NIGHTLY run the whole suite across the Python matrix.
 
 name: "CI"
 
@@ -39,7 +36,12 @@ on:
   merge_group:
     types: [checks_requested]
   schedule:
-    - cron: "0 7 * * *" # Runs at 7 AM UTC daily
+    - cron: "0 7 * * *" # 07:00 UTC daily, two hours after cache-warm
+
+permissions:
+  contents: read
+  pull-requests: read # get-pr-labels reads ciflow:* labels
+  actions: write # prune-caches.sh deletes superseded cache entries
 
 defaults:
   run:
@@ -55,7 +57,7 @@ env:
 
 jobs:
   # ============================================================================
-  # CHANGED FILES DETECTION
+  # PRE-FLIGHT
   # ============================================================================
   changed-files:
     runs-on: ubuntu-latest
@@ -83,15 +85,14 @@ jobs:
             !**.md
             !.github/**
             !.gitignore
-            .github/workflows/ci.yml
+            .github/workflows/**
+            .github/actions/**
+            .github/scripts/**
 
       - name: Show output
         run: |
           echo '${{ toJSON(steps.changed-files.outputs) }}'
 
-  # ============================================================================
-  # LINTING STAGE
-  # ============================================================================
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -111,7 +112,7 @@ jobs:
       - name: Cache pre-commit
         uses: actions/cache@v4
         with:
-          path: ~/.cache/pre-commit
+          path: /tmp/pre-commit-cache
           key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
           restore-keys: |
             pre-commit-
@@ -121,9 +122,6 @@ jobs:
           uv sync --extra torch --extra jax
           make lint
 
-  # ============================================================================
-  # GET PR LABELS (for copy-pr-bot integration)
-  # ============================================================================
   get-pr-labels:
     runs-on: ubuntu-latest
     outputs:
@@ -154,315 +152,156 @@ jobs:
           echo "Set empty labels for non-PR branch"
 
   # ============================================================================
-  # TEST STAGE (GPU Runner)
+  # PULL-REQUEST TIER
   # ============================================================================
-  test:
-    name: Test CUDA 13 py${{ matrix.python-version }}
-    needs:
-      - lint
-      - get-pr-labels
-      - changed-files
-    runs-on: linux-amd64-gpu-h100-latest-1
-    timeout-minutes: 480
+  # Bounded and predictable: the same 4,275 tests every time, sharded by measured
+  # cost. Only shard 1 publishes a cache — it owns electrostatics_torch, whose
+  # PME kernels are the expensive ones, and one cache per pull request keeps the
+  # repository inside its 10 GB budget.
+  test-minimal:
+    name: PR minimal
+    needs: [lint, get-pr-labels, changed-files]
+    if: |
+      (github.event_name != 'schedule') &&
+      (github.ref != 'refs/heads/main') &&
+      !contains(fromJSON(needs.get-pr-labels.outputs.labels || '[]'), 'ciflow:skip') &&
+      !contains(fromJSON(needs.get-pr-labels.outputs.labels || '[]'), 'ciflow:all') &&
+      (needs.changed-files.outputs.any_changed == 'true')
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
-    container:
-      image: nvcr.io/nvidia/cuda:13.1.0-runtime-ubuntu24.04
-      options: --gpus all
-    if: |
-      (github.event_name == 'schedule') ||
-      contains(fromJSON(needs.get-pr-labels.outputs.labels || '[]'), 'ciflow:all') ||
-      (
-        !contains(fromJSON(needs.get-pr-labels.outputs.labels || '[]'), 'ciflow:skip') &&
-        (needs.changed-files.outputs.any_changed == 'true')
-      ) ||
-      (
-        (github.event_name == 'merge_group') &&
-        (needs.changed-files.outputs.any_changed == 'true')
-      )
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+        shard: [1, 2, 3]
+    uses: ./.github/workflows/reusable-gpu-tests.yml
+    with:
+      suite: minimal
+      shard: ${{ matrix.shard }}
+      save-warp-cache: ${{ matrix.shard == 1 }}
+      timeout-minutes: 60
+    secrets: inherit
 
-      - name: Install apt requirements
-        env:
-          DEBIAN_FRONTEND: "noninteractive"
-          TZ: "Etc/UTC"
-        run: |
-          apt-get update && \
-          apt-get install -y curl \
-            git \
-            build-essential
+  # Runs alongside the minimal tier, never gating the fast verdict. Unbounded by
+  # nature: a change to a core electrostatics file selects most of the suite.
+  test-impacted:
+    name: PR impacted
+    needs: [lint, get-pr-labels, changed-files]
+    if: |
+      (github.event_name != 'schedule') &&
+      (github.ref != 'refs/heads/main') &&
+      !contains(fromJSON(needs.get-pr-labels.outputs.labels || '[]'), 'ciflow:skip') &&
+      !contains(fromJSON(needs.get-pr-labels.outputs.labels || '[]'), 'ciflow:all') &&
+      (needs.changed-files.outputs.any_changed == 'true')
+    uses: ./.github/workflows/reusable-gpu-tests.yml
+    with:
+      suite: impacted
+      timeout-minutes: 120
+    secrets: inherit
+
+  # Applies the coverage threshold once, to the union of both tiers. Needs only
+  # coverage and the source tree, so it runs on an ordinary runner rather than
+  # occupying a GPU to read SQLite files. `[tool.coverage.paths]` in
+  # pyproject.toml remaps the shards' absolute paths onto this checkout.
+  pr-coverage:
+    name: PR coverage gate
+    needs: [test-minimal, test-impacted]
+    if: |
+      always() &&
+      needs.test-minimal.result == 'success' &&
+      needs.test-impacted.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Setup UV
-        env:
-          UV_VERSION: "0.9.25"
-          UV_CHECKSUM: "10fb1f54d56f3eb60622006797339d4ea0bfda9b358d07db635f73cf89f7094c"
-        run: |
-          UV_INSTALLER=$(mktemp)
-          curl --proto '=https' --tlsv1.2 -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" -o "$UV_INSTALLER"
-          echo "${UV_CHECKSUM}  ${UV_INSTALLER}" | sha256sum -c -
-          sh "$UV_INSTALLER"
-          rm "$UV_INSTALLER"
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-
-      - name: Install dependencies
-        run: |
-          export PATH="$HOME/.local/bin:$PATH"
-          uv venv --seed --python ${{ matrix.python-version }}
-          uv sync --extra torch --extra jax
-          uv pip install -r test/test-requires.txt
-
-      # CONDITIONAL LOGIC BASED ON EVENT TYPE
-      #
-      # PR branches use push events to refs/heads/pull-request/*, not the
-      # pull_request event. Merge queue runs use merge_group events on
-      # gh-readonly-queue refs, but should use the same testmon-selected path.
-      # Testmon databases are Python/CUDA-specific because testmon keys its
-      # dependency database by the interpreter version and installed packages.
-      # Coverage baselines are cached separately so stale coverage files do not
-      # replace or mask the testmon dependency database.
-      #
-      # The testmon and warp caches are branch-scoped (sanitized ref name) so a
-      # long-lived branch / PR maintains its OWN cache line across successive
-      # commits, with main as a restore-keys fallback for the first run. GitHub
-      # scopes caches to the ref that created them, so successive pushes to the
-      # same pull-request/<N> mirror ref reuse the cache; main remains the only
-      # globally-readable fallback.
-      - name: Compute cache scope key
-        id: scope
-        env:
-          REF_NAME: ${{ github.ref_name }}
-        run: echo "key=${REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
-
-      - name: Restore testmon cache (for PRs and merge queue)
-        if: startsWith(github.ref, 'refs/heads/pull-request/') || github.event_name == 'merge_group'
-        uses: actions/cache/restore@v4
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
         with:
-          path: |
-            .testmondata
-            .testmondata-shm
-            .testmondata-wal
-          key: testmon-cache-${{ steps.scope.outputs.key }}-py${{ matrix.python-version }}-cuda13-${{ github.run_id }}
-          restore-keys: |
-            testmon-cache-${{ steps.scope.outputs.key }}-py${{ matrix.python-version }}-cuda13-
-            testmon-cache-main-py${{ matrix.python-version }}-cuda13-
+          enable-cache: true
 
-      # Warp compiles every kernel from scratch on a cold cache, and conftest keys
-      # the cache per checkout (not per pid) so all per-module pytest runs share it.
-      # Persisting it across CI runs skips recompilation on cache hit. Kernels are
-      # content-hashed, so a stale entry is simply unused (Warp recompiles changed
-      # kernels) -> safe to restore on every trigger, including main/schedule.
-      - name: Restore warp kernel cache
-        uses: actions/cache/restore@v4
+      - name: Download coverage data
+        uses: actions/download-artifact@v4
         with:
-          path: .warp-cache
-          key: warp-cache-${{ steps.scope.outputs.key }}-py${{ matrix.python-version }}-cuda13-${{ github.run_id }}
-          restore-keys: |
-            warp-cache-${{ steps.scope.outputs.key }}-py${{ matrix.python-version }}-cuda13-
-            warp-cache-main-py${{ matrix.python-version }}-cuda13-
+          pattern: coverage-data-*
+          merge-multiple: true
 
-      - name: Restore coverage baseline (for PRs and merge queue)
-        if: startsWith(github.ref, 'refs/heads/pull-request/') || github.event_name == 'merge_group'
-        uses: actions/cache/restore@v4
-        with:
-          path: .coverage.baseline
-          key: coverage-baseline-main-py${{ matrix.python-version }}-cuda13-${{ github.run_id }}
-          restore-keys: |
-            coverage-baseline-main-py${{ matrix.python-version }}-cuda13-
-
-      - name: Prepare coverage baseline (for PRs and merge queue)
-        if: startsWith(github.ref, 'refs/heads/pull-request/') || github.event_name == 'merge_group'
-        run: |
-          if [ -f .coverage.baseline ]; then
-            echo "Using restored coverage baseline for PR coverage merge"
-            mv .coverage.baseline coverage_main.dat
-          else
-            echo "No coverage baseline restored; reporting PR coverage only"
-          fi
-
-      - name: Run tests with testmon and coverage
-        run: |
-          export PATH="$HOME/.local/bin:$PATH"
-          # Share one warp kernel cache across all per-module pytest runs (conftest
-          # honors WARP_CACHE_PATH via setdefault) and persist it via actions/cache.
-          export WARP_CACHE_PATH="$GITHUB_WORKSPACE/.warp-cache"
-          mkdir -p "$WARP_CACHE_PATH"
-          USE_TESTMON_SELECTION=${{ startsWith(github.ref, 'refs/heads/pull-request/') || github.event_name == 'merge_group' }}
-          if [[ "$USE_TESTMON_SELECTION" == "true" ]]; then
-            # PR/Merge queue: testmon selects affected tests, coverage traces them
-            make testmon-coverage COVERAGE_BASELINE_FILE=coverage_main.dat
-          else
-            # Main/Schedule: refresh testmon DB and coverage baseline in one full pass.
-            rm -f .testmondata .testmondata-shm .testmondata-wal
-            rm -f .coverage .coverage.* coverage_main.dat
-            make testmon-coverage PYTEST_TESTMON_FLAGS="--testmon"
-          fi
-
-      # Save the testmon DB and warp cache on main/schedule AND on PR / merge-queue
-      # runs, each under its branch-scoped key. This lets successive commits on the
-      # same pull-request/<N> ref reuse the cache they just built (same cache scope),
-      # instead of recompiling/reselecting cold every commit on a long-lived branch.
-      # The coverage baseline below stays main-scoped so PR coverage still diffs
-      # against main, not against the PR's own prior coverage.
-      - name: Save testmon cache
-        if: >-
-          (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-          (github.event_name == 'schedule') ||
-          startsWith(github.ref, 'refs/heads/pull-request/') ||
-          (github.event_name == 'merge_group')
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            .testmondata
-            .testmondata-shm
-            .testmondata-wal
-          key: testmon-cache-${{ steps.scope.outputs.key }}-py${{ matrix.python-version }}-cuda13-${{ github.run_id }}
-
-      - name: Save warp kernel cache
-        if: >-
-          (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-          (github.event_name == 'schedule') ||
-          startsWith(github.ref, 'refs/heads/pull-request/') ||
-          (github.event_name == 'merge_group')
-        uses: actions/cache/save@v4
-        with:
-          path: .warp-cache
-          key: warp-cache-${{ steps.scope.outputs.key }}-py${{ matrix.python-version }}-cuda13-${{ github.run_id }}
-
-      - name: Prepare coverage baseline
-        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'schedule')
-        run: |
-          cp .coverage .coverage.baseline
-
-      - name: Save coverage baseline
-        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'schedule')
-        uses: actions/cache/save@v4
-        with:
-          path: .coverage.baseline
-          key: coverage-baseline-main-py${{ matrix.python-version }}-cuda13-${{ github.run_id }}
+      - name: Combine and enforce the threshold
+        run: make coverage-combine UV_RUN="uv run --no-project --with coverage"
 
       - name: Upload coverage to Codecov
-        if: github.event_name != 'merge_group' && github.event_name != 'schedule'
+        if: github.event_name != 'merge_group'
         uses: codecov/codecov-action@04b047e8bb82a0c002c8312c1c880fbc6a999d45 # v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./nvalchemiops.coverage.xml
           fail_ci_if_error: false
 
-      - name: Upload coverage report artifact
+      - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report-py${{ matrix.python-version }}-cuda13
+          name: coverage-report-pr
           path: nvalchemiops.coverage.xml
           retention-days: 7
 
+  # ============================================================================
+  # FULL TIER
+  # ============================================================================
+  # Each matrix job restores and saves its own per-combination cache, so every
+  # lane stays warm from its own previous run without a dedicated producer.
+  # cache-warm.yml only covers py3.12/CUDA 13, the lane a human waits on.
+  test-full:
+    name: Full CUDA 13
+    needs: [lint, get-pr-labels]
+    if: |
+      (github.event_name == 'schedule') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      contains(fromJSON(needs.get-pr-labels.outputs.labels || '[]'), 'ciflow:all')
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    uses: ./.github/workflows/reusable-gpu-tests.yml
+    with:
+      suite: full
+      python-version: ${{ matrix.python-version }}
+      # py3.12/CUDA 13 is cache-warm.yml's lane; two writers on the same key
+      # would delete each other's entry. Every other lane maintains its own.
+      save-warp-cache: ${{ matrix.python-version != '3.12' }}
+      timeout-minutes: 480
+    secrets: inherit
+
   test-cuda12:
-    name: Test CUDA 12 py${{ matrix.python-version }}
-    needs:
-      - lint
-    runs-on: linux-amd64-gpu-h100-latest-1
-    timeout-minutes: 480
+    name: Full CUDA 12
+    needs: [lint]
     if: github.event_name == 'schedule'
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
-    container:
-      image: nvcr.io/nvidia/cuda:12.8.2-runtime-ubuntu24.04
-      options: --gpus all
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install apt requirements
-        env:
-          DEBIAN_FRONTEND: "noninteractive"
-          TZ: "Etc/UTC"
-        run: |
-          apt-get update && \
-          apt-get install -y curl \
-            git \
-            build-essential
-
-      - name: Setup UV
-        env:
-          UV_VERSION: "0.9.25"
-          UV_CHECKSUM: "10fb1f54d56f3eb60622006797339d4ea0bfda9b358d07db635f73cf89f7094c"
-        run: |
-          UV_INSTALLER=$(mktemp)
-          curl --proto '=https' --tlsv1.2 -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" -o "$UV_INSTALLER"
-          echo "${UV_CHECKSUM}  ${UV_INSTALLER}" | sha256sum -c -
-          sh "$UV_INSTALLER"
-          rm "$UV_INSTALLER"
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-
-      - name: Install dependencies
-        run: |
-          export PATH="$HOME/.local/bin:$PATH"
-          uv venv --seed --python ${{ matrix.python-version }}
-          uv sync --extra torch-cu12 --extra jax-cu12
-          uv pip install -r test/test-requires.txt
-
-      - name: Restore warp kernel cache
-        uses: actions/cache/restore@v4
-        with:
-          path: .warp-cache
-          key: warp-cache-main-py${{ matrix.python-version }}-cuda12-${{ github.run_id }}
-          restore-keys: |
-            warp-cache-main-py${{ matrix.python-version }}-cuda12-
-
-      - name: Run tests with testmon and coverage
-        run: |
-          export PATH="$HOME/.local/bin:$PATH"
-          export WARP_CACHE_PATH="$GITHUB_WORKSPACE/.warp-cache"
-          mkdir -p "$WARP_CACHE_PATH"
-          rm -f .testmondata .testmondata-shm .testmondata-wal
-          rm -f .coverage .coverage.* coverage_main.dat
-          make testmon-coverage PYTEST_TESTMON_FLAGS="--testmon"
-
-      - name: Save testmon cache
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            .testmondata
-            .testmondata-shm
-            .testmondata-wal
-          key: testmon-cache-main-py${{ matrix.python-version }}-cuda12-${{ github.run_id }}
-
-      - name: Save warp kernel cache
-        uses: actions/cache/save@v4
-        with:
-          path: .warp-cache
-          key: warp-cache-main-py${{ matrix.python-version }}-cuda12-${{ github.run_id }}
-
-      - name: Prepare coverage baseline
-        run: |
-          cp .coverage .coverage.baseline
-
-      - name: Save coverage baseline
-        uses: actions/cache/save@v4
-        with:
-          path: .coverage.baseline
-          key: coverage-baseline-main-py${{ matrix.python-version }}-cuda12-${{ github.run_id }}
-
-      - name: Upload coverage report artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report-py${{ matrix.python-version }}-cuda12
-          path: nvalchemiops.coverage.xml
-          retention-days: 7
+    uses: ./.github/workflows/reusable-gpu-tests.yml
+    with:
+      suite: full
+      python-version: ${{ matrix.python-version }}
+      cuda-major: "12"
+      torch-extra: torch-cu12
+      jax-extra: jax-cu12
+      save-warp-cache: true
+      timeout-minutes: 480
+    secrets: inherit
 
   # ============================================================================
-  # VERIFY STATUS
+  # STATUS
   # ============================================================================
   verify-status:
     needs:
       - lint
       - get-pr-labels
-      - test
+      - changed-files
+      - test-minimal
+      - test-impacted
+      - pr-coverage
+      - test-full
       - test-cuda12
     runs-on: ubuntu-latest
     if: always()
