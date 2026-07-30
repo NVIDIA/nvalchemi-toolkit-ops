@@ -2951,8 +2951,8 @@ def pme_reciprocal_space(
     5. B-spline interpolation of potential to atoms (gathering)
     6. Self-energy and background corrections
 
-    Formula
-    -------
+    **Formula**
+
     The reciprocal-space energy is computed via the mesh potential:
 
     .. math::
@@ -3026,6 +3026,27 @@ def pme_reciprocal_space(
         charge gradients are attached to the energy via a straight-through
         trick.  Forces and virial are forward-only (not differentiable).
         See :func:`ewald_real_space` for details.
+    cell_inv_t : torch.Tensor, shape (3, 3) or (B, 3, 3), optional
+        Precomputed transposed cell inverse :math:`(M^{-1})^T`. When supplied,
+        the reciprocal-space path skips the per-call ``torch.linalg.inv`` of
+        the cell (which dispatches getrf/trsm/laswp on the 3x3 cell every
+        iteration). This is a setup constant for fixed-cell calls and is
+        assumed to correspond to the current ``cell`` when supplied while
+        ``cell.requires_grad`` is true.
+    volume : torch.Tensor, shape (1,) or (B,), optional
+        Precomputed cell volume :math:`|\\det(M)|`. When supplied, both the
+        Green's-function normalization and the self/background correction
+        skip ``torch.linalg.det`` (which also dispatches getrf under the
+        hood). Same fixed-cell use-case as ``cell_inv_t``.
+    moduli_x, moduli_y, moduli_z : torch.Tensor, optional
+        Precomputed 1D B-spline modulus LUTs
+        (``sinc(m/N)^spline_order`` per axis) from
+        ``compute_bspline_moduli_1d``. When supplied, the reciprocal-space
+        path skips the per-call ``fftfreq + sinc^p`` rebuild. The moduli
+        only depend on mesh dimension + spline order, so callers can precompute
+        them once for repeated calls with the same mesh and spline order.
+        Supply all three arrays together; if any is missing, all supplied
+        moduli are discarded and the complete set is recomputed.
 
     Returns
     -------
@@ -3037,6 +3058,11 @@ def pme_reciprocal_space(
         Direct charge gradients :math:`\\partial E_{\\text{recip}}/\\partial q_i`. Only returned if compute_charge_gradients=True.
     virial : torch.Tensor, shape (1, 3, 3) or (B, 3, 3), optional
         Virial tensor. Only returned if compute_virial=True. Always last in tuple.
+
+    Raises
+    ------
+    ValueError
+        If neither mesh_dimensions nor mesh_spacing is provided.
 
     Note
     ----
@@ -3061,11 +3087,6 @@ def pme_reciprocal_space(
     Enabled output flags are appended in order: energies, [forces],
     [charge_gradients], [virial]. A single output is returned unwrapped;
     multiple outputs are returned as a tuple.
-
-    Raises
-    ------
-    ValueError
-        If neither mesh_dimensions nor mesh_spacing is provided.
 
     Examples
     --------

@@ -900,7 +900,31 @@ def coulomb_forces(
 
     Parameters
     ----------
-    See coulomb_energy for parameter descriptions.
+    positions : torch.Tensor, shape (N, 3)
+        Atomic coordinates.
+    charges : torch.Tensor, shape (N,)
+        Atomic charges.
+    cell : torch.Tensor, shape (1, 3, 3) or (B, 3, 3)
+        Unit cell matrix. Shape (B, 3, 3) for batched calculations.
+    cutoff : float
+        Cutoff distance for interactions.
+    alpha : float, default=0.0
+        Ewald splitting parameter. Use 0.0 for undamped Coulomb.
+    neighbor_list : torch.Tensor | None, shape (2, num_pairs)
+        Neighbor pairs in COO format. Row 0 = source, Row 1 = target.
+    neighbor_ptr : torch.Tensor | None, shape (N+1,)
+        CSR row pointers for neighbor list. Required with neighbor_list.
+        Provided by neighborlist module.
+    neighbor_shifts : torch.Tensor | None, shape (num_pairs, 3)
+        Integer unit cell shifts for neighbor list format.
+    neighbor_matrix : torch.Tensor | None, shape (N, max_neighbors)
+        Neighbor indices in matrix format.
+    neighbor_matrix_shifts : torch.Tensor | None, shape (N, max_neighbors, 3)
+        Integer unit cell shifts for matrix format.
+    fill_value : int | None
+        Fill value for neighbor matrix padding.
+    batch_idx : torch.Tensor | None, shape (N,)
+        Batch indices for each atom.
 
     Returns
     -------

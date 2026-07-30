@@ -310,7 +310,31 @@ def coulomb_forces(
 
     Parameters
     ----------
-    See coulomb_energy for parameter descriptions.
+    positions : jax.Array, shape (N, 3)
+        Atomic coordinates.
+    charges : jax.Array, shape (N,)
+        Atomic charges.
+    cell : jax.Array, shape (1, 3, 3) or (B, 3, 3)
+        Unit cell matrix. Shape (B, 3, 3) for batched calculations.
+    cutoff : float
+        Cutoff distance for interactions.
+    alpha : float, default=0.0
+        Ewald splitting parameter. Use 0.0 for undamped Coulomb.
+    neighbor_list : jax.Array | None, shape (2, num_pairs)
+        Neighbor pairs in COO format. Row 0 = source, Row 1 = target.
+    neighbor_ptr : jax.Array | None, shape (N+1,)
+        CSR row pointers for neighbor list. Required with neighbor_list.
+        Provided by neighborlist module.
+    neighbor_shifts : jax.Array | None, shape (num_pairs, 3)
+        Integer unit cell shifts for neighbor list format.
+    neighbor_matrix : jax.Array | None, shape (N, max_neighbors)
+        Neighbor indices in matrix format.
+    neighbor_matrix_shifts : jax.Array | None, shape (N, max_neighbors, 3)
+        Integer unit cell shifts for matrix format.
+    fill_value : int | None
+        Fill value for neighbor matrix padding.
+    batch_idx : jax.Array | None, shape (N,)
+        Batch indices for each atom.
 
     Returns
     -------

@@ -2071,6 +2071,24 @@ def build_cell_list(
         OUTPUT: Flattened list of atom indices organized by cell. If None, allocated.
     max_total_cells : int, optional
         Maximum number of cells to allocate. If None, will be estimated.
+    graph_mode : {"none", "warp"}, default="none"
+        Execution mode for the underlying Warp build launches. ``"none"`` runs
+        the per-step ``jax_kernel`` sequence. ``"warp"`` uses a fused
+        ``jax_callable`` that captures the full build; donate and reuse the
+        optional cell-list buffers for replay-friendly ``jax.jit`` usage.
+    target_indices : jax.Array, optional
+        Not supported. Raises ``NotImplementedError`` if any partial-list or
+        pair-output kwargs are passed.
+    return_vectors, return_distances : bool, default False
+        Not supported on the build-only path. Raises ``NotImplementedError``.
+    pair_fn : wp.Function, optional
+        Not supported on the build-only path. Raises ``NotImplementedError``.
+    pair_params : jax.Array, optional
+        Not supported on the build-only path. Raises ``NotImplementedError``.
+    neighbor_vectors, neighbor_distances : jax.Array, optional
+        Not supported on the build-only path. Raises ``NotImplementedError``.
+    pair_energies, pair_forces : jax.Array, optional
+        Not supported on the build-only path. Raises ``NotImplementedError``.
 
     Returns
     -------
@@ -2334,6 +2352,43 @@ def query_cell_list(
         ``len(target_indices)`` for partial rows.
     num_neighbors : jax.Array, shape (num_rows,), optional
         Pre-shaped neighbors count array.
+    neighbor_matrix_shifts : jax.Array, shape (num_rows, max_neighbors, 3), dtype=int32, optional
+        Pre-allocated shift vectors array. When ``rebuild_flags`` is None the
+        buffer is zeroed before the query; with selective rebuild the kernel
+        updates only flagged rows.
+    rebuild_flags : jax.Array, shape () or (1,), dtype=bool, optional
+        Device-side selective-rebuild flag. When provided, the query proceeds
+        only if ``rebuild_flags[0]`` is True; otherwise existing output
+        buffers are returned unchanged. Not supported with pair-output kwargs.
+    graph_mode : {"none", "warp"}, default="none"
+        Execution mode for atom-centric topology queries. ``"warp"`` fuses the
+        sorted-build kernel behind a ``jax_callable`` callback. Pair-output
+        kwargs require ``graph_mode="none"``. Explicit ``strategy="pair_centric"``
+        with ``graph_mode="warp"`` raises ``NotImplementedError``.
+    half_fill : bool, default False
+        If True, build a half neighbor list (each undirected pair stored once)
+        using the half-fill kernel specialization. Requires
+        ``graph_mode="none"`` in this binding.
+    return_vectors : bool, default False
+        If True, append per-pair displacement vectors to the return tuple.
+        Requires ``graph_mode="none"``; not supported with ``rebuild_flags``.
+    return_distances : bool, default False
+        If True, append per-pair scalar distances to the return tuple. Same
+        restrictions as ``return_vectors``.
+    pair_fn : wp.Function, optional
+        Module-scope Warp pair potential evaluated inline during the query.
+        Requires ``pair_params``; only supported with ``graph_mode="none"``.
+    pair_params : jax.Array, shape (total_atoms, K), dtype matches positions, optional
+        Per-atom parameters forwarded to ``pair_fn``. Required when ``pair_fn``
+        is set.
+    neighbor_vectors : jax.Array, shape (num_rows, max_neighbors, 3), optional
+        Pre-shaped output buffer for per-pair displacement vectors.
+    neighbor_distances : jax.Array, shape (num_rows, max_neighbors), optional
+        Pre-shaped output buffer for per-pair scalar distances.
+    pair_energies : jax.Array, shape (num_rows, max_neighbors), optional
+        Pre-shaped output buffer for per-pair energies from ``pair_fn``.
+    pair_forces : jax.Array, shape (num_rows, max_neighbors, 3), optional
+        Pre-shaped output buffer for per-pair forces from ``pair_fn``.
     target_indices : jax.Array, shape (num_targets,), dtype=int32, optional
         Compact partial-list source rows. Output row ``r`` maps to atom
         ``target_indices[r]``; COO source rows remain compact row ids.
@@ -2371,9 +2426,11 @@ def query_cell_list(
         Variable-length tuple depending on requested outputs. Matrix outputs use
         ``num_rows`` rows, where ``num_rows`` is ``total_atoms`` normally and
         ``len(target_indices)`` for partial lists. The base return is
-        ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``; optional
-        distance/vector arrays and ``pair_fn`` energy/force arrays are appended
-        in the same order as ``cell_list``.
+        ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``. Requested
+        pair outputs follow in this order: ``neighbor_distances`` when
+        ``return_distances=True``, then ``neighbor_vectors`` when
+        ``return_vectors=True``, then ``(pair_energies, pair_forces)`` when
+        ``pair_fn`` is set.
 
     See Also
     --------
@@ -2913,6 +2970,61 @@ def cell_list(
         Maximum number of cells to allocate. If None, will be estimated.
     return_neighbor_list : bool, optional
         If True, convert result to COO neighbor list format. Default is False.
+    half_fill : bool, default False
+        If True, build a half neighbor list (each pair stored once). Forwarded
+        to :func:`query_cell_list`.
+    fill_value : int, optional
+        Matrix sentinel for unused neighbor slots on the matrix return path.
+        Defaults to ``total_atoms`` when None.
+    cells_per_dimension : jax.Array, shape (3,), dtype=int32, optional
+        Pre-allocated bin-count buffer for :func:`build_cell_list`. Allocated
+        internally when None.
+    neighbor_search_radius : jax.Array, shape (3,), dtype=int32, optional
+        Per-axis cell search radius from sizing. Allocated or estimated when
+        None.
+    atom_periodic_shifts : jax.Array, shape (total_atoms, 3), dtype=int32, optional
+        Build output: periodic image crossings per atom. Allocated when None.
+    atom_to_cell_mapping : jax.Array, shape (total_atoms, 3), dtype=int32, optional
+        Build output: 3-D cell coordinates per atom. Allocated when None.
+    atoms_per_cell_count : jax.Array, shape (max_total_cells,), dtype=int32, optional
+        Build output: atom count per spatial bin. Allocated when None.
+    cell_atom_start_indices : jax.Array, shape (max_total_cells,), dtype=int32, optional
+        Build output: CSR-style start index into ``cell_atom_list`` per cell.
+    cell_atom_list : jax.Array, shape (total_atoms,), dtype=int32, optional
+        Build output: atom indices sorted by cell occupancy.
+    sorted_positions : jax.Array, shape (total_atoms, 3), optional
+        Caller-owned gather scratch for the sorted atom-centric query path.
+        Forwarded to :func:`query_cell_list`.
+    sorted_atom_periodic_shifts : jax.Array, shape (total_atoms, 3), dtype=int32, optional
+        Caller-owned gather scratch for sorted shifts. Forwarded to
+        :func:`query_cell_list`.
+    neighbor_matrix : jax.Array, shape (num_rows, max_neighbors), dtype=int32, optional
+        Pre-shaped neighbor matrix for the query step. ``num_rows`` is
+        ``total_atoms`` normally and ``len(target_indices)`` for partial rows.
+    neighbor_matrix_shifts : jax.Array, shape (num_rows, max_neighbors, 3), dtype=int32, optional
+        Pre-shaped shift matrix for the query step.
+    num_neighbors : jax.Array, shape (num_rows,), dtype=int32, optional
+        Pre-shaped per-atom neighbor counts for the query step.
+    target_indices : jax.Array, shape (num_targets,), dtype=int32, optional
+        Compact partial-list source rows. Output row ``r`` maps to atom
+        ``target_indices[r]``; user buffers must be compact-row shaped.
+    return_vectors : bool, default False
+        If True, append per-pair displacement vectors to the return tuple.
+        Enables the autograd pair-geometry path (``graph_mode="none"`` only).
+    return_distances : bool, default False
+        If True, append per-pair scalar distances to the return tuple.
+    pair_fn : wp.Function, optional
+        Inline Warp pair potential for the query step. Requires ``pair_params``.
+    pair_params : jax.Array, shape (total_atoms, K), optional
+        Per-atom parameters forwarded to ``pair_fn``.
+    neighbor_vectors : jax.Array, shape (num_rows, max_neighbors, 3), optional
+        Pre-shaped output buffer for per-pair displacement vectors.
+    neighbor_distances : jax.Array, shape (num_rows, max_neighbors), optional
+        Pre-shaped output buffer for per-pair scalar distances.
+    pair_energies : jax.Array, shape (num_rows, max_neighbors), optional
+        Pre-shaped output buffer for per-pair energies from ``pair_fn``.
+    pair_forces : jax.Array, shape (num_rows, max_neighbors, 3), optional
+        Pre-shaped output buffer for per-pair forces from ``pair_fn``.
     strategy : {"auto", "atom_centric", "pair_centric"}, default "auto"
         Cell-list query sub-strategy, forwarded to :func:`query_cell_list`.
         Both strategies produce identical pair SETS; only per-row ordering in
@@ -2950,6 +3062,10 @@ def cell_list(
         (total_atoms, max_neighbors, 3), dtype int32.
         If ``return_neighbor_list=True``: ``neighbor_list_shifts`` with shape
         (num_pairs, 3), dtype int32.
+        These three arrays form the base tuple. Requested pair outputs follow
+        in this order: ``neighbor_distances`` when ``return_distances=True``,
+        then ``neighbor_vectors`` when ``return_vectors=True``, then
+        ``(pair_energies, pair_forces)`` when ``pair_fn`` is set.
 
     See Also
     --------

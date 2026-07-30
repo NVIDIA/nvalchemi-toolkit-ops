@@ -281,8 +281,11 @@ def _dftd3_matrix_op(
     numbers : torch.Tensor, shape (num_atoms), dtype=int32
         Atomic numbers
     neighbor_matrix : torch.Tensor, shape (num_atoms, max_neighbors), dtype=int32
-        Neighbor indices. See module docstring for format details.
-        Padding entries have values >= fill_value.
+        Neighbor indices in dense row format. Row ``i`` lists the neighbor
+        atom indices of atom ``i``; unused slots are padded with values
+        ``>= fill_value``. Requires a symmetric neighbor representation (each
+        pair appears in both rows). Padding atoms (``numbers[i] == 0``) are
+        skipped.
     covalent_radii : torch.Tensor, shape (max_Z+1), dtype=float32
         Covalent radii indexed by atomic number, in same units as positions
     r4r2 : torch.Tensor, shape (max_Z+1), dtype=float32
@@ -328,8 +331,8 @@ def _dftd3_matrix_op(
     Returns
     -------
     None
-
-    Modifies input tensors in-place: energy, forces, coord_num, virial (remains zeros)
+        Modifies ``energy``, ``forces``, ``coord_num``, and ``virial``
+        (which remains zero) in place.
 
     Notes
     -----
@@ -458,6 +461,13 @@ def _dftd3_matrix_op(
     )
 
 
+# Preserve the decorated function's public documentation metadata. PyTorch's
+# CustomOpDef otherwise exposes its generic ``(*args, **kwargs)`` signature and
+# class docstring to Sphinx.
+_dftd3_matrix_op.__doc__ = _dftd3_matrix_op._init_fn.__doc__
+_dftd3_matrix_op.__wrapped__ = _dftd3_matrix_op._init_fn
+
+
 @torch.library.custom_op(
     "nvalchemiops::dftd3_matrix_pbc",
     mutates_args=("energy", "forces", "coord_num", "virial"),
@@ -507,8 +517,11 @@ def _dftd3_matrix_pbc_op(
     numbers : torch.Tensor, shape (num_atoms), dtype=int32
         Atomic numbers
     neighbor_matrix : torch.Tensor, shape (num_atoms, max_neighbors), dtype=int32
-        Neighbor indices. See module docstring for format details.
-        Padding entries have values >= fill_value.
+        Neighbor indices in dense row format. Row ``i`` lists the neighbor
+        atom indices of atom ``i``; unused slots are padded with values
+        ``>= fill_value``. Requires a symmetric neighbor representation (each
+        pair appears in both rows). Padding atoms (``numbers[i] == 0``) are
+        skipped.
     cell : torch.Tensor, shape (num_systems, 3, 3), dtype=float32 or float64
         Unit cell lattice vectors for PBC, in same dtype and units as positions.
     neighbor_matrix_shifts : torch.Tensor, shape (num_atoms, max_neighbors, 3), dtype=int32
@@ -561,8 +574,8 @@ def _dftd3_matrix_pbc_op(
     Returns
     -------
     None
-
-    Modifies input tensors in-place: energy, forces, coord_num, virial (if compute_virial=True)
+        Modifies ``energy``, ``forces``, ``coord_num``, and, when
+        ``compute_virial=True``, ``virial`` in place.
 
     Notes
     -----
@@ -708,6 +721,10 @@ def _dftd3_matrix_pbc_op(
     )
 
 
+_dftd3_matrix_pbc_op.__doc__ = _dftd3_matrix_pbc_op._init_fn.__doc__
+_dftd3_matrix_pbc_op.__wrapped__ = _dftd3_matrix_pbc_op._init_fn
+
+
 @torch.library.custom_op(
     "nvalchemiops::dftd3",
     mutates_args=("energy", "forces", "coord_num", "virial"),
@@ -797,8 +814,8 @@ def _dftd3_op(
     Returns
     -------
     None
-
-    Modifies input tensors in-place: energy, forces, coord_num, virial (remains zeros)
+        Modifies ``energy``, ``forces``, ``coord_num``, and ``virial``
+        (which remains zero) in place.
 
     Notes
     -----
@@ -923,6 +940,10 @@ def _dftd3_op(
     )
 
 
+_dftd3_op.__doc__ = _dftd3_op._init_fn.__doc__
+_dftd3_op.__wrapped__ = _dftd3_op._init_fn
+
+
 @torch.library.custom_op(
     "nvalchemiops::dftd3_pbc",
     mutates_args=("energy", "forces", "coord_num", "virial"),
@@ -1022,8 +1043,8 @@ def _dftd3_pbc_op(
     Returns
     -------
     None
-
-    Modifies input tensors in-place: energy, forces, coord_num, virial (if compute_virial=True)
+        Modifies ``energy``, ``forces``, ``coord_num``, and, when
+        ``compute_virial=True``, ``virial`` in place.
 
     Notes
     -----
@@ -1165,6 +1186,10 @@ def _dftd3_pbc_op(
     )
 
 
+_dftd3_pbc_op.__doc__ = _dftd3_pbc_op._init_fn.__doc__
+_dftd3_pbc_op.__wrapped__ = _dftd3_pbc_op._init_fn
+
+
 def dftd3(
     positions: torch.Tensor,
     numbers: torch.Tensor,
@@ -1274,9 +1299,11 @@ def dftd3(
         Convention: cell[s, i, :] is i-th lattice vector for system s.
         If None, non-periodic calculation. Default: None
     neighbor_matrix : torch.Tensor | None, optional
-        Neighbor indices [num_atoms, max_neighbors] as int32. See module docstring for
-        details on the format. Padding entries have values >= fill_value.
-        Mutually exclusive with neighbor_list. Default: None
+        Neighbor indices [num_atoms, max_neighbors] as int32 in dense row
+        format. Row ``i`` lists the neighbor atom indices of atom ``i``;
+        unused slots are padded with values ``>= fill_value``. Requires a
+        symmetric neighbor representation (each pair appears in both rows).
+        Mutually exclusive with ``neighbor_list``. Default: None
     neighbor_matrix_shifts : torch.Tensor or None, optional
         Integer unit cell shifts [num_atoms, max_neighbors, 3] as int32 for PBC with
         neighbor_matrix format. If None, non-periodic calculation. If provided along

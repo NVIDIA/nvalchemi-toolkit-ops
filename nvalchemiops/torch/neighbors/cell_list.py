@@ -1762,6 +1762,36 @@ def cell_list(
         Pre-allocated sort-side scratch (shape ``(total_atoms, 3)``).
         Pass both to make the call graph-capture safe.  Allocate via
         :func:`allocate_query_sort_scratch`.  Both or neither.
+    target_indices : torch.Tensor, shape (num_targets,), dtype=torch.int32, optional
+        Restrict central rows to a subset of atom indices.  Output rows are
+        compact and follow ``target_indices`` order; COO source rows remain
+        compact row ids.  User buffers must be compact-row shaped, not full
+        atom-row shaped.
+    return_vectors : bool, default=False
+        Write per-pair displacement vectors into ``neighbor_vectors``.
+    return_distances : bool, default=False
+        Write per-pair scalar distances into ``neighbor_distances``.
+    pair_fn : wp.Function or CompiledPairFn, optional
+        Module-scope Warp ``@wp.func`` of signature
+        ``(r_ij, distance, pair_params, i, j) -> (energy, force)`` evaluated
+        as neighbors are enumerated.  Forward-only (not differentiable).
+    pair_params : torch.Tensor, optional
+        Per-atom parameters forwarded to ``pair_fn``.  Required when
+        ``pair_fn`` is set.
+    neighbor_vectors : torch.Tensor, shape (num_rows, max_neighbors, 3), optional
+        OUTPUT: Pre-allocated per-pair displacement vectors, dtype matching
+        ``positions``. When omitted with ``return_vectors=True``, allocated
+        internally.
+    neighbor_distances : torch.Tensor, shape (num_rows, max_neighbors), optional
+        OUTPUT: Pre-allocated per-pair distances, dtype matching
+        ``positions``. When omitted with ``return_distances=True``, allocated
+        internally.
+    pair_energies : torch.Tensor, shape (num_rows, max_neighbors), optional
+        OUTPUT: Pre-allocated per-pair energies written by ``pair_fn``.  When
+        omitted and ``pair_fn`` is set, allocated internally.
+    pair_forces : torch.Tensor, shape (num_rows, max_neighbors, 3), optional
+        OUTPUT: Pre-allocated per-pair forces written by ``pair_fn``.  When
+        omitted and ``pair_fn`` is set, allocated internally.
 
     Returns
     -------
@@ -1770,6 +1800,11 @@ def cell_list(
 
         - Matrix format (default): ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``
         - List format (return_neighbor_list=True): ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)``
+
+        Requested pair outputs follow the topology tuple in this order:
+        ``neighbor_distances`` when ``return_distances=True``, then
+        ``neighbor_vectors`` when ``return_vectors=True``, then
+        ``(pair_energies, pair_forces)`` when ``pair_fn`` is set.
 
     Notes
     -----

@@ -1948,25 +1948,71 @@ def batch_cluster_tile_neighbor_list(
         cannot be combined with pair-output buffers.
     rebuild_flags : torch.Tensor, shape (num_systems,), dtype=torch.bool, optional
         Per-system selective rebuild flags. Supported for matrix output and
-        segmented COO output.
+        segmented COO output. Across selective calls, callers must retain and
+        reuse ``tile_offsets``, ``tile_counts``, and the complete scratch/tile
+        block triggered by ``sorted_atom_index``. Matrix output additionally
+        requires persistent neighbor matrix/count/shift buffers for every
+        active cutoff. The matrix and COO return tuples do not include the
+        scratch/tile state, so omitting these inputs allocates fresh state and
+        cannot preserve topology for systems that are not rebuilt.
     tile_offsets, tile_counts : torch.Tensor, optional
         Fixed per-system tile offsets and OUTPUT tile counters for segmented
         tile-list state. Use ``estimate_batch_cluster_tile_segments`` to size
-        these arrays.
+        these arrays. Caller-owned persistent buffers are required across
+        selective rebuild calls.
     pair_offsets, pair_counts : torch.Tensor, optional
         Fixed per-system COO offsets and OUTPUT pair counters for segmented
         COO output. Compact COO cannot be combined with ``rebuild_flags``.
     neighbor_matrix, num_neighbors, neighbor_matrix_shifts : torch.Tensor, optional
-        Pre-allocated matrix-format outputs. All-or-nothing across the trio.
+        Pre-allocated matrix-format outputs for the primary cutoff, shapes
+        ``(total_atoms, max_neighbors)``, ``(total_atoms,)``, and
+        ``(total_atoms, max_neighbors, 3)`` respectively, dtype int32.
+        Each omitted buffer is allocated independently. All three must be
+        caller-owned persistent buffers when ``rebuild_flags`` is set so
+        selective rebuild can preserve prior neighbor topology.
+    neighbor_matrix2 : torch.Tensor, shape (total_atoms, max_neighbors), dtype=torch.int32, optional
+        Pre-allocated neighbor indices for the secondary cutoff
+        (``cutoff2``). Allocated independently when omitted. With
+        ``rebuild_flags``, this buffer, ``num_neighbors2``, and
+        ``neighbor_matrix_shifts2`` must all be retained and reused across
+        selective calls.
+    neighbor_matrix_shifts2 : torch.Tensor, shape (total_atoms, max_neighbors, 3), dtype=torch.int32, optional
+        Pre-allocated periodic shift vectors for the secondary cutoff.
+        Allocated independently when omitted.
+    num_neighbors2 : torch.Tensor, shape (total_atoms,), dtype=torch.int32, optional
+        Pre-allocated per-atom neighbor counts for the secondary cutoff.
+        Allocated independently when omitted.
     neighbor_list, neighbor_list_shifts, pair_counter : torch.Tensor, optional
         Pre-allocated COO-format outputs. Shapes ``(2, max_pairs)``,
         ``(max_pairs, 3)``, ``(1,)`` int32. All-or-nothing across the trio.
     inv_cell_batch : torch.Tensor, optional
         Pre-computed inverse cell matrices.
-    sorted_atom_index, sort_inv, sorted_pos_x, sorted_pos_y, sorted_pos_z, batch_idx_sorted, batch_ptr_padded, group_system, group_ptr, group_ctr_*, group_ext_*, num_tiles, tile_row_group, tile_col_group, tile_system : torch.Tensor, optional
+    sorted_atom_index, sort_inv, sorted_pos_x, sorted_pos_y, sorted_pos_z, batch_idx_sorted, batch_ptr_padded, group_system, group_ptr : torch.Tensor, optional
         Pre-allocated scratch buffers (shapes as returned by
         ``allocate_batch_cluster_tile_list``). All-or-nothing: provide
         every scratch tensor or none. The trigger is ``sorted_atom_index``.
+        Retain the complete scratch block across selective rebuild calls.
+    group_ctr_x : torch.Tensor, shape (ngroup_padded,), dtype=float32, optional
+        Pre-allocated group bounding-box centre x-coordinate scratch; written
+        by build.  Part of the all-or-nothing scratch block triggered by
+        ``sorted_atom_index``.
+    group_ctr_y : torch.Tensor, shape (ngroup_padded,), dtype=float32, optional
+        Pre-allocated group bounding-box centre y-coordinate scratch; written
+        by build.
+    group_ctr_z : torch.Tensor, shape (ngroup_padded,), dtype=float32, optional
+        Pre-allocated group bounding-box centre z-coordinate scratch; written
+        by build.
+    group_ext_x : torch.Tensor, shape (ngroup_padded,), dtype=float32, optional
+        Pre-allocated group bounding-box half-extent x scratch; written by build.
+    group_ext_y : torch.Tensor, shape (ngroup_padded,), dtype=float32, optional
+        Pre-allocated group bounding-box half-extent y scratch; written by build.
+    group_ext_z : torch.Tensor, shape (ngroup_padded,), dtype=float32, optional
+        Pre-allocated group bounding-box half-extent z scratch; written by build.
+    num_tiles, tile_row_group, tile_col_group, tile_system : torch.Tensor, optional
+        Pre-allocated tile-list state (shapes as returned by
+        ``allocate_batch_cluster_tile_list``).  Part of the all-or-nothing
+        scratch block triggered by ``sorted_atom_index`` and persistent across
+        selective rebuild calls.
     return_vectors, return_distances : bool, default False
         Write per-pair displacements / scalar distances to
         ``neighbor_vectors`` / ``neighbor_distances``. Matrix format uses
@@ -1991,10 +2037,14 @@ def batch_cluster_tile_neighbor_list(
         Shape depends on ``format``:
 
         - ``"matrix"`` (default): ``(neighbor_matrix, num_neighbors,
-          neighbor_matrix_shifts)``, with optional ``(*, distances)``
-          and/or ``(*, vectors)`` appended when ``return_distances`` /
-          ``return_vectors`` is True, and optional ``(*, pair_energies,
-          pair_forces)`` when ``pair_fn`` is set.
+          neighbor_matrix_shifts)``. When ``cutoff2`` is set, the secondary
+          ``(neighbor_matrix2, num_neighbors2, neighbor_matrix_shifts2)``
+          triple follows the primary triple. On the non-selective path without
+          ``pair_fn``, optional distances and/or vectors are appended when
+          ``return_distances`` / ``return_vectors`` is True. Selective queries
+          and ``pair_fn`` queries instead write requested pair-output buffers
+          in place and return only the topology triple (or dual-cutoff
+          sextuple); ``pair_energies`` and ``pair_forces`` are never appended.
         - ``"coo"``: ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)``
           via the direct ``batch_query_cluster_tile_coo`` path (no
           matrix intermediate). ``neighbor_ptr`` is reconstructed from

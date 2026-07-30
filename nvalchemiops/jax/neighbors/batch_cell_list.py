@@ -1060,6 +1060,19 @@ def batch_build_cell_list(
         Cutoff distance. Default is 5.0.
     max_total_cells : int, optional
         Maximum cells. If None, will be estimated.
+    target_indices : jax.Array, optional
+        Not supported. Raises ``NotImplementedError`` if any partial-list or
+        pair-output kwargs are passed.
+    return_vectors, return_distances : bool, default False
+        Not supported on the build-only path. Raises ``NotImplementedError``.
+    pair_fn : wp.Function, optional
+        Not supported on the build-only path. Raises ``NotImplementedError``.
+    pair_params : jax.Array, optional
+        Not supported on the build-only path. Raises ``NotImplementedError``.
+    neighbor_vectors, neighbor_distances : jax.Array, optional
+        Not supported on the build-only path. Raises ``NotImplementedError``.
+    pair_energies, pair_forces : jax.Array, optional
+        Not supported on the build-only path. Raises ``NotImplementedError``.
 
     Returns
     -------
@@ -1342,6 +1355,28 @@ def batch_query_cell_list(
     target_indices : jax.Array, shape (num_targets,), dtype=int32, optional
         Compact partial-list source rows. Output row ``r`` maps to atom
         ``target_indices[r]``; COO source rows remain compact row ids.
+    rebuild_flags : jax.Array, shape (num_systems,), dtype=bool, optional
+        Per-system selective-rebuild flags. Atoms in system ``s`` are queried
+        only when ``rebuild_flags[s]`` is True; otherwise existing output
+        rows are preserved. Not supported with pair-output kwargs.
+    return_vectors : bool, default False
+        If True, append per-pair displacement vectors to the return tuple.
+        Requires ``graph_mode="none"`` semantics (always true here); not
+        supported with ``rebuild_flags``.
+    return_distances : bool, default False
+        If True, append per-pair scalar distances to the return tuple.
+    pair_fn : wp.Function, optional
+        Inline Warp pair potential for the query step. Requires ``pair_params``.
+    pair_params : jax.Array, shape (total_atoms, K), optional
+        Per-atom parameters forwarded to ``pair_fn``.
+    neighbor_vectors : jax.Array, shape (num_rows, max_neighbors, 3), optional
+        Pre-shaped output buffer for per-pair displacement vectors.
+    neighbor_distances : jax.Array, shape (num_rows, max_neighbors), optional
+        Pre-shaped output buffer for per-pair scalar distances.
+    pair_energies : jax.Array, shape (num_rows, max_neighbors), optional
+        Pre-shaped output buffer for per-pair energies from ``pair_fn``.
+    pair_forces : jax.Array, shape (num_rows, max_neighbors, 3), optional
+        Pre-shaped output buffer for per-pair forces from ``pair_fn``.
 
     Returns
     -------
@@ -1349,9 +1384,11 @@ def batch_query_cell_list(
         Variable-length tuple depending on requested outputs. Matrix outputs use
         ``num_rows`` rows, where ``num_rows`` is ``total_atoms`` normally and
         ``len(target_indices)`` for partial lists. The base return is
-        ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``; optional
-        distance/vector arrays and ``pair_fn`` energy/force arrays are appended
-        in the same order as ``batch_cell_list``.
+        ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``. Requested
+        pair outputs follow in this order: ``neighbor_distances`` when
+        ``return_distances=True``, then ``neighbor_vectors`` when
+        ``return_vectors=True``, then ``(pair_energies, pair_forces)`` when
+        ``pair_fn`` is set.
     """
 
     has_pair_outputs = _has_partial_or_pair_outputs(
@@ -2068,6 +2105,26 @@ def batch_cell_list(
         Accepted for signature parity with Torch; forwarded to
         :func:`batch_query_cell_list`.  JAX always runs the sorted atom-centric
         kernel (this option never branches).
+    target_indices : jax.Array, shape (num_targets,), dtype=int32, optional
+        Compact partial-list source rows. Output row ``r`` maps to atom
+        ``target_indices[r]``; user buffers must be compact-row shaped.
+    return_vectors : bool, default False
+        If True, append per-pair displacement vectors to the return tuple.
+        Enables the autograd pair-geometry path.
+    return_distances : bool, default False
+        If True, append per-pair scalar distances to the return tuple.
+    pair_fn : wp.Function, optional
+        Inline Warp pair potential for the query step. Requires ``pair_params``.
+    pair_params : jax.Array, shape (total_atoms, K), optional
+        Per-atom parameters forwarded to ``pair_fn``.
+    neighbor_vectors : jax.Array, shape (num_rows, max_neighbors, 3), optional
+        Pre-shaped output buffer for per-pair displacement vectors.
+    neighbor_distances : jax.Array, shape (num_rows, max_neighbors), optional
+        Pre-shaped output buffer for per-pair scalar distances.
+    pair_energies : jax.Array, shape (num_rows, max_neighbors), optional
+        Pre-shaped output buffer for per-pair energies from ``pair_fn``.
+    pair_forces : jax.Array, shape (num_rows, max_neighbors, 3), optional
+        Pre-shaped output buffer for per-pair forces from ``pair_fn``.
 
     Returns
     -------
@@ -2087,6 +2144,10 @@ def batch_cell_list(
         If ``return_neighbor_list=True``: ``neighbor_list_shifts`` with shape
         (num_pairs, 3), dtype int32.
         Periodic shift vectors for each neighbor relationship.
+        These three arrays form the base tuple. Requested pair outputs follow
+        in this order: ``neighbor_distances`` when ``return_distances=True``,
+        then ``neighbor_vectors`` when ``return_vectors=True``, then
+        ``(pair_energies, pair_forces)`` when ``pair_fn`` is set.
 
     See Also
     --------

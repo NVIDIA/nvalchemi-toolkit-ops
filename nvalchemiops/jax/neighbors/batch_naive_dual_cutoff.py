@@ -349,6 +349,23 @@ def batch_naive_neighbor_list_dual_cutoff(
         neighbor search. Set to False when positions are already
         wrapped (e.g. by a preceding integration step) to save two
         GPU kernel launches per call.
+    rebuild_flags : jax.Array, shape (num_systems,), dtype=bool, optional
+        Per-system selective-rebuild flags. Atoms in system ``s`` are
+        refilled only when ``rebuild_flags[s]`` is True; both of their
+        neighbor-count arrays are zeroed before the selective kernel runs,
+        while state for unflagged systems is preserved when all prior
+        neighbor-matrix, count, and (for PBC) shift buffers for both cutoffs
+        are passed back. Omitted buffers are freshly allocated and cannot
+        preserve prior state.
+    positions_wrapped_buffer : jax.Array, shape (total_atoms, 3), dtype matches positions, optional
+        Scratch buffer for wrapped positions when ``wrap_positions=True``
+        and PBC is enabled. Allocated internally when None.
+    per_atom_cell_offsets_buffer : jax.Array, shape (total_atoms, 3), dtype=int32, optional
+        Scratch buffer for per-atom cell offsets from the batched wrap
+        kernel. Allocated internally when None.
+    inv_cell_buffer : jax.Array, shape (num_systems, 3, 3), dtype matches positions, optional
+        Precomputed inverse cell matrices for the batched wrap kernel. If
+        None, computed from ``cell`` each call.
 
     Returns
     -------

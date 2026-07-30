@@ -95,6 +95,13 @@ def estimate_max_tiles_per_group(
         Multiplier on the volumetric estimate.
     floor : int, default 256
         Minimum returned value (the historical default).
+
+    Returns
+    -------
+    int
+        Estimated ``max_tiles_per_group`` for compact tile-list capacity
+        planning.  Clamped by ``min(ngroup, ...)`` in downstream capacity
+        formulas.
     """
     ngroup = (int(total_atoms) + TILE_GROUP_SIZE - 1) // TILE_GROUP_SIZE
     if ngroup <= 1:
@@ -440,6 +447,10 @@ def build_cluster_tile_list(
     group_ext_x_buffer, group_ext_y_buffer, group_ext_z_buffer : wp.array, optional
         Caller-owned per-group bbox-extent scratch. Transient buffers are
         allocated when omitted.
+    rebuild_flags : wp.array, shape (1,), dtype=wp.bool, optional
+        Selective-rebuild flag.  When provided, the kernel checks this flag
+        on the GPU and skips work when False (no CPU-GPU sync).  When
+        omitted, the non-selective kernel specialization is launched.
 
     Returns
     -------
@@ -454,6 +465,8 @@ def build_cluster_tile_list(
     -----
     - Thread launch: tiled over ``(ngroup,)`` with ``block_dim=TILE_GROUP_SIZE``.
     - Modifies: ``num_tiles``, ``tile_row_group``, ``tile_col_group``.
+    - When ``rebuild_flags`` is provided, ``num_tiles`` is reset for
+      systems flagged for rebuild before tile enumeration.
     - The caller is responsible for Morton-sorting positions before
       invoking this launcher. See the framework bindings under
       ``nvalchemiops.{jax,torch}.neighbors.cluster_tile`` for the full
@@ -600,6 +613,33 @@ def query_cluster_tile(
         Must be ``wp.float32``.
     device : str
         Warp device string (e.g. ``"cuda:0"``).
+    n_tiles : int, optional
+        Host-synced emitted-tile count used to tighten the launch dimension.
+        When omitted, the launcher uses the full ``tile_row_group`` buffer
+        capacity; surplus blocks early-return inside the kernel when their
+        tile index exceeds ``num_tiles[0]``.
+    cutoff2 : float, optional
+        Second pair cutoff for dual-cutoff matrix output.  When provided,
+        ``neighbor_matrix2``, ``num_neighbors2``, and
+        ``neighbor_matrix_shifts2`` are required.  Cannot be combined with
+        pair-output kwargs (``return_vectors``, ``return_distances``,
+        ``pair_fn``).
+    neighbor_matrix2 : wp.array, shape (natom, max_neighbors2), dtype=wp.int32, optional
+        OUTPUT: second per-atom neighbor matrix for ``cutoff2``.
+    num_neighbors2 : wp.array, shape (natom,), dtype=wp.int32, optional
+        OUTPUT: per-atom neighbor counts for ``cutoff2``.  Caller must zero
+        before launch.
+    neighbor_matrix_shifts2 : wp.array, shape (natom, max_neighbors2, 3), dtype=wp.int32, optional
+        OUTPUT: per-pair periodic shift vectors for ``cutoff2``.
+    rebuild_flags : wp.array, shape (1,), dtype=wp.bool, optional
+        Selective-rebuild flag.  When provided, the kernel checks this flag
+        on the GPU and skips work when False (no CPU-GPU sync).
+    tile_offsets : wp.array, dtype=wp.int32, optional
+        Exclusive prefix offsets into the compact tile buffer.  Must be
+        supplied together with ``tile_counts`` for segmented tile access.
+    tile_counts : wp.array, dtype=wp.int32, optional
+        Emitted-tile counters for segmented tile access.  Must be supplied
+        together with ``tile_offsets``.
     return_vectors : bool, default False
         If True, write per-pair displacement vectors into ``neighbor_vectors``.
     return_distances : bool, default False
@@ -827,6 +867,28 @@ def query_cluster_tile_coo(
         Must be ``wp.float32``.
     device : str
         Warp device string (e.g. ``"cuda:0"``).
+    n_tiles : int, optional
+        Host-synced emitted-tile count used to tighten the launch dimension.
+        When omitted, the launcher uses the full ``tile_row_group`` buffer
+        capacity; surplus blocks early-return inside the kernel when their
+        tile index exceeds ``num_tiles[0]``.
+    rebuild_flags : wp.array, shape (1,), dtype=wp.bool, optional
+        Selective-rebuild flag.  When provided, the kernel checks this flag
+        on the GPU and skips work when False (no CPU-GPU sync).  Selective
+        COO mode requires both ``pair_offsets`` and ``pair_counts``.
+    tile_offsets : wp.array, dtype=wp.int32, optional
+        Exclusive prefix offsets into the compact tile buffer.  Must be
+        supplied together with ``tile_counts`` for segmented tile access.
+    tile_counts : wp.array, dtype=wp.int32, optional
+        Emitted-tile counters for segmented tile access.  Must be supplied
+        together with ``tile_offsets``.
+    pair_offsets : wp.array, dtype=wp.int32, optional
+        Exclusive prefix offsets into the compact COO pair buffer.  Must be
+        supplied together with ``pair_counts`` for segmented COO output.
+    pair_counts : wp.array, dtype=wp.int32, optional
+        Emitted-pair counters for segmented COO output.  Must be supplied
+        together with ``pair_offsets``.  Reset when ``rebuild_flags`` is
+        provided and segmented COO mode is active.
     return_vectors : bool, default False
         If True, write per-pair displacement vectors into ``neighbor_vectors``.
     return_distances : bool, default False
@@ -1019,6 +1081,18 @@ def batch_build_cluster_tile_list(
     group_ext_x_buffer, group_ext_y_buffer, group_ext_z_buffer : wp.array, optional
         Caller-owned per-group bbox-extent scratch. Transient buffers are
         allocated when omitted.
+    rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool, optional
+        Per-system selective-rebuild flags.  When provided together with
+        ``tile_offsets`` and ``tile_counts``, only systems where
+        ``rebuild_flags[i]`` is True are processed; others are skipped on
+        the GPU without CPU sync.
+    tile_offsets : wp.array, shape (num_systems + 1,), dtype=wp.int32, optional
+        Exclusive prefix offsets into the compact tile buffer.  Must be
+        supplied together with ``tile_counts`` for segmented tile output.
+    tile_counts : wp.array, shape (num_systems,), dtype=wp.int32, optional
+        Per-system emitted-tile counters.  Must be supplied together with
+        ``tile_offsets`` for segmented tile output.  Reset for flagged
+        systems when ``rebuild_flags`` is provided.
 
     Returns
     -------
@@ -1036,6 +1110,8 @@ def batch_build_cluster_tile_list(
       ``tile_system``.
     - Pairs are emitted only within the same system; cross-system pairs
       are filtered out.
+    - Selective batched builds require both ``tile_offsets`` and
+      ``tile_counts``.
 
     See Also
     --------
@@ -1193,6 +1269,35 @@ def batch_query_cluster_tile(
         Must be ``wp.float32``.
     device : str
         Warp device string (e.g. ``"cuda:0"``).
+    n_tiles : int, optional
+        Host-synced emitted-tile count used to tighten the launch dimension.
+        When omitted, the launcher uses the full ``tile_row_group`` buffer
+        capacity; surplus blocks early-return inside the kernel when their
+        tile index exceeds ``num_tiles[0]``.
+    cutoff2 : float, optional
+        Second pair cutoff for dual-cutoff matrix output.  When provided,
+        ``neighbor_matrix2``, ``num_neighbors2``, and
+        ``neighbor_matrix_shifts2`` are required.  Cannot be combined with
+        pair-output kwargs (``return_vectors``, ``return_distances``,
+        ``pair_fn``).
+    neighbor_matrix2 : wp.array, shape (natom, max_neighbors2), dtype=wp.int32, optional
+        OUTPUT: second per-atom neighbor matrix for ``cutoff2``.
+    num_neighbors2 : wp.array, shape (natom,), dtype=wp.int32, optional
+        OUTPUT: per-atom neighbor counts for ``cutoff2``.  Caller must zero
+        before launch.
+    neighbor_matrix_shifts2 : wp.array, shape (natom, max_neighbors2, 3), dtype=wp.int32, optional
+        OUTPUT: per-pair periodic shift vectors for ``cutoff2``.
+    rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool, optional
+        Per-system selective-rebuild flags.  When provided together with
+        ``tile_offsets`` and ``tile_counts``, only systems where
+        ``rebuild_flags[i]`` is True are processed; others are skipped on
+        the GPU without CPU sync.
+    tile_offsets : wp.array, shape (num_systems + 1,), dtype=wp.int32, optional
+        Exclusive prefix offsets into the compact tile buffer.  Must be
+        supplied together with ``tile_counts`` for segmented tile access.
+    tile_counts : wp.array, shape (num_systems,), dtype=wp.int32, optional
+        Per-system emitted-tile counters.  Must be supplied together with
+        ``tile_offsets`` for segmented tile access.
     return_vectors : bool, default False
         If True, write per-pair displacement vectors into ``neighbor_vectors``.
     return_distances : bool, default False
@@ -1227,6 +1332,8 @@ def batch_query_cluster_tile(
       :func:`nvalchemiops.neighbors.cell_list.batch_query_cell_list` or
       :func:`nvalchemiops.neighbors.naive.batch_naive_neighbor_matrix`
       instead.
+    - Selective batched matrix queries require both ``tile_offsets`` and
+      ``tile_counts``.
 
     See Also
     --------
@@ -1418,6 +1525,28 @@ def batch_query_cluster_tile_coo(
         Must be ``wp.float32``.
     device : str
         Warp device string (e.g. ``"cuda:0"``).
+    n_tiles : int, optional
+        Host-synced emitted-tile count used to tighten the launch dimension.
+        When omitted, the launcher uses the full ``tile_row_group`` buffer
+        capacity; surplus blocks early-return inside the kernel when their
+        tile index exceeds ``num_tiles[0]``.
+    rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool, optional
+        Per-system selective-rebuild flags.  When provided, selective COO
+        mode requires ``pair_offsets``, ``pair_counts``, ``tile_offsets``,
+        and ``tile_counts``.
+    tile_offsets : wp.array, shape (num_systems + 1,), dtype=wp.int32, optional
+        Exclusive prefix offsets into the compact tile buffer.  Must be
+        supplied together with ``tile_counts`` for segmented tile access.
+    tile_counts : wp.array, shape (num_systems,), dtype=wp.int32, optional
+        Per-system emitted-tile counters.  Must be supplied together with
+        ``tile_offsets`` for segmented tile access.
+    pair_offsets : wp.array, shape (num_systems + 1,), dtype=wp.int32, optional
+        Exclusive prefix offsets into the compact COO pair buffer.  Must be
+        supplied together with ``pair_counts`` for segmented COO output.
+    pair_counts : wp.array, shape (num_systems,), dtype=wp.int32, optional
+        Per-system emitted-pair counters.  Must be supplied together with
+        ``pair_offsets`` for segmented COO output.  Reset for flagged
+        systems when ``rebuild_flags`` is provided.
     return_vectors : bool, default False
         If True, write per-pair displacement vectors into ``neighbor_vectors``.
     return_distances : bool, default False
@@ -1451,6 +1580,8 @@ def batch_query_cluster_tile_coo(
       :func:`nvalchemiops.neighbors.cell_list.batch_query_cell_list` or
       :func:`nvalchemiops.neighbors.naive.batch_naive_neighbor_matrix`
       instead.
+    - Selective batched COO queries require ``pair_offsets``,
+      ``pair_counts``, ``tile_offsets``, and ``tile_counts``.
 
     See Also
     --------

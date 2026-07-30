@@ -1696,6 +1696,14 @@ def batch_cell_list(
         Value to use for padding empty neighbor slots in the matrix. Default is total_atoms.
     return_neighbor_list : bool, optional - default=False
         If True, convert the neighbor matrix to a neighbor list (idx_i, idx_j) format.
+    neighbor_matrix : torch.Tensor, shape (num_rows, max_neighbors), dtype=torch.int32, optional
+        Pre-allocated neighbor indices.  ``num_rows`` is ``total_atoms``
+        normally and ``len(target_indices)`` when partial rows are requested.
+        When omitted, allocated internally.
+    neighbor_matrix_shifts : torch.Tensor, shape (num_rows, max_neighbors, 3), dtype=torch.int32, optional
+        Pre-allocated periodic shift vectors.  When omitted, allocated internally.
+    num_neighbors : torch.Tensor, shape (num_rows,), dtype=torch.int32, optional
+        Pre-allocated per-atom neighbor counts.  When omitted, allocated internally.
     cells_per_dimension : torch.Tensor, shape (num_systems, 3), dtype=int32, optional
         Pre-allocated tensor for cell dimensions.
     neighbor_search_radius : torch.Tensor, shape (num_systems, 3), dtype=int32, optional
@@ -1720,11 +1728,53 @@ def batch_cell_list(
         non-rebuilt systems entirely on the GPU (no CPU-GPU sync). When this is used,
         pre-allocated ``neighbor_matrix`` and ``num_neighbors`` tensors must be provided
         and will not be globally zeroed - only rebuilt-system entries are reset.
+    strategy : {"auto", "atom_centric", "pair_centric"}, default "auto"
+        Cell-list query kernel selection.  Both strategies return identical
+        pair sets; per-row ordering inside ``neighbor_matrix`` differs.
+        See :func:`nvalchemiops.neighbors.cell_list.select_batch_cell_list_strategy`
+        for the ``"auto"`` rule.  Pair-centric is CUDA-only.
+    atom_centric_path : {"auto", "direct", "sorted"}, default "auto"
+        Atom-centric implementation path.  ``"auto"`` resolves to ``"direct"``.
+    target_indices : torch.Tensor, shape (num_targets,), dtype=torch.int32, optional
+        Restrict central rows to a subset of atom indices.  Output rows are
+        compact and follow ``target_indices`` order; COO source rows remain
+        compact row ids.  User buffers must be compact-row shaped, not full
+        atom-row shaped.
+    return_vectors : bool, default=False
+        Write per-pair displacement vectors into ``neighbor_vectors``.
+    return_distances : bool, default=False
+        Write per-pair scalar distances into ``neighbor_distances``.
+    pair_fn : wp.Function or CompiledPairFn, optional
+        Module-scope Warp ``@wp.func`` of signature
+        ``(r_ij, distance, pair_params, i, j) -> (energy, force)`` evaluated
+        as neighbors are enumerated.  Forward-only (not differentiable).
+    pair_params : torch.Tensor, optional
+        Per-atom parameters forwarded to ``pair_fn``.  Required when
+        ``pair_fn`` is set.
+    neighbor_vectors : torch.Tensor, shape (num_rows, max_neighbors, 3), optional
+        OUTPUT: Pre-allocated per-pair displacement vectors, dtype matching
+        ``positions``.  When omitted and ``return_vectors=True``, allocated
+        internally.
+    neighbor_distances : torch.Tensor, shape (num_rows, max_neighbors), optional
+        OUTPUT: Pre-allocated per-pair distances, dtype matching ``positions``.
+        When omitted and ``return_distances=True``, allocated internally.
+    pair_energies : torch.Tensor, shape (num_rows, max_neighbors), optional
+        OUTPUT: Pre-allocated per-pair energies written by ``pair_fn``.  When
+        omitted and ``pair_fn`` is set, allocated internally.
+    pair_forces : torch.Tensor, shape (num_rows, max_neighbors, 3), optional
+        OUTPUT: Pre-allocated per-pair forces written by ``pair_fn``.  When
+        omitted and ``pair_fn`` is set, allocated internally.
 
     Returns
     -------
     results : tuple of torch.Tensor
-        Variable-length tuple with neighbor data in matrix or list format.
+        Variable-length tuple. The base is ``(neighbor_matrix, num_neighbors,
+        neighbor_matrix_shifts)`` in matrix format or ``(neighbor_list,
+        neighbor_ptr, neighbor_list_shifts)`` in list format. Requested pair
+        outputs follow in this order: ``neighbor_distances`` when
+        ``return_distances=True``, then ``neighbor_vectors`` when
+        ``return_vectors=True``, then ``(pair_energies, pair_forces)`` when
+        ``pair_fn`` is set.
 
     See Also
     --------
