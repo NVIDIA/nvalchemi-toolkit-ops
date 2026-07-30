@@ -19,13 +19,35 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
-from nvalchemiops.jax.neighbors import naive_neighbor_list_dual_cutoff
+from nvalchemiops.jax.neighbors import (
+    naive_neighbor_list,
+    naive_neighbor_list_dual_cutoff,
+)
 
 from .conftest import create_simple_cubic_system_jax, requires_gpu
 
 pytestmark = requires_gpu
+
+
+def _active_neighbor_shift_rows(
+    neighbor_matrix: jax.Array,
+    shifts: jax.Array,
+    counts: jax.Array,
+    atom_index: int,
+) -> list[tuple[int, int, int, int]]:
+    """Return sorted active ``(neighbor, sx, sy, sz)`` rows for one atom."""
+    count = int(np.asarray(counts[atom_index]))
+    rows = np.concatenate(
+        (
+            np.asarray(neighbor_matrix[atom_index, :count])[:, None],
+            np.asarray(shifts[atom_index, :count]),
+        ),
+        axis=1,
+    )
+    return sorted(tuple(row) for row in rows.tolist())
 
 
 class TestNaiveDualCutoffCorrectness:
@@ -118,6 +140,92 @@ class TestNaiveDualCutoffCorrectness:
         assert jnp.all(num_neighbors1 >= 0)
         assert jnp.all(num_neighbors2 >= 0)
         assert jnp.all(num_neighbors2 >= num_neighbors1)
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    @pytest.mark.parametrize(
+        "wrap_kwargs",
+        [
+            pytest.param({}, id="default_wrapped"),
+            pytest.param({"wrap_positions": False}, id="prewrapped"),
+        ],
+    )
+    def test_pbc_wrap_modes_match_single_cutoff(
+        self,
+        dtype,
+        wrap_kwargs,
+    ):
+        """Both PBC wrap modes match independent single-cutoff results."""
+        positions, cell, pbc = create_simple_cubic_system_jax(
+            num_atoms=8,
+            cell_size=2.0,
+            dtype=dtype,
+        )
+        cutoff1 = 1.1
+        cutoff2 = 1.5
+        max_neighbors1 = 15
+        max_neighbors2 = 25
+
+        (
+            neighbor_matrix1,
+            num_neighbors1,
+            neighbor_matrix_shifts1,
+            neighbor_matrix2,
+            num_neighbors2,
+            neighbor_matrix_shifts2,
+        ) = naive_neighbor_list_dual_cutoff(
+            positions,
+            cutoff1=cutoff1,
+            cutoff2=cutoff2,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors1=max_neighbors1,
+            max_neighbors2=max_neighbors2,
+            **wrap_kwargs,
+        )
+        reference1 = naive_neighbor_list(
+            positions,
+            cutoff=cutoff1,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=max_neighbors1,
+            **wrap_kwargs,
+        )
+        reference2 = naive_neighbor_list(
+            positions,
+            cutoff=cutoff2,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=max_neighbors2,
+            **wrap_kwargs,
+        )
+
+        assert jnp.any(num_neighbors1 > 0)
+        assert jnp.any(num_neighbors2 > 0)
+        assert jnp.array_equal(num_neighbors1, reference1[1])
+        assert jnp.array_equal(num_neighbors2, reference2[1])
+        for atom_index in range(positions.shape[0]):
+            assert _active_neighbor_shift_rows(
+                neighbor_matrix1,
+                neighbor_matrix_shifts1,
+                num_neighbors1,
+                atom_index,
+            ) == _active_neighbor_shift_rows(
+                reference1[0],
+                reference1[2],
+                reference1[1],
+                atom_index,
+            )
+            assert _active_neighbor_shift_rows(
+                neighbor_matrix2,
+                neighbor_matrix_shifts2,
+                num_neighbors2,
+                atom_index,
+            ) == _active_neighbor_shift_rows(
+                reference2[0],
+                reference2[2],
+                reference2[1],
+                atom_index,
+            )
 
 
 class TestNaiveDualCutoffEdgeCases:

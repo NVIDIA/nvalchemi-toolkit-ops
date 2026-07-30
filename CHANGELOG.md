@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Unbatched JAX naive dual-cutoff PBC neighbor lists now populate both cutoff
+  outputs when using the default `wrap_positions=True`. Previously this path
+  wrapped positions but skipped the fill kernel, leaving zero counts and padded
+  matrices.
+
 ## 0.4.0 - 2026-07-13
 
 ### Added

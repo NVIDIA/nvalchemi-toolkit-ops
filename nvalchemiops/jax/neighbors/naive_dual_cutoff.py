@@ -614,6 +614,79 @@ def naive_neighbor_list_dual_cutoff(
                 per_atom_cell_offsets,
                 launch_dims=(total_atoms,),
             )
+            if rebuild_flags is not None:
+                rf = rebuild_flags.flatten()[:1].astype(jnp.bool_)
+                num_neighbors1 = jnp.where(
+                    rf[0], jnp.zeros_like(num_neighbors1), num_neighbors1
+                )
+                num_neighbors2 = jnp.where(
+                    rf[0], jnp.zeros_like(num_neighbors2), num_neighbors2
+                )
+                (
+                    neighbor_matrix1,
+                    neighbor_matrix_shifts1,
+                    num_neighbors1,
+                    neighbor_matrix2,
+                    neighbor_matrix_shifts2,
+                    num_neighbors2,
+                ) = _jax_fill_pbc_selective(
+                    positions_wrapped,
+                    per_atom_cell_offsets,
+                    float(cutoff1 * cutoff1),
+                    float(cutoff2 * cutoff2),
+                    cell,
+                    shift_range_per_dimension,
+                    empty_num_shifts,
+                    empty_batch_idx,
+                    empty_batch_ptr,
+                    empty_target_indices,
+                    neighbor_matrix1,
+                    neighbor_matrix_shifts1,
+                    num_neighbors1,
+                    neighbor_matrix2,
+                    neighbor_matrix_shifts2,
+                    num_neighbors2,
+                    empty_vectors,
+                    empty_distances,
+                    empty_pair_params,
+                    empty_energies,
+                    empty_forces,
+                    rf,
+                    launch_dims=(1, max_shifts_per_system, total_atoms),
+                )
+            else:
+                (
+                    neighbor_matrix1,
+                    neighbor_matrix_shifts1,
+                    num_neighbors1,
+                    neighbor_matrix2,
+                    neighbor_matrix_shifts2,
+                    num_neighbors2,
+                ) = _jax_fill_pbc(
+                    positions_wrapped,
+                    per_atom_cell_offsets,
+                    float(cutoff1 * cutoff1),
+                    float(cutoff2 * cutoff2),
+                    cell,
+                    shift_range_per_dimension,
+                    empty_num_shifts,
+                    empty_batch_idx,
+                    empty_batch_ptr,
+                    empty_target_indices,
+                    neighbor_matrix1,
+                    neighbor_matrix_shifts1,
+                    num_neighbors1,
+                    neighbor_matrix2,
+                    neighbor_matrix_shifts2,
+                    num_neighbors2,
+                    empty_vectors,
+                    empty_distances,
+                    empty_pair_params,
+                    empty_energies,
+                    empty_forces,
+                    empty_rebuild_flags,
+                    launch_dims=(1, max_shifts_per_system, total_atoms),
+                )
         else:
             if rebuild_flags is not None:
                 rf = rebuild_flags.flatten()[:1].astype(jnp.bool_)
