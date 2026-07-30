@@ -50,37 +50,22 @@ from nvalchemiops.neighbors.neighbor_utils import (
 # wrap-position kernels remain eager because they are not factory direct wrappers.
 
 
-def _direct_batch_naive_kernel_registrations(
-    *,
-    pbc_mode: str,
-    selective: bool = False,
-    half_fill: bool = False,
-    partial: bool = False,
-    geometry: bool = False,
-):
-    """Build lazy direct registrations for one batched naive specialization."""
-    return _lazy_naive_kernel(
+_DIRECT_BATCH_NAIVE_KERNELS = {
+    (pbc_mode, selective, half_fill): _lazy_naive_kernel(
         operation="single_cutoff",
         batched=True,
         pbc_mode=pbc_mode,
         selective=selective,
-        partial=partial,
         half_fill=half_fill,
-        geometry=geometry,
-        pair_fn=None,
-    )
-
-
-_DIRECT_BATCH_NAIVE_KERNELS = {
-    (pbc_mode, selective, half_fill): _direct_batch_naive_kernel_registrations(
-        pbc_mode=pbc_mode, selective=selective, half_fill=half_fill
     )
     for pbc_mode in ("none", "wrap_on_entry", "prewrapped")
     for selective in (False, True)
     for half_fill in (False, True)
 }
 _DIRECT_BATCH_NAIVE_GEOMETRY_KERNELS = {
-    (pbc_mode, half_fill): _direct_batch_naive_kernel_registrations(
+    (pbc_mode, half_fill): _lazy_naive_kernel(
+        operation="single_cutoff",
+        batched=True,
         pbc_mode=pbc_mode,
         half_fill=half_fill,
         geometry=True,

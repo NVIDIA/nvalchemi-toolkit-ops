@@ -82,37 +82,22 @@ _DTYPE_TO_NAIVE_KERNELS = (wp.float32, wp.float64)
 # build_naive_kernel_tables tables below remain for GraphMode.WARP callbacks.
 
 
-def _direct_naive_kernel_registrations(
-    *,
-    pbc_mode: str,
-    selective: bool = False,
-    half_fill: bool = False,
-    partial: bool = False,
-    geometry: bool = False,
-):
-    """Build lazy direct registrations for one static naive specialization."""
-    return _lazy_naive_kernel(
+_DIRECT_NAIVE_KERNELS = {
+    (pbc_mode, selective, half_fill): _lazy_naive_kernel(
         operation="single_cutoff",
         batched=False,
         pbc_mode=pbc_mode,
         selective=selective,
-        partial=partial,
         half_fill=half_fill,
-        geometry=geometry,
-        pair_fn=None,
-    )
-
-
-_DIRECT_NAIVE_KERNELS = {
-    (pbc_mode, selective, half_fill): _direct_naive_kernel_registrations(
-        pbc_mode=pbc_mode, selective=selective, half_fill=half_fill
     )
     for pbc_mode in ("none", "wrap_on_entry", "prewrapped")
     for selective in (False, True)
     for half_fill in (False, True)
 }
 _DIRECT_NAIVE_GEOMETRY_KERNELS = {
-    (pbc_mode, half_fill): _direct_naive_kernel_registrations(
+    (pbc_mode, half_fill): _lazy_naive_kernel(
+        operation="single_cutoff",
+        batched=False,
         pbc_mode=pbc_mode,
         half_fill=half_fill,
         geometry=True,

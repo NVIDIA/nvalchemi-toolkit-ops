@@ -32,20 +32,12 @@ from nvalchemiops.neighbors.neighbor_utils import (
     get_wrap_positions_kernel,
 )
 
-
-def _direct_dual_registrations(*, pbc_mode: str, selective: bool = False):
-    """Build lazy direct registrations for one dual-cutoff specialization."""
-    return _lazy_naive_kernel(
+_DIRECT_NAIVE_DUAL_KERNELS = {
+    (pbc_mode, selective): _lazy_naive_kernel(
         operation="dual_cutoff",
         batched=False,
         pbc_mode=pbc_mode,
         selective=selective,
-    )
-
-
-_DIRECT_NAIVE_DUAL_KERNELS = {
-    (pbc_mode, selective): _direct_dual_registrations(
-        pbc_mode=pbc_mode, selective=selective
     )
     for pbc_mode in ("none", "wrap_on_entry", "prewrapped")
     for selective in (False, True)
