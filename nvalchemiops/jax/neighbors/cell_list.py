@@ -375,6 +375,10 @@ __all__ = [
     "estimate_cell_list_sizes",
 ]
 
+ADAPTIVE_MIN_CELLS = 4
+_DEFAULT_CELL_LIST_BUFFER_FACTOR = 1.5
+_MAX_ADAPTIVE_PROMOTION_STEPS = 8
+
 
 def _reset_query_outputs(
     neighbor_matrix,
@@ -386,6 +390,61 @@ def _reset_query_outputs(
     neighbor_matrix.fill_(fill_value)
     num_neighbors.zero_()
     neighbor_matrix_shifts.zero_()
+
+
+def _derive_neighbor_search_radius(
+    cell: jax.Array,
+    pbc: jax.Array,
+    cutoff: float,
+    cells_per_dimension: jax.Array,
+) -> jax.Array:
+    """Derive per-axis cell search radii from the realized cell grid."""
+    is_single = cells_per_dimension.ndim == 1
+    cell_batch = cell[jnp.newaxis, ...] if cell.ndim == 2 else cell
+    pbc_batch = pbc[jnp.newaxis, ...] if pbc.ndim == 1 else pbc
+    cpd_batch = (
+        cells_per_dimension[jnp.newaxis, ...] if is_single else cells_per_dimension
+    )
+    inverse_cell_transpose = jnp.swapaxes(
+        jnp.linalg.inv(cell_batch),
+        -1,
+        -2,
+    )
+    face_distances = 1.0 / jnp.linalg.norm(inverse_cell_transpose, axis=-1)
+    ratio = (
+        jnp.asarray(cutoff, dtype=face_distances.dtype)
+        * cpd_batch.astype(face_distances.dtype)
+        / face_distances
+    )
+    radius = jnp.ceil(ratio).astype(jnp.int32)
+    radius = jnp.where(
+        (cpd_batch == 1) & ~pbc_batch.astype(jnp.bool_),
+        jnp.int32(0),
+        radius,
+    )
+    return radius[0] if is_single else radius
+
+
+def _derive_promoted_cells_per_dimension(
+    cell: jax.Array,
+    pbc: jax.Array,
+    cutoff: float,
+) -> jax.Array:
+    """Derive uncapped promoted grids for one or more cell geometries."""
+    inverse_cell_transpose = jnp.swapaxes(jnp.linalg.inv(cell), -1, -2)
+    face_distances = 1.0 / jnp.linalg.norm(inverse_cell_transpose, axis=-1)
+    cells_per_dimension = jnp.maximum(
+        (face_distances / cutoff).astype(jnp.int32),
+        1,
+    )
+    promote_mask = pbc.astype(jnp.bool_) | (cells_per_dimension > 1)
+    for _ in range(_MAX_ADAPTIVE_PROMOTION_STEPS):
+        cells_per_dimension = jnp.where(
+            promote_mask & (cells_per_dimension < ADAPTIVE_MIN_CELLS),
+            cells_per_dimension * 2,
+            cells_per_dimension,
+        )
+    return cells_per_dimension
 
 
 def _is_cpu_array(array: jax.Array) -> bool:
@@ -1655,7 +1714,7 @@ def estimate_cell_list_sizes(
     cell: jax.Array,
     cutoff: float,
     pbc: jax.Array | None = None,
-    buffer_factor: float = 1.5,
+    buffer_factor: float = _DEFAULT_CELL_LIST_BUFFER_FACTOR,
 ) -> tuple[int, jax.Array, jax.Array]:
     """Estimate required cell list sizes based on atomic density.
 
@@ -1715,35 +1774,14 @@ def estimate_cell_list_sizes(
     num_cells_est = jnp.int32(volume / cell_volume * buffer_factor)
     max_total_cells = jnp.max(jnp.array([num_cells_est, 8]))  # Minimum 8 cells
 
-    # Compute cells_per_dimension and neighbor_search_radius from cell geometry,
-    # mirroring the Warp _estimate_cell_list_sizes kernel used by the Torch
-    # path: natural cell count, ADAPTIVE_MIN_CELLS=4 promotion on PBC axes,
-    # halve-to-fit when total cells > max_total_cells, then compute
-    # neighbor_search_radius against the FINAL cells_per_dimension.
-    inverse_cell_transpose = jnp.linalg.inv(cell[0]).T
-    face_distances = 1.0 / jnp.linalg.norm(inverse_cell_transpose, axis=1)
-    cells_per_dimension = jnp.maximum(jnp.int32(face_distances / cutoff), 1)
-
     pbc_squeezed = pbc.squeeze()[:3] if pbc.ndim > 1 else pbc[:3]
-
-    # ADAPTIVE_MIN_CELLS=4: promote each PBC axis (or any axis already > 1)
-    # up to at least 4 cells so the atom-centric query has enough cell-level
-    # parallelism.  Open axes with a single cell are left alone.
-    ADAPTIVE_MIN_CELLS = 4
-    promote_mask = pbc_squeezed | (cells_per_dimension > 1)
-    # Bit-trick: smallest power-of-2 multiplier that brings cells_per_dim
-    # to >= ADAPTIVE_MIN_CELLS.  At cells_per_dim=1 -> multiplier=4; at 2 ->
-    # 2; at >= 4 -> 1.
-    needed_mult = jnp.where(
-        cells_per_dimension >= ADAPTIVE_MIN_CELLS,
-        1,
-        ADAPTIVE_MIN_CELLS // jnp.maximum(cells_per_dimension, 1),
-    )
-    cells_per_dimension = jnp.where(
-        promote_mask,
-        cells_per_dimension * needed_mult,
-        cells_per_dimension,
-    )
+    # Match Warp's natural-grid calculation and repeated-doubling promotion,
+    # then apply the single-system capacity clamp below.
+    cells_per_dimension = _derive_promoted_cells_per_dimension(
+        cell,
+        pbc,
+        cutoff,
+    )[0]
 
     # Halve-to-fit: if total cells exceeds max_total_cells, halve each axis
     # (floor with min=1) repeatedly until total <= max.  Mirrors the kernel's
@@ -1758,10 +1796,11 @@ def estimate_cell_list_sizes(
     for _ in range(16):
         cells_per_dimension = _halve_to_fit(cells_per_dimension)
 
-    neighbor_search_radius = jnp.where(
-        (cells_per_dimension == 1) & ~pbc_squeezed,
-        jnp.zeros(3, dtype=jnp.int32),
-        jnp.int32(jnp.ceil(cutoff * cells_per_dimension / face_distances)),
+    neighbor_search_radius = _derive_neighbor_search_radius(
+        cell,
+        pbc_squeezed,
+        cutoff,
+        cells_per_dimension,
     )
 
     return max_total_cells, cells_per_dimension, neighbor_search_radius
@@ -2056,9 +2095,11 @@ def build_cell_list(
     pbc : jax.Array, shape (3,) or (1, 3), dtype=bool
         Periodic boundary condition flags.
     cells_per_dimension : jax.Array, shape (3,), dtype=int32, optional
-        OUTPUT: Number of cells in x, y, z directions. If None, allocated.
+        OUTPUT: Number of cells in x, y, z directions. If None, an output
+        buffer is allocated and populated with the constructed grid.
     neighbor_search_radius : jax.Array, shape (3,), dtype=int32, optional
-        Search radius in neighboring cells. If None, allocated.
+        Search radius in neighboring cells. If None, it is derived from the
+        constructed grid and cell face distances after construction.
     atom_periodic_shifts : jax.Array, shape (total_atoms, 3), dtype=int32, optional
         OUTPUT: Periodic boundary crossings for each atom. If None, allocated.
     atom_to_cell_mapping : jax.Array, shape (total_atoms, 3), dtype=int32, optional
@@ -2094,6 +2135,10 @@ def build_cell_list(
     When calling inside ``jax.jit``, ``max_total_cells`` **must** be provided
     to avoid calling ``estimate_cell_list_sizes``, which is not JIT-compatible.
 
+    The constructed grid may differ from the initial output buffer because
+    capacity can reduce it. When ``neighbor_search_radius`` is omitted, this
+    function derives it from that realized grid before returning.
+
     ``graph_mode="warp"`` uses a fused ``jax_callable`` that captures the full
     Warp-side build sequence. For replay-friendly usage inside ``jax.jit``,
     donate and reuse the optional cell-list buffers.
@@ -2126,15 +2171,10 @@ def build_cell_list(
     if pbc.ndim == 1:
         pbc = pbc[jnp.newaxis, :]
 
+    derive_radius = neighbor_search_radius is None
+
     if max_total_cells is None:
-        max_total_cells, _, neighbor_search_radius_est = estimate_cell_list_sizes(
-            positions, cell, cutoff, pbc
-        )
-        if neighbor_search_radius is None:
-            neighbor_search_radius = neighbor_search_radius_est
-    else:
-        if neighbor_search_radius is None:
-            neighbor_search_radius = jnp.ones(3, dtype=jnp.int32)
+        max_total_cells, _, _ = estimate_cell_list_sizes(positions, cell, cutoff, pbc)
 
     # Allocate cell list tensors if not provided
     if cells_per_dimension is None:
@@ -2255,6 +2295,14 @@ def build_cell_list(
             cell_atom_start_indices,
             cell_atom_list,
             launch_dims=(total_atoms,),
+        )
+
+    if derive_radius:
+        neighbor_search_radius = _derive_neighbor_search_radius(
+            cell,
+            pbc_bool,
+            cutoff,
+            cells_per_dimension,
         )
 
     return (
@@ -2910,7 +2958,14 @@ def cell_list(
     max_neighbors : int, optional
         Maximum number of neighbors per atom. If None, will be estimated.
     max_total_cells : int, optional
-        Maximum number of cells to allocate. If None, will be estimated.
+        Maximum number of cells to allocate. If None, it will be estimated.
+        With ``graph_mode="warp"``, an explicit value requires an explicit
+        ``neighbor_search_radius`` because the fused query cannot inspect the
+        constructed grid between build and query.
+    neighbor_search_radius : jax.Array, shape (3,), dtype=int32, optional
+        Per-axis search radius. Normal build/query paths derive it from the
+        realized grid when omitted. Provide it when ``graph_mode="warp"`` and
+        ``max_total_cells`` is explicit.
     return_neighbor_list : bool, optional
         If True, convert result to COO neighbor list format. Default is False.
     strategy : {"auto", "atom_centric", "pair_centric"}, default "auto"
@@ -2931,7 +2986,9 @@ def cell_list(
     graph_mode : {"none", "warp"}, default="none"
         Execution mode for the underlying Warp launches. ``"warp"`` is
         intended for jitted call sites that donate and reuse the optional
-        cell-list caches and output buffers.
+        cell-list caches and output buffers. When combined with explicit
+        ``max_total_cells``, it requires a concrete
+        ``neighbor_search_radius`` because build and query are fused.
 
     Returns
     -------
@@ -3087,10 +3144,14 @@ def cell_list(
         max_total_cells, _, neighbor_search_radius_est = estimate_cell_list_sizes(
             positions, cell, cutoff, pbc
         )
-        if neighbor_search_radius is None:
+        if neighbor_search_radius is None and graph_mode == "warp":
             neighbor_search_radius = neighbor_search_radius_est
-    elif neighbor_search_radius is None:
-        neighbor_search_radius = jnp.ones(3, dtype=jnp.int32)
+    elif graph_mode == "warp" and neighbor_search_radius is None:
+        raise ValueError(
+            "neighbor_search_radius must be provided when graph_mode='warp' "
+            "and max_total_cells is set because the fused query needs concrete "
+            "search metadata before the build result is available."
+        )
 
     if cells_per_dimension is None:
         cells_per_dimension = jnp.ones(3, dtype=jnp.int32)
