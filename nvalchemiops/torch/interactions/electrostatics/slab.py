@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 import torch
 import warp as wp
 
@@ -37,6 +39,8 @@ from nvalchemiops.torch.interactions.electrostatics._slab_chain import (
 )
 from nvalchemiops.torch.interactions.electrostatics._util import (
     _build_electrostatic_result,
+    _reduce_atom_energy,
+    _validate_energy_reduction,
 )
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
@@ -369,15 +373,18 @@ def compute_slab_correction(
     compute_forces: bool = False,
     compute_charge_gradients: bool = False,
     compute_virial: bool = False,
+    *,
+    energy_reduction: Literal["atom", "system"] = "atom",
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
     """Yeh-Berkowitz slab correction for 2D periodic electrostatics, with the
     Ballenegger et al. (2009) Eq. 29 extension for non-neutral systems.
 
-    Returns the slab-correction contribution (per-atom energy and optionally
-    per-atom force, charge gradient, and per-system virial). The caller adds
-    these to the corresponding 3D Ewald/PME quantities; in normal usage the
-    correction is invoked through ``ewald_summation(..., slab_correction=True)``
-    or ``particle_mesh_ewald(..., slab_correction=True)``.
+    Returns the slab-correction contribution (energy in the requested atom/system
+    layout and optionally per-atom force, charge gradient, and per-system virial).
+    The caller adds these to the corresponding 3D Ewald/PME quantities; in normal
+    usage the correction is invoked through
+    ``ewald_summation(..., slab_correction=True)`` or
+    ``particle_mesh_ewald(..., slab_correction=True)``.
 
     Background-charge convention
     ----------------------------
@@ -417,11 +424,14 @@ def compute_slab_correction(
     compute_virial : bool, default=False
         If True, return per-system virial tensor using the normal-following
         affine strain convention W = E_slab * (I - 2 n n^T).
+    energy_reduction : {"atom", "system"}, default="atom"
+        Return per-atom energies ``(N,)`` or summed per-system energies ``(B,)``.
 
     Returns
     -------
-    energies : torch.Tensor, shape (N,), dtype=float64
-        Per-atom slab correction energy.
+    energies : torch.Tensor, shape (N,) or (B,), dtype=float64
+        Slab correction energy: per-atom when ``energy_reduction="atom"``,
+        per-system when ``energy_reduction="system"``.
     forces : torch.Tensor, shape (N, 3), dtype matches positions, optional
         Per-atom slab force (only returned if compute_forces=True).
     charge_grads : torch.Tensor, shape (N,), dtype=float64, optional
@@ -445,6 +455,7 @@ def compute_slab_correction(
         ...     positions, charges, triclinic_cell, pbc_slab, compute_forces=True
         ... )
     """
+    _validate_energy_reduction(energy_reduction)
     ensure_electrostatics_ops_registered()
     cell, num_systems = _prepare_cell(cell)
     pbc = _prepare_pbc_for_slab(pbc, num_systems, positions.device)
@@ -480,8 +491,15 @@ def compute_slab_correction(
         virial = direct_outputs[out_idx] if compute_virial else None
         if grad_enabled:
             energies = _slab_correction_energy_autograd(
-                positions, charges, cell, pbc, batch_idx
+                positions,
+                charges,
+                cell,
+                pbc,
+                batch_idx,
+                energy_reduction == "system",
             )
+        elif energy_reduction == "system":
+            energies = _reduce_atom_energy(energies, batch_idx, num_systems)
         return _build_electrostatic_result(
             energies,
             forces,
@@ -493,6 +511,16 @@ def compute_slab_correction(
         )
 
     if not grad_enabled:
-        return _run_slab_correction_op(positions, charges, cell, pbc, batch_idx)[0]
+        energies = _run_slab_correction_op(positions, charges, cell, pbc, batch_idx)[0]
+        if energy_reduction == "system":
+            energies = _reduce_atom_energy(energies, batch_idx, num_systems)
+        return energies
 
-    return _slab_correction_energy_autograd(positions, charges, cell, pbc, batch_idx)
+    return _slab_correction_energy_autograd(
+        positions,
+        charges,
+        cell,
+        pbc,
+        batch_idx,
+        energy_reduction == "system",
+    )

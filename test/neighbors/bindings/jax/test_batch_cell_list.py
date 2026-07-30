@@ -1844,3 +1844,173 @@ class TestJaxBatchCellListAutograd:
                 max_neighbors=8,
                 pair_params=jnp.ones((pos.shape[0], 1), dtype=pos.dtype),
             )
+
+
+class TestRegistrationLaziness:
+    """Test public batched cell-list registration cache materialization."""
+
+    @staticmethod
+    def _registrations():
+        """Return every lazy batched cell-list registration."""
+        return tuple(
+            registration
+            for registrations in (
+                batch_cell_list_module._BATCH_CELL_LIST_BUILD_REGISTRATIONS,
+                batch_cell_list_module._BATCH_CELL_LIST_QUERY_REGISTRATIONS,
+            )
+            for registration in registrations.values()
+        )
+
+    @pytest.fixture(autouse=True)
+    def _restore_registration_caches(self):
+        """Restore process-global registration caches after each laziness test."""
+        snapshots = [
+            (registration, dict(registration._cache))
+            for registration in self._registrations()
+        ]
+        try:
+            yield
+        finally:
+            for registration, cache in snapshots:
+                registration._cache.clear()
+                registration._cache.update(cache)
+
+    def _clear_registration_caches(self) -> None:
+        """Clear lazy batched cell-list registration caches before assertions."""
+        for registration in self._registrations():
+            registration._cache.clear()
+
+    @staticmethod
+    def _inputs(dtype=jnp.float32):
+        """Return a two-system public batch-cell-list input."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+            ],
+            dtype=dtype,
+        )
+        return (
+            positions,
+            jnp.array([0, 0, 1, 1], dtype=jnp.int32),
+            jnp.array([0, 2, 4], dtype=jnp.int32),
+            jnp.broadcast_to(jnp.eye(3, dtype=dtype), (2, 3, 3)),
+            jnp.ones((2, 3), dtype=jnp.bool_),
+        )
+
+    def test_atom_centric_populates_selected_registries(self) -> None:
+        """Public batch dispatch materializes only its required wrappers."""
+        self._clear_registration_caches()
+        positions, batch_idx, batch_ptr, cell, pbc = self._inputs()
+
+        _neighbor_matrix, num_neighbors, _shifts = batch_cell_list(
+            positions,
+            1.0,
+            cell,
+            pbc,
+            batch_idx,
+            batch_ptr,
+            max_neighbors=4,
+            max_total_cells=8,
+            strategy="atom_centric",
+        )
+
+        assert int(num_neighbors.sum()) > 0
+        assert {
+            stage
+            for stage, registration in batch_cell_list_module._BATCH_CELL_LIST_BUILD_REGISTRATIONS.items()
+            if len(registration._cache) == 1
+        } == {
+            "construct_bin_size",
+            "count_atoms",
+            "bin_atoms",
+            "cells_per_system",
+            "gather",
+        }
+        assert {
+            key
+            for key, registration in batch_cell_list_module._BATCH_CELL_LIST_QUERY_REGISTRATIONS.items()
+            if len(registration._cache) == 1
+        } == {(False, False)}
+
+    def test_pair_centric_leaves_atom_centric_registration_caches_empty(self) -> None:
+        """Batched pair-centric dispatch does not construct atom-centric wrappers."""
+        self._clear_registration_caches()
+        positions, batch_idx, batch_ptr, cell, pbc = self._inputs()
+
+        _neighbor_matrix, num_neighbors, _shifts = batch_cell_list(
+            positions,
+            1.0,
+            cell,
+            pbc,
+            batch_idx,
+            batch_ptr,
+            max_neighbors=4,
+            max_total_cells=8,
+            strategy="pair_centric",
+        )
+
+        assert int(num_neighbors.sum()) > 0
+        assert (
+            batch_cell_list_module._BATCH_CELL_LIST_BUILD_REGISTRATIONS["gather"]._cache
+            == {}
+        )
+        for (
+            registration
+        ) in batch_cell_list_module._BATCH_CELL_LIST_QUERY_REGISTRATIONS.values():
+            assert registration._cache == {}
+
+    def test_pair_centric_pair_outputs_leave_direct_caches_empty(self) -> None:
+        """Batched pair-output dispatch does not construct gather wrappers."""
+        self._clear_registration_caches()
+        positions, batch_idx, batch_ptr, cell, pbc = self._inputs()
+
+        *_outputs, distances = batch_cell_list(
+            positions,
+            1.0,
+            cell,
+            pbc,
+            batch_idx,
+            batch_ptr,
+            max_neighbors=4,
+            max_total_cells=8,
+            strategy="pair_centric",
+            return_distances=True,
+        )
+
+        distances.block_until_ready()
+        assert (
+            batch_cell_list_module._BATCH_CELL_LIST_BUILD_REGISTRATIONS["gather"]._cache
+            == {}
+        )
+        for (
+            registration
+        ) in batch_cell_list_module._BATCH_CELL_LIST_QUERY_REGISTRATIONS.values():
+            assert registration._cache == {}
+
+    def test_cells_per_system_reuses_one_wrapper_across_dtypes(self) -> None:
+        """The dtype-independent build stage shares one cached wrapper."""
+        self._clear_registration_caches()
+        for dtype in (jnp.float32, jnp.float64):
+            positions, batch_idx, batch_ptr, cell, pbc = self._inputs(dtype)
+            outputs = batch_build_cell_list(
+                positions,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                cell=cell,
+                pbc=pbc,
+                cutoff=1.0,
+                max_total_cells=8,
+            )
+            outputs[0].block_until_ready()
+
+        assert (
+            len(
+                batch_cell_list_module._BATCH_CELL_LIST_BUILD_REGISTRATIONS[
+                    "cells_per_system"
+                ]._cache
+            )
+            == 1
+        )
