@@ -138,10 +138,12 @@ pre-commit install
 # Step 3: create a branch for changes
 git checkout -b 15-fix-description
 
-# Step 4: Run `pytest`; `Makefile` in root folder contains definition
-# for some of these commands. Run `coverage` tool afterwards.
-make pytest
-make coverage
+# Step 4: Run the tests; `Makefile` in the root folder defines these.
+# `test-minimal` is what CI runs on a pull request and is much faster;
+# `test-full` is the whole suite, including tests marked `slow`, and is
+# what runs nightly. Both report combined coverage.
+make test-minimal
+make test-full
 
 # When things pass, add and commit files; make sure to address
 # any outstanding pre-commit issues
