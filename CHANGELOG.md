@@ -15,6 +15,12 @@
   matrices.
 - Batched PyTorch cluster-tile segmented COO validates fixed topology, offsets,
   counts, and tile-state capacities before launching Warp kernels.
+- Segmented cluster-tile COO kernels now bound writes by physical output capacity
+  when compiled steady-state calls reuse malformed caller metadata, preventing
+  invalid segments from escaping their backing buffers.
+- Documented that compiled explicit PyTorch cluster-tile calls require an eagerly
+  validated, unchanged fully periodic `pbc` tensor because fullgraph execution
+  cannot inspect runtime PBC values without synchronizing on the host.
 - JAX cluster-tile empty selective rebuilds now preserve false-flag state and
   clear true-flag pair and tile counts while retaining fixed-capacity storage.
 
