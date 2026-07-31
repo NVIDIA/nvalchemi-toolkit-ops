@@ -516,6 +516,9 @@ class TestJaxClusterTileAutograd:
         pos = jax.random.normal(key, (32, 3), dtype=jnp.float32) * 0.15
         cell = jnp.eye(3, dtype=jnp.float32) * 20.0
 
+        # Drain asynchronous input construction before Warp starts CUDA graph capture.
+        jax.block_until_ready((pos, cell))
+
         def loss(p):
             *_, d, _ = cluster_tile_neighbor_list(
                 p,

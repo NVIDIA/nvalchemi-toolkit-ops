@@ -32,6 +32,7 @@ from nvalchemiops.interactions.dispersion._dftd3 import (
 from nvalchemiops.interactions.dispersion._dftd3 import (
     dftd3_pbc as wp_dftd3_pbc,
 )
+from nvalchemiops.torch import torch_custom_op
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 __all__ = [
@@ -234,7 +235,7 @@ class D3Parameters:
 # ==============================================================================
 
 
-@torch.library.custom_op(
+@torch_custom_op(
     "nvalchemiops::dftd3_matrix",
     mutates_args=("energy", "forces", "coord_num", "virial"),
 )
@@ -329,7 +330,8 @@ def _dftd3_matrix_op(
     -------
     None
 
-    Modifies input tensors in-place: energy, forces, coord_num, virial (remains zeros)
+    Modifies input tensors in-place: energy, forces, coord_num, virial. Output
+    buffers are reset to zero on every successful call, including empty systems.
 
     Notes
     -----
@@ -359,6 +361,12 @@ def _dftd3_matrix_op(
     if fill_value is None:
         fill_value = num_atoms
 
+    # Zero output tensors
+    energy.zero_()
+    forces.zero_()
+    coord_num.zero_()
+    virial.zero_()
+
     # Handle empty case
     if num_atoms == 0:
         return
@@ -366,12 +374,6 @@ def _dftd3_matrix_op(
     # Infer device from positions if not provided
     if device is None:
         device = str(positions.device)
-
-    # Zero output tensors
-    energy.zero_()
-    forces.zero_()
-    coord_num.zero_()
-    virial.zero_()
 
     # Detect dtype and set appropriate Warp types
     wp_dtype = get_wp_dtype(positions.dtype)
@@ -458,7 +460,7 @@ def _dftd3_matrix_op(
     )
 
 
-@torch.library.custom_op(
+@torch_custom_op(
     "nvalchemiops::dftd3_matrix_pbc",
     mutates_args=("energy", "forces", "coord_num", "virial"),
 )
@@ -562,7 +564,8 @@ def _dftd3_matrix_pbc_op(
     -------
     None
 
-    Modifies input tensors in-place: energy, forces, coord_num, virial (if compute_virial=True)
+    Modifies input tensors in-place: energy, forces, coord_num, virial. Output
+    buffers are reset to zero on every successful call, including empty systems.
 
     Notes
     -----
@@ -593,6 +596,12 @@ def _dftd3_matrix_pbc_op(
     if fill_value is None:
         fill_value = num_atoms
 
+    # Zero output tensors
+    energy.zero_()
+    forces.zero_()
+    coord_num.zero_()
+    virial.zero_()
+
     # Handle empty case
     if num_atoms == 0:
         return
@@ -600,12 +609,6 @@ def _dftd3_matrix_pbc_op(
     # Infer device from positions if not provided
     if device is None:
         device = str(positions.device)
-
-    # Zero output tensors
-    energy.zero_()
-    forces.zero_()
-    coord_num.zero_()
-    virial.zero_()
 
     # Detect dtype and set appropriate Warp types
     wp_dtype = get_wp_dtype(positions.dtype)
@@ -708,7 +711,7 @@ def _dftd3_matrix_pbc_op(
     )
 
 
-@torch.library.custom_op(
+@torch_custom_op(
     "nvalchemiops::dftd3",
     mutates_args=("energy", "forces", "coord_num", "virial"),
 )
@@ -798,7 +801,9 @@ def _dftd3_op(
     -------
     None
 
-    Modifies input tensors in-place: energy, forces, coord_num, virial (remains zeros)
+    Modifies input tensors in-place: energy, forces, coord_num, virial. Output
+    buffers are reset to zero on every successful call, including empty systems
+    and CSR graphs with no edges. The non-PBC virial is reset but not computed.
 
     Notes
     -----
@@ -826,6 +831,12 @@ def _dftd3_op(
     num_atoms = positions.size(0)
     num_edges = idx_j.size(0)
 
+    # Zero output tensors
+    energy.zero_()
+    forces.zero_()
+    coord_num.zero_()
+    virial.zero_()
+
     # Handle empty case
     if num_atoms == 0 or num_edges == 0:
         return
@@ -833,12 +844,6 @@ def _dftd3_op(
     # Infer device from positions if not provided
     if device is None:
         device = str(positions.device)
-
-    # Zero output tensors
-    energy.zero_()
-    forces.zero_()
-    coord_num.zero_()
-    virial.zero_()
 
     # Detect dtype and set appropriate Warp types
     wp_dtype = get_wp_dtype(positions.dtype)
@@ -923,7 +928,7 @@ def _dftd3_op(
     )
 
 
-@torch.library.custom_op(
+@torch_custom_op(
     "nvalchemiops::dftd3_pbc",
     mutates_args=("energy", "forces", "coord_num", "virial"),
 )
@@ -1023,7 +1028,9 @@ def _dftd3_pbc_op(
     -------
     None
 
-    Modifies input tensors in-place: energy, forces, coord_num, virial (if compute_virial=True)
+    Modifies input tensors in-place: energy, forces, coord_num, virial. Output
+    buffers are reset to zero on every successful call, including empty systems
+    and CSR graphs with no edges.
 
     Notes
     -----
@@ -1052,6 +1059,12 @@ def _dftd3_pbc_op(
     num_atoms = positions.size(0)
     num_edges = idx_j.size(0)
 
+    # Zero output tensors
+    energy.zero_()
+    forces.zero_()
+    coord_num.zero_()
+    virial.zero_()
+
     # Handle empty case
     if num_atoms == 0 or num_edges == 0:
         return
@@ -1059,12 +1072,6 @@ def _dftd3_pbc_op(
     # Infer device from positions if not provided
     if device is None:
         device = str(positions.device)
-
-    # Zero output tensors
-    energy.zero_()
-    forces.zero_()
-    coord_num.zero_()
-    virial.zero_()
 
     # Detect dtype and set appropriate Warp types
     wp_dtype = get_wp_dtype(positions.dtype)
