@@ -51,6 +51,10 @@
   all non-empty systems by reserving an equal per-system capacity; volume-based
   sizing remains the default. Fused Warp graph calls with explicit
   `max_total_cells` now require an explicit `neighbor_search_radius`.
+- Torch Ewald, PME, and slab backward paths now compile when an explicit
+  single-system batch (`batch_idx=zeros(N)`) is supplied. Reciprocal PME
+  compiled gradients are also correct when a compiled function is reused across
+  mesh sizes.
 
 ## 0.4.0 - 2026-07-13
 

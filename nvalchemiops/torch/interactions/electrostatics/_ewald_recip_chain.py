@@ -82,7 +82,10 @@ from nvalchemiops.torch._warp_op_helpers import (
     register_warp_op_chain,
 )
 from nvalchemiops.torch.interactions.electrostatics._util import (
+    _broadcast_system_values_to_atoms,
+    _distribute_system_mean_cotangent_to_atoms,
     _is_per_system_uniform_cotangent,
+    _mean_atom_values_by_system,
 )
 from nvalchemiops.torch.types import (
     get_wp_dtype,
@@ -125,34 +128,19 @@ def _scoped_stream(device: torch.device):
     return wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream(device)))
 
 
-def _atom_counts(batch_idx: torch.Tensor, num_systems: int) -> torch.Tensor:
-    counts = torch.zeros(num_systems, dtype=torch.float64, device=batch_idx.device)
-    return counts.index_add(
-        0,
-        batch_idx,
-        torch.ones(batch_idx.shape[0], dtype=torch.float64, device=batch_idx.device),
-    )
-
-
 def _per_system_cotangent(grad_energy_atom, batch_idx, num_systems, num_atoms):
     """Reduce a per-atom energy cotangent ``(N,)`` to per-system ``(S,)`` (mean)."""
     g = grad_energy_atom.reshape(-1).to(torch.float64)
-    if batch_idx is None:
-        if num_atoms == 0:
-            return torch.zeros(1, dtype=torch.float64, device=g.device)
-        return g.mean().reshape(1)
-    sums = torch.zeros(num_systems, dtype=torch.float64, device=g.device)
-    sums = sums.index_add(0, batch_idx, g)
-    return sums / _atom_counts(batch_idx, num_systems).clamp_min(1.0)
+    return _mean_atom_values_by_system(g, batch_idx, num_systems)
 
 
 def _distribute_to_atoms(per_system, batch_idx, num_systems, num_atoms):
-    if num_atoms == 0:
-        return torch.zeros(0, dtype=torch.float64, device=per_system.device)
-    if batch_idx is None:
-        return (per_system / float(num_atoms)).expand(num_atoms).clone()
-    counts = _atom_counts(batch_idx, num_systems)
-    return (per_system / counts.clamp_min(1.0)).index_select(0, batch_idx)
+    return _distribute_system_mean_cotangent_to_atoms(
+        per_system,
+        batch_idx,
+        num_systems,
+        num_atoms,
+    )
 
 
 def _cotangent_per_system_uniform(grad_energy_atom, batch_idx, num_systems):
@@ -457,9 +445,12 @@ def _atom_cotangent(grad_energy_atom, batch_idx, num_systems, num_atoms):
     mapped to atoms so the cached-derivative scale reproduces its first-backward value.
     """
     g_sys = _per_system_cotangent(grad_energy_atom, batch_idx, num_systems, num_atoms)
-    if batch_idx is None:
-        return g_sys.expand(num_atoms)
-    return g_sys.index_select(0, batch_idx)
+    return _broadcast_system_values_to_atoms(
+        g_sys,
+        batch_idx,
+        num_systems,
+        num_atoms,
+    )
 
 
 def _forward_impl(

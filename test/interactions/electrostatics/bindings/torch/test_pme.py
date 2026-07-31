@@ -32,9 +32,11 @@ from importlib import import_module
 
 import pytest
 import torch
+import warp as wp
 
 from nvalchemiops.torch.interactions.electrostatics import (
     compute_bspline_moduli_1d,
+    estimate_pme_parameters,
     particle_mesh_ewald,
     pme_reciprocal_space,
 )
@@ -43,6 +45,7 @@ from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
     generate_k_vectors_pme,
 )
 from nvalchemiops.torch.interactions.electrostatics.pme import (
+    _pme_convolve_backward_args,
     _pme_reciprocal_space_impl,
     _prepare_alpha,
     pme_energy_corrections,
@@ -51,7 +54,7 @@ from nvalchemiops.torch.interactions.electrostatics.pme import (
 from nvalchemiops.torch.interactions.electrostatics.pme import (
     compute_bspline_moduli_1d as pme_compute_bspline_moduli_1d,
 )
-from nvalchemiops.torch.neighbors import batch_cell_list, cell_list
+from nvalchemiops.torch.neighbors import batch_cell_list, cell_list, neighbor_list
 
 # Check for optional dependencies
 try:
@@ -298,6 +301,102 @@ def _particle_mesh_ewald_without_direct_output_deprecation(*args, **kwargs):
             category=DeprecationWarning,
         )
         return particle_mesh_ewald(*args, **kwargs)
+
+
+def _compile_pme_setup(
+    device: torch.device,
+    *,
+    full_pme: bool,
+    num_atoms: int = 2,
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    dict[str, object],
+]:
+    """Build fixed explicit-B=1 PME inputs outside compiled callables."""
+    dtype = torch.float64
+    if num_atoms == 1:
+        positions = torch.tensor([[5.0, 5.0, 5.0]], dtype=dtype, device=device)
+        charges = torch.tensor([1.0], dtype=dtype, device=device)
+    else:
+        positions = torch.tensor(
+            [[2.0, 5.0, 5.0], [8.0, 5.0, 5.0]],
+            dtype=dtype,
+            device=device,
+        )
+        charges = torch.tensor([1.0, -1.0], dtype=dtype, device=device)
+    cell = torch.eye(3, dtype=dtype, device=device).unsqueeze(0) * 10.0
+    batch_idx = torch.zeros(num_atoms, dtype=torch.int32, device=device)
+
+    if num_atoms == 1:
+        pme_common: dict[str, object] = {
+            "alpha": torch.tensor([0.3], dtype=dtype, device=device),
+            "mesh_dimensions": (8, 8, 8),
+            "spline_order": 4,
+        }
+    else:
+        with torch.no_grad():
+            params = estimate_pme_parameters(
+                positions,
+                cell,
+                batch_idx=batch_idx,
+                accuracy=1e-6,
+            )
+        pme_common = {
+            "alpha": params.alpha,
+            "mesh_dimensions": tuple(params.mesh_dimensions),
+            "spline_order": 4,
+        }
+
+    if full_pme:
+        if num_atoms == 1:
+            neighbor_matrix = torch.full(
+                (1, 1),
+                num_atoms,
+                dtype=torch.int32,
+                device=device,
+            )
+            neighbor_shifts = torch.zeros(
+                (1, 1, 3),
+                dtype=torch.int32,
+                device=device,
+            )
+            max_neighbors = 1
+        else:
+            with torch.no_grad():
+                neighbor_matrix, max_neighbors, neighbor_shifts = neighbor_list(
+                    positions=positions,
+                    cell=cell,
+                    pbc=torch.ones((1, 3), dtype=torch.bool, device=device),
+                    cutoff=params.real_space_cutoff.max().item(),
+                    batch_idx=batch_idx,
+                    fill_value=num_atoms,
+                )
+            max_neighbors = max(int(max_neighbors.max()), 1)
+        pme_common.update(
+            neighbor_matrix=neighbor_matrix[:, :max_neighbors].to(torch.int32),
+            neighbor_matrix_shifts=neighbor_shifts[:, :max_neighbors].to(torch.int32),
+            mask_value=num_atoms,
+            accuracy=1e-6,
+        )
+    return positions, charges, cell, batch_idx, pme_common
+
+
+def _pme_energy_and_grads(
+    loss_fn,
+    positions: torch.Tensor,
+    charges: torch.Tensor,
+    cell: torch.Tensor,
+) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+    """Evaluate a scalar PME loss and its public first-order derivatives."""
+    positions = positions.clone().requires_grad_(True)
+    charges = charges.clone().requires_grad_(True)
+    cell = cell.clone().requires_grad_(True)
+    loss = loss_fn(positions, charges, cell)
+    gradients = torch.autograd.grad(loss, (positions, charges, cell))
+    return loss, gradients
 
 
 def create_simple_system(
@@ -4168,6 +4267,525 @@ class TestPMEVirialTorchPMEParity:
 class TestPMETorchCompile:
     """Verify that PME functions work correctly under torch.compile."""
 
+    @pytest.mark.parametrize("dtype", [torch.complex64, torch.complex128])
+    def test_convolve_backward_args_materializes_only_compiled_cotangent(self, dtype):
+        """Eager routing preserves its cotangent while compiled routing clones it."""
+        cotangent = torch.arange(24, dtype=torch.float64).reshape(2, 3, 4).to(dtype)
+        forward_inputs = tuple(
+            torch.full((1,), index, dtype=torch.float64) for index in range(8)
+        )
+
+        eager_args = _pme_convolve_backward_args(
+            (cotangent,),
+            (*forward_inputs, False),
+        )
+        compiled_args = _pme_convolve_backward_args(
+            (cotangent,),
+            (*forward_inputs, True),
+        )
+
+        assert len(eager_args) == len(compiled_args) == 9
+        assert eager_args[0] is compiled_args[0] is forward_inputs[0]
+        for index, forward_input in enumerate(forward_inputs[1:], start=2):
+            assert eager_args[index] is compiled_args[index] is forward_input
+
+        assert eager_args[1] is cotangent
+        assert compiled_args[1] is not cotangent
+        torch.testing.assert_close(compiled_args[1], cotangent, rtol=0.0, atol=0.0)
+        assert (
+            compiled_args[1].untyped_storage().data_ptr()
+            != cotangent.untyped_storage().data_ptr()
+        )
+
+    @pytest.mark.parametrize(
+        "device",
+        ["cpu", pytest.param("cuda", marks=pytest.mark.slow)],
+    )
+    def test_reciprocal_compile_specializations_preserve_rfft_cotangent(self, device):
+        """Mesh-8 then mesh-32 compiled reciprocal gradients match eager PME."""
+        if device == "cuda" and (
+            not torch.cuda.is_available() or not wp.is_cuda_available()
+        ):
+            pytest.skip("CUDA or Warp CUDA support unavailable")
+
+        torch._dynamo.reset()
+        torch_device = torch.device(device)
+        one_positions, one_charges, one_cell, one_batch_idx, one_pme_common = (
+            _compile_pme_setup(
+                torch_device,
+                full_pme=False,
+                num_atoms=1,
+            )
+        )
+        two_positions, two_charges, two_cell, two_batch_idx, two_pme_common = (
+            _compile_pme_setup(
+                torch_device,
+                full_pme=False,
+                num_atoms=2,
+            )
+        )
+        two_pme_common["mesh_dimensions"] = (32, 32, 32)
+
+        def loss_fn(
+            pos: torch.Tensor,
+            q: torch.Tensor,
+            box: torch.Tensor,
+            alpha: torch.Tensor,
+            batch_idx: torch.Tensor | None,
+            mesh_dimensions: tuple[int, int, int],
+        ) -> torch.Tensor:
+            return pme_reciprocal_space(
+                pos,
+                q,
+                box,
+                alpha=alpha,
+                mesh_dimensions=mesh_dimensions,
+                spline_order=4,
+                batch_idx=batch_idx,
+            ).sum()
+
+        def make_loss_fn(
+            pme_common: dict[str, object],
+            batch_idx: torch.Tensor | None,
+            evaluator=loss_fn,
+        ):
+            def bound_loss_fn(
+                pos: torch.Tensor,
+                q: torch.Tensor,
+                box: torch.Tensor,
+            ) -> torch.Tensor:
+                return evaluator(
+                    pos,
+                    q,
+                    box,
+                    pme_common["alpha"],
+                    batch_idx,
+                    pme_common["mesh_dimensions"],
+                )
+
+            return bound_loss_fn
+
+        eager_explicit = _pme_energy_and_grads(
+            make_loss_fn(two_pme_common, two_batch_idx),
+            two_positions,
+            two_charges,
+            two_cell,
+        )
+        eager_unbatched = _pme_energy_and_grads(
+            make_loss_fn(two_pme_common, None),
+            two_positions,
+            two_charges,
+            two_cell,
+        )
+
+        try:
+            compiled_loss_fn = torch.compile(loss_fn, dynamic=True)
+            compiled_one = make_loss_fn(
+                one_pme_common,
+                one_batch_idx,
+                compiled_loss_fn,
+            )
+            _pme_energy_and_grads(
+                compiled_one,
+                one_positions,
+                one_charges,
+                one_cell,
+            )
+            compiled_two = make_loss_fn(
+                two_pme_common,
+                two_batch_idx,
+                compiled_loss_fn,
+            )
+            compiled_explicit = _pme_energy_and_grads(
+                compiled_two,
+                two_positions,
+                two_charges,
+                two_cell,
+            )
+        finally:
+            torch._dynamo.reset()
+
+        for compiled_grad, eager_grad, unbatched_grad in zip(
+            compiled_explicit[1],
+            eager_explicit[1],
+            eager_unbatched[1],
+            strict=True,
+        ):
+            torch.testing.assert_close(
+                compiled_grad,
+                eager_grad,
+                rtol=1e-7,
+                atol=1e-9,
+            )
+            torch.testing.assert_close(
+                compiled_grad,
+                unbatched_grad,
+                rtol=1e-7,
+                atol=1e-9,
+            )
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("device", ["cpu", "cuda"])
+    def test_single_system_batch_idx_conservative_forces_compile(self, device):
+        """Explicit B=1 PME forces compile and match eager and unbatched references."""
+        if device == "cuda" and (
+            not torch.cuda.is_available() or not wp.is_cuda_available()
+        ):
+            pytest.skip("CUDA or Warp CUDA support unavailable")
+
+        torch._dynamo.reset()
+        torch_device = torch.device(device)
+        dtype = torch.float64
+        positions = torch.tensor(
+            [[2.0, 5.0, 5.0], [8.0, 5.0, 5.0]],
+            dtype=dtype,
+            device=torch_device,
+        )
+        charges = torch.tensor([1.0, -1.0], dtype=dtype, device=torch_device)
+        cell = torch.eye(3, dtype=dtype, device=torch_device).unsqueeze(0) * 10.0
+        num_atoms = positions.shape[0]
+        batch_idx = torch.zeros(num_atoms, dtype=torch.int32, device=torch_device)
+
+        with torch.no_grad():
+            params = estimate_pme_parameters(
+                positions,
+                cell,
+                batch_idx=batch_idx,
+                accuracy=1e-6,
+            )
+            neighbor_matrix, max_neighbors, neighbor_shifts = neighbor_list(
+                positions=positions,
+                cell=cell,
+                pbc=torch.tensor(
+                    [[True, True, True]],
+                    dtype=torch.bool,
+                    device=torch_device,
+                ),
+                cutoff=params.real_space_cutoff.max().item(),
+                batch_idx=batch_idx,
+                fill_value=num_atoms,
+            )
+
+        max_neighbors = max(int(max_neighbors.max()), 1)
+        pme_common = dict(
+            cell=cell,
+            alpha=params.alpha,
+            mesh_dimensions=tuple(params.mesh_dimensions),
+            spline_order=4,
+            neighbor_matrix=neighbor_matrix[:, :max_neighbors].to(torch.int32),
+            neighbor_matrix_shifts=neighbor_shifts[:, :max_neighbors].to(torch.int32),
+            mask_value=num_atoms,
+            accuracy=1e-6,
+        )
+
+        def forces(pos: torch.Tensor, bidx: torch.Tensor | None) -> torch.Tensor:
+            energy = particle_mesh_ewald(
+                positions=pos,
+                charges=charges,
+                batch_idx=bidx,
+                **pme_common,
+            ).sum()
+            (grad_pos,) = torch.autograd.grad(energy, pos, create_graph=False)
+            return -grad_pos
+
+        eager_batched = forces(positions.clone().requires_grad_(True), batch_idx)
+        eager_unbatched = forces(positions.clone().requires_grad_(True), None)
+        # Eager/direct float64 real-space currently uses a float32-grade wp_erfc
+        # approximation; atol=1e-8 covers its measured ~8.01e-9 error.
+        torch.testing.assert_close(
+            eager_batched,
+            eager_unbatched,
+            rtol=1e-7,
+            atol=1e-8,
+        )
+
+        try:
+            compiled_batched = torch.compile(forces, dynamic=True)(
+                positions.clone().requires_grad_(True),
+                batch_idx,
+            )
+        finally:
+            torch._dynamo.reset()
+        try:
+            compiled_unbatched = torch.compile(forces, dynamic=True)(
+                positions.clone().requires_grad_(True),
+                None,
+            )
+        finally:
+            torch._dynamo.reset()
+        torch.testing.assert_close(
+            compiled_batched,
+            eager_batched,
+            rtol=1e-7,
+            atol=1e-8,
+        )
+        torch.testing.assert_close(
+            compiled_batched,
+            compiled_unbatched,
+            rtol=1e-7,
+            atol=1e-8,
+        )
+
+    @pytest.mark.parametrize("device", ["cpu", "cuda"])
+    @pytest.mark.parametrize("num_atoms", [1, 2])
+    def test_reciprocal_explicit_batch_single_system_loss_compile_gradients(
+        self, device, num_atoms
+    ):
+        """Compiled explicit-B=1 reciprocal PME matches eager energy gradients."""
+        if device == "cuda" and (
+            not torch.cuda.is_available() or not wp.is_cuda_available()
+        ):
+            pytest.skip("CUDA or Warp CUDA support unavailable")
+
+        torch_device = torch.device(device)
+        positions, charges, cell, batch_idx, pme_common = _compile_pme_setup(
+            torch_device,
+            full_pme=False,
+            num_atoms=num_atoms,
+        )
+
+        def make_loss_fn(bidx: torch.Tensor | None):
+            def loss_fn(pos: torch.Tensor, q: torch.Tensor, box: torch.Tensor):
+                return pme_reciprocal_space(
+                    pos,
+                    q,
+                    box,
+                    batch_idx=bidx,
+                    **pme_common,
+                ).sum()
+
+            return loss_fn
+
+        eager_explicit = _pme_energy_and_grads(
+            make_loss_fn(batch_idx),
+            positions,
+            charges,
+            cell,
+        )
+        eager_unbatched = _pme_energy_and_grads(
+            make_loss_fn(None),
+            positions,
+            charges,
+            cell,
+        )
+
+        torch._dynamo.reset()
+        try:
+            compiled_loss_fn = torch.compile(make_loss_fn(batch_idx), dynamic=True)
+            compiled_explicit = _pme_energy_and_grads(
+                compiled_loss_fn,
+                positions,
+                charges,
+                cell,
+            )
+        finally:
+            torch._dynamo.reset()
+
+        for compiled, eager, unbatched in zip(
+            compiled_explicit,
+            eager_explicit,
+            eager_unbatched,
+            strict=True,
+        ):
+            if isinstance(compiled, tuple):
+                for compiled_grad, eager_grad, unbatched_grad in zip(
+                    compiled,
+                    eager,
+                    unbatched,
+                    strict=True,
+                ):
+                    torch.testing.assert_close(
+                        compiled_grad,
+                        eager_grad,
+                        rtol=1e-7,
+                        atol=1e-9,
+                    )
+                    torch.testing.assert_close(
+                        compiled_grad,
+                        unbatched_grad,
+                        rtol=1e-7,
+                        atol=1e-9,
+                    )
+            else:
+                torch.testing.assert_close(
+                    compiled,
+                    eager,
+                    rtol=1e-7,
+                    atol=1e-9,
+                )
+                torch.testing.assert_close(
+                    compiled,
+                    unbatched,
+                    rtol=1e-7,
+                    atol=1e-9,
+                )
+
+    @pytest.mark.parametrize(
+        "device",
+        ["cpu", pytest.param("cuda", marks=pytest.mark.slow)],
+    )
+    def test_full_pme_explicit_batch_single_system_loss_compile_gradients(self, device):
+        """Compiled explicit-B=1 full PME matches eager energy gradients."""
+        if device == "cuda" and (
+            not torch.cuda.is_available() or not wp.is_cuda_available()
+        ):
+            pytest.skip("CUDA or Warp CUDA support unavailable")
+
+        torch_device = torch.device(device)
+        positions, charges, cell, batch_idx, pme_common = _compile_pme_setup(
+            torch_device,
+            full_pme=True,
+        )
+
+        def make_loss_fn(bidx: torch.Tensor | None):
+            def loss_fn(pos: torch.Tensor, q: torch.Tensor, box: torch.Tensor):
+                return particle_mesh_ewald(
+                    pos,
+                    q,
+                    box,
+                    batch_idx=bidx,
+                    **pme_common,
+                ).sum()
+
+            return loss_fn
+
+        eager_explicit = _pme_energy_and_grads(
+            make_loss_fn(batch_idx),
+            positions,
+            charges,
+            cell,
+        )
+        eager_unbatched = _pme_energy_and_grads(
+            make_loss_fn(None),
+            positions,
+            charges,
+            cell,
+        )
+
+        torch._dynamo.reset()
+        try:
+            compiled_loss_fn = torch.compile(make_loss_fn(batch_idx), dynamic=True)
+            compiled_explicit = _pme_energy_and_grads(
+                compiled_loss_fn,
+                positions,
+                charges,
+                cell,
+            )
+        finally:
+            torch._dynamo.reset()
+
+        for compiled, eager, unbatched in zip(
+            compiled_explicit,
+            eager_explicit,
+            eager_unbatched,
+            strict=True,
+        ):
+            if isinstance(compiled, tuple):
+                for compiled_grad, eager_grad, unbatched_grad in zip(
+                    compiled,
+                    eager,
+                    unbatched,
+                    strict=True,
+                ):
+                    torch.testing.assert_close(
+                        compiled_grad,
+                        eager_grad,
+                        rtol=1e-7,
+                        atol=1e-9,
+                    )
+                    torch.testing.assert_close(
+                        compiled_grad,
+                        unbatched_grad,
+                        rtol=1e-7,
+                        atol=1e-9,
+                    )
+            else:
+                torch.testing.assert_close(
+                    compiled,
+                    eager,
+                    rtol=1e-7,
+                    atol=1e-9,
+                )
+                torch.testing.assert_close(
+                    compiled,
+                    unbatched,
+                    rtol=1e-7,
+                    atol=1e-9,
+                )
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("device", ["cpu", "cuda"])
+    def test_full_pme_explicit_batch_direct_outputs_compile(self, device):
+        """Compiled explicit-B=1 full PME direct outputs match eager references."""
+        if device == "cuda" and (
+            not torch.cuda.is_available() or not wp.is_cuda_available()
+        ):
+            pytest.skip("CUDA or Warp CUDA support unavailable")
+
+        torch_device = torch.device(device)
+        positions, charges, cell, batch_idx, pme_common = _compile_pme_setup(
+            torch_device,
+            full_pme=True,
+        )
+
+        def direct_outputs(
+            pos: torch.Tensor,
+            q: torch.Tensor,
+            box: torch.Tensor,
+            bidx: torch.Tensor | None,
+        ) -> tuple[torch.Tensor, ...]:
+            return particle_mesh_ewald(
+                pos,
+                q,
+                box,
+                batch_idx=bidx,
+                compute_forces=True,
+                compute_charge_gradients=True,
+                compute_virial=True,
+                **pme_common,
+            )
+
+        eager_explicit = _particle_mesh_ewald_without_direct_output_deprecation(
+            positions,
+            charges,
+            cell,
+            batch_idx=batch_idx,
+            compute_forces=True,
+            compute_charge_gradients=True,
+            compute_virial=True,
+            **pme_common,
+        )
+        eager_unbatched = _particle_mesh_ewald_without_direct_output_deprecation(
+            positions,
+            charges,
+            cell,
+            batch_idx=None,
+            compute_forces=True,
+            compute_charge_gradients=True,
+            compute_virial=True,
+            **pme_common,
+        )
+
+        torch._dynamo.reset()
+        try:
+            compiled_explicit = torch.compile(direct_outputs, dynamic=True)(
+                positions,
+                charges,
+                cell,
+                batch_idx,
+            )
+        finally:
+            torch._dynamo.reset()
+
+        for compiled, eager, unbatched in zip(
+            compiled_explicit,
+            eager_explicit,
+            eager_unbatched,
+            strict=True,
+        ):
+            torch.testing.assert_close(compiled, eager, rtol=1e-7, atol=1e-9)
+            torch.testing.assert_close(compiled, unbatched, rtol=1e-7, atol=1e-9)
+
     @pytest.mark.skipif(
         not torch.cuda.is_available(), reason="CUDA required for torch.compile"
     )
@@ -5807,7 +6425,7 @@ class TestPMEQRGeometryFallback:
 class TestPMEDoubleBackward:
     """Second-order contract: create_graph losses + gradgradcheck (recip + full)."""
 
-    def _build(self, which, device, triclinic=False):
+    def _build(self, which, device, triclinic=False, explicit_batch=False):
         positions, charges, cell = _pme_contract_dipole(device)
         if triclinic:
             # Non-cubic cell: exercises the mixed d2E/dpos.dcell second order that a
@@ -5818,14 +6436,31 @@ class TestPMEDoubleBackward:
                 device=device,
             )
         alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+        batch_idx = (
+            torch.zeros(positions.shape[0], dtype=torch.int32, device=device)
+            if explicit_batch
+            else None
+        )
+        batch_kwargs = {"batch_idx": batch_idx} if explicit_batch else {}
         if which == "recip":
 
             def energy_fn(p, q, c):
                 return pme_reciprocal_space(
-                    p, q, c, alpha=alpha, mesh_dimensions=_MESH, compute_forces=False
+                    p,
+                    q,
+                    c,
+                    alpha=alpha,
+                    mesh_dimensions=_MESH,
+                    compute_forces=False,
+                    **batch_kwargs,
                 )
         else:
-            nl, nptr, ns = _pme_full_neighbors(positions, cell, device)
+            nl, nptr, ns = _pme_full_neighbors(
+                positions,
+                cell,
+                device,
+                batch_idx=batch_idx,
+            )
 
             def energy_fn(p, q, c):
                 return particle_mesh_ewald(
@@ -5838,6 +6473,7 @@ class TestPMEDoubleBackward:
                     neighbor_ptr=nptr,
                     neighbor_shifts=ns,
                     compute_forces=False,
+                    **batch_kwargs,
                 )
 
         return energy_fn, positions, charges, cell
@@ -5991,6 +6627,40 @@ class TestPMEDoubleBackward:
             cell,
             wrt=("positions", "cell"),
         )
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    @pytest.mark.parametrize(
+        ("which", "wrt", "triclinic"),
+        [
+            ("recip", ("positions",), False),
+            ("recip", ("cell",), False),
+            ("full", ("charges",), False),
+            ("full", ("positions", "cell"), True),
+        ],
+    )
+    def test_gradgradcheck_explicit_single_batch(self, device, which, wrt, triclinic):
+        """Explicit-B=1 public APIs retain focused float64 second derivatives."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        energy_fn, positions, charges, cell = self._build(
+            which,
+            device,
+            triclinic=triclinic,
+            explicit_batch=True,
+        )
+        if wrt == ("positions", "cell"):
+            positions_leaf = positions.clone().requires_grad_(True)
+            cell_leaf = cell.clone().requires_grad_(True)
+            (grad_positions,) = torch.autograd.grad(
+                energy_fn(positions_leaf, charges, cell_leaf).sum(),
+                positions_leaf,
+                create_graph=True,
+            )
+            (mixed_grad,) = torch.autograd.grad(grad_positions.sum(), cell_leaf)
+            assert mixed_grad.abs().max() > 1e-8
+        assert gradgradcheck_energy(energy_fn, positions, charges, cell, wrt=wrt)
 
     @pytest.mark.slow
     @pytest.mark.parametrize("device", ["cuda", "cpu"])

@@ -239,6 +239,16 @@ def _atom_ranges(
     (the existing batched-Ewald contract); ``atom_start``/``atom_end`` are int32.
     """
     device = batch_idx.device
+    if num_systems == 1:
+        starts = torch.zeros((1,), dtype=torch.int32, device=device)
+        ends = torch.full(
+            (1,),
+            batch_idx.shape[0],
+            dtype=torch.int32,
+            device=device,
+        )
+        return starts, ends
+
     counts = torch.zeros(num_systems, dtype=torch.long, device=device)
     counts = counts.index_add(
         0,
@@ -543,12 +553,15 @@ def _apply_reciprocal_corrections(
     if batch_idx is None:
         total_charge = charges.sum().reshape(1)
         return ewald_energy_corrections(e_ksum, charges, volume, alpha, total_charge)
-    total_charges = torch.zeros(
-        volume.shape[0],
-        dtype=charges.dtype,
-        device=charges.device,
-    )
-    total_charges = total_charges.index_add(0, batch_idx.to(torch.long), charges)
+    if volume.shape[0] == 1:
+        total_charges = charges.sum().reshape(1)
+    else:
+        total_charges = torch.zeros(
+            volume.shape[0],
+            dtype=charges.dtype,
+            device=charges.device,
+        )
+        total_charges = total_charges.index_add(0, batch_idx.to(torch.long), charges)
     return ewald_energy_corrections_batch(
         e_ksum,
         charges,

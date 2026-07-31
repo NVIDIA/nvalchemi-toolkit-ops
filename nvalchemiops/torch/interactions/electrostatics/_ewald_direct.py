@@ -407,11 +407,14 @@ def _reciprocal_space_direct_op(
             bidx = batch_idx
             alpha_atom = alpha.to(torch.float64).index_select(0, bidx)
             vol = torch.abs(torch.linalg.det(cell.to(torch.float64)))  # (S,)
-            q_over_v = torch.zeros(
-                num_systems, dtype=torch.float64, device=positions.device
-            )
-            q_over_v = q_over_v.index_add(0, bidx, charges64) / vol
-            q_over_v_atom = q_over_v.index_select(0, bidx)
+            if num_systems == 1:
+                q_over_v_atom = (charges64.sum() / vol[0]).expand_as(charges64)
+            else:
+                q_over_v = torch.zeros(
+                    num_systems, dtype=torch.float64, device=positions.device
+                )
+                q_over_v = q_over_v.index_add(0, bidx, charges64) / vol
+                q_over_v_atom = q_over_v.index_select(0, bidx)
         else:
             alpha_atom = alpha.to(torch.float64)[0]
             vol = torch.abs(torch.det(cell[0].to(torch.float64)))
@@ -423,8 +426,13 @@ def _reciprocal_space_direct_op(
     # Virial background correction: W_bg = -E_bg I.
     if want_virial:
         if batched:
-            q_tot = torch.zeros(num_systems, dtype=input_dtype, device=positions.device)
-            q_tot = q_tot.index_add(0, batch_idx, charges.to(input_dtype))
+            if num_systems == 1:
+                q_tot = charges.to(input_dtype).sum().reshape(1)
+            else:
+                q_tot = torch.zeros(
+                    num_systems, dtype=input_dtype, device=positions.device
+                )
+                q_tot = q_tot.index_add(0, batch_idx, charges.to(input_dtype))
             vol = torch.abs(torch.linalg.det(cell)).to(input_dtype)
             alpha_b = alpha.to(input_dtype)
             e_bg = _PI * q_tot**2 / (2.0 * alpha_b**2 * vol)
