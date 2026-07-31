@@ -1964,7 +1964,11 @@ class _AttachRealSpaceCellGradLmax1(torch.autograd.Function):
         if ctx.needs_input_grad[1]:
             batch_idx = batch_idx_saved if ctx.has_batch else None
             grad_system, _ = _energy_cotangents(
-                grad_energy, batch_idx, ctx.num_atoms, ctx.num_systems
+                grad_energy,
+                batch_idx,
+                ctx.num_atoms,
+                ctx.num_systems,
+                "atom",
             )
             if ctx.has_batch:
                 if ctx.l_max == 1:

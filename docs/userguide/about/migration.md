@@ -6,6 +6,54 @@
 
 This guide lists user-visible migrations by release.
 
+## Unreleased
+
+### Energy Output Layout (`energy_reduction`)
+
+Monopole Torch and JAX Ewald, PME, and slab entry points accept keyword-only
+`energy_reduction="atom" | "system"` (default `"atom"`).
+
+| Mode | Energy shape | Typical use |
+|------|--------------|-------------|
+| `"atom"` (default) | `(N,)` per-atom | Weighted atom losses, existing `E.sum()` recipes |
+| `"system"` | `(B,)` per-system | Batched per-system losses without manual `scatter_add` |
+
+Direct-output fields are unchanged: forces remain `(N, 3)`, charge gradients
+remain `(N,)`, and virials remain `(B, 3, 3)`.
+
+For batched per-system losses, prefer `energy_reduction="system"` over
+manually reducing per-atom energies with `scatter_add` or `segment_sum`:
+
+```python
+# Torch: per-system energy and forces from one call.
+energy = particle_mesh_ewald(
+    positions, charges, cell,
+    batch_idx=batch_idx,
+    energy_reduction="system",
+    neighbor_list=nl, neighbor_ptr=nl_ptr, neighbor_shifts=shifts,
+)  # (B,)
+forces = -torch.autograd.grad(energy.sum(), positions)[0]
+```
+
+```python
+# JAX: same layout under jit when energy_reduction is static.
+energy = particle_mesh_ewald(
+    positions, charges, cell,
+    batch_idx=batch_idx,
+    energy_reduction="system",
+    neighbor_list=nl, neighbor_ptr=nl_ptr, neighbor_shifts=shifts,
+)  # (B,)
+```
+
+On Torch CUDA, eager atom mode may synchronize once per participating component
+when a materialized uniform cotangent must be proven by value inspection (for
+example `grad_outputs=torch.ones_like(energy)` on a contiguous per-atom
+energy). System mode is structurally sync-free: arbitrary `(B,)` cotangents
+reach the cached backward without inspecting atom values. Under `torch.compile`
+or CUDA graph capture, only metadata-proven atom cotangents use the fast path;
+system mode is the guaranteed sync-free layout. JAX adds API/layout parity
+only; underlying Warp kernels remain atom-buffer-oriented.
+
 ## v0.4.0: Electrostatics
 
 ### Energy-Derivative Training
@@ -33,11 +81,11 @@ electrostatics APIs do not expose public Hessian or Jacobian tensors/functions.
 
 JAX full Ewald/PME supports first-order energy derivatives for positions,
 charges, and row-vector displacement virials using the same per-system
-energy-cotangent reducer as Torch. Higher-order JAX support is limited to tested
-position and charge scalar losses. JAX PME stress/cell/strain, alpha, and
-precomputed-metadata higher-order paths are unsupported until implemented and
-tested. JAX direct-output flags remain functional for compatibility in v0.4.0
-but are deprecated for differentiable training.
+energy-cotangent reducer as Torch. Higher-order JAX support is limited to
+tested position and charge scalar losses. JAX PME stress/cell/strain, alpha,
+and precomputed-metadata higher-order paths are unsupported until implemented
+and tested. JAX direct-output flags remain functional for compatibility in
+v0.4.0 but are deprecated for differentiable training.
 
 ### Precomputed Electrostatics Metadata
 

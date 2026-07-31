@@ -191,7 +191,17 @@ def _alpha_array(num_systems, device, dtype):
     )
 
 
-def _launch_forward(sysd, *, dtype, batched, neighbor_input, device, deriv, cell_grad):
+def _launch_forward(
+    sysd,
+    *,
+    dtype,
+    batched,
+    neighbor_input,
+    device,
+    deriv,
+    cell_grad,
+    energy_layout="atom",
+):
     """Launch a factory forward kernel; return (energies, forces, cg, virial) numpy."""
     if neighbor_input == "list":
         inputs = prepare_csr_inputs(sysd, device, dtype=dtype)
@@ -207,7 +217,9 @@ def _launch_forward(sysd, *, dtype, batched, neighbor_input, device, deriv, cell
         if batched
         else s["batch_id"]
     )
-    energies = wp.zeros(n, dtype=wp.float64, device=device)
+    energies = wp.zeros(
+        n if energy_layout == "atom" else nsys, dtype=wp.float64, device=device
+    )
     forces = wp.zeros(n, dtype=_VEC[dtype], device=device)
     cg = wp.zeros(n, dtype=wp.float64, device=device)
     virial = wp.zeros(nsys, dtype=_MAT[dtype], device=device)
@@ -233,6 +245,7 @@ def _launch_forward(sysd, *, dtype, batched, neighbor_input, device, deriv, cell
         deriv_state=deriv,
         cell_grad=cell_grad,
         order="forward",
+        energy_layout=energy_layout,
     )
     wp.launch(
         kernel,
@@ -601,6 +614,58 @@ class TestForwardDerivativeParity:
             virial=True,
         )
         _assert_forward_parity(v_got, v_ref, dtype)
+
+
+class TestSystemEnergyLayout:
+    """Factory system-layout forward output matches atom-layout reduction."""
+
+    @pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)
+    @pytest.mark.parametrize("batched,neighbor_input", _GRID, ids=_GRID_IDS)
+    def test_system_energy_matches_atom_layout(
+        self, device, dtype, batched, neighbor_input
+    ):
+        """System layout accumulates each atom-row energy into its system slot."""
+        sysd = _batch_system() if batched else _single_system()
+        atom_energies, *_ = _launch_forward(
+            sysd,
+            dtype=dtype,
+            batched=batched,
+            neighbor_input=neighbor_input,
+            device=device,
+            deriv=_DerivState.E,
+            cell_grad=False,
+        )
+        system_energies, *_ = _launch_forward(
+            sysd,
+            dtype=dtype,
+            batched=batched,
+            neighbor_input=neighbor_input,
+            device=device,
+            deriv=_DerivState.E,
+            cell_grad=False,
+            energy_layout="system",
+        )
+
+        expected = np.zeros(sysd.get("num_systems", 1), dtype=np.float64)
+        if batched:
+            np.add.at(expected, sysd["batch_idx"], atom_energies)
+        else:
+            expected[0] = atom_energies.sum()
+        _assert_forward_parity(system_energies, expected, dtype)
+
+    @pytest.mark.parametrize("order", ["backward", "double_backward"])
+    def test_system_energy_layout_is_forward_only(self, order):
+        """Non-forward factory orders reject the system-output specialization."""
+        with pytest.raises(NotImplementedError, match="energy_layout"):
+            get_ewald_real_kernel(
+                wp.float64,
+                batched=False,
+                neighbor_input="list",
+                deriv_state=_DerivState.E_F,
+                cell_grad=False,
+                order=order,
+                energy_layout="system",
+            )
 
 
 # ==============================================================================
