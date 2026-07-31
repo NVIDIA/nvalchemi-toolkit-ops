@@ -24,7 +24,9 @@ charge gradients, and virials, keep their existing shapes.
 In eager atom mode, recognizing a materialized uniform output gradient may
 require reading its value, which synchronizes CUDA once. System mode avoids
 this check: per-system output gradients go directly to the cached backward.
-Internally, the Warp kernels continue to use per-atom energy buffers.
+Torch real-space forward specializations can write directly to system-major
+energy buffers; other components may retain atom-major intermediate buffers and
+reduce before composition.
 Point-charge Ewald/PME inputs support ``float32`` and ``float64``. Keep all
 floating inputs and precomputed metadata in a call on a consistent dtype.
 

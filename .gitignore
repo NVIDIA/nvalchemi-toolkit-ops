@@ -44,6 +44,7 @@ htmlcov/
 .tmp/
 nosetests.xml
 coverage.xml
+nvalchemiops.coverage.xml
 *.cover
 .hypothesis/
 .pytest_cache/
@@ -59,6 +60,7 @@ ipython_config.py
 # Environments
 .env
 .venv
+.venv-*
 env/
 venv/
 ENV/
@@ -123,3 +125,12 @@ nvalchemiops/_version.py
 
 # Warp kernel cache (CI persists this via actions/cache at $GITHUB_WORKSPACE/.warp-cache)
 .warp-cache/
+
+# Per-test coverage databases and the duration table behind `make
+# minimal-suite-report`. Regenerate rather than commit; they are large and
+# machine-specific.
+.covctx/
+ci_durations.json
+
+# Slow-test verification logs (see tools/verify_slow_tests.sh)
+.slowcheck/
