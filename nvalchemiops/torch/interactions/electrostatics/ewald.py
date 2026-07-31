@@ -1618,6 +1618,7 @@ def _ewald_reciprocal_space(
         if preserve_k_vector_grad:
             energies = _select_energy(energies)
         else:
+
             def _system_fallback(
                 p,
                 q,
