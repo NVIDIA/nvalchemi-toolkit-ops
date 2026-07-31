@@ -1092,13 +1092,22 @@ def batch_naive_neighbor_list(
     num_neighbors : jax.Array, shape (num_rows,), optional
         Pre-shaped neighbors count array.
     shift_range_per_dimension : jax.Array, optional
-        Pre-computed shift range for PBC systems.
+        Pre-computed shift range for PBC systems.  For eager topology-only
+        PBC calls these may be omitted.  For ``jax.jit`` partial/pair-output
+        PBC calls (``return_distances``, ``return_vectors``, ``pair_fn``, or
+        ``target_indices``), precompute via :func:`compute_naive_num_shifts`
+        outside the jit boundary and pass concrete values.
     num_shifts_per_system : jax.Array, optional
-        Number of periodic shifts per system.
+        Number of periodic shifts per system.  Same ``jax.jit``
+        precomputation requirement as ``shift_range_per_dimension`` for
+        partial/pair-output PBC calls.
     max_shifts_per_system : int, optional
-        Maximum per-system shift count (launch dimension).
+        Maximum per-system shift count (launch dimension).  Same ``jax.jit``
+        precomputation requirement as ``shift_range_per_dimension`` for
+        partial/pair-output PBC calls.
     max_atoms_per_system : int, optional
-        Maximum atoms in any system.
+        Maximum atoms in any system. For every PBC call under ``jax.jit``,
+        pass a concrete value; eager calls may omit it and rely on inference.
     wrap_positions : bool, default=True
         If True, wrap input positions into the primary cell before
         neighbor search. Set to False when positions are already
@@ -1160,6 +1169,16 @@ def batch_naive_neighbor_list(
         this order: ``neighbor_distances`` when ``return_distances=True``,
         ``neighbor_vectors`` when ``return_vectors=True``, and
         ``(pair_energies, pair_forces)`` when ``pair_fn`` is set.
+
+    Notes
+    -----
+    For ``jax.jit`` PBC calls, pass a concrete ``max_atoms_per_system`` outside
+    the jit boundary. For partial/pair-output PBC calls
+    (``return_distances``, ``return_vectors``, ``pair_fn``, or
+    ``target_indices``), also precompute ``shift_range_per_dimension``,
+    ``num_shifts_per_system``, and ``max_shifts_per_system`` via
+    :func:`compute_naive_num_shifts`. Eager topology-only PBC calls may omit
+    these kwargs.
 
     Examples
     --------

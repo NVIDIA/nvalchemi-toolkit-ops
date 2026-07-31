@@ -2369,6 +2369,11 @@ def query_cell_list(
 ) -> tuple[jax.Array, ...]:
     """Query cell list to find neighbors within cutoff.
 
+    Let ``num_rows = len(target_indices)`` when ``target_indices`` is supplied,
+    otherwise ``total_atoms``.  Optional distance/energy buffers have shape
+    ``(num_rows, max_neighbors)``; vector/force buffers have shape
+    ``(num_rows, max_neighbors, 3)``.
+
     Parameters
     ----------
     positions : jax.Array, shape (total_atoms, 3), dtype=float32 or float64
@@ -2478,7 +2483,10 @@ def query_cell_list(
         pair outputs follow in this order: ``neighbor_distances`` when
         ``return_distances=True``, then ``neighbor_vectors`` when
         ``return_vectors=True``, then ``(pair_energies, pair_forces)`` when
-        ``pair_fn`` is set.
+        ``pair_fn`` is set.  Matrix pair outputs use ``num_rows`` rows:
+        ``neighbor_distances`` and ``pair_energies`` have shape
+        ``(num_rows, max_neighbors)``; ``neighbor_vectors`` and ``pair_forces``
+        have shape ``(num_rows, max_neighbors, 3)``.
 
     See Also
     --------
@@ -2996,11 +3004,18 @@ def cell_list(
     neighbor_distances: jax.Array | None = None,
     pair_energies: jax.Array | None = None,
     pair_forces: jax.Array | None = None,
-) -> tuple[jax.Array, jax.Array, jax.Array]:
+) -> tuple[jax.Array, ...]:
     """Build and query spatial cell list for efficient neighbor finding.
 
     This is a convenience function that combines build_cell_list and query_cell_list
     in a single call.
+
+    Let ``num_rows = len(target_indices)`` when ``target_indices`` is supplied,
+    otherwise ``total_atoms``.  Query output buffers (neighbor matrix, counts,
+    shifts, pair buffers) and COO pointer arrays use ``num_rows`` rows; COO
+    source ids are compact row ids.  Build/cache buffers
+    (``atom_periodic_shifts``, ``atom_to_cell_mapping``, ``cell_atom_list``,
+    sorted gather scratch) remain ``total_atoms``-shaped.
 
     Parameters
     ----------
@@ -3034,9 +3049,6 @@ def cell_list(
     cells_per_dimension : jax.Array, shape (3,), dtype=int32, optional
         Pre-allocated bin-count buffer for :func:`build_cell_list`. Allocated
         internally when None.
-    neighbor_search_radius : jax.Array, shape (3,), dtype=int32, optional
-        Per-axis cell search radius from sizing. Allocated or estimated when
-        None.
     atom_periodic_shifts : jax.Array, shape (total_atoms, 3), dtype=int32, optional
         Build output: periodic image crossings per atom. Allocated when None.
     atom_to_cell_mapping : jax.Array, shape (total_atoms, 3), dtype=int32, optional
@@ -3048,21 +3060,23 @@ def cell_list(
     cell_atom_list : jax.Array, shape (total_atoms,), dtype=int32, optional
         Build output: atom indices sorted by cell occupancy.
     sorted_positions : jax.Array, shape (total_atoms, 3), optional
-        Caller-owned gather scratch for the sorted atom-centric query path.
-        Forwarded to :func:`query_cell_list`.
+        Caller-owned gather scratch for sorted atom-centric and pair-centric
+        query paths (shape ``total_atoms``).  Direct atom-centric skips the
+        gather.  Forwarded to :func:`query_cell_list`.
     sorted_atom_periodic_shifts : jax.Array, shape (total_atoms, 3), dtype=int32, optional
-        Caller-owned gather scratch for sorted shifts. Forwarded to
+        Caller-owned gather scratch for sorted shifts (shape ``total_atoms``).
+        Paired with ``sorted_positions``.  Forwarded to
         :func:`query_cell_list`.
     neighbor_matrix : jax.Array, shape (num_rows, max_neighbors), dtype=int32, optional
-        Pre-shaped neighbor matrix for the query step. ``num_rows`` is
-        ``total_atoms`` normally and ``len(target_indices)`` for partial rows.
+        Pre-shaped neighbor matrix for the query step.
     neighbor_matrix_shifts : jax.Array, shape (num_rows, max_neighbors, 3), dtype=int32, optional
         Pre-shaped shift matrix for the query step.
     num_neighbors : jax.Array, shape (num_rows,), dtype=int32, optional
         Pre-shaped per-atom neighbor counts for the query step.
     target_indices : jax.Array, shape (num_targets,), dtype=int32, optional
         Compact partial-list source rows. Output row ``r`` maps to atom
-        ``target_indices[r]``; user buffers must be compact-row shaped.
+        ``target_indices[r]``; user buffers must be ``num_rows``-shaped.
+        COO source ids are compact row ids.
     return_vectors : bool, default False
         If True, append per-pair displacement vectors to the return tuple.
         Enables the autograd pair-geometry path (``graph_mode="none"`` only).
@@ -3106,23 +3120,28 @@ def cell_list(
     -------
     neighbor_data : jax.Array
         If ``return_neighbor_list=False`` (default): ``neighbor_matrix`` with shape
-        (total_atoms, max_neighbors), dtype int32.
+        ``(num_rows, max_neighbors)``, dtype int32.
         If ``return_neighbor_list=True``: ``neighbor_list`` with shape
-        (2, num_pairs), dtype int32, in COO format.
+        ``(2, num_pairs)``, dtype int32, in COO format.  Source ids are compact
+        row ids when ``target_indices`` is supplied.
     neighbor_count : jax.Array
         If ``return_neighbor_list=False``: ``num_neighbors`` with shape
-        (total_atoms,), dtype int32.
+        ``(num_rows,)``, dtype int32.
         If ``return_neighbor_list=True``: ``neighbor_ptr`` with shape
-        (total_atoms + 1,), dtype int32.
+        ``(num_rows + 1,)``, dtype int32.
     shift_data : jax.Array
         If ``return_neighbor_list=False``: ``neighbor_matrix_shifts`` with shape
-        (total_atoms, max_neighbors, 3), dtype int32.
+        ``(num_rows, max_neighbors, 3)``, dtype int32.
         If ``return_neighbor_list=True``: ``neighbor_list_shifts`` with shape
-        (num_pairs, 3), dtype int32.
+        ``(num_pairs, 3)``, dtype int32.
         These three arrays form the base tuple. Requested pair outputs follow
         in this order: ``neighbor_distances`` when ``return_distances=True``,
         then ``neighbor_vectors`` when ``return_vectors=True``, then
-        ``(pair_energies, pair_forces)`` when ``pair_fn`` is set.
+        ``(pair_energies, pair_forces)`` when ``pair_fn`` is set.  Matrix pair
+        outputs use ``num_rows`` rows: ``neighbor_distances`` and
+        ``pair_energies`` have shape ``(num_rows, max_neighbors)``;
+        ``neighbor_vectors`` and ``pair_forces`` have shape
+        ``(num_rows, max_neighbors, 3)``.
 
     See Also
     --------

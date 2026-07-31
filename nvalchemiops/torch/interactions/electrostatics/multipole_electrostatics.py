@@ -151,7 +151,7 @@ def multipole_electrostatic_energy(
         Per-atom :math:`(N,)` :math:`\text{float64}` (single) or
         :math:`(N_\text{total},)` (batched, flat across systems) on
         ``positions.device``. Call ``.sum()`` for the total energy or
-        ``torch.zeros(B).scatter_add(0, batch_idx, E)`` for per-system totals;
+        ``E.new_zeros(B).scatter_add(0, batch_idx, E)`` for per-system totals;
         forces/stress/charge-grads flow from ``grad(E.sum(), ...)``.
         Autograd-connected to ``positions`` and ``multipole_moments``.
     """
@@ -284,8 +284,7 @@ def multipole_reciprocal_space_energy(
         Normalization convention for the density basis. Defaults to
         ``NormMode.MULTIPOLES`` (the only physically meaningful choice for
         source moments; the other modes exist for debugging / cross-checks).
-        Used only while constructing reciprocal state; ignored when ``cache``
-        is supplied because the cache already encodes its normalization.
+        Still resolved when ``cache`` is supplied.
     batch_idx : torch.Tensor, optional, shape (N_total,), int32
         Per-atom system index (expected sorted). Required when ``cell`` is
         ``(B, 3, 3)``; must be ``None`` for a single ``(3, 3)`` cell.
@@ -295,11 +294,11 @@ def multipole_reciprocal_space_energy(
     cache : MultipoleSCFCache, optional
         Pre-built reciprocal cache (from :func:`prepare_multipole_scf_cache`)
         holding the position-independent k-grid / GTO-Fourier (``phi_hat``) /
-        per-k-factor tables. When given, the per-call cache rebuild is skipped
-        (MD / inference steady state) — the analog of passing precomputed
-        ``k_squared`` to PME. ``cell``/``sigma``/``alpha``/``k_cutoff`` are then
-        ignored for the reciprocal (the cache already encodes them); the caller
-        owns matching the cache to the system.
+        per-k-factor tables. When given, reciprocal-state rebuild is skipped
+        (MD / inference steady state). ``cell`` shape, positive ``sigma`` and
+        ``alpha``, and ``normalize`` are still validated or resolved before
+        cache use; ``k_cutoff`` is ignored because the cache already encodes
+        the k-grid. The caller owns matching the cache to the system.
 
     Returns
     -------
@@ -310,7 +309,7 @@ def multipole_reciprocal_space_energy(
         correction — the caller combines this with the real-space and
         self / background terms to get the full Ewald total.
         Call ``.sum()`` for the total or
-        ``torch.zeros(B).scatter_add(0, batch_idx, E)`` for per-system totals.
+        ``E.new_zeros(B).scatter_add(0, batch_idx, E)`` for per-system totals.
 
     """
     is_batch = batch_idx is not None

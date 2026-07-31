@@ -1862,14 +1862,20 @@ def naive_neighbor_list(
         reuse to XLA; note that JAX returns a new array rather than mutating the input.
         Must be provided if max_neighbors is not provided.
     shift_range_per_dimension : jax.Array, shape (1, 3), dtype=int32, optional
-        Shift range in each dimension for each system.
-        Pass in a pre-computed value to avoid recomputation for PBC systems.
+        Shift range in each dimension for the system.  For eager topology-only
+        PBC calls these may be omitted and are computed inside the function.
+        For ``jax.jit`` partial/pair-output PBC calls (``return_distances``,
+        ``return_vectors``, ``pair_fn``, or ``target_indices``), precompute via
+        :func:`compute_naive_num_shifts` outside the jit boundary and pass
+        concrete values.
     num_shifts_per_system : jax.Array, shape (1,), dtype=int32, optional
-        Number of periodic shifts for the system.
-        Pass in a pre-computed value to avoid recomputation for PBC systems.
+        Number of periodic shifts for the system.  Same ``jax.jit``
+        precomputation requirement as ``shift_range_per_dimension`` for
+        partial/pair-output PBC calls.
     max_shifts_per_system : int, optional
-        Maximum per-system shift count.
-        Pass in a pre-computed value to avoid recomputation for PBC systems.
+        Maximum per-system shift count.  Same ``jax.jit`` precomputation
+        requirement as ``shift_range_per_dimension`` for partial/pair-output
+        PBC calls.
     rebuild_flags : jax.Array, shape () or (1,), dtype=bool, optional
         Device-side selective-rebuild flag. When provided, the neighbor list is
         recomputed only if ``rebuild_flags[0]`` is True; otherwise existing
@@ -2082,6 +2088,10 @@ def naive_neighbor_list(
     ``positions_wrapped`` and ``per_atom_cell_offsets`` must also be passed
     in with stable buffer pointers; the simplest way is to pre-allocate them
     once and capture them in the jit'ed closure (see the example above).
+    For ``jax.jit`` partial/pair-output PBC calls, also precompute
+    ``shift_range_per_dimension``, ``num_shifts_per_system``, and
+    ``max_shifts_per_system`` via :func:`compute_naive_num_shifts` outside
+    the jit boundary.  Eager topology-only PBC calls may omit those kwargs.
     Letting any of these allocate fresh inside ``naive_neighbor_list``
     silently degrades the wrapped path to cold-capture-per-call (correct,
     but significantly slower than the proposal's measured replay numbers).

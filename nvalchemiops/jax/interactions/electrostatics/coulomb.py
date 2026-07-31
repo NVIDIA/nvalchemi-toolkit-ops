@@ -137,8 +137,9 @@ def coulomb_energy(
         Atomic coordinates.
     charges : jax.Array, shape (N,)
         Atomic charges.
-    cell : jax.Array, shape (1, 3, 3) or (B, 3, 3)
-        Unit cell matrix. Shape (B, 3, 3) for batched calculations.
+    cell : jax.Array, shape (3, 3), (1, 3, 3), or (B, 3, 3)
+        Unit cell matrix. A single-system ``(3, 3)`` matrix is promoted to
+        ``(1, 3, 3)`` internally.
     cutoff : float
         Cutoff distance for interactions.
     alpha : float, default=0.0
@@ -155,9 +156,19 @@ def coulomb_energy(
     neighbor_matrix_shifts : jax.Array | None, shape (N, max_neighbors, 3)
         Integer unit cell shifts for matrix format.
     fill_value : int | None
-        Fill value for neighbor matrix padding.
+        Fill value for neighbor matrix padding. Applies only to matrix format.
     batch_idx : jax.Array | None, shape (N,)
         Batch indices for each atom.
+
+    Notes
+    -----
+    Callers must supply one complete supported neighbor topology route:
+    CSR/COO ``neighbor_list``, ``neighbor_ptr``, and ``neighbor_shifts``; or
+    matrix ``neighbor_matrix`` and ``neighbor_matrix_shifts``. Current
+    validation raises ``ValueError`` when no complete route is provided or when
+    both complete routes are supplied simultaneously; it does not reject stray
+    fields from the other representation. Shift arrays are required in both
+    formats; for non-periodic systems pass integer all-zero shifts.
 
     Returns
     -------
@@ -314,8 +325,9 @@ def coulomb_forces(
         Atomic coordinates.
     charges : jax.Array, shape (N,)
         Atomic charges.
-    cell : jax.Array, shape (1, 3, 3) or (B, 3, 3)
-        Unit cell matrix. Shape (B, 3, 3) for batched calculations.
+    cell : jax.Array, shape (3, 3), (1, 3, 3), or (B, 3, 3)
+        Unit cell matrix. A single-system ``(3, 3)`` matrix is promoted to
+        ``(1, 3, 3)`` internally.
     cutoff : float
         Cutoff distance for interactions.
     alpha : float, default=0.0
@@ -332,9 +344,19 @@ def coulomb_forces(
     neighbor_matrix_shifts : jax.Array | None, shape (N, max_neighbors, 3)
         Integer unit cell shifts for matrix format.
     fill_value : int | None
-        Fill value for neighbor matrix padding.
+        Fill value for neighbor matrix padding. Applies only to matrix format.
     batch_idx : jax.Array | None, shape (N,)
         Batch indices for each atom.
+
+    Notes
+    -----
+    Callers must supply one complete supported neighbor topology route:
+    CSR/COO ``neighbor_list``, ``neighbor_ptr``, and ``neighbor_shifts``; or
+    matrix ``neighbor_matrix`` and ``neighbor_matrix_shifts``. Current
+    validation raises ``ValueError`` when no complete route is provided or when
+    both complete routes are supplied simultaneously; it does not reject stray
+    fields from the other representation. Shift arrays are required in both
+    formats; for non-periodic systems pass integer all-zero shifts.
 
     Returns
     -------
@@ -387,8 +409,9 @@ def coulomb_energy_forces(
         Atomic coordinates.
     charges : jax.Array, shape (N,)
         Atomic charges.
-    cell : jax.Array, shape (1, 3, 3) or (B, 3, 3)
-        Unit cell matrix. Shape (B, 3, 3) for batched calculations.
+    cell : jax.Array, shape (3, 3), (1, 3, 3), or (B, 3, 3)
+        Unit cell matrix. A single-system ``(3, 3)`` matrix is promoted to
+        ``(1, 3, 3)`` internally.
     cutoff : float
         Cutoff distance for interactions.
     alpha : float, default=0.0
@@ -405,9 +428,19 @@ def coulomb_energy_forces(
     neighbor_matrix_shifts : jax.Array | None, shape (N, max_neighbors, 3)
         Integer unit cell shifts for matrix format.
     fill_value : int | None
-        Fill value for neighbor matrix padding.
+        Fill value for neighbor matrix padding. Applies only to matrix format.
     batch_idx : jax.Array | None, shape (N,)
         Batch indices for each atom.
+
+    Notes
+    -----
+    Callers must supply one complete supported neighbor topology route:
+    CSR/COO ``neighbor_list``, ``neighbor_ptr``, and ``neighbor_shifts``; or
+    matrix ``neighbor_matrix`` and ``neighbor_matrix_shifts``. Current
+    validation raises ``ValueError`` when no complete route is provided or when
+    both complete routes are supplied simultaneously; it does not reject stray
+    fields from the other representation. Shift arrays are required in both
+    formats; for non-periodic systems pass integer all-zero shifts.
 
     Returns
     -------

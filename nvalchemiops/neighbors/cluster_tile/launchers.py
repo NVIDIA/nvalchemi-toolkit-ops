@@ -615,9 +615,11 @@ def query_cluster_tile(
         Warp device string (e.g. ``"cuda:0"``).
     n_tiles : int, optional
         Host-synced emitted-tile count used to tighten the launch dimension.
-        When omitted, the launcher uses the full ``tile_row_group`` buffer
-        capacity; surplus blocks early-return inside the kernel when their
-        tile index exceeds ``num_tiles[0]``.
+        When omitted, the launcher launches over the full ``tile_row_group``
+        buffer capacity; surplus blocks early-return inside the kernel when
+        their tile index exceeds ``num_tiles[0]``, avoiding a host sync.
+        When supplied, the launch dimension is ``min(max(n_tiles, 0),
+        tile_capacity)``.
     cutoff2 : float, optional
         Second pair cutoff for dual-cutoff matrix output.  When provided,
         ``neighbor_matrix2``, ``num_neighbors2``, and
@@ -670,12 +672,11 @@ def query_cluster_tile(
 
     Notes
     -----
-    - Thread launch: tiled over the **allocated** ``tile_row_group``
-      buffer with ``block_dim=TILE_GROUP_SIZE``.  Threads whose tile
-      index exceeds ``num_tiles[0]`` (the actual emitted-tile count
-      from :func:`build_cluster_tile_list`) early-return inside the
-      kernel — this removes the host-side ``num_tiles.item()`` sync
-      that wrappers used to do to set the launch dimension.
+    - Thread launch: ``min(max(n_tiles, 0), tile_capacity)`` blocks when
+      ``n_tiles`` is supplied, otherwise the full ``tile_row_group`` buffer
+      capacity.  Surplus blocks early-return inside the kernel when their
+      tile index exceeds ``num_tiles[0]``, avoiding a host-side
+      ``num_tiles.item()`` sync to set the launch dimension.
     - Modifies: ``neighbor_matrix``, ``num_neighbors``,
       ``neighbor_matrix_shifts``, and any enabled pair-output buffers.
     - Cluster-tile iterates emitted tile pairs rather than source atoms,
@@ -869,9 +870,11 @@ def query_cluster_tile_coo(
         Warp device string (e.g. ``"cuda:0"``).
     n_tiles : int, optional
         Host-synced emitted-tile count used to tighten the launch dimension.
-        When omitted, the launcher uses the full ``tile_row_group`` buffer
-        capacity; surplus blocks early-return inside the kernel when their
-        tile index exceeds ``num_tiles[0]``.
+        When omitted, the launcher launches over the full ``tile_row_group``
+        buffer capacity; surplus blocks early-return inside the kernel when
+        their tile index exceeds ``num_tiles[0]``, avoiding a host sync.
+        When supplied, the launch dimension is ``min(max(n_tiles, 0),
+        tile_capacity)``.
     rebuild_flags : wp.array, shape (1,), dtype=wp.bool, optional
         Selective-rebuild flag.  When provided, the kernel checks this flag
         on the GPU and skips work when False (no CPU-GPU sync).  Selective
@@ -913,9 +916,11 @@ def query_cluster_tile_coo(
 
     Notes
     -----
-    - Thread launch: tiled over the **allocated** ``tile_row_group``
-      buffer with ``block_dim=TILE_GROUP_SIZE``.  Threads whose tile
-      index exceeds ``num_tiles[0]`` early-return inside the kernel.
+    - Thread launch: ``min(max(n_tiles, 0), tile_capacity)`` blocks when
+      ``n_tiles`` is supplied, otherwise the full ``tile_row_group`` buffer
+      capacity.  Surplus blocks early-return inside the kernel when their
+      tile index exceeds ``num_tiles[0]``, avoiding a host-side
+      ``num_tiles.item()`` sync to set the launch dimension.
     - Modifies: ``pair_counter``, ``coo_list``, ``coo_shifts``, and any
       enabled pair-output buffers.
     - Cluster-tile does not support partial neighbor lists; use
@@ -1271,9 +1276,11 @@ def batch_query_cluster_tile(
         Warp device string (e.g. ``"cuda:0"``).
     n_tiles : int, optional
         Host-synced emitted-tile count used to tighten the launch dimension.
-        When omitted, the launcher uses the full ``tile_row_group`` buffer
-        capacity; surplus blocks early-return inside the kernel when their
-        tile index exceeds ``num_tiles[0]``.
+        When omitted, the launcher launches over the full ``tile_row_group``
+        buffer capacity; surplus blocks early-return inside the kernel when
+        their tile index exceeds ``num_tiles[0]``, avoiding a host sync.
+        When supplied, the launch dimension is ``min(max(n_tiles, 0),
+        tile_capacity)``.
     cutoff2 : float, optional
         Second pair cutoff for dual-cutoff matrix output.  When provided,
         ``neighbor_matrix2``, ``num_neighbors2``, and
@@ -1323,9 +1330,11 @@ def batch_query_cluster_tile(
 
     Notes
     -----
-    - Thread launch: tiled over the **allocated** ``tile_row_group``
-      buffer with ``block_dim=TILE_GROUP_SIZE``.  Threads whose tile
-      index exceeds ``num_tiles[0]`` early-return inside the kernel.
+    - Thread launch: ``min(max(n_tiles, 0), tile_capacity)`` blocks when
+      ``n_tiles`` is supplied, otherwise the full ``tile_row_group`` buffer
+      capacity.  Surplus blocks early-return inside the kernel when their
+      tile index exceeds ``num_tiles[0]``, avoiding a host-side
+      ``num_tiles.item()`` sync to set the launch dimension.
     - Modifies: ``neighbor_matrix``, ``num_neighbors``,
       ``neighbor_matrix_shifts``, and any enabled pair-output buffers.
     - Cluster-tile does not support partial neighbor lists; use
@@ -1527,9 +1536,11 @@ def batch_query_cluster_tile_coo(
         Warp device string (e.g. ``"cuda:0"``).
     n_tiles : int, optional
         Host-synced emitted-tile count used to tighten the launch dimension.
-        When omitted, the launcher uses the full ``tile_row_group`` buffer
-        capacity; surplus blocks early-return inside the kernel when their
-        tile index exceeds ``num_tiles[0]``.
+        When omitted, the launcher launches over the full ``tile_row_group``
+        buffer capacity; surplus blocks early-return inside the kernel when
+        their tile index exceeds ``num_tiles[0]``, avoiding a host sync.
+        When supplied, the launch dimension is ``min(max(n_tiles, 0),
+        tile_capacity)``.
     rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool, optional
         Per-system selective-rebuild flags.  When provided, selective COO
         mode requires ``pair_offsets``, ``pair_counts``, ``tile_offsets``,
@@ -1571,9 +1582,11 @@ def batch_query_cluster_tile_coo(
 
     Notes
     -----
-    - Thread launch: tiled over the **allocated** ``tile_row_group``
-      buffer with ``block_dim=TILE_GROUP_SIZE``.  Threads whose tile
-      index exceeds ``num_tiles[0]`` early-return inside the kernel.
+    - Thread launch: ``min(max(n_tiles, 0), tile_capacity)`` blocks when
+      ``n_tiles`` is supplied, otherwise the full ``tile_row_group`` buffer
+      capacity.  Surplus blocks early-return inside the kernel when their
+      tile index exceeds ``num_tiles[0]``, avoiding a host-side
+      ``num_tiles.item()`` sync to set the launch dimension.
     - Modifies: ``pair_counter``, ``coo_list``, ``coo_shifts``, and any
       enabled pair-output buffers.
     - Cluster-tile does not support partial neighbor lists; use

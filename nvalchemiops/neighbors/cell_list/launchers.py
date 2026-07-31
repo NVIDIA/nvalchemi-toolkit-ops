@@ -762,13 +762,15 @@ def query_cell_list(
     device : str
         Warp device string (e.g., 'cuda:0', 'cpu').
     sorted_positions : wp.array, shape (total_atoms,), dtype=wp.vec3*, optional
-        Per-cell-contiguous gather scratch.  ``gather_fused`` writes into
-        it each call.  Allocated transiently when omitted; graph/capture
-        callers should pass caller-owned scratch.
+        Per-cell-contiguous gather scratch (shape ``total_atoms``).  Gathered
+        and read only when ``strategy="pair_centric"`` or
+        ``atom_centric_path="sorted"``; direct atom-centric skips the gather.
+        Allocated transiently when omitted; graph/capture callers should pass
+        caller-owned scratch only for paths that use it.
     sorted_atom_periodic_shifts : wp.array, shape (total_atoms,), dtype=wp.vec3i, optional
-        Per-cell-contiguous gather scratch.  ``gather_fused`` writes into
-        it each call.  Allocated transiently when omitted; graph/capture
-        callers should pass caller-owned scratch.
+        Per-cell-contiguous gather scratch for periodic shifts (shape
+        ``total_atoms``).  Paired with ``sorted_positions``; omitted on the
+        direct atom-centric path.
     rebuild_flags : wp.array, shape (1,), dtype=wp.bool, optional
         1-element flag.  ``False`` makes the kernel return immediately.
         When omitted, this launcher uses the non-selective kernel
@@ -826,6 +828,9 @@ def query_cell_list(
     -----
     - Output and scratch arrays are caller-owned except for the optional
       transient ``target_row_lookup`` allocation described above.
+      Sorted gather scratch is used only on sorted atom-centric and
+      pair-centric paths; direct atom-centric does not read it.
+      ``target_row_lookup`` is separate from sorted gather scratch.
       ``num_neighbors`` must be zeroed before each pair-centric call
       (atomic_add semantics).  Shifts output uses the always-write
       contract (no prefill required).
@@ -1485,11 +1490,15 @@ def batch_query_cell_list(
         specialization is launched and the caller is responsible for
         pre-zeroing ``num_neighbors``.
     sorted_positions : wp.array, shape (total_atoms,), dtype=wp.vec3*, optional
-        Per-cell-contiguous gather scratch.  Allocated transiently when
-        omitted; graph/capture callers should pass caller-owned scratch.
+        Per-cell-contiguous gather scratch (shape ``total_atoms``).  Gathered
+        and read only when ``strategy="pair_centric"`` or
+        ``atom_centric_path="sorted"``; direct atom-centric skips the gather.
+        Allocated transiently when omitted; graph/capture callers should pass
+        caller-owned scratch only for paths that use it.
     sorted_atom_periodic_shifts : wp.array, shape (total_atoms,), dtype=wp.vec3i, optional
-        Per-cell-contiguous gather scratch.  Allocated transiently when
-        omitted; graph/capture callers should pass caller-owned scratch.
+        Per-cell-contiguous gather scratch for periodic shifts (shape
+        ``total_atoms``).  Paired with ``sorted_positions``; omitted on the
+        direct atom-centric path.
     strategy : {"atom_centric", "pair_centric"}, default "atom_centric"
         Selects which of the two batch query kernels to launch.
         ``"pair_centric"`` requires the additional caller-allocated scratch
@@ -1550,9 +1559,10 @@ def batch_query_cell_list(
     -----
     - This is a low-level warp interface. For framework bindings, use torch/jax wrappers.
     - Output arrays must be pre-allocated by caller.
-    - Both atom-centric and pair-centric paths consume the per-cell-contiguous
-      ``sorted_positions`` / ``sorted_atom_periodic_shifts`` scratch.  The
-      selected path fills that scratch before launching its neighbor kernel.
+    - Sorted gather scratch is gathered and read only on sorted atom-centric
+      and pair-centric paths; direct atom-centric skips it.  Graph/capture
+      callers need caller-owned sorted scratch only for a path that uses it.
+      ``target_row_lookup`` is separate from sorted gather scratch.
     - Both strategies support compact ``target_indices`` rows, optional
       vector/distance buffers, ``pair_fn`` slot outputs, and selective rebuild
       flags.

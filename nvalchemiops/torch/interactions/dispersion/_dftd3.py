@@ -574,8 +574,11 @@ def _dftd3_matrix_pbc_op(
     Returns
     -------
     None
-        Modifies ``energy``, ``forces``, ``coord_num``, and, when
-        ``compute_virial=True``, ``virial`` in place.
+        Modifies ``energy``, ``forces``, and ``coord_num`` in place when
+        ``num_atoms > 0``; otherwise returns without modifying outputs. On
+        nonempty calls, ``virial`` is cleared regardless of ``compute_virial``;
+        ``compute_virial=True`` then populates it, and ``compute_virial=False``
+        leaves the cleared buffer at zero.
 
     Notes
     -----
@@ -1043,8 +1046,11 @@ def _dftd3_pbc_op(
     Returns
     -------
     None
-        Modifies ``energy``, ``forces``, ``coord_num``, and, when
-        ``compute_virial=True``, ``virial`` in place.
+        Modifies ``energy``, ``forces``, and ``coord_num`` in place when
+        ``num_atoms > 0`` and ``num_edges > 0``; otherwise returns without
+        modifying outputs. On nonempty calls, ``virial`` is cleared regardless
+        of ``compute_virial``; ``compute_virial=True`` then populates it, and
+        ``compute_virial=False`` leaves the cleared buffer at zero.
 
     Notes
     -----
