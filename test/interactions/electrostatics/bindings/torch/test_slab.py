@@ -55,6 +55,7 @@ from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
     generate_k_vectors_ewald_summation,
 )
 from nvalchemiops.torch.neighbors import batch_cell_list, cell_list
+from test.interactions.electrostatics._deriv_check import toy_charge_model
 
 try:
     from torchpme import EwaldCalculator, PMECalculator
@@ -1711,6 +1712,214 @@ class TestSlabHybridForces:
         # Hybrid forward virial matches standard mode virial.
         torch.testing.assert_close(v_hyb, v_std, rtol=1e-12, atol=1e-15)
         assert v_hyb.grad_fn is None
+
+
+class TestHybridSlabSystemRouting:
+    """Slab-enabled PME hybrid system output must match atom-layout q(R) gradients."""
+
+    @pytest.mark.parametrize("device", ["cpu", "cuda"])
+    def test_pme_qr_gradient_and_hvp_match_atom_layout(self, device):
+        """Hybrid slab PME preserves atom/system q(R) gradient and HVP parity."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        dtype = torch.float64
+        positions_a, _charges_a, cell_a, _pbc = _make_cscl_slab_system(
+            dtype,
+            device,
+        )
+        positions_b = positions_a + torch.tensor(
+            [0.2, -0.1, 0.3],
+            dtype=dtype,
+            device=device,
+        )
+        positions = torch.cat([positions_a, positions_b])
+        cell = cell_a.repeat(2, 1, 1)
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        pbc = torch.tensor(
+            [[True, True, False], [True, True, False]],
+            dtype=torch.bool,
+            device=device,
+        )
+        neighbor_list, neighbor_ptr, neighbor_shifts = batch_cell_list(
+            positions,
+            REAL_SPACE_CUTOFF,
+            cell,
+            pbc,
+            batch_idx=batch_idx,
+            return_neighbor_list=True,
+        )
+        alpha = torch.tensor([EWALD_ALPHA, EWALD_ALPHA], dtype=dtype, device=device)
+        weights = torch.tensor([1.3, -0.6], dtype=dtype, device=device)
+        direction = torch.arange(
+            1,
+            positions.numel() + 1,
+            dtype=dtype,
+            device=device,
+        ).reshape_as(positions)
+        direction = direction / direction.norm()
+
+        def evaluate(reduction):
+            """Evaluate one independent slab-enabled public-layout graph."""
+            pos = positions.detach().clone().requires_grad_(True)
+            cell_input = cell.detach().clone().requires_grad_(True)
+            energies = particle_mesh_ewald(
+                pos,
+                toy_charge_model(pos, batch_idx=batch_idx),
+                cell_input,
+                alpha=alpha,
+                mesh_dimensions=(16, 16, 16),
+                batch_idx=batch_idx,
+                neighbor_list=neighbor_list,
+                neighbor_ptr=neighbor_ptr,
+                neighbor_shifts=neighbor_shifts,
+                hybrid_forces=True,
+                pbc=pbc,
+                slab_correction=True,
+                energy_reduction=reduction,
+            )
+            if reduction == "atom":
+                objective = (energies * weights.index_select(0, batch_idx.long())).sum()
+            else:
+                objective = (energies * weights).sum()
+            grad_positions, grad_cell = torch.autograd.grad(
+                objective,
+                (pos, cell_input),
+                create_graph=True,
+            )
+            (hvp,) = torch.autograd.grad(
+                grad_positions,
+                pos,
+                grad_outputs=direction,
+            )
+            return energies, objective, grad_positions, grad_cell, hvp
+
+        atom_energy, atom_objective, atom_grad, atom_cell_grad, atom_hvp = evaluate(
+            "atom"
+        )
+        (
+            system_energy,
+            system_objective,
+            system_grad,
+            system_cell_grad,
+            system_hvp,
+        ) = evaluate("system")
+        expected_system = torch.zeros_like(system_energy).index_add(
+            0,
+            batch_idx.long(),
+            atom_energy,
+        )
+
+        torch.testing.assert_close(system_energy, expected_system)
+        torch.testing.assert_close(system_objective, atom_objective)
+        assert atom_grad.norm() > 0
+        assert atom_cell_grad.norm() > 0
+        assert atom_hvp.norm() > 0
+        torch.testing.assert_close(system_grad, atom_grad)
+        torch.testing.assert_close(system_cell_grad, atom_cell_grad)
+        torch.testing.assert_close(system_hvp, atom_hvp)
+
+    @pytest.mark.parametrize("device", ["cpu", "cuda"])
+    def test_hybrid_slab_contribution_matches_eager_derivatives(self, device):
+        """Hybrid fallback preserves the standalone slab q(R) contribution."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        dtype = torch.float64
+        positions_a, _charges_a, cell_a, _pbc = _make_cscl_slab_system(
+            dtype,
+            device,
+        )
+        positions = torch.cat(
+            [
+                positions_a,
+                positions_a
+                + torch.tensor([0.2, -0.1, 0.3], dtype=dtype, device=device),
+            ]
+        )
+        cell = cell_a.repeat(2, 1, 1)
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        pbc = torch.tensor(
+            [[True, True, False], [True, True, False]],
+            dtype=torch.bool,
+            device=device,
+        )
+        neighbor_list, neighbor_ptr, neighbor_shifts = batch_cell_list(
+            positions,
+            REAL_SPACE_CUTOFF,
+            cell,
+            pbc,
+            batch_idx=batch_idx,
+            return_neighbor_list=True,
+        )
+        alpha = torch.tensor([EWALD_ALPHA, EWALD_ALPHA], dtype=dtype, device=device)
+        weights = torch.tensor([1.3, -0.6], dtype=dtype, device=device)
+        atom_weights = weights.index_select(0, batch_idx.long())
+        direction = torch.arange(
+            1,
+            positions.numel() + 1,
+            dtype=dtype,
+            device=device,
+        ).reshape_as(positions)
+        direction = direction / direction.norm()
+
+        def derivatives(energy_fn):
+            """Return weighted q(R) gradient, cell gradient, and position HVP."""
+            pos = positions.detach().clone().requires_grad_(True)
+            cell_input = cell.detach().clone().requires_grad_(True)
+            energy = energy_fn(pos, cell_input)
+            objective = (atom_weights * energy).sum()
+            grad_positions, grad_cell = torch.autograd.grad(
+                objective,
+                (pos, cell_input),
+                create_graph=True,
+            )
+            (hvp,) = torch.autograd.grad(
+                grad_positions,
+                pos,
+                grad_outputs=direction,
+            )
+            return grad_positions, grad_cell, hvp
+
+        def hybrid_slab_energy(pos, cell_input):
+            """Isolate the hybrid PME slab contribution by subtraction."""
+            charges = toy_charge_model(pos, batch_idx=batch_idx)
+            common_kwargs = {
+                "alpha": alpha,
+                "mesh_dimensions": (16, 16, 16),
+                "batch_idx": batch_idx,
+                "neighbor_list": neighbor_list,
+                "neighbor_ptr": neighbor_ptr,
+                "neighbor_shifts": neighbor_shifts,
+                "hybrid_forces": True,
+            }
+            return particle_mesh_ewald(
+                pos,
+                charges,
+                cell_input,
+                pbc=pbc,
+                slab_correction=True,
+                **common_kwargs,
+            ) - particle_mesh_ewald(
+                pos,
+                charges,
+                cell_input,
+                slab_correction=False,
+                **common_kwargs,
+            )
+
+        def eager_slab_energy(pos, cell_input):
+            """Evaluate the independently composed eager slab energy."""
+            return compute_slab_correction(
+                pos,
+                toy_charge_model(pos, batch_idx=batch_idx),
+                cell_input,
+                pbc,
+                batch_idx=batch_idx,
+            )
+
+        hybrid_derivatives = derivatives(hybrid_slab_energy)
+        eager_derivatives = derivatives(eager_slab_energy)
+        for hybrid, eager in zip(hybrid_derivatives, eager_derivatives, strict=True):
+            torch.testing.assert_close(hybrid, eager, rtol=1e-4, atol=1e-6)
 
 
 # ==============================================================================
