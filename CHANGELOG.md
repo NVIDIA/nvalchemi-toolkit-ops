@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- Unbatched JAX naive dual-cutoff PBC neighbor lists now populate both cutoff
+  outputs when using the default `wrap_positions=True`. Previously this path
+  wrapped positions but skipped the fill kernel, leaving zero counts and padded
+  matrices.
 ### Changed (neighbors)
 
 - Improved JAX neighbor-list import performance by deferring dtype-specific
@@ -29,6 +35,14 @@
   all non-empty systems by reserving an equal per-system capacity; volume-based
   sizing remains the default. Fused Warp graph calls with explicit
   `max_total_cells` now require an explicit `neighbor_search_radius`.
+- Torch Ewald, PME, and slab backward paths now compile when an explicit
+  single-system batch (`batch_idx=zeros(N)`) is supplied. Reciprocal PME
+  compiled gradients are also correct when a compiled function is reused across
+  mesh sizes.
+
+- Fixed Torch PME and Ewald energy gradients for connected charge, position, and
+  cell inputs. Non-uniform or weighted energy losses and `create_graph=True`
+  higher-order derivatives no longer double-count upstream chain-rule terms.
 
 ## 0.4.0 - 2026-07-13
 

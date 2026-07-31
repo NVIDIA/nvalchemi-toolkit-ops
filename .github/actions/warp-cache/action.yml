@@ -1,0 +1,97 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: "Restore Warp kernel cache"
+description: >-
+  Restore the compiled-kernel cache, walking a fallback ladder that ends at the
+  baseline cache-warm.yml publishes on main. Also exports WARP_CACHE_PATH and
+  reports what it found, so a slow run can be explained without reading logs.
+
+inputs:
+  python-version:
+    description: "Python version, part of the cache key"
+    required: true
+  cuda-major:
+    description: "CUDA major version, part of the cache key"
+    required: false
+    default: "13"
+
+outputs:
+  matched-key:
+    description: "Cache key that matched, empty on a complete miss"
+    value: ${{ steps.restore.outputs.cache-matched-key }}
+  scope-key:
+    description: >-
+      Ref name with slashes replaced by dashes. Callers that save a cache must
+      use this rather than github.ref_name: a ref like `pull-request/132`
+      produces a key the restore ladder below can never prefix-match, which
+      fails silently because the main-scoped fallback still hits.
+    value: ${{ steps.scope.outputs.key }}
+
+runs:
+  using: "composite"
+  steps:
+    # Caches are scoped to the ref that wrote them, with the default branch as
+    # the only globally readable fallback.
+    #
+    # There is deliberately no rung for "the originating pull request" on a
+    # merge-queue ref. It looks appealing — the queue ref carries the PR number —
+    # but a queue ref cannot read a cache scoped to refs/heads/pull-request/<N>,
+    # so such a rung can never hit. Queue items fall through to main, which is
+    # why cache-warm.yml keeping main fresh is what actually makes them fast.
+    - name: Compute cache scope
+      id: scope
+      shell: bash -e -u -o pipefail {0}
+      env:
+        REF_NAME: ${{ github.ref_name }}
+      run: |
+        echo "key=${REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore Warp kernel cache
+      id: restore
+      uses: actions/cache/restore@v4
+      with:
+        path: .warp-cache
+        key: warp-${{ steps.scope.outputs.key }}-py${{ inputs.python-version }}-cuda${{ inputs.cuda-major }}-${{ github.run_id }}
+        restore-keys: |
+          warp-${{ steps.scope.outputs.key }}-py${{ inputs.python-version }}-cuda${{ inputs.cuda-major }}-
+          warp-main-py${{ inputs.python-version }}-cuda${{ inputs.cuda-major }}-
+
+    - name: Export cache path
+      shell: bash -e -u -o pipefail {0}
+      run: |
+        # conftest honours WARP_CACHE_PATH, so every per-group pytest process in
+        # this job shares one directory that actions/cache can persist.
+        echo "WARP_CACHE_PATH=$GITHUB_WORKSPACE/.warp-cache" >> "$GITHUB_ENV"
+        mkdir -p "$GITHUB_WORKSPACE/.warp-cache"
+
+    - name: Report cache state
+      shell: bash -e -u -o pipefail {0}
+      run: |
+        MATCHED="${{ steps.restore.outputs.cache-matched-key }}"
+        {
+          echo "### Warp kernel cache"
+          echo ""
+          if [ -n "$MATCHED" ]; then
+            echo "Restored from \`$MATCHED\`"
+          else
+            echo "**No cache restored** — every kernel will be recompiled."
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+        if [ -z "$MATCHED" ]; then
+          # This is the condition that previously went unnoticed for weeks while
+          # pull requests silently took hours, so make it visible in the run.
+          echo "::warning title=Cold Warp cache::No Warp cache was restored, so every kernel is being recompiled. Check that cache-warm.yml is succeeding on main."
+        fi

@@ -24,8 +24,11 @@ import warp as wp
 
 from nvalchemiops.torch._warp_op_helpers import register_warp_op_chain
 from nvalchemiops.torch.interactions.electrostatics._util import (
+    _distribute_system_mean_cotangent_to_atoms,
     _is_per_system_uniform_cotangent,
+    _mean_atom_values_by_system,
     _reduce_atom_energy,
+    _sum_atom_values_by_system,
 )
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
@@ -54,16 +57,11 @@ def _per_system_cotangent(
     num_systems: int,
 ) -> torch.Tensor:
     """Reduce atom energy cotangents to per-system means."""
-    if grad_energy_atom.numel() == 0:
-        return torch.zeros(
-            num_systems, device=grad_energy_atom.device, dtype=torch.float64
-        )
-
-    idx = batch_idx.to(device=grad_energy_atom.device, dtype=torch.long)
-    sums = torch.zeros(num_systems, device=grad_energy_atom.device, dtype=torch.float64)
-    sums = sums.index_add(0, idx, grad_energy_atom.reshape(-1).to(torch.float64))
-    counts = torch.bincount(idx, minlength=num_systems).to(torch.float64)
-    return sums / counts.clamp_min(1.0)
+    return _mean_atom_values_by_system(
+        grad_energy_atom.reshape(-1).to(torch.float64),
+        batch_idx,
+        num_systems,
+    )
 
 
 def _cotangent_per_system_uniform(
@@ -81,13 +79,12 @@ def _distribute_system_values(
     num_atoms: int,
 ) -> torch.Tensor:
     """Distribute per-system values to per-atom cotangents by atom count."""
-    if num_atoms == 0:
-        return torch.zeros(0, device=system_values.device, dtype=torch.float64)
-
-    idx = batch_idx.to(device=system_values.device, dtype=torch.long)
-    counts = torch.bincount(idx, minlength=system_values.shape[0]).to(torch.float64)
-    values = system_values / counts.clamp_min(1.0)
-    return values.index_select(0, idx)
+    return _distribute_system_mean_cotangent_to_atoms(
+        system_values,
+        batch_idx,
+        system_values.shape[0],
+        num_atoms,
+    )
 
 
 def _run_moments(
@@ -502,13 +499,7 @@ def _slab_double_backward_layout(
     )
     atom_dot = (base_pos.to(torch.float64) * h_pos.to(torch.float64)).sum(dim=1)
     atom_dot = atom_dot + base_q * h_charge.reshape(-1).to(torch.float64)
-    system_dot = torch.zeros(num_systems, device=positions.device, dtype=torch.float64)
-    if num_atoms > 0:
-        system_dot = system_dot.index_add(
-            0,
-            batch_idx.to(device=positions.device, dtype=torch.long),
-            atom_dot,
-        )
+    system_dot = _sum_atom_values_by_system(atom_dot, batch_idx, num_systems)
     system_dot = system_dot + (
         base_cell.to(torch.float64) * h_cell.to(torch.float64)
     ).sum(dim=(1, 2))

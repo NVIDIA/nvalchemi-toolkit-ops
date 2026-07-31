@@ -769,12 +769,16 @@ def make_ewald_real_kernel(
         ``dE/dcell`` block (``wp.array(dtype=wp.mat33d)``, shape ``(N,)``). Requires
         ``order="forward"`` and ``deriv_state`` in ``{E_F, E_F_dQ}``. Restricted to
         ``neighbor_input="list"`` (non-tiled) or ``neighbor_input="matrix"`` (tiled).
+    energy_layout : {"atom", "system"}
+        Forward energy layout. ``"atom"`` writes atom-major energy; ``"system"``
+        writes system-major energy and is valid only for ``order="forward"``.
 
     Returns
     -------
     wp.Kernel
         Cached, specialized Warp kernel for the requested ``(wp_dtype, batched,
-        neighbor_input, deriv_state, cell_grad, order, tiled, cell_literal)``
+        neighbor_input, deriv_state, cell_grad, order, tiled, cell_literal,
+        energy_layout)``
         combination. The same object is returned on repeated calls with identical
         arguments (``@lru_cache``).
 
@@ -869,6 +873,10 @@ def get_ewald_real_kernel(
         Cooperative-block matrix variant; requires ``neighbor_input="matrix"``.
     cell_literal : bool
         Forward-only variant that also emits the literal ``dE/dcell`` per-atom output.
+    energy_layout : {"atom", "system"}
+        Forward energy layout. ``"system"`` writes system-major energy and is
+        valid only for ``order="forward"``. This is forwarded to
+        :func:`make_ewald_real_kernel` as a specialization and cache axis.
     component : str
         Must be ``"ewald_real"``; validated before delegating to
         :func:`make_ewald_real_kernel`.
@@ -876,7 +884,8 @@ def get_ewald_real_kernel(
     Returns
     -------
     wp.Kernel
-        Cached, specialized Warp kernel for the requested combination.
+        Cached, specialized Warp kernel for the requested combination, including
+        ``energy_layout``.
 
     See Also
     --------

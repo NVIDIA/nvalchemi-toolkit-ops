@@ -2261,12 +2261,21 @@ potentials (MLIPs) with learned charge models (`q = q(R)`) -- computing total fo
   the Ewald/PME kernel (`compute_forces=True`)
 - **Charge chain-rule forces** `-(dE/dq)(dq/dR)`, computed via PyTorch autograd through the charge model
 
-The legacy `hybrid_forces=True` path computes both contributions without adding
-the fixed-charge positional term twice. In standard mode, `energy.backward()`
-already includes both position and charge terms, so adding explicit forces would
-**double-count** the positional contribution. `hybrid_forces=True` detaches
-positions and cell from the autograd graph and makes energy differentiable only
-through the charges via a straight-through estimator.
+When `charges.requires_grad=True`, ordinary first-order losses whose energy
+cotangent is uniform within each system (for example, `energy.sum()`) use the
+legacy `hybrid_forces=True` cached charge-gradient path. It detaches positions
+and cell and injects charge gradients through a straight-through estimator. Its
+energy therefore contributes only the charge chain-rule term, which can be
+combined with the explicit fixed-charge force without double-counting.
+
+For a weighted per-system objective, first multiply each direct per-atom force
+by `weights[batch_idx]`; raw direct forces are complementary only to unit
+weights.
+
+Non-uniform per-atom energy losses and calls with `create_graph=True` instead
+reconstruct the eager energy graph. They include both the fixed-charge geometry
+term and the charge chain-rule term, just like standard energy autograd. Do not
+add direct analytical forces to those fallback-derived geometry gradients.
 
 ```{important}
 Do not combine explicit forces (`compute_forces=True`) with full autograd
@@ -2298,8 +2307,9 @@ cell_scaled = cell @ scaling
 # Geometry-dependent charges from scaled positions
 q = charge_model(positions_scaled, Z)
 
-# hybrid_forces=True: explicit forces + virial are analytical (forward-only),
-# energy is differentiable w.r.t. charges only (via straight-through trick)
+# For a uniform first-order loss, hybrid_forces=True keeps direct forces and
+# virial forward-only while energy differentiates through the cached charge path.
+# Weighted per-atom losses and create_graph=True use the full eager fallback.
 energies, direct_forces, direct_virial = particle_mesh_ewald(
     positions_scaled, q, cell_scaled,
     neighbor_list=nl, neighbor_ptr=nl_ptr, neighbor_shifts=shifts,
@@ -2307,8 +2317,8 @@ energies, direct_forces, direct_virial = particle_mesh_ewald(
     hybrid_forces=True,
 )
 
-# Differentiate energy w.r.t. positions and scaling.
-# In hybrid mode only the charge pathway is in the autograd graph.
+# Differentiate energy w.r.t. positions and scaling. This uniform first-order
+# loss uses the cached charge pathway in hybrid mode.
 dE_dpos, dE_dscaling = torch.autograd.grad(
     energies.sum(), [positions, scaling],
 )
@@ -2652,11 +2662,11 @@ Monopole Torch and JAX Ewald, PME, and slab entry points accept keyword-only
 tuples, only the first energy field changes shape; forces remain `(N, 3)`,
 charge gradients remain `(N,)`, and virials remain `(B, 3, 3)`.
 
-Composite Ewald/PME calls apply the same layout to every energy component
-(real, reciprocal, correction, and optional slab) before combining. Hybrid and
-direct-output internals remain atom-major; reduction occurs only at the public
-boundary. Underlying Warp kernels and custom ops continue to use atom-buffer
-layouts.
+Composite Ewald/PME calls apply the requested public layout to their combined
+energy. Torch real-space can write system-major energy directly through
+system-layout Warp/custom-op specializations. Reciprocal, correction, and slab
+components, as well as JAX bindings, may reduce atom-major component outputs
+before composition. Direct derivative fields retain their established shapes.
 
 For batched per-system losses, prefer `energy_reduction="system"` over manually
 reducing per-atom energies:
@@ -2959,9 +2969,9 @@ deprecated flags remain available for compatibility in v0.4.0 but emit a
 
 | Deprecated flag | Replacement |
 |-----------------|-------------|
-| `compute_forces=True` | `forces = -torch.autograd.grad(E.sum(), positions)[0]` (atom mode) or `grad((weights * E).sum(), positions)` (system mode) |
+| `compute_forces=True` | `forces = -torch.autograd.grad(E.sum(), positions)[0]` in either layout; `-torch.autograd.grad((weights * E).sum(), positions)[0]` is the force of a weighted objective and matches deprecated unweighted direct output only when all participating weights are one |
 | `compute_virial=True` | `grad_u = torch.autograd.grad(E.sum(), displacement)[0]` with the row-vector displacement recipe; `virial = -grad_u`, `stress = grad_u / V` |
-| `compute_charge_gradients=True` | `dEdq = torch.autograd.grad(E.sum(), charges)[0]` (atom mode) or `grad((weights * E).sum(), charges)` (system mode) |
+| `compute_charge_gradients=True` | `dEdq = torch.autograd.grad(E.sum(), charges)[0]` in either layout; `torch.autograd.grad((weights * E).sum(), charges)[0]` is the gradient of a weighted objective and matches deprecated unweighted direct output only when all participating weights are one |
 | `hybrid_forces=True` | Keep `charges = charge_model(positions)` in the graph; derive the force from energy (full `q(R)` force) |
 | Manual `scatter_add` / `segment_sum` on atom energy | `energy_reduction="system"` on the monopole Ewald/PME/slab APIs |
 
