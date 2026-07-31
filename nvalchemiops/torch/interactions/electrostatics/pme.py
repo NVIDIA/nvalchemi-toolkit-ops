@@ -204,6 +204,7 @@ from nvalchemiops.torch.interactions.electrostatics._util import (
     _InjectChargeGrad,
     _is_per_system_uniform_cotangent,
     _reduce_atom_energy,
+    _sum_atom_values_by_system,
     _unpack_electrostatic_outputs,
     _validate_energy_reduction,
 )
@@ -473,12 +474,15 @@ def _pme_convolve_forward(
     alpha: torch.Tensor,
     volume: torch.Tensor,
     is_batch: bool,
+    is_compiled: bool,
 ) -> torch.Tensor:
     """Run the fused Warp convolve kernel on ``mesh_fft``. No autograd here —
     callers wrap this in ``_PMEFusedConvolve`` for the autograd-aware version.
 
     ``moduli_x/y/z`` are precomputed 1D B-spline modulus LUTs
     (``sinc(m/N)^spline_order`` per axis); see ``compute_bspline_moduli_1d``.
+    ``is_compiled`` is registered-autograd metadata and does not affect the
+    numerical forward.
     """
     from nvalchemiops.interactions.electrostatics.pme_kernels import (
         batch_pme_convolve as _batch_pme_convolve,
@@ -1581,10 +1585,13 @@ def pme_energy_corrections(
             volumes = volume.to(input_dtype)
 
         # Compute total charge per system
-        total_charges = torch.zeros(
-            num_systems, dtype=input_dtype, device=raw_energies.device
-        )
-        total_charges.scatter_add_(0, batch_idx, charges.to(input_dtype))
+        if num_systems == 1:
+            total_charges = charges.to(input_dtype).sum().reshape(1)
+        else:
+            total_charges = torch.zeros(
+                num_systems, dtype=input_dtype, device=raw_energies.device
+            )
+            total_charges.scatter_add_(0, batch_idx, charges.to(input_dtype))
 
         result = _batch_pme_energy_corrections(
             raw_energies,
@@ -1674,10 +1681,13 @@ def pme_energy_corrections_with_charge_grad(
             volumes = volume.to(input_dtype)
 
         # Compute total charge per system
-        total_charges = torch.zeros(
-            num_systems, dtype=input_dtype, device=raw_energies.device
-        )
-        total_charges.scatter_add_(0, batch_idx, charges.to(input_dtype))
+        if num_systems == 1:
+            total_charges = charges.to(input_dtype).sum().reshape(1)
+        else:
+            total_charges = torch.zeros(
+                num_systems, dtype=input_dtype, device=raw_energies.device
+            )
+            total_charges.scatter_add_(0, batch_idx, charges.to(input_dtype))
 
         return _batch_pme_energy_corrections_with_charge_grad(
             raw_energies,
@@ -1800,6 +1810,60 @@ def _virial_bg_correction_backward_launch(
     return grad_charges, grad_cell, grad_alpha, grad_virial.clone()
 
 
+def _pme_convolve_backward_args(
+    grad_outputs: tuple[torch.Tensor, ...],
+    forward_inputs: tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        bool,
+        bool,
+    ],
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    bool,
+]:
+    """Order fused-convolve backward inputs with a compiled-only cotangent copy."""
+    (
+        mesh_fft,
+        k_squared,
+        moduli_x,
+        moduli_y,
+        moduli_z,
+        alpha,
+        volume,
+        is_batch,
+        is_compiled,
+    ) = forward_inputs
+    grad_convolved = grad_outputs[0]
+    if is_compiled:
+        # Materialize before the opaque custom-op consumer so Inductor keeps
+        # Hermitian RFFT interior-frequency weighting ahead of it.
+        grad_convolved = grad_convolved * 1.0
+    return (
+        mesh_fft,
+        grad_convolved,
+        k_squared,
+        moduli_x,
+        moduli_y,
+        moduli_z,
+        alpha,
+        volume,
+        is_batch,
+    )
+
+
 def register_pme_ops() -> None:
     """Register PME Torch custom ops once."""
     global _PME_OPS_REGISTERED
@@ -1814,18 +1878,8 @@ def register_pme_ops() -> None:
         backward_fake=_convolve_backward_fake,
         backward_return_arity=4,
         diff_input_positions=(0, 5, 6, 1),
-        n_forward_inputs=8,
-        backward_args=lambda g, f: (
-            f[0],
-            g[0],
-            f[1],
-            f[2],
-            f[3],
-            f[4],
-            f[5],
-            f[6],
-            f[7],
-        ),
+        n_forward_inputs=9,
+        backward_args=_pme_convolve_backward_args,
         double_backward=_pme_convolve_double_backward,
         double_backward_fake=_convolve_double_backward_fake,
         double_backward_return_arity=5,
@@ -2093,21 +2147,10 @@ def _pme_cell_grad_from_virial(
     """
     cell_3d = cell if cell.dim() == 3 else cell.unsqueeze(0)
     num_systems = cell_3d.shape[0]
-    pos_term = torch.zeros(
-        num_systems,
-        3,
-        3,
-        device=positions.device,
-        dtype=torch.float64,
-    )
     outer = positions.to(torch.float64).unsqueeze(2) * dEdR.to(torch.float64).unsqueeze(
         1
     )
-    if batch_idx is None:
-        if outer.numel():
-            pos_term[0] = outer.sum(dim=0)
-    else:
-        pos_term = pos_term.index_add(0, batch_idx.to(torch.long), outer)
+    pos_term = _sum_atom_values_by_system(outer, batch_idx, num_systems)
     target = -virial.to(torch.float64) - pos_term
     if cell_inv_t is not None:
         inv_t_3d = _normalize_cell_inv_t_cache(cell_inv_t).to(torch.float64)
@@ -2782,8 +2825,9 @@ def _pme_reciprocal_space_impl(
     #
     # cuFFT emits non-contiguous output; under torch.compile we must copy
     # to match the convolve launcher's stride contract, in eager we don't.
+    is_compiled = torch.compiler.is_compiling()
     mesh_fft = torch.fft.rfftn(mesh_grid, norm="backward", dim=fft_dims)
-    if torch.compiler.is_compiling():
+    if is_compiled:
         mesh_fft = mesh_fft.contiguous()
     need_virial_output = compute_virial or cache_virial
     mesh_fft_raw = mesh_fft if need_virial_output else None
@@ -2797,6 +2841,7 @@ def _pme_reciprocal_space_impl(
         alpha_gsf,
         volume,
         is_batch,
+        is_compiled,
     )
     potential_mesh = torch.fft.irfftn(
         convolved_mesh, norm="forward", s=mesh_dimensions, dim=fft_dims

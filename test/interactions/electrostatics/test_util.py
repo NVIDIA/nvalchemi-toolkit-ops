@@ -291,3 +291,123 @@ def test_ewald_uniform_predicates_accept_eager_per_system_constants(device):
 
     assert real_chain._cotangent_per_system_uniform(grad, batch_idx, 2)
     assert recip_chain._cotangent_per_system_uniform(grad, batch_idx, 2)
+
+
+@pytest.mark.parametrize("device", _available_devices())
+def test_single_system_sum_and_mean_avoid_segmented_reduction(device):
+    """Single-system reductions produce direct sums and means for scalar through matrix values."""
+    batch_idx = torch.zeros(3, dtype=torch.int32, device=device)
+    values = torch.tensor(
+        [
+            [[1.0, 2.0], [3.0, 4.0]],
+            [[5.0, 6.0], [7.0, 8.0]],
+            [[9.0, 10.0], [11.0, 12.0]],
+        ],
+        dtype=DT,
+        device=device,
+    )
+
+    sums = _util._sum_atom_values_by_system(values, batch_idx, 1)
+    means = _util._mean_atom_values_by_system(values, batch_idx, 1)
+
+    assert torch.equal(sums, values.sum(dim=0, keepdim=True))
+    assert torch.equal(means, values.mean(dim=0, keepdim=True))
+
+
+@pytest.mark.parametrize("device", _available_devices())
+def test_single_system_empty_reductions_have_exact_shapes(device):
+    """Empty B=1 reductions retain a leading system dimension and trailing shape."""
+    batch_idx = torch.empty(0, dtype=torch.int32, device=device)
+    values = torch.empty((0, 3, 3), dtype=DT, device=device)
+
+    sums = _util._sum_atom_values_by_system(values, batch_idx, 1)
+    means = _util._mean_atom_values_by_system(values, batch_idx, 1)
+
+    assert sums.shape == (1, 3, 3)
+    assert means.shape == (1, 3, 3)
+    assert torch.equal(sums, torch.zeros_like(sums))
+    assert torch.equal(means, torch.zeros_like(means))
+
+
+@pytest.mark.parametrize("device", _available_devices())
+def test_single_system_broadcast_and_mean_adjoint(device):
+    """B=1 broadcasts directly and distributes a mean cotangent with 1/N scaling."""
+    batch_idx = torch.zeros(3, dtype=torch.int32, device=device)
+    per_system = torch.tensor([[6.0, -3.0]], dtype=DT, device=device)
+
+    broadcast = _util._broadcast_system_values_to_atoms(per_system, batch_idx, 1, 3)
+    distributed = _util._distribute_system_mean_cotangent_to_atoms(
+        per_system, batch_idx, 1, 3
+    )
+
+    assert torch.equal(broadcast, per_system.expand(3, 2))
+    assert torch.equal(distributed, (per_system / 3.0).expand(3, 2))
+    assert distributed._base is None
+
+
+@pytest.mark.parametrize("device", _available_devices())
+def test_heterogeneous_two_system_helpers_match_explicit_references(device):
+    """B=2 helpers preserve segmented behavior for unequal atom counts."""
+    batch_idx = torch.tensor([0, 1, 1, 1], dtype=torch.int32, device=device)
+    values = torch.tensor(
+        [[2.0, 4.0], [3.0, 9.0], [6.0, 8.0], [5.0, 10.0]],
+        dtype=DT,
+        device=device,
+    )
+    per_system_cotangent = torch.tensor(
+        [[6.0, -3.0], [-9.0, 12.0]],
+        dtype=DT,
+        device=device,
+    )
+    expected_sum = torch.zeros((2, 2), dtype=DT, device=device).index_add(
+        0, batch_idx, values
+    )
+    counts = torch.zeros(2, dtype=DT, device=device).index_add(
+        0, batch_idx, torch.ones(4, dtype=DT, device=device)
+    )
+    expected_mean = expected_sum / counts.clamp_min(1)[:, None]
+    expected_broadcast = per_system_cotangent.index_select(0, batch_idx)
+    expected_distributed = (
+        per_system_cotangent / counts.clamp_min(1)[:, None]
+    ).index_select(0, batch_idx)
+
+    assert torch.equal(counts, torch.tensor([1.0, 3.0], dtype=DT, device=device))
+    assert torch.equal(
+        _util._sum_atom_values_by_system(values, batch_idx, 2), expected_sum
+    )
+    assert torch.equal(
+        _util._mean_atom_values_by_system(values, batch_idx, 2), expected_mean
+    )
+    assert torch.equal(
+        _util._broadcast_system_values_to_atoms(per_system_cotangent, batch_idx, 2, 4),
+        expected_broadcast,
+    )
+    assert torch.equal(
+        _util._distribute_system_mean_cotangent_to_atoms(
+            per_system_cotangent, batch_idx, 2, 4
+        ),
+        expected_distributed,
+    )
+
+
+def test_compiled_single_system_reduction_graph_has_no_atomic_scatter():
+    """The B=1 helper graph contains no index/scatter atomic reduction."""
+    graphs = []
+    batch_idx = torch.zeros(3, dtype=torch.int32)
+
+    def backend(graph_module, _example_inputs):
+        graphs.append(graph_module)
+        return graph_module.forward
+
+    def reduction(values):
+        return _util._mean_atom_values_by_system(values, batch_idx, 1)
+
+    compiled = torch.compile(reduction, backend=backend, fullgraph=True)
+    actual = compiled(torch.tensor([2.0, 4.0, 9.0], dtype=DT))
+
+    assert torch.equal(actual, torch.tensor([5.0], dtype=DT))
+    assert graphs
+    graph_text = "\n".join(str(graph.graph) for graph in graphs)
+    assert "index_add" not in graph_text
+    assert "scatter_add" not in graph_text
+    assert "index_put" not in graph_text
