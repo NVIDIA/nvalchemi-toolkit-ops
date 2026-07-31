@@ -60,6 +60,10 @@
   cell inputs. Non-uniform or weighted energy losses and `create_graph=True`
   higher-order derivatives no longer double-count upstream chain-rule terms.
 
+- Torch `ewald_reciprocal_space` now preserves graph-connected reciprocal
+  vectors for cell/strain autograd, restoring the physical reciprocal Ewald
+  virial when vectors are regenerated from the differentiable cell.
+
 ## 0.4.0 - 2026-07-13
 
 ### Added

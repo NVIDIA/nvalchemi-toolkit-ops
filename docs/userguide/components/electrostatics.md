@@ -699,7 +699,7 @@ real_energies, real_forces = ewald_real_space(
     compute_forces=True,
 )
 
-# Reciprocal-space only (long-range, smooth)
+# Reciprocal-space only in a fixed-cell loop
 k_vectors = generate_k_vectors_ewald_summation(cell.detach(), k_cutoff=8.0)
 recip_energies, recip_forces = ewald_reciprocal_space(
     positions, charges, cell, k_vectors, alpha, compute_forces=True,
@@ -746,6 +746,25 @@ The sum of real and reciprocal components gives the Ewald energy.
 The self-energy and background corrections are embedded within
 the reciprocal energy.
 ```
+
+For a differentiable cell or strain calculation, generate the Cartesian
+reciprocal vectors inside the energy closure from that same differentiable cell.
+Use fixed Python Miller bounds so the reciprocal-index set remains constant:
+
+```python
+miller_bounds = (12, 12, 12)
+
+def reciprocal_energy(positions, charges, cell):
+    k_vectors = generate_k_vectors_ewald_summation(
+        cell, k_cutoff=8.0, miller_bounds=miller_bounds
+    )
+    return ewald_reciprocal_space(positions, charges, cell, k_vectors, alpha)
+```
+
+Passing detached vectors while differentiating with respect to `cell` holds
+their Cartesian values fixed and does not produce the physical Ewald strain
+virial. The eager Torch component API warns for this case; the advisory warning
+is suppressed under `torch.compile`.
 
 When using the Ewald component functions for slab-like systems, add the slab
 correction explicitly after computing the 3D-periodic real- and reciprocal-space

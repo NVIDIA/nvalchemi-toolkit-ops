@@ -612,13 +612,13 @@ def _reciprocal_space_energy(
     batch_idx: torch.Tensor | None,
     max_atoms_per_system: int | None = None,
     energy_reduction: Literal["atom", "system"] = "atom",
+    preserve_k_vector_grad: bool = False,
 ) -> torch.Tensor:
     """Per-atom reciprocal-space Ewald energy, connected to autograd via the chain.
 
-    Energy = k-sum (explicit chain, differentiable in positions / charges and,
-    for internally generated reciprocal geometry, cell) minus the Torch-native
-    self + background corrections. Public k-vector leaf gradients are outside
-    the electrostatics contract.
+    Energy = k-sum (explicit chain, differentiable in positions, charges, and
+    reciprocal vectors; cell-dependent paths compose through reciprocal-vector
+    and volume graphs) minus the Torch-native self + background corrections.
     """
     num_atoms = positions.shape[0]
     device = positions.device
@@ -633,10 +633,11 @@ def _reciprocal_space_energy(
     # recompute). ``cell`` flows through ``k_vectors(cell)`` / ``volume`` as before.
     need_pos = bool(positions.requires_grad)
     need_charge = bool(charges.requires_grad)
-    # The recip chain owns the cell first order via grad_kvectors / grad_volume (the
-    # k-major ``kspace`` recompute). Public k-vector leaf gradients are not part of
-    # the contract; the cell path is only valid when k-vectors were generated from
-    # this cell inside the full Ewald call.
+    # ``need_cell`` gates the k-major grad_kvectors / grad_volume backward owned by
+    # the recip chain. The public component preserves a supplied k-vector graph when
+    # both cell and k_vectors require grad; otherwise vectors are fixed Cartesian
+    # metadata for cell derivatives. Leaf vectors without a cell edge still receive
+    # dE/dk; physical strain requires vectors generated from the differentiable cell.
     need_cell = bool(cell.requires_grad)
     ensure_electrostatics_ops_registered()
     if batch_idx is None:
@@ -724,6 +725,8 @@ def _reciprocal_space_energy(
         )
 
     if energy_reduction == "system" and cell.requires_grad:
+        if preserve_k_vector_grad:
+            return _reduce_atom_energy(e_ksum + correction, batch_idx, num_systems)
         return _InjectCachedEvalGradWithFallback.apply(
             (e_ksum + correction).detach(),
             positions,
@@ -1240,6 +1243,11 @@ def ewald_reciprocal_space(
         Unit cell matrices.
     k_vectors : torch.Tensor
         Reciprocal lattice vectors. Shape (K, 3) for single system, (B, K, 3) for batch.
+        When both ``cell`` and ``k_vectors`` require gradients, the supplied
+        k-vector graph is preserved. Physical strain derivatives require vectors
+        generated from the same differentiable cell. Non-differentiable vectors,
+        and grad-bearing leaf vectors without a cell edge, are fixed Cartesian
+        metadata for cell derivatives.
     alpha : torch.Tensor, shape (1,) or (B,)
         Ewald splitting parameter(s).
     batch_idx : torch.Tensor, shape (N,), optional
@@ -1291,8 +1299,11 @@ def ewald_reciprocal_space(
     ----
     Energies are always float64 for numerical stability during accumulation.
     Forces, virial, and charge gradients match the input dtype (float32 or float64).
-    ``k_vectors`` are setup metadata. Caller-supplied vectors are treated as
-    static values that correspond to the current ``cell``.
+    For eager execution, a differentiable ``cell`` paired with fixed Cartesian
+    ``k_vectors`` emits a warning because its cell derivative is not the physical
+    Ewald strain virial. This advisory warning is suppressed under
+    ``torch.compile``. Generate vectors from the differentiable cell with fixed
+    Miller bounds for physical strain derivatives.
 
     When ``charges`` is a non-leaf tensor that may depend on ``positions``
     (:math:`q = q(R)`), ordinary first-order losses may use cached partial
@@ -1302,6 +1313,27 @@ def ewald_reciprocal_space(
     gradients as needed to avoid double-counting that chain term (issue #115).
     """
     _validate_energy_reduction(energy_reduction)
+
+    allow_cell_grad_with_k_vectors = bool(
+        cell.requires_grad and k_vectors.requires_grad
+    )
+    k_vectors_fixed_for_cell = bool(not k_vectors.requires_grad or k_vectors.is_leaf)
+    if (
+        torch.is_grad_enabled()
+        and cell.requires_grad
+        and k_vectors_fixed_for_cell
+        and not hybrid_forces
+        and not torch.compiler.is_compiling()
+    ):
+        warnings.warn(
+            "ewald_reciprocal_space received k_vectors that are fixed Cartesian "
+            "metadata for cell derivatives. If differentiated with respect to "
+            "cell or strain, this call does not produce the physical Ewald strain "
+            "virial. Generate k_vectors from the differentiable cell with fixed "
+            "miller_bounds, or use ewald_summation with k_cutoff.",
+            UserWarning,
+            stacklevel=2,
+        )
     return _ewald_reciprocal_space(
         positions=positions,
         charges=charges,
@@ -1313,7 +1345,8 @@ def ewald_reciprocal_space(
         compute_charge_gradients=compute_charge_gradients,
         compute_virial=compute_virial,
         hybrid_forces=hybrid_forces,
-        allow_cell_grad_with_k_vectors=False,
+        allow_cell_grad_with_k_vectors=allow_cell_grad_with_k_vectors,
+        preserve_k_vector_grad=allow_cell_grad_with_k_vectors,
         max_atoms_per_system=max_atoms_per_system,
         energy_reduction=energy_reduction,
     )
@@ -1331,6 +1364,7 @@ def _ewald_reciprocal_space(
     compute_virial: bool = False,
     hybrid_forces: bool = False,
     allow_cell_grad_with_k_vectors: bool = False,
+    preserve_k_vector_grad: bool = False,
     max_atoms_per_system: int | None = None,
     energy_reduction: Literal["atom", "system"] = "atom",
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
@@ -1534,6 +1568,7 @@ def _ewald_reciprocal_space(
         batch_idx=batch_idx,
         max_atoms_per_system=max_atoms_per_system,
         energy_reduction=energy_reduction if not want_direct else "atom",
+        preserve_k_vector_grad=preserve_k_vector_grad,
     )
 
     if not want_direct:
@@ -1580,42 +1615,45 @@ def _ewald_reciprocal_space(
         )
 
     if energy_reduction == "system" and cell.requires_grad:
+        if preserve_k_vector_grad:
+            energies = _select_energy(energies)
+        else:
 
-        def _system_fallback(
-            p,
-            q,
-            c,
-            fallback_batch_idx,
-            fallback_k_vectors,
-            fallback_alpha,
-        ):
-            return _reciprocal_system_energy_torch(
+            def _system_fallback(
                 p,
                 q,
                 c,
+                fallback_batch_idx,
                 fallback_k_vectors,
                 fallback_alpha,
-                fallback_batch_idx,
-                num_systems,
-            )
+            ):
+                return _reciprocal_system_energy_torch(
+                    p,
+                    q,
+                    c,
+                    fallback_k_vectors,
+                    fallback_alpha,
+                    fallback_batch_idx,
+                    num_systems,
+                )
 
-        energies = _InjectCachedEvalGradWithFallback.apply(
-            energies.detach(),
-            positions,
-            charges,
-            cell,
-            None,
-            None,
-            None,
-            batch_idx,
-            _system_fallback,
-            "system",
-            num_systems,
-            True,
-            True,
-            k_vectors_2d,
-            alpha,
-        )
+            energies = _InjectCachedEvalGradWithFallback.apply(
+                energies.detach(),
+                positions,
+                charges,
+                cell,
+                None,
+                None,
+                None,
+                batch_idx,
+                _system_fallback,
+                "system",
+                num_systems,
+                True,
+                True,
+                k_vectors_2d,
+                alpha,
+            )
     elif (
         not cell.requires_grad
         and (positions.requires_grad or charges.requires_grad)
@@ -1688,7 +1726,11 @@ def ewald_summation(
     alpha : float, torch.Tensor, or None, default=None
         Ewald splitting parameter. Auto-estimated if None.
     k_vectors : torch.Tensor, optional
-        Pre-computed reciprocal lattice vectors.
+        Pre-computed reciprocal lattice vectors for fixed-cell reuse.
+        Caller-supplied vectors are static metadata assumed to correspond to the
+        current ``cell``; cache-generation derivatives are not recovered. For
+        physical cell/strain derivatives, omit ``k_vectors`` so vectors are
+        regenerated from the differentiable ``cell``.
     k_cutoff : float, optional
         K-space cutoff for generating k_vectors.
     miller_bounds : tuple[int, int, int] or torch.Tensor, optional, keyword-only
