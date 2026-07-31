@@ -18,18 +18,26 @@
 from __future__ import annotations
 
 import functools
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
 import warp as wp
-from warp.jax_experimental import GraphMode, jax_callable, jax_kernel
+from warp.jax_experimental import GraphMode, jax_callable
 
 from nvalchemiops.jax.neighbors._autograd import (
     _build_index_residuals,
     _NeighborForwardOutput,
     _route_pair_outputs,
 )
+from nvalchemiops.jax.neighbors._registration import (
+    _lazy_cell_list_build_kernel,
+    _lazy_cell_list_query_kernel,
+)
 from nvalchemiops.jax.neighbors.cell_list import (
+    _DEFAULT_CELL_LIST_BUFFER_FACTOR,
+    _derive_neighbor_search_radius,
+    _derive_promoted_cells_per_dimension,
     _is_cpu_array,
     _resolve_cell_strategy,
     _validate_atom_centric_path,
@@ -47,10 +55,6 @@ from nvalchemiops.neighbors.cell_list import (
 )
 from nvalchemiops.neighbors.cell_list import (
     compute_batch_pair_centric_n_outer,
-    get_build_cell_list_kernel,
-    get_cell_list_cells_per_system_kernel,
-    get_cell_list_gather_kernel,
-    get_query_cell_list_kernel,
     is_pair_centric_parallelism_sufficient,
 )
 from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
@@ -62,280 +66,60 @@ from nvalchemiops.neighbors.output_args import (
 # JAX Kernel Wrappers
 # ==============================================================================
 
-# Build step 1: Construct bin sizes (per system)
-_jax_batch_construct_bin_size_f32 = jax_kernel(
-    get_build_cell_list_kernel("construct_bin_size", wp.float32, batched=True),
-    num_outputs=1,
-    in_out_argnames=["cells_per_dimension_batch"],
-    enable_backward=False,
-)
-_jax_batch_construct_bin_size_f64 = jax_kernel(
-    get_build_cell_list_kernel("construct_bin_size", wp.float64, batched=True),
-    num_outputs=1,
-    in_out_argnames=["cells_per_dimension_batch"],
-    enable_backward=False,
-)
 
-# Helper: Compute cells per system
-_jax_compute_cells_per_system = jax_kernel(
-    get_cell_list_cells_per_system_kernel(),
-    num_outputs=1,
-    in_out_argnames=["cells_per_system"],
-    enable_backward=False,
-)
+def _build_registry(stage: str):
+    """Create lazy dtype registrations for one batched build stage."""
+    return _lazy_cell_list_build_kernel(stage=stage, batched=True)
 
-# Build step 2: Count atoms per bin
-_jax_batch_count_atoms_per_bin_f32 = jax_kernel(
-    get_build_cell_list_kernel("count_atoms", wp.float32, batched=True),
-    num_outputs=2,
-    in_out_argnames=["atoms_per_cell_count", "atom_periodic_shifts"],
-    enable_backward=False,
-)
-_jax_batch_count_atoms_per_bin_f64 = jax_kernel(
-    get_build_cell_list_kernel("count_atoms", wp.float64, batched=True),
-    num_outputs=2,
-    in_out_argnames=["atoms_per_cell_count", "atom_periodic_shifts"],
-    enable_backward=False,
-)
 
-# Build step 3: Bin atoms into cells
-_jax_batch_bin_atoms_f32 = jax_kernel(
-    get_build_cell_list_kernel("bin_atoms", wp.float32, batched=True),
-    num_outputs=3,
-    in_out_argnames=["atom_to_cell_mapping", "atoms_per_cell_count", "cell_atom_list"],
-    enable_backward=False,
-)
-_jax_batch_bin_atoms_f64 = jax_kernel(
-    get_build_cell_list_kernel("bin_atoms", wp.float64, batched=True),
-    num_outputs=3,
-    in_out_argnames=["atom_to_cell_mapping", "atoms_per_cell_count", "cell_atom_list"],
-    enable_backward=False,
-)
+_BATCH_CELL_LIST_BUILD_REGISTRATIONS = {
+    stage: _build_registry(stage)
+    for stage in (
+        "construct_bin_size",
+        "count_atoms",
+        "bin_atoms",
+        "gather",
+        "cells_per_system",
+    )
+}
 
-# Gather: pack positions + atom_periodic_shifts into per-cell-contiguous layout
-# (cell_atom_list permutation) for coalesced reads by the sorted-build kernel.
-_jax_batch_gather_positions_by_cell_f32 = jax_kernel(
-    get_cell_list_gather_kernel(wp.float32),
-    num_outputs=2,
-    in_out_argnames=["sorted_positions", "sorted_shifts"],
-    enable_backward=False,
-)
-_jax_batch_gather_positions_by_cell_f64 = jax_kernel(
-    get_cell_list_gather_kernel(wp.float64),
-    num_outputs=2,
-    in_out_argnames=["sorted_positions", "sorted_shifts"],
-    enable_backward=False,
-)
 
-# Query: sorted-reads atom-centric batch neighbor matrix kernel.  The same
-# kernel handles selective and non-selective callers via the ``rebuild_flags``
-# array (always-True for non-selective; per-system bool array otherwise).
-_jax_batch_build_neighbor_matrix_local_count_sorted_f32 = jax_kernel(
-    get_query_cell_list_kernel(
-        wp.float32,
-        strategy="atom_centric",
+def _query_registry(*, half_fill: bool, geometry: bool):
+    """Create lazy direct registrations for a static batched query."""
+    return _lazy_cell_list_query_kernel(
         batched=True,
         selective=True,
         partial=False,
-        return_vectors=False,
-        return_distances=False,
+        half_fill=half_fill,
+        geometry=geometry,
         pair_fn=None,
-    ),
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
-    enable_backward=False,
-)
-_jax_batch_build_neighbor_matrix_local_count_sorted_f64 = jax_kernel(
-    get_query_cell_list_kernel(
-        wp.float64,
-        strategy="atom_centric",
-        batched=True,
-        selective=True,
-        partial=False,
-        return_vectors=False,
-        return_distances=False,
-        pair_fn=None,
-    ),
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
-    enable_backward=False,
-)
+        atom_centric_path="sorted",
+    )
 
-# Half-fill variants of the sorted-build kernel.  ``half_fill`` is a compile-time
-# specialization in the Warp factory (the runtime ``half_fill`` arg is an ignored
-# ABI placeholder), so honoring ``half_fill=True`` requires a distinct kernel.
-_jax_batch_build_neighbor_matrix_local_count_sorted_half_f32 = jax_kernel(
-    get_query_cell_list_kernel(
-        wp.float32,
-        strategy="atom_centric",
-        batched=True,
-        selective=True,
-        partial=False,
-        half_fill=True,
-        return_vectors=False,
-        return_distances=False,
-        pair_fn=None,
-    ),
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
-    enable_backward=False,
-)
-_jax_batch_build_neighbor_matrix_local_count_sorted_half_f64 = jax_kernel(
-    get_query_cell_list_kernel(
-        wp.float64,
-        strategy="atom_centric",
-        batched=True,
-        selective=True,
-        partial=False,
-        half_fill=True,
-        return_vectors=False,
-        return_distances=False,
-        pair_fn=None,
-    ),
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
-    enable_backward=False,
-)
 
-# Pair-output variants — consumed by the autograd path when
-# ``return_distances`` / ``return_vectors`` is set.  The bytes written into
-# ``neighbor_vectors`` / ``neighbor_distances`` are differentiable via the
-# JAX autograd primitive in :mod:`nvalchemiops.jax.neighbors._autograd`.
-_jax_batch_build_neighbor_matrix_local_count_sorted_pair_f32 = jax_kernel(
-    get_query_cell_list_kernel(
-        wp.float32,
-        strategy="atom_centric",
-        batched=True,
-        selective=True,
-        partial=False,
-        return_vectors=True,
-        return_distances=True,
-        pair_fn=None,
-    ),
-    num_outputs=5,
-    in_out_argnames=[
-        "neighbor_matrix",
-        "neighbor_matrix_shifts",
-        "num_neighbors",
-        "neighbor_vectors",
-        "neighbor_distances",
-    ],
-    enable_backward=False,
-)
-_jax_batch_build_neighbor_matrix_local_count_sorted_pair_f64 = jax_kernel(
-    get_query_cell_list_kernel(
-        wp.float64,
-        strategy="atom_centric",
-        batched=True,
-        selective=True,
-        partial=False,
-        return_vectors=True,
-        return_distances=True,
-        pair_fn=None,
-    ),
-    num_outputs=5,
-    in_out_argnames=[
-        "neighbor_matrix",
-        "neighbor_matrix_shifts",
-        "num_neighbors",
-        "neighbor_vectors",
-        "neighbor_distances",
-    ],
-    enable_backward=False,
-)
-
-# Half-fill specializations of the atom-centric geometry pair-output kernel
-# (selected when ``half_fill=True``; ``half_fill`` is a compile-time constant).
-_jax_batch_build_neighbor_matrix_local_count_sorted_pair_half_f32 = jax_kernel(
-    get_query_cell_list_kernel(
-        wp.float32,
-        strategy="atom_centric",
-        batched=True,
-        selective=True,
-        partial=False,
-        return_vectors=True,
-        return_distances=True,
-        pair_fn=None,
-        half_fill=True,
-    ),
-    num_outputs=5,
-    in_out_argnames=[
-        "neighbor_matrix",
-        "neighbor_matrix_shifts",
-        "num_neighbors",
-        "neighbor_vectors",
-        "neighbor_distances",
-    ],
-    enable_backward=False,
-)
-_jax_batch_build_neighbor_matrix_local_count_sorted_pair_half_f64 = jax_kernel(
-    get_query_cell_list_kernel(
-        wp.float64,
-        strategy="atom_centric",
-        batched=True,
-        selective=True,
-        partial=False,
-        return_vectors=True,
-        return_distances=True,
-        pair_fn=None,
-        half_fill=True,
-    ),
-    num_outputs=5,
-    in_out_argnames=[
-        "neighbor_matrix",
-        "neighbor_matrix_shifts",
-        "num_neighbors",
-        "neighbor_vectors",
-        "neighbor_distances",
-    ],
-    enable_backward=False,
-)
+_BATCH_CELL_LIST_QUERY_REGISTRATIONS = {
+    (False, False): _query_registry(half_fill=False, geometry=False),
+    (True, False): _query_registry(half_fill=True, geometry=False),
+    (False, True): _query_registry(half_fill=False, geometry=True),
+    (True, True): _query_registry(half_fill=True, geometry=True),
+}
 
 
 @functools.cache
 def _get_jax_batch_cell_list_pair_outputs_kernel(
     pair_fn, wp_dtype, partial, half_fill: bool = False
 ):
-    """Build (and cache) a ``jax_kernel`` for a batched cell-list atom-centric
-    ``sorted`` pair-output kernel.
-
-    Mirrors the geometry registration above, optionally with ``pair_fn`` set
-    (so the kernel's ``HAS_PAIR_FN`` body runs and ``pair_energies`` /
-    ``pair_forces`` are registered as additional outputs) and/or
-    ``partial=True`` (the ``target_indices`` path: output row ``r`` maps to atom
-    ``target_indices[r]``, launched ``(num_targets,)``).  Cached by
-    ``(pair_fn identity, wp_dtype, partial)``; one recompile per distinct
-    ``(pair_fn, partial)`` combination.
-
-    With ``pair_fn`` the kernel has 7 outputs (geometry + ``pe`` / ``pf``);
-    without it, 5 (geometry only).
-    """
-    kernel = get_query_cell_list_kernel(
-        wp_dtype,
-        strategy="atom_centric",
+    """Return a cached sorted direct registration for batched pair outputs."""
+    jax_dtype = jnp.float64 if wp_dtype == wp.float64 else jnp.float32
+    return _lazy_cell_list_query_kernel(
         batched=True,
         selective=True,
         partial=bool(partial),
-        return_vectors=True,
-        return_distances=True,
-        pair_fn=pair_fn,
         half_fill=bool(half_fill),
-    )
-    in_out_argnames = [
-        "neighbor_matrix",
-        "neighbor_matrix_shifts",
-        "num_neighbors",
-        "neighbor_vectors",
-        "neighbor_distances",
-    ]
-    if pair_fn is not None:
-        in_out_argnames += ["pair_energies", "pair_forces"]
-    return jax_kernel(
-        kernel,
-        num_outputs=len(in_out_argnames),
-        in_out_argnames=in_out_argnames,
-        enable_backward=False,
-    )
+        geometry=True,
+        pair_fn=pair_fn,
+        atom_centric_path="sorted",
+    )[jax_dtype]
 
 
 __all__ = [
@@ -385,6 +169,92 @@ def _normalize_batch_cell_pbc(
         pbc_out = pbc_out.astype(jnp.bool_)
 
     return cell_out, pbc_out
+
+
+def _estimate_batch_max_total_cells(
+    batch_ptr: jax.Array,
+    cell: jax.Array,
+    pbc: jax.Array,
+    cutoff: float,
+    buffer_factor: float,
+    capacity_strategy: Literal["volume", "geometry"],
+) -> int:
+    """Estimate allocation capacity without materializing construct metadata."""
+    if capacity_strategy not in ("volume", "geometry"):
+        raise ValueError(
+            "capacity_strategy must be 'volume' or 'geometry', "
+            f"got {capacity_strategy!r}."
+        )
+
+    num_systems = batch_ptr.shape[0] - 1
+    promoted_cells_per_dimension = (
+        _derive_promoted_cells_per_dimension(cell, pbc, cutoff)
+        if capacity_strategy == "geometry"
+        else None
+    )
+    max_total_cells = 0
+
+    for sys_idx in range(num_systems):
+        num_atoms_in_sys = batch_ptr[sys_idx + 1] - batch_ptr[sys_idx]
+        # Empty systems do not determine the required per-system capacity.
+        if num_atoms_in_sys == 0:
+            continue
+
+        if capacity_strategy == "volume":
+            # Sum each non-empty system's density-based capacity estimate.
+            volume = jnp.abs(jnp.linalg.det(cell[sys_idx]))
+            num_cells_est = int(volume / cutoff**3 * buffer_factor)
+        else:
+            # Track the largest promoted grid for equal per-system allocation.
+            cells_per_dimension = promoted_cells_per_dimension[sys_idx]
+            num_cells_est = int(
+                cells_per_dimension[0]
+                * cells_per_dimension[1]
+                * cells_per_dimension[2]
+                * buffer_factor
+            )
+
+        system_capacity = max(num_cells_est, 8)
+        if capacity_strategy == "geometry":
+            max_total_cells = max(max_total_cells, system_capacity)
+        else:
+            max_total_cells += system_capacity
+
+    if capacity_strategy == "geometry":
+        # Construction divides the total capacity evenly across all systems.
+        max_total_cells *= num_systems
+    return max(max_total_cells, num_systems)
+
+
+def _construct_batch_cells_per_dimension(
+    cell: jax.Array,
+    pbc: jax.Array,
+    cutoff: float,
+    max_total_cells: int,
+) -> jax.Array:
+    """Run the authoritative construct kernel and return realized bins."""
+    num_systems = cell.shape[0]
+    if max_total_cells < num_systems:
+        raise ValueError(
+            "max_total_cells must be at least num_systems "
+            f"(got max_total_cells={max_total_cells}, num_systems={num_systems})."
+        )
+
+    cells_per_dimension = jnp.zeros((num_systems, 3), dtype=jnp.int32)
+    empty_bool1d = jnp.zeros((0,), dtype=jnp.bool_)
+    empty_i32 = jnp.zeros((0,), dtype=jnp.int32)
+    construct = _BATCH_CELL_LIST_BUILD_REGISTRATIONS["construct_bin_size"][cell.dtype]
+    (cells_per_dimension,) = construct(
+        cell,
+        empty_bool1d,
+        pbc,
+        empty_i32,
+        cells_per_dimension,
+        float(cutoff),
+        int(max_total_cells),
+        launch_dims=(num_systems,),
+    )
+    return cells_per_dimension
 
 
 # ==============================================================================
@@ -925,7 +795,9 @@ def estimate_batch_cell_list_sizes(
     cell: jax.Array | None = None,
     cutoff: float = 5.0,
     pbc: jax.Array | None = None,
-    buffer_factor: float = 1.5,
+    buffer_factor: float = _DEFAULT_CELL_LIST_BUFFER_FACTOR,
+    *,
+    capacity_strategy: Literal["volume", "geometry"] = "volume",
 ) -> tuple[int, jax.Array, jax.Array]:
     """Estimate required batch cell list sizes.
 
@@ -945,15 +817,40 @@ def estimate_batch_cell_list_sizes(
         PBC flags.
     buffer_factor : float, optional
         Buffer multiplier. Default is 1.5.
+    capacity_strategy : {"volume", "geometry"}, optional
+        Capacity estimation policy. ``"volume"`` (default) estimates capacity
+        from each cell's volume and the cutoff. ``"geometry"`` estimates
+        capacity from the largest promoted per-axis grid among non-empty
+        systems, scaled by the number of systems.
 
     Returns
     -------
     max_total_cells : int
         Maximum total cells to allocate.
     cells_per_dimension : jax.Array, shape (num_systems, 3)
-        Cells per dimension for each system.
+        Realized cells per dimension for each system at ``max_total_cells``.
     neighbor_search_radius : jax.Array, shape (num_systems, 3)
-        Search radius for each system.
+        Search radius derived from the realized cells per dimension.
+
+    Notes
+    -----
+    The volume policy sums ``max(int(abs(det(cell)) / cutoff**3 *
+    buffer_factor), 8)`` for non-empty systems. The geometry policy derives
+    per-axis face-distance cells, applies adaptive promotion, then allocates
+    ``num_systems`` times the largest non-empty promoted-grid capacity. This
+    matches construction's equal per-system capacity bound, so every non-empty
+    system retains its promoted grid. Empty systems count toward the
+    per-system allocation multiplier but do not determine the largest capacity;
+    an all-empty batch allocates one cell per system. Geometry can therefore
+    reserve substantially more memory than volume sizing for heterogeneous
+    batches.
+
+    The returned cells and radii match ``batch_build_cell_list`` when called
+    with the returned ``max_total_cells``. To use geometry sizing for a build,
+    call this estimator with ``capacity_strategy="geometry"`` and pass its
+    capacity to ``batch_build_cell_list``. That explicit estimator-then-build
+    flow dispatches construction once per call, whereas automatic builds use
+    the private volume capacity helper and dispatch construction only once.
 
     .. warning::
 
@@ -977,40 +874,26 @@ def estimate_batch_cell_list_sizes(
         dtype=cell_dtype,
     )
 
-    # Simple estimation per system
-    max_total_cells = 0
-    cells_per_dim_list = []
-    search_radius_list = []
-
-    for sys_idx in range(num_systems):
-        start_idx = batch_ptr[sys_idx]
-        end_idx = batch_ptr[sys_idx + 1]
-        num_atoms_in_sys = end_idx - start_idx
-
-        if num_atoms_in_sys == 0:
-            cells_per_dim_list.append(jnp.ones(3, dtype=jnp.int32))
-            search_radius_list.append(jnp.ones(3, dtype=jnp.int32))
-            continue
-
-        # Volume estimation
-        det = jnp.linalg.det(cell[sys_idx])
-        volume = jnp.abs(det)
-
-        cell_volume = cutoff**3
-        # TODO: This estimation derives array sizes from traced input data (cell
-        # geometry), which is fundamentally incompatible with jax.jit compilation.
-        # The JAX bindings need a refactored usage pattern where sizing is always
-        # performed outside the JIT boundary, or a fixed upper-bound allocation
-        # strategy is adopted.
-        num_cells_est = max(int(volume / cell_volume * buffer_factor), 8)
-        max_total_cells += num_cells_est
-
-        cells_per_dim = jnp.ceil(num_cells_est ** (1 / 3)).astype(jnp.int32)
-        cells_per_dim_list.append(cells_per_dim * jnp.ones(3, dtype=jnp.int32))
-        search_radius_list.append(jnp.ones(3, dtype=jnp.int32))
-
-    cells_per_dimension = jnp.stack(cells_per_dim_list, axis=0)
-    neighbor_search_radius = jnp.stack(search_radius_list, axis=0)
+    max_total_cells = _estimate_batch_max_total_cells(
+        batch_ptr,
+        cell,
+        _pbc_bool,
+        cutoff,
+        buffer_factor,
+        capacity_strategy,
+    )
+    cells_per_dimension = _construct_batch_cells_per_dimension(
+        cell,
+        _pbc_bool,
+        cutoff,
+        max_total_cells,
+    )
+    neighbor_search_radius = _derive_neighbor_search_radius(
+        cell,
+        _pbc_bool,
+        cutoff,
+        cells_per_dimension,
+    )
 
     return max_total_cells, cells_per_dimension, neighbor_search_radius
 
@@ -1117,15 +1000,19 @@ def batch_build_cell_list(
     )
 
     if max_total_cells is None:
-        max_total_cells, cells_per_dim_est, neighbor_search_radius = (
-            estimate_batch_cell_list_sizes(
-                positions, batch_ptr, batch_idx, cell, cutoff, pbc
-            )
+        max_total_cells = _estimate_batch_max_total_cells(
+            batch_ptr,
+            cell,
+            pbc_bool,
+            cutoff,
+            _DEFAULT_CELL_LIST_BUFFER_FACTOR,
+            "volume",
         )
-        # Ensure neighbor_search_radius is on the correct device
-        neighbor_search_radius = neighbor_search_radius
-    else:
-        neighbor_search_radius = jnp.ones((num_systems, 3), dtype=jnp.int32)
+
+    neighbor_search_radius = jnp.zeros(
+        (num_systems, 3),
+        dtype=jnp.int32,
+    )
 
     # Allocate cell list tensors
     (
@@ -1142,16 +1029,17 @@ def batch_build_cell_list(
         neighbor_search_radius,
     )
 
-    # Select kernels based on dtype
-    if positions.dtype == jnp.float64:
-        _construct = _jax_batch_construct_bin_size_f64
-        _count = _jax_batch_count_atoms_per_bin_f64
-        _bin = _jax_batch_bin_atoms_f64
-    else:
-        _construct = _jax_batch_construct_bin_size_f32
-        _count = _jax_batch_count_atoms_per_bin_f32
-        _bin = _jax_batch_bin_atoms_f32
+    # Select kernels based on dtype.
+    if positions.dtype != jnp.float64:
         positions = positions.astype(jnp.float32)
+    _construct = _BATCH_CELL_LIST_BUILD_REGISTRATIONS["construct_bin_size"][
+        positions.dtype
+    ]
+    _count = _BATCH_CELL_LIST_BUILD_REGISTRATIONS["count_atoms"][positions.dtype]
+    _bin = _BATCH_CELL_LIST_BUILD_REGISTRATIONS["bin_atoms"][positions.dtype]
+    _cells_per_system = _BATCH_CELL_LIST_BUILD_REGISTRATIONS["cells_per_system"][
+        positions.dtype
+    ]
 
     if cell.dtype != positions.dtype:
         cell = cell.astype(positions.dtype)
@@ -1162,20 +1050,23 @@ def batch_build_cell_list(
     total_atoms = positions.shape[0]
 
     # Step 1: Construct bin sizes (one thread per system)
-    (cells_per_dimension,) = _construct(
+    cells_per_dimension = _construct_batch_cells_per_dimension(
         cell,
-        empty_bool1d,
         pbc_bool,
-        empty_i32,
-        cells_per_dimension,
         float(cutoff),
-        int(max_total_cells),
-        launch_dims=(num_systems,),
+        max_total_cells,
+    )
+
+    neighbor_search_radius = _derive_neighbor_search_radius(
+        cell,
+        pbc_bool,
+        cutoff,
+        cells_per_dimension,
     )
 
     # Step 2: Compute cells_per_system and cell_offsets
     cells_per_system = jnp.zeros(num_systems, dtype=jnp.int32)
-    (cells_per_system,) = _jax_compute_cells_per_system(
+    (cells_per_system,) = _cells_per_system(
         cells_per_dimension,
         cells_per_system,
         launch_dims=(num_systems,),
@@ -1451,20 +1342,7 @@ def batch_query_cell_list(
 
     # Select kernels based on dtype; same sorted-reads kernel for selective
     # and non-selective (controlled by ``rebuild_flags``).
-    if positions.dtype == jnp.float64:
-        _gather_kernel = _jax_batch_gather_positions_by_cell_f64
-        _sorted_build_kernel = (
-            _jax_batch_build_neighbor_matrix_local_count_sorted_half_f64
-            if half_fill
-            else _jax_batch_build_neighbor_matrix_local_count_sorted_f64
-        )
-    else:
-        _gather_kernel = _jax_batch_gather_positions_by_cell_f32
-        _sorted_build_kernel = (
-            _jax_batch_build_neighbor_matrix_local_count_sorted_half_f32
-            if half_fill
-            else _jax_batch_build_neighbor_matrix_local_count_sorted_f32
-        )
+    if positions.dtype != jnp.float64:
         positions = positions.astype(jnp.float32)
 
     if cell.dtype != positions.dtype:
@@ -1675,6 +1553,10 @@ def batch_query_cell_list(
         )
         return neighbor_matrix, num_neighbors, neighbor_matrix_shifts
 
+    _gather_kernel = _BATCH_CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
+    _sorted_build_kernel = _BATCH_CELL_LIST_QUERY_REGISTRATIONS[
+        (bool(half_fill), False)
+    ][positions.dtype]
     sorted_positions = jnp.zeros((total_atoms, 3), dtype=positions.dtype)
     sorted_atom_periodic_shifts = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
     sorted_positions, sorted_atom_periodic_shifts = _gather_kernel(
@@ -1775,11 +1657,6 @@ def _batch_cell_list_pair_outputs_forward(
     cell = jax.lax.stop_gradient(cell)
 
     f64 = positions.dtype == jnp.float64
-    gather_kernel = (
-        _jax_batch_gather_positions_by_cell_f64
-        if f64
-        else _jax_batch_gather_positions_by_cell_f32
-    )
 
     total_atoms = positions.shape[0]
     num_systems = pbc_bool.shape[0]
@@ -1905,23 +1782,20 @@ def _batch_cell_list_pair_outputs_forward(
                 pair_fn, wp_dtype, is_partial, half_fill
             )
         elif half_fill:
-            pair_kernel = (
-                _jax_batch_build_neighbor_matrix_local_count_sorted_pair_half_f64
-                if f64
-                else _jax_batch_build_neighbor_matrix_local_count_sorted_pair_half_f32
-            )
+            pair_kernel = _BATCH_CELL_LIST_QUERY_REGISTRATIONS[(True, True)][
+                positions.dtype
+            ]
         else:
-            pair_kernel = (
-                _jax_batch_build_neighbor_matrix_local_count_sorted_pair_f64
-                if f64
-                else _jax_batch_build_neighbor_matrix_local_count_sorted_pair_f32
-            )
+            pair_kernel = _BATCH_CELL_LIST_QUERY_REGISTRATIONS[(False, True)][
+                positions.dtype
+            ]
         ti_arg = (
             jnp.asarray(target_indices, dtype=jnp.int32)
             if is_partial
             else jnp.zeros((0,), dtype=jnp.int32)
         )
 
+        gather_kernel = _BATCH_CELL_LIST_BUILD_REGISTRATIONS["gather"][positions.dtype]
         sorted_positions = jnp.zeros((total_atoms, 3), dtype=positions.dtype)
         sorted_atom_periodic_shifts = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
         sorted_positions, sorted_atom_periodic_shifts = gather_kernel(

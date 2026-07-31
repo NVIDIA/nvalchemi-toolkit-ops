@@ -18,19 +18,21 @@
 from __future__ import annotations
 
 import functools
+from importlib import import_module
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-import nvalchemiops.jax.neighbors.naive as naive_module
 from nvalchemiops.jax.neighbors.naive import naive_neighbor_list
 from nvalchemiops.jax.neighbors.neighbor_utils import compute_naive_num_shifts
 
 from .conftest import requires_gpu
 
 pytestmark = requires_gpu
+
+naive_module = import_module("nvalchemiops.jax.neighbors.naive")
 
 
 class TestNaiveNeighborList:
@@ -2001,3 +2003,111 @@ class TestJaxNaiveAutograd:
             assert row_a == row_b
         assert jnp.isfinite(d_b).all().item()
         assert jnp.isfinite(v_b).all().item()
+
+
+class TestRegistrationLaziness:
+    """Regression tests for lazy direct naive registry construction."""
+
+    @staticmethod
+    def _direct_registrations():
+        """Return every direct naive lazy registration."""
+        return tuple(
+            registration
+            for registrations in (
+                naive_module._DIRECT_NAIVE_KERNELS,
+                naive_module._DIRECT_NAIVE_GEOMETRY_KERNELS,
+            )
+            for registration in registrations.values()
+        )
+
+    @pytest.fixture(autouse=True)
+    def _restore_direct_caches(self):
+        """Restore process-global direct caches after each laziness test."""
+        snapshots = [
+            (registration, dict(registration._cache))
+            for registration in self._direct_registrations()
+        ]
+        try:
+            yield
+        finally:
+            for registration, cache in snapshots:
+                registration._cache.clear()
+                registration._cache.update(cache)
+
+    def _clear_direct_caches(self) -> None:
+        """Clear lazy direct naive wrapper caches before each laziness check."""
+        for registration in self._direct_registrations():
+            registration._cache.clear()
+
+    def test_direct_no_pbc_caches_one_wrapper(self) -> None:
+        """Direct scalar no-PBC should register exactly one dtype wrapper."""
+        self._clear_direct_caches()
+        positions = jnp.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=jnp.float32)
+        naive_neighbor_list(positions, 1.0, max_neighbors=4)
+
+        assert (
+            len(naive_module._DIRECT_NAIVE_KERNELS[("none", False, False)]._cache) == 1
+        )
+        for key, registration in naive_module._DIRECT_NAIVE_KERNELS.items():
+            if key != ("none", False, False):
+                assert len(registration._cache) == 0
+        for registration in naive_module._DIRECT_NAIVE_GEOMETRY_KERNELS.values():
+            assert len(registration._cache) == 0
+
+    def test_jitted_direct_first_use_caches_one_wrapper(self) -> None:
+        """Direct registration remains lazy when its first use is traced."""
+        self._clear_direct_caches()
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        jitted_neighbor_counts = jax.jit(
+            lambda positions: naive_neighbor_list(
+                positions,
+                1.0,
+                max_neighbors=4,
+            )[1]
+        )
+
+        num_neighbors = jitted_neighbor_counts(positions)
+        num_neighbors.block_until_ready()
+
+        assert int(num_neighbors.sum()) > 0
+        assert (
+            len(naive_module._DIRECT_NAIVE_KERNELS[("none", False, False)]._cache) == 1
+        )
+
+    def test_tile_path_leaves_direct_caches_empty(self) -> None:
+        """Tile dispatch should not touch direct naive registry caches."""
+        self._clear_direct_caches()
+        positions = jnp.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=jnp.float32)
+        naive_neighbor_list(positions, 1.0, max_neighbors=4, strategy="tile")
+
+        for registrations in (
+            naive_module._DIRECT_NAIVE_KERNELS,
+            naive_module._DIRECT_NAIVE_GEOMETRY_KERNELS,
+        ):
+            for registration in registrations.values():
+                assert len(registration._cache) == 0
+
+    def test_warp_graph_path_leaves_direct_caches_empty(self) -> None:
+        """Warp graph dispatch should not touch direct naive registry caches."""
+        self._clear_direct_caches()
+        positions, cutoff, cell, pbc, max_neighbors = _make_naive_inputs(
+            jnp.float32,
+            pbc_enabled=False,
+            wrap_positions=False,
+        )
+        naive_neighbor_list(
+            positions,
+            cutoff,
+            max_neighbors=max_neighbors,
+            graph_mode="warp",
+        )
+
+        for registrations in (
+            naive_module._DIRECT_NAIVE_KERNELS,
+            naive_module._DIRECT_NAIVE_GEOMETRY_KERNELS,
+        ):
+            for registration in registrations.values():
+                assert len(registration._cache) == 0

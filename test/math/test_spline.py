@@ -923,7 +923,15 @@ def _bspline_via_convolution(u: np.ndarray, order: int, h: float = 1e-4) -> np.n
     box = ((grid >= 0) & (grid < 1)).astype(np.float64)
     spline = box.copy()
     for _ in range(n - 1):
-        spline = np.convolve(spline, box) * h
+        output_size = spline.size + box.size - 1
+        fft_size = 1 << (output_size - 1).bit_length()
+        spline = (
+            np.fft.irfft(
+                np.fft.rfft(spline, fft_size) * np.fft.rfft(box, fft_size),
+                fft_size,
+            )[:output_size]
+            * h
+        )
     out_grid = np.arange(0, len(spline)) * h
     return np.interp(u, out_grid, spline)
 

@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+from importlib import import_module
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -29,6 +31,8 @@ from nvalchemiops.neighbors.neighbor_utils import NeighborOverflowError
 from .conftest import requires_gpu
 
 pytestmark = requires_gpu
+
+batch_naive_module = import_module("nvalchemiops.jax.neighbors.batch_naive")
 
 
 def _sorted_row_multisets(
@@ -1397,3 +1401,86 @@ class TestJaxBatchNaiveAutograd:
             assert row_a == row_b
         assert jnp.isfinite(d_b).all().item()
         assert jnp.isfinite(v_b).all().item()
+
+
+class TestRegistrationLaziness:
+    """Regression tests for lazy direct batched naive registry construction."""
+
+    @staticmethod
+    def _direct_registrations():
+        """Return every direct batched naive lazy registration."""
+        return tuple(
+            registration
+            for registrations in (
+                batch_naive_module._DIRECT_BATCH_NAIVE_KERNELS,
+                batch_naive_module._DIRECT_BATCH_NAIVE_GEOMETRY_KERNELS,
+            )
+            for registration in registrations.values()
+        )
+
+    @pytest.fixture(autouse=True)
+    def _restore_direct_caches(self):
+        """Restore process-global direct caches after each laziness test."""
+        snapshots = [
+            (registration, dict(registration._cache))
+            for registration in self._direct_registrations()
+        ]
+        try:
+            yield
+        finally:
+            for registration, cache in snapshots:
+                registration._cache.clear()
+                registration._cache.update(cache)
+
+    def _clear_direct_caches(self) -> None:
+        """Clear lazy direct batched naive wrapper caches before each check."""
+        for registration in self._direct_registrations():
+            registration._cache.clear()
+
+    def test_direct_no_pbc_caches_one_wrapper(self) -> None:
+        """Direct scalar no-PBC should register exactly one dtype wrapper."""
+        self._clear_direct_caches()
+        positions = jnp.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=jnp.float32)
+        batch_idx = jnp.array([0, 0], dtype=jnp.int32)
+        batch_naive_neighbor_list(
+            positions,
+            1.0,
+            batch_idx=batch_idx,
+            max_neighbors=4,
+        )
+
+        assert (
+            len(
+                batch_naive_module._DIRECT_BATCH_NAIVE_KERNELS[
+                    ("none", False, False)
+                ]._cache
+            )
+            == 1
+        )
+        for key, registration in batch_naive_module._DIRECT_BATCH_NAIVE_KERNELS.items():
+            if key != ("none", False, False):
+                assert len(registration._cache) == 0
+        for (
+            registration
+        ) in batch_naive_module._DIRECT_BATCH_NAIVE_GEOMETRY_KERNELS.values():
+            assert len(registration._cache) == 0
+
+    def test_tile_path_leaves_direct_caches_empty(self) -> None:
+        """Tile dispatch should not touch direct batched naive registry caches."""
+        self._clear_direct_caches()
+        positions = jnp.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=jnp.float32)
+        batch_idx = jnp.array([0, 0], dtype=jnp.int32)
+        batch_naive_neighbor_list(
+            positions,
+            1.0,
+            batch_idx=batch_idx,
+            max_neighbors=4,
+            strategy="tile",
+        )
+
+        for registrations in (
+            batch_naive_module._DIRECT_BATCH_NAIVE_KERNELS,
+            batch_naive_module._DIRECT_BATCH_NAIVE_GEOMETRY_KERNELS,
+        ):
+            for registration in registrations.values():
+                assert len(registration._cache) == 0
