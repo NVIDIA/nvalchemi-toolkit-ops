@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 import jax
 import jax.numpy as jnp
 from jax.interpreters import ad as jax_ad
@@ -43,9 +45,11 @@ from nvalchemiops.jax.interactions.electrostatics._lazy_jax_kernels import (
     _make_jax_kernels,
 )
 from nvalchemiops.jax.interactions.electrostatics._utils import (
+    _apply_energy_reduction,
     _build_electrostatic_result,
     _normalize_dtype,
     _prepare_cell,
+    _validate_energy_reduction,
 )
 
 __all__ = ["compute_slab_correction"]
@@ -289,53 +293,6 @@ def _precompute_slab_geometry(
         slab_height_sq,
         launch_dims=(num_systems,),
     )
-
-
-def _system_sum_from_atoms(
-    values: jax.Array,
-    batch_idx: jax.Array | None,
-    num_systems: int,
-) -> jax.Array:
-    """Sum atom values by system."""
-    if batch_idx is None:
-        return values.sum(keepdims=True)
-    return (
-        jnp.zeros((num_systems,), dtype=values.dtype)
-        .at[batch_idx.astype(jnp.int32)]
-        .add(values)
-    )
-
-
-def _per_system_atom_counts(
-    batch_idx: jax.Array | None,
-    num_systems: int,
-    num_atoms: int,
-) -> jax.Array:
-    """Return atom counts per system as float64."""
-    if batch_idx is None:
-        return jnp.full((num_systems,), float(num_atoms), dtype=jnp.float64)
-    return (
-        jnp.zeros((num_systems,), dtype=jnp.float64)
-        .at[batch_idx.astype(jnp.int32)]
-        .add(jnp.ones((num_atoms,), dtype=jnp.float64))
-    )
-
-
-def _distribute_system_values(
-    system_values: jax.Array,
-    batch_idx: jax.Array | None,
-    num_atoms: int,
-) -> jax.Array:
-    """Distribute per-system values uniformly to atoms."""
-    if batch_idx is None:
-        if num_atoms == 0:
-            return jnp.zeros((0,), dtype=system_values.dtype)
-        return jnp.full(
-            (num_atoms,), system_values[0] / num_atoms, dtype=system_values.dtype
-        )
-    bidx = batch_idx.astype(jnp.int32)
-    counts = _per_system_atom_counts(batch_idx, system_values.shape[0], num_atoms)
-    return (system_values / jnp.maximum(counts, 1.0))[bidx]
 
 
 def _slab_correction_energy_kernel_value(
@@ -763,7 +720,7 @@ def _slab_correction_energy_autodiff(
     return _slab_correction_energy_jvp(positions, charges, cell, pbc, batch_idx)
 
 
-def compute_slab_correction(
+def _compute_slab_correction_impl(
     positions: jax.Array,
     charges: jax.Array,
     cell: jax.Array,
@@ -773,48 +730,10 @@ def compute_slab_correction(
     compute_charge_gradients: bool = False,
     compute_virial: bool = False,
 ) -> jax.Array | tuple[jax.Array, ...]:
-    """Yeh-Berkowitz/Ballenegger slab correction for 2D periodic systems.
+    """Compute the atom-layout slab correction result.
 
-    Returns the standalone slab correction contribution for JAX electrostatics
-    APIs. The caller can add the returned energy, force, charge-gradient, and
-    virial terms to 3D-periodic Ewald or PME component outputs. Energy-only
-    calls use explicit Warp-backed derivative paths; direct-output flags remain
-    forward compatibility paths.
-
-    Parameters
-    ----------
-    positions : jax.Array, shape (N, 3)
-        Atomic coordinates.
-    charges : jax.Array, shape (N,)
-        Atomic charges.
-    cell : jax.Array, shape (3, 3) or (B, 3, 3)
-        Unit cell matrices.
-    pbc : jax.Array, shape (3,) or (B, 3), dtype=bool
-        Per-system periodic boundary conditions. True marks periodic directions
-        and False marks the non-periodic slab direction. Systems whose pbc row
-        is not slab-like contribute zero. A shape (3,) array is accepted only
-        for single-system calls.
-    batch_idx : jax.Array, shape (N,), dtype=int32, optional
-        System index for each atom. Defaults to all zeros for a single system.
-        When provided, atoms must be grouped by system: ``batch_idx`` must be
-        contiguous, nondecreasing, and use system IDs ``0..B-1``.
-    compute_forces : bool, default=False
-        If True, return per-atom slab forces.
-    compute_charge_gradients : bool, default=False
-        If True, return per-atom slab charge gradients dE_slab/dq_i.
-    compute_virial : bool, default=False
-        If True, return per-system slab virial tensors.
-
-    Returns
-    -------
-    energies : jax.Array, shape (N,)
-        Per-atom slab correction energy.
-    forces : jax.Array, shape (N, 3), optional
-        Per-atom slab force.
-    charge_gradients : jax.Array, shape (N,), optional
-        Per-atom slab charge gradient.
-    virial : jax.Array, shape (B, 3, 3), optional
-        Per-system slab virial tensor.
+    Implementation for :func:`compute_slab_correction`. The public wrapper
+    applies the ``energy_reduction`` layout after this function returns.
     """
     dtype = _normalize_dtype(positions.dtype)
     positions_cast = positions.astype(dtype)
@@ -1084,3 +1003,81 @@ def compute_slab_correction(
         )
 
     return energy_out
+
+
+def compute_slab_correction(
+    positions: jax.Array,
+    charges: jax.Array,
+    cell: jax.Array,
+    pbc: jax.Array,
+    batch_idx: jax.Array | None = None,
+    compute_forces: bool = False,
+    compute_charge_gradients: bool = False,
+    compute_virial: bool = False,
+    *,
+    energy_reduction: Literal["atom", "system"] = "atom",
+) -> jax.Array | tuple[jax.Array, ...]:
+    """Yeh-Berkowitz/Ballenegger slab correction for 2D periodic systems.
+
+    Returns the standalone slab correction contribution for JAX electrostatics
+    APIs. The caller can add the returned energy, force, charge-gradient, and
+    virial terms to 3D-periodic Ewald or PME component outputs. Energy-only
+    calls use explicit Warp-backed derivative paths; direct-output flags remain
+    forward compatibility paths.
+
+    Parameters
+    ----------
+    positions : jax.Array, shape (N, 3)
+        Atomic coordinates.
+    charges : jax.Array, shape (N,)
+        Atomic charges.
+    cell : jax.Array, shape (3, 3) or (B, 3, 3)
+        Unit cell matrices.
+    pbc : jax.Array, shape (3,) or (B, 3), dtype=bool
+        Per-system periodic boundary conditions. True marks periodic directions
+        and False marks the non-periodic slab direction. Systems whose pbc row
+        is not slab-like contribute zero. A shape (3,) array is accepted only
+        for single-system calls.
+    batch_idx : jax.Array, shape (N,), dtype=int32, optional
+        System index for each atom. Defaults to all zeros for a single system.
+        When provided, atoms must be grouped by system: ``batch_idx`` must be
+        contiguous, nondecreasing, and use system IDs ``0..B-1``.
+    compute_forces : bool, default=False
+        If True, return per-atom slab forces.
+    compute_charge_gradients : bool, default=False
+        If True, return per-atom slab charge gradients dE_slab/dq_i.
+    compute_virial : bool, default=False
+        If True, return per-system slab virial tensors.
+    energy_reduction : {"atom", "system"}, keyword-only, default="atom"
+        Public energy layout. ``"atom"`` returns per-atom energies of shape
+        (N,) (default, unchanged behavior). ``"system"`` returns per-system
+        energies of shape (B,) (or (1,) for a single system), computed as a
+        differentiable, uniform scatter-sum of the per-atom energies; it does
+        not support nonuniform per-atom weighting. Only the energy field of
+        the return value changes; forces, charge gradients, and the virial
+        keep their existing atom/system layouts.
+
+    Returns
+    -------
+    energies : jax.Array, shape (N,) or (B,)
+        Slab correction energy: per-atom when ``energy_reduction="atom"``,
+        per-system when ``energy_reduction="system"``.
+    forces : jax.Array, shape (N, 3), optional
+        Per-atom slab force.
+    charge_gradients : jax.Array, shape (N,), optional
+        Per-atom slab charge gradient.
+    virial : jax.Array, shape (B, 3, 3), optional
+        Per-system slab virial tensor.
+    """
+    _validate_energy_reduction(energy_reduction)
+    result = _compute_slab_correction_impl(
+        positions,
+        charges,
+        cell,
+        pbc,
+        batch_idx,
+        compute_forces,
+        compute_charge_gradients,
+        compute_virial,
+    )
+    return _apply_energy_reduction(result, energy_reduction, batch_idx, cell)

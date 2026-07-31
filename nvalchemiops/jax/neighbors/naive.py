@@ -31,15 +31,13 @@ from nvalchemiops.jax.neighbors._autograd import (
     _route_pair_outputs,
 )
 from nvalchemiops.jax.neighbors._dispatch import _is_jax_cpu_array
+from nvalchemiops.jax.neighbors._registration import _lazy_naive_kernel
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     _validate_graph_mode,
     build_naive_kernel_tables,
     compute_naive_num_shifts,
     coo_pack_pair_geometry,
     get_neighbor_list_from_neighbor_matrix,
-)
-from nvalchemiops.neighbors.naive import (
-    get_naive_neighbor_matrix_kernel as _get_naive_kernel,
 )
 from nvalchemiops.neighbors.naive.launchers import (
     _launch_naive_neighbor_matrix_no_pbc,
@@ -80,369 +78,51 @@ _DTYPE_TO_NAIVE_KERNELS = (wp.float32, wp.float64)
     half_fill=True,
 )
 
-# Pair-output variants — produced by the same factory but with
-# ``return_vectors`` / ``return_distances`` flipped on.  Used by the
-# autograd path in :mod:`nvalchemiops.jax.neighbors._autograd`.
-#
-# The PBC variant is hard-wired to ``pbc_mode='wrap_on_entry'``.  The kernel
-# is idempotent on already-wrapped positions and produces correct shifts
-# for raw (unwrapped) positions as well, so the autograd path silently
-# ignores the public ``wrap_positions`` kwarg.  Callers who pre-wrap to save
-# the two extra kernel launches lose that optimization on the autograd
-# path but retain numerical equivalence.
+# Direct jax_kernel registrations are constructed lazily.  The retained
+# build_naive_kernel_tables tables below remain for GraphMode.WARP callbacks.
 
-_fill_naive_pair_kernels = {
-    t: _get_naive_kernel(
-        t,
-        pbc_mode="none",
+
+_DIRECT_NAIVE_KERNELS = {
+    (pbc_mode, selective, half_fill): _lazy_naive_kernel(
+        operation="single_cutoff",
         batched=False,
-        selective=False,
-        return_vectors=True,
-        return_distances=True,
+        pbc_mode=pbc_mode,
+        selective=selective,
+        half_fill=half_fill,
     )
-    for t in _DTYPE_TO_NAIVE_KERNELS
+    for pbc_mode in ("none", "wrap_on_entry", "prewrapped")
+    for selective in (False, True)
+    for half_fill in (False, True)
 }
-_fill_naive_pbc_pair_kernels = {
-    t: _get_naive_kernel(
-        t,
-        pbc_mode="wrap_on_entry",
+_DIRECT_NAIVE_GEOMETRY_KERNELS = {
+    (pbc_mode, half_fill): _lazy_naive_kernel(
+        operation="single_cutoff",
         batched=False,
-        selective=False,
-        return_vectors=True,
-        return_distances=True,
+        pbc_mode=pbc_mode,
+        half_fill=half_fill,
+        geometry=True,
     )
-    for t in _DTYPE_TO_NAIVE_KERNELS
+    for pbc_mode in ("none", "wrap_on_entry")
+    for half_fill in (False, True)
 }
-
-# Half-fill specializations of the pair-output kernels (``half_fill`` is a
-# compile-time constant in the Warp factory, so honoring it needs a distinct
-# kernel).  Selected by the forward when ``half_fill=True``.
-_fill_naive_pair_half_kernels = {
-    t: _get_naive_kernel(
-        t,
-        pbc_mode="none",
-        batched=False,
-        selective=False,
-        return_vectors=True,
-        return_distances=True,
-        half_fill=True,
-    )
-    for t in _DTYPE_TO_NAIVE_KERNELS
-}
-_fill_naive_pbc_pair_half_kernels = {
-    t: _get_naive_kernel(
-        t,
-        pbc_mode="wrap_on_entry",
-        batched=False,
-        selective=False,
-        return_vectors=True,
-        return_distances=True,
-        half_fill=True,
-    )
-    for t in _DTYPE_TO_NAIVE_KERNELS
-}
-
-__all__ = ["naive_neighbor_list"]
-
-# ==============================================================================
-# JAX Kernel Wrappers
-# ==============================================================================
-
-# No-PBC naive neighbor matrix kernel wrappers
-_jax_fill_naive_f32 = jax_kernel(
-    _fill_naive_neighbor_matrix_kernels[wp.float32],
-    num_outputs=2,
-    in_out_argnames=["neighbor_matrix1", "num_neighbors1"],
-    enable_backward=False,
-)
-_jax_fill_naive_f64 = jax_kernel(
-    _fill_naive_neighbor_matrix_kernels[wp.float64],
-    num_outputs=2,
-    in_out_argnames=["neighbor_matrix1", "num_neighbors1"],
-    enable_backward=False,
-)
-
-# PBC naive neighbor matrix kernel wrappers
-_jax_fill_naive_pbc_f32 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_kernels[wp.float32],
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
-    enable_backward=False,
-)
-_jax_fill_naive_pbc_f64 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_kernels[wp.float64],
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
-    enable_backward=False,
-)
-
-# Selective no-PBC naive neighbor matrix kernel wrappers
-_jax_fill_naive_selective_f32 = jax_kernel(
-    _fill_naive_neighbor_matrix_selective_kernels[wp.float32],
-    num_outputs=2,
-    in_out_argnames=["neighbor_matrix1", "num_neighbors1"],
-    enable_backward=False,
-)
-_jax_fill_naive_selective_f64 = jax_kernel(
-    _fill_naive_neighbor_matrix_selective_kernels[wp.float64],
-    num_outputs=2,
-    in_out_argnames=["neighbor_matrix1", "num_neighbors1"],
-    enable_backward=False,
-)
-
-# Selective PBC naive neighbor matrix kernel wrappers
-_jax_fill_naive_pbc_selective_f32 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_selective_kernels[wp.float32],
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
-    enable_backward=False,
-)
-_jax_fill_naive_pbc_selective_f64 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_selective_kernels[wp.float64],
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
-    enable_backward=False,
-)
-
-# PBC prewrapped naive neighbor matrix kernel wrappers
-_jax_fill_naive_pbc_prewrapped_f32 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_prewrapped_kernels[wp.float32],
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
-    enable_backward=False,
-)
-_jax_fill_naive_pbc_prewrapped_f64 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_prewrapped_kernels[wp.float64],
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
-    enable_backward=False,
-)
-
-# Selective PBC prewrapped naive neighbor matrix kernel wrappers
-_jax_fill_naive_pbc_prewrapped_selective_f32 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_prewrapped_selective_kernels[wp.float32],
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
-    enable_backward=False,
-)
-_jax_fill_naive_pbc_prewrapped_selective_f64 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_prewrapped_selective_kernels[wp.float64],
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
-    enable_backward=False,
-)
-
-# Half-fill naive neighbor matrix kernel wrappers
-_jax_fill_naive_half_f32 = jax_kernel(
-    _fill_naive_neighbor_matrix_half_kernels[wp.float32],
-    num_outputs=2,
-    in_out_argnames=["neighbor_matrix1", "num_neighbors1"],
-    enable_backward=False,
-)
-_jax_fill_naive_half_f64 = jax_kernel(
-    _fill_naive_neighbor_matrix_half_kernels[wp.float64],
-    num_outputs=2,
-    in_out_argnames=["neighbor_matrix1", "num_neighbors1"],
-    enable_backward=False,
-)
-_jax_fill_naive_pbc_half_f32 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_half_kernels[wp.float32],
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
-    enable_backward=False,
-)
-_jax_fill_naive_pbc_half_f64 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_half_kernels[wp.float64],
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
-    enable_backward=False,
-)
-_jax_fill_naive_selective_half_f32 = jax_kernel(
-    _fill_naive_neighbor_matrix_selective_half_kernels[wp.float32],
-    num_outputs=2,
-    in_out_argnames=["neighbor_matrix1", "num_neighbors1"],
-    enable_backward=False,
-)
-_jax_fill_naive_selective_half_f64 = jax_kernel(
-    _fill_naive_neighbor_matrix_selective_half_kernels[wp.float64],
-    num_outputs=2,
-    in_out_argnames=["neighbor_matrix1", "num_neighbors1"],
-    enable_backward=False,
-)
-_jax_fill_naive_pbc_selective_half_f32 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_selective_half_kernels[wp.float32],
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
-    enable_backward=False,
-)
-_jax_fill_naive_pbc_selective_half_f64 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_selective_half_kernels[wp.float64],
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
-    enable_backward=False,
-)
-_jax_fill_naive_pbc_prewrapped_half_f32 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_prewrapped_half_kernels[wp.float32],
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
-    enable_backward=False,
-)
-_jax_fill_naive_pbc_prewrapped_half_f64 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_prewrapped_half_kernels[wp.float64],
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
-    enable_backward=False,
-)
-_jax_fill_naive_pbc_prewrapped_selective_half_f32 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_prewrapped_selective_half_kernels[wp.float32],
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
-    enable_backward=False,
-)
-_jax_fill_naive_pbc_prewrapped_selective_half_f64 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_prewrapped_selective_half_kernels[wp.float64],
-    num_outputs=3,
-    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
-    enable_backward=False,
-)
-
-# Pair-output kernel wrappers (no PBC).  Returns 4 outputs: neighbor_matrix,
-# num_neighbors, neighbor_vectors, neighbor_distances.
-_jax_fill_naive_pair_f32 = jax_kernel(
-    _fill_naive_pair_kernels[wp.float32],
-    num_outputs=4,
-    in_out_argnames=[
-        "neighbor_matrix1",
-        "num_neighbors1",
-        "neighbor_vectors",
-        "neighbor_distances",
-    ],
-    enable_backward=False,
-)
-_jax_fill_naive_pair_f64 = jax_kernel(
-    _fill_naive_pair_kernels[wp.float64],
-    num_outputs=4,
-    in_out_argnames=[
-        "neighbor_matrix1",
-        "num_neighbors1",
-        "neighbor_vectors",
-        "neighbor_distances",
-    ],
-    enable_backward=False,
-)
-
-# Pair-output kernel wrappers (PBC, wrap-on-entry mode).  Returns 5 outputs:
-# adds neighbor_matrix_shifts.
-_jax_fill_naive_pbc_pair_f32 = jax_kernel(
-    _fill_naive_pbc_pair_kernels[wp.float32],
-    num_outputs=5,
-    in_out_argnames=[
-        "neighbor_matrix1",
-        "neighbor_matrix_shifts1",
-        "num_neighbors1",
-        "neighbor_vectors",
-        "neighbor_distances",
-    ],
-    enable_backward=False,
-)
-_jax_fill_naive_pbc_pair_f64 = jax_kernel(
-    _fill_naive_pbc_pair_kernels[wp.float64],
-    num_outputs=5,
-    in_out_argnames=[
-        "neighbor_matrix1",
-        "neighbor_matrix_shifts1",
-        "num_neighbors1",
-        "neighbor_vectors",
-        "neighbor_distances",
-    ],
-    enable_backward=False,
-)
-
-# Half-fill geometry-only pair-output callables (same I/O as the full-fill ones).
-_jax_fill_naive_pair_half_f32 = jax_kernel(
-    _fill_naive_pair_half_kernels[wp.float32],
-    num_outputs=4,
-    in_out_argnames=[
-        "neighbor_matrix1",
-        "num_neighbors1",
-        "neighbor_vectors",
-        "neighbor_distances",
-    ],
-    enable_backward=False,
-)
-_jax_fill_naive_pair_half_f64 = jax_kernel(
-    _fill_naive_pair_half_kernels[wp.float64],
-    num_outputs=4,
-    in_out_argnames=[
-        "neighbor_matrix1",
-        "num_neighbors1",
-        "neighbor_vectors",
-        "neighbor_distances",
-    ],
-    enable_backward=False,
-)
-_jax_fill_naive_pbc_pair_half_f32 = jax_kernel(
-    _fill_naive_pbc_pair_half_kernels[wp.float32],
-    num_outputs=5,
-    in_out_argnames=[
-        "neighbor_matrix1",
-        "neighbor_matrix_shifts1",
-        "num_neighbors1",
-        "neighbor_vectors",
-        "neighbor_distances",
-    ],
-    enable_backward=False,
-)
-_jax_fill_naive_pbc_pair_half_f64 = jax_kernel(
-    _fill_naive_pbc_pair_half_kernels[wp.float64],
-    num_outputs=5,
-    in_out_argnames=[
-        "neighbor_matrix1",
-        "neighbor_matrix_shifts1",
-        "num_neighbors1",
-        "neighbor_vectors",
-        "neighbor_distances",
-    ],
-    enable_backward=False,
-)
 
 
 @functools.cache
 def _get_jax_naive_pair_kernel(
     wp_dtype, pbc_mode: str, half_fill: bool = False, partial: bool = False
 ):
-    """Build a geometry-output naive kernel for optional partial rows."""
-    kernel = _get_naive_kernel(
-        wp_dtype,
-        pbc_mode=pbc_mode,
+    """Return a cached direct geometry registration for optional partial rows."""
+    jax_dtype = jnp.float64 if wp_dtype == wp.float64 else jnp.float32
+    return _lazy_naive_kernel(
+        operation="single_cutoff",
         batched=False,
+        pbc_mode=pbc_mode,
         selective=False,
         partial=partial,
-        return_vectors=True,
-        return_distances=True,
         half_fill=half_fill,
-    )
-    if pbc_mode == "none":
-        in_out_argnames = [
-            "neighbor_matrix1",
-            "num_neighbors1",
-            "neighbor_vectors",
-            "neighbor_distances",
-        ]
-    else:
-        in_out_argnames = [
-            "neighbor_matrix1",
-            "neighbor_matrix_shifts1",
-            "num_neighbors1",
-            "neighbor_vectors",
-            "neighbor_distances",
-        ]
-    return jax_kernel(
-        kernel,
-        num_outputs=len(in_out_argnames),
-        in_out_argnames=in_out_argnames,
-        enable_backward=False,
-    )
+        geometry=True,
+        pair_fn=None,
+    )[jax_dtype]
 
 
 @functools.cache
@@ -453,56 +133,25 @@ def _get_jax_naive_pair_fn_kernel(
     half_fill: bool = False,
     partial: bool = False,
 ):
-    """Build (and cache) a ``jax_kernel`` for a ``pair_fn``-specialized naive kernel.
-
-    The naive kernel signature always carries ``pair_params`` / ``pair_energies`` /
-    ``pair_forces`` slots; specializing the factory with ``pair_fn`` flips the
-    compile-time ``HAS_PAIR_FN`` constant on so the body actually evaluates the user
-    function and writes the energy/force buffers.  Here we register those two buffers
-    as additional outputs (so JAX returns them).
-
-    Cached by ``(pair_fn identity, wp_dtype, pbc_mode)`` — Warp ``@wp.func`` objects
-    are hashable by identity, so a module-scope singleton ``pair_fn`` recompiles only
-    once.  ``jax_kernel`` (rather than ``jax_callable``) mirrors the geometry-only
-    pair-output path above: the kernel is fully specialized, so no launcher closure is
-    needed.
-    """
-    kernel = _get_naive_kernel(
-        wp_dtype,
-        pbc_mode=pbc_mode,
+    """Return a cached pair-function direct naive registration."""
+    jax_dtype = jnp.float64 if wp_dtype == wp.float64 else jnp.float32
+    return _lazy_naive_kernel(
+        operation="single_cutoff",
         batched=False,
+        pbc_mode=pbc_mode,
         selective=False,
         partial=partial,
-        return_vectors=True,
-        return_distances=True,
-        pair_fn=pair_fn,
         half_fill=half_fill,
-    )
-    if pbc_mode == "none":
-        in_out_argnames = [
-            "neighbor_matrix1",
-            "num_neighbors1",
-            "neighbor_vectors",
-            "neighbor_distances",
-            "pair_energies",
-            "pair_forces",
-        ]
-    else:  # "wrap_on_entry"
-        in_out_argnames = [
-            "neighbor_matrix1",
-            "neighbor_matrix_shifts1",
-            "num_neighbors1",
-            "neighbor_vectors",
-            "neighbor_distances",
-            "pair_energies",
-            "pair_forces",
-        ]
-    return jax_kernel(
-        kernel,
-        num_outputs=len(in_out_argnames),
-        in_out_argnames=in_out_argnames,
-        enable_backward=False,
-    )
+        geometry=True,
+        pair_fn=pair_fn,
+    )[jax_dtype]
+
+
+__all__ = ["naive_neighbor_list"]
+
+# ==============================================================================
+# JAX Kernel Wrappers
+# ==============================================================================
 
 
 # Wrap positions single kernel wrappers
@@ -1630,11 +1279,9 @@ def _naive_pair_outputs_forward(
         elif is_partial:
             kernel = _get_jax_naive_pair_kernel(wp_dtype, "none", half_fill, is_partial)
         elif half_fill:
-            kernel = (
-                _jax_fill_naive_pair_half_f64 if f64 else _jax_fill_naive_pair_half_f32
-            )
+            kernel = _DIRECT_NAIVE_GEOMETRY_KERNELS[("none", True)][positions.dtype]
         else:
-            kernel = _jax_fill_naive_pair_f64 if f64 else _jax_fill_naive_pair_f32
+            kernel = _DIRECT_NAIVE_GEOMETRY_KERNELS[("none", False)][positions.dtype]
         outs = kernel(
             positions,
             empty_offsets,
@@ -1674,15 +1321,13 @@ def _naive_pair_outputs_forward(
                 wp_dtype, "wrap_on_entry", half_fill, is_partial
             )
         elif half_fill:
-            kernel = (
-                _jax_fill_naive_pbc_pair_half_f64
-                if f64
-                else _jax_fill_naive_pbc_pair_half_f32
-            )
+            kernel = _DIRECT_NAIVE_GEOMETRY_KERNELS[("wrap_on_entry", True)][
+                positions.dtype
+            ]
         else:
-            kernel = (
-                _jax_fill_naive_pbc_pair_f64 if f64 else _jax_fill_naive_pbc_pair_f32
-            )
+            kernel = _DIRECT_NAIVE_GEOMETRY_KERNELS[("wrap_on_entry", False)][
+                positions.dtype
+            ]
         if cell.ndim == 2:
             cell = cell[jnp.newaxis, :, :]
         if pbc.ndim == 1:
@@ -2462,46 +2107,10 @@ def naive_neighbor_list(
             else:
                 return neighbor_matrix, num_neighbors
 
-    # Select kernel based on dtype and static half-fill specialization.
+    # Select wrap kernel by dtype; direct naive registrations resolve at launch.
     if positions.dtype == jnp.float64:
-        if half_fill:
-            _jax_fill = _jax_fill_naive_half_f64
-            _jax_fill_pbc = _jax_fill_naive_pbc_half_f64
-            _jax_fill_pbc_prewrapped = _jax_fill_naive_pbc_prewrapped_half_f64
-            _jax_fill_selective = _jax_fill_naive_selective_half_f64
-            _jax_fill_pbc_selective = _jax_fill_naive_pbc_selective_half_f64
-            _jax_fill_pbc_prewrapped_selective = (
-                _jax_fill_naive_pbc_prewrapped_selective_half_f64
-            )
-        else:
-            _jax_fill = _jax_fill_naive_f64
-            _jax_fill_pbc = _jax_fill_naive_pbc_f64
-            _jax_fill_pbc_prewrapped = _jax_fill_naive_pbc_prewrapped_f64
-            _jax_fill_selective = _jax_fill_naive_selective_f64
-            _jax_fill_pbc_selective = _jax_fill_naive_pbc_selective_f64
-            _jax_fill_pbc_prewrapped_selective = (
-                _jax_fill_naive_pbc_prewrapped_selective_f64
-            )
         _jax_wrap_single = _jax_wrap_positions_single_f64
     else:
-        if half_fill:
-            _jax_fill = _jax_fill_naive_half_f32
-            _jax_fill_pbc = _jax_fill_naive_pbc_half_f32
-            _jax_fill_pbc_prewrapped = _jax_fill_naive_pbc_prewrapped_half_f32
-            _jax_fill_selective = _jax_fill_naive_selective_half_f32
-            _jax_fill_pbc_selective = _jax_fill_naive_pbc_selective_half_f32
-            _jax_fill_pbc_prewrapped_selective = (
-                _jax_fill_naive_pbc_prewrapped_selective_half_f32
-            )
-        else:
-            _jax_fill = _jax_fill_naive_f32
-            _jax_fill_pbc = _jax_fill_naive_pbc_f32
-            _jax_fill_pbc_prewrapped = _jax_fill_naive_pbc_prewrapped_f32
-            _jax_fill_selective = _jax_fill_naive_selective_f32
-            _jax_fill_pbc_selective = _jax_fill_naive_pbc_selective_f32
-            _jax_fill_pbc_prewrapped_selective = (
-                _jax_fill_naive_pbc_prewrapped_selective_f32
-            )
         _jax_wrap_single = _jax_wrap_positions_single_f32
         positions = positions.astype(jnp.float32)
 
@@ -2702,7 +2311,9 @@ def naive_neighbor_list(
             num_neighbors = jnp.where(
                 rf[0], jnp.zeros_like(num_neighbors), num_neighbors
             )
-            neighbor_matrix, num_neighbors = _jax_fill_selective(
+            neighbor_matrix, num_neighbors = _DIRECT_NAIVE_KERNELS[
+                ("none", True, bool(half_fill))
+            ][positions.dtype](
                 positions,
                 empty_offsets,
                 cutoff_sq,
@@ -2728,7 +2339,9 @@ def naive_neighbor_list(
                 launch_dims=(1, 1, total_atoms),
             )
         else:
-            neighbor_matrix, num_neighbors = _jax_fill(
+            neighbor_matrix, num_neighbors = _DIRECT_NAIVE_KERNELS[
+                ("none", False, bool(half_fill))
+            ][positions.dtype](
                 positions,
                 empty_offsets,
                 cutoff_sq,
@@ -2781,7 +2394,9 @@ def naive_neighbor_list(
                     rf[0], jnp.zeros_like(num_neighbors), num_neighbors
                 )
                 neighbor_matrix, neighbor_matrix_shifts, num_neighbors = (
-                    _jax_fill_pbc_selective(
+                    _DIRECT_NAIVE_KERNELS[("wrap_on_entry", True, bool(half_fill))][
+                        positions.dtype
+                    ](
                         positions_wrapped,
                         per_atom_cell_offsets,
                         cutoff_sq,
@@ -2808,30 +2423,34 @@ def naive_neighbor_list(
                     )
                 )
             else:
-                neighbor_matrix, neighbor_matrix_shifts, num_neighbors = _jax_fill_pbc(
-                    positions_wrapped,
-                    per_atom_cell_offsets,
-                    cutoff_sq,
-                    0.0,
-                    cell,
-                    shift_range_per_dimension,
-                    empty_num_shifts,
-                    empty_batch_idx,
-                    empty_batch_ptr,
-                    empty_target_indices,
-                    neighbor_matrix,
-                    neighbor_matrix_shifts,
-                    num_neighbors,
-                    empty_matrix,
-                    empty_shifts,
-                    empty_num_neighbors,
-                    empty_vectors,
-                    empty_distances,
-                    empty_pair_params,
-                    empty_energies,
-                    empty_forces,
-                    empty_rebuild_flags,
-                    launch_dims=(1, max_shifts_per_system, total_atoms),
+                neighbor_matrix, neighbor_matrix_shifts, num_neighbors = (
+                    _DIRECT_NAIVE_KERNELS[("wrap_on_entry", False, bool(half_fill))][
+                        positions.dtype
+                    ](
+                        positions_wrapped,
+                        per_atom_cell_offsets,
+                        cutoff_sq,
+                        0.0,
+                        cell,
+                        shift_range_per_dimension,
+                        empty_num_shifts,
+                        empty_batch_idx,
+                        empty_batch_ptr,
+                        empty_target_indices,
+                        neighbor_matrix,
+                        neighbor_matrix_shifts,
+                        num_neighbors,
+                        empty_matrix,
+                        empty_shifts,
+                        empty_num_neighbors,
+                        empty_vectors,
+                        empty_distances,
+                        empty_pair_params,
+                        empty_energies,
+                        empty_forces,
+                        empty_rebuild_flags,
+                        launch_dims=(1, max_shifts_per_system, total_atoms),
+                    )
                 )
         else:
             if rebuild_flags is not None:
@@ -2840,7 +2459,9 @@ def naive_neighbor_list(
                     rf[0], jnp.zeros_like(num_neighbors), num_neighbors
                 )
                 neighbor_matrix, neighbor_matrix_shifts, num_neighbors = (
-                    _jax_fill_pbc_prewrapped_selective(
+                    _DIRECT_NAIVE_KERNELS[("prewrapped", True, bool(half_fill))][
+                        positions.dtype
+                    ](
                         positions,
                         empty_offsets,
                         cutoff_sq,
@@ -2868,7 +2489,9 @@ def naive_neighbor_list(
                 )
             else:
                 neighbor_matrix, neighbor_matrix_shifts, num_neighbors = (
-                    _jax_fill_pbc_prewrapped(
+                    _DIRECT_NAIVE_KERNELS[("prewrapped", False, bool(half_fill))][
+                        positions.dtype
+                    ](
                         positions,
                         empty_offsets,
                         cutoff_sq,
