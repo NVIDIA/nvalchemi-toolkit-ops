@@ -15,10 +15,7 @@
 
 from __future__ import annotations
 
-import functools
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
 
 import torch
 import warp as wp
@@ -35,6 +32,7 @@ from nvalchemiops.interactions.dispersion._dftd3 import (
 from nvalchemiops.interactions.dispersion._dftd3 import (
     dftd3_pbc as wp_dftd3_pbc,
 )
+from nvalchemiops.torch import torch_custom_op
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 __all__ = [
@@ -237,21 +235,7 @@ class D3Parameters:
 # ==============================================================================
 
 
-def _documented_custom_op(
-    name: str,
-    *,
-    mutates_args: tuple[str, ...],
-) -> Callable[[Callable[..., Any]], Any]:
-    """Register a Torch custom op while retaining implementation metadata."""
-
-    def decorator(implementation: Callable[..., Any]) -> Any:
-        op = torch.library.custom_op(name, mutates_args=mutates_args)(implementation)
-        return functools.update_wrapper(op, implementation)
-
-    return decorator
-
-
-@_documented_custom_op(
+@torch_custom_op(
     "nvalchemiops::dftd3_matrix",
     mutates_args=("energy", "forces", "coord_num", "virial"),
 )
@@ -476,7 +460,7 @@ def _dftd3_matrix_op(
     )
 
 
-@_documented_custom_op(
+@torch_custom_op(
     "nvalchemiops::dftd3_matrix_pbc",
     mutates_args=("energy", "forces", "coord_num", "virial"),
 )
@@ -727,7 +711,7 @@ def _dftd3_matrix_pbc_op(
     )
 
 
-@_documented_custom_op(
+@torch_custom_op(
     "nvalchemiops::dftd3",
     mutates_args=("energy", "forces", "coord_num", "virial"),
 )
@@ -944,7 +928,7 @@ def _dftd3_op(
     )
 
 
-@_documented_custom_op(
+@torch_custom_op(
     "nvalchemiops::dftd3_pbc",
     mutates_args=("energy", "forces", "coord_num", "virial"),
 )
