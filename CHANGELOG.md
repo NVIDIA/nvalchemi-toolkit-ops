@@ -40,6 +40,10 @@
   compiled gradients are also correct when a compiled function is reused across
   mesh sizes.
 
+- Fixed Torch PME and Ewald energy gradients for connected charge, position, and
+  cell inputs. Non-uniform or weighted energy losses and `create_graph=True`
+  higher-order derivatives no longer double-count upstream chain-rule terms.
+
 ## 0.4.0 - 2026-07-13
 
 ### Added

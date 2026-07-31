@@ -17,11 +17,15 @@
 
 from __future__ import annotations
 
+import gc
+import weakref
+
 import pytest
 
 torch = pytest.importorskip("torch")
 _util = pytest.importorskip("nvalchemiops.torch.interactions.electrostatics._util")
 _InjectChargeGrad = _util._InjectChargeGrad
+_InjectCachedEvalGrad = _util._InjectCachedEvalGrad
 _InjectCachedEvalGradWithFallback = _util._InjectCachedEvalGradWithFallback
 _energy_cotangents = _util._energy_cotangents
 _is_per_system_uniform_cotangent = _util._is_per_system_uniform_cotangent
@@ -114,7 +118,7 @@ def test_cached_eval_qR_nonuniform_fallback_uses_partial_derivatives():
     cell_grad_state = torch.zeros_like(cell)
     grad_energy = torch.tensor([1.0, 2.0, 4.0], dtype=DT)
 
-    def fallback_fn(p, q, _cell):
+    def fallback_fn(p, q, _cell, *_state):
         return p[:, 1] * q + 0.5 * p[:, 2].square()
 
     out = _InjectCachedEvalGradWithFallback.apply(
@@ -127,6 +131,10 @@ def test_cached_eval_qR_nonuniform_fallback_uses_partial_derivatives():
         cell_grad_state,
         None,
         fallback_fn,
+        "atom",
+        1,
+        False,
+        False,
     )
 
     out.backward(grad_energy)
@@ -156,7 +164,7 @@ def test_cached_eval_qR_create_graph_second_order():
     charge_grad_state = torch.zeros_like(charges)
     cell_grad_state = torch.zeros_like(cell)
 
-    def fallback_fn(p, q, _cell):
+    def fallback_fn(p, q, _cell, *_state):
         return p[:, 1] * q + 0.5 * p[:, 2].square()
 
     out = _InjectCachedEvalGradWithFallback.apply(
@@ -169,6 +177,10 @@ def test_cached_eval_qR_create_graph_second_order():
         cell_grad_state,
         None,
         fallback_fn,
+        "atom",
+        1,
+        False,
+        False,
     )
 
     grad_pos = torch.autograd.grad(out.sum(), positions, create_graph=True)[0]
@@ -191,6 +203,306 @@ def test_cached_eval_qR_create_graph_second_order():
         rtol=1e-5,
         atol=1e-7,
     )
+
+
+def test_cached_eval_qR_create_graph_sibling_positions():
+    """create_graph q(R) fallback preserves a sibling position charge chain."""
+    torch.manual_seed(0)
+    base_positions = torch.randn(3, 3, dtype=DT, requires_grad=True)
+    theta = torch.randn(3, dtype=DT, requires_grad=True)
+    positions_for_op = base_positions * 1.0
+    charges = base_positions[:, 0].square() + theta
+    cell = torch.eye(3, dtype=DT).unsqueeze(0)
+    energy = positions_for_op[:, 1].detach().clone()
+    pos_grad_state = torch.zeros_like(positions_for_op)
+    charge_grad_state = torch.zeros_like(charges)
+    cell_grad_state = torch.zeros_like(cell)
+
+    def fallback_fn(p, q, _cell, *_state):
+        return p[:, 1] * q + 0.5 * p[:, 2].square()
+
+    out = _InjectCachedEvalGradWithFallback.apply(
+        energy,
+        positions_for_op,
+        charges,
+        cell,
+        pos_grad_state,
+        charge_grad_state,
+        cell_grad_state,
+        None,
+        fallback_fn,
+        "atom",
+        1,
+        False,
+        False,
+    )
+
+    (grad_base,) = torch.autograd.grad(out.sum(), base_positions, create_graph=True)
+    expected_grad = torch.stack(
+        (
+            2.0 * base_positions[:, 0] * base_positions[:, 1],
+            charges,
+            base_positions[:, 2],
+        ),
+        dim=1,
+    )
+    torch.testing.assert_close(grad_base, expected_grad)
+
+    loss = grad_base.square().sum()
+    (grad_theta,) = torch.autograd.grad(loss, theta)
+
+    def loss_of_theta(theta_in: torch.Tensor) -> torch.Tensor:
+        p = base_positions.detach().clone().requires_grad_(True)
+        q = p[:, 0].square() + theta_in
+        e = fallback_fn(p * 1.0, q, cell)
+        (grad_p,) = torch.autograd.grad(e.sum(), p, create_graph=True)
+        return grad_p.square().sum()
+
+    grad_theta_fd = finite_difference_jacobian(
+        loss_of_theta,
+        theta.detach(),
+        eps=1e-6,
+    )
+    torch.testing.assert_close(grad_theta, grad_theta_fd, rtol=1e-5, atol=1e-7)
+
+
+def test_cached_eval_qR_create_graph_cell_dependent_charges():
+    """create_graph q(cell) fallback applies the cell charge chain once."""
+    positions = torch.randn(3, 3, dtype=DT)
+    cell = torch.eye(3, dtype=DT).unsqueeze(0).requires_grad_()
+    charges = cell[0, 0, :].clone()
+    energy = positions[:, 1].detach().clone()
+    pos_grad_state = torch.zeros_like(positions)
+    charge_grad_state = torch.zeros_like(charges)
+    cell_grad_state = torch.zeros_like(cell)
+
+    def fallback_fn(p, q, _cell, *_state):
+        return p[:, 1] * q + 0.5 * p[:, 2].square()
+
+    out = _InjectCachedEvalGradWithFallback.apply(
+        energy,
+        positions,
+        charges,
+        cell,
+        pos_grad_state,
+        charge_grad_state,
+        cell_grad_state,
+        None,
+        fallback_fn,
+        "atom",
+        1,
+        False,
+        False,
+    )
+
+    (grad_cell,) = torch.autograd.grad(out.sum(), cell, create_graph=True)
+    expected = torch.zeros_like(cell)
+    expected[0, 0, :] = positions[:, 1]
+    torch.testing.assert_close(grad_cell, expected)
+
+
+def test_cached_eval_create_graph_dechains_nested_inputs():
+    """create_graph fallback de-chains cell -> positions -> charges."""
+    cell = torch.tensor(2.0, dtype=DT, requires_grad=True)
+    positions = 3.0 * cell
+    charges = 5.0 * positions
+    energy = torch.zeros((), dtype=DT)
+    states = tuple(torch.zeros_like(value) for value in (positions, charges, cell))
+
+    def fallback_fn(p, q, c, *_state):
+        return p.square() + 2.0 * q + 7.0 * c
+
+    out = _InjectCachedEvalGradWithFallback.apply(
+        energy,
+        positions,
+        charges,
+        cell,
+        *states,
+        None,
+        fallback_fn,
+        "atom",
+        1,
+        False,
+        False,
+    )
+    (grad_cell,) = torch.autograd.grad(out, cell, create_graph=True)
+    (hvp,) = torch.autograd.grad(grad_cell, cell)
+
+    assert grad_cell.item() == pytest.approx(73.0)
+    assert hvp.item() == pytest.approx(18.0)
+
+
+def test_cached_eval_weighted_dechains_nested_inputs():
+    """Weighted fallback de-chains nested connected inputs without reuse errors."""
+    cell = torch.tensor(2.0, dtype=DT, requires_grad=True)
+    positions = 3.0 * cell
+    charges = 5.0 * positions
+    energy = torch.zeros(2, dtype=DT)
+    states = tuple(torch.zeros_like(value) for value in (positions, charges, cell))
+    weights = torch.tensor([1.0, 2.0], dtype=DT)
+
+    def fallback_fn(p, q, c, *_state):
+        return torch.stack(
+            (
+                p.square() + 2.0 * q + 7.0 * c,
+                2.0 * p.square() + 3.0 * q + 11.0 * c,
+            )
+        )
+
+    out = _InjectCachedEvalGradWithFallback.apply(
+        energy,
+        positions,
+        charges,
+        cell,
+        *states,
+        None,
+        fallback_fn,
+        "atom",
+        1,
+        False,
+        False,
+    )
+    (grad_cell,) = torch.autograd.grad(out, cell, grad_outputs=weights)
+
+    assert grad_cell.item() == pytest.approx(329.0)
+
+
+def test_cached_eval_releases_fallback_state_after_uniform_backward():
+    """Saved fallback state is released after uniform cached backward."""
+    positions = torch.zeros((2, 3), dtype=DT, requires_grad=True)
+    charges = torch.zeros(2, dtype=DT)
+    cell = torch.eye(3, dtype=DT).unsqueeze(0)
+    energy = torch.zeros(2, dtype=DT)
+    fallback_state = torch.ones(2, dtype=DT)
+    state_ref = weakref.ref(fallback_state)
+
+    def fallback_fn(*_args):
+        raise AssertionError("uniform cached backward must not call the fallback")
+
+    out = _InjectCachedEvalGradWithFallback.apply(
+        energy,
+        positions,
+        charges,
+        cell,
+        torch.zeros_like(positions),
+        None,
+        None,
+        None,
+        fallback_fn,
+        "atom",
+        1,
+        False,
+        False,
+        fallback_state,
+    )
+    del fallback_state
+
+    out.sum().backward()
+    gc.collect()
+
+    assert state_ref() is None
+
+
+def test_cached_eval_releases_fallback_state_after_weighted_backward():
+    """Saved fallback state is released after weighted fallback backward."""
+    positions = torch.zeros((2, 3), dtype=DT, requires_grad=True)
+    charges = torch.zeros(2, dtype=DT)
+    cell = torch.eye(3, dtype=DT).unsqueeze(0)
+    energy = torch.zeros(2, dtype=DT)
+    fallback_state = torch.tensor([2.0, 3.0], dtype=DT)
+    state_ref = weakref.ref(fallback_state)
+
+    def fallback_fn(p, _q, _c, _batch_idx, state):
+        return p[:, 0] * state
+
+    out = _InjectCachedEvalGradWithFallback.apply(
+        energy,
+        positions,
+        charges,
+        cell,
+        torch.zeros_like(positions),
+        None,
+        None,
+        None,
+        fallback_fn,
+        "atom",
+        1,
+        False,
+        False,
+        fallback_state,
+    )
+    del fallback_state
+
+    out.backward(torch.tensor([1.0, 2.0], dtype=DT))
+    gc.collect()
+
+    assert state_ref() is None
+
+
+def test_cached_eval_retains_fallback_state_until_final_backward():
+    """Saved fallback state survives retained backward then releases finally."""
+    positions = torch.zeros((2, 3), dtype=DT, requires_grad=True)
+    charges = torch.zeros(2, dtype=DT)
+    cell = torch.eye(3, dtype=DT).unsqueeze(0)
+    energy = torch.zeros(2, dtype=DT)
+    fallback_state = torch.tensor([2.0, 3.0], dtype=DT)
+    state_ref = weakref.ref(fallback_state)
+
+    def fallback_fn(p, _q, _c, _batch_idx, state):
+        return p[:, 0] * state
+
+    out = _InjectCachedEvalGradWithFallback.apply(
+        energy,
+        positions,
+        charges,
+        cell,
+        torch.zeros_like(positions),
+        None,
+        None,
+        None,
+        fallback_fn,
+        "atom",
+        1,
+        False,
+        False,
+        fallback_state,
+    )
+    del fallback_state
+    weights = torch.tensor([1.0, 2.0], dtype=DT)
+
+    out.backward(weights, retain_graph=True)
+    gc.collect()
+    assert state_ref() is not None
+
+    out.backward(weights)
+    gc.collect()
+    assert state_ref() is None
+
+
+def test_cached_eval_without_fallback_releases_batch_idx_after_backward():
+    """Cached direct-gradient state releases tensor-valued batch indices."""
+    positions = torch.zeros((2, 3), dtype=DT, requires_grad=True)
+    charges = torch.zeros(2, dtype=DT)
+    cell = torch.eye(3, dtype=DT).unsqueeze(0)
+    batch_idx = torch.tensor([0, 0], dtype=torch.int32)
+    batch_idx_ref = weakref.ref(batch_idx)
+
+    out = _InjectCachedEvalGrad.apply(
+        torch.zeros(1, dtype=DT),
+        positions,
+        charges,
+        cell,
+        torch.zeros_like(positions),
+        None,
+        None,
+        batch_idx,
+    )
+    del batch_idx
+
+    out.sum().backward()
+    gc.collect()
+
+    assert batch_idx_ref() is None
 
 
 def _available_devices():

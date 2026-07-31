@@ -30,7 +30,7 @@ import torch
 _CotangentLayout = Literal["atom", "system"]
 
 __all__ = [
-    "_has_potentially_geometry_dependent_charges",
+    "_dechain_connected_input_grads",
     "_InjectCachedEvalGrad",
     "_InjectCachedEvalGradWithFallback",
     "_InjectChargeGrad",
@@ -93,35 +93,66 @@ def _sum_charge_gradients(
     return real_space_charge_grads + reciprocal_charge_grads
 
 
-def _has_potentially_geometry_dependent_charges(
-    positions: torch.Tensor,
-    charges: torch.Tensor,
-) -> bool:
-    """Return whether ``charges`` may carry a q(R) autograd path.
+_CONNECTED_INPUT_ORDER = ("charges", "positions", "cell", "alpha")
 
-    A non-leaf charge tensor may depend on positions, e.g. charges = q(positions).
-    Custom backwards must avoid differentiating a connected recompute with respect
-    to both positions and charges and then returning both gradients, because
-    PyTorch would apply dE/dq * dq/dR twice.
+
+def _dechain_connected_input_grads(
+    grad_map: dict[str, torch.Tensor | None],
+    input_map: dict[str, torch.Tensor],
+    *,
+    create_vjp_graph: bool,
+) -> dict[str, torch.Tensor | None]:
+    """Remove dependent-input paths from connected gradients.
+
+    Parameters
+    ----------
+    grad_map : dict[str, torch.Tensor or None]
+        Gradients of the recomputed energy with respect to differentiable inputs.
+    input_map : dict[str, torch.Tensor]
+        Differentiable inputs corresponding to ``grad_map``.
+    create_vjp_graph : bool
+        Whether to construct correction VJPs with
+        ``torch.autograd.grad(create_graph=True)``.
 
     Returns
     -------
-    bool
-        True when ``positions`` and ``charges`` both require gradients and
-        ``charges`` is a non-leaf tensor that may depend on ``positions``.
+    dict[str, torch.Tensor or None]
+        Independent partial gradients for the connected inputs.
 
     Notes
     -----
-    Issue #115 is prevented by routing these workloads through
-    :class:`_InjectChargeGrad`, eager electrostatics chains, or safe cached
-    fallback paths that recompute independent partial derivatives before PyTorch
-    applies the dE/dq * dq/dR chain term exactly once.
+    Inputs are processed downstream-to-upstream in the supported dependency
+    order ``charges -> positions -> cell -> alpha``. This removes each
+    child-input path from its upstream parent exactly once while preserving
+    sibling inputs that merely share an ultimate leaf.
     """
-    return bool(
-        positions.requires_grad
-        and charges.requires_grad
-        and charges.grad_fn is not None
-    )
+    result = dict(grad_map)
+    active_names = [name for name in _CONNECTED_INPUT_ORDER if name in input_map]
+    for index, child_name in enumerate(active_names):
+        child = input_map[child_name]
+        child_grad = result.get(child_name)
+        if child_grad is None or child.grad_fn is None:
+            continue
+
+        parent_names = [
+            name for name in active_names[index + 1 :] if result.get(name) is not None
+        ]
+        if not parent_names:
+            continue
+
+        parent_vjps = torch.autograd.grad(
+            child,
+            tuple(input_map[name] for name in parent_names),
+            grad_outputs=child_grad,
+            allow_unused=True,
+            create_graph=create_vjp_graph,
+            retain_graph=True,
+        )
+        for parent_name, parent_vjp in zip(parent_names, parent_vjps, strict=True):
+            parent_grad = result[parent_name]
+            if parent_vjp is not None and parent_grad is not None:
+                result[parent_name] = parent_grad - parent_vjp
+    return result
 
 
 def _detach_setup_tensor(tensor: torch.Tensor | None) -> torch.Tensor | None:
@@ -556,8 +587,12 @@ class _InjectCachedEvalGrad(torch.autograd.Function):
             cell_grad_state,
             batch_idx,
         ) = base_inputs
-        ctx.save_for_backward(pos_grad_state, charge_grad_state, cell_grad_state)
-        ctx.batch_idx = batch_idx
+        ctx.save_for_backward(
+            pos_grad_state,
+            charge_grad_state,
+            cell_grad_state,
+            batch_idx,
+        )
         ctx.num_atoms = int(positions.shape[0])
         ctx.energy_reduction = inputs[8] if len(inputs) > 8 else "atom"
         ctx.num_systems = (
@@ -570,13 +605,18 @@ class _InjectCachedEvalGrad(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_energy):
         """Use cached derivatives for uniform eval, else pass to eager energy."""
-        pos_grad_state, charge_grad_state, cell_grad_state = ctx.saved_tensors
+        (
+            pos_grad_state,
+            charge_grad_state,
+            cell_grad_state,
+            batch_idx,
+        ) = ctx.saved_tensors
         num_atoms = ctx.num_atoms
 
         if ctx.energy_reduction == "system":
             grad_system, atom_grad = _energy_cotangents(
                 grad_energy,
-                ctx.batch_idx,
+                batch_idx,
                 num_atoms,
                 ctx.num_systems,
                 "system",
@@ -585,7 +625,7 @@ class _InjectCachedEvalGrad(torch.autograd.Function):
                 result = (atom_grad, None, None, None, None, None, None, None)
                 return result + (None,) * (ctx.num_inputs - len(result))
         elif torch.is_grad_enabled() or not _is_per_system_uniform_cotangent(
-            grad_energy, ctx.batch_idx, ctx.num_systems
+            grad_energy, batch_idx, ctx.num_systems
         ):
             result = (grad_energy, None, None, None, None, None, None, None)
             return result + (None,) * (ctx.num_inputs - len(result))
@@ -595,7 +635,7 @@ class _InjectCachedEvalGrad(torch.autograd.Function):
         else:
             grad_system, atom_grad = _energy_cotangents(
                 grad_energy,
-                ctx.batch_idx,
+                batch_idx,
                 num_atoms,
                 ctx.num_systems,
                 "atom",
@@ -631,8 +671,10 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
 
     The forward takes a detached/eval energy plus cached first derivatives. For
     ordinary uniform first-order losses it uses the caches. For create-graph or
-    non-uniform weighted losses it calls ``fallback_fn(positions, charges, cell)``
-    inside backward and differentiates that true energy graph.
+    non-uniform weighted losses it calls
+    ``fallback_fn(positions, charges, cell, batch_idx, *fallback_tensor_args)``
+    inside backward and differentiates that true energy graph. Tensor-valued
+    fallback state is saved explicitly so PyTorch releases it after backward.
     """
 
     @staticmethod
@@ -650,6 +692,7 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
         num_systems=None,
         force_fallback=False,
         fallback_returns_system=False,
+        *fallback_tensor_args,
     ):
         """Return energy in the requested public layout."""
         if energy_reduction == "system":
@@ -659,7 +702,7 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
 
     @staticmethod
     def setup_context(ctx, inputs, output):
-        """Save inputs, caches, and the fallback callable."""
+        """Save inputs, caches, and explicit fallback tensor state."""
         base_inputs = inputs[:9]
         (
             _energy,
@@ -672,6 +715,7 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
             batch_idx,
             fallback_fn,
         ) = base_inputs
+        fallback_tensor_args = inputs[13:]
         ctx.save_for_backward(
             positions,
             charges,
@@ -679,10 +723,12 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
             pos_grad_state,
             charge_grad_state,
             cell_grad_state,
+            batch_idx,
+            *fallback_tensor_args,
         )
-        ctx.batch_idx = batch_idx
         ctx.fallback_fn = fallback_fn
-        ctx.num_atoms = int(positions.shape[0])
+        ctx.num_fallback_tensor_args = len(fallback_tensor_args)
+        ctx.num_atoms = int(positions.shape[0]) if positions.ndim else 1
         ctx.energy_reduction = inputs[9] if len(inputs) > 9 else "atom"
         ctx.num_systems = (
             int(inputs[10])
@@ -704,6 +750,8 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
             pos_grad_state,
             charge_grad_state,
             cell_grad_state,
+            batch_idx,
+            *fallback_tensor_args,
         ) = ctx.saved_tensors
         num_atoms = ctx.num_atoms
 
@@ -712,13 +760,13 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
 
         def _public_fallback_energy(recomputed):
             if ctx.energy_reduction == "system" and not ctx.fallback_returns_system:
-                return _reduce_atom_energy(recomputed, ctx.batch_idx, ctx.num_systems)
+                return _reduce_atom_energy(recomputed, batch_idx, ctx.num_systems)
             return recomputed
 
         if ctx.energy_reduction == "system":
             grad_system, atom_grad = _energy_cotangents(
                 grad_energy,
-                ctx.batch_idx,
+                batch_idx,
                 num_atoms,
                 ctx.num_systems,
                 "system",
@@ -726,113 +774,19 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
             use_fallback = create_graph or ctx.force_fallback
         else:
             use_fallback = create_graph or not _is_per_system_uniform_cotangent(
-                grad_energy, ctx.batch_idx, ctx.num_systems
+                grad_energy, batch_idx, ctx.num_systems
             )
 
         if use_fallback:
-            # q(R) routing:
-            # - create_graph: return connected position/cell/alpha gradients only; do not
-            #   also return grad_charges from the same connected recompute.
-            # - first-order weighted loss: recompute position/cell/alpha partials with
-            #   charges detached, then return dE/dq separately so PyTorch chains q(R) once.
-            if _has_potentially_geometry_dependent_charges(positions, charges):
-                if create_graph:
-                    diff_inputs = []
-                    diff_names = []
-                    for name, tensor in (
-                        ("positions", positions),
-                        ("cell", cell),
-                    ):
-                        if tensor.requires_grad:
-                            diff_inputs.append(tensor)
-                            diff_names.append(name)
-                    with torch.enable_grad():
-                        recomputed = _public_fallback_energy(
-                            ctx.fallback_fn(positions, charges, cell)
-                        )
-                        if diff_inputs:
-                            diff_grads = torch.autograd.grad(
-                                recomputed,
-                                tuple(diff_inputs),
-                                grad_outputs=grad_energy,
-                                allow_unused=True,
-                                create_graph=True,
-                            )
-                            grad_map = dict(zip(diff_names, diff_grads, strict=True))
-                        else:
-                            grad_map = {}
-                    return _pad(
-                        (
-                            None,
-                            grad_map.get("positions"),
-                            None,
-                            grad_map.get("cell"),
-                            None,
-                            None,
-                            None,
-                            None,
-                            None,
-                        )
-                    )
-
-                partial_inputs = []
-                partial_names = []
-                if positions.requires_grad:
-                    partial_inputs.append(positions)
-                    partial_names.append("positions")
-                if cell.requires_grad:
-                    partial_inputs.append(cell)
-                    partial_names.append("cell")
-
-                with torch.enable_grad():
-                    partial_map = {}
-                    if partial_inputs:
-                        recomputed_partial = _public_fallback_energy(
-                            ctx.fallback_fn(
-                                positions,
-                                charges.detach(),
-                                cell,
-                            )
-                        )
-                        partial_grads = torch.autograd.grad(
-                            recomputed_partial,
-                            tuple(partial_inputs),
-                            grad_outputs=grad_energy,
-                            allow_unused=True,
-                            create_graph=create_graph,
-                        )
-                        partial_map = dict(
-                            zip(partial_names, partial_grads, strict=True)
-                        )
-
-                    grad_charges = None
-                    if charges.requires_grad:
-                        recomputed_charge = _public_fallback_energy(
-                            ctx.fallback_fn(positions, charges, cell)
-                        )
-                        (grad_charges,) = torch.autograd.grad(
-                            recomputed_charge,
-                            charges,
-                            grad_outputs=grad_energy,
-                            allow_unused=True,
-                            create_graph=create_graph,
-                        )
-                return _pad(
-                    (
-                        None,
-                        partial_map.get("positions"),
-                        grad_charges,
-                        partial_map.get("cell"),
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                    )
-                )
             with torch.enable_grad():
                 recomputed = _public_fallback_energy(
-                    ctx.fallback_fn(positions, charges, cell)
+                    ctx.fallback_fn(
+                        positions,
+                        charges,
+                        cell,
+                        batch_idx,
+                        *fallback_tensor_args,
+                    )
                 )
                 diff_inputs = []
                 diff_names = []
@@ -853,8 +807,14 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
                         grad_outputs=grad_energy,
                         allow_unused=True,
                         create_graph=create_graph,
+                        retain_graph=True,
                     )
                     grad_map = dict(zip(diff_names, diff_grads, strict=True))
+                    grad_map = _dechain_connected_input_grads(
+                        grad_map,
+                        dict(zip(diff_names, diff_inputs, strict=True)),
+                        create_vjp_graph=create_graph,
+                    )
             return _pad(
                 (
                     None,
@@ -874,7 +834,7 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
         else:
             grad_system, atom_grad = _energy_cotangents(
                 grad_energy,
-                ctx.batch_idx,
+                batch_idx,
                 num_atoms,
                 ctx.num_systems,
                 "atom",

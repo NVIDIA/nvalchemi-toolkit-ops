@@ -307,3 +307,85 @@ def fd_virial_full_jax(
 
             virial[a, b] = -(E_plus - E_minus) / (2.0 * h)
     return jnp.array(virial, dtype=jnp.float64)
+
+
+def toy_charge_model_jax(
+    positions: jax.Array,
+    *,
+    batch_idx: jax.Array | None = None,
+    scale: float = 0.3,
+    length: float = 5.0,
+) -> jax.Array:
+    """Create smooth, neutral geometry-dependent charges for derivative tests.
+
+    Parameters
+    ----------
+    positions : jax.Array, shape (N, 3)
+        Atomic positions.
+    batch_idx : jax.Array or None, shape (N,)
+        Optional two-system atom-to-system mapping.
+    scale : float, default=0.3
+        Charge amplitude.
+    length : float, default=5.0
+        Position length scale.
+
+    Returns
+    -------
+    jax.Array, shape (N,)
+        Neutral geometry-dependent charges.
+    """
+    q_raw = scale * jnp.sin(positions.sum(axis=1) / length)
+    if batch_idx is None:
+        return q_raw - q_raw.mean()
+    counts = jax.ops.segment_sum(
+        jnp.ones_like(q_raw),
+        batch_idx,
+        num_segments=2,
+    )
+    sums = jax.ops.segment_sum(q_raw, batch_idx, num_segments=2)
+    return q_raw - sums[batch_idx] / counts[batch_idx]
+
+
+def qr_manual_chain_jax(
+    energy_fn,
+    positions: jax.Array,
+    cell: jax.Array,
+    *,
+    batch_idx: jax.Array | None = None,
+) -> tuple[jax.Array, jax.Array]:
+    """Compare a sibling q(R) gradient with its manual chain decomposition.
+
+    Parameters
+    ----------
+    energy_fn : callable
+        Callable returning per-atom energies from positions and charges.
+    positions : jax.Array, shape (N, 3)
+        Reference positions.
+    cell : jax.Array
+        Unit cell matrix passed to ``energy_fn``.
+    batch_idx : jax.Array or None
+        Optional two-system atom-to-system mapping.
+
+    Returns
+    -------
+    tuple[jax.Array, jax.Array]
+        Full sibling gradient and fixed-charge partial plus charge-model VJP.
+    """
+
+    def full_energy(base):
+        return energy_fn(
+            base * 1.0,
+            toy_charge_model_jax(base, batch_idx=batch_idx),
+            cell,
+        ).sum()
+
+    full_grad = jax.grad(full_energy)(positions)
+    charges = toy_charge_model_jax(positions, batch_idx=batch_idx)
+    partial_grad = jax.grad(lambda pos: energy_fn(pos, charges, cell).sum())(positions)
+    charge_grad = jax.grad(lambda q: energy_fn(positions, q, cell).sum())(charges)
+    _, charge_pullback = jax.vjp(
+        lambda pos: toy_charge_model_jax(pos, batch_idx=batch_idx),
+        positions,
+    )
+    manual_grad = partial_grad + charge_pullback(charge_grad)[0]
+    return full_grad, manual_grad
