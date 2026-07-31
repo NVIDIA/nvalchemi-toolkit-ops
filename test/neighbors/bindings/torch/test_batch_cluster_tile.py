@@ -36,6 +36,7 @@ from nvalchemiops.torch.neighbors.batch_cluster_tile import (
     estimate_batch_cluster_tile_segments,
     estimate_batch_max_tiles_per_group,
 )
+from nvalchemiops.torch.neighbors.neighbor_utils import _validate_segmented_coo_state
 
 from ...test_utils import (
     assert_neighbor_lists_equal,
@@ -110,6 +111,39 @@ def _scratch_kwargs(
 
 class TestBatchClusterTileValidation:
     """Validate public option combinations rejected before kernel launch."""
+
+    def test_selective_coo_bootstrap_rejects_partial_state(self):
+        """All-true COO bootstrap does not mix caller and allocated state."""
+        positions, cell_batch, batch_ptr = _make_batch([32], [8.0], device="cpu")
+
+        with pytest.raises(ValueError, match="complete caller-owned state"):
+            batch_cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell_batch,
+                batch_ptr,
+                format="coo",
+                rebuild_flags=torch.ones(1, dtype=torch.bool),
+                return_state=True,
+                neighbor_list=torch.empty((2, 64), dtype=torch.int32),
+            )
+
+    def test_segmented_coo_validation_allows_nonselective_state(self):
+        """Segmented COO metadata does not require selective rebuild flags."""
+        device = torch.device("cpu")
+        capacity = 8
+
+        result = _validate_segmented_coo_state(
+            device=device,
+            num_systems=1,
+            neighbor_list=torch.empty((2, capacity), dtype=torch.int32),
+            neighbor_list_shifts=torch.empty((capacity, 3), dtype=torch.int32),
+            pair_offsets=torch.tensor([0, capacity], dtype=torch.int32),
+            pair_counts=torch.zeros(1, dtype=torch.int32),
+            rebuild_flags=None,
+        )
+
+        assert result == capacity
 
     def test_pair_outputs_reject_tile_format(self):
         """Pair-output buffers are not supported with tile-format output."""
@@ -1181,6 +1215,55 @@ class TestBatchTileNeighborListFormats:
             ),
         ):
             assert returned is supplied
+
+    def test_selective_segmented_coo_all_true_bootstrap_allocates_state(
+        self, device, dtype
+    ):
+        """An all-true batched COO call allocates persistent state."""
+        positions, cell_batch, batch_ptr = _make_batch(
+            [64], [8.0], device=device, dtype=dtype, seed=46
+        )
+
+        result = batch_cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell_batch,
+            batch_ptr,
+            max_neighbors=64,
+            format="coo",
+            rebuild_flags=torch.ones(1, dtype=torch.bool, device=device),
+            return_state=True,
+        )
+
+        assert len(result) == 10
+        neighbor_list, pair_offsets, pair_counts, shifts, *state = result
+        assert neighbor_list.shape[0] == 2
+        assert shifts.shape == (neighbor_list.shape[1], 3)
+        assert pair_offsets.shape == (2,)
+        assert pair_counts.shape == (1,)
+
+        reused = batch_cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell_batch,
+            batch_ptr,
+            max_neighbors=64,
+            format="coo",
+            rebuild_flags=torch.zeros(1, dtype=torch.bool, device=device),
+            return_state=True,
+            neighbor_list=neighbor_list,
+            neighbor_list_shifts=shifts,
+            pair_offsets=pair_offsets,
+            pair_counts=pair_counts,
+            tile_offsets=state[0],
+            tile_counts=state[1],
+            num_tiles=state[2],
+            tile_row_group=state[3],
+            tile_col_group=state[4],
+            tile_system=state[5],
+        )
+
+        assert all(reused[index] is result[index] for index in range(10))
 
     def test_selective_dual_cutoff_return_state(self, device, dtype):
         """Dual-cutoff matrix output appends state after both matrix triples."""

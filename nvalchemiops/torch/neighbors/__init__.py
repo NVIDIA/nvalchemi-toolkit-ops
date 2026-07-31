@@ -323,6 +323,14 @@ def neighbor_list(
         ``return_state=True``, ``(num_tiles, tile_row_group, tile_col_group)``
         is appended.
 
+        Batched selective calls to explicit ``method="batch_cluster_tile"`` append
+        ``(tile_offsets, tile_counts, num_tiles, tile_row_group, tile_col_group,
+        tile_system)`` when ``return_state=True``. The resulting matrix tuple has
+        nine tensors (or twelve with ``cutoff2``); segmented COO returns
+        ``(neighbor_list, pair_offsets, pair_counts, neighbor_list_shifts,
+        tile_offsets, tile_counts, num_tiles, tile_row_group, tile_col_group,
+        tile_system)``.
+
     Examples
     --------
     Single cutoff, matrix format, with PBC::

@@ -777,6 +777,25 @@ class TestClusterTileCompile:
         assert torch.equal(compiled_counts, preserved_counts)
         assert torch.equal(compiled_shifts, preserved_shifts)
 
+        capture_flags = torch.ones(1, dtype=torch.bool, device=device)
+        warmup_stream = torch.cuda.Stream(device=device)
+        with torch.cuda.stream(warmup_stream):
+            run(capture_flags)
+        warmup_stream.synchronize()
+        graph = torch.cuda.CUDAGraph()
+        torch.cuda.synchronize(device=device)
+        with torch.cuda.graph(graph):
+            run(capture_flags)
+        captured_list = compiled_list.clone()
+        captured_counts = compiled_counts.clone()
+        captured_shifts = compiled_shifts.clone()
+        capture_flags.zero_()
+        graph.replay()
+        torch.cuda.synchronize(device=device)
+        assert torch.equal(compiled_list, captured_list)
+        assert torch.equal(compiled_counts, captured_counts)
+        assert torch.equal(compiled_shifts, captured_shifts)
+
 
 # =============================================================================
 # Left-handed cells
@@ -1334,6 +1353,50 @@ class TestClusterTileCutoff2SelectiveOverflow:
             pair_counts=result[2],
             neighbor_list_shifts=result[3],
         )
+        assert all(reused[index] is result[index] for index in range(7))
+
+    def test_selective_coo_all_true_bootstrap_allocates_reusable_state(
+        self, device, dtype
+    ):
+        """An eager all-true selective COO call allocates reusable state."""
+        positions = torch.rand(64, 3, dtype=dtype, device=device) * 6.0
+        cell = _orthorhombic_cell(6.0, device, dtype)
+
+        result = cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell,
+            max_neighbors=64,
+            format="coo",
+            rebuild_flags=torch.ones(1, dtype=torch.bool, device=device),
+            return_state=True,
+        )
+
+        assert len(result) == 7
+        assert result[0].shape == (2, 64 * 64)
+        assert torch.equal(
+            result[1],
+            torch.tensor([0, 64 * 64], dtype=torch.int32, device=device),
+        )
+        assert result[2].dtype == torch.int32
+
+        reused = cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell,
+            max_neighbors=64,
+            format="coo",
+            rebuild_flags=torch.zeros(1, dtype=torch.bool, device=device),
+            return_state=True,
+            neighbor_list=result[0],
+            pair_offsets=result[1],
+            pair_counts=result[2],
+            neighbor_list_shifts=result[3],
+            num_tiles=result[4],
+            tile_row_group=result[5],
+            tile_col_group=result[6],
+        )
+
         assert all(reused[index] is result[index] for index in range(7))
 
     def test_selective_coo_overflow_raises(self, device, dtype):

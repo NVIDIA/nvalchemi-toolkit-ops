@@ -1340,17 +1340,37 @@ topology and tile-state buffers, otherwise it raises `ValueError` before a kerne
 launch. `pair_offsets` starts at zero, is nondecreasing, and ends at the physical
 COO capacity; `pair_counts` stays within each segment.
 
-The single-system explicit `cluster_tile` route also supports
+```python
+# Eager bootstrap: omit every persistent buffer.
+state = cluster_tile_neighbor_list(
+    positions, cutoff, cell, format="coo", return_state=True,
+    rebuild_flags=torch.ones(1, dtype=torch.bool, device=positions.device),
+)
+```
+
+The direct single-system `cluster_tile_neighbor_list` route also supports
 `torch.compile(fullgraph=True)` for this steady-state phase. Bootstrap and validate
 capacities eagerly, then compile a function that accepts fixed-shape buffers and
 `rebuild_flags`; compiled calls preserve false-flag data and rebuild true-flag data.
-The explicit `pbc` tensor must likewise be eagerly validated as fully periodic and
-left unchanged for the compiled loop: cluster-tile is PBC-implicit and compiled
-calls intentionally do not host-synchronize PBC values. Compiled calls also omit
+False flags retain the fixed launch graph, so they do not promise zero preprocessing
+or kernel launches. The unified `neighbor_list(..., method="cluster_tile")` dispatch
+is unsupported under compilation because it cannot validate tensor-valued `pbc`
+without host synchronization. Compiled calls also omit
 host-synchronized offset and overflow diagnostics, so retain the eagerly validated
 capacities. The Warp COO query enforces physical output-buffer bounds as defense in
 depth, but mutated or malformed metadata remains unsupported. Batched cluster-tile
 fullgraph support is not provided.
+
+```python
+@torch.compile(fullgraph=True)
+def reuse(flags, neighbor_list, pair_offsets, pair_counts, shifts, num_tiles, row, col):
+    return cluster_tile_neighbor_list(
+        positions, cutoff, cell, format="coo", return_state=True,
+        rebuild_flags=flags, neighbor_list=neighbor_list, pair_offsets=pair_offsets,
+        pair_counts=pair_counts, neighbor_list_shifts=shifts, num_tiles=num_tiles,
+        tile_row_group=row, tile_col_group=col,
+    )
+```
 
 ### Dual Cutoff
 

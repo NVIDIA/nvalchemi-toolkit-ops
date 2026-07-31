@@ -382,6 +382,13 @@ def _reject_unsupported_cluster_tile_combo(
     half_fill: bool,
 ) -> None:
     """Raise ``NotImplementedError`` for unsupported explicit cluster-tile combos."""
+    if torch.compiler.is_compiling():
+        raise NotImplementedError(
+            "compiled unified cluster-tile dispatch cannot validate tensor-valued "
+            "pbc without synchronization; validate fully periodic pbc eagerly and "
+            "compile the direct single-system cluster_tile_neighbor_list path; "
+            "batched fullgraph is unsupported"
+        )
     if pbc is None:
         raise NotImplementedError(
             "method='cluster_tile' / 'batch_cluster_tile' is "
@@ -389,13 +396,7 @@ def _reject_unsupported_cluster_tile_combo(
             "are not supported.  Use method='naive' or 'cell_list', "
             "or pass a cell with fully periodic pbc."
         )
-    if torch.compiler.is_compiling():
-        # ``pbc`` must be eagerly validated as fully periodic before entering
-        # a compiled cluster-tile steady-state loop. Tensor-value checks are
-        # not fullgraph-compatible without a host synchronization.
-        all_periodic = True
-    else:
-        all_periodic = bool(pbc.all().item())
+    all_periodic = bool(pbc.all().item())
     if not all_periodic:
         raise NotImplementedError(
             "method='cluster_tile' / 'batch_cluster_tile' is "

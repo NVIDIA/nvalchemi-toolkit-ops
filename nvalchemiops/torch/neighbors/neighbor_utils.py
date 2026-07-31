@@ -62,7 +62,7 @@ def _validate_pair_params_present(
         raise ValueError("pair_params is required when pair_fn is provided")
 
 
-def _validate_segmented_coo_state(
+def _validate_segmented_coo_structure(
     *,
     device: torch.device,
     num_systems: int,
@@ -70,7 +70,7 @@ def _validate_segmented_coo_state(
     neighbor_list_shifts: torch.Tensor,
     pair_offsets: torch.Tensor,
     pair_counts: torch.Tensor,
-    rebuild_flags: torch.Tensor,
+    rebuild_flags: torch.Tensor | None,
     tile_offsets: torch.Tensor | None = None,
     tile_counts: torch.Tensor | None = None,
     num_tiles: torch.Tensor | None = None,
@@ -78,24 +78,15 @@ def _validate_segmented_coo_state(
     tile_col_group: torch.Tensor | None = None,
     tile_system: torch.Tensor | None = None,
 ) -> int:
-    """Validate fixed-capacity segmented COO state before a kernel launch.
-
-    The returned value is the physical topology capacity, derived from
-    ``neighbor_list`` rather than caller-provided offset values. Eager calls
-    validate offset starts, monotonicity, final capacities, and active counts
-    before launching Warp. Value checks that require a device-to-host read
-    intentionally run only outside ``torch.compile``; compiled steady-state
-    callers must reuse eagerly validated metadata. The Warp COO kernel still
-    bounds writes by the physical topology capacity as defense in depth, but
-    this does not make malformed metadata supported.
-    """
+    """Validate segmented COO shapes, dtypes, devices, and capacities."""
     tensors = {
         "neighbor_list": neighbor_list,
         "neighbor_list_shifts": neighbor_list_shifts,
         "pair_offsets": pair_offsets,
         "pair_counts": pair_counts,
-        "rebuild_flags": rebuild_flags,
     }
+    if rebuild_flags is not None:
+        tensors["rebuild_flags"] = rebuild_flags
     optional_tensors = {
         "tile_offsets": tile_offsets,
         "tile_counts": tile_counts,
@@ -132,7 +123,9 @@ def _validate_segmented_coo_state(
         )
     if pair_counts.dtype != torch.int32 or pair_counts.shape != (num_systems,):
         raise ValueError("pair_counts must have shape (num_systems,) and dtype int32")
-    if rebuild_flags.dtype != torch.bool or rebuild_flags.shape != (num_systems,):
+    if rebuild_flags is not None and (
+        rebuild_flags.dtype != torch.bool or rebuild_flags.shape != (num_systems,)
+    ):
         raise ValueError("rebuild_flags must have shape (num_systems,) and dtype bool")
 
     tile_values = (tile_offsets, tile_counts, num_tiles, tile_row_group, tile_col_group)
@@ -167,9 +160,20 @@ def _validate_segmented_coo_state(
         ):
             raise ValueError("tile_system must match tile row and column buffer shapes")
 
-    if torch.compiler.is_compiling():
-        return capacity
+    return capacity
 
+
+def _validate_segmented_coo_values(
+    *,
+    neighbor_list: torch.Tensor,
+    pair_offsets: torch.Tensor,
+    pair_counts: torch.Tensor,
+    tile_offsets: torch.Tensor | None = None,
+    tile_counts: torch.Tensor | None = None,
+    tile_row_group: torch.Tensor | None = None,
+) -> None:
+    """Eagerly validate segmented COO metadata values before mutation."""
+    capacity = int(neighbor_list.shape[1])
     pair_offsets_host = pair_offsets.cpu()
     pair_counts_host = pair_counts.cpu()
     if int(pair_offsets_host[0]) != 0:
@@ -199,6 +203,48 @@ def _validate_segmented_coo_state(
         ):
             raise ValueError("tile_counts must lie within their tile_offsets segments")
 
+
+def _validate_segmented_coo_state(
+    *,
+    device: torch.device,
+    num_systems: int,
+    neighbor_list: torch.Tensor,
+    neighbor_list_shifts: torch.Tensor,
+    pair_offsets: torch.Tensor,
+    pair_counts: torch.Tensor,
+    rebuild_flags: torch.Tensor | None,
+    tile_offsets: torch.Tensor | None = None,
+    tile_counts: torch.Tensor | None = None,
+    num_tiles: torch.Tensor | None = None,
+    tile_row_group: torch.Tensor | None = None,
+    tile_col_group: torch.Tensor | None = None,
+    tile_system: torch.Tensor | None = None,
+) -> int:
+    """Validate fixed-capacity segmented COO state before a kernel launch."""
+    capacity = _validate_segmented_coo_structure(
+        device=device,
+        num_systems=num_systems,
+        neighbor_list=neighbor_list,
+        neighbor_list_shifts=neighbor_list_shifts,
+        pair_offsets=pair_offsets,
+        pair_counts=pair_counts,
+        rebuild_flags=rebuild_flags,
+        tile_offsets=tile_offsets,
+        tile_counts=tile_counts,
+        num_tiles=num_tiles,
+        tile_row_group=tile_row_group,
+        tile_col_group=tile_col_group,
+        tile_system=tile_system,
+    )
+    if not torch.compiler.is_compiling():
+        _validate_segmented_coo_values(
+            neighbor_list=neighbor_list,
+            pair_offsets=pair_offsets,
+            pair_counts=pair_counts,
+            tile_offsets=tile_offsets,
+            tile_counts=tile_counts,
+            tile_row_group=tile_row_group,
+        )
     return capacity
 
 

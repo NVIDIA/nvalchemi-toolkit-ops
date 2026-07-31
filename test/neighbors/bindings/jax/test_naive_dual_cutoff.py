@@ -430,6 +430,84 @@ class TestNaiveDualCutoffJIT:
 class TestNaiveDualCutoffSelectiveRebuildFlags:
     """Test selective rebuild (rebuild_flags) for naive_neighbor_list_dual_cutoff JAX."""
 
+    def test_wrapped_pbc_false_flag_preserves_both_cutoffs(self, dtype):
+        """Wrapped PBC false flags preserve both matrices, counts, and shifts."""
+        positions, cell, pbc = create_simple_cubic_system_jax(
+            num_atoms=8, cell_size=2.0, dtype=dtype
+        )
+        positions = positions.at[0, 0].add(2.0)
+        kwargs = {
+            "cell": cell,
+            "pbc": pbc,
+            "max_neighbors1": 15,
+            "max_neighbors2": 25,
+        }
+        reference = naive_neighbor_list_dual_cutoff(positions, 1.1, 1.5, **kwargs)
+        preserved = naive_neighbor_list_dual_cutoff(
+            positions,
+            1.1,
+            1.5,
+            neighbor_matrix1=reference[0],
+            num_neighbors1=reference[1],
+            neighbor_matrix_shifts1=reference[2],
+            neighbor_matrix2=reference[3],
+            num_neighbors2=reference[4],
+            neighbor_matrix_shifts2=reference[5],
+            rebuild_flags=jnp.zeros(1, dtype=jnp.bool_),
+            **kwargs,
+        )
+
+        for got, expected in zip(preserved, reference):
+            assert jnp.array_equal(got, expected)
+
+    def test_wrapped_pbc_true_flag_rebuilds_both_cutoffs(self, dtype):
+        """Wrapped PBC true flags rebuild both cutoff matrices and shifts."""
+        positions, cell, pbc = create_simple_cubic_system_jax(
+            num_atoms=8, cell_size=2.0, dtype=dtype
+        )
+        positions = positions.at[0, 0].add(2.0)
+        kwargs = {
+            "cell": cell,
+            "pbc": pbc,
+            "max_neighbors1": 15,
+            "max_neighbors2": 25,
+        }
+        reference = naive_neighbor_list_dual_cutoff(positions, 1.1, 1.5, **kwargs)
+        rebuilt = naive_neighbor_list_dual_cutoff(
+            positions,
+            1.1,
+            1.5,
+            neighbor_matrix1=jnp.zeros_like(reference[0]),
+            num_neighbors1=jnp.zeros_like(reference[1]),
+            neighbor_matrix_shifts1=jnp.zeros_like(reference[2]),
+            neighbor_matrix2=jnp.zeros_like(reference[3]),
+            num_neighbors2=jnp.zeros_like(reference[4]),
+            neighbor_matrix_shifts2=jnp.zeros_like(reference[5]),
+            rebuild_flags=jnp.ones(1, dtype=jnp.bool_),
+            **kwargs,
+        )
+
+        for matrix_index, count_index, shifts_index in ((0, 1, 2), (3, 4, 5)):
+            assert jnp.array_equal(rebuilt[count_index], reference[count_index])
+            for atom_index, count in enumerate(reference[count_index].tolist()):
+                rebuilt_pairs = jnp.concatenate(
+                    [
+                        rebuilt[matrix_index][atom_index, :count, None],
+                        rebuilt[shifts_index][atom_index, :count],
+                    ],
+                    axis=1,
+                )
+                reference_pairs = jnp.concatenate(
+                    [
+                        reference[matrix_index][atom_index, :count, None],
+                        reference[shifts_index][atom_index, :count],
+                    ],
+                    axis=1,
+                )
+                assert {tuple(row) for row in rebuilt_pairs.tolist()} == {
+                    tuple(row) for row in reference_pairs.tolist()
+                }
+
     def test_no_rebuild_preserves_data(self, dtype):
         """Flag=False: neighbor data should remain unchanged."""
         positions, _, _ = create_simple_cubic_system_jax(

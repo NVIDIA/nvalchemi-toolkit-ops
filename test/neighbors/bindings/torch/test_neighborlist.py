@@ -51,8 +51,8 @@ class TestNeighborListClusterTileCompile:
     """Validate compiled public cluster-tile dispatcher routes."""
 
     @pytest.mark.slow
-    def test_selective_coo_fullgraph(self):
-        """The explicit public selective COO route compiles for state reuse."""
+    def test_compiled_unified_cluster_tile_is_rejected(self):
+        """Unified compiled cluster-tile cannot inspect tensor-valued PBC."""
         if not torch.cuda.is_available():
             pytest.skip("cluster_tile requires CUDA")
         torch.manual_seed(42)
@@ -94,10 +94,11 @@ class TestNeighborListClusterTileCompile:
                 max_neighbors=64,
             )
 
-        result = run(torch.ones(1, dtype=torch.bool, device=device))
-        assert len(result) == 7
-        assert result[0].data_ptr() == topology.data_ptr()
-        assert result[2].data_ptr() == pair_counts.data_ptr()
+        with pytest.raises(
+            torch._dynamo.exc.Unsupported,
+            match="cannot validate tensor-valued pbc without synchronization",
+        ):
+            run(torch.ones(1, dtype=torch.bool, device=device))
 
 
 class TestNeighborListAutoSelection:

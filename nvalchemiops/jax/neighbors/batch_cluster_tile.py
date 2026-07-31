@@ -2031,7 +2031,10 @@ def batch_cluster_tile_neighbor_list(
     For ``format == "matrix"``:
         ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``, with
         optional ``(*, distances)`` and/or ``(*, vectors)`` appended when
-        ``return_distances`` / ``return_vectors`` is True.
+        ``return_distances`` / ``return_vectors`` is True. With
+        ``rebuild_flags``, append ``(tile_offsets, tile_counts, num_tiles,
+        tile_row_group, tile_col_group, tile_system)`` after one matrix triple,
+        or after both triples when ``cutoff2`` is provided.
     For ``format == "coo"``:
         ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)`` in compact
         mode, or ``(neighbor_list, pair_offsets, pair_counts,

@@ -2138,6 +2138,10 @@ def cluster_tile_neighbor_list(
     )
     dual_cutoff = cutoff2 is not None
     selective = rebuild_flags is not None
+    is_compiling = torch.compiler.is_compiling()
+    eager_all_true = (
+        selective and not is_compiling and bool(rebuild_flags.flatten()[0].item())
+    )
     if return_state and not selective:
         raise ValueError("return_state=True requires rebuild_flags")
     if not selective and (pair_offsets is not None or pair_counts is not None):
@@ -2198,39 +2202,107 @@ def cluster_tile_neighbor_list(
                 }
             )
         missing = [name for name, value in required.items() if value is None]
-        if missing:
+        bootstrap_coo = format == "coo" and eager_all_true and bool(return_state)
+        if missing and not bootstrap_coo:
             raise ValueError(
                 "rebuild_flags requires previous cluster_tile state: "
                 + ", ".join(missing)
             )
-        if format == "coo":
-            if (
-                neighbor_list is None
-                or pair_offsets is None
-                or pair_counts is None
-                or neighbor_list_shifts is None
-            ):
-                raise ValueError("selective COO requires fixed topology buffers")
-            max_pairs_from_buffers = _validate_segmented_coo_state(
-                device=positions.device,
-                num_systems=1,
-                neighbor_list=neighbor_list,
-                neighbor_list_shifts=neighbor_list_shifts,
-                pair_offsets=pair_offsets,
-                pair_counts=pair_counts,
-                rebuild_flags=rebuild_flags,
-            )
-            if max_pairs is not None and int(max_pairs) != max_pairs_from_buffers:
-                raise ValueError("max_pairs must equal neighbor_list.shape[1]")
     N = positions.shape[0]
     device = positions.device
     if max_neighbors is None:
-        max_neighbors = max(
-            estimate_max_neighbors(cutoff2 if cutoff2 is not None else cutoff),
-            TILE_GROUP_SIZE,
+        max_neighbors = (
+            int(neighbor_matrix.shape[1])
+            if format == "matrix" and neighbor_matrix is not None
+            else max(
+                estimate_max_neighbors(cutoff2 if cutoff2 is not None else cutoff),
+                TILE_GROUP_SIZE,
+            )
         )
+    elif (
+        format == "matrix"
+        and neighbor_matrix is not None
+        and (neighbor_matrix.shape != (N, int(max_neighbors)))
+    ):
+        raise ValueError("neighbor_matrix must have shape (N, max_neighbors)")
     if fill_value is None:
         fill_value = N
+    if selective and format == "matrix":
+        matrix_state = {
+            "neighbor_matrix": neighbor_matrix,
+            "num_neighbors": num_neighbors,
+            "neighbor_matrix_shifts": neighbor_matrix_shifts,
+            "num_tiles": num_tiles,
+            "tile_row_group": tile_row_group,
+            "tile_col_group": tile_col_group,
+        }
+        for name, value in matrix_state.items():
+            if value is None or value.device != device or value.dtype != torch.int32:
+                raise ValueError(f"{name} must be an int32 tensor on positions.device")
+        if (
+            num_neighbors.shape != (N,)
+            or neighbor_matrix_shifts.shape != (N, int(max_neighbors), 3)
+            or num_tiles.shape != (1,)
+            or tile_row_group.ndim != 1
+            or tile_col_group.shape != tile_row_group.shape
+        ):
+            raise ValueError("selective matrix state has an invalid shape")
+        if dual_cutoff and (
+            neighbor_matrix2 is None
+            or num_neighbors2 is None
+            or neighbor_matrix_shifts2 is None
+            or neighbor_matrix2.dtype != torch.int32
+            or num_neighbors2.dtype != torch.int32
+            or neighbor_matrix_shifts2.dtype != torch.int32
+            or neighbor_matrix2.device != device
+            or num_neighbors2.device != device
+            or neighbor_matrix_shifts2.device != device
+            or neighbor_matrix2.shape != (N, int(max_neighbors))
+            or num_neighbors2.shape != (N,)
+            or neighbor_matrix_shifts2.shape != (N, int(max_neighbors), 3)
+        ):
+            raise ValueError("selective secondary matrix state has an invalid shape")
+    if selective and format == "coo" and eager_all_true:
+        coo_state = (
+            neighbor_list,
+            pair_offsets,
+            pair_counts,
+            neighbor_list_shifts,
+            num_tiles,
+            tile_row_group,
+            tile_col_group,
+        )
+        if any(value is not None for value in coo_state) and any(
+            value is None for value in coo_state
+        ):
+            raise ValueError(
+                "selective COO bootstrap requires complete caller-owned state "
+                "or no persistent state"
+            )
+        if neighbor_list is None:
+            capacity = max_pairs if max_pairs is not None else N * max_neighbors
+            neighbor_list = torch.empty(
+                (2, capacity), dtype=torch.int32, device=positions.device
+            )
+            neighbor_list_shifts = torch.empty(
+                (capacity, 3), dtype=torch.int32, device=positions.device
+            )
+            pair_offsets = torch.tensor(
+                [0, capacity], dtype=torch.int32, device=positions.device
+            )
+            pair_counts = torch.zeros(1, dtype=torch.int32, device=positions.device)
+    if selective and format == "coo":
+        max_pairs_from_buffers = _validate_segmented_coo_state(
+            device=positions.device,
+            num_systems=1,
+            neighbor_list=neighbor_list,
+            neighbor_list_shifts=neighbor_list_shifts,
+            pair_offsets=pair_offsets,
+            pair_counts=pair_counts,
+            rebuild_flags=rebuild_flags,
+        )
+        if max_pairs is not None and int(max_pairs) != max_pairs_from_buffers:
+            raise ValueError("max_pairs must equal neighbor_list.shape[1]")
 
     if (
         selective
@@ -2335,7 +2407,13 @@ def cluster_tile_neighbor_list(
             max_tiles_per_group=max_tiles_per_group,
         )
         if selective:
-            num_tiles, tile_row_group, tile_col_group = previous_tile_state
+            previous_num_tiles, previous_row, previous_col = previous_tile_state
+            if previous_num_tiles is not None:
+                num_tiles = previous_num_tiles
+            if previous_row is not None:
+                tile_row_group = previous_row
+            if previous_col is not None:
+                tile_col_group = previous_col
     build_cluster_tile_list(
         positions,
         build_cutoff,
