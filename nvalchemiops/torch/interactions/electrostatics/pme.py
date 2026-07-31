@@ -2999,8 +2999,8 @@ def pme_reciprocal_space(
         Stress = ``-virial / volume``.
     hybrid_forces : bool, default=False
         .. deprecated:: 0.4.0
-            Deprecated direct-output flag for differentiable training. Compute
-            energy and use ``torch.autograd.grad`` instead.
+            Deprecated direct-output flag. Compute energy and use ``torch.autograd.grad`` instead.
+
         Enables the legacy direct-output path. With ``charges.requires_grad``,
         uniform first-order cotangents use cached charge gradients; non-uniform
         per-atom losses and ``create_graph=True`` rebuild the eager energy graph
@@ -3455,6 +3455,7 @@ def particle_mesh_ewald(
         .. deprecated:: 0.4.0
             Deprecated direct-output flag for differentiable training. Compute
             energy and use ``torch.autograd.grad`` instead.
+
         Enables the legacy direct-output path. With ``charges.requires_grad``,
         uniform first-order cotangents use cached charge gradients; non-uniform
         per-atom losses and ``create_graph=True`` rebuild the eager energy graph

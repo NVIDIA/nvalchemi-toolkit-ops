@@ -15,7 +15,7 @@
 
 """
 NPT Dynamics (MTK + Nosé-Hoover Chain) with Lennard-Jones Potential
-==================================================================
+===================================================================
 
 This example demonstrates isothermal-isobaric (NPT) dynamics using the
 Martyna-Tobias-Klein (MTK) barostat coupled with a Nosé-Hoover chain (NHC)

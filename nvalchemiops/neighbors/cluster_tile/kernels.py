@@ -541,6 +541,33 @@ def _bbox_valid(
     return 0
 
 
+@wp.func
+def _coo_segment_is_valid(
+    start: wp.int32,
+    stop: wp.int32,
+    max_pairs: wp.int32,
+) -> wp.int32:
+    """Return whether a segmented COO interval lies within physical storage.
+
+    Parameters
+    ----------
+    start : wp.int32
+        Inclusive start offset of the segment.
+    stop : wp.int32
+        Exclusive stop offset of the segment.
+    max_pairs : wp.int32
+        Physical capacity of the COO pair buffer.
+
+    Returns
+    -------
+    wp.int32
+        One when ``0 <= start <= stop <= max_pairs``; otherwise zero.
+    """
+    if start >= 0 and stop >= start and stop <= max_pairs:
+        return wp.int32(1)
+    return wp.int32(0)
+
+
 @lru_cache(maxsize=None)
 def _get_reset_cluster_tile_counts_kernel(*, selective: bool) -> wp.Kernel:
     """Build a counter-reset kernel for cluster-tile segmented state."""
@@ -1245,7 +1272,8 @@ def _make_query_cluster_tile_coo_kernel(
         natom : wp.int32
             Number of real atoms before padding.
         max_pairs : wp.int32
-            Compact COO capacity. Sentinel in segmented COO specializations.
+            Physical COO output capacity for both compact and segmented modes.
+            Segmented offsets must describe intervals within this capacity.
         tile_row_group, tile_col_group, tile_system : wp.array, shape (num_tiles,), dtype=wp.int32
             Cluster-tile records from the build launcher.
         num_tiles : wp.array, shape (1,), dtype=wp.int32
@@ -1286,10 +1314,11 @@ def _make_query_cluster_tile_coo_kernel(
         -----
         - Thread launch: Tiled launch with one block per allocated tile slot and block dimension ``TILE_GROUP_SIZE``.
         - Modifies: ``pair_counter`` or ``pair_counts``, ``coo_list``, ``coo_shifts``, and enabled pair-output buffers.
-        Segmented COO writes use ``local = atomic_add(pair_counts, isys,
-        count)`` and write only if ``local < pair_offsets[isys + 1] -
-        pair_offsets[isys]``; overflow is reported by the wrapper from the
-        final count.
+        Segmented COO writes reserve from ``pair_counts`` only for valid output
+        intervals. Non-batched queries require the complete physical interval
+        ``[0, max_pairs]``; batched queries accept physically bounded
+        per-system subsegments. Valid segments retain attempted counts for
+        wrapper overflow reporting; invalid segments retain zero active pairs.
 
         See Also
         --------
@@ -1388,14 +1417,35 @@ def _make_query_cluster_tile_coo_kernel(
                 base = wp.int32(0)
                 capacity = max_pairs
                 offset = wp.int32(0)
+                segment_valid = wp.int32(1)
                 # Full-fill: reserve two slots per valid pair (forward (i, j)
                 # and reverse (j, i)), so the COO list carries each ordered
                 # pair once -- matching cell_list / naive (half_fill=False).
                 if COO_SEGMENTED:
-                    capacity = pair_offsets[system_idx + 1] - pair_offsets[system_idx]
-                    offset = pair_offsets[system_idx]
-                    if lane == 0:
-                        base = wp.atomic_add(pair_counts, system_idx, 2 * i_count)
+                    start = pair_offsets[system_idx]
+                    stop = pair_offsets[system_idx + 1]
+                    if BATCHED:
+                        segment_valid = _coo_segment_is_valid(
+                            start,
+                            stop,
+                            max_pairs,
+                        )
+                    else:
+                        if start == 0 and stop == max_pairs:
+                            segment_valid = wp.int32(1)
+                        else:
+                            segment_valid = wp.int32(0)
+                    if segment_valid == 1:
+                        capacity = stop - start
+                        offset = start
+                        if lane == 0:
+                            base = wp.atomic_add(
+                                pair_counts,
+                                system_idx,
+                                2 * i_count,
+                            )
+                    else:
+                        capacity = wp.int32(0)
                 else:
                     if lane == 0:
                         base = wp.atomic_add(pair_counter, 0, 2 * i_count)
@@ -1412,7 +1462,13 @@ def _make_query_cluster_tile_coo_kernel(
                 write_pos = offset + local_pos
                 write_rev = offset + local_rev
 
-                if valid == 1 and local_pos < capacity:
+                if (
+                    valid == 1
+                    and segment_valid == 1
+                    and local_pos < capacity
+                    and write_pos >= 0
+                    and write_pos < max_pairs
+                ):
                     coo_list[write_pos, 0] = i_orig
                     coo_list[write_pos, 1] = j_orig_t
                     coo_shifts[write_pos, 0] = s_shift[0]
@@ -1435,7 +1491,13 @@ def _make_query_cluster_tile_coo_kernel(
                             pair_energies[write_pos] = pair_energy
                             pair_forces[write_pos] = pair_force
 
-                if valid == 1 and local_rev < capacity:
+                if (
+                    valid == 1
+                    and segment_valid == 1
+                    and local_rev < capacity
+                    and write_rev >= 0
+                    and write_rev < max_pairs
+                ):
                     coo_list[write_rev, 0] = j_orig_t
                     coo_list[write_rev, 1] = i_orig
                     coo_shifts[write_rev, 0] = -s_shift[0]

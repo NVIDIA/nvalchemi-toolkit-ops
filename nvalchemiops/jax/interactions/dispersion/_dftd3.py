@@ -1540,48 +1540,28 @@ def _dftd3_nl_impl(
     Returns
     -------
     energy : jax.Array, shape (num_systems,)
-        Per-system dispersion energy, float32.
+        Per-system dispersion energy, float32. Zero for empty systems and
+        nonempty systems with no CSR edges.
     forces : jax.Array, shape (N, 3)
-        Atomic forces, float32. If ``idx_j`` has zero edges, the early-return
-        path has shape ``(0, 3)`` even when ``N > 0``.
+        Atomic forces, float32. Shape ``(0, 3)`` when ``N == 0``; for
+        ``N > 0`` with no CSR edges, shape ``(N, 3)`` and filled with zeros.
     coord_num : jax.Array, shape (N,)
-        Coordination numbers, float32. If ``idx_j`` has zero edges, the
-        early-return path has shape ``(0,)`` even when ``N > 0``.
+        Coordination numbers, float32. Shape ``(0,)`` when ``N == 0``; for
+        ``N > 0`` with no CSR edges, shape ``(N,)`` and filled with zeros.
     virial : jax.Array, shape (num_systems, 3, 3), optional
         Per-system virial tensor, float32. Returned only when
-        ``compute_virial=True``.
+        ``compute_virial=True`` and zero for empty systems and zero-edge
+        graphs.
     """
     num_atoms = positions.shape[0]
     num_edges = idx_j.shape[0]
 
-    # Handle empty case
-    if num_atoms == 0 or num_edges == 0:
-        if num_systems is None:
-            num_systems = 1
-            if batch_idx is not None:
-                try:
-                    num_systems = int(jnp.max(batch_idx)) + 1
-                except (
-                    jax.errors.ConcretizationTypeError,
-                    jax.errors.TracerIntegerConversionError,
-                ):
-                    raise ValueError(
-                        "Cannot infer num_systems inside jax.jit. "
-                        "Please provide num_systems explicitly when using jax.jit."
-                    ) from None
-        empty_energy = jnp.zeros(num_systems, dtype=jnp.float32)
-        empty_forces = jnp.zeros((0, 3), dtype=jnp.float32)
-        empty_cn = jnp.zeros((0,), dtype=jnp.float32)
-        if compute_virial:
-            empty_virial = jnp.zeros((num_systems, 3, 3), dtype=jnp.float32)
-            return empty_energy, empty_forces, empty_cn, empty_virial
-        return empty_energy, empty_forces, empty_cn
-
-    # Determine number of systems
+    # Determine number of systems before handling empty graphs so zero-edge PBC
+    # inputs retain the leading cell dimension.
     if num_systems is None:
         if cell is not None:
             num_systems = cell.shape[0]
-        elif batch_idx is not None:
+        elif batch_idx is not None and num_atoms > 0:
             try:
                 num_systems = int(jnp.max(batch_idx)) + 1
             except (
@@ -1594,6 +1574,26 @@ def _dftd3_nl_impl(
                 ) from None
         else:
             num_systems = 1
+
+    # An empty system has no per-atom outputs.
+    if num_atoms == 0:
+        empty_energy = jnp.zeros(num_systems, dtype=jnp.float32)
+        empty_forces = jnp.zeros((0, 3), dtype=jnp.float32)
+        empty_cn = jnp.zeros((0,), dtype=jnp.float32)
+        if compute_virial:
+            empty_virial = jnp.zeros((num_systems, 3, 3), dtype=jnp.float32)
+            return empty_energy, empty_forces, empty_cn, empty_virial
+        return empty_energy, empty_forces, empty_cn
+
+    # A nonempty system with no edges still returns one zero value per atom.
+    if num_edges == 0:
+        empty_energy = jnp.zeros(num_systems, dtype=jnp.float32)
+        empty_forces = jnp.zeros((num_atoms, 3), dtype=jnp.float32)
+        empty_cn = jnp.zeros((num_atoms,), dtype=jnp.float32)
+        if compute_virial:
+            empty_virial = jnp.zeros((num_systems, 3, 3), dtype=jnp.float32)
+            return empty_energy, empty_forces, empty_cn, empty_virial
+        return empty_energy, empty_forces, empty_cn
 
     # Create batch indices if not provided
     if batch_idx is None:

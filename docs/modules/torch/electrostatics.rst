@@ -9,13 +9,19 @@ These functions accept standard ``torch.Tensor`` inputs and support automatic di
 Ewald and PME support full autograd for positions, charges, and cell parameters.
 DSF supports charge gradients via autograd; forces and virials are computed analytically.
 Setup parameters such as ``alpha``, cutoffs, mesh controls, batch metadata, and
-neighbor topology are treated as constants. Cell-derived caches such as
-``k_vectors``, ``k_squared``, ``volume``, and ``cell_inv_t`` are accepted when
-``cell.requires_grad`` is true, but they are static metadata and are assumed to
-correspond to the current ``cell``; their cache-generation derivatives are not
-recovered. Energy-returning Ewald, PME, and slab paths support atom-weighted
-losses such as ``(weights * energies).sum()`` for positions, charges, and
-supported cell derivatives. Monopole entry points provide the keyword-only
+neighbor topology are treated as constants. On the full ``ewald_summation`` and
+``particle_mesh_ewald`` APIs, cell-derived caches such as ``k_vectors``,
+``k_squared``, ``volume``, and ``cell_inv_t`` are accepted when
+``cell.requires_grad`` is true, but they are static metadata assumed to
+correspond to the current ``cell``; cache-generation derivatives are not
+recovered. The lower-level ``ewald_reciprocal_space`` component preserves a
+supplied ``k_vectors`` autograd graph when the cell also requires gradients;
+physical strain derivatives require vectors generated from the same
+differentiable cell. Energy-returning Ewald, PME, and slab paths support
+atom-weighted losses such as ``(weights * energies).sum()`` for positions,
+charges, and supported cell derivatives.
+
+Monopole entry points provide the keyword-only
 ``energy_reduction`` option. The default, ``"atom"``, returns one energy per
 atom with shape ``(N,)``. Set it to ``"system"`` to sum energies within each
 system and return shape ``(B,)``. Other requested outputs, including forces,

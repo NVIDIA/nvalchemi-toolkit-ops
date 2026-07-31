@@ -2,12 +2,28 @@
 
 ## Unreleased
 
+### Added
+
+- PyTorch cluster-tile selective calls can append caller-owned tile state with
+  `return_state=True`, without changing the default neighbor-list return arity.
+
 ### Fixed
 
 - Unbatched JAX naive dual-cutoff PBC neighbor lists now populate both cutoff
   outputs when using the default `wrap_positions=True`. Previously this path
   wrapped positions but skipped the fill kernel, leaving zero counts and padded
   matrices.
+- Batched PyTorch cluster-tile segmented COO validates fixed topology, offsets,
+  counts, and tile-state capacities before launching Warp kernels.
+- Single-system Torch and JAX segmented cluster-tile COO now require one exact
+  physical interval, bound writes by output capacity, fail closed for malformed
+  offsets, and cap compiled/JIT active counts to writable capacity. Batched
+  per-system physical subsegments remain supported.
+- Compiled unified PyTorch cluster-tile dispatch now rejects tensor-valued PBC
+  rather than treating it as fully periodic. Eagerly validate PBC and compile the
+  direct single-system fixed-state route instead.
+- JAX cluster-tile empty selective rebuilds now preserve false-flag state and
+  clear true-flag pair and tile counts while retaining fixed-capacity storage.
 ### Changed (neighbors)
 
 - Improved JAX neighbor-list import performance by deferring dtype-specific
@@ -29,6 +45,12 @@
 
 ### Fixed
 
+- Torch DFT-D3 custom operators now zero caller-owned energy, forces,
+  coordination-number, and virial buffers before empty-system or zero-edge
+  early returns, so reused output tensors cannot retain stale values.
+- JAX DFT-D3 CSR calls with atoms but no edges return zero-filled per-atom
+  forces and coordination numbers with shapes ``(N, 3)`` and ``(N,)``, matching
+  the neighbor-matrix contract and preserving per-system energy and virial axes.
 - JAX cell-list builds now derive search radii from their realized grids,
   preventing missed neighbors when static capacity changes the constructed
   grid. Batched `capacity_strategy="geometry"` preserves promoted grids for
@@ -43,6 +65,10 @@
 - Fixed Torch PME and Ewald energy gradients for connected charge, position, and
   cell inputs. Non-uniform or weighted energy losses and `create_graph=True`
   higher-order derivatives no longer double-count upstream chain-rule terms.
+
+- Torch `ewald_reciprocal_space` now preserves graph-connected reciprocal
+  vectors for cell/strain autograd, restoring the physical reciprocal Ewald
+  virial when vectors are regenerated from the differentiable cell.
 
 ## 0.4.0 - 2026-07-13
 

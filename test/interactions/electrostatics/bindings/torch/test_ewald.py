@@ -2878,7 +2878,8 @@ class TestAutogradReciprocalSpace:
             allow_unused=True,
         )
         assert torch.isfinite(grad_cell).all()
-        assert grad_k is None
+        assert grad_k is not None
+        assert torch.isfinite(grad_k).all()
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_autograd_matches_explicit_forces(self, device):
@@ -3022,7 +3023,8 @@ class TestAutogradReciprocalSpace:
             allow_unused=True,
         )
         assert torch.isfinite(grad_cell).all()
-        assert grad_k is None
+        assert grad_k is not None
+        assert torch.isfinite(grad_k).all()
 
 
 class TestAutogradFullEwald:
@@ -5856,6 +5858,24 @@ class TestEwaldRealSpaceVirial:
 class TestEwaldReciprocalSpaceVirial:
     """Test reciprocal-space Ewald virial against finite-difference."""
 
+    @staticmethod
+    def _triclinic_system(device):
+        """Return the issue-136 reciprocal virial regression system."""
+        dtype = torch.float64
+        positions = torch.tensor(
+            [[0.5, 0.5, 0.5], [3.0, 1.0, 2.0], [1.5, 3.5, 4.0], [4.5, 2.5, 1.0]],
+            dtype=dtype,
+            device=device,
+        )
+        charges = torch.tensor([1.0, -1.0, 0.7, -0.7], dtype=dtype, device=device)
+        cell = torch.tensor(
+            [[[6.0, 0.0, 0.0], [1.0, 5.0, 0.0], [0.5, 0.7, 5.5]]],
+            dtype=dtype,
+            device=device,
+        )
+        alpha = torch.tensor([0.4], dtype=dtype, device=device)
+        return positions, charges, cell, alpha
+
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_reciprocal_virial_shape(self, device):
         """Reciprocal virial output has correct shape."""
@@ -5919,6 +5939,111 @@ class TestEwaldReciprocalSpaceVirial:
             rtol=1e-3,
             msg="Reciprocal virial does not match finite-difference reference",
         )
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_generated_k_strain_autograd_matches_fd_and_direct_virial(self, device):
+        """Generated reciprocal vectors preserve the physical strain derivative."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell, alpha = self._triclinic_system(device)
+        miller_bounds = (4, 4, 4)
+
+        def energy_fn(pos, q, c):
+            k_vectors = generate_k_vectors_ewald_summation(
+                c,
+                k_cutoff=4.0,
+                miller_bounds=miller_bounds,
+            )
+            return ewald_reciprocal_space(pos, q, c, k_vectors, alpha)
+
+        fd_virial = fd_strain_virial(
+            energy_fn,
+            positions,
+            charges,
+            cell,
+            eps=1e-6,
+        )
+        autograd_virial = autograd_strain_virial(energy_fn, positions, charges, cell)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            k_vectors = generate_k_vectors_ewald_summation(
+                cell,
+                k_cutoff=4.0,
+                miller_bounds=miller_bounds,
+            )
+            _, direct_virial = ewald_reciprocal_space(
+                positions,
+                charges,
+                cell,
+                k_vectors,
+                alpha,
+                compute_virial=True,
+            )
+
+        torch.testing.assert_close(autograd_virial, fd_virial, rtol=1e-5, atol=1e-6)
+        torch.testing.assert_close(
+            autograd_virial,
+            direct_virial,
+            rtol=1e-5,
+            atol=1e-6,
+        )
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_fixed_k_strain_autograd_matches_fixed_k_fd(self, device):
+        """Fixed Cartesian reciprocal vectors retain fixed-k cell derivatives."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell, alpha = self._triclinic_system(device)
+        fixed_k_vectors = generate_k_vectors_ewald_summation(
+            cell,
+            k_cutoff=4.0,
+            miller_bounds=(4, 4, 4),
+        ).detach()
+
+        def fixed_energy_fn(pos, q, c):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                return ewald_reciprocal_space(pos, q, c, fixed_k_vectors, alpha)
+
+        fd_virial = fd_strain_virial(
+            fixed_energy_fn,
+            positions,
+            charges,
+            cell,
+            eps=1e-6,
+        )
+        autograd_virial = autograd_strain_virial(
+            fixed_energy_fn,
+            positions,
+            charges,
+            cell,
+        )
+        connected_k_vectors = generate_k_vectors_ewald_summation(
+            cell,
+            k_cutoff=4.0,
+            miller_bounds=(4, 4, 4),
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            fixed_energy = ewald_reciprocal_space(
+                positions,
+                charges,
+                cell,
+                fixed_k_vectors,
+                alpha,
+            )
+        connected_energy = ewald_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            connected_k_vectors,
+            alpha,
+        )
+
+        torch.testing.assert_close(autograd_virial, fd_virial, rtol=1e-5, atol=1e-6)
+        torch.testing.assert_close(fixed_energy, connected_energy)
 
 
 class TestEwaldTotalVirial:
@@ -9508,9 +9633,14 @@ class TestEwaldQRGeometryFallback:
         return energy_fn
 
     def _recip_energy_fn(self, positions, cell, device, alpha):
-        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=2.0).squeeze(0)
+        miller_bounds = (4, 4, 4)
 
         def energy_fn(p, q, c):
+            k_vectors = generate_k_vectors_ewald_summation(
+                c,
+                k_cutoff=2.0,
+                miller_bounds=miller_bounds,
+            )
             return ewald_reciprocal_space(p, q, c, k_vectors, alpha)
 
         return energy_fn
@@ -9641,9 +9771,7 @@ class TestEwaldDoubleBackward:
                 return_neighbor_list=True,
             )
         alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
-        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=2.0)
-        if not explicit_batch:
-            k_vectors = k_vectors.squeeze(0)
+        miller_bounds = (4, 4, 4)
 
         if part == "real":
 
@@ -9661,6 +9789,11 @@ class TestEwaldDoubleBackward:
         elif part == "recip":
 
             def energy_fn(p, q, c):
+                k_vectors = generate_k_vectors_ewald_summation(
+                    c,
+                    k_cutoff=2.0,
+                    miller_bounds=miller_bounds,
+                )
                 return ewald_reciprocal_space(
                     p,
                     q,
@@ -9678,6 +9811,7 @@ class TestEwaldDoubleBackward:
                     c,
                     alpha=alpha,
                     k_cutoff=2.0,
+                    miller_bounds=miller_bounds,
                     neighbor_list=nl,
                     neighbor_ptr=nptr,
                     neighbor_shifts=ns,
@@ -9806,6 +9940,33 @@ class TestEwaldDoubleBackward:
         device = torch.device(device)
         energy_fn, positions, charges, cell = self._energy_fn(part, device)
         assert gradgradcheck_energy(energy_fn, positions, charges, cell, wrt=wrt)
+
+    @pytest.mark.parametrize("device", ["cuda"])
+    def test_gradgradcheck_fixed_k_recip_cell_cuda_canary(self, device):
+        """Fixed-k reciprocal cell gradgradcheck preserves second-order coverage."""
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = _contract_dipole(device)
+        alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+        fixed_k_vectors = generate_k_vectors_ewald_summation(
+            cell,
+            k_cutoff=2.0,
+            miller_bounds=(4, 4, 4),
+        ).detach()
+
+        def energy_fn(p, q, c):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                return ewald_reciprocal_space(p, q, c, fixed_k_vectors, alpha)
+
+        assert gradgradcheck_energy(
+            energy_fn,
+            positions,
+            charges,
+            cell,
+            wrt=("cell",),
+        )
 
     @pytest.mark.parametrize("device", ["cuda"])
     def test_gradgradcheck_triclinic_mixed_cuda_canary(self, device):

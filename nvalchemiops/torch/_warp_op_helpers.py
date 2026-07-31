@@ -48,6 +48,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable
 from contextlib import nullcontext
+from functools import update_wrapper
 from typing import Any
 
 import torch
@@ -58,7 +59,22 @@ __all__ = [
     "register_noop_fake",
     "register_warp_op_chain",
     "scoped_warp_stream",
+    "torch_custom_op",
 ]
+
+
+def torch_custom_op(
+    name: str,
+    *,
+    mutates_args: tuple[str, ...],
+) -> Callable[[Callable[..., Any]], Any]:
+    """Register a Torch custom op while retaining implementation metadata."""
+
+    def decorator(implementation: Callable[..., Any]) -> Any:
+        op = torch.library.custom_op(name, mutates_args=mutates_args)(implementation)
+        return update_wrapper(op, implementation)
+
+    return decorator
 
 
 def scoped_warp_stream(device: torch.device | str):

@@ -62,6 +62,216 @@ def _validate_pair_params_present(
         raise ValueError("pair_params is required when pair_fn is provided")
 
 
+def _validate_segmented_coo_structure(
+    *,
+    device: torch.device,
+    num_systems: int,
+    neighbor_list: torch.Tensor,
+    neighbor_list_shifts: torch.Tensor,
+    pair_offsets: torch.Tensor,
+    pair_counts: torch.Tensor,
+    rebuild_flags: torch.Tensor | None,
+    tile_offsets: torch.Tensor | None = None,
+    tile_counts: torch.Tensor | None = None,
+    num_tiles: torch.Tensor | None = None,
+    tile_row_group: torch.Tensor | None = None,
+    tile_col_group: torch.Tensor | None = None,
+    tile_system: torch.Tensor | None = None,
+) -> int:
+    """Validate segmented COO shapes, dtypes, devices, and capacities."""
+    tensors = {
+        "neighbor_list": neighbor_list,
+        "neighbor_list_shifts": neighbor_list_shifts,
+        "pair_offsets": pair_offsets,
+        "pair_counts": pair_counts,
+    }
+    if rebuild_flags is not None:
+        tensors["rebuild_flags"] = rebuild_flags
+    optional_tensors = {
+        "tile_offsets": tile_offsets,
+        "tile_counts": tile_counts,
+        "num_tiles": num_tiles,
+        "tile_row_group": tile_row_group,
+        "tile_col_group": tile_col_group,
+        "tile_system": tile_system,
+    }
+    tensors.update(
+        {name: value for name, value in optional_tensors.items() if value is not None}
+    )
+    for name, value in tensors.items():
+        if value.device != device:
+            raise ValueError(f"{name} must match positions.device")
+
+    if (
+        neighbor_list.dtype != torch.int32
+        or neighbor_list.ndim != 2
+        or neighbor_list.shape[0] != 2
+    ):
+        raise ValueError("neighbor_list must have shape (2, capacity) and dtype int32")
+    capacity = int(neighbor_list.shape[1])
+    if neighbor_list_shifts.dtype != torch.int32 or neighbor_list_shifts.shape != (
+        capacity,
+        3,
+    ):
+        raise ValueError(
+            "neighbor_list_shifts must have shape (neighbor_list capacity, 3) "
+            "and dtype int32"
+        )
+    if pair_offsets.dtype != torch.int32 or pair_offsets.shape != (num_systems + 1,):
+        raise ValueError(
+            "pair_offsets must have shape (num_systems + 1,) and dtype int32"
+        )
+    if pair_counts.dtype != torch.int32 or pair_counts.shape != (num_systems,):
+        raise ValueError("pair_counts must have shape (num_systems,) and dtype int32")
+    if rebuild_flags is not None and (
+        rebuild_flags.dtype != torch.bool or rebuild_flags.shape != (num_systems,)
+    ):
+        raise ValueError("rebuild_flags must have shape (num_systems,) and dtype bool")
+
+    tile_values = (tile_offsets, tile_counts, num_tiles, tile_row_group, tile_col_group)
+    if any(value is not None for value in tile_values):
+        if any(value is None for value in tile_values):
+            raise ValueError("segmented COO tile state must be supplied completely")
+        if (
+            tile_offsets.dtype != torch.int32
+            or tile_offsets.shape != (num_systems + 1,)
+            or tile_counts.dtype != torch.int32
+            or tile_counts.shape != (num_systems,)
+            or num_tiles.dtype != torch.int32
+            or num_tiles.shape != (1,)
+        ):
+            raise ValueError(
+                "segmented COO tile metadata has an invalid shape or dtype"
+            )
+        if (
+            tile_row_group.dtype != torch.int32
+            or tile_col_group.dtype != torch.int32
+            or tile_row_group.ndim != 1
+            or tile_col_group.ndim != 1
+            or tile_row_group.shape != tile_col_group.shape
+        ):
+            raise ValueError(
+                "tile row and column buffers must be matching 1D int32 arrays"
+            )
+        if tile_system is not None and (
+            tile_system.dtype != torch.int32
+            or tile_system.ndim != 1
+            or tile_system.shape != tile_row_group.shape
+        ):
+            raise ValueError("tile_system must match tile row and column buffer shapes")
+
+    return capacity
+
+
+def _validate_segmented_coo_values(
+    *,
+    neighbor_list: torch.Tensor,
+    pair_offsets: torch.Tensor,
+    pair_counts: torch.Tensor,
+    tile_offsets: torch.Tensor | None = None,
+    tile_counts: torch.Tensor | None = None,
+    tile_row_group: torch.Tensor | None = None,
+) -> None:
+    """Eagerly validate segmented COO metadata values before mutation."""
+    capacity = int(neighbor_list.shape[1])
+    pair_offsets_host = pair_offsets.cpu()
+    pair_counts_host = pair_counts.cpu()
+    if int(pair_offsets_host[0]) != 0:
+        raise ValueError("pair_offsets must start at zero")
+    if bool((pair_offsets_host[1:] < pair_offsets_host[:-1]).any()):
+        raise ValueError("pair_offsets must be nondecreasing")
+    if int(pair_offsets_host[-1]) != capacity:
+        raise ValueError("pair_offsets final value must equal neighbor_list capacity")
+    pair_capacities = pair_offsets_host[1:] - pair_offsets_host[:-1]
+    if bool((pair_counts_host < 0).any()) or bool(
+        (pair_counts_host > pair_capacities).any()
+    ):
+        raise ValueError("pair_counts must lie within their pair_offsets segments")
+
+    if tile_offsets is not None:
+        tile_offsets_host = tile_offsets.cpu()
+        tile_counts_host = tile_counts.cpu()
+        if int(tile_offsets_host[0]) != 0:
+            raise ValueError("tile_offsets must start at zero")
+        if bool((tile_offsets_host[1:] < tile_offsets_host[:-1]).any()):
+            raise ValueError("tile_offsets must be nondecreasing")
+        if int(tile_offsets_host[-1]) > int(tile_row_group.shape[0]):
+            raise ValueError("tile_offsets exceed the physical tile-buffer capacity")
+        tile_capacities = tile_offsets_host[1:] - tile_offsets_host[:-1]
+        if bool((tile_counts_host < 0).any()) or bool(
+            (tile_counts_host > tile_capacities).any()
+        ):
+            raise ValueError("tile_counts must lie within their tile_offsets segments")
+
+
+def _validate_segmented_coo_state(
+    *,
+    device: torch.device,
+    num_systems: int,
+    neighbor_list: torch.Tensor,
+    neighbor_list_shifts: torch.Tensor,
+    pair_offsets: torch.Tensor,
+    pair_counts: torch.Tensor,
+    rebuild_flags: torch.Tensor | None,
+    tile_offsets: torch.Tensor | None = None,
+    tile_counts: torch.Tensor | None = None,
+    num_tiles: torch.Tensor | None = None,
+    tile_row_group: torch.Tensor | None = None,
+    tile_col_group: torch.Tensor | None = None,
+    tile_system: torch.Tensor | None = None,
+) -> int:
+    """Validate fixed-capacity segmented COO state before a kernel launch."""
+    capacity = _validate_segmented_coo_structure(
+        device=device,
+        num_systems=num_systems,
+        neighbor_list=neighbor_list,
+        neighbor_list_shifts=neighbor_list_shifts,
+        pair_offsets=pair_offsets,
+        pair_counts=pair_counts,
+        rebuild_flags=rebuild_flags,
+        tile_offsets=tile_offsets,
+        tile_counts=tile_counts,
+        num_tiles=num_tiles,
+        tile_row_group=tile_row_group,
+        tile_col_group=tile_col_group,
+        tile_system=tile_system,
+    )
+    if not torch.compiler.is_compiling():
+        _validate_segmented_coo_values(
+            neighbor_list=neighbor_list,
+            pair_offsets=pair_offsets,
+            pair_counts=pair_counts,
+            tile_offsets=tile_offsets,
+            tile_counts=tile_counts,
+            tile_row_group=tile_row_group,
+        )
+    return capacity
+
+
+def _normalize_compiled_single_segment_coo_count(
+    *,
+    pair_offsets: torch.Tensor,
+    pair_counts: torch.Tensor,
+    physical_capacity: int,
+) -> None:
+    """Fail closed for malformed compiled single-segment COO metadata.
+
+    This compiled-path helper uses only device-side int32 operations. A false
+    rebuild flag returns before the Warp query validates metadata, while an
+    overflowed attempted count is not final until every query block completes.
+    It therefore validates the exact fixed interval and clamps the final count
+    here. This is deliberately not a generic batched normalizer.
+    """
+    offsets_valid = (pair_offsets[0] == 0) & (pair_offsets[1] == physical_capacity)
+    clamped_count = torch.clamp(pair_counts, min=0, max=physical_capacity)
+    normalized_counts = torch.where(
+        offsets_valid,
+        clamped_count,
+        torch.zeros_like(pair_counts),
+    )
+    pair_counts.copy_(normalized_counts)
+
+
 def compute_naive_num_shifts(
     cell: torch.Tensor,
     cutoff: float,
