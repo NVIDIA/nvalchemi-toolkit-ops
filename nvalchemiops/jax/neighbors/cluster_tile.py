@@ -1079,8 +1079,10 @@ def query_cluster_tile(
     neighbor_matrix_shifts2 : jax.Array, shape (natom, max_neighbors, 3), dtype=int32, optional
         Second shift buffer for dual-cutoff mode.
     rebuild_flags : jax.Array, shape (1,), dtype=bool, optional
-        When set, skips atoms flagged as unchanged; requires all
-        ``previous_*`` buffers to be passed.
+        When set, requires all ``previous_*`` buffers. For an empty system a
+        false flag preserves the previous active counts and tile state, while
+        a true flag clears the active pair and tile counts without rewriting
+        fixed-capacity topology storage.
     return_vectors : bool, optional
         If True, also fill and return per-pair displacement vectors.
     return_distances : bool, optional
@@ -1396,6 +1398,74 @@ def query_cluster_tile(
     return neighbor_matrix, num_neighbors, neighbor_matrix_shifts
 
 
+def _validate_single_segment_coo_state(
+    *,
+    pair_offsets: jax.Array,
+    pair_counts: jax.Array,
+    rebuild_flags: jax.Array | None,
+    neighbor_list: jax.Array | None,
+    neighbor_list_shifts: jax.Array | None,
+    max_pairs: int,
+) -> int:
+    """Validate static single-system segmented-COO metadata and buffers."""
+    if pair_offsets.dtype != jnp.int32 or pair_offsets.shape != (2,):
+        raise ValueError("pair_offsets must have shape (2,) and dtype int32")
+    if pair_counts.dtype != jnp.int32 or pair_counts.shape != (1,):
+        raise ValueError("pair_counts must have shape (1,) and dtype int32")
+    if rebuild_flags is not None and (
+        rebuild_flags.dtype != jnp.bool_ or rebuild_flags.shape != (1,)
+    ):
+        raise ValueError("rebuild_flags must have shape (1,) and dtype bool")
+
+    physical_capacity: int | None = None
+    if neighbor_list is not None:
+        if (
+            neighbor_list.dtype != jnp.int32
+            or neighbor_list.ndim != 2
+            or neighbor_list.shape[0] != 2
+        ):
+            raise ValueError(
+                "neighbor_list must have shape (2, capacity) and dtype int32"
+            )
+        physical_capacity = int(neighbor_list.shape[1])
+    if neighbor_list_shifts is not None:
+        if (
+            neighbor_list_shifts.dtype != jnp.int32
+            or neighbor_list_shifts.ndim != 2
+            or neighbor_list_shifts.shape[1] != 3
+        ):
+            raise ValueError(
+                "neighbor_list_shifts must have shape (capacity, 3) and dtype int32"
+            )
+        shift_capacity = int(neighbor_list_shifts.shape[0])
+        if physical_capacity is not None and shift_capacity != physical_capacity:
+            raise ValueError(
+                "neighbor_list_shifts must match neighbor_list physical capacity"
+            )
+        physical_capacity = shift_capacity
+    if physical_capacity is None:
+        physical_capacity = int(max_pairs)
+    if physical_capacity < 0:
+        raise ValueError("max_pairs must be nonnegative")
+    return physical_capacity
+
+
+def _normalize_single_segment_coo_count(
+    *,
+    pair_offsets: jax.Array,
+    pair_counts: jax.Array,
+    physical_capacity: int,
+) -> jax.Array:
+    """Fail closed for malformed single-system COO metadata without host sync."""
+    offsets_valid = (pair_offsets[0] == 0) & (pair_offsets[1] == physical_capacity)
+    clamped_count = jnp.clip(pair_counts, 0, physical_capacity)
+    return jnp.where(
+        offsets_valid,
+        clamped_count,
+        jnp.zeros_like(pair_counts),
+    )
+
+
 def query_cluster_tile_coo(
     sorted_atom_index: jax.Array,
     sorted_pos_x: jax.Array,
@@ -1417,9 +1487,9 @@ def query_cluster_tile_coo(
 ) -> tuple[jax.Array, ...]:
     """Convert the tile pair list to flat COO form.
 
-    In compact mode the pair count is data-dependent (eager-only).  In
-    segmented mode the output arrays have fixed shapes dictated by
-    ``pair_offsets`` so the call is ``jit``-compatible.
+    In compact mode the pair count is data-dependent (eager-only). In
+    segmented mode caller-provided fixed buffers define output shapes, so the
+    call is ``jit``-compatible.
 
     Parameters
     ----------
@@ -1444,16 +1514,18 @@ def query_cluster_tile_coo(
     natom : int
         Real atom count (excluding padding).
     max_pairs : int
-        Upper bound on the number of pair entries in compact mode.
-        Ignored in segmented mode (derived from ``pair_offsets[-1]``).
+        Upper bound on the number of pair entries in compact mode. In
+        segmented mode it sizes missing fixed buffers; supplied buffer shapes
+        define physical capacity.
     rebuild_flags : jax.Array, shape (1,), dtype=bool, optional
         Selective-rebuild flag.  Requires ``pair_offsets`` and
         ``pair_counts`` (segmented mode only).
-    pair_offsets : jax.Array, shape (ngroup + 1,), dtype=int32, optional
-        CSR-style offsets into the fixed segmented pair buffer.
+    pair_offsets : jax.Array, shape (2,), dtype=int32, optional
+        Exact ``[0, physical_capacity]`` interval for the fixed segmented
+        pair buffer.
         Pass together with ``pair_counts`` to activate segmented mode.
-    pair_counts : jax.Array, shape (ngroup,), dtype=int32, optional
-        Per-group pair counts for the fixed segmented buffer.
+    pair_counts : jax.Array, shape (1,), dtype=int32, optional
+        Filled pair count for the fixed segmented buffer.
     neighbor_list : jax.Array, shape (2, max_pairs), dtype=int32, optional
         Pre-allocated COO list buffer (segmented mode).
     neighbor_list_shifts : jax.Array, shape (max_pairs, 3), dtype=int32, optional
@@ -1484,6 +1556,15 @@ def query_cluster_tile_coo(
         raise ValueError("Pass both 'pair_offsets' and 'pair_counts', or neither.")
     if rebuild_flags is not None and not segmented:
         raise ValueError("rebuild_flags requires pair_offsets and pair_counts")
+    if segmented:
+        physical_capacity = _validate_single_segment_coo_state(
+            pair_offsets=pair_offsets,
+            pair_counts=pair_counts,
+            rebuild_flags=rebuild_flags,
+            neighbor_list=neighbor_list,
+            neighbor_list_shifts=neighbor_list_shifts,
+            max_pairs=max_pairs,
+        )
     coo_registration = _CLUSTER_TILE_QUERIES["coo_segmented" if segmented else "coo"]
     coo_registration.preload(device_source=sorted_pos_x)
 
@@ -1492,11 +1573,13 @@ def query_cluster_tile_coo(
 
     pair_counter = jnp.zeros(1, dtype=jnp.int32)
     if segmented:
-        max_pairs = int(pair_offsets[-1])
         if neighbor_list is None:
-            neighbor_list = jnp.zeros((2, max_pairs), dtype=jnp.int32)
+            neighbor_list = jnp.zeros((2, physical_capacity), dtype=jnp.int32)
         if neighbor_list_shifts is None:
-            neighbor_list_shifts = jnp.zeros((max_pairs, 3), dtype=jnp.int32)
+            neighbor_list_shifts = jnp.zeros(
+                (physical_capacity, 3),
+                dtype=jnp.int32,
+            )
         coo_list = neighbor_list.T.copy()
         coo_shifts = neighbor_list_shifts
         if rebuild_flags is None:
@@ -1521,7 +1604,12 @@ def query_cluster_tile_coo(
             coo_shifts,
             float(cutoff),
             int(natom),
-            int(max_pairs),
+            physical_capacity,
+        )
+        pair_counts = _normalize_single_segment_coo_count(
+            pair_offsets=pair_offsets,
+            pair_counts=pair_counts,
+            physical_capacity=physical_capacity,
         )
         del pair_counter
         return coo_list.T, pair_offsets, pair_counts, coo_shifts
@@ -1708,9 +1796,11 @@ def cluster_tile_neighbor_list(
     max_pairs : int, optional
         Upper bound for compact COO output; defaults to ``N * max_neighbors``.
     pair_offsets, previous_pair_counts, previous_neighbor_list, previous_neighbor_list_shifts : jax.Array, optional
-        Fixed segmented-COO buffers used with ``rebuild_flags`` and
-        ``format="coo"``. The return tuple preserves the fixed buffer
-        shapes and reports the updated ``pair_counts``.
+        Single fixed segmented-COO state used with ``rebuild_flags`` and
+        ``format="coo"``. ``pair_offsets`` must be
+        ``[0, previous_neighbor_list.shape[1]]`` and
+        ``previous_pair_counts`` must have shape ``(1,)``. The return tuple
+        preserves fixed buffer shapes and reports the updated count.
     return_vectors, return_distances : bool, default False
         If True, append per-pair displacement vectors / scalar distances
         to the matrix-format return tuple. Matrix format only.
@@ -1724,7 +1814,10 @@ def cluster_tile_neighbor_list(
     For ``format == "matrix"``:
         ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``, with
         optional ``(*, distances)`` and/or ``(*, vectors)`` appended when
-        ``return_distances`` / ``return_vectors`` is True.
+        ``return_distances`` / ``return_vectors`` is True. With
+        ``rebuild_flags``, append ``(num_tiles, tile_row_group,
+        tile_col_group)`` after one matrix triple, or after both triples when
+        ``cutoff2`` is provided.
     For ``format == "coo"``:
         ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)`` in compact
         mode, or ``(neighbor_list, pair_offsets, pair_counts,
@@ -1832,6 +1925,16 @@ def cluster_tile_neighbor_list(
         max_neighbors = estimate_max_neighbors(
             cutoff2 if cutoff2 is not None else cutoff
         )
+    single_segment_capacity: int | None = None
+    if selective and format == "coo":
+        single_segment_capacity = _validate_single_segment_coo_state(
+            pair_offsets=pair_offsets,
+            pair_counts=previous_pair_counts,
+            rebuild_flags=rebuild_flags,
+            neighbor_list=previous_neighbor_list,
+            neighbor_list_shifts=previous_neighbor_list_shifts,
+            max_pairs=max_pairs if max_pairs is not None else N * max_neighbors,
+        )
 
     if N == 0:
         # Public docstring promises ``N >= 0``.  Returning zero-shaped
@@ -1842,6 +1945,31 @@ def cluster_tile_neighbor_list(
         nn0 = jnp.empty(0, dtype=jnp.int32)
         ns0 = jnp.empty((0, int(max_neighbors), 3), dtype=jnp.int32)
         if format == "coo":
+            if selective:
+                empty_pair_counts = jnp.where(
+                    rebuild_flags,
+                    jnp.zeros_like(previous_pair_counts),
+                    previous_pair_counts,
+                )
+                empty_pair_counts = _normalize_single_segment_coo_count(
+                    pair_offsets=pair_offsets,
+                    pair_counts=empty_pair_counts,
+                    physical_capacity=single_segment_capacity,
+                )
+                empty_num_tiles = jnp.where(
+                    rebuild_flags,
+                    jnp.zeros_like(previous_num_tiles),
+                    previous_num_tiles,
+                )
+                return (
+                    previous_neighbor_list,
+                    pair_offsets,
+                    empty_pair_counts,
+                    previous_neighbor_list_shifts,
+                    empty_num_tiles,
+                    previous_tile_row_group,
+                    previous_tile_col_group,
+                )
             coo_base = (
                 jnp.empty((2, 0), dtype=jnp.int32),
                 jnp.zeros(1, dtype=jnp.int32),
@@ -1903,7 +2031,11 @@ def cluster_tile_neighbor_list(
         if selective:
             return (
                 *matrix_out,
-                previous_num_tiles,
+                jnp.where(
+                    rebuild_flags,
+                    jnp.zeros_like(previous_num_tiles),
+                    previous_num_tiles,
+                ),
                 previous_tile_row_group,
                 previous_tile_col_group,
             )
@@ -2034,7 +2166,7 @@ def cluster_tile_neighbor_list(
                 cell_topology,
                 cutoff,
                 N,
-                int(pair_offsets[-1]),
+                single_segment_capacity,
                 rebuild_flags=rebuild_flags,
                 pair_offsets=pair_offsets,
                 pair_counts=previous_pair_counts,

@@ -1245,6 +1245,140 @@ segmented-COO outputs in both the PyTorch and JAX `batch_naive` / `batch_cell_li
 paths (single-system paths take a whole-system flag of shape `(1,)`). It is not
 combined with differentiable per-pair geometry.
 
+Cluster-tile selective rebuilds also require the tile-list buffers. JAX returns that
+state as part of every selective result. Zero-atom calls keep the same arity as
+nonempty calls: selective matrix output contains the matrix triple plus tile state
+(and both matrix triples for dual cutoff), while segmented COO remains the normal
+seven-array single-system or ten-array batched tuple.
+
+PyTorch keeps the existing return arity by default. To receive the tile state, select
+the cluster-tile method explicitly and pass `return_state=True` with
+`rebuild_flags`:
+
+- Single-system matrix output appends `(num_tiles, tile_row_group,
+  tile_col_group)`, yielding six tensors for one cutoff and nine for two.
+- Single-system segmented COO returns `(neighbor_list, pair_offsets,
+  pair_counts, neighbor_list_shifts)` and appends `(num_tiles,
+  tile_row_group, tile_col_group)` with `return_state=True`, yielding seven
+  tensors. The fixed buffers have shapes `(2, max_pairs)`, `(2,)`, `(1,)`, and
+  `(max_pairs, 3)`; `pair_offsets` is `[0, max_pairs]`, and
+  `pair_counts[0]` gives the active prefix. Values after that prefix are
+  inactive.
+- Batched matrix output appends `(tile_offsets, tile_counts, num_tiles,
+  tile_row_group, tile_col_group, tile_system)`, yielding nine tensors for one
+  cutoff and twelve for two.
+- Batched segmented COO appends the same six state tensors to its four topology
+  outputs, yielding ten tensors.
+
+```python
+from nvalchemiops.torch.neighbors import neighbor_list
+
+(
+    neighbor_matrix,
+    num_neighbors,
+    shifts,
+    tile_offsets,
+    tile_counts,
+    num_tiles,
+    tile_row_group,
+    tile_col_group,
+    tile_system,
+) = neighbor_list(
+    positions,
+    cutoff,
+    cell=cells,
+    pbc=pbc,
+    batch_ptr=batch_ptr,
+    method="batch_cluster_tile",
+    rebuild_flags=rebuild_flags,
+    return_state=True,
+)
+```
+
+For a single-system fixed-capacity COO workflow, retain the public topology
+buffers and tile state from the previous step:
+
+```python
+(
+    neighbor_list_coo,
+    pair_offsets,
+    pair_counts,
+    shifts_coo,
+    num_tiles,
+    tile_row_group,
+    tile_col_group,
+) = neighbor_list(
+    positions,
+    cutoff,
+    cell=cell,
+    pbc=pbc,
+    method="cluster_tile",
+    return_neighbor_list=True,
+    rebuild_flags=rebuild_flags,  # shape (1,)
+    neighbor_list=neighbor_list_coo,
+    pair_offsets=pair_offsets,  # tensor([0, max_pairs], dtype=torch.int32)
+    pair_counts=pair_counts,
+    neighbor_list_shifts=shifts_coo,
+    num_tiles=num_tiles,
+    tile_row_group=tile_row_group,
+    tile_col_group=tile_col_group,
+    return_state=True,
+)
+```
+
+Pass the returned topology buffers and state back on the next call. `return_state`
+is intentionally rejected for auto-selected and non-cluster-tile methods, and it
+requires `rebuild_flags`. Caller-supplied state tensors are returned by identity:
+the suffix aliases the same buffers, which the next selective call updates in place.
+When only the public state suffix is supplied, temporary sorting scratch is allocated
+internally without replacing those state buffers.
+
+Use two phases for PyTorch selective COO. First make an eager bootstrap call with
+every flag true; it may allocate omitted topology and tile buffers and returns the
+reusable state. Every later eager call containing a false flag must supply all fixed
+topology and tile-state buffers, otherwise it raises `ValueError` before a kernel
+launch. Single-system Torch and JAX COO state has one segment:
+`pair_offsets` must stay `[0, physical_capacity]`, and `pair_counts` has one value.
+
+```python
+# Eager bootstrap: omit every persistent buffer.
+state = cluster_tile_neighbor_list(
+    positions, cutoff, cell, format="coo", return_state=True,
+    rebuild_flags=torch.ones(1, dtype=torch.bool, device=positions.device),
+)
+```
+
+The direct single-system `cluster_tile_neighbor_list` route also supports
+`torch.compile(fullgraph=True)` for this steady-state phase. Bootstrap and validate
+capacities eagerly, then compile a function that accepts fixed-shape buffers and
+`rebuild_flags`; compiled calls preserve false-flag data and rebuild true-flag data.
+False flags retain the fixed launch graph, so they do not promise zero preprocessing
+or kernel launches. The unified `neighbor_list(..., method="cluster_tile")` dispatch
+is unsupported under compilation because it cannot validate tensor-valued `pbc`
+without host synchronization. Compiled calls also omit
+host-synchronized offset and overflow diagnostics, so retain the eagerly validated
+capacities. The Warp COO query enforces physical output-buffer bounds as defense in
+depth, but mutated or malformed metadata remains unsupported. Compiled Torch and
+JIT-compiled JAX cannot synchronize to raise a data-dependent metadata error. If
+caller-provided single-system offsets no longer equal `[0, physical_capacity]`, a
+true rebuild is suppressed before it writes and the returned active count is zero.
+For valid offsets, an overflowed count is capped at writable capacity. A false
+rebuild retains valid prior buffers and counts; malformed metadata still returns a
+zero active count without changing those buffers. This prevents a returned count
+from naming unwritten entries; it does not make mutated metadata supported. Batched
+cluster-tile fullgraph support is not provided.
+
+```python
+@torch.compile(fullgraph=True)
+def reuse(flags, neighbor_list, pair_offsets, pair_counts, shifts, num_tiles, row, col):
+    return cluster_tile_neighbor_list(
+        positions, cutoff, cell, format="coo", return_state=True,
+        rebuild_flags=flags, neighbor_list=neighbor_list, pair_offsets=pair_offsets,
+        pair_counts=pair_counts, neighbor_list_shifts=shifts, num_tiles=num_tiles,
+        tile_row_group=row, tile_col_group=col,
+    )
+```
+
 ### Dual Cutoff
 
 Compute two neighbor lists with different cutoffs simultaneously:
