@@ -455,7 +455,9 @@ def naive_neighbor_list_dual_cutoff(
                     neighbor_matrix2,
                     neighbor_matrix_shifts2,
                     num_neighbors2,
-                ) = _jax_fill_pbc_selective(
+                ) = _DIRECT_NAIVE_DUAL_KERNELS[("wrap_on_entry", True)][
+                    positions.dtype
+                ](
                     positions_wrapped,
                     per_atom_cell_offsets,
                     float(cutoff1 * cutoff1),
@@ -488,7 +490,9 @@ def naive_neighbor_list_dual_cutoff(
                     neighbor_matrix2,
                     neighbor_matrix_shifts2,
                     num_neighbors2,
-                ) = _jax_fill_pbc(
+                ) = _DIRECT_NAIVE_DUAL_KERNELS[("wrap_on_entry", False)][
+                    positions.dtype
+                ](
                     positions_wrapped,
                     per_atom_cell_offsets,
                     float(cutoff1 * cutoff1),

@@ -56,7 +56,10 @@ from nvalchemiops.neighbors.neighbor_utils import (
     selective_zero_num_neighbors_single as wp_selective_zero_num_neighbors_single,
 )
 from nvalchemiops.neighbors.output_args import _has_partial_or_pair_outputs
-from nvalchemiops.torch.neighbors.neighbor_utils import _validate_segmented_coo_state
+from nvalchemiops.torch.neighbors.neighbor_utils import (
+    _normalize_compiled_single_segment_coo_count,
+    _validate_segmented_coo_state,
+)
 from nvalchemiops.torch.types import get_wp_dtype
 
 if TYPE_CHECKING:
@@ -1678,7 +1681,7 @@ def query_cluster_tile_coo(
             )
         if coo_list.shape != (max_pairs, 2):
             raise ValueError("coo_list must have shape (max_pairs, 2)")
-        _validate_segmented_coo_state(
+        physical_capacity = _validate_segmented_coo_state(
             device=coo_list.device,
             num_systems=1,
             neighbor_list=coo_list.transpose(0, 1),
@@ -1687,6 +1690,8 @@ def query_cluster_tile_coo(
             pair_counts=pair_counts,
             rebuild_flags=rebuild_flags,
         )
+        if physical_capacity != max_pairs:
+            raise ValueError("max_pairs must equal coo_list.shape[0]")
 
     cell_mat, inv_cell_mat = _cell_invcell_from_cell(cell)
     cell_mat = cell_mat.to(sorted_pos_x.dtype)
@@ -1725,6 +1730,12 @@ def query_cluster_tile_coo(
             coo_shifts,
             n_tiles,
         )
+        if torch.compiler.is_compiling():
+            _normalize_compiled_single_segment_coo_count(
+                pair_offsets=pair_offsets,
+                pair_counts=pair_counts,
+                physical_capacity=physical_capacity,
+            )
         return
 
     if _has_partial_or_pair_outputs(

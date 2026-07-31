@@ -579,7 +579,7 @@ class TestBatchSegmentedCooPhysicalBounds:
         )
 
         assert int(pair_counts[0].item()) > 0
-        assert int(pair_counts[1].item()) > 0
+        assert int(pair_counts[1].item()) == 0
         assert torch.all(coo_list[:8] != -77)
         assert torch.all(coo_list[max_pairs:] == -77)
         assert torch.all(coo_shifts[max_pairs:] == -77)

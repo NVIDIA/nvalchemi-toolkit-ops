@@ -31,6 +31,7 @@ from nvalchemiops.jax.neighbors.cluster_tile import (
     build_cluster_tile_list,
     cluster_tile_neighbor_list,
     estimate_cluster_tile_list_sizes,
+    query_cluster_tile_coo,
 )
 
 from .conftest import requires_gpu
@@ -866,6 +867,44 @@ class TestJaxClusterTileCutoff2Selective:
         assert int(pair_counts[0]) <= int(pair_offsets[1] - pair_offsets[0])
         assert int(nt2[0]) > 0
 
+    def test_rebuild_flags_coo_clamps_valid_overflow_to_physical_capacity(self):
+        """Valid fixed metadata cannot report more pairs than it can store."""
+        positions = jnp.zeros((64, 3), dtype=jnp.float32)
+        cell = _orthorhombic_cell(6.0)
+        num_tiles, tile_row_group, tile_col_group, *_ = cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell,
+            format="tile",
+        )
+        capacity = 64
+        out = cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell,
+            max_neighbors=64,
+            format="coo",
+            rebuild_flags=jnp.array([True], dtype=jnp.bool_),
+            previous_num_tiles=num_tiles,
+            previous_tile_row_group=tile_row_group,
+            previous_tile_col_group=tile_col_group,
+            pair_offsets=jnp.array([0, capacity], dtype=jnp.int32),
+            previous_pair_counts=jnp.zeros(1, dtype=jnp.int32),
+            previous_neighbor_list=jnp.full((2, capacity), -77, dtype=jnp.int32),
+            previous_neighbor_list_shifts=jnp.full(
+                (capacity, 3),
+                -77,
+                dtype=jnp.int32,
+            ),
+        )
+
+        np.testing.assert_array_equal(
+            np.asarray(out[2]),
+            np.array([capacity], dtype=np.int32),
+        )
+        assert np.all(np.asarray(out[0]) != -77)
+        assert np.all(np.asarray(out[3]) != -77)
+
     def test_rebuild_flags_coo_requires_segment_buffers(self):
         positions = jnp.zeros((32, 3), dtype=jnp.float32)
         cell = _orthorhombic_cell(4.0)
@@ -887,6 +926,139 @@ class TestJaxClusterTileCutoff2Selective:
                 previous_tile_row_group=tile_row_group,
                 previous_tile_col_group=tile_col_group,
             )
+
+    def test_rebuild_flags_coo_requires_one_single_system_segment(self):
+        """Single-system segmented COO rejects unused extra metadata segments."""
+        positions = jnp.zeros((32, 3), dtype=jnp.float32)
+        cell = _orthorhombic_cell(6.0)
+        num_tiles, tile_row_group, tile_col_group, *_ = cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell,
+            format="tile",
+        )
+
+        with pytest.raises(ValueError, match=r"pair_offsets must have shape \(2,\)"):
+            cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell,
+                max_neighbors=64,
+                format="coo",
+                rebuild_flags=jnp.array([False], dtype=jnp.bool_),
+                previous_num_tiles=num_tiles,
+                previous_tile_row_group=tile_row_group,
+                previous_tile_col_group=tile_col_group,
+                pair_offsets=jnp.array([0, 4, 8], dtype=jnp.int32),
+                previous_pair_counts=jnp.array([0, 0], dtype=jnp.int32),
+                previous_neighbor_list=jnp.full((2, 8), -77, dtype=jnp.int32),
+                previous_neighbor_list_shifts=jnp.full((8, 3), -77, dtype=jnp.int32),
+            )
+
+    @pytest.mark.parametrize(
+        ("pair_offsets_values", "rebuild_flag"),
+        [
+            ((64, 0), True),
+            ((0, 32), True),
+            ((1, 64), True),
+            ((64, 0), False),
+            ((0, 32), False),
+            ((1, 64), False),
+        ],
+        ids=[
+            "reversed-true",
+            "undersized-true",
+            "nonzero-start-true",
+            "reversed-false",
+            "undersized-false",
+            "nonzero-start-false",
+        ],
+    )
+    def test_jit_selective_coo_invalid_offsets_fail_closed(
+        self,
+        pair_offsets_values,
+        rebuild_flag,
+    ):
+        """JIT returns no active entries for malformed single-system metadata."""
+        positions = jnp.zeros((32, 3), dtype=jnp.float32)
+        cell = _orthorhombic_cell(6.0)
+        num_tiles, tile_row_group, tile_col_group, *_ = cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell,
+            format="tile",
+        )
+        neighbor_list = jnp.full((2, 64), -77, dtype=jnp.int32)
+        neighbor_list_shifts = jnp.full((64, 3), -77, dtype=jnp.int32)
+
+        @jax.jit
+        def run(pair_offsets, pair_counts, runtime_rebuild_flags):
+            return cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell,
+                max_neighbors=64,
+                format="coo",
+                rebuild_flags=runtime_rebuild_flags,
+                previous_num_tiles=num_tiles,
+                previous_tile_row_group=tile_row_group,
+                previous_tile_col_group=tile_col_group,
+                pair_offsets=pair_offsets,
+                previous_pair_counts=pair_counts,
+                previous_neighbor_list=neighbor_list,
+                previous_neighbor_list_shifts=neighbor_list_shifts,
+            )
+
+        out = run(
+            jnp.array(pair_offsets_values, dtype=jnp.int32),
+            jnp.array([0 if rebuild_flag else 7], dtype=jnp.int32),
+            jnp.array([rebuild_flag], dtype=jnp.bool_),
+        )
+
+        np.testing.assert_array_equal(np.asarray(out[2]), np.zeros(1, dtype=np.int32))
+        np.testing.assert_array_equal(np.asarray(out[0]), np.asarray(neighbor_list))
+        np.testing.assert_array_equal(
+            np.asarray(out[3]),
+            np.asarray(neighbor_list_shifts),
+        )
+
+    def test_jit_query_coo_uses_fixed_buffer_capacity(self):
+        """Fixed buffers keep a traced max_pairs argument out of sizing logic."""
+        positions = jnp.zeros((32, 3), dtype=jnp.float32)
+        cell = _orthorhombic_cell(6.0)
+        state = build_cluster_tile_list(positions, 2.0, cell)
+        neighbor_list = jnp.full((2, 64), -77, dtype=jnp.int32)
+        neighbor_list_shifts = jnp.full((64, 3), -77, dtype=jnp.int32)
+
+        @jax.jit
+        def run(runtime_max_pairs):
+            return query_cluster_tile_coo(
+                state[0],
+                state[2],
+                state[3],
+                state[4],
+                state[11],
+                state[12],
+                state[13],
+                cell,
+                2.0,
+                32,
+                runtime_max_pairs,
+                rebuild_flags=jnp.array([False], dtype=jnp.bool_),
+                pair_offsets=jnp.array([0, 64], dtype=jnp.int32),
+                pair_counts=jnp.array([7], dtype=jnp.int32),
+                neighbor_list=neighbor_list,
+                neighbor_list_shifts=neighbor_list_shifts,
+            )
+
+        out = run(jnp.array(1, dtype=jnp.int32))
+
+        np.testing.assert_array_equal(np.asarray(out[2]), np.array([7], dtype=np.int32))
+        np.testing.assert_array_equal(np.asarray(out[0]), np.asarray(neighbor_list))
+        np.testing.assert_array_equal(
+            np.asarray(out[3]),
+            np.asarray(neighbor_list_shifts),
+        )
 
 
 class TestJaxClusterTileEmptySelective:
@@ -949,6 +1121,53 @@ class TestJaxClusterTileEmptySelective:
         np.testing.assert_array_equal(
             np.asarray(col), np.asarray(tile_state["previous_tile_col_group"])
         )
+
+    def test_empty_selective_coo_invalid_offsets_fail_closed(self):
+        """Malformed metadata zeros an inactive empty-system count."""
+        pair_offsets = jnp.array([0, 3], dtype=jnp.int32)
+        previous_pair_counts = jnp.array([4], dtype=jnp.int32)
+        previous_neighbor_list = jnp.full((2, 5), 7, dtype=jnp.int32)
+        previous_neighbor_list_shifts = jnp.full((5, 3), 7, dtype=jnp.int32)
+
+        out = cluster_tile_neighbor_list(
+            jnp.empty((0, 3), dtype=jnp.float32),
+            1.0,
+            _orthorhombic_cell(4.0),
+            max_neighbors=8,
+            format="coo",
+            rebuild_flags=jnp.array([False], dtype=jnp.bool_),
+            pair_offsets=pair_offsets,
+            previous_pair_counts=previous_pair_counts,
+            previous_neighbor_list=previous_neighbor_list,
+            previous_neighbor_list_shifts=previous_neighbor_list_shifts,
+            **self._tile_state(),
+        )
+
+        np.testing.assert_array_equal(np.asarray(out[2]), np.zeros(1, dtype=np.int32))
+        np.testing.assert_array_equal(
+            np.asarray(out[0]), np.asarray(previous_neighbor_list)
+        )
+        np.testing.assert_array_equal(
+            np.asarray(out[3]),
+            np.asarray(previous_neighbor_list_shifts),
+        )
+
+    def test_empty_selective_coo_rejects_mismatched_fixed_buffer_shapes(self):
+        """Fixed COO and shift buffers must describe one shared capacity."""
+        with pytest.raises(ValueError, match="neighbor_list_shifts"):
+            cluster_tile_neighbor_list(
+                jnp.empty((0, 3), dtype=jnp.float32),
+                1.0,
+                _orthorhombic_cell(4.0),
+                max_neighbors=8,
+                format="coo",
+                rebuild_flags=jnp.array([False], dtype=jnp.bool_),
+                pair_offsets=jnp.array([0, 5], dtype=jnp.int32),
+                previous_pair_counts=jnp.array([4], dtype=jnp.int32),
+                previous_neighbor_list=jnp.full((2, 5), 7, dtype=jnp.int32),
+                previous_neighbor_list_shifts=jnp.full((4, 3), 7, dtype=jnp.int32),
+                **self._tile_state(),
+            )
 
     @pytest.mark.parametrize("rebuild_flag", [False, True])
     def test_empty_selective_matrix_returns_state(self, rebuild_flag):

@@ -796,6 +796,155 @@ class TestClusterTileCompile:
         assert torch.equal(compiled_counts, captured_counts)
         assert torch.equal(compiled_shifts, captured_shifts)
 
+    @pytest.mark.slow
+    @pytest.mark.parametrize(
+        ("pair_offsets_values", "rebuild_flag"),
+        [
+            ((64, 0), True),
+            ((0, 32), True),
+            ((1, 64), True),
+            ((64, 0), False),
+            ((0, 32), False),
+            ((1, 64), False),
+        ],
+        ids=[
+            "reversed-true",
+            "undersized-true",
+            "nonzero-start-true",
+            "reversed-false",
+            "undersized-false",
+            "nonzero-start-false",
+        ],
+    )
+    def test_selective_coo_wrapper_fullgraph_invalid_offsets_fail_closed(
+        self,
+        device,
+        dtype,
+        pair_offsets_values,
+        rebuild_flag,
+    ):
+        """Compiled malformed offsets must not name active COO entries."""
+        natom = 64
+        capacity = 64
+        positions = torch.zeros((natom, 3), dtype=dtype, device=device)
+        cell = _orthorhombic_cell(6.0, device, dtype)
+        num_tiles, tile_row_group, tile_col_group, *_ = cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell,
+            format="tile",
+        )
+        neighbor_list = torch.full(
+            (2, capacity),
+            -77,
+            dtype=torch.int32,
+            device=device,
+        )
+        neighbor_list_shifts = torch.full(
+            (capacity, 3),
+            -77,
+            dtype=torch.int32,
+            device=device,
+        )
+        pair_offsets = torch.tensor(
+            pair_offsets_values,
+            dtype=torch.int32,
+            device=device,
+        )
+        pair_counts = torch.tensor(
+            [7 if not rebuild_flag else 0],
+            dtype=torch.int32,
+            device=device,
+        )
+
+        @torch.compile(fullgraph=True)
+        def run(
+            rebuild_flags,
+            runtime_pair_offsets,
+            runtime_pair_counts,
+        ):
+            return cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell,
+                max_neighbors=64,
+                format="coo",
+                rebuild_flags=rebuild_flags,
+                return_state=True,
+                num_tiles=num_tiles,
+                tile_row_group=tile_row_group,
+                tile_col_group=tile_col_group,
+                neighbor_list=neighbor_list,
+                pair_offsets=runtime_pair_offsets,
+                pair_counts=runtime_pair_counts,
+                neighbor_list_shifts=neighbor_list_shifts,
+            )
+
+        result = run(
+            torch.tensor([rebuild_flag], dtype=torch.bool, device=device),
+            pair_offsets,
+            pair_counts,
+        )
+
+        assert result[2].data_ptr() == pair_counts.data_ptr()
+        assert int(pair_counts.item()) == 0
+        assert torch.all(neighbor_list == -77)
+        assert torch.all(neighbor_list_shifts == -77)
+
+    @pytest.mark.slow
+    def test_selective_coo_wrapper_fullgraph_clamps_overflow_count(self, device, dtype):
+        """Compiled valid segments report at most their written capacity."""
+        natom = 64
+        capacity = 64
+        positions = torch.zeros((natom, 3), dtype=dtype, device=device)
+        cell = _orthorhombic_cell(6.0, device, dtype)
+        num_tiles, tile_row_group, tile_col_group, *_ = cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell,
+            format="tile",
+        )
+        neighbor_list = torch.full(
+            (2, capacity),
+            -77,
+            dtype=torch.int32,
+            device=device,
+        )
+        neighbor_list_shifts = torch.full(
+            (capacity, 3),
+            -77,
+            dtype=torch.int32,
+            device=device,
+        )
+        pair_offsets = torch.tensor([0, capacity], dtype=torch.int32, device=device)
+        pair_counts = torch.zeros(1, dtype=torch.int32, device=device)
+
+        @torch.compile(fullgraph=True)
+        def run(runtime_pair_counts):
+            return cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell,
+                max_neighbors=64,
+                format="coo",
+                rebuild_flags=torch.ones(1, dtype=torch.bool, device=device),
+                return_state=True,
+                num_tiles=num_tiles,
+                tile_row_group=tile_row_group,
+                tile_col_group=tile_col_group,
+                neighbor_list=neighbor_list,
+                pair_offsets=pair_offsets,
+                pair_counts=runtime_pair_counts,
+                neighbor_list_shifts=neighbor_list_shifts,
+            )
+
+        result = run(pair_counts)
+
+        assert result[2].data_ptr() == pair_counts.data_ptr()
+        assert int(pair_counts.item()) == capacity
+        assert torch.all(neighbor_list != -77)
+        assert torch.all(neighbor_list_shifts != -77)
+
 
 # =============================================================================
 # Left-handed cells

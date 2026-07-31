@@ -15,9 +15,10 @@
   matrices.
 - Batched PyTorch cluster-tile segmented COO validates fixed topology, offsets,
   counts, and tile-state capacities before launching Warp kernels.
-- Segmented cluster-tile COO kernels now bound writes by physical output capacity
-  when compiled steady-state calls reuse malformed caller metadata, preventing
-  invalid segments from escaping their backing buffers.
+- Single-system Torch and JAX segmented cluster-tile COO now require one exact
+  physical interval, bound writes by output capacity, fail closed for malformed
+  offsets, and cap compiled/JIT active counts to writable capacity. Batched
+  per-system physical subsegments remain supported.
 - Compiled unified PyTorch cluster-tile dispatch now rejects tensor-valued PBC
   rather than treating it as fully periodic. Eagerly validate PBC and compile the
   direct single-system fixed-state route instead.

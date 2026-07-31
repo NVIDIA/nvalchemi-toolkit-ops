@@ -1337,8 +1337,8 @@ Use two phases for PyTorch selective COO. First make an eager bootstrap call wit
 every flag true; it may allocate omitted topology and tile buffers and returns the
 reusable state. Every later eager call containing a false flag must supply all fixed
 topology and tile-state buffers, otherwise it raises `ValueError` before a kernel
-launch. `pair_offsets` starts at zero, is nondecreasing, and ends at the physical
-COO capacity; `pair_counts` stays within each segment.
+launch. Single-system Torch and JAX COO state has one segment:
+`pair_offsets` must stay `[0, physical_capacity]`, and `pair_counts` has one value.
 
 ```python
 # Eager bootstrap: omit every persistent buffer.
@@ -1358,8 +1358,15 @@ is unsupported under compilation because it cannot validate tensor-valued `pbc`
 without host synchronization. Compiled calls also omit
 host-synchronized offset and overflow diagnostics, so retain the eagerly validated
 capacities. The Warp COO query enforces physical output-buffer bounds as defense in
-depth, but mutated or malformed metadata remains unsupported. Batched cluster-tile
-fullgraph support is not provided.
+depth, but mutated or malformed metadata remains unsupported. Compiled Torch and
+JIT-compiled JAX cannot synchronize to raise a data-dependent metadata error. If
+caller-provided single-system offsets no longer equal `[0, physical_capacity]`, a
+true rebuild is suppressed before it writes and the returned active count is zero.
+For valid offsets, an overflowed count is capped at writable capacity. A false
+rebuild retains valid prior buffers and counts; malformed metadata still returns a
+zero active count without changing those buffers. This prevents a returned count
+from naming unwritten entries; it does not make mutated metadata supported. Batched
+cluster-tile fullgraph support is not provided.
 
 ```python
 @torch.compile(fullgraph=True)

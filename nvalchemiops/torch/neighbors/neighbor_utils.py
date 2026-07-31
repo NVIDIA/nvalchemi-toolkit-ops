@@ -248,6 +248,30 @@ def _validate_segmented_coo_state(
     return capacity
 
 
+def _normalize_compiled_single_segment_coo_count(
+    *,
+    pair_offsets: torch.Tensor,
+    pair_counts: torch.Tensor,
+    physical_capacity: int,
+) -> None:
+    """Fail closed for malformed compiled single-segment COO metadata.
+
+    This compiled-path helper uses only device-side int32 operations. A false
+    rebuild flag returns before the Warp query validates metadata, while an
+    overflowed attempted count is not final until every query block completes.
+    It therefore validates the exact fixed interval and clamps the final count
+    here. This is deliberately not a generic batched normalizer.
+    """
+    offsets_valid = (pair_offsets[0] == 0) & (pair_offsets[1] == physical_capacity)
+    clamped_count = torch.clamp(pair_counts, min=0, max=physical_capacity)
+    normalized_counts = torch.where(
+        offsets_valid,
+        clamped_count,
+        torch.zeros_like(pair_counts),
+    )
+    pair_counts.copy_(normalized_counts)
+
+
 def compute_naive_num_shifts(
     cell: torch.Tensor,
     cutoff: float,

@@ -169,8 +169,8 @@ class TestSegmentedCooPhysicalBounds:
             torch.tensor([1, 0, 0, 0], dtype=torch.int32),
         )
 
-    def test_oversized_segment_preserves_physical_canary(self, device):
-        """An oversized fixed segment must not write beyond max_pairs."""
+    def test_single_segment_requires_full_physical_interval(self, device):
+        """A single-system segment must span the full physical COO buffer."""
         natom = TILE_GROUP_SIZE
         max_pairs = 8
         backing_capacity = 1024
@@ -196,7 +196,7 @@ class TestSegmentedCooPhysicalBounds:
         )
         rebuild_flags = torch.ones(1, dtype=torch.bool, device=device)
         pair_offsets = torch.tensor(
-            [max_pairs, backing_capacity],
+            [0, max_pairs // 2],
             dtype=torch.int32,
             device=device,
         )
@@ -270,9 +270,9 @@ class TestSegmentedCooPhysicalBounds:
             ),
         )
 
-        assert int(pair_counts.item()) > 0
-        assert torch.all(coo_list[max_pairs:] == -77)
-        assert torch.all(coo_shifts[max_pairs:] == -77)
+        assert int(pair_counts.item()) == 0
+        assert torch.all(coo_list == -77)
+        assert torch.all(coo_shifts == -77)
 
 
 class TestComputeMortonLauncher:

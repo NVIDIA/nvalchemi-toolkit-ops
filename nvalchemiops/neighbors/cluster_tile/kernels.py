@@ -1299,10 +1299,11 @@ def _make_query_cluster_tile_coo_kernel(
         -----
         - Thread launch: Tiled launch with one block per allocated tile slot and block dimension ``TILE_GROUP_SIZE``.
         - Modifies: ``pair_counter`` or ``pair_counts``, ``coo_list``, ``coo_shifts``, and enabled pair-output buffers.
-        Segmented COO writes use ``local = atomic_add(pair_counts, isys,
-        count)`` and write only if ``local < pair_offsets[isys + 1] -
-        pair_offsets[isys]``; overflow is reported by the wrapper from the
-        final count.
+        Segmented COO writes reserve from ``pair_counts`` only for valid output
+        intervals. Non-batched queries require the complete physical interval
+        ``[0, max_pairs]``; batched queries accept physically bounded
+        per-system subsegments. Valid segments retain attempted counts for
+        wrapper overflow reporting; invalid segments retain zero active pairs.
 
         See Also
         --------
@@ -1408,14 +1409,28 @@ def _make_query_cluster_tile_coo_kernel(
                 if COO_SEGMENTED:
                     start = pair_offsets[system_idx]
                     stop = pair_offsets[system_idx + 1]
-                    segment_valid = _coo_segment_is_valid(start, stop, max_pairs)
+                    if BATCHED:
+                        segment_valid = _coo_segment_is_valid(
+                            start,
+                            stop,
+                            max_pairs,
+                        )
+                    else:
+                        if start == 0 and stop == max_pairs:
+                            segment_valid = wp.int32(1)
+                        else:
+                            segment_valid = wp.int32(0)
                     if segment_valid == 1:
                         capacity = stop - start
                         offset = start
+                        if lane == 0:
+                            base = wp.atomic_add(
+                                pair_counts,
+                                system_idx,
+                                2 * i_count,
+                            )
                     else:
                         capacity = wp.int32(0)
-                    if lane == 0:
-                        base = wp.atomic_add(pair_counts, system_idx, 2 * i_count)
                 else:
                     if lane == 0:
                         base = wp.atomic_add(pair_counter, 0, 2 * i_count)
