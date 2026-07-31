@@ -53,18 +53,23 @@ from nvalchemiops.torch._warp_op_helpers import (
 )
 from nvalchemiops.torch.interactions.electrostatics._util import (
     _is_per_system_uniform_cotangent,
+    _system_cotangent_to_atoms,
 )
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 __all__ = [
     "ewald_real_energy_single",
     "ewald_real_energy_batch",
+    "ewald_real_system_energy_batch",
+    "ewald_real_system_energy_single",
     "register_ewald_real_ops",
     "real_space_cell_connect",
 ]
 
 _REAL_SINGLE: dict[str, object] | None = None
 _REAL_BATCH: dict[str, object] | None = None
+_REAL_SYSTEM_SINGLE: dict[str, object] | None = None
+_REAL_SYSTEM_BATCH: dict[str, object] | None = None
 _LITERAL_CELL_GRAD: dict[str, object] | None = None
 _EWALD_REAL_OPS_REGISTERED = False
 
@@ -259,6 +264,7 @@ def _forward_impl(
     need_charge,
     need_cell,
     need_virial,
+    energy_layout="atom",
 ):
     """Fused forward: energy + detached derivative caches / direct virial.
 
@@ -286,7 +292,12 @@ def _forward_impl(
     # position/charge gradients are also active.
     use_cell_literal = bool(need_cell)
 
-    energies = torch.zeros(num_atoms, device=positions.device, dtype=torch.float64)
+    num_systems = cell.shape[0]
+    energies = torch.zeros(
+        num_atoms if energy_layout == "atom" else num_systems,
+        device=positions.device,
+        dtype=torch.float64,
+    )
     # Caches: dE/dR (= -force) per atom, dE/dq per atom, literal dE/dcell per atom
     # (N,3,3). Zero-size when not needed so the op output arity stays static.
     dEdR = torch.zeros(
@@ -302,7 +313,6 @@ def _forward_impl(
         device=positions.device,
         dtype=torch.float64,
     )
-    num_systems = cell.shape[0]
     virial = torch.zeros(
         num_systems if need_virial else 0,
         3,
@@ -343,6 +353,7 @@ def _forward_impl(
         order="forward",
         tiled=use_matrix,
         cell_literal=use_cell_literal,
+        energy_layout=energy_layout,
     )
     wp_batch = _wp(batch_idx, wp.int32) if batched else sentinels["batch_id"]
     # The forward kernel writes the physical force F only for force-bearing
@@ -413,6 +424,7 @@ def _backward_impl(
     need_pos,
     need_charge,
     need_cell,
+    energy_layout="atom",
 ):
     """First backward = cheap scale of the detached forward caches (no pair loop).
 
@@ -446,8 +458,10 @@ def _backward_impl(
     # Recompute the exact weighted VJP from the differentiable Torch pair energy. The
     # uniform path (the common training case, e.g. energy.sum()) keeps the fast scale.
     any_need = need_pos or need_charge or need_cell
-    if any_need and not _cotangent_per_system_uniform(
-        grad_energy_atom, batch_idx, num_systems
+    if (
+        energy_layout == "atom"
+        and any_need
+        and not _cotangent_per_system_uniform(grad_energy_atom, batch_idx, num_systems)
     ):
         edge_i, edge_j, unit_shifts = _neighbor_edges(
             use_matrix,
@@ -500,9 +514,12 @@ def _backward_impl(
     if scale_positions or scale_charges:
         device = wp.device_from_torch(positions.device)
         wp_vec = get_wp_vec_dtype(input_dtype)
-        grad_energy = _per_system_cotangent(
-            grad_energy_atom, batch_idx, num_systems, num_atoms
-        )
+        if energy_layout == "system":
+            grad_energy = grad_energy_atom.reshape(-1).to(torch.float64)
+        else:
+            grad_energy = _per_system_cotangent(
+                grad_energy_atom, batch_idx, num_systems, num_atoms
+            )
         sentinels = alloc_ewald_real_sentinels(get_wp_dtype(input_dtype), device)
         wp_batch = (
             _wp(batch_idx, wp.int32) if batch_idx is not None else sentinels["batch_id"]
@@ -553,6 +570,7 @@ def _double_backward_impl(
     need_pos,
     need_charge,
     need_cell,
+    energy_layout="atom",
 ):
     # ``dEdR_cache`` / ``dEdq_cache`` (the backward op's leading cache inputs) and
     # ``need_pos`` / ``need_charge`` are accepted for positional alignment but NOT
@@ -583,12 +601,20 @@ def _double_backward_impl(
     )
 
     if num_atoms == 0 or _is_empty(use_matrix, idx_j, neighbor_matrix):
-        gge = _distribute_to_atoms(grad_grad_energy, batch_idx, num_systems, num_atoms)
+        if energy_layout == "system":
+            gge = grad_grad_energy
+        else:
+            gge = _distribute_to_atoms(
+                grad_grad_energy, batch_idx, num_systems, num_atoms
+            )
         return gge, grad_positions, grad_charges, grad_cell
 
-    grad_energy = _per_system_cotangent(
-        grad_energy_atom, batch_idx, num_systems, num_atoms
-    )
+    if energy_layout == "system":
+        grad_energy = grad_energy_atom.reshape(-1).to(torch.float64)
+    else:
+        grad_energy = _per_system_cotangent(
+            grad_energy_atom, batch_idx, num_systems, num_atoms
+        )
 
     sentinels = alloc_ewald_real_sentinels(wp_scalar, device)
     nbr = _neighbor_args(
@@ -642,7 +668,10 @@ def _double_backward_impl(
             )
         else:
             wp.launch(kernel, dim=[num_atoms], inputs=launch_inputs, device=device)
-    gge = _distribute_to_atoms(grad_grad_energy, batch_idx, num_systems, num_atoms)
+    if energy_layout == "system":
+        gge = grad_grad_energy
+    else:
+        gge = _distribute_to_atoms(grad_grad_energy, batch_idx, num_systems, num_atoms)
     return gge, grad_positions, grad_charges, grad_cell
 
 
@@ -913,6 +942,269 @@ def _real_double_backward_batch(
     )
 
 
+def _real_forward_system_single(
+    positions: torch.Tensor,
+    charges: torch.Tensor,
+    cell: torch.Tensor,
+    alpha: torch.Tensor,
+    idx_j: torch.Tensor,
+    neighbor_ptr: torch.Tensor,
+    neighbor_shifts: torch.Tensor,
+    neighbor_matrix: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor,
+    mask_value: int,
+    use_matrix: bool,
+    need_pos: bool,
+    need_charge: bool,
+    need_cell: bool,
+    need_virial: bool,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    return _forward_impl(
+        positions,
+        charges,
+        cell,
+        alpha,
+        None,
+        idx_j,
+        neighbor_ptr,
+        neighbor_shifts,
+        neighbor_matrix,
+        neighbor_matrix_shifts,
+        mask_value,
+        use_matrix,
+        need_pos,
+        need_charge,
+        need_cell,
+        need_virial,
+        "system",
+    )
+
+
+def _real_forward_system_batch(
+    positions: torch.Tensor,
+    charges: torch.Tensor,
+    cell: torch.Tensor,
+    alpha: torch.Tensor,
+    batch_idx: torch.Tensor,
+    idx_j: torch.Tensor,
+    neighbor_ptr: torch.Tensor,
+    neighbor_shifts: torch.Tensor,
+    neighbor_matrix: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor,
+    mask_value: int,
+    use_matrix: bool,
+    need_pos: bool,
+    need_charge: bool,
+    need_cell: bool,
+    need_virial: bool,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    return _forward_impl(
+        positions,
+        charges,
+        cell,
+        alpha,
+        batch_idx,
+        idx_j,
+        neighbor_ptr,
+        neighbor_shifts,
+        neighbor_matrix,
+        neighbor_matrix_shifts,
+        mask_value,
+        use_matrix,
+        need_pos,
+        need_charge,
+        need_cell,
+        need_virial,
+        "system",
+    )
+
+
+def _real_backward_system_single(
+    dEdR_cache: torch.Tensor,
+    dEdq_cache: torch.Tensor,
+    grad_energy: torch.Tensor,
+    positions: torch.Tensor,
+    charges: torch.Tensor,
+    cell: torch.Tensor,
+    alpha: torch.Tensor,
+    idx_j: torch.Tensor,
+    neighbor_ptr: torch.Tensor,
+    neighbor_shifts: torch.Tensor,
+    neighbor_matrix: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor,
+    mask_value: int,
+    use_matrix: bool,
+    need_pos: bool,
+    need_charge: bool,
+    need_cell: bool,
+    need_virial: bool,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    return _backward_impl(
+        dEdR_cache,
+        dEdq_cache,
+        grad_energy,
+        positions,
+        charges,
+        cell,
+        alpha,
+        None,
+        idx_j,
+        neighbor_ptr,
+        neighbor_shifts,
+        neighbor_matrix,
+        neighbor_matrix_shifts,
+        mask_value,
+        use_matrix,
+        need_pos,
+        need_charge,
+        need_cell,
+        "system",
+    )
+
+
+def _real_backward_system_batch(
+    dEdR_cache: torch.Tensor,
+    dEdq_cache: torch.Tensor,
+    grad_energy: torch.Tensor,
+    positions: torch.Tensor,
+    charges: torch.Tensor,
+    cell: torch.Tensor,
+    alpha: torch.Tensor,
+    batch_idx: torch.Tensor,
+    idx_j: torch.Tensor,
+    neighbor_ptr: torch.Tensor,
+    neighbor_shifts: torch.Tensor,
+    neighbor_matrix: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor,
+    mask_value: int,
+    use_matrix: bool,
+    need_pos: bool,
+    need_charge: bool,
+    need_cell: bool,
+    need_virial: bool,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    return _backward_impl(
+        dEdR_cache,
+        dEdq_cache,
+        grad_energy,
+        positions,
+        charges,
+        cell,
+        alpha,
+        batch_idx,
+        idx_j,
+        neighbor_ptr,
+        neighbor_shifts,
+        neighbor_matrix,
+        neighbor_matrix_shifts,
+        mask_value,
+        use_matrix,
+        need_pos,
+        need_charge,
+        need_cell,
+        "system",
+    )
+
+
+def _real_double_backward_system_single(
+    v_pos: torch.Tensor,
+    v_charge: torch.Tensor,
+    v_cell_zero: torch.Tensor,
+    dEdR_cache: torch.Tensor,
+    dEdq_cache: torch.Tensor,
+    grad_energy: torch.Tensor,
+    positions: torch.Tensor,
+    charges: torch.Tensor,
+    cell: torch.Tensor,
+    alpha: torch.Tensor,
+    idx_j: torch.Tensor,
+    neighbor_ptr: torch.Tensor,
+    neighbor_shifts: torch.Tensor,
+    neighbor_matrix: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor,
+    mask_value: int,
+    use_matrix: bool,
+    need_pos: bool,
+    need_charge: bool,
+    need_cell: bool,
+    need_virial: bool,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    return _double_backward_impl(
+        v_pos,
+        v_charge,
+        v_cell_zero,
+        dEdR_cache,
+        dEdq_cache,
+        grad_energy,
+        positions,
+        charges,
+        cell,
+        alpha,
+        None,
+        idx_j,
+        neighbor_ptr,
+        neighbor_shifts,
+        neighbor_matrix,
+        neighbor_matrix_shifts,
+        mask_value,
+        use_matrix,
+        need_pos,
+        need_charge,
+        need_cell,
+        "system",
+    )
+
+
+def _real_double_backward_system_batch(
+    v_pos: torch.Tensor,
+    v_charge: torch.Tensor,
+    v_cell_zero: torch.Tensor,
+    dEdR_cache: torch.Tensor,
+    dEdq_cache: torch.Tensor,
+    grad_energy: torch.Tensor,
+    positions: torch.Tensor,
+    charges: torch.Tensor,
+    cell: torch.Tensor,
+    alpha: torch.Tensor,
+    batch_idx: torch.Tensor,
+    idx_j: torch.Tensor,
+    neighbor_ptr: torch.Tensor,
+    neighbor_shifts: torch.Tensor,
+    neighbor_matrix: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor,
+    mask_value: int,
+    use_matrix: bool,
+    need_pos: bool,
+    need_charge: bool,
+    need_cell: bool,
+    need_virial: bool,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    return _double_backward_impl(
+        v_pos,
+        v_charge,
+        v_cell_zero,
+        dEdR_cache,
+        dEdq_cache,
+        grad_energy,
+        positions,
+        charges,
+        cell,
+        alpha,
+        batch_idx,
+        idx_j,
+        neighbor_ptr,
+        neighbor_shifts,
+        neighbor_matrix,
+        neighbor_matrix_shifts,
+        mask_value,
+        use_matrix,
+        need_pos,
+        need_charge,
+        need_cell,
+        "system",
+    )
+
+
 # ===========================================================================
 # Register the chains
 # ===========================================================================
@@ -965,6 +1257,19 @@ def _real_forward_fake(positions, *args):
     return energy, dEdR, dEdq, dedcell, virial
 
 
+def _real_system_forward_fake(positions, *args):
+    """System-energy forward fake with atom-major derivative caches."""
+    _energy, dEdR, dEdq, dedcell, virial = _real_forward_fake(positions, *args)
+    cell = args[1]
+    return (
+        positions.new_empty(cell.shape[0], dtype=torch.float64),
+        dEdR,
+        dEdq,
+        dedcell,
+        virial,
+    )
+
+
 def _real_backward_fake(dEdR_cache, dEdq_cache, grad_energy, positions, charges, *args):
     """Backward fake: ``(grad_positions, grad_charges, zero grad_cell)``."""
     n = positions.shape[0]
@@ -998,9 +1303,33 @@ def _real_double_backward_fake(
     )
 
 
+def _real_system_double_backward_fake(
+    v_pos,
+    v_charge,
+    v_cell_zero,
+    dEdR_cache,
+    dEdq_cache,
+    grad_energy,
+    positions,
+    charges,
+    *args,
+):
+    """System-energy double-backward fake preserving the system energy layout."""
+    _ = v_pos, v_charge, v_cell_zero, dEdR_cache, dEdq_cache, charges
+    cell = args[0]
+    n = positions.shape[0]
+    return (
+        grad_energy.new_empty(grad_energy.shape),
+        positions.new_empty(n, 3, dtype=positions.dtype),
+        positions.new_empty(n, dtype=torch.float64),
+        cell.new_empty(cell.shape),
+    )
+
+
 def register_ewald_real_ops() -> None:
     """Register the Ewald real-space Torch custom-op chain once."""
-    global _EWALD_REAL_OPS_REGISTERED, _LITERAL_CELL_GRAD, _REAL_BATCH, _REAL_SINGLE
+    global _EWALD_REAL_OPS_REGISTERED, _LITERAL_CELL_GRAD
+    global _REAL_BATCH, _REAL_SINGLE, _REAL_SYSTEM_BATCH, _REAL_SYSTEM_SINGLE
     if _EWALD_REAL_OPS_REGISTERED:
         return
 
@@ -1047,6 +1376,45 @@ def register_ewald_real_ops() -> None:
         batch_match=True,
     )
 
+    _REAL_SYSTEM_SINGLE = register_warp_op_chain(
+        name="nvalchemiops::ewald_real_system_energy_single",
+        forward=_real_forward_system_single,
+        backward=_real_backward_system_single,
+        double_backward=_real_double_backward_system_single,
+        forward_fake=_real_system_forward_fake,
+        backward_fake=_real_backward_fake,
+        double_backward_fake=_real_system_double_backward_fake,
+        forward_return_arity=5,
+        propagate_outputs=(0,),
+        save_forward_outputs=(1, 2),
+        diff_input_positions=(0, 1, 2),
+        n_forward_inputs=15,
+        backward_return_arity=3,
+        second_order_diff_positions=(2, 3, 4, 5),
+        n_backward_inputs=18,
+        double_backward_return_arity=4,
+    )
+
+    _REAL_SYSTEM_BATCH = register_warp_op_chain(
+        name="nvalchemiops::ewald_real_system_energy_batch",
+        forward=_real_forward_system_batch,
+        backward=_real_backward_system_batch,
+        double_backward=_real_double_backward_system_batch,
+        forward_fake=_real_system_forward_fake,
+        backward_fake=_real_backward_fake,
+        double_backward_fake=_real_system_double_backward_fake,
+        forward_return_arity=5,
+        propagate_outputs=(0,),
+        save_forward_outputs=(1, 2),
+        diff_input_positions=(0, 1, 2),
+        n_forward_inputs=16,
+        backward_return_arity=3,
+        second_order_diff_positions=(2, 3, 4, 5),
+        n_backward_inputs=19,
+        double_backward_return_arity=4,
+        batch_match=True,
+    )
+
     _LITERAL_CELL_GRAD = register_warp_op_chain(
         name="nvalchemiops::ewald_real_literal_cell_grad",
         forward=_literal_cell_grad_forward,
@@ -1076,6 +1444,22 @@ def ewald_real_energy_batch(*args, **kwargs):
     if _REAL_BATCH is None:
         raise RuntimeError("Ewald real batched op registration failed")
     return _REAL_BATCH["forward"](*args, **kwargs)
+
+
+def ewald_real_system_energy_single(*args, **kwargs):
+    """Call the registered single-system real-space system-energy op."""
+    register_ewald_real_ops()
+    if _REAL_SYSTEM_SINGLE is None:
+        raise RuntimeError("Ewald real system single-op registration failed")
+    return _REAL_SYSTEM_SINGLE["forward"](*args, **kwargs)
+
+
+def ewald_real_system_energy_batch(*args, **kwargs):
+    """Call the registered batched real-space system-energy op."""
+    register_ewald_real_ops()
+    if _REAL_SYSTEM_BATCH is None:
+        raise RuntimeError("Ewald real system batch-op registration failed")
+    return _REAL_SYSTEM_BATCH["forward"](*args, **kwargs)
 
 
 # ===========================================================================
@@ -1919,10 +2303,10 @@ class _RealCellGrad(torch.autograd.Function):
         neighbor_matrix,
         neighbor_matrix_shifts,
         mask_value,
+        energy_layout,
     ):
-        return torch.zeros(
-            positions.shape[0], dtype=torch.float64, device=positions.device
-        )
+        num_energy = positions.shape[0] if energy_layout == "atom" else cell.shape[0]
+        return torch.zeros(num_energy, dtype=torch.float64, device=positions.device)
 
     @staticmethod
     def setup_context(ctx, inputs, output):
@@ -1939,6 +2323,7 @@ class _RealCellGrad(torch.autograd.Function):
             neighbor_matrix,
             neighbor_matrix_shifts,
             mask_value,
+            energy_layout,
         ) = inputs
         ctx.save_for_backward(
             positions,
@@ -1954,9 +2339,10 @@ class _RealCellGrad(torch.autograd.Function):
         )
         ctx.batch_idx = batch_idx
         ctx.mask_value = mask_value
+        ctx.energy_layout = energy_layout
 
     @staticmethod
-    def backward(ctx, grad_energy_atom):
+    def backward(ctx, grad_energy):
         (
             positions,
             charges,
@@ -1970,6 +2356,12 @@ class _RealCellGrad(torch.autograd.Function):
             neighbor_matrix_shifts,
         ) = ctx.saved_tensors
         num_atoms = positions.shape[0]
+        if ctx.energy_layout == "system":
+            grad_energy_atom = _system_cotangent_to_atoms(
+                grad_energy, ctx.batch_idx, num_atoms
+            )
+        else:
+            grad_energy_atom = grad_energy
         if torch.is_grad_enabled():
             # Path 3: stress-loss double-backward. dE/dcell must stay differentiable
             # so the dE/dR dcell / dE/dq dcell / dE/dcell^2 cross terms flow. Use
@@ -2093,6 +2485,7 @@ class _RealCellGrad(torch.autograd.Function):
             None,
             None,
             None,
+            None,
         )
 
 
@@ -2110,6 +2503,7 @@ def real_space_cell_connect(
     neighbor_matrix: torch.Tensor,
     neighbor_matrix_shifts: torch.Tensor,
     mask_value: int,
+    energy_layout: str = "atom",
 ) -> torch.Tensor:
     """Add the value-zero cell-gradient connector to the kernel ``energy``.
 
@@ -2135,4 +2529,5 @@ def real_space_cell_connect(
         neighbor_matrix,
         neighbor_matrix_shifts,
         mask_value,
+        energy_layout,
     )

@@ -336,6 +336,86 @@ def test_ewald_component_preserves_supplied_k_vector_graph() -> None:
     assert torch.isfinite(grad_cache_cell).all()
 
 
+@pytest.mark.parametrize("compute_virial", [False, True])
+def test_ewald_component_system_energy_preserves_k_vector_graph(
+    compute_virial: bool,
+) -> None:
+    """System-reduced component energy preserves supplied vector graph gradients."""
+    positions, charges, cell = _system()
+    batch_idx = torch.zeros(
+        positions.shape[0], dtype=torch.int32, device=positions.device
+    )
+    current_cell = cell.detach().unsqueeze(0).requires_grad_(True)
+    cache_cell = (cell.detach() * 1.02).unsqueeze(0).requires_grad_(True)
+    alpha = torch.tensor([0.35], dtype=torch.float64, device=positions.device)
+    k_vectors = generate_k_vectors_ewald_summation(cache_cell, k_cutoff=5.0)
+
+    reciprocal = ewald_reciprocal_space(
+        positions,
+        charges,
+        current_cell,
+        k_vectors,
+        alpha,
+        batch_idx=batch_idx,
+        energy_reduction="system",
+        compute_virial=compute_virial,
+    )
+    if compute_virial:
+        reciprocal = reciprocal[0]
+    grad_current, grad_cache_cell = torch.autograd.grad(
+        reciprocal.sum(),
+        (current_cell, cache_cell),
+        allow_unused=True,
+    )
+    assert torch.isfinite(grad_current).all()
+    assert grad_cache_cell is not None
+    assert torch.isfinite(grad_cache_cell).all()
+
+
+@pytest.mark.parametrize("compute_virial", [False, True])
+def test_ewald_component_system_energy_preserves_k_vector_graph_hvp(
+    compute_virial: bool,
+) -> None:
+    """System-reduced component HVPs preserve supplied vector graph derivatives."""
+    positions, charges, cell = _system()
+    batch_idx = torch.zeros(
+        positions.shape[0], dtype=torch.int32, device=positions.device
+    )
+    alpha = torch.tensor([0.35], dtype=torch.float64, device=positions.device)
+    direction = torch.arange(9, dtype=torch.float64, device=positions.device).reshape(
+        1, 3, 3
+    )
+
+    def _cache_derivatives(energy_reduction: str):
+        current_cell = cell.detach().unsqueeze(0).requires_grad_(True)
+        cache_cell = (cell.detach() * 1.02).unsqueeze(0).requires_grad_(True)
+        k_vectors = generate_k_vectors_ewald_summation(cache_cell, k_cutoff=5.0)
+        reciprocal = ewald_reciprocal_space(
+            positions,
+            charges,
+            current_cell,
+            k_vectors,
+            alpha,
+            batch_idx=batch_idx,
+            energy_reduction=energy_reduction,
+            compute_virial=compute_virial,
+        )
+        if compute_virial:
+            reciprocal = reciprocal[0]
+        (gradient,) = torch.autograd.grad(
+            reciprocal.sum(),
+            cache_cell,
+            create_graph=True,
+        )
+        (hvp,) = torch.autograd.grad((gradient * direction).sum(), cache_cell)
+        return gradient, hvp
+
+    atom_gradient, atom_hvp = _cache_derivatives("atom")
+    system_gradient, system_hvp = _cache_derivatives("system")
+    torch.testing.assert_close(system_gradient, atom_gradient)
+    torch.testing.assert_close(system_hvp, atom_hvp)
+
+
 def test_ewald_public_reciprocal_exposes_no_cache_bypass_keyword() -> None:
     """The public reciprocal component has no internal cell-gradient bypass."""
     positions, charges, cell = _system()

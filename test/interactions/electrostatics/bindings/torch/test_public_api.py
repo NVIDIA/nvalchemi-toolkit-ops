@@ -90,6 +90,74 @@ def test_ewald_miller_bounds_is_keyword_only_after_legacy_slots() -> None:
 
 
 @pytest.mark.parametrize(
+    "name",
+    [
+        "ewald_real_space",
+        "ewald_reciprocal_space",
+        "ewald_summation",
+        "pme_reciprocal_space",
+        "particle_mesh_ewald",
+        "compute_slab_correction",
+    ],
+)
+def test_monopole_energy_reduction_is_keyword_only(name: str) -> None:
+    """Monopole APIs expose the compatible atom/system energy-layout option."""
+    parameter = inspect.signature(getattr(electrostatics, name)).parameters[
+        "energy_reduction"
+    ]
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameter.default == "atom"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "ewald_real_space",
+        "ewald_reciprocal_space",
+        "ewald_summation",
+        "pme_reciprocal_space",
+        "particle_mesh_ewald",
+        "compute_slab_correction",
+    ],
+)
+def test_monopole_energy_reduction_rejects_invalid_value_early(name: str) -> None:
+    """Invalid layouts fail before neighbor, mesh, or kernel validation."""
+    positions = torch.zeros((0, 3), dtype=torch.float64)
+    charges = torch.zeros(0, dtype=torch.float64)
+    cell = torch.eye(3, dtype=torch.float64).unsqueeze(0)
+    alpha = torch.tensor([0.3], dtype=torch.float64)
+    pbc = torch.tensor([True, True, False])
+    calls = {
+        "ewald_real_space": lambda: electrostatics.ewald_real_space(
+            positions, charges, cell, alpha, energy_reduction="invalid"
+        ),
+        "ewald_reciprocal_space": lambda: electrostatics.ewald_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            torch.zeros((0, 3), dtype=torch.float64),
+            alpha,
+            energy_reduction="invalid",
+        ),
+        "ewald_summation": lambda: electrostatics.ewald_summation(
+            positions, charges, cell, energy_reduction="invalid"
+        ),
+        "pme_reciprocal_space": lambda: electrostatics.pme_reciprocal_space(
+            positions, charges, cell, alpha, energy_reduction="invalid"
+        ),
+        "particle_mesh_ewald": lambda: electrostatics.particle_mesh_ewald(
+            positions, charges, cell, energy_reduction="invalid"
+        ),
+        "compute_slab_correction": lambda: electrostatics.compute_slab_correction(
+            positions, charges, cell, pbc, energy_reduction="invalid"
+        ),
+    }
+
+    with pytest.raises(ValueError, match="energy_reduction"):
+        calls[name]()
+
+
+@pytest.mark.parametrize(
     ("public_name", "private_name"),
     [
         ("pme_green_structure_factor", "_pme_green_structure_factor"),

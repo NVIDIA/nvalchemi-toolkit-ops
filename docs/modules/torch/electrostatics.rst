@@ -20,6 +20,17 @@ physical strain derivatives require vectors generated from the same
 differentiable cell. Energy-returning Ewald, PME, and slab paths support
 atom-weighted losses such as ``(weights * energies).sum()`` for positions,
 charges, and supported cell derivatives.
+
+Monopole entry points provide the keyword-only
+``energy_reduction`` option. The default, ``"atom"``, returns one energy per
+atom with shape ``(N,)``. Set it to ``"system"`` to sum energies within each
+system and return shape ``(B,)``. Other requested outputs, including forces,
+charge gradients, and virials, keep their existing shapes.
+
+In eager atom mode, recognizing a materialized uniform output gradient may
+require reading its value, which synchronizes CUDA once. System mode avoids
+this check: per-system output gradients go directly to the cached backward.
+Internally, the Warp kernels continue to use per-atom energy buffers.
 Point-charge Ewald/PME inputs support ``float32`` and ``float64``. Keep all
 floating inputs and precomputed metadata in a call on a consistent dtype.
 
