@@ -26,7 +26,12 @@ accepted for cell-differentiated calls as static metadata that is assumed to
 correspond to the current ``cell``; cache-generation derivatives are not
 recovered. Energy-returning Ewald, PME, and slab paths support atom-weighted
 losses such as ``(weights * energies).sum()`` for positions, charges, and
-supported cell derivatives. JAX PME supports first-order cell/strain gradients,
+supported cell derivatives. Monopole entry points provide the keyword-only
+``energy_reduction`` option. The default, ``"atom"``, returns one energy per
+atom with shape ``(N,)``. Set it to ``"system"`` to sum energies within each
+system and return shape ``(B,)``. Other requested outputs keep their existing
+shapes.
+JAX PME supports first-order cell/strain gradients,
 but PME cell/strain HVPs, including full PME with ``slab_correction=True``, are
 explicitly unsupported until a native transposable PME cell-HVP path is
 implemented and tested.
