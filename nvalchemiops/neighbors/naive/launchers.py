@@ -957,6 +957,18 @@ def naive_neighbor_matrix(
     pair_forces : wp.array, shape (rows, max_neighbors), dtype=wp.vec3*, optional
         OUTPUT: Required if ``pair_fn`` is provided.  Stores the per-pair
         force returned by ``pair_fn``.
+    strategy : {"auto", "scalar", "tile"}, default "auto"
+        Kernel dispatch selector.  Topology-only calls do not forward
+        ``strategy`` to the internal helper, so the supplied value is ignored
+        and the helper applies its default ``"auto"`` dispatch.  Partial and
+        pair-output launches forward ``strategy`` to the helper except the
+        batched PBC partial/pair-output path, which also omits it (a deferred
+        implementation follow-up). Where forwarded, ``"auto"`` resolves to
+        the scalar kernel and ``"scalar"`` is supported; ``"tile"`` raises
+        ``ValueError`` because pair-output and ``target_indices`` paths have no
+        tile kernel. When the helper receives ``"auto"`` on topology-only
+        calls, it picks the scalar SIMT kernel on CPU and the tile-cooperative
+        kernel on CUDA.
 
     Notes
     -----
@@ -965,8 +977,10 @@ def naive_neighbor_matrix(
     - The CUDA path uses ``wp.launch_tiled(block_dim=BLOCK_DIM)``; Warp forces
       ``block_dim = 1`` on CPU which would silently break the lane-cooperative
       partitioning, so CPU callers take the scalar path.
-    - The tile-cooperative path is taken only for the default
-      call.  When any of ``target_indices`` / ``return_vectors`` /
+    - Topology-only calls ignore the supplied ``strategy`` (helper default
+      ``"auto"``).  Partial/pair-output calls forward ``strategy`` except
+      batched PBC partial/pair-output, which also omits it.
+    - When any of ``target_indices`` / ``return_vectors`` /
       ``return_distances`` / ``pair_fn`` is supplied, the scalar factory
       kernel is used regardless of device (no tile variant for these axes).
 
@@ -1104,12 +1118,30 @@ def batch_naive_neighbor_matrix(
         OUTPUT: Required if ``pair_fn`` is provided.
     pair_forces : wp.array, shape (rows, max_neighbors), dtype=wp.vec3*, optional
         OUTPUT: Required if ``pair_fn`` is provided.
+    strategy : {"auto", "scalar", "tile"}, default "auto"
+        Kernel dispatch selector.  Topology-only calls do not forward
+        ``strategy`` to the internal helper, so the supplied value is ignored
+        and the helper applies its default ``"auto"`` dispatch.  Partial and
+        pair-output launches forward ``strategy`` to the helper except the
+        batched PBC partial/pair-output path, which also omits it (a deferred
+        implementation follow-up). Where forwarded, ``"auto"`` resolves to
+        the scalar kernel and ``"scalar"`` is supported; ``"tile"`` raises
+        ``ValueError`` because pair-output and ``target_indices`` paths have no
+        tile kernel. When the helper receives ``"auto"`` on topology-only
+        calls, it picks the scalar SIMT kernel on CPU and applies the adaptive
+        ``use_tiled`` heuristic on CUDA
+        (``total_atoms >= 2048`` and ``total_atoms >= 256 * num_systems``,
+        with a tighter ``>= 512 * num_systems`` threshold above 12 288
+        atoms).
 
     Notes
     -----
     - This is a low-level warp interface. For framework bindings, use torch/jax wrappers.
     - Output arrays must be pre-allocated by caller.
-    - Default calls dispatch internally:
+    - Topology-only calls ignore the supplied ``strategy`` (helper default
+      ``"auto"``).  Partial/pair-output calls forward ``strategy`` except
+      batched PBC partial/pair-output, which also omits it.
+    - Default topology-only calls dispatch internally:
 
       * On CPU, always use the scalar kernel (Warp forces ``block_dim=1`` on CPU).
       * On CUDA, use the tile-cooperative kernel when the adaptive
@@ -1290,9 +1322,23 @@ def naive_neighbor_matrix_pbc(
     per_atom_cell_offsets_buffer : wp.array, shape (total_atoms,), dtype=wp.vec3i, optional
         Caller-supplied scratch buffer for per-atom cell offsets
         (only used when ``wrap_positions=True``).
-    inv_cell_buffer : wp.array, shape (num_systems,), dtype=wp.mat33*, optional
+    inv_cell_buffer : wp.array, shape (1,), dtype=wp.mat33*, optional
         Caller-supplied scratch buffer for inverse cell matrices
         (only used when ``wrap_positions=True``).
+    strategy : {"auto", "scalar", "tile"}, default "auto"
+        Kernel dispatch selector.  Topology-only calls do not forward
+        ``strategy`` to the internal helper, so the supplied value is ignored
+        and the helper applies its default ``"auto"`` dispatch.  Partial and
+        pair-output launches forward ``strategy`` to the helper except the
+        batched PBC partial/pair-output path, which also omits it (a deferred
+        implementation follow-up). Where forwarded, ``"auto"`` resolves to
+        the scalar kernel and ``"scalar"`` is supported; ``"tile"`` raises
+        ``ValueError`` because pair-output and ``target_indices`` paths have no
+        tile kernel. When the helper receives ``"auto"`` on topology-only
+        calls, it picks the tile-cooperative kernel on CUDA when
+        ``wrap_positions=True`` and no pair-output or
+        ``target_indices`` path is active; otherwise the scalar factory kernel
+        is used.
     pbc : wp.array, shape (1, 3), dtype=wp.bool, optional
         Per-axis periodic boundary flags.  When supplied, axes marked False
         are left unwrapped during position wrapping.  When omitted, wrapping
@@ -1313,6 +1359,9 @@ def naive_neighbor_matrix_pbc(
       When omitted the launcher allocates a fresh buffer for the call.
     - The CUDA path uses ``wp.launch_tiled(block_dim=BLOCK_DIM)``; CPU is
       forced to ``block_dim = 1`` by Warp, so CPU callers take the scalar path.
+    - Topology-only calls ignore the supplied ``strategy`` (helper default
+      ``"auto"``).  Partial/pair-output calls forward ``strategy`` except
+      batched PBC partial/pair-output, which also omits it.
     - When any of the pair-output kwargs is supplied, the scalar factory
       kernel is used (no tile variant for the pair-output kwargs).
 
@@ -1519,6 +1568,20 @@ def batch_naive_neighbor_matrix_pbc(
         Caller-supplied scratch for per-atom cell offsets.
     inv_cell_buffer : wp.array, shape (num_systems,), dtype=wp.mat33*, optional
         Caller-supplied scratch for inverse cell matrices.
+    strategy : {"auto", "scalar", "tile"}, default "auto"
+        Kernel dispatch selector.  Topology-only calls do not forward
+        ``strategy`` to the internal helper, so the supplied value is ignored
+        and the helper applies its default ``"auto"`` dispatch.  Partial and
+        pair-output launches forward ``strategy`` to the helper except the
+        batched PBC partial/pair-output path, which also omits it (a deferred
+        implementation follow-up). Where forwarded, ``"auto"`` resolves to
+        the scalar kernel and ``"scalar"`` is supported; ``"tile"`` raises
+        ``ValueError`` because pair-output and ``target_indices`` paths have no
+        tile kernel. When the helper receives ``"auto"`` on topology-only
+        calls, it picks the tile-cooperative kernel on CUDA when
+        ``wrap_positions=True`` and no pair-output or
+        ``target_indices`` path is active; otherwise the scalar factory kernel
+        is used.
     pbc : wp.array, shape (num_systems, 3), dtype=wp.bool, optional
         Per-system, per-axis periodic boundary flags.  When supplied, axes
         marked False are left unwrapped during position wrapping.  When
@@ -1537,14 +1600,14 @@ def batch_naive_neighbor_matrix_pbc(
       ``inv_cell_buffer``) to eliminate per-call allocation; when omitted the
       launcher allocates fresh per call (batched callers do not share the
       single-system cache).
-    - Default calls dispatch internally:
+    - Topology-only calls ignore the supplied ``strategy`` (helper default
+      ``"auto"``).  Partial/pair-output calls forward ``strategy`` except
+      batched PBC partial/pair-output, which also omits it.
+    - Default topology-only calls dispatch internally:
 
       * On CPU, use the scalar 3D-launch kernels.
       * On CUDA with ``wrap_positions=True``, use the tile-cooperative kernel
-        when the adaptive ``use_tiled`` heuristic favours it
-        (``256 <= avg_atoms_per_system < 6144`` and either
-        ``avg_atoms_per_system >= 2048`` or ``total_atoms <= 8192``);
-        otherwise fall back to the scalar 3D-launch kernel.
+        when no pair-output or ``target_indices`` path is active.
       * When ``wrap_positions=False`` the prewrapped scalar kernels are used
         on both devices (no tiled prewrapped variant).
     - When any of the pair-output kwargs is supplied, the scalar factory
@@ -2087,6 +2150,20 @@ def batch_naive_neighbor_matrix_pbc_dual_cutoff(
         Not supported in dual-cutoff mode; raises ``ValueError`` if provided.
     pair_params : wp.array, optional
         Not supported in dual-cutoff mode; raises ``ValueError`` if provided.
+    positions_wrapped_buffer : wp.array, shape (total_atoms,), dtype=wp.vec3*, optional
+        Caller-supplied scratch for wrapped positions (used when
+        ``wrap_positions=True``).  Optional — the launcher allocates when
+        omitted.
+    per_atom_cell_offsets_buffer : wp.array, shape (total_atoms,), dtype=wp.vec3i, optional
+        Caller-supplied scratch for per-atom cell offsets.
+    inv_cell_buffer : wp.array, shape (num_systems,), dtype=wp.mat33*, optional
+        Caller-supplied scratch for inverse cell matrices.
+    pbc : wp.array, shape (num_systems, 3), dtype=wp.bool, optional
+        Per-system, per-axis periodic boundary flags.  When supplied, axes
+        marked False are left unwrapped during position wrapping.  When
+        omitted, wrapping uses the existing all-axis behavior.
+    positions_wrapped, per_atom_cell_offsets, inv_cell : deprecated
+        Deprecated aliases of the ``*_buffer`` kwargs above.
 
     Notes
     -----
@@ -2094,6 +2171,11 @@ def batch_naive_neighbor_matrix_pbc_dual_cutoff(
     - Output arrays must be pre-allocated by caller.
     - When ``wrap_positions`` is True, positions are wrapped into the primary
       cell in a preprocessing step before the neighbor search kernel.
+    - The scratch buffers used for the wrap step
+      (``positions_wrapped_buffer``, ``per_atom_cell_offsets_buffer``,
+      ``inv_cell_buffer``) may be supplied by the caller to eliminate
+      per-call allocation; their contents are overwritten on every call.
+      When omitted the launcher allocates a fresh buffer for the call.
     - Dual-cutoff mode does not support pair outputs or
       target-row restriction; ``pair_fn`` / ``pair_params`` raise
       ``ValueError`` if provided.

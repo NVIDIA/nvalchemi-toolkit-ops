@@ -179,6 +179,22 @@ def naive_neighbor_list_dual_cutoff(
         neighbor search. Set to False when positions are already
         wrapped (e.g. by a preceding integration step) to save two
         GPU kernel launches per call.
+    rebuild_flags : jax.Array, shape () or (1,), dtype=bool, optional
+        Device-side selective-rebuild flag. When provided, both neighbor
+        matrices are recomputed only if ``rebuild_flags[0]`` is True;
+        otherwise existing buffers are preserved and the fill kernels are
+        skipped. Preservation requires passing back both complete previous
+        matrix/count bundles and, under PBC, both shift buffers; omitted
+        buffers are freshly allocated. No CPU-GPU synchronisation occurs.
+    positions_wrapped_buffer : jax.Array, shape (total_atoms, 3), dtype matches positions, optional
+        Scratch buffer the wrap kernel writes into when ``wrap_positions=True``
+        and PBC is enabled. Allocated internally when None.
+    per_atom_cell_offsets_buffer : jax.Array, shape (total_atoms, 3), dtype=int32, optional
+        Scratch buffer for per-atom cell-image offsets from the wrap kernel.
+        Allocated internally when None.
+    inv_cell_buffer : jax.Array, shape (1, 3, 3) or (num_systems, 3, 3), dtype matches positions, optional
+        Precomputed inverse cell matrix for the wrap kernel. If None,
+        computed from ``cell`` each call.
 
     Returns
     -------

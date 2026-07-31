@@ -39,7 +39,29 @@ def wp_exp_kernel(x: wp.float64, factor: wp.float64) -> wp.float64:
 
 @wp.func
 def wpdivmod(a: int, b: int):  # type: ignore
-    """Warp implementation of the divmod utility."""
+    """Integer quotient and remainder.
+
+    Computes ``quotient = int(a / b)`` with truncating division toward zero,
+    then adjusts a negative C-style remainder. For the positive-divisor
+    contract used by the neighbor kernels, this matches :func:`divmod`,
+    including for negative dividends (for example, ``wpdivmod(-5, 3)`` and
+    Python ``divmod(-5, 3)`` both return ``(-2, 1)``).
+
+    Parameters
+    ----------
+    a : int
+        Dividend.
+    b : int
+        Positive divisor.
+
+    Returns
+    -------
+    quotient : int
+        Floor quotient for the positive divisor.
+    remainder : int
+        Non-negative remainder in ``[0, |b|)`` produced by the adjustment
+        above.
+    """
     div = int(a / b)
     mod = a % b
     if mod < 0:

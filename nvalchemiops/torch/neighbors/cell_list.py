@@ -114,11 +114,11 @@ def allocate_query_sort_scratch(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Allocate sort-side scratch tensors consumed by ``query_cell_list``.
 
-    Required by both atom-centric and pair-centric query paths when the
-    call is wrapped in a captured CUDA graph.  Allocate once during
-    setup and pass the returned tensors to ``query_cell_list(...,
-    sorted_positions=..., sorted_shifts=...)`` so the captured region
-    does no allocation of its own.
+    Used by sorted atom-centric and pair-centric query paths when the call is
+    wrapped in a captured CUDA graph.  Direct atom-centric skips the gather.
+    Allocate once during setup and pass the returned tensors to
+    ``query_cell_list(..., sorted_positions=..., sorted_shifts=...)`` only
+    when the selected path uses sorted scratch.
 
     Parameters
     ----------
@@ -758,6 +758,11 @@ def query_cell_list(
     within the specified cutoff distance. Handles periodic boundary conditions
     and returns neighbor matrix format.
 
+    Let ``num_rows = len(target_indices)`` when ``target_indices`` is supplied,
+    otherwise ``total_atoms``.  Optional distance/energy buffers have shape
+    ``(num_rows, max_neighbors)``; vector/force buffers have shape
+    ``(num_rows, max_neighbors, 3)``.
+
     This function is torch compilable.
 
     Parameters
@@ -784,13 +789,14 @@ def query_cell_list(
         Starting index in cell_atom_list for each cell from build_cell_list.
     cell_atom_list : torch.Tensor, shape (total_atoms,), dtype=int32
         Flattened list of atom indices organized by cell from build_cell_list.
-    neighbor_matrix : torch.Tensor, shape (total_atoms, max_neighbors), dtype=int32
+    neighbor_matrix : torch.Tensor, shape (num_rows, max_neighbors), dtype=int32
         OUTPUT: Neighbor matrix to be filled with neighbor atom indices.
-        Must be pre-allocated.
-    neighbor_matrix_shifts : torch.Tensor, shape (total_atoms, max_neighbors, 3), dtype=int32
+        ``num_rows`` is ``len(target_indices)`` when partial rows are
+        requested, otherwise ``total_atoms``.  Must be pre-allocated.
+    neighbor_matrix_shifts : torch.Tensor, shape (num_rows, max_neighbors, 3), dtype=int32
         OUTPUT: Matrix storing shift vectors for each neighbor relationship.
         Must be pre-allocated.
-    num_neighbors : torch.Tensor, shape (total_atoms,), dtype=int32
+    num_neighbors : torch.Tensor, shape (num_rows,), dtype=int32
         OUTPUT: Number of neighbors found for each atom.
         Must be pre-allocated.
     half_fill : bool, default=False
@@ -818,21 +824,18 @@ def query_cell_list(
         Selects the atom-centric implementation path when
         ``strategy="atom_centric"``.  ``"auto"`` resolves to ``"direct"``.
     sorted_positions, sorted_shifts : torch.Tensor, optional
-        Pre-allocated scratch (shape ``(total_atoms, 3)``) used by both
-        atom-centric and pair-centric paths.  Allocate via
-        :func:`allocate_query_sort_scratch`.  Both or neither.
+        Caller-owned gather scratch (shape ``(total_atoms, 3)``).  Gathered
+        and used only when ``strategy="pair_centric"`` or
+        ``atom_centric_path="sorted"``; direct atom-centric skips it.  Pass
+        both for graph/capture only on paths that use sorted scratch.
+        Allocate via :func:`allocate_query_sort_scratch`.  ``target_row_lookup``
+        is separate.  Both or neither.
 
-        When NOT provided, the function allocates a fresh torch tensor
-        per call.  Pass the allocated tensors for graphed workflows so
-        the captured region does no allocation of its own.
-
-        Graph capture: use ``wp.capture_begin/end`` with stream
-        alignment (``wp.ScopedStream(wp.stream_from_torch(side_stream))``).
-        ``torch.cuda.graph`` will NOT work because ``build_cell_list``
-        invokes ``wp.utils.array_scan`` (CUB) which allocates its
-        workspace via ``cudaMallocAsync``; that allocator is not
-        permitted by ``torch.cuda.graph`` capture but is fine under
-        Warp's stream-capture flavor.
+        Graph capture: use ``wp.capture_begin/end`` with stream alignment
+        (``wp.ScopedStream(wp.stream_from_torch(side_stream))``).
+        ``torch.cuda.graph`` is unsupported because ``build_cell_list`` invokes
+        ``wp.utils.array_scan`` (CUB), whose ``cudaMallocAsync`` workspace
+        allocation is not permitted during ``torch.cuda.graph`` capture.
     target_indices : torch.Tensor, shape (num_targets,), dtype=int32, optional
         Restrict central rows to a subset of atom indices.  Output rows are
         compact and follow ``target_indices`` order.
@@ -844,10 +847,14 @@ def query_cell_list(
         ``(r_ij, distance, pair_params, i, j) -> (energy, force)``.
     pair_params : torch.Tensor, shape (num_atoms, num_parameters), optional
         Per-atom pair-function parameters; required with ``pair_fn``.
-    neighbor_vectors, neighbor_distances : torch.Tensor, optional
-        OUTPUT buffers for per-pair displacements / distances.
-    pair_energies, pair_forces : torch.Tensor, optional
-        OUTPUT buffers for per-pair energies / forces; required with ``pair_fn``.
+    neighbor_vectors : torch.Tensor, shape (num_rows, max_neighbors, 3), optional
+        OUTPUT buffer for per-pair displacement vectors.
+    neighbor_distances : torch.Tensor, shape (num_rows, max_neighbors), optional
+        OUTPUT buffer for per-pair scalar distances.
+    pair_energies : torch.Tensor, shape (num_rows, max_neighbors), optional
+        OUTPUT buffer for per-pair energies; required with ``pair_fn``.
+    pair_forces : torch.Tensor, shape (num_rows, max_neighbors, 3), optional
+        OUTPUT buffer for per-pair forces; required with ``pair_fn``.
 
     See Also
     --------
@@ -1675,16 +1682,19 @@ def cell_list(
     neighbor_distances: torch.Tensor | None = None,
     pair_energies: torch.Tensor | None = None,
     pair_forces: torch.Tensor | None = None,
-) -> (
-    tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
-    | tuple[torch.Tensor, torch.Tensor, torch.Tensor]
-    | tuple[torch.Tensor, torch.Tensor]
-):
+) -> tuple[torch.Tensor, ...]:
     """Build complete neighbor matrix using spatial cell list acceleration.
 
     High-level convenience function that automatically estimates memory requirements,
     builds spatial cell list data structures, and queries them to produce a complete
     neighbor matrix. Combines build_cell_list and query_cell_list operations.
+
+    Let ``num_rows = len(target_indices)`` when ``target_indices`` is supplied,
+    otherwise ``total_atoms``.  Query output buffers (neighbor matrix, counts,
+    shifts, pair buffers) and COO pointer arrays use ``num_rows`` rows; COO
+    source ids are compact row ids.  Build/cache buffers
+    (``atom_periodic_shifts``, ``atom_to_cell_mapping``, ``cell_atom_list``,
+    sorted gather scratch) remain ``total_atoms``-shaped.
 
     Parameters
     ----------
@@ -1709,13 +1719,13 @@ def cell_list(
         We recommend using the neighbor matrix format,
         and only convert to a neighbor list format if absolutely necessary.
     neighbor_matrix : torch.Tensor, optional
-        Pre-allocated tensor of shape (total_atoms, max_neighbors) for neighbor indices.
-        If None, allocated internally.
+        Pre-allocated tensor of shape ``(num_rows, max_neighbors)`` for
+        neighbor indices.  If None, allocated internally.
     neighbor_matrix_shifts : torch.Tensor, optional
-        Pre-allocated tensor of shape (total_atoms, max_neighbors, 3) for shift vectors.
-        If None, allocated internally.
+        Pre-allocated tensor of shape ``(num_rows, max_neighbors, 3)`` for
+        shift vectors.  If None, allocated internally.
     num_neighbors : torch.Tensor, optional
-        Pre-allocated tensor of shape (total_atoms,) for neighbor counts.
+        Pre-allocated tensor of shape ``(num_rows,)`` for neighbor counts.
         If None, allocated internally.
     cells_per_dimension : torch.Tensor, shape (3,), dtype=int32, optional
         Number of cells in x, y, z directions.
@@ -1759,9 +1769,41 @@ def cell_list(
     atom_centric_path : {"auto", "direct", "sorted"}, default "auto"
         Atom-centric implementation path.  ``"auto"`` resolves to ``"direct"``.
     sorted_positions, sorted_shifts : torch.Tensor, optional
-        Pre-allocated sort-side scratch (shape ``(total_atoms, 3)``).
-        Pass both to make the call graph-capture safe.  Allocate via
-        :func:`allocate_query_sort_scratch`.  Both or neither.
+        Caller-owned gather scratch (shape ``(total_atoms, 3)``).  Gathered
+        and used only when ``strategy="pair_centric"`` or
+        ``atom_centric_path="sorted"``; direct atom-centric skips it.  Pass
+        both for graph/capture only on paths that use sorted scratch.
+        Allocate via :func:`allocate_query_sort_scratch`.  Both or neither.
+    target_indices : torch.Tensor, shape (num_targets,), dtype=torch.int32, optional
+        Restrict central rows to a subset of atom indices.  Output rows are
+        compact and follow ``target_indices`` order; COO source rows are
+        compact row ids.  User buffers must be ``num_rows``-shaped, not
+        ``total_atoms``-shaped.
+    return_vectors : bool, default=False
+        Write per-pair displacement vectors into ``neighbor_vectors``.
+    return_distances : bool, default=False
+        Write per-pair scalar distances into ``neighbor_distances``.
+    pair_fn : wp.Function or CompiledPairFn, optional
+        Module-scope Warp ``@wp.func`` of signature
+        ``(r_ij, distance, pair_params, i, j) -> (energy, force)`` evaluated
+        as neighbors are enumerated.  Forward-only (not differentiable).
+    pair_params : torch.Tensor, optional
+        Per-atom parameters forwarded to ``pair_fn``.  Required when
+        ``pair_fn`` is set.
+    neighbor_vectors : torch.Tensor, shape (num_rows, max_neighbors, 3), optional
+        OUTPUT: Pre-allocated per-pair displacement vectors, dtype matching
+        ``positions``. When omitted with ``return_vectors=True``, allocated
+        internally.
+    neighbor_distances : torch.Tensor, shape (num_rows, max_neighbors), optional
+        OUTPUT: Pre-allocated per-pair distances, dtype matching
+        ``positions``. When omitted with ``return_distances=True``, allocated
+        internally.
+    pair_energies : torch.Tensor, shape (num_rows, max_neighbors), optional
+        OUTPUT: Pre-allocated per-pair energies written by ``pair_fn``.  When
+        omitted and ``pair_fn`` is set, allocated internally.
+    pair_forces : torch.Tensor, shape (num_rows, max_neighbors, 3), optional
+        OUTPUT: Pre-allocated per-pair forces written by ``pair_fn``.  When
+        omitted and ``pair_fn`` is set, allocated internally.
 
     Returns
     -------
@@ -1770,6 +1812,14 @@ def cell_list(
 
         - Matrix format (default): ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``
         - List format (return_neighbor_list=True): ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)``
+
+        Requested pair outputs follow the topology tuple in this order:
+        ``neighbor_distances`` when ``return_distances=True``, then
+        ``neighbor_vectors`` when ``return_vectors=True``, then
+        ``(pair_energies, pair_forces)`` when ``pair_fn`` is set.  Matrix pair
+        outputs use ``num_rows`` rows: distance/energy arrays have shape
+        ``(num_rows, max_neighbors)``; vector/force arrays have shape
+        ``(num_rows, max_neighbors, 3)``.
 
     Notes
     -----

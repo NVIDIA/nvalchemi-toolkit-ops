@@ -1507,14 +1507,64 @@ def naive_neighbor_list(
         reuse to XLA; note that JAX returns a new array rather than mutating the input.
         Must be provided if max_neighbors is not provided.
     shift_range_per_dimension : jax.Array, shape (1, 3), dtype=int32, optional
-        Shift range in each dimension for each system.
-        Pass in a pre-computed value to avoid recomputation for PBC systems.
+        Shift range in each dimension for the system.  For eager topology-only
+        PBC calls these may be omitted and are computed inside the function.
+        For ``jax.jit`` partial/pair-output PBC calls (``return_distances``,
+        ``return_vectors``, ``pair_fn``, or ``target_indices``), precompute via
+        :func:`compute_naive_num_shifts` outside the jit boundary and pass
+        concrete values.
     num_shifts_per_system : jax.Array, shape (1,), dtype=int32, optional
-        Number of periodic shifts for the system.
-        Pass in a pre-computed value to avoid recomputation for PBC systems.
+        Number of periodic shifts for the system.  Same ``jax.jit``
+        precomputation requirement as ``shift_range_per_dimension`` for
+        partial/pair-output PBC calls.
     max_shifts_per_system : int, optional
-        Maximum per-system shift count.
-        Pass in a pre-computed value to avoid recomputation for PBC systems.
+        Maximum per-system shift count.  Same ``jax.jit`` precomputation
+        requirement as ``shift_range_per_dimension`` for partial/pair-output
+        PBC calls.
+    rebuild_flags : jax.Array, shape () or (1,), dtype=bool, optional
+        Device-side selective-rebuild flag. When provided, the neighbor list is
+        recomputed only if ``rebuild_flags[0]`` is True; otherwise existing
+        ``neighbor_matrix`` / ``num_neighbors`` / ``neighbor_matrix_shifts``
+        contents are preserved and the fill kernel is skipped. Preservation
+        requires passing the complete previous matrix/count bundle back in
+        (including shifts under PBC); omitted buffers are freshly allocated.
+        Not supported together with pair-output kwargs
+        (``return_distances`` / ``return_vectors`` / ``pair_fn``) or
+        ``strategy="tile"``.
+    inv_cell_buffer : jax.Array, shape (1, 3, 3), dtype matches positions, optional
+        Inverse cell matrix consumed by the wrap kernel when ``pbc`` is set and
+        ``wrap_positions=True``. Pass a precomputed value to avoid per-call
+        ``jnp.linalg.inv`` and to keep the buffer pointer stable for
+        ``graph_mode="warp"`` graph replay. If None, computed from ``cell`` each
+        call. Shape must be exactly ``(1, 3, 3)`` (matching the internally
+        normalized ``cell``).
+    positions_wrapped_buffer : jax.Array, shape (total_atoms, 3), dtype matches positions, optional
+        Scratch buffer the wrap kernel writes into. Donate or capture in a
+        ``jax.jit`` closure to keep the pointer stable across
+        ``graph_mode="warp"`` calls. If None, allocated fresh each call.
+    per_atom_cell_offsets_buffer : jax.Array, shape (total_atoms, 3), dtype=int32, optional
+        Scratch buffer recording per-atom cell-image offsets from the wrap
+        kernel. Same graph-replay stability contract as
+        ``positions_wrapped_buffer``.
+    return_distances : bool, default False
+        If True, append per-pair scalar distances to the matrix-format return
+        tuple (after the topology arrays). Enables the autograd pair-geometry
+        path; not supported with ``rebuild_flags`` or ``strategy="tile"``.
+    return_vectors : bool, default False
+        If True, append per-pair displacement vectors to the matrix-format
+        return tuple. Same restrictions as ``return_distances``.
+    pair_fn : wp.Function, optional
+        Module-scope Warp pair potential evaluated inline during the neighbor
+        search. Requires ``pair_params`` and auto-allocates ``pair_energies`` /
+        ``pair_forces`` when those buffers are omitted. Not supported with
+        ``rebuild_flags`` or ``strategy="tile"``.
+    pair_params : jax.Array, shape (total_atoms, K), dtype matches positions, optional
+        Per-atom parameters forwarded to ``pair_fn``. Required when ``pair_fn``
+        is set.
+    pair_energies : jax.Array, shape (num_rows, max_neighbors), optional
+        Pre-shaped output buffer for per-pair energies from ``pair_fn``.
+    pair_forces : jax.Array, shape (num_rows, max_neighbors, 3), optional
+        Pre-shaped output buffer for per-pair forces from ``pair_fn``.
     return_neighbor_list : bool, optional - default = False
         If True, convert the neighbor matrix to a neighbor list (idx_i, idx_j) format by
         creating a mask over the fill_value, which can incur a performance penalty.
@@ -1543,29 +1593,9 @@ def naive_neighbor_list(
         tile is opt-in in the JAX binding (unlike the torch single-system
         binding, whose ``"auto"`` tiles by default). The tile and scalar
         paths produce identical pair *sets* (per-row ordering may differ).
-    inv_cell : jax.Array, shape (1, 3, 3), dtype matches positions, optional
-        Inverse cell matrix consumed by the wrap kernel. Only used when
-        ``pbc`` is provided and ``wrap_positions=True``. Pass in a
-        precomputed value to avoid a per-call ``jnp.linalg.inv`` and to
-        keep the input pointer stable for ``graph_mode="warp"`` graph
-        replay (omitting it forces cache-miss-per-call on the wrapped
-        path). If None, computed from ``cell`` each call. The shape must
-        be exactly ``(1, 3, 3)`` (matching the internally-normalized
-        ``cell``); a ``(3, 3)`` array would silently allocate a different
-        buffer per call and break ``graph_mode="warp"`` cache replay,
-        which is why a mismatched shape now raises ``ValueError``.
-    positions_wrapped : jax.Array, shape (total_atoms, 3), dtype matches positions, optional
-        Scratch buffer the wrap kernel writes into. Pass in a pre-shaped
-        array to keep the buffer pointer stable across ``graph_mode="warp"``
-        calls (required for graph-replay cache hits on the wrapped path).
-        If None, allocated fresh each call. A mismatched shape or dtype
-        raises ``ValueError`` to prevent silent graph-replay cache misses.
-    per_atom_cell_offsets : jax.Array, shape (total_atoms, 3), dtype=int32, optional
-        Scratch buffer the wrap kernel uses to record per-atom cell offsets.
-        Pass in a pre-shaped array to keep the buffer pointer stable for
-        ``graph_mode="warp"`` replay. If None, allocated fresh each call.
-        A mismatched shape or dtype raises ``ValueError`` to prevent
-        silent graph-replay cache misses.
+    inv_cell, positions_wrapped, per_atom_cell_offsets : jax.Array, optional
+        Deprecated aliases for ``inv_cell_buffer``, ``positions_wrapped_buffer``,
+        and ``per_atom_cell_offsets_buffer``. Prefer the ``*_buffer`` names.
     graph_mode : {"none", "warp"}, default="none"
         Execution mode for the underlying Warp launches. ``"none"``
         preserves the existing per-kernel ``jax_kernel`` dispatch path.
@@ -1582,6 +1612,11 @@ def naive_neighbor_list(
         - No PBC, list format: ``(neighbor_list, neighbor_ptr)``
         - With PBC, matrix format: ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``
         - With PBC, list format: ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)``
+
+        Requested pair outputs follow the applicable topology tuple in this
+        order: ``neighbor_distances`` when ``return_distances=True``, then
+        ``neighbor_vectors`` when ``return_vectors=True``, then
+        ``(pair_energies, pair_forces)`` when ``pair_fn`` is set.
 
         **Components returned:**
 
@@ -1698,6 +1733,10 @@ def naive_neighbor_list(
     ``positions_wrapped`` and ``per_atom_cell_offsets`` must also be passed
     in with stable buffer pointers; the simplest way is to pre-allocate them
     once and capture them in the jit'ed closure (see the example above).
+    For ``jax.jit`` partial/pair-output PBC calls, also precompute
+    ``shift_range_per_dimension``, ``num_shifts_per_system``, and
+    ``max_shifts_per_system`` via :func:`compute_naive_num_shifts` outside
+    the jit boundary.  Eager topology-only PBC calls may omit those kwargs.
     Letting any of these allocate fresh inside ``naive_neighbor_list``
     silently degrades the wrapped path to cold-capture-per-call (correct,
     but significantly slower than the proposal's measured replay numbers).

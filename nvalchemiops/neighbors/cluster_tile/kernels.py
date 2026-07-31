@@ -547,7 +547,22 @@ def _coo_segment_is_valid(
     stop: wp.int32,
     max_pairs: wp.int32,
 ) -> wp.int32:
-    """Return whether a segmented COO interval lies within physical storage."""
+    """Return whether a segmented COO interval lies within physical storage.
+
+    Parameters
+    ----------
+    start : wp.int32
+        Inclusive start offset of the segment.
+    stop : wp.int32
+        Exclusive stop offset of the segment.
+    max_pairs : wp.int32
+        Physical capacity of the COO pair buffer.
+
+    Returns
+    -------
+    wp.int32
+        One when ``0 <= start <= stop <= max_pairs``; otherwise zero.
+    """
     if start >= 0 and stop >= start and stop <= max_pairs:
         return wp.int32(1)
     return wp.int32(0)

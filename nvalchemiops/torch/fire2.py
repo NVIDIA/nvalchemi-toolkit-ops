@@ -396,10 +396,23 @@ def fire2_step_coord(
             f_sumsq = torch.empty_like(vf)
             max_norm = torch.empty_like(vf)
 
-    delaystep, dtgrow, dtshrink, alphashrink, alpha0, tmax, tmin, maxstep
-        FIRE2 hyperparameters.  See
-        :func:`~nvalchemiops.dynamics.optimizers.fire2.fire2_step` for
-        defaults and descriptions.
+    delaystep : int, default 60
+        Minimum consecutive positive-power steps before timestep growth.
+    dtgrow : float, default 1.05
+        Timestep growth factor applied when ``nsteps_inc > delaystep``.
+    dtshrink : float, default 0.75
+        Timestep shrink factor applied on uphill steps (:math:`P \le 0`).
+    alphashrink : float, default 0.985
+        Alpha decay factor applied after enough positive-power steps.
+    alpha0 : float, default 0.09
+        Alpha reset value for uphill systems (:math:`P \le 0`).
+    tmax : float, default 0.08
+        Maximum allowed per-system timestep.
+    tmin : float, default 0.005
+        Minimum allowed per-system timestep.
+    maxstep : float, default 0.1
+        Maximum allowed displacement per atom. Steps larger than this are
+        rescaled by ``maxstep / max_norm[s]`` per system.
     compute_reductions : bool, default True
         If True, recompute ``vf``/``v_sumsq``/``f_sumsq`` internally. If False,
         use the caller-supplied values in those buffers instead of recomputing
@@ -408,13 +421,6 @@ def fire2_step_coord(
 
     Notes
     -----
-    Default hyperparameters (from the underlying Warp implementation):
-    ``delaystep=60``, ``dtgrow=1.05``, ``dtshrink=0.75``,
-    ``alphashrink=0.985``, ``alpha0=0.09``, ``tmax=0.08``,
-    ``tmin=0.005``, ``maxstep=0.1``.
-    See :func:`nvalchemiops.dynamics.optimizers.fire2.fire2_step` for
-    full descriptions.
-
     For variable-cell optimization (coordinates + cell DOFs), use
     :func:`fire2_step_coord_cell` instead.
 
@@ -617,8 +623,24 @@ def fire2_step_coord_cell(
         zeroed in-place if provided. In this coupled cell adapter,
         ``max_norm`` is the final physical Cartesian atomic displacement norm,
         recomputed after cell motion is coupled back to the atoms.
-    delaystep, dtgrow, dtshrink, alphashrink, alpha0, tmax, tmin, maxstep
-        FIRE2 hyperparameters.
+    delaystep : int, default 60
+        Minimum consecutive positive-power steps before timestep growth.
+    dtgrow : float, default 1.05
+        Timestep growth factor applied when ``nsteps_inc > delaystep``.
+    dtshrink : float, default 0.75
+        Timestep shrink factor applied on uphill steps (:math:`P \le 0`).
+    alphashrink : float, default 0.985
+        Alpha decay factor applied after enough positive-power steps.
+    alpha0 : float, default 0.09
+        Alpha reset value for uphill systems (:math:`P \le 0`).
+    tmax : float, default 0.08
+        Maximum allowed per-system timestep.
+    tmin : float, default 0.005
+        Minimum allowed per-system timestep.
+    maxstep : float, default 0.1
+        Maximum allowed physical Cartesian displacement per atom after cell
+        coupling. Steps larger than this are rescaled by
+        ``maxstep / max_norm[s]`` per system.
     cell_force_scale : float, default=1.0
         Extra positive multiplier for stress-derived cell-force normalization.
         Cell forces are divided by ``atoms_per_system * cell_force_scale``.
@@ -633,13 +655,6 @@ def fire2_step_coord_cell(
 
     Notes
     -----
-    Default hyperparameters (from the underlying Warp implementation):
-    ``delaystep=60``, ``dtgrow=1.05``, ``dtshrink=0.75``,
-    ``alphashrink=0.985``, ``alpha0=0.09``, ``tmax=0.08``,
-    ``tmin=0.005``, ``maxstep=0.1``.
-    See :func:`nvalchemiops.dynamics.optimizers.fire2.fire2_step` for
-    full descriptions.
-
     The high-level variable-cell adapter normalizes raw stress-derived cell
     forces by the number of atoms in each system. ``cell_force_scale`` is an
     extra multiplier on top of that per-system atom-count normalization.
@@ -1351,8 +1366,23 @@ def fire2_step_extended(
         Consecutive positive-power step counter per system.
     vf, v_sumsq, f_sumsq, max_norm : torch.Tensor or None
         Per-system scratch buffers, shape (M,). Allocated internally if None.
-    delaystep, dtgrow, dtshrink, alphashrink, alpha0, tmax, tmin, maxstep :
-        FIRE2 hyperparameters.  See ``fire2_step_coord_cell`` for details.
+    delaystep : int, default 60
+        Minimum consecutive positive-power steps before timestep growth.
+    dtgrow : float, default 1.05
+        Timestep growth factor applied when ``nsteps_inc > delaystep``.
+    dtshrink : float, default 0.75
+        Timestep shrink factor applied on uphill steps (:math:`P \le 0`).
+    alphashrink : float, default 0.985
+        Alpha decay factor applied after enough positive-power steps.
+    alpha0 : float, default 0.09
+        Alpha reset value for uphill systems (:math:`P \le 0`).
+    tmax : float, default 0.08
+        Maximum allowed per-system timestep.
+    tmin : float, default 0.005
+        Minimum allowed per-system timestep.
+    maxstep : float, default 0.1
+        Maximum allowed displacement per packed degree of freedom. Steps
+        larger than this are rescaled by ``maxstep / max_norm[s]`` per system.
 
     Notes
     -----

@@ -686,6 +686,28 @@ def batch_naive_neighbor_list(
         If True, only store relationships where i < j. Default is False.
     fill_value : int, optional
         Value to fill the neighbor matrix with. Default is total_atoms.
+    return_neighbor_list : bool, default False
+        If True, convert the neighbor matrix to COO ``(neighbor_list,
+        neighbor_ptr)`` format (and shift vectors when PBC is enabled).
+        Incurs a masking step; prefer the matrix format when possible.
+    rebuild_flags : jax.Array, shape (num_systems,), dtype=bool, optional
+        Per-system selective-rebuild flags. Atoms in system ``s`` are
+        refilled only when ``rebuild_flags[s]`` is True; their rows in
+        ``num_neighbors`` are zeroed before the selective kernel runs, while
+        rows for unflagged systems are preserved when the previous
+        ``neighbor_matrix``, ``num_neighbors``, and (for PBC)
+        ``neighbor_matrix_shifts`` buffers are passed back. Omitted buffers
+        are freshly allocated and cannot preserve prior rows. Not supported
+        with pair-output kwargs or ``strategy="tile"``.
+    positions_wrapped_buffer : jax.Array, shape (total_atoms, 3), dtype matches positions, optional
+        Scratch buffer for wrapped positions when ``wrap_positions=True``
+        and PBC is enabled. Allocated internally when None.
+    per_atom_cell_offsets_buffer : jax.Array, shape (total_atoms, 3), dtype=int32, optional
+        Scratch buffer for per-atom cell offsets from the batched wrap
+        kernel. Allocated internally when None.
+    inv_cell_buffer : jax.Array, shape (num_systems, 3, 3), dtype matches positions, optional
+        Precomputed inverse cell matrices for the batched wrap kernel. If
+        None, computed from ``cell`` each call.
     neighbor_matrix : jax.Array, shape (num_rows, max_neighbors), optional
         Pre-shaped neighbor matrix. ``num_rows`` is ``total_atoms`` normally and
         ``len(target_indices)`` for partial rows.
@@ -694,13 +716,22 @@ def batch_naive_neighbor_list(
     num_neighbors : jax.Array, shape (num_rows,), optional
         Pre-shaped neighbors count array.
     shift_range_per_dimension : jax.Array, optional
-        Pre-computed shift range for PBC systems.
+        Pre-computed shift range for PBC systems.  For eager topology-only
+        PBC calls these may be omitted.  For ``jax.jit`` partial/pair-output
+        PBC calls (``return_distances``, ``return_vectors``, ``pair_fn``, or
+        ``target_indices``), precompute via :func:`compute_naive_num_shifts`
+        outside the jit boundary and pass concrete values.
     num_shifts_per_system : jax.Array, optional
-        Number of periodic shifts per system.
+        Number of periodic shifts per system.  Same ``jax.jit``
+        precomputation requirement as ``shift_range_per_dimension`` for
+        partial/pair-output PBC calls.
     max_shifts_per_system : int, optional
-        Maximum per-system shift count (launch dimension).
+        Maximum per-system shift count (launch dimension).  Same ``jax.jit``
+        precomputation requirement as ``shift_range_per_dimension`` for
+        partial/pair-output PBC calls.
     max_atoms_per_system : int, optional
-        Maximum atoms in any system.
+        Maximum atoms in any system. For every PBC call under ``jax.jit``,
+        pass a concrete value; eager calls may omit it and rely on inference.
     wrap_positions : bool, default=True
         If True, wrap input positions into the primary cell before
         neighbor search. Set to False when positions are already
@@ -722,10 +753,28 @@ def batch_naive_neighbor_list(
         produce identical pair *sets* (per-row ordering may differ; under
         ``half_fill`` the two pick opposite pair owners, yielding the same
         undirected set with sign-flipped shifts).
+    return_distances : bool, default False
+        If True, append per-pair scalar distances to the return tuple. Enables
+        the autograd pair-geometry path; not supported with ``rebuild_flags``
+        or ``strategy="tile"``.
+    return_vectors : bool, default False
+        If True, append per-pair displacement vectors to the return tuple.
+        Same restrictions as ``return_distances``.
     neighbor_distances : jax.Array, shape (num_rows, max_neighbors), optional
         Pre-shaped distance output for ``return_distances=True`` or ``pair_fn``.
     neighbor_vectors : jax.Array, shape (num_rows, max_neighbors, 3), optional
         Pre-shaped vector output for ``return_vectors=True`` or ``pair_fn``.
+    pair_fn : wp.Function, optional
+        Module-scope Warp pair potential evaluated inline during the neighbor
+        search. Requires ``pair_params``; not supported with ``rebuild_flags``
+        or ``strategy="tile"``.
+    pair_params : jax.Array, shape (total_atoms, K), dtype matches positions, optional
+        Per-atom parameters forwarded to ``pair_fn``. Required when ``pair_fn``
+        is set.
+    pair_energies : jax.Array, shape (num_rows, max_neighbors), optional
+        Pre-shaped output buffer for per-pair energies from ``pair_fn``.
+    pair_forces : jax.Array, shape (num_rows, max_neighbors, 3), optional
+        Pre-shaped output buffer for per-pair forces from ``pair_fn``.
     target_indices : jax.Array, shape (num_targets,), dtype=int32, optional
         Compact partial-list source rows. Output row ``r`` maps to atom
         ``target_indices[r]``; COO source rows remain compact row ids. User
@@ -738,7 +787,22 @@ def batch_naive_neighbor_list(
         ``num_rows`` rows, where ``num_rows`` is ``total_atoms`` normally and
         ``len(target_indices)`` for partial lists. COO pointer arrays have
         shape ``(num_rows + 1,)`` and source ids are compact rows when
-        ``target_indices`` is provided.
+        ``target_indices`` is provided. The base topology tuple follows the
+        matrix/list and PBC layouts described by
+        :func:`naive_neighbor_list`. Requested pair outputs then follow in
+        this order: ``neighbor_distances`` when ``return_distances=True``,
+        ``neighbor_vectors`` when ``return_vectors=True``, and
+        ``(pair_energies, pair_forces)`` when ``pair_fn`` is set.
+
+    Notes
+    -----
+    For ``jax.jit`` PBC calls, pass a concrete ``max_atoms_per_system`` outside
+    the jit boundary. For partial/pair-output PBC calls
+    (``return_distances``, ``return_vectors``, ``pair_fn``, or
+    ``target_indices``), also precompute ``shift_range_per_dimension``,
+    ``num_shifts_per_system``, and ``max_shifts_per_system`` via
+    :func:`compute_naive_num_shifts`. Eager topology-only PBC calls may omit
+    these kwargs.
 
     Examples
     --------

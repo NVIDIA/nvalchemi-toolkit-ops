@@ -144,7 +144,6 @@ exclude_patterns = [
     "sphinxext.py",
     "Thumbs.db",
     ".DS_Store",
-    "benchmarks/benchmark_results/README.md",
 ]
 autodoc_typehints = "description"
 autodoc_preserve_defaults = True

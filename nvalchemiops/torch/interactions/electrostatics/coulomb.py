@@ -767,9 +767,19 @@ def coulomb_energy(
     neighbor_matrix_shifts : torch.Tensor | None, shape (N, max_neighbors, 3)
         Integer unit cell shifts for matrix format.
     fill_value : int | None
-        Fill value for neighbor matrix padding.
+        Fill value for neighbor matrix padding. Applies only to matrix format.
     batch_idx : torch.Tensor | None, shape (N,)
         Batch indices for each atom.
+
+    Notes
+    -----
+    Callers must supply one complete supported neighbor topology route:
+    CSR/COO ``neighbor_list``, ``neighbor_ptr``, and ``neighbor_shifts``; or
+    matrix ``neighbor_matrix`` and ``neighbor_matrix_shifts``. Current
+    validation raises ``ValueError`` when no complete route is provided or when
+    both complete routes are supplied simultaneously; it does not reject stray
+    fields from the other representation. Shift arrays are required in both
+    formats; for non-periodic systems pass integer all-zero shifts.
 
     Returns
     -------
@@ -900,7 +910,41 @@ def coulomb_forces(
 
     Parameters
     ----------
-    See coulomb_energy for parameter descriptions.
+    positions : torch.Tensor, shape (N, 3)
+        Atomic coordinates.
+    charges : torch.Tensor, shape (N,)
+        Atomic charges.
+    cell : torch.Tensor, shape (1, 3, 3) or (B, 3, 3)
+        Unit cell matrix. Shape (B, 3, 3) for batched calculations.
+    cutoff : float
+        Cutoff distance for interactions.
+    alpha : float, default=0.0
+        Ewald splitting parameter. Use 0.0 for undamped Coulomb.
+    neighbor_list : torch.Tensor | None, shape (2, num_pairs)
+        Neighbor pairs in COO format. Row 0 = source, Row 1 = target.
+    neighbor_ptr : torch.Tensor | None, shape (N+1,)
+        CSR row pointers for neighbor list. Required with neighbor_list.
+        Provided by neighborlist module.
+    neighbor_shifts : torch.Tensor | None, shape (num_pairs, 3)
+        Integer unit cell shifts for neighbor list format.
+    neighbor_matrix : torch.Tensor | None, shape (N, max_neighbors)
+        Neighbor indices in matrix format.
+    neighbor_matrix_shifts : torch.Tensor | None, shape (N, max_neighbors, 3)
+        Integer unit cell shifts for matrix format.
+    fill_value : int | None
+        Fill value for neighbor matrix padding. Applies only to matrix format.
+    batch_idx : torch.Tensor | None, shape (N,)
+        Batch indices for each atom.
+
+    Notes
+    -----
+    Callers must supply one complete supported neighbor topology route:
+    CSR/COO ``neighbor_list``, ``neighbor_ptr``, and ``neighbor_shifts``; or
+    matrix ``neighbor_matrix`` and ``neighbor_matrix_shifts``. Current
+    validation raises ``ValueError`` when no complete route is provided or when
+    both complete routes are supplied simultaneously; it does not reject stray
+    fields from the other representation. Shift arrays are required in both
+    formats; for non-periodic systems pass integer all-zero shifts.
 
     Returns
     -------
@@ -972,9 +1016,24 @@ def coulomb_energy_forces(
     neighbor_matrix_shifts : torch.Tensor | None, shape (N, max_neighbors, 3)
         Integer unit cell shifts for matrix format.
     fill_value : int | None
-        Fill value for neighbor matrix padding.
+        Fill value for neighbor matrix padding. Applies only to matrix format.
     batch_idx : torch.Tensor | None, shape (N,)
         Batch indices for each atom.
+
+    Notes
+    -----
+    Callers must supply one complete supported neighbor topology route:
+    CSR/COO ``neighbor_list``, ``neighbor_ptr``, and ``neighbor_shifts``; or
+    matrix ``neighbor_matrix`` and ``neighbor_matrix_shifts``. Current
+    validation raises ``ValueError`` when no complete route is provided or when
+    both complete routes are supplied simultaneously; it does not reject stray
+    fields from the other representation. Shift arrays are required in both
+    formats; for non-periodic systems pass integer all-zero shifts.
+
+    Note
+    ----
+    Energies are always float64 for numerical stability during accumulation.
+    Forces match the input dtype (float32 or float64).
 
     Returns
     -------
@@ -982,11 +1041,6 @@ def coulomb_energy_forces(
         Per-atom energies.
     forces : torch.Tensor, shape (N, 3)
         Forces on each atom.
-
-    Note
-    ----
-    Energies are always float64 for numerical stability during accumulation.
-    Forces match the input dtype (float32 or float64).
 
     Examples
     --------

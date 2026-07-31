@@ -860,6 +860,22 @@ def build_cluster_tile_list(
         Cutoff distance for the bbox filter.
     cell : jax.Array, shape (3, 3) or (1, 3, 3), dtype=float32
         Unit cell matrix (orthorhombic or triclinic).
+    rebuild_flags : jax.Array, shape (1,), dtype=bool, optional
+        Selective-rebuild flag. When set, only tiles for flagged systems/atoms
+        are rebuilt via the selective Warp callback.  On the first call,
+        ``num_tiles``, ``tile_row_group``, and ``tile_col_group`` may be
+        omitted and are allocated as zeros; on subsequent selective calls
+        pass the tile state returned by the prior build or selective one-shot
+        wrapper.
+    num_tiles : jax.Array, shape (1,), dtype=int32, optional
+        Previous global tile-count buffer reused across selective rebuilds.
+        Allocated as zeros on the first selective call when omitted.
+    tile_row_group : jax.Array, shape (max_tiles,), dtype=int32, optional
+        Previous row-group index buffer for tile pairs. Allocated as zeros on
+        the first selective call when omitted.
+    tile_col_group : jax.Array, shape (max_tiles,), dtype=int32, optional
+        Previous column-group index buffer for tile pairs. Allocated as zeros
+        on the first selective call when omitted.
 
     Returns
     -------
@@ -1801,6 +1817,28 @@ def cluster_tile_neighbor_list(
         ``[0, previous_neighbor_list.shape[1]]`` and
         ``previous_pair_counts`` must have shape ``(1,)``. The return tuple
         preserves fixed buffer shapes and reports the updated count.
+    previous_num_tiles : jax.Array, shape (1,), dtype=int32, optional
+        Tile-count state from an earlier build, or a zero-initialized buffer
+        for the first selective call. Required whenever ``rebuild_flags`` is
+        set (matrix or segmented COO) and passed through to
+        :func:`build_cluster_tile_list`.
+    previous_tile_row_group : jax.Array, shape (max_tiles,), dtype=int32, optional
+        Previous tile row-group buffer for selective rebuild.
+    previous_tile_col_group : jax.Array, shape (max_tiles,), dtype=int32, optional
+        Previous tile column-group buffer for selective rebuild.
+    previous_neighbor_matrix : jax.Array, shape (N, max_neighbors), dtype=int32, optional
+        Previous neighbor-matrix buffer updated selectively when
+        ``rebuild_flags`` is set.
+    previous_num_neighbors : jax.Array, shape (N,), dtype=int32, optional
+        Previous per-atom neighbor counts for selective matrix rebuild.
+    previous_neighbor_matrix_shifts : jax.Array, shape (N, max_neighbors, 3), dtype=int32, optional
+        Previous shift buffer for selective matrix rebuild.
+    previous_neighbor_matrix2 : jax.Array, shape (N, max_neighbors), dtype=int32, optional
+        Second neighbor matrix for dual-cutoff selective rebuild.
+    previous_num_neighbors2 : jax.Array, shape (N,), dtype=int32, optional
+        Per-atom counts for the second dual-cutoff matrix.
+    previous_neighbor_matrix_shifts2 : jax.Array, shape (N, max_neighbors, 3), dtype=int32, optional
+        Shift buffer for the second dual-cutoff matrix.
     return_vectors, return_distances : bool, default False
         If True, append per-pair displacement vectors / scalar distances
         to the matrix-format return tuple. Matrix format only.
@@ -1812,17 +1850,26 @@ def cluster_tile_neighbor_list(
     Returns
     -------
     For ``format == "matrix"``:
-        ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``, with
-        optional ``(*, distances)`` and/or ``(*, vectors)`` appended when
-        ``return_distances`` / ``return_vectors`` is True. With
-        ``rebuild_flags``, append ``(num_tiles, tile_row_group,
-        tile_col_group)`` after one matrix triple, or after both triples when
-        ``cutoff2`` is provided.
+        ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``. When
+        ``cutoff2`` is set, the secondary
+        ``(neighbor_matrix2, num_neighbors2, neighbor_matrix_shifts2)``
+        triple follows the primary triple. Otherwise, optional distances
+        and/or vectors are appended when ``return_distances`` /
+        ``return_vectors`` is True, followed by ``(pair_energies,
+        pair_forces)`` when ``pair_fn`` is set. When ``rebuild_flags`` is set,
+        the return tuple appends, after one matrix triple or both
+        ``cutoff2`` triples,
+        ``(num_tiles, tile_row_group, tile_col_group)`` so callers can
+        persist tile state for the next selective rebuild.
     For ``format == "coo"``:
         ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)`` in compact
         mode, or ``(neighbor_list, pair_offsets, pair_counts,
         neighbor_list_shifts, num_tiles, tile_row_group, tile_col_group)``
-        with ``rebuild_flags`` segmented mode.
+        with ``rebuild_flags`` segmented mode. On the eager pair-output path,
+        optional distances and/or vectors follow the compact triple, followed
+        by ``(pair_energies, pair_forces)`` when ``pair_fn`` is set. On an
+        empty selective call, a true flag clears active pair and tile counts;
+        a false flag preserves the prior counts, topology, and tile state.
     For ``format == "tile"``:
         ``(num_tiles, tile_row_group, tile_col_group, sorted_atom_index,
         sorted_pos_x, sorted_pos_y, sorted_pos_z)`` --- the raw cluster

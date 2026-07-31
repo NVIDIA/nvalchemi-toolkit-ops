@@ -548,6 +548,32 @@ def estimate_multipole_pme_parameters(
     differ from the Ewald optimum even on the same hardware. Default
     ``1.0`` (canonical KP) is a safe starting point.
 
+    Parameters
+    ----------
+    positions : torch.Tensor, shape (N, 3) or (N_total, 3)
+        Atomic coordinates.
+    cell : torch.Tensor, shape (3, 3) or (B, 3, 3)
+        Unit cell matrix (matches the multipole-PME convention).
+    sigma : float or torch.Tensor
+        GTO basis width — same value used by the multipole-PME kernel.
+        Scalar or shape ``(B,)``.
+    batch_idx : torch.Tensor, shape (N_total,), int32, optional
+        System index per atom. ``None`` selects single-system mode.
+    accuracy : float, default 1e-6
+        Target relative accuracy (matches monopole convention). Also
+        drives mesh resolution via the B-spline error envelope.
+    cost_ratio : float, default 1.0
+        Empirical ``C_r / C_k`` ratio — per-pair real-space cost divided
+        by reciprocal-space cost on the target hardware. ``1.0`` (default)
+        reproduces canonical Kolafa-Perram. Higher values shift the
+        optimum toward smaller ``real_space_cutoff`` (fewer pairs) and a
+        finer FFT mesh (larger ``mesh_dimensions``). For PME the true
+        reciprocal cost is ``O(M log M)`` plus spread/gather, not the
+        per-k-vector cost of direct Ewald summation, so the optimal
+        ``cost_ratio`` may differ from
+        :func:`estimate_multipole_ewald_parameters` even on the same
+        hardware. Setting below 1 is allowed but rarely useful.
+
     Returns
     -------
     MultipolePMEParameters

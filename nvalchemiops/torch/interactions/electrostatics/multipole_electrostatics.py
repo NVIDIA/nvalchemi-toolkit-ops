@@ -151,7 +151,7 @@ def multipole_electrostatic_energy(
         Per-atom :math:`(N,)` :math:`\text{float64}` (single) or
         :math:`(N_\text{total},)` (batched, flat across systems) on
         ``positions.device``. Call ``.sum()`` for the total energy or
-        ``torch.zeros(B).scatter_add(0, batch_idx, E)`` for per-system totals;
+        ``E.new_zeros(B).scatter_add(0, batch_idx, E)`` for per-system totals;
         forces/stress/charge-grads flow from ``grad(E.sum(), ...)``.
         Autograd-connected to ``positions`` and ``multipole_moments``.
     """
@@ -245,18 +245,46 @@ def multipole_reciprocal_space_energy(
     erfc-damped contribution (see :func:`multipole_real_space_energy`)
     at the same :math:`\alpha` to assemble the full Ewald-split Coulomb sum.
 
-    Single-system vs batched dispatch
-    ---------------------------------
+    **Single-system vs batched dispatch**
+
     Mirrors :func:`multipole_ewald_summation`: pass ``cell`` of shape
     ``(3, 3)`` (single) or ``(B, 3, 3)`` (batched) and use ``batch_idx`` to
     select the batched path (returns per-atom :math:`(N_\text{total},)`).
     Both single and batched modes build their k-grid from ``k_cutoff`` (or
     reuse a pre-built ``cache``).
 
+    **Cached-cell gradients**
+
+    A pre-built cache holds a fixed (detached) k-grid and volume, so
+    ``grad(E, cell)`` (stress) does **not** flow through it. Pass ``cache=None``
+    for stress or cell-gradient training. Forces
+    (``grad(E, positions)``) are unaffected because positions enter per call.
+
     Parameters
     ----------
-    positions, multipole_moments, cell, sigma, k_cutoff, normalize
-        Same as :func:`multipole_electrostatic_energy`.
+    positions : torch.Tensor
+        Atomic positions, shape ``(N, 3)`` or ``(N_total, 3)`` (flat across
+        systems in the batched case), ``float32`` or ``float64``.
+    multipole_moments : torch.Tensor
+        Packed per-atom multipole moments, shape ``(N, (l_max+1)**2)``,
+        in e3nn spherical layout: ``[q]`` (l_max=0), ``[q, mu_y, mu_z, mu_x]``
+        (l_max=1), or the l_max=1 block plus the five traceless l=2 channels
+        (l_max=2). The l=2 quadrupole is expanded to the Cartesian symmetric
+        ``(N, 3, 3)`` form and threaded through the SCF-cache Q channel.
+    cell : torch.Tensor
+        Unit-cell matrix (lattice vectors as rows), shape ``(3, 3)``, or
+        ``B`` per-system cells ``(B, 3, 3)`` (batched).
+    sigma : float
+        Density-basis Gaussian width. Used for both the source GTO basis and
+        the self-interaction overlap (matches ``GTOElectrostaticEnergy``).
+    k_cutoff : float, optional
+        Maximum ``|k|`` to include in the reciprocal-space sum. Required when
+        ``cache`` is not supplied; ignored when a pre-built cache is passed.
+    normalize : NormMode | int | str
+        Normalization convention for the density basis. Defaults to
+        ``NormMode.MULTIPOLES`` (the only physically meaningful choice for
+        source moments; the other modes exist for debugging / cross-checks).
+        Still resolved when ``cache`` is supplied.
     batch_idx : torch.Tensor, optional, shape (N_total,), int32
         Per-atom system index (expected sorted). Required when ``cell`` is
         ``(B, 3, 3)``; must be ``None`` for a single ``(3, 3)`` cell.
@@ -266,17 +294,11 @@ def multipole_reciprocal_space_energy(
     cache : MultipoleSCFCache, optional
         Pre-built reciprocal cache (from :func:`prepare_multipole_scf_cache`)
         holding the position-independent k-grid / GTO-Fourier (``phi_hat``) /
-        per-k-factor tables. When given, the per-call cache rebuild is skipped
-        (MD / inference steady state) — the analog of passing precomputed
-        ``k_squared`` to PME. ``cell``/``sigma``/``alpha``/``k_cutoff`` are then
-        ignored for the reciprocal (the cache already encodes them); the caller
-        owns matching the cache to the system.
-
-        .. warning::
-            A pre-built cache holds a fixed (detached) k-grid and volume, so
-            ``grad(E, cell)`` (stress) does **not** flow through it — pass
-            ``cache=None`` for stress / cell-gradient training. Forces
-            (``grad(E, positions)``) are unaffected (positions enter per call).
+        per-k-factor tables. When given, reciprocal-state rebuild is skipped
+        (MD / inference steady state). ``cell`` shape, positive ``sigma`` and
+        ``alpha``, and ``normalize`` are still validated or resolved before
+        cache use; ``k_cutoff`` is ignored because the cache already encodes
+        the k-grid. The caller owns matching the cache to the system.
 
     Returns
     -------
@@ -287,7 +309,8 @@ def multipole_reciprocal_space_energy(
         correction — the caller combines this with the real-space and
         self / background terms to get the full Ewald total.
         Call ``.sum()`` for the total or
-        ``torch.zeros(B).scatter_add(0, batch_idx, E)`` for per-system totals.
+        ``E.new_zeros(B).scatter_add(0, batch_idx, E)`` for per-system totals.
+
     """
     is_batch = batch_idx is not None
     if is_batch:

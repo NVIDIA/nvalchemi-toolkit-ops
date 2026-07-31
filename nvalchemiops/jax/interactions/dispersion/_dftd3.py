@@ -319,7 +319,7 @@ def direct_forces_kernel_nm(
     virial: jax.Array,
     **kwargs,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-    """Compute direct pairwise D3 forces and energy for neighbor-matrix format.
+    r"""Compute direct pairwise D3 forces and energy for neighbor-matrix format.
 
     Dispatches to the virial or non-virial Warp kernel overload depending on
     ``compute_virial``.  When ``compute_virial=False`` the input ``virial``
@@ -339,7 +339,7 @@ def direct_forces_kernel_nm(
     coord_num : jax.Array, shape (N,)
         Coordination numbers per atom, float32.
     r4r2 : jax.Array, shape (max_Z+1,)
-        :math:`\\langle r^4 \\rangle / \\langle r^2 \\rangle` expectation values
+        :math:`\langle r^4 \rangle / \langle r^2 \rangle` expectation values
         indexed by atomic number, float32.
     c6_reference : jax.Array, shape (max_Z+1, max_Z+1, interp_mesh, interp_mesh)
         C6 reference coefficients, float32.
@@ -370,7 +370,7 @@ def direct_forces_kernel_nm(
     compute_virial : bool
         If True, accumulate the virial tensor.
     dE_dCN : jax.Array, shape (N,)
-        Pre-allocated zero buffer; accumulates :math:`\\partial E / \\partial CN`
+        Pre-allocated zero buffer; accumulates :math:`\partial E / \partial CN`
         contributions, float32.  Modified in-place by the kernel.
     forces : jax.Array, shape (N, 3)
         Pre-allocated zero buffer; accumulates direct force contributions,
@@ -388,7 +388,7 @@ def direct_forces_kernel_nm(
     Returns
     -------
     dE_dCN : jax.Array, shape (N,)
-        Updated :math:`\\partial E / \\partial CN` accumulator, float32.
+        Updated :math:`\partial E / \partial CN` accumulator, float32.
     forces : jax.Array, shape (N, 3)
         Updated direct force accumulator, float32.
     energy : jax.Array, shape (num_systems,)
@@ -490,7 +490,7 @@ def direct_forces_kernel_nl(
     virial: jax.Array,
     **kwargs,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-    """Compute direct pairwise D3 forces and energy for neighbor-list format.
+    r"""Compute direct pairwise D3 forces and energy for neighbor-list format.
 
     Dispatches to the virial or non-virial Warp kernel overload depending on
     ``compute_virial``.  When ``compute_virial=False`` the input ``virial``
@@ -512,7 +512,7 @@ def direct_forces_kernel_nl(
     coord_num : jax.Array, shape (N,)
         Coordination numbers per atom, float32.
     r4r2 : jax.Array, shape (max_Z+1,)
-        :math:`\\langle r^4 \\rangle / \\langle r^2 \\rangle` expectation values
+        :math:`\langle r^4 \rangle / \langle r^2 \rangle` expectation values
         indexed by atomic number, float32.
     c6_reference : jax.Array, shape (max_Z+1, max_Z+1, interp_mesh, interp_mesh)
         C6 reference coefficients, float32.
@@ -541,7 +541,7 @@ def direct_forces_kernel_nl(
     compute_virial : bool
         If True, accumulate the virial tensor.
     dE_dCN : jax.Array, shape (N,)
-        Pre-allocated zero buffer; accumulates :math:`\\partial E / \\partial CN`
+        Pre-allocated zero buffer; accumulates :math:`\partial E / \partial CN`
         contributions, float32.  Modified in-place by the kernel.
     forces : jax.Array, shape (N, 3)
         Pre-allocated zero buffer; accumulates direct force contributions,
@@ -559,7 +559,7 @@ def direct_forces_kernel_nl(
     Returns
     -------
     dE_dCN : jax.Array, shape (N,)
-        Updated :math:`\\partial E / \\partial CN` accumulator, float32.
+        Updated :math:`\partial E / \partial CN` accumulator, float32.
     forces : jax.Array, shape (N, 3)
         Updated direct force accumulator, float32.
     energy : jax.Array, shape (num_systems,)
@@ -750,7 +750,7 @@ def cn_forces_contrib_nm(
     virial: jax.Array,
     **kwargs,
 ) -> tuple[jax.Array, jax.Array]:
-    """Add CN-gradient force contribution for neighbor-matrix format.
+    r"""Add CN-gradient force contribution for neighbor-matrix format.
 
     Dispatches to the virial or non-virial Warp kernel overload depending on
     ``compute_virial``.  When ``compute_virial=False`` the input ``virial``
@@ -770,7 +770,7 @@ def cn_forces_contrib_nm(
     covalent_radii : jax.Array, shape (max_Z+1,)
         Covalent radii indexed by atomic number, float32.
     dE_dCN : jax.Array, shape (N,)
-        :math:`\\partial E / \\partial CN` values from the direct-force pass,
+        :math:`\partial E / \partial CN` values from the direct-force pass,
         float32.
     k1 : float
         CN counting steepness parameter (typically 16.0).
@@ -860,7 +860,7 @@ def cn_forces_contrib_nl(
     virial: jax.Array,
     **kwargs,
 ) -> tuple[jax.Array, jax.Array]:
-    """Add CN-gradient force contribution for neighbor-list format.
+    r"""Add CN-gradient force contribution for neighbor-list format.
 
     Dispatches to the virial or non-virial Warp kernel overload depending on
     ``compute_virial``.  When ``compute_virial=False`` the input ``virial``
@@ -882,7 +882,7 @@ def cn_forces_contrib_nl(
     covalent_radii : jax.Array, shape (max_Z+1,)
         Covalent radii indexed by atomic number, float32.
     dE_dCN : jax.Array, shape (N,)
-        :math:`\\partial E / \\partial CN` values from the direct-force pass,
+        :math:`\partial E / \partial CN` values from the direct-force pass,
         float32.
     k1 : float
         CN counting steepness parameter (typically 16.0).
@@ -1133,7 +1133,70 @@ def _dftd3_nm_impl(
     tuple[jax.Array, jax.Array, jax.Array]
     | tuple[jax.Array, jax.Array, jax.Array, jax.Array]
 ):
-    """Internal implementation for neighbor matrix format using jax_kernel wrappers."""
+    r"""Internal implementation for neighbor matrix format using jax_kernel wrappers.
+
+    Parameters
+    ----------
+    positions : jax.Array, shape (N, 3)
+        Atomic coordinates, float32 or float64.
+    numbers : jax.Array, shape (N,)
+        Atomic numbers, int32.
+    neighbor_matrix : jax.Array, shape (N, max_neighbors)
+        Neighbor indices in dense row format, int32. Row ``i`` lists the
+        neighbor atom indices of atom ``i``; unused slots are padded with
+        values ``>= fill_value``.
+    covalent_radii : jax.Array, shape (max_Z+1,)
+        Covalent radii indexed by atomic number, float32.
+    r4r2 : jax.Array, shape (max_Z+1,)
+        :math:`\langle r^4 \rangle / \langle r^2 \rangle` expectation values,
+        float32.
+    c6_reference : jax.Array, shape (max_Z+1, max_Z+1, interp_mesh, interp_mesh)
+        C6 reference coefficients, float32.
+    coord_num_ref : jax.Array, shape (max_Z+1, max_Z+1, interp_mesh, interp_mesh)
+        Coordination number reference grid, float32.
+    a1 : float
+        Becke-Johnson damping parameter 1.
+    a2 : float
+        Becke-Johnson damping parameter 2.
+    s8 : float
+        C8 scaling factor.
+    k1 : float, optional
+        CN counting steepness parameter. Default: 16.0.
+    k3 : float, optional
+        CN interpolation Gaussian width parameter. Default: -4.0.
+    s6 : float, optional
+        C6 scaling factor. Default: 1.0.
+    s5_smoothing_on : float, optional
+        Distance where S5 switching begins. Default: 1e10.
+    s5_smoothing_off : float, optional
+        Distance where S5 switching completes. Default: 1e10.
+    fill_value : int | None, optional
+        Padding sentinel in ``neighbor_matrix``. Defaults to ``num_atoms``.
+    batch_idx : jax.Array | None, optional
+        System index per atom, int32. Defaults to all zeros (single system).
+    cell : jax.Array | None, optional
+        Unit cell lattice vectors [num_systems, 3, 3] for PBC.
+    neighbor_matrix_shifts : jax.Array | None, optional
+        Integer unit cell shifts [num_atoms, max_neighbors, 3], int32, for PBC
+        with neighbor-matrix format.
+    compute_virial : bool, optional
+        If True, compute and return the virial tensor. Default: False.
+    num_systems : int | None, optional
+        Number of systems in the batch. Required inside ``jax.jit`` when it
+        cannot be inferred from ``cell`` or ``batch_idx``.
+
+    Returns
+    -------
+    energy : jax.Array, shape (num_systems,)
+        Per-system dispersion energy, float32.
+    forces : jax.Array, shape (N, 3)
+        Atomic forces, float32.
+    coord_num : jax.Array, shape (N,)
+        Coordination numbers, float32.
+    virial : jax.Array, shape (num_systems, 3, 3), optional
+        Per-system virial tensor, float32. Returned only when
+        ``compute_virial=True``.
+    """
     num_atoms = positions.shape[0]
     max_neighbors = neighbor_matrix.shape[1] if num_atoms > 0 else 0
 
@@ -1424,7 +1487,72 @@ def _dftd3_nl_impl(
     tuple[jax.Array, jax.Array, jax.Array]
     | tuple[jax.Array, jax.Array, jax.Array, jax.Array]
 ):
-    """Internal implementation for neighbor list format using jax_kernel wrappers."""
+    r"""Internal implementation for neighbor list format using jax_kernel wrappers.
+
+    Parameters
+    ----------
+    positions : jax.Array, shape (N, 3)
+        Atomic coordinates, float32 or float64.
+    numbers : jax.Array, shape (N,)
+        Atomic numbers, int32.
+    idx_j : jax.Array, shape (num_pairs,)
+        Destination atom indices in CSR neighbor list, int32.
+    neighbor_ptr : jax.Array, shape (N+1,)
+        CSR row pointers indexing into ``idx_j``, int32.
+    covalent_radii : jax.Array, shape (max_Z+1,)
+        Covalent radii indexed by atomic number, float32.
+    r4r2 : jax.Array, shape (max_Z+1,)
+        :math:`\langle r^4 \rangle / \langle r^2 \rangle` expectation values,
+        float32.
+    c6_reference : jax.Array, shape (max_Z+1, max_Z+1, interp_mesh, interp_mesh)
+        C6 reference coefficients, float32.
+    coord_num_ref : jax.Array, shape (max_Z+1, max_Z+1, interp_mesh, interp_mesh)
+        Coordination number reference grid, float32.
+    a1 : float
+        Becke-Johnson damping parameter 1.
+    a2 : float
+        Becke-Johnson damping parameter 2.
+    s8 : float
+        C8 scaling factor.
+    k1 : float, optional
+        CN counting steepness parameter. Default: 16.0.
+    k3 : float, optional
+        CN interpolation Gaussian width parameter. Default: -4.0.
+    s6 : float, optional
+        C6 scaling factor. Default: 1.0.
+    s5_smoothing_on : float, optional
+        Distance where S5 switching begins. Default: 1e10.
+    s5_smoothing_off : float, optional
+        Distance where S5 switching completes. Default: 1e10.
+    batch_idx : jax.Array | None, optional
+        System index per atom, int32. Defaults to all zeros (single system).
+    cell : jax.Array | None, optional
+        Unit cell lattice vectors [num_systems, 3, 3] for PBC.
+    unit_shifts : jax.Array | None, optional
+        Integer unit cell shifts [num_pairs, 3], int32, for PBC with
+        neighbor-list format.
+    compute_virial : bool, optional
+        If True, compute and return the virial tensor. Default: False.
+    num_systems : int | None, optional
+        Number of systems in the batch. Required inside ``jax.jit`` when it
+        cannot be inferred from ``cell`` or ``batch_idx``.
+
+    Returns
+    -------
+    energy : jax.Array, shape (num_systems,)
+        Per-system dispersion energy, float32. Zero for empty systems and
+        nonempty systems with no CSR edges.
+    forces : jax.Array, shape (N, 3)
+        Atomic forces, float32. Shape ``(0, 3)`` when ``N == 0``; for
+        ``N > 0`` with no CSR edges, shape ``(N, 3)`` and filled with zeros.
+    coord_num : jax.Array, shape (N,)
+        Coordination numbers, float32. Shape ``(0,)`` when ``N == 0``; for
+        ``N > 0`` with no CSR edges, shape ``(N,)`` and filled with zeros.
+    virial : jax.Array, shape (num_systems, 3, 3), optional
+        Per-system virial tensor, float32. Returned only when
+        ``compute_virial=True`` and zero for empty systems and zero-edge
+        graphs.
+    """
     num_atoms = positions.shape[0]
     num_edges = idx_j.shape[0]
 

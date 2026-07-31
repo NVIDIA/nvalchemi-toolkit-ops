@@ -1333,6 +1333,52 @@ def batch_naive_neighbor_list(
         neighbor search. Set to False when positions are already
         wrapped (e.g. by a preceding integration step) to save two
         GPU kernel launches per call.
+    positions_wrapped_buffer : torch.Tensor, shape (total_atoms, 3), optional
+        Caller-supplied scratch buffer for wrapped positions, dtype matching
+        ``positions``.  Used when ``wrap_positions=True`` and PBC is active.
+        When omitted, the warp launcher allocates internally; supply to avoid
+        per-call allocation.
+    per_atom_cell_offsets_buffer : torch.Tensor, shape (total_atoms, 3), dtype=torch.int32, optional
+        Caller-supplied scratch buffer for per-atom fractional cell offsets.
+        Used when ``wrap_positions=True`` and PBC is active.  When omitted, the
+        warp launcher allocates internally.
+    inv_cell_buffer : torch.Tensor, shape (num_systems, 3, 3), optional
+        Caller-supplied scratch buffer for inverse cell matrices, dtype matching
+        ``cell``.  Used when ``wrap_positions=True`` and PBC is active.  When
+        omitted, the warp launcher allocates internally.
+    return_distances : bool, default=False
+        Also return per-pair distances ``|r_ij|`` in matrix layout
+        ``(num_rows, max_neighbors)``, differentiable w.r.t. positions (and
+        cell when PBC is active).
+    return_vectors : bool, default=False
+        Also return per-pair displacement vectors ``r_ij`` in matrix layout
+        ``(num_rows, max_neighbors, 3)``, differentiable w.r.t. positions (and
+        cell when PBC is active).
+    neighbor_vectors : torch.Tensor, shape (num_rows, max_neighbors, 3), optional
+        OUTPUT: Pre-allocated per-pair displacement vectors.  When omitted and
+        ``return_vectors=True``, allocated internally.  Dtype matches
+        ``positions``.
+    neighbor_distances : torch.Tensor, shape (num_rows, max_neighbors), optional
+        OUTPUT: Pre-allocated per-pair distances.  When omitted and
+        ``return_distances=True``, allocated internally.  Dtype matches
+        ``positions``.
+    pair_fn : wp.Function or CompiledPairFn, optional
+        Module-scope Warp ``@wp.func`` of signature
+        ``(r_ij, distance, pair_params, i, j) -> (energy, force)`` evaluated
+        as neighbors are enumerated.  Forward-only (not differentiable).
+    pair_params : torch.Tensor, optional
+        Per-atom parameters forwarded to ``pair_fn``.  Required when
+        ``pair_fn`` is set; shape and dtype are determined by ``pair_fn``.
+    pair_energies : torch.Tensor, shape (num_rows, max_neighbors), optional
+        OUTPUT: Pre-allocated per-pair energies written by ``pair_fn``.  When
+        omitted and ``pair_fn`` is set, allocated internally.
+    pair_forces : torch.Tensor, shape (num_rows, max_neighbors, 3), optional
+        OUTPUT: Pre-allocated per-pair forces written by ``pair_fn``.  When
+        omitted and ``pair_fn`` is set, allocated internally.
+    strategy : {"auto", "scalar", "tile"}, default "auto"
+        Naive kernel variant.  ``"scalar"`` uses a global-load O(N^2) path;
+        ``"tile"`` uses shared-memory tiling (CUDA only, no PBC pair outputs
+        or partial rows).  ``"auto"`` picks between them.
     target_indices : torch.Tensor, shape (num_targets,), dtype=torch.int32, optional
         Compact partial-list source rows. Output row ``r`` maps to atom
         ``target_indices[r]``; COO source rows remain compact row ids. User
@@ -1351,6 +1397,11 @@ def batch_naive_neighbor_list(
         - No PBC, list format: ``(neighbor_list, neighbor_ptr)``
         - With PBC, matrix format: ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``
         - With PBC, list format: ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)``
+
+        Requested pair outputs follow the applicable topology tuple in this
+        order: ``neighbor_distances`` when ``return_distances=True``, then
+        ``neighbor_vectors`` when ``return_vectors=True``, then
+        ``(pair_energies, pair_forces)`` when ``pair_fn`` is set.
 
     See Also
     --------
