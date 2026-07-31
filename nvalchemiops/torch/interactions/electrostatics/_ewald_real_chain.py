@@ -52,7 +52,10 @@ from nvalchemiops.torch._warp_op_helpers import (
     register_warp_op_chain,
 )
 from nvalchemiops.torch.interactions.electrostatics._util import (
+    _distribute_system_mean_cotangent_to_atoms,
     _is_per_system_uniform_cotangent,
+    _mean_atom_values_by_system,
+    _sum_atom_values_by_system,
     _system_cotangent_to_atoms,
 )
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
@@ -88,36 +91,20 @@ def _scoped_stream(device: torch.device):
     return wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream(device)))
 
 
-def _atom_counts(batch_idx: torch.Tensor, num_systems: int) -> torch.Tensor:
-    """Per-system atom counts (float64)."""
-    counts = torch.zeros(num_systems, dtype=torch.float64, device=batch_idx.device)
-    return counts.index_add(
-        0,
-        batch_idx,
-        torch.ones(batch_idx.shape[0], dtype=torch.float64, device=batch_idx.device),
-    )
-
-
 def _per_system_cotangent(grad_energy_atom, batch_idx, num_systems, num_atoms):
     """Reduce a per-atom energy cotangent ``(N,)`` to per-system ``(S,)`` (mean)."""
     g = grad_energy_atom.reshape(-1).to(torch.float64)
-    if batch_idx is None:
-        if num_atoms == 0:
-            return torch.zeros(1, dtype=torch.float64, device=g.device)
-        return g.mean().reshape(1)
-    sums = torch.zeros(num_systems, dtype=torch.float64, device=g.device)
-    sums = sums.index_add(0, batch_idx, g)
-    return sums / _atom_counts(batch_idx, num_systems).clamp_min(1.0)
+    return _mean_atom_values_by_system(g, batch_idx, num_systems)
 
 
 def _distribute_to_atoms(per_system, batch_idx, num_systems, num_atoms):
     """Distribute a per-system ``dL/d(grad_energy)`` back to per-atom by ``1/count``."""
-    if num_atoms == 0:
-        return torch.zeros(0, dtype=torch.float64, device=per_system.device)
-    if batch_idx is None:
-        return (per_system / float(num_atoms)).expand(num_atoms).clone()
-    counts = _atom_counts(batch_idx, num_systems)
-    return (per_system / counts.clamp_min(1.0)).index_select(0, batch_idx)
+    return _distribute_system_mean_cotangent_to_atoms(
+        per_system,
+        batch_idx,
+        num_systems,
+        num_atoms,
+    )
 
 
 def _cotangent_per_system_uniform(grad_energy_atom, batch_idx, num_systems):
@@ -1585,10 +1572,11 @@ def _real_cell_grad_via_kernel(
         )
     # Weight per-atom blocks by the upstream energy cotangent and reduce per system.
     weighted = grad_energy_atom.to(torch.float64).view(-1, 1, 1) * dedcell_atom
-    grad_cell = torch.zeros(
-        (num_systems, 3, 3), dtype=torch.float64, device=positions.device
+    grad_cell = _sum_atom_values_by_system(
+        weighted,
+        sys_of_atom.to(torch.long),
+        num_systems,
     )
-    grad_cell = grad_cell.index_add(0, sys_of_atom.to(torch.long), weighted)
     return grad_cell.to(cell.dtype)
 
 
@@ -1645,10 +1633,7 @@ def _real_space_dEdcell_analytic(
     # outer(n, dE/dsep)[p, q] = n_p * dE/dsep_q
     contrib = w.view(-1, 1, 1) * n.unsqueeze(2) * d_e_dsep.unsqueeze(1)  # (M, 3, 3)
     contrib = torch.where((r > 1e-8).view(-1, 1, 1), contrib, torch.zeros_like(contrib))
-    grad_cell = torch.zeros(
-        (num_systems, 3, 3), dtype=torch.float64, device=positions.device
-    )
-    grad_cell = grad_cell.index_add(0, sys_of_edge, contrib)
+    grad_cell = _sum_atom_values_by_system(contrib, sys_of_edge, num_systems)
     return grad_cell.to(cell.dtype)
 
 
@@ -2153,23 +2138,14 @@ def _scatter_dedcell_cache(
     dtype: torch.dtype,
 ) -> torch.Tensor:
     """Reduce atom-major literal ``dE/dcell`` cache to per-system cell grads."""
-    num_atoms = dedcell.shape[0]
-    if batch_idx is None:
-        sys_of_atom = torch.zeros(num_atoms, dtype=torch.long, device=dedcell.device)
-    else:
-        sys_of_atom = batch_idx.long()
     weighted = grad_energy_atom.to(torch.float64).view(-1, 1, 1) * dedcell.to(
         torch.float64
     )
-    return (
-        torch.zeros(
-            (num_systems, 3, 3),
-            dtype=torch.float64,
-            device=dedcell.device,
-        )
-        .index_add(0, sys_of_atom, weighted)
-        .to(dtype)
-    )
+    return _sum_atom_values_by_system(
+        weighted,
+        batch_idx,
+        num_systems,
+    ).to(dtype)
 
 
 class _CachedLiteralCellGrad(torch.autograd.Function):

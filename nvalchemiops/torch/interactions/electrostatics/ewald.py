@@ -113,7 +113,6 @@ from nvalchemiops.torch.interactions.electrostatics._util import (
     _component_direct_output_deprecation_msg,
     _detach_setup_tensor,
     _direct_output_deprecation_msg,
-    _has_potentially_geometry_dependent_charges,
     _InjectCachedEvalGrad,
     _InjectCachedEvalGradWithFallback,
     _InjectChargeGrad,
@@ -239,6 +238,16 @@ def _atom_ranges(
     (the existing batched-Ewald contract); ``atom_start``/``atom_end`` are int32.
     """
     device = batch_idx.device
+    if num_systems == 1:
+        starts = torch.zeros((1,), dtype=torch.int32, device=device)
+        ends = torch.full(
+            (1,),
+            batch_idx.shape[0],
+            dtype=torch.int32,
+            device=device,
+        )
+        return starts, ends
+
     counts = torch.zeros(num_systems, dtype=torch.long, device=device)
     counts = counts.index_add(
         0,
@@ -543,12 +552,15 @@ def _apply_reciprocal_corrections(
     if batch_idx is None:
         total_charge = charges.sum().reshape(1)
         return ewald_energy_corrections(e_ksum, charges, volume, alpha, total_charge)
-    total_charges = torch.zeros(
-        volume.shape[0],
-        dtype=charges.dtype,
-        device=charges.device,
-    )
-    total_charges = total_charges.index_add(0, batch_idx.to(torch.long), charges)
+    if volume.shape[0] == 1:
+        total_charges = charges.sum().reshape(1)
+    else:
+        total_charges = torch.zeros(
+            volume.shape[0],
+            dtype=charges.dtype,
+            device=charges.device,
+        )
+        total_charges = total_charges.index_add(0, batch_idx.to(torch.long), charges)
     return ewald_energy_corrections_batch(
         e_ksum,
         charges,
@@ -694,14 +706,21 @@ def _reciprocal_space_energy(
         torch.zeros_like(e_ksum), charges, volume, alpha, batch_idx
     )
 
-    def _system_fallback(p, q, c, k=None):
+    def _system_fallback(
+        p,
+        q,
+        c,
+        fallback_batch_idx,
+        fallback_k_vectors,
+        fallback_alpha,
+    ):
         return _reciprocal_system_energy_torch(
             p,
             q,
             c,
-            k_vectors_2d if k is None else k,
-            alpha,
-            batch_idx,
+            fallback_k_vectors,
+            fallback_alpha,
+            fallback_batch_idx,
             num_systems,
         )
 
@@ -722,6 +741,8 @@ def _reciprocal_space_energy(
             num_systems,
             True,
             True,
+            k_vectors_2d,
+            alpha,
         )
 
     if (
@@ -817,14 +838,14 @@ def ewald_real_space(
         :math:`W = -\partial E / \partial \varepsilon`.
         Stress = -virial / volume.
     hybrid_forces : bool, default=False
-        When True, positions and cell are detached from the autograd graph and
-        charge gradients are attached to the energy via a straight-through
-        trick.  Forces and virial are forward-only (not differentiable).
-        This is intended for efficient inference with geometry-dependent
-        charges :math:`q = q(R)`, where explicit forces provide
-        :math:`\partial E/\partial R|_q` and autograd through the energy
-        provides the charge chain-rule term
-        :math:`\partial E/\partial q \cdot \mathrm{d}q/\mathrm{d}R`.
+        Enables the legacy direct-output path. When ``charges.requires_grad``,
+        ordinary first-order losses whose cotangent is uniform within each
+        system use detached positions/cell and cached charge gradients through
+        a straight-through connector. Non-uniform per-atom losses and
+        ``create_graph=True`` rebuild the eager energy graph with geometry and
+        charge-chain derivatives. Fixed-charge hybrid calls remain forward-only.
+        Forces and virial are forward-only. Do not add direct analytical forces
+        to a fallback-derived full geometry gradient.
     energy_reduction : {"atom", "system"}, default="atom"
         Return per-atom energies ``(N,)`` or summed per-system energies ``(B,)``.
 
@@ -923,7 +944,7 @@ def ewald_real_space(
 
     want_direct = compute_forces or compute_charge_gradients or compute_virial
 
-    if energy_reduction == "system":
+    if energy_reduction == "system" and not (hybrid_forces and charges.requires_grad):
         system_positions = positions.detach() if hybrid_forces else positions
         system_cell = cell.detach() if hybrid_forces else cell
         energies, forces, charge_grads, virial = _real_space_energy_outputs(
@@ -989,18 +1010,29 @@ def ewald_real_space(
         )
         if charges.requires_grad:
 
-            def _fallback(p, q, c):
+            def _fallback(
+                p,
+                q,
+                c,
+                fallback_batch_idx,
+                fallback_alpha,
+                fallback_idx_j,
+                fallback_neighbor_ptr,
+                fallback_neighbor_shifts,
+                fallback_neighbor_matrix,
+                fallback_neighbor_matrix_shifts,
+            ):
                 return _real_space_energy(
                     p,
                     q,
                     c,
-                    alpha,
-                    batch_idx=batch_idx,
-                    idx_j=idx_j,
-                    neighbor_ptr=neighbor_ptr,
-                    neighbor_shifts=neighbor_shifts,
-                    neighbor_matrix=neighbor_matrix,
-                    neighbor_matrix_shifts=neighbor_matrix_shifts,
+                    fallback_alpha,
+                    batch_idx=fallback_batch_idx,
+                    idx_j=fallback_idx_j,
+                    neighbor_ptr=fallback_neighbor_ptr,
+                    neighbor_shifts=fallback_neighbor_shifts,
+                    neighbor_matrix=fallback_neighbor_matrix,
+                    neighbor_matrix_shifts=fallback_neighbor_matrix_shifts,
                     mask_value=mask_value,
                 )
 
@@ -1016,6 +1048,14 @@ def ewald_real_space(
                 _fallback,
                 energy_reduction,
                 num_systems,
+                False,
+                False,
+                alpha,
+                idx_j,
+                neighbor_ptr,
+                neighbor_shifts,
+                neighbor_matrix,
+                neighbor_matrix_shifts,
             )
         else:
             energies = _select_energy(energies)
@@ -1026,7 +1066,6 @@ def ewald_real_space(
         and not cell.requires_grad
         and not alpha.requires_grad
         and (positions.requires_grad or charges.requires_grad)
-        and not _has_potentially_geometry_dependent_charges(positions, charges)
     ):
         # Ordinary scalar first-derivative evaluations can use detached direct
         # caches. Weighted losses and create_graph=True rebuild the true energy
@@ -1048,18 +1087,29 @@ def ewald_real_space(
             want_virial=False,
         )
 
-        def _fallback(p, q, c):
+        def _fallback(
+            p,
+            q,
+            c,
+            fallback_batch_idx,
+            fallback_alpha,
+            fallback_idx_j,
+            fallback_neighbor_ptr,
+            fallback_neighbor_shifts,
+            fallback_neighbor_matrix,
+            fallback_neighbor_matrix_shifts,
+        ):
             return _real_space_energy(
                 p,
                 q,
                 c,
-                alpha,
-                batch_idx=batch_idx,
-                idx_j=idx_j,
-                neighbor_ptr=neighbor_ptr,
-                neighbor_shifts=neighbor_shifts,
-                neighbor_matrix=neighbor_matrix,
-                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                fallback_alpha,
+                batch_idx=fallback_batch_idx,
+                idx_j=fallback_idx_j,
+                neighbor_ptr=fallback_neighbor_ptr,
+                neighbor_shifts=fallback_neighbor_shifts,
+                neighbor_matrix=fallback_neighbor_matrix,
+                neighbor_matrix_shifts=fallback_neighbor_matrix_shifts,
                 mask_value=mask_value,
             )
 
@@ -1075,6 +1125,14 @@ def ewald_real_space(
             _fallback,
             energy_reduction,
             num_systems,
+            False,
+            False,
+            alpha,
+            idx_j,
+            neighbor_ptr,
+            neighbor_shifts,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
         )
         return energies
 
@@ -1208,10 +1266,12 @@ def ewald_reciprocal_space(
         :math:`W = -\partial E / \partial \varepsilon`.
         Stress = -virial / volume.
     hybrid_forces : bool, default=False
-        When True, positions and cell are detached from the autograd graph and
-        charge gradients are attached to the energy via a straight-through
-        trick.  Forces and virial are forward-only (not differentiable).
-        See :func:`ewald_real_space` for details.
+        Enables the legacy direct-output path. With ``charges.requires_grad``,
+        uniform first-order cotangents use cached charge gradients; non-uniform
+        per-atom losses and ``create_graph=True`` rebuild the eager energy graph
+        with geometry and charge-chain derivatives. Fixed-charge hybrid calls
+        remain forward-only. See :func:`ewald_real_space` for the complete
+        contract.
     max_atoms_per_system : int, optional, keyword-only
         Maximum number of atoms in any single system when ``batch_idx`` is
         provided. Passing this host-known upper bound avoids CUDA host
@@ -1429,14 +1489,21 @@ def _ewald_reciprocal_space(
         )
         if charges.requires_grad:
 
-            def _fallback(p, q, c):
+            def _fallback(
+                p,
+                q,
+                c,
+                fallback_batch_idx,
+                fallback_k_vectors,
+                fallback_alpha,
+            ):
                 return _reciprocal_space_energy(
                     p,
                     q,
                     c,
-                    k_vectors_hybrid,
-                    alpha,
-                    batch_idx=batch_idx,
+                    fallback_k_vectors,
+                    fallback_alpha,
+                    batch_idx=fallback_batch_idx,
                     max_atoms_per_system=max_atoms_per_system,
                 )
 
@@ -1452,6 +1519,10 @@ def _ewald_reciprocal_space(
                 _fallback,
                 energy_reduction,
                 num_systems,
+                False,
+                False,
+                k_vectors_hybrid,
+                alpha,
             )
         else:
             energies = _select_energy(energies)
@@ -1547,15 +1618,21 @@ def _ewald_reciprocal_space(
         if preserve_k_vector_grad:
             energies = _select_energy(energies)
         else:
-
-            def _system_fallback(p, q, c):
+            def _system_fallback(
+                p,
+                q,
+                c,
+                fallback_batch_idx,
+                fallback_k_vectors,
+                fallback_alpha,
+            ):
                 return _reciprocal_system_energy_torch(
                     p,
                     q,
                     c,
-                    k_vectors_2d,
-                    alpha,
-                    batch_idx,
+                    fallback_k_vectors,
+                    fallback_alpha,
+                    fallback_batch_idx,
                     num_systems,
                 )
 
@@ -1573,6 +1650,8 @@ def _ewald_reciprocal_space(
                 num_systems,
                 True,
                 True,
+                k_vectors_2d,
+                alpha,
             )
     elif (
         not cell.requires_grad
@@ -1693,10 +1772,12 @@ def ewald_summation(
     accuracy : float, default=1e-6
         Target accuracy for parameter estimation.
     hybrid_forces : bool, default=False
-        When True, positions and cell are detached from the autograd graph and
-        charge gradients are attached to the energy via a straight-through
-        trick.  Forces and virial are forward-only (not differentiable).
-        See :func:`ewald_real_space` for details.
+        Enables the legacy direct-output path. With ``charges.requires_grad``,
+        uniform first-order cotangents use cached charge gradients; non-uniform
+        per-atom losses and ``create_graph=True`` rebuild the eager energy graph
+        with geometry and charge-chain derivatives. Fixed-charge hybrid calls
+        remain forward-only. See :func:`ewald_real_space` for the complete
+        contract.
     pbc : torch.Tensor, shape (3,) or (B, 3), dtype=bool, optional
         Per-system periodic boundary conditions. Required when
         ``slab_correction=True``. Each row has True for periodic directions

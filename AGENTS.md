@@ -55,10 +55,13 @@ make license
 Tests require a **GPU** to run. The test suite uses pytest with coverage.
 
 ```bash
-# Run full test suite with coverage
-make pytest
-# Or directly:
-uv run pytest --cov --cov-report=term-missing:skip-covered test/
+# Run the pull-request suite: the subset CI runs on a PR, plus coverage.
+# This is the fast one; prefer it while iterating.
+make test-minimal
+
+# Run everything, including tests marked `slow`, plus coverage. This is what
+# runs nightly.
+make test-full
 
 # Run a single test file
 uv run pytest test/test_types.py -vv
@@ -72,8 +75,9 @@ uv run pytest test/test_types.py::TestGetWpDtype::test_float32 -vv
 # Run tests by keyword expression
 uv run pytest -k "dispersion" -vv
 
-# Skip slow tests
-uv run pytest -m "not slow" test/
+# Include slow tests. pytest-skip-slow SKIPS anything marked `slow` unless you
+# pass this, so a plain `pytest` run silently leaves ~400 tests out.
+uv run pytest --slow test/
 
 # Run only GPU-marked tests
 uv run pytest -m "gpu" test/
@@ -84,9 +88,15 @@ uv run pytest --lf test/
 
 **Pytest configuration** (`pyproject.toml`):
 
-- Default addopts: `-vv -r xfXs --cov --cov-fail-under=70`
+- Default addopts: `-vv -r xfXs`
 - Custom markers: `slow`, `gpu`
-- Coverage fail-under: 75% (coverage.py) / 70% (pytest-cov addopts)
+- Coverage fail-under: 70%, enforced by `coverage report` in the make targets
+  rather than by pytest-cov
+
+Never wrap a `--testmon` run in `coverage run`. Both install a `sys.settrace`
+hook, Python allows one per thread, and testmon wins — the coverage report comes
+out near zero instead of erroring. `make testmon-collect` deliberately runs
+without coverage for this reason.
 
 Test directory structure mirrors source: `test/interactions/`, `test/math/`, `test/neighbors/`.
 Test files follow the `test_*.py` naming pattern.

@@ -1,0 +1,80 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Deletes a pull request's caches once it closes.
+#
+# GitHub allows 10 GB per repository and evicts by least-recent *access*. Left
+# alone, closed pull requests hold their caches for seven days, and the entry
+# most at risk of eviction is the main-scoped baseline every cold branch depends
+# on. This measured 5.31 GB across five open pull requests before cleanup
+# existed, with nothing on main.
+
+name: "Cleanup PR caches"
+
+# pull_request_target, not pull_request: a pull_request event from a fork gets a
+# read-only GITHUB_TOKEN that no permissions block can elevate, so every delete
+# would 403 while the job still reported success. Contributions here arrive from
+# forks by way of copy-pr-bot, so that is the normal case, not the edge case.
+#
+# pull_request_target is safe here specifically because this job checks nothing
+# out and runs no code from the pull request; its only input is a number.
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  actions: write # required to delete cache entries
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete caches for this pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.number }}
+        run: |
+          # copy-pr-bot mirrors pull requests to refs/heads/pull-request/<N>, so
+          # caches are scoped there rather than to refs/pull/<N>/merge. The usual
+          # snippet for this targets the latter and silently deletes nothing.
+          REF="refs/heads/pull-request/${PR}"
+          echo "Deleting caches scoped to ${REF}"
+
+          IDS=$(gh cache list --ref "$REF" --limit 100 --json id --jq '.[].id')
+          if [ -z "$IDS" ]; then
+            echo "No caches found for ${REF}"
+            exit 0
+          fi
+
+          # Count failures explicitly. `gh cache delete "$id" && COUNT=...` would
+          # put the delete on the left of an AND-list, where `set -e` ignores a
+          # non-zero exit — so a job with no permission to delete anything still
+          # finished green, reporting zero deletions as though there were none.
+          DELETED=0
+          FAILED=0
+          for id in $IDS; do
+            if gh cache delete "$id"; then
+              DELETED=$((DELETED + 1))
+            else
+              FAILED=$((FAILED + 1))
+            fi
+          done
+          echo "Deleted ${DELETED} cache entries for ${REF}" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::error::Failed to delete ${FAILED} cache entries for ${REF}"
+            exit 1
+          fi

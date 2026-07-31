@@ -195,15 +195,16 @@ from nvalchemiops.torch.interactions.electrostatics._util import (
     _combine_electrostatic_outputs,
     _compiled_direct_output_deprecation_signal,
     _component_direct_output_deprecation_msg,
+    _dechain_connected_input_grads,
     _detach_setup_tensor,
     _direct_output_deprecation_msg,
     _energy_cotangents,
-    _has_potentially_geometry_dependent_charges,
     _InjectCachedEvalGrad,
     _InjectCachedEvalGradWithFallback,
     _InjectChargeGrad,
     _is_per_system_uniform_cotangent,
     _reduce_atom_energy,
+    _sum_atom_values_by_system,
     _unpack_electrostatic_outputs,
     _validate_energy_reduction,
 )
@@ -473,12 +474,15 @@ def _pme_convolve_forward(
     alpha: torch.Tensor,
     volume: torch.Tensor,
     is_batch: bool,
+    is_compiled: bool,
 ) -> torch.Tensor:
     """Run the fused Warp convolve kernel on ``mesh_fft``. No autograd here —
     callers wrap this in ``_PMEFusedConvolve`` for the autograd-aware version.
 
     ``moduli_x/y/z`` are precomputed 1D B-spline modulus LUTs
     (``sinc(m/N)^spline_order`` per axis); see ``compute_bspline_moduli_1d``.
+    ``is_compiled`` is registered-autograd metadata and does not affect the
+    numerical forward.
     """
     from nvalchemiops.interactions.electrostatics.pme_kernels import (
         batch_pme_convolve as _batch_pme_convolve,
@@ -1581,10 +1585,13 @@ def pme_energy_corrections(
             volumes = volume.to(input_dtype)
 
         # Compute total charge per system
-        total_charges = torch.zeros(
-            num_systems, dtype=input_dtype, device=raw_energies.device
-        )
-        total_charges.scatter_add_(0, batch_idx, charges.to(input_dtype))
+        if num_systems == 1:
+            total_charges = charges.to(input_dtype).sum().reshape(1)
+        else:
+            total_charges = torch.zeros(
+                num_systems, dtype=input_dtype, device=raw_energies.device
+            )
+            total_charges.scatter_add_(0, batch_idx, charges.to(input_dtype))
 
         result = _batch_pme_energy_corrections(
             raw_energies,
@@ -1674,10 +1681,13 @@ def pme_energy_corrections_with_charge_grad(
             volumes = volume.to(input_dtype)
 
         # Compute total charge per system
-        total_charges = torch.zeros(
-            num_systems, dtype=input_dtype, device=raw_energies.device
-        )
-        total_charges.scatter_add_(0, batch_idx, charges.to(input_dtype))
+        if num_systems == 1:
+            total_charges = charges.to(input_dtype).sum().reshape(1)
+        else:
+            total_charges = torch.zeros(
+                num_systems, dtype=input_dtype, device=raw_energies.device
+            )
+            total_charges.scatter_add_(0, batch_idx, charges.to(input_dtype))
 
         return _batch_pme_energy_corrections_with_charge_grad(
             raw_energies,
@@ -1800,6 +1810,60 @@ def _virial_bg_correction_backward_launch(
     return grad_charges, grad_cell, grad_alpha, grad_virial.clone()
 
 
+def _pme_convolve_backward_args(
+    grad_outputs: tuple[torch.Tensor, ...],
+    forward_inputs: tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        bool,
+        bool,
+    ],
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    bool,
+]:
+    """Order fused-convolve backward inputs with a compiled-only cotangent copy."""
+    (
+        mesh_fft,
+        k_squared,
+        moduli_x,
+        moduli_y,
+        moduli_z,
+        alpha,
+        volume,
+        is_batch,
+        is_compiled,
+    ) = forward_inputs
+    grad_convolved = grad_outputs[0]
+    if is_compiled:
+        # Materialize before the opaque custom-op consumer so Inductor keeps
+        # Hermitian RFFT interior-frequency weighting ahead of it.
+        grad_convolved = grad_convolved * 1.0
+    return (
+        mesh_fft,
+        grad_convolved,
+        k_squared,
+        moduli_x,
+        moduli_y,
+        moduli_z,
+        alpha,
+        volume,
+        is_batch,
+    )
+
+
 def register_pme_ops() -> None:
     """Register PME Torch custom ops once."""
     global _PME_OPS_REGISTERED
@@ -1814,18 +1878,8 @@ def register_pme_ops() -> None:
         backward_fake=_convolve_backward_fake,
         backward_return_arity=4,
         diff_input_positions=(0, 5, 6, 1),
-        n_forward_inputs=8,
-        backward_args=lambda g, f: (
-            f[0],
-            g[0],
-            f[1],
-            f[2],
-            f[3],
-            f[4],
-            f[5],
-            f[6],
-            f[7],
-        ),
+        n_forward_inputs=9,
+        backward_args=_pme_convolve_backward_args,
         double_backward=_pme_convolve_double_backward,
         double_backward_fake=_convolve_double_backward_fake,
         double_backward_return_arity=5,
@@ -2093,21 +2147,10 @@ def _pme_cell_grad_from_virial(
     """
     cell_3d = cell if cell.dim() == 3 else cell.unsqueeze(0)
     num_systems = cell_3d.shape[0]
-    pos_term = torch.zeros(
-        num_systems,
-        3,
-        3,
-        device=positions.device,
-        dtype=torch.float64,
-    )
     outer = positions.to(torch.float64).unsqueeze(2) * dEdR.to(torch.float64).unsqueeze(
         1
     )
-    if batch_idx is None:
-        if outer.numel():
-            pos_term[0] = outer.sum(dim=0)
-    else:
-        pos_term = pos_term.index_add(0, batch_idx.to(torch.long), outer)
+    pos_term = _sum_atom_values_by_system(outer, batch_idx, num_systems)
     target = -virial.to(torch.float64) - pos_term
     if cell_inv_t is not None:
         inv_t_3d = _normalize_cell_inv_t_cache(cell_inv_t).to(torch.float64)
@@ -2218,7 +2261,7 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_energy):
         """Return cached first gradients or recompute for higher-order fallback."""
-        create_graph = torch.is_grad_enabled()
+        create_vjp_graph = torch.is_grad_enabled()
         (
             positions,
             charges,
@@ -2237,191 +2280,13 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
             cached_dEdcell,
         ) = ctx.saved_tensors
 
-        use_fallback = create_graph or (
+        use_fallback = create_vjp_graph or (
             ctx.energy_reduction == "atom"
             and not _is_per_system_uniform_cotangent(
                 grad_energy, batch_idx, ctx.num_systems
             )
         )
         if use_fallback:
-            if _has_potentially_geometry_dependent_charges(positions, charges):
-                if create_graph:
-                    diff_inputs = []
-                    diff_names = []
-                    for name, tensor in (
-                        ("positions", positions),
-                        ("cell", cell),
-                        ("alpha", alpha),
-                    ):
-                        if tensor.requires_grad:
-                            diff_inputs.append(tensor)
-                            diff_names.append(name)
-
-                    with torch.enable_grad():
-                        recomputed, _forces, _charge_grads, _virial = (
-                            _pme_reciprocal_space_impl(
-                                positions,
-                                charges,
-                                cell,
-                                alpha,
-                                ctx.mesh_dimensions,
-                                ctx.spline_order,
-                                batch_idx,
-                                compute_forces=False,
-                                compute_charge_gradients=False,
-                                compute_virial=False,
-                                k_vectors=k_vectors,
-                                k_squared=k_squared,
-                                volume=volume,
-                                cell_inv_t=cell_inv_t,
-                                moduli_x=moduli_x,
-                                moduli_y=moduli_y,
-                                moduli_z=moduli_z,
-                            )
-                        )
-                        if ctx.energy_reduction == "system":
-                            recomputed = _reduce_atom_energy(
-                                recomputed, batch_idx, ctx.num_systems
-                            )
-                        if diff_inputs:
-                            diff_grads = torch.autograd.grad(
-                                recomputed,
-                                tuple(diff_inputs),
-                                grad_outputs=grad_energy,
-                                allow_unused=True,
-                                create_graph=True,
-                            )
-                            grad_map = dict(zip(diff_names, diff_grads, strict=True))
-                        else:
-                            grad_map = {}
-                    return (
-                        grad_map.get("positions"),
-                        None,
-                        grad_map.get("cell"),
-                        grad_map.get("alpha"),
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                    )
-
-                partial_inputs = []
-                partial_names = []
-                for name, tensor in (
-                    ("positions", positions),
-                    ("cell", cell),
-                    ("alpha", alpha),
-                ):
-                    if tensor.requires_grad:
-                        partial_inputs.append(tensor)
-                        partial_names.append(name)
-
-                with torch.enable_grad():
-                    partial_map = {}
-                    if partial_inputs:
-                        recomputed_partial, _forces, _charge_grads, _virial = (
-                            _pme_reciprocal_space_impl(
-                                positions,
-                                charges.detach(),
-                                cell,
-                                alpha,
-                                ctx.mesh_dimensions,
-                                ctx.spline_order,
-                                batch_idx,
-                                compute_forces=False,
-                                compute_charge_gradients=False,
-                                compute_virial=False,
-                                k_vectors=k_vectors,
-                                k_squared=k_squared,
-                                volume=volume,
-                                cell_inv_t=cell_inv_t,
-                                moduli_x=moduli_x,
-                                moduli_y=moduli_y,
-                                moduli_z=moduli_z,
-                            )
-                        )
-                        if ctx.energy_reduction == "system":
-                            recomputed_partial = _reduce_atom_energy(
-                                recomputed_partial, batch_idx, ctx.num_systems
-                            )
-                        partial_grads = torch.autograd.grad(
-                            recomputed_partial,
-                            tuple(partial_inputs),
-                            grad_outputs=grad_energy,
-                            allow_unused=True,
-                            create_graph=create_graph,
-                        )
-                        partial_map = dict(
-                            zip(partial_names, partial_grads, strict=True)
-                        )
-
-                    grad_charges = None
-                    if charges.requires_grad:
-                        recomputed_charge, _forces, _charge_grads, _virial = (
-                            _pme_reciprocal_space_impl(
-                                positions,
-                                charges,
-                                cell,
-                                alpha,
-                                ctx.mesh_dimensions,
-                                ctx.spline_order,
-                                batch_idx,
-                                compute_forces=False,
-                                compute_charge_gradients=False,
-                                compute_virial=False,
-                                k_vectors=k_vectors,
-                                k_squared=k_squared,
-                                volume=volume,
-                                cell_inv_t=cell_inv_t,
-                                moduli_x=moduli_x,
-                                moduli_y=moduli_y,
-                                moduli_z=moduli_z,
-                            )
-                        )
-                        if ctx.energy_reduction == "system":
-                            recomputed_charge = _reduce_atom_energy(
-                                recomputed_charge, batch_idx, ctx.num_systems
-                            )
-                        (grad_charges,) = torch.autograd.grad(
-                            recomputed_charge,
-                            charges,
-                            grad_outputs=grad_energy,
-                            allow_unused=True,
-                            create_graph=create_graph,
-                        )
-                return (
-                    partial_map.get("positions"),
-                    grad_charges,
-                    partial_map.get("cell"),
-                    partial_map.get("alpha"),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-
             with torch.enable_grad():
                 recomputed, _forces, _charge_grads, _virial = (
                     _pme_reciprocal_space_impl(
@@ -2459,14 +2324,23 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
                     if tensor.requires_grad:
                         diff_inputs.append(tensor)
                         diff_names.append(name)
-                diff_grads = torch.autograd.grad(
-                    recomputed,
-                    tuple(diff_inputs),
-                    grad_outputs=grad_energy,
-                    allow_unused=True,
-                    create_graph=create_graph,
-                )
-                grad_map = dict(zip(diff_names, diff_grads, strict=True))
+                if diff_inputs:
+                    diff_grads = torch.autograd.grad(
+                        recomputed,
+                        tuple(diff_inputs),
+                        grad_outputs=grad_energy,
+                        allow_unused=True,
+                        create_graph=create_vjp_graph,
+                        retain_graph=True,
+                    )
+                    grad_map = dict(zip(diff_names, diff_grads, strict=True))
+                    grad_map = _dechain_connected_input_grads(
+                        grad_map,
+                        dict(zip(diff_names, diff_inputs, strict=True)),
+                        create_vjp_graph=create_vjp_graph,
+                    )
+                else:
+                    grad_map = {}
                 grad_positions = grad_map.get("positions")
                 grad_charges = grad_map.get("charges")
                 grad_cell = grad_map.get("cell")
@@ -2782,8 +2656,9 @@ def _pme_reciprocal_space_impl(
     #
     # cuFFT emits non-contiguous output; under torch.compile we must copy
     # to match the convolve launcher's stride contract, in eager we don't.
+    is_compiled = torch.compiler.is_compiling()
     mesh_fft = torch.fft.rfftn(mesh_grid, norm="backward", dim=fft_dims)
-    if torch.compiler.is_compiling():
+    if is_compiled:
         mesh_fft = mesh_fft.contiguous()
     need_virial_output = compute_virial or cache_virial
     mesh_fft_raw = mesh_fft if need_virial_output else None
@@ -2797,6 +2672,7 @@ def _pme_reciprocal_space_impl(
         alpha_gsf,
         volume,
         is_batch,
+        is_compiled,
     )
     potential_mesh = torch.fft.irfftn(
         convolved_mesh, norm="forward", s=mesh_dimensions, dim=fft_dims
@@ -2949,26 +2825,39 @@ def _pme_reciprocal_space_impl(
 
     if hybrid_forces and charges.requires_grad:
 
-        def _fallback(p, q, c):
+        def _fallback(
+            p,
+            q,
+            c,
+            fallback_batch_idx,
+            fallback_alpha,
+            fallback_k_vectors,
+            fallback_k_squared,
+            fallback_volume,
+            fallback_cell_inv_t,
+            fallback_moduli_x,
+            fallback_moduli_y,
+            fallback_moduli_z,
+        ):
             fallback_energies, _forces, _charge_grads, _virial = (
                 _pme_reciprocal_space_impl(
                     p,
                     q,
                     c,
-                    alpha,
+                    fallback_alpha,
                     mesh_dimensions,
                     spline_order,
-                    batch_idx,
+                    fallback_batch_idx,
                     compute_forces=False,
                     compute_charge_gradients=False,
                     compute_virial=False,
-                    k_vectors=k_vectors,
-                    k_squared=k_squared,
-                    volume=volume,
-                    cell_inv_t=cell_inv_t,
-                    moduli_x=moduli_x,
-                    moduli_y=moduli_y,
-                    moduli_z=moduli_z,
+                    k_vectors=fallback_k_vectors,
+                    k_squared=fallback_k_squared,
+                    volume=fallback_volume,
+                    cell_inv_t=fallback_cell_inv_t,
+                    moduli_x=fallback_moduli_x,
+                    moduli_y=fallback_moduli_y,
+                    moduli_z=fallback_moduli_z,
                     hybrid_forces=False,
                 )
             )
@@ -2986,6 +2875,16 @@ def _pme_reciprocal_space_impl(
             _fallback,
             "atom",
             cell.shape[0] if is_batch else 1,
+            False,
+            False,
+            alpha,
+            k_vectors,
+            k_squared,
+            volume,
+            cell_inv_t,
+            moduli_x,
+            moduli_y,
+            moduli_z,
         )
 
     if return_cell_inv_t:
@@ -3099,10 +2998,12 @@ def pme_reciprocal_space(
         ``W = -dE/d(displacement)`` for the row-vector displacement recipe.
         Stress = ``-virial / volume``.
     hybrid_forces : bool, default=False
-        When True, positions and cell are detached from the autograd graph and
-        charge gradients are attached to the energy via a straight-through
-        trick.  Forces and virial are forward-only (not differentiable).
-        See :func:`ewald_real_space` for details.
+        Enables the legacy direct-output path. With ``charges.requires_grad``,
+        uniform first-order cotangents use cached charge gradients; non-uniform
+        per-atom losses and ``create_graph=True`` rebuild the eager energy graph
+        with geometry and charge-chain derivatives. Fixed-charge hybrid calls
+        remain forward-only. See :func:`ewald_real_space` for the complete
+        contract.
     energy_reduction : {"atom", "system"}, default="atom"
         Return per-atom energies ``(N,)`` or summed per-system energies ``(B,)``.
 
@@ -3243,9 +3144,6 @@ def pme_reciprocal_space(
     charge_grad = bool(charges.requires_grad)
     cell_grad = bool(cell.requires_grad)
     output_grad_requested = compute_forces or compute_charge_gradients or compute_virial
-    # q(R) workloads may keep this cached-first path: _PMEReciprocalCachedFirstGrad.backward
-    # routes non-uniform/create_graph cases through safe partial recompute instead of
-    # returning connected position and charge gradients from the same graph.
     use_cached_first_grad = (
         not output_grad_requested
         and not hybrid_forces
@@ -3530,10 +3428,12 @@ def particle_mesh_ewald(
         Only used when alpha or mesh_dimensions is None.
         Smaller values increase accuracy but also computational cost.
     hybrid_forces : bool, default=False
-        When True, positions and cell are detached from the autograd graph and
-        charge gradients are attached to the energy via a straight-through
-        trick.  Forces and virial are forward-only (not differentiable).
-        See :func:`ewald_real_space` for details.
+        Enables the legacy direct-output path. With ``charges.requires_grad``,
+        uniform first-order cotangents use cached charge gradients; non-uniform
+        per-atom losses and ``create_graph=True`` rebuild the eager energy graph
+        with geometry and charge-chain derivatives. Fixed-charge hybrid calls
+        remain forward-only. See :func:`ewald_real_space` for the complete
+        contract.
     pbc : torch.Tensor, shape (3,) or (B, 3), optional
         Per-system periodic boundary conditions for slab correction. Required
         when ``slab_correction=True``. Each row has True for periodic
@@ -3860,36 +3760,69 @@ def particle_mesh_ewald(
                 batch_idx,
                 cached_cell_inv_t,
             )
+        reciprocal_alpha = _prepare_alpha(
+            alpha,
+            num_systems,
+            torch.float64,
+            positions.device,
+        )
 
-        def _fallback(p, q, c):
+        def _fallback(
+            p,
+            q,
+            c,
+            fallback_batch_idx,
+            fallback_alpha,
+            fallback_neighbor_list,
+            fallback_neighbor_ptr,
+            fallback_neighbor_shifts,
+            fallback_neighbor_matrix,
+            fallback_neighbor_matrix_shifts,
+            fallback_reciprocal_alpha,
+            fallback_k_vectors,
+            fallback_k_squared,
+            fallback_cell_inv_t,
+            fallback_volume,
+            fallback_moduli_x,
+            fallback_moduli_y,
+            fallback_moduli_z,
+        ):
             rs_energy = ewald_real_space(
                 positions=p,
                 charges=q,
                 cell=c,
-                alpha=alpha,
-                neighbor_list=neighbor_list,
-                neighbor_ptr=neighbor_ptr,
-                neighbor_shifts=neighbor_shifts,
-                neighbor_matrix=neighbor_matrix,
-                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                alpha=fallback_alpha,
+                neighbor_list=fallback_neighbor_list,
+                neighbor_ptr=fallback_neighbor_ptr,
+                neighbor_shifts=fallback_neighbor_shifts,
+                neighbor_matrix=fallback_neighbor_matrix,
+                neighbor_matrix_shifts=fallback_neighbor_matrix_shifts,
                 mask_value=mask_value,
-                batch_idx=batch_idx,
+                batch_idx=fallback_batch_idx,
             )
-            rec_energy = pme_reciprocal_space(
-                positions=p,
-                charges=q,
-                cell=c,
-                alpha=alpha,
-                mesh_dimensions=mesh_dimensions,
-                spline_order=spline_order,
-                batch_idx=batch_idx,
-                k_vectors=k_vectors,
-                k_squared=k_squared,
-                cell_inv_t=cell_inv_t,
-                volume=volume,
-                moduli_x=moduli_x,
-                moduli_y=moduli_y,
-                moduli_z=moduli_z,
+            rec_energy, _forces, _charge_grads, _virial = _pme_reciprocal_space_impl(
+                p,
+                q,
+                c,
+                fallback_reciprocal_alpha,
+                mesh_dimensions,
+                spline_order,
+                fallback_batch_idx,
+                compute_forces=False,
+                compute_charge_gradients=False,
+                compute_virial=False,
+                k_vectors=fallback_k_vectors,
+                k_squared=fallback_k_squared,
+                cell_inv_t=fallback_cell_inv_t,
+                volume=fallback_volume,
+                moduli_x=fallback_moduli_x,
+                moduli_y=fallback_moduli_y,
+                moduli_z=fallback_moduli_z,
+                hybrid_forces=False,
+                cache_forces=False,
+                cache_charge_gradients=False,
+                cache_virial=False,
+                return_cell_inv_t=False,
             )
             return rs_energy + rec_energy
 
@@ -3907,6 +3840,22 @@ def particle_mesh_ewald(
             _fallback,
             energy_reduction,
             num_systems,
+            False,
+            False,
+            alpha,
+            neighbor_list,
+            neighbor_ptr,
+            neighbor_shifts,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            reciprocal_alpha,
+            k_vectors,
+            k_squared,
+            cell_inv_t,
+            volume,
+            moduli_x,
+            moduli_y,
+            moduli_z,
         )
 
     if hybrid_forces and charges.requires_grad and not slab_correction:
@@ -3982,36 +3931,69 @@ def particle_mesh_ewald(
             if compute_virial and real_virial is not None and rec_virial is not None
             else None
         )
+        reciprocal_alpha = _prepare_alpha(
+            alpha,
+            num_systems,
+            torch.float64,
+            positions.device,
+        )
 
-        def _fallback(p, q, c):
+        def _fallback(
+            p,
+            q,
+            c,
+            fallback_batch_idx,
+            fallback_alpha,
+            fallback_neighbor_list,
+            fallback_neighbor_ptr,
+            fallback_neighbor_shifts,
+            fallback_neighbor_matrix,
+            fallback_neighbor_matrix_shifts,
+            fallback_reciprocal_alpha,
+            fallback_k_vectors,
+            fallback_k_squared,
+            fallback_cell_inv_t,
+            fallback_volume,
+            fallback_moduli_x,
+            fallback_moduli_y,
+            fallback_moduli_z,
+        ):
             rs_energy = ewald_real_space(
                 positions=p,
                 charges=q,
                 cell=c,
-                alpha=alpha,
-                neighbor_list=neighbor_list,
-                neighbor_ptr=neighbor_ptr,
-                neighbor_shifts=neighbor_shifts,
-                neighbor_matrix=neighbor_matrix,
-                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                alpha=fallback_alpha,
+                neighbor_list=fallback_neighbor_list,
+                neighbor_ptr=fallback_neighbor_ptr,
+                neighbor_shifts=fallback_neighbor_shifts,
+                neighbor_matrix=fallback_neighbor_matrix,
+                neighbor_matrix_shifts=fallback_neighbor_matrix_shifts,
                 mask_value=mask_value,
-                batch_idx=batch_idx,
+                batch_idx=fallback_batch_idx,
             )
-            rec_energy = pme_reciprocal_space(
-                positions=p,
-                charges=q,
-                cell=c,
-                alpha=alpha,
-                mesh_dimensions=mesh_dimensions,
-                spline_order=spline_order,
-                batch_idx=batch_idx,
-                k_vectors=k_vectors,
-                k_squared=k_squared,
-                cell_inv_t=cell_inv_t,
-                volume=volume,
-                moduli_x=moduli_x,
-                moduli_y=moduli_y,
-                moduli_z=moduli_z,
+            rec_energy, _forces, _charge_grads, _virial = _pme_reciprocal_space_impl(
+                p,
+                q,
+                c,
+                fallback_reciprocal_alpha,
+                mesh_dimensions,
+                spline_order,
+                fallback_batch_idx,
+                compute_forces=False,
+                compute_charge_gradients=False,
+                compute_virial=False,
+                k_vectors=fallback_k_vectors,
+                k_squared=fallback_k_squared,
+                cell_inv_t=fallback_cell_inv_t,
+                volume=fallback_volume,
+                moduli_x=fallback_moduli_x,
+                moduli_y=fallback_moduli_y,
+                moduli_z=fallback_moduli_z,
+                hybrid_forces=False,
+                cache_forces=False,
+                cache_charge_gradients=False,
+                cache_virial=False,
+                return_cell_inv_t=False,
             )
             return rs_energy + rec_energy
 
@@ -4027,6 +4009,22 @@ def particle_mesh_ewald(
             _fallback,
             energy_reduction,
             num_systems,
+            False,
+            False,
+            alpha,
+            neighbor_list,
+            neighbor_ptr,
+            neighbor_shifts,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            reciprocal_alpha,
+            k_vectors,
+            k_squared,
+            cell_inv_t,
+            volume,
+            moduli_x,
+            moduli_y,
+            moduli_z,
         )
 
         return _build_electrostatic_result(

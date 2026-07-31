@@ -63,6 +63,8 @@ from test.interactions.electrostatics.bindings.jax.conftest import (
     fd_virial_full_jax,
     make_crystal_system_jax,
     make_virial_cscl_system_jax,
+    qr_manual_chain_jax,
+    toy_charge_model_jax,
 )
 
 # Try to import torchpme for reference calculations
@@ -2653,6 +2655,118 @@ class TestFullPMENeighborList:
         assert jnp.all(jnp.isfinite(energies))
         assert jnp.all(jnp.isfinite(forces))
         assert jnp.all(jnp.isfinite(charge_grads))
+
+
+class TestPMEQRChainRule:
+    """q(R) chain-rule coverage for preprocessed PME positions."""
+
+    @pytest.mark.parametrize("which", ["recip", "full"])
+    @pytest.mark.parametrize("jit", [False, True])
+    def test_qR_sibling_force_matches_manual_chain(self, device, which, jit):
+        """Sibling position and charge expressions have identical gradients."""
+        positions, _charges, cell = create_simple_system(num_atoms=4)
+        pbc = jnp.array([[True, True, True]])
+        kwargs = {}
+        if which == "full":
+            neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+                positions,
+                5.0,
+                cell,
+                pbc,
+            )
+            kwargs = {
+                "neighbor_matrix": neighbor_matrix,
+                "neighbor_matrix_shifts": neighbor_matrix_shifts,
+            }
+
+        def energy_fn(pos, charges, cell_arg):
+            if which == "recip":
+                return pme_reciprocal_space(
+                    positions=pos,
+                    charges=charges,
+                    cell=cell_arg,
+                    alpha=jnp.array([0.3], dtype=pos.dtype),
+                    mesh_dimensions=(16, 16, 16),
+                )
+            return particle_mesh_ewald(
+                positions=pos,
+                charges=charges,
+                cell=cell_arg,
+                alpha=0.3,
+                mesh_dimensions=(16, 16, 16),
+                compute_forces=False,
+                **kwargs,
+            )
+
+        full_grad, manual_grad = qr_manual_chain_jax(
+            energy_fn,
+            positions,
+            cell,
+        )
+        if jit:
+            full_grad = jax.jit(
+                lambda p: jax.grad(
+                    lambda base: energy_fn(
+                        base * 1.0,
+                        toy_charge_model_jax(base),
+                        cell,
+                    ).sum()
+                )(p)
+            )(positions)
+        assert jnp.allclose(full_grad, manual_grad, rtol=1e-5, atol=1e-6)
+
+    @pytest.mark.parametrize("which", ["recip", "full"])
+    def test_qR_sibling_position_hvp_matches_fd(self, device, which):
+        """q(R) position HVPs remain correct through sibling expressions."""
+        positions, _charges, cell = create_simple_system(num_atoms=4)
+        pbc = jnp.array([[True, True, True]])
+        kwargs = {}
+        if which == "full":
+            neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+                positions,
+                5.0,
+                cell,
+                pbc,
+            )
+            kwargs = {
+                "neighbor_matrix": neighbor_matrix,
+                "neighbor_matrix_shifts": neighbor_matrix_shifts,
+            }
+
+        def energy_sum(base):
+            return (
+                pme_reciprocal_space(
+                    positions=base * 1.0,
+                    charges=toy_charge_model_jax(base),
+                    cell=cell,
+                    alpha=jnp.array([0.3], dtype=base.dtype),
+                    mesh_dimensions=(16, 16, 16),
+                )
+                if which == "recip"
+                else particle_mesh_ewald(
+                    positions=base * 1.0,
+                    charges=toy_charge_model_jax(base),
+                    cell=cell,
+                    alpha=0.3,
+                    mesh_dimensions=(16, 16, 16),
+                    compute_forces=False,
+                    **kwargs,
+                )
+            ).sum()
+
+        direction = jax.random.normal(
+            jax.random.PRNGKey(115),
+            positions.shape,
+            dtype=positions.dtype,
+        )
+        direction = direction / jnp.linalg.norm(direction)
+        grad_fn = jax.grad(energy_sum)
+        hvp = jax.grad(lambda p: jnp.vdot(grad_fn(p), direction))(positions)
+        eps = jnp.array(1e-5, dtype=positions.dtype)
+        fd = (
+            grad_fn(positions + eps * direction) - grad_fn(positions - eps * direction)
+        ) / (2.0 * eps)
+        assert jnp.allclose(hvp, fd, rtol=1e-3, atol=2e-5)
 
 
 class TestPMEJIT:

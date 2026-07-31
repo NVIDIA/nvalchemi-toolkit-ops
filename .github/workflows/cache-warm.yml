@@ -1,0 +1,179 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Publishes the caches every other workflow restores from.
+#
+# This is a pure producer: it reads nothing but the repository, so it works on a
+# fresh clone, a new CUDA version, or a runner that has never seen this project.
+# Nothing here depends on a test job having run first.
+#
+# A failure here is a pull-request-speed incident, not just a red build. When it
+# stops publishing, pull requests get slower over the following days and the
+# symptom looks nothing like the cause. That is exactly what happened before this
+# pipeline was rewritten.
+#
+# WHY ONLY py3.12 / CUDA 13
+#
+# That is the combination the pull-request tier runs, and the only lane where a
+# human is waiting. The nightly matrix jobs restore and save their own per-
+# combination caches, so they stay warm from their own previous run without
+# needing a dedicated producer.
+
+name: "Cache warm"
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 5 * * *" # 05:00 UTC, two hours before the nightly test run
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write # prune-caches.sh deletes superseded entries
+
+defaults:
+  run:
+    shell: bash -x -e -u -o pipefail {0}
+
+concurrency:
+  # Never run two warmers at once; the newest merge is the one worth warming.
+  group: cache-warm
+  cancel-in-progress: true
+
+jobs:
+  warp:
+    name: Warm Warp kernel cache (py3.12, CUDA 13)
+    runs-on: linux-amd64-gpu-h100-latest-1
+    timeout-minutes: 90
+    container:
+      image: nvcr.io/nvidia/cuda:13.1.0-runtime-ubuntu24.04
+      options: --gpus all
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up test environment
+        uses: ./.github/actions/setup-env
+        with:
+          python-version: "3.12"
+
+      # Restoring first is what makes this cheap to run on every merge: Warp
+      # content-hashes each module, so only kernels whose source actually changed
+      # are rebuilt. Measured cold: ~40 min. Measured against a warm cache: ~30 s.
+      - name: Restore previous Warp cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .warp-cache
+          key: warp-main-py3.12-cuda13-${{ github.run_id }}
+          restore-keys: |
+            warp-main-py3.12-cuda13-
+
+      - name: Compile kernels
+        run: |
+          # $GITHUB_WORKSPACE, not github.workspace: inside a container job the
+          # expression yields the host path while actions/cache resolves the
+          # relative `path:` against the container's mount. Using the expression
+          # compiles kernels outside the cached directory, so the job publishes
+          # nothing while reporting success.
+          export WARP_CACHE_PATH="$GITHUB_WORKSPACE/.warp-cache"
+          mkdir -p "$WARP_CACHE_PATH"
+          # Defaults to 60% of cores. Speed-up is well below linear: the build
+          # ends on a few very large translation units that cannot be split.
+          uv run python tools/warm_warp_cache.py
+
+      # Rotate before saving. Cache entries are immutable, so the key embeds the
+      # run id and every run would otherwise leave a ~200 MB entry behind for
+      # seven days. Deleting first rather than after means a failed save leaves
+      # the previous cache in place instead of nothing.
+      # REST rather than `gh`: the GitHub CLI is not installed in the CUDA
+      # container, so a `gh` call exits 127 and rotation silently never happens.
+      - name: Prune superseded caches
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREFIX: warp-main-py3.12-cuda13-
+        run: |
+          bash .github/scripts/prune-caches.sh
+
+      - name: Save Warp cache
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: .warp-cache
+          key: warp-main-py3.12-cuda13-${{ github.run_id }}
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "### Warp cache published"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Key | \`warp-main-py3.12-cuda13-${{ github.run_id }}\` |"
+            echo "| Size | $(du -sh .warp-cache 2>/dev/null | cut -f1 || echo n/a) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The testmon database drives the impacted-tests tier on pull requests. It has
+  # to be built without coverage: both install a sys.settrace hook and Python
+  # allows one per thread, so a run that collects for testmon reports near-zero
+  # coverage. That is what failed every nightly build before this rewrite.
+  #
+  # Nightly only: it runs the whole suite, which costs hours even warm, and a
+  # database one day stale still deselects almost as well as a fresh one.
+  testmon:
+    name: Build testmon database (py3.12, CUDA 13)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: warp
+    runs-on: linux-amd64-gpu-h100-latest-1
+    timeout-minutes: 300
+    container:
+      image: nvcr.io/nvidia/cuda:13.1.0-runtime-ubuntu24.04
+      options: --gpus all
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up test environment
+        uses: ./.github/actions/setup-env
+        with:
+          python-version: "3.12"
+
+      - name: Restore Warp kernel cache
+        uses: ./.github/actions/warp-cache
+        with:
+          python-version: "3.12"
+
+      - name: Build testmon database
+        run: make testmon-collect
+
+      - name: Prune superseded caches
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREFIX: testmon-main-py3.12-cuda13-
+        run: |
+          bash .github/scripts/prune-caches.sh
+
+      - name: Save testmon database
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .testmondata
+            .testmondata-shm
+            .testmondata-wal
+          key: testmon-main-py3.12-cuda13-${{ github.run_id }}
