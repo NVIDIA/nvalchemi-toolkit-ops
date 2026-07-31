@@ -654,6 +654,9 @@ class TestJaxBatchClusterTileAutograd:
         batch_ptr = jnp.array([0, n_per, 2 * n_per], dtype=jnp.int32)
         cell_batch = jnp.tile(jnp.eye(3, dtype=jnp.float32)[None] * 20.0, (2, 1, 1))
 
+        # Drain asynchronous input construction before Warp starts CUDA graph capture.
+        jax.block_until_ready((pos, cell_batch, batch_ptr))
+
         def loss(p):
             *_, d, _ = batch_cluster_tile_neighbor_list(
                 p,
