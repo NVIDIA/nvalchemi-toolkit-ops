@@ -8444,6 +8444,33 @@ class TestEwaldDoubleBackward:
         assert gradgradcheck_energy(energy_fn, positions, charges, cell, wrt=wrt)
 
     @pytest.mark.parametrize("device", ["cuda"])
+    def test_gradgradcheck_fixed_k_recip_cell_cuda_canary(self, device):
+        """Fixed-k reciprocal cell gradgradcheck preserves second-order coverage."""
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = _contract_dipole(device)
+        alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+        fixed_k_vectors = generate_k_vectors_ewald_summation(
+            cell,
+            k_cutoff=2.0,
+            miller_bounds=(4, 4, 4),
+        ).detach()
+
+        def energy_fn(p, q, c):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                return ewald_reciprocal_space(p, q, c, fixed_k_vectors, alpha)
+
+        assert gradgradcheck_energy(
+            energy_fn,
+            positions,
+            charges,
+            cell,
+            wrt=("cell",),
+        )
+
+    @pytest.mark.parametrize("device", ["cuda"])
     def test_gradgradcheck_triclinic_mixed_cuda_canary(self, device):
         """Non-slow CUDA canary for triclinic mixed position-cell terms."""
         if not torch.cuda.is_available():

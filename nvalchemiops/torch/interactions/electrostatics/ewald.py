@@ -553,10 +553,9 @@ def _reciprocal_space_energy(
 ) -> torch.Tensor:
     """Per-atom reciprocal-space Ewald energy, connected to autograd via the chain.
 
-    Energy = k-sum (explicit chain, differentiable in positions / charges and,
-    through a preserved reciprocal-vector graph, cell) minus the Torch-native
-    self + background corrections. Leaf k-vector gradients are available only
-    while a cell-gradient path requests the reciprocal k-space VJP.
+    Energy = k-sum (explicit chain, differentiable in positions, charges, and
+    reciprocal vectors; cell-dependent paths compose through reciprocal-vector
+    and volume graphs) minus the Torch-native self + background corrections.
     """
     num_atoms = positions.shape[0]
     device = positions.device
@@ -571,10 +570,11 @@ def _reciprocal_space_energy(
     # recompute). ``cell`` flows through ``k_vectors(cell)`` / ``volume`` as before.
     need_pos = bool(positions.requires_grad)
     need_charge = bool(charges.requires_grad)
-    # The recip chain owns the cell first order via grad_kvectors / grad_volume (the
-    # k-major ``kspace`` recompute). Public k-vector leaf gradients are not part of
-    # the contract; the cell path is only valid when k-vectors were generated from
-    # this cell inside the full Ewald call.
+    # ``need_cell`` gates the k-major grad_kvectors / grad_volume backward owned by
+    # the recip chain. The public component preserves a supplied k-vector graph when
+    # both cell and k_vectors require grad; otherwise vectors are fixed Cartesian
+    # metadata for cell derivatives. Leaf vectors without a cell edge still receive
+    # dE/dk; physical strain requires vectors generated from the differentiable cell.
     need_cell = bool(cell.requires_grad)
     ensure_electrostatics_ops_registered()
     if batch_idx is None:
@@ -1404,7 +1404,11 @@ def ewald_summation(
     alpha : float, torch.Tensor, or None, default=None
         Ewald splitting parameter. Auto-estimated if None.
     k_vectors : torch.Tensor, optional
-        Pre-computed reciprocal lattice vectors.
+        Pre-computed reciprocal lattice vectors for fixed-cell reuse.
+        Caller-supplied vectors are static metadata assumed to correspond to the
+        current ``cell``; cache-generation derivatives are not recovered. For
+        physical cell/strain derivatives, omit ``k_vectors`` so vectors are
+        regenerated from the differentiable ``cell``.
     k_cutoff : float, optional
         K-space cutoff for generating k_vectors.
     miller_bounds : tuple[int, int, int] or torch.Tensor, optional, keyword-only
