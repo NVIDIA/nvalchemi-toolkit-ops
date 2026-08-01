@@ -2137,8 +2137,9 @@ def query_cell_list(
     num_neighbors : jax.Array, shape (num_rows,), optional
         Pre-shaped neighbors count array.
     target_indices : jax.Array, shape (num_targets,), dtype=int32, optional
-        Compact partial-list source rows. Output row ``r`` maps to atom
-        ``target_indices[r]``; COO source rows remain compact row ids.
+        Indices of the central atoms for compact partial rows. Output row ``r``
+        maps to atom ``target_indices[r]``. In COO output, the first row holds
+        compact row ids.
     strategy : {"auto", "atom_centric", "pair_centric"}, default "auto"
         Cell-list query sub-strategy.  Both strategies produce identical pair
         SETS; only the per-row ordering inside ``neighbor_matrix`` differs

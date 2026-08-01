@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -68,12 +69,34 @@ _jax_select_method_f64 = jax_kernel(
 )
 
 
-def _is_jax_cpu_array(array: jax.Array) -> bool:
-    """Return whether ``array`` is backed by a CPU device."""
+def _jax_array_device_kind(
+    array: jax.Array,
+) -> Literal["cpu", "cuda", "unknown"]:
+    """Return the concrete JAX placement kind, or unknown for tracers."""
     try:
-        return all(device.platform == "cpu" for device in array.devices())
-    except AttributeError:
-        return True
+        devices = tuple(array.devices())
+    except (
+        AttributeError,
+        jax.errors.ConcretizationTypeError,
+        jax.errors.TracerIntegerConversionError,
+    ):
+        return "unknown"
+    if not devices:
+        return "unknown"
+    platforms = {device.platform for device in devices}
+    if platforms == {"cpu"}:
+        return "cpu"
+    if platforms <= {"gpu", "cuda"}:
+        return "cuda"
+    raise ValueError(
+        "Unsupported JAX platform for Warp neighbor execution: "
+        f"{', '.join(sorted(platforms))}",
+    )
+
+
+def _is_jax_cpu_array(array: jax.Array) -> bool:
+    """Return whether ``array`` is concretely backed by a CPU device."""
+    return _jax_array_device_kind(array) == "cpu"
 
 
 def _jax_selector_cpu_fallback(

@@ -377,7 +377,7 @@ def test_naive_pair_fn_optional_buffers_and_returned(device):
 
 
 def test_naive_pair_fn_target_indices_compact_rows(device):
-    """Torch naive ``target_indices + pair_fn`` uses compact source rows."""
+    """Torch naive ``target_indices + pair_fn`` uses compact central rows."""
     positions = torch.tensor(
         [
             [0.0, 0.0, 0.0],
@@ -721,6 +721,63 @@ def test_compiled_pair_fn_batch_naive_pbc_fullgraph_matrix(device):
         positions, nm, nms, nn, nv, nd, pe, pf
     )
     _check_pair_outputs(nm_out, nn_out, nv_out, nd_out, pe_out, pf_out, pp)
+
+
+def test_compiled_pair_fn_batch_naive_pbc_target_indices_fullgraph_matrix(device):
+    """Compiled batch PBC pair functions accept compact targets without max atoms."""
+    _skip_without_cuda(device)
+    positions, cell, pbc = _single_system_pbc(device)
+    batch_idx = torch.zeros(positions.shape[0], dtype=torch.int32, device=device)
+    batch_ptr = torch.tensor([0, positions.shape[0]], dtype=torch.int32, device=device)
+    target_indices = torch.tensor([0, 2], dtype=torch.int32, device=device)
+    cutoff = 0.75
+    max_neighbors = 8
+    cpf = _compiled_pair_fn("batch_naive_pbc_target_fullgraph")
+    nm, nms, nn, nv, nd, pe, pf, pp = _alloc_target_pair_buffers(
+        positions.shape[0], target_indices.shape[0], max_neighbors, device
+    )
+    shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, cutoff, pbc)
+
+    @torch.compile(fullgraph=True)
+    def run(positions, nm, nms, nn, nv, nd, pe, pf):
+        return batch_naive_neighbor_list(
+            positions,
+            cutoff,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=max_neighbors,
+            neighbor_matrix=nm,
+            neighbor_matrix_shifts=nms,
+            num_neighbors=nn,
+            shift_range_per_dimension=shift_range,
+            num_shifts_per_system=num_shifts,
+            max_shifts_per_system=max_shifts,
+            target_indices=target_indices,
+            return_distances=True,
+            return_vectors=True,
+            neighbor_vectors=nv,
+            neighbor_distances=nd,
+            pair_fn=cpf,
+            pair_params=pp,
+            pair_energies=pe,
+            pair_forces=pf,
+        )
+
+    nm_out, nn_out, _shifts, nd_out, nv_out, pe_out, pf_out = run(
+        positions, nm, nms, nn, nv, nd, pe, pf
+    )
+    _check_target_pair_outputs(
+        nm_out,
+        nn_out,
+        nv_out,
+        nd_out,
+        pe_out,
+        pf_out,
+        pp,
+        target_indices,
+    )
 
 
 def test_compiled_pair_fn_cell_list_fullgraph_matrix(device):
@@ -1185,7 +1242,7 @@ def test_batch_naive_pair_fn_optional_buffers_and_returned(device):
 
 
 def test_batch_naive_pair_fn_target_indices_compact_rows(device):
-    """Torch batch_naive ``target_indices + pair_fn`` uses compact source rows."""
+    """Torch batch_naive ``target_indices + pair_fn`` uses compact central rows."""
     positions = torch.tensor(
         [
             [0.0, 0.0, 0.0],

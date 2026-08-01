@@ -380,7 +380,7 @@ partial_coo, partial_ptr, _ = neighbor_list(
 )
 num_partial_pairs = int(partial_ptr[-1])
 compact_rows = jnp.unique(partial_coo[0, :num_partial_pairs])
-print(f"COO compact source rows present: {compact_rows.tolist()}")
+print(f"COO compact central rows present: {compact_rows.tolist()}")
 print(f"COO pointer length: {partial_ptr.shape[0]} (num_targets + 1)")
 
 # %%

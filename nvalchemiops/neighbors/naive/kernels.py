@@ -505,7 +505,7 @@ def _make_scalar_kernel(
         batch_ptr : wp.array, shape (num_systems + 1,), dtype=wp.int32
             Prefix offsets delimiting atoms per system in batched modes.
         target_indices : wp.array, shape (n_targets,), dtype=wp.int32
-            Compact target rows for partial neighbor lists. Zero-size sentinel
+            Indices of central atoms for compact partial rows. Zero-size sentinel
             for full neighbor-list specializations.
         neighbor_matrix1 : wp.array, shape (rows, max_neighbors), dtype=wp.int32
             OUTPUT: Primary neighbor matrix.
@@ -932,15 +932,15 @@ def _make_tile_kernel(
     batched: bool,
     half_fill: bool,
     selective: bool,
+    partial: bool,
 ) -> wp.Kernel:
     """Return a cached CUDA tile-cooperative single-cutoff kernel."""
     _require_supported_dtype(wp_dtype)
-    if batched and pbc_mode is _PBCMode.PREWRAPPED:
-        raise NotImplementedError("batched prewrapped PBC has no tiled kernel")
 
     vec_dtype, mat_dtype = _DTYPE_INFO[wp_dtype]
     BATCHED = bool(batched)
     SELECTIVE = bool(selective)
+    PARTIAL = bool(partial)
     HALF_FILL = wp.constant(bool(half_fill))
     PBC = pbc_mode is not _PBCMode.NONE
     WRAP_ON_ENTRY = pbc_mode is _PBCMode.WRAP_ON_ENTRY
@@ -955,6 +955,7 @@ def _make_tile_kernel(
         num_shifts_arr: wp.array(dtype=wp.int32),
         batch_idx: wp.array(dtype=wp.int32),
         batch_ptr: wp.array(dtype=wp.int32),
+        target_indices: wp.array(dtype=wp.int32),
         neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
         neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2),
         num_neighbors: wp.array(dtype=wp.int32),
@@ -981,11 +982,14 @@ def _make_tile_kernel(
             System index for each atom. Zero-size sentinel for single-system modes.
         batch_ptr : wp.array, shape (num_systems + 1,), dtype=wp.int32
             Prefix offsets delimiting atoms per system in batched modes.
-        neighbor_matrix : wp.array, shape (total_atoms, max_neighbors), dtype=wp.int32
+        target_indices : wp.array, shape (n_targets,), dtype=wp.int32
+            Indices of central atoms for compact partial rows. Zero-size sentinel
+            for full neighbor-list specializations.
+        neighbor_matrix : wp.array, shape (rows, max_neighbors), dtype=wp.int32
             OUTPUT: Neighbor matrix.
-        neighbor_matrix_shifts : wp.array, shape (total_atoms, max_neighbors), dtype=wp.vec3i
+        neighbor_matrix_shifts : wp.array, shape (rows, max_neighbors), dtype=wp.vec3i
             OUTPUT: Periodic shift matrix for PBC modes.
-        num_neighbors : wp.array, shape (total_atoms,), dtype=wp.int32
+        num_neighbors : wp.array, shape (rows,), dtype=wp.int32
             OUTPUT: Per-atom neighbor counts.
         rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool
             Selective rebuild flags. Sentinel for non-selective specializations.
@@ -999,14 +1003,18 @@ def _make_tile_kernel(
         -----
         - Thread launch: Tiled launch with one tile block per ``(shift, source atom)`` pair. No-PBC launchers use a single sentinel shift.
         - Modifies: ``neighbor_matrix``, ``neighbor_matrix_shifts`` in PBC modes, and ``num_neighbors``.
-        PBC, batching, wrap-on-entry, and selective rebuild are static factory
-        specializations. Inactive inputs are zero-size sentinels and are not read.
+        PBC, batching, wrap-on-entry, selective rebuild, and partial rows are
+        static factory specializations. Inactive inputs are zero-size sentinels
+        and are not read.
 
         See Also
         --------
         get_naive_neighbor_matrix_kernel : Return the specialized naive tile-output kernel.
         """
-        ishift, atom_i = wp.tid()
+        ishift, row = wp.tid()
+        atom_i = row
+        if PARTIAL:
+            atom_i = target_indices[row]
         isys = wp.int32(0)
         j_start = wp.int32(0)
         j_end = positions.shape[0]
@@ -1023,25 +1031,57 @@ def _make_tile_kernel(
 
         if PBC:
             if BATCHED and ishift >= num_shifts_arr[isys]:
-                return
+                if not PARTIAL or HALF_FILL or ishift >= 2 * num_shifts_arr[isys] - 1:
+                    return
 
-            shift = _decode_shift_index(ishift, shift_range[isys])
+            shift = wp.vec3i(0, 0, 0)
+            if PARTIAL and not HALF_FILL:
+                if ishift > 0:
+                    shift = _decode_full_shift_index(ishift - 1, shift_range[isys])
+            else:
+                shift = _decode_shift_index(ishift, shift_range[isys])
             current_cell = cell[isys]
             pos_i = positions[atom_i]
-            pos_i_image = _shifted_position(shift, current_cell, pos_i)
+            pos_i_image = pos_i
+            if not PARTIAL:
+                pos_i_image = _shifted_position(shift, current_cell, pos_i)
             atom_i_offset = wp.vec3i(0, 0, 0)
             if WRAP_ON_ENTRY:
                 atom_i_offset = per_atom_cell_offsets[atom_i]
 
-            if shift[0] == 0 and shift[1] == 0 and shift[2] == 0:
+            zero_shift = shift[0] == 0 and shift[1] == 0 and shift[2] == 0
+            if not PARTIAL and zero_shift:
                 j_end = atom_i
 
             for chunk_start in range(j_start, j_end, BLOCK_DIM):
                 atom_j = chunk_start + lane
                 safe_j = wp.min(atom_j, positions.shape[0] - 1)
-                diff = pos_i_image - positions[safe_j]
+                if PARTIAL:
+                    nbr_image = _shifted_position(
+                        shift, current_cell, positions[safe_j]
+                    )
+                    diff = nbr_image - pos_i
+                else:
+                    diff = pos_i_image - positions[safe_j]
                 dist_sq = wp.dot(diff, diff)
-                if atom_j < j_end and dist_sq < cutoff_sq:
+                active = atom_j < j_end and dist_sq < cutoff_sq
+                if PARTIAL and zero_shift and atom_j == atom_i:
+                    active = False
+                if PARTIAL and HALF_FILL and zero_shift and atom_j <= atom_i:
+                    active = False
+                if active:
+                    if PARTIAL:
+                        stored_shift = shift
+                        if WRAP_ON_ENTRY:
+                            atom_j_offset = per_atom_cell_offsets[atom_j]
+                            stored_shift = _correct_shift(
+                                shift, atom_i_offset, atom_j_offset
+                            )
+                        pos = wp.atomic_add(num_neighbors, row, 1)
+                        if pos < max_neighbors:
+                            neighbor_matrix[row, pos] = atom_j
+                            neighbor_matrix_shifts[row, pos] = stored_shift
+                        continue
                     # Tile traversal writes the shifted atom as the row;
                     # match the scalar row-local shift convention.
                     stored_shift = -shift
@@ -1065,12 +1105,23 @@ def _make_tile_kernel(
             return
 
         pos_i = positions[atom_i]
-        for chunk_start in range(atom_i + 1, j_end, BLOCK_DIM):
+        no_pbc_start = atom_i + 1
+        if PARTIAL and not HALF_FILL:
+            no_pbc_start = j_start
+        for chunk_start in range(no_pbc_start, j_end, BLOCK_DIM):
             atom_j = chunk_start + lane
             safe_j = wp.min(atom_j, positions.shape[0] - 1)
             diff = pos_i - positions[safe_j]
             dist_sq = wp.dot(diff, diff)
-            if atom_j < j_end and dist_sq < cutoff_sq:
+            active = atom_j < j_end and dist_sq < cutoff_sq
+            if PARTIAL and atom_j == atom_i:
+                active = False
+            if active:
+                if PARTIAL:
+                    pos = wp.atomic_add(num_neighbors, row, 1)
+                    if pos < max_neighbors:
+                        neighbor_matrix[row, pos] = atom_j
+                    continue
                 _update_neighbor_matrix(
                     atom_i,
                     atom_j,
@@ -1091,7 +1142,11 @@ def _make_tile_kernel(
             selective=SELECTIVE,
         ),
         wp_dtype=wp_dtype,
-        features=("tile", "half" if bool(half_fill) else ""),
+        features=(
+            "tile",
+            "half" if bool(half_fill) else "",
+            "partial" if PARTIAL else "",
+        ),
     )
     return set_fn_doc(
         set_fn_name(_kernel, name),
@@ -1105,6 +1160,7 @@ def _make_tile_kernel(
                 ("batched", BATCHED),
                 ("half_fill", bool(half_fill)),
                 ("selective", SELECTIVE),
+                ("partial", PARTIAL),
             ),
         ),
     )
@@ -1133,14 +1189,19 @@ def get_naive_neighbor_matrix_kernel(
     mode = _parse_pbc_mode(pbc_mode)
     strat = _parse_strategy(strategy)
     if strat is _NaiveStrategy.TILE:
-        if partial or return_vectors or return_distances or pair_fn is not None:
+        if return_vectors or return_distances or pair_fn is not None:
             raise NotImplementedError("pair outputs currently use strategy='scalar'")
+        if partial and selective:
+            raise NotImplementedError(
+                "Partial tile kernels do not support selective rebuilds.",
+            )
         return _make_tile_kernel(
             wp_dtype,
             pbc_mode=mode,
             batched=batched,
             half_fill=half_fill,
             selective=selective,
+            partial=partial,
         )
     return _make_scalar_kernel(
         "single_cutoff",

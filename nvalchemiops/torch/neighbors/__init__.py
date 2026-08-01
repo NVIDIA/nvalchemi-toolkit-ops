@@ -225,13 +225,14 @@ def neighbor_list(
             cell list construction.
         max_atoms_per_system : int, optional
             Maximum number of atoms per system. Used in batch naive implementation
-            with PBC. If not provided, it will be computed automatically.
-            Can be provided to avoid CUDA synchronization.
+            with PBC for full-row launch sizing. Compact partial paths, including
+            geometry and pair-output paths, ignore this bound and do not require it.
+            Full-row calls infer it when omitted, which may synchronize.
         target_indices : torch.Tensor, optional
-            Restrict the source rows of the neighbor list to this subset of atom
-            indices (partial neighbor list). Matrix outputs use
-            ``len(target_indices)`` compact rows; COO source rows are compact row
-            ids. Supported by naive and cell-list methods; not by cluster_tile.
+            Select the central atoms for a partial neighbor list. Matrix outputs
+            use ``len(target_indices)`` compact rows; in COO output the first
+            row holds compact row ids. Supported by naive and cell-list methods;
+            not by cluster_tile.
         return_distances : bool, default=False
             Also return per-pair distances ``|r_ij|`` in matrix layout
             ``(num_rows, max_neighbors)``, where ``num_rows`` is
@@ -292,8 +293,8 @@ def neighbor_list(
               for partial lists. Row ``r`` contains neighbors for atom ``r`` or
               ``target_indices[r]`` respectively.
             - If ``return_neighbor_list=True``: Returns ``neighbor_list`` with shape
-              (2, num_pairs), dtype int32, in COO format [source_rows, target_atoms].
-              With ``target_indices``, source rows are compact row ids.
+              (2, num_pairs), dtype int32, in COO format [central_rows, neighbor_atoms].
+              With ``target_indices``, central rows are compact row ids.
 
         - **num_neighbor_data** (tensor): Information about the number of neighbors for each atom,
           format depends on ``return_neighbor_list``:

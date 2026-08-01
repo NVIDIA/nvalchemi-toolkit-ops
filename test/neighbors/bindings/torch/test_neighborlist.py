@@ -2041,6 +2041,8 @@ class TestNeighborListFineGrainedMethodEquivalence:
     @pytest.mark.parametrize("method", ["naive_scalar", "naive_tile"])
     def test_naive_suboptions_match_naive(self, device, method):
         """``naive_scalar`` / ``naive_tile`` match the base ``naive`` pair set."""
+        if method == "naive_tile" and device == "cpu":
+            pytest.skip("CUDA is required for naive_tile.")
         positions, cell, pbc = self._periodic_float32_system(device)
         cutoff = 5.0
 
@@ -2061,6 +2063,43 @@ class TestNeighborListFineGrainedMethodEquivalence:
             return_neighbor_list=True,
         )
         torch.testing.assert_close(_sorted_pairs(fine[0]), _sorted_pairs(base[0]))
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA is required for naive_tile partial"
+    )
+    def test_naive_tile_partial_smoke(self):
+        """Fine-grained naive_tile reaches compact unbatched and batched routes."""
+        device = "cuda"
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [2.0, 0.0, 0.0], [2.5, 0.0, 0.0]],
+            dtype=torch.float32,
+            device=device,
+        )
+        targets = torch.tensor([2, 0], dtype=torch.int32, device=device)
+        matrix, counts = neighbor_list(
+            positions,
+            0.75,
+            max_neighbors=4,
+            target_indices=targets,
+            method="naive_tile",
+        )
+        assert matrix.shape == (2, 4)
+        assert counts.shape == (2,)
+
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device=device)
+        batch_matrix, batch_counts = neighbor_list(
+            positions,
+            0.75,
+            max_neighbors=4,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            target_indices=targets,
+            method="batch_naive_tile",
+        )
+        assert batch_matrix.shape == (2, 4)
+        assert batch_counts.shape == (2,)
 
     @pytest.mark.parametrize(
         "device",

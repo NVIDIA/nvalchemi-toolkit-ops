@@ -986,8 +986,9 @@ neighbor_matrix_half, num_neighbors_half, shifts_half = neighbor_list(
 ```{note}
 In JAX, `half_fill` and `fill_value` are supported by `naive`, `batch_naive`,
 `cell_list`, and `batch_cell_list` (the cell-list paths use `graph_mode="none"`
-for `half_fill`).  The `naive` tiled kernel (`strategy="tile"`) is
-CUDA-only and opt-in; JAX `naive` auto-selection still uses the scalar kernel.
+for `half_fill`). The topology-only `naive` tiled kernel
+(`strategy="tile"`) is CUDA-only. Explicit tile supports batched compact rows;
+batched partial `auto` remains scalar, and geometry/pair outputs use scalar.
 ```
 
 :::
@@ -1433,8 +1434,9 @@ cutoff1, cutoff2 = 3.0, 6.0
 
 Pass `target_indices` (an `int32` array of atom indices) to build neighbors only for a
 subset of *central* atoms. Output rows are **compact**: there are `num_targets` rows
-and row `r` corresponds to atom `target_indices[r]`. In COO output the source index
-`nl[0]` is the compact row in `[0, num_targets)` (map it back through `target_indices`):
+and row `r` corresponds to atom `target_indices[r]`. In COO output the central-row
+index `nl[0]` is the compact row in `[0, num_targets)` (map it back through
+`target_indices`):
 
 ```python
 from nvalchemiops.torch.neighbors import neighbor_list
@@ -1451,6 +1453,29 @@ PyTorch, and JAX, including low-level JAX cell-list query wrappers; `cluster_til
 does not support `target_indices`. On JAX, `cell_list` `target_indices` runs through
 the `atom_centric` strategy (`pair_centric` plus `target_indices` is rejected;
 identical results are available via `atom_centric`).
+
+For topology-only partial `naive` lists, `strategy="tile"` is CUDA-only and is
+available in both PyTorch and JAX for no-PBC, wrapped PBC, and prewrapped PBC.
+For native, PyTorch, and eager JAX single-system CUDA calls, `strategy="auto"`
+selects a strategy from the dtype and atom count. JAX traced partial `auto`
+calls without `graph_mode="warp"` and batched partial `auto` calls remain
+scalar. `graph_mode="warp"` requires tile and routes `auto` to tile. Explicit
+tile supports both single and batched compact rows.
+Geometry buffers, distances, vectors, pair functions, and pair energy/force
+outputs remain scalar-only. Scalar and tiled rows can differ in order; compare
+counts and sorted `(neighbor, periodic_shift)` multisets. JAX additionally
+supports `graph_mode="warp"` replay with stable caller-owned output buffers
+donated through `jax.jit`. Wrapped PBC also requires stable inverse-cell and
+wrapping scratch buffers; cutoff, `half_fill`, and PBC shift metadata are
+statically specialized. There is no corresponding Torch graph-replay API.
+
+`target_indices` must contain unique, in-bounds global atom indices. Violating
+this precondition is undefined behavior. Naive partial lists do not support
+`rebuild_flags`; this restriction does not apply to cell-list APIs.
+
+For batched PBC naive lists, `max_atoms_per_system` is used only for full-row
+launch sizing. Every compact partial path, including geometry and pair-output
+paths, ignores it and does not require the caller to provide it.
 
 ### Per-Pair Distances and Vectors
 
@@ -1560,7 +1585,7 @@ the differentiable-geometry path — a traced (jit'd) cutoff is not yet supporte
 On JAX, `naive` / `batch_naive` and `cell_list` / `batch_cell_list` support
 `target_indices` (partial neighbor lists) combined with pair outputs: the
 compact output has `num_targets` rows (row `r` → atom `target_indices[r]`), and
-in COO mode the source index `nl[0]` is the compact row in `[0, num_targets)`
+in COO mode the central-row index `nl[0]` is the compact row in `[0, num_targets)`
 (mapped back via `target_indices`), matching the Torch contract.
 
 For PyTorch `torch.compile(fullgraph=True)`, pass a pre-specialized wrapper from

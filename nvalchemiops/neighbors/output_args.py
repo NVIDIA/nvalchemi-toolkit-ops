@@ -204,7 +204,7 @@ def _prepare_pair_output_args(
     ``target_indices`` is validated upstream by the naive and cell-list
     launchers.  Cluster-tile launchers do not accept a ``target_indices``
     kwarg because those kernels iterate emitted tile pairs rather than
-    source atoms.
+    central atoms.
     """
     _validate_pair_output_kwargs(
         wp_dtype=wp_dtype,

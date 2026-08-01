@@ -86,18 +86,18 @@ def _neighbor_shift_sets(
     neighbor_matrix: torch.Tensor,
     neighbor_matrix_shifts: torch.Tensor,
     num_neighbors: torch.Tensor,
-) -> list[set[tuple[int, tuple[int, int, int]]]]:
-    """Return row-local ``(neighbor, shift)`` sets for order-independent checks."""
+) -> list[list[tuple[int, tuple[int, int, int]]]]:
+    """Return row-local ``(neighbor, shift)`` multisets for order-independent checks."""
     matrix_cpu = neighbor_matrix.detach().cpu()
     shifts_cpu = neighbor_matrix_shifts.detach().cpu()
     counts_cpu = num_neighbors.detach().cpu()
     rows = []
     for row in range(matrix_cpu.shape[0]):
-        row_items = set()
+        row_items = []
         for slot in range(int(counts_cpu[row].item())):
             shift = tuple(int(x) for x in shifts_cpu[row, slot].tolist())
-            row_items.add((int(matrix_cpu[row, slot].item()), shift))
-        rows.append(row_items)
+            row_items.append((int(matrix_cpu[row, slot].item()), shift))
+        rows.append(sorted(row_items))
     return rows
 
 
@@ -579,6 +579,7 @@ class TestBatchNaiveWpLaunchers:
                 wp_num_shifts,
                 wp_batch_idx,
                 wp_batch_ptr,
+                sentinels.target_indices,
                 wp.from_torch(nm_tiled, dtype=wp.int32),
                 wp.from_torch(ns_tiled, dtype=wp.vec3i),
                 wp.from_torch(nn_tiled, dtype=wp.int32),
@@ -590,6 +591,141 @@ class TestBatchNaiveWpLaunchers:
         assert _neighbor_shift_sets(nm_tiled, ns_tiled, nn_tiled) == (
             _neighbor_shift_sets(nm_scalar, ns_scalar, nn_scalar)
         )
+
+    @pytest.mark.gpu
+    def test_batched_pbc_partial_tiled_matches_scalar(self):
+        """Partial batched PBC tile output matches scalar row-local topology."""
+        device = "cuda:0"
+        dtype = torch.float32
+        atoms_per_system = [4, 5]
+        positions, cell, pbc, _ = create_batch_systems(
+            num_systems=len(atoms_per_system),
+            atoms_per_system=atoms_per_system,
+            dtype=dtype,
+            device=device,
+        )
+        batch_idx, batch_ptr = create_batch_idx_and_ptr(atoms_per_system, device)
+        target_indices = torch.tensor([0, 3, 4, 8], dtype=torch.int32, device=device)
+        cutoff = 1.2
+        max_neighbors = 25
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+            cell,
+            cutoff,
+            pbc,
+        )
+
+        def build(strategy: str) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            neighbor_matrix = torch.full(
+                (target_indices.shape[0], max_neighbors),
+                -1,
+                dtype=torch.int32,
+                device=device,
+            )
+            neighbor_matrix_shifts = torch.zeros(
+                (target_indices.shape[0], max_neighbors, 3),
+                dtype=torch.int32,
+                device=device,
+            )
+            num_neighbors = torch.zeros(
+                target_indices.shape[0],
+                dtype=torch.int32,
+                device=device,
+            )
+            batch_naive_neighbor_matrix_pbc(
+                positions=wp.from_torch(positions, dtype=get_wp_vec_dtype(dtype)),
+                cell=wp.from_torch(cell, dtype=get_wp_mat_dtype(dtype)),
+                cutoff=cutoff,
+                batch_ptr=wp.from_torch(batch_ptr, dtype=wp.int32),
+                batch_idx=wp.from_torch(batch_idx, dtype=wp.int32),
+                shift_range=wp.from_torch(shift_range, dtype=wp.vec3i),
+                num_shifts_arr=wp.from_torch(num_shifts, dtype=wp.int32),
+                max_shifts_per_system=max_shifts,
+                neighbor_matrix=wp.from_torch(neighbor_matrix, dtype=wp.int32),
+                neighbor_matrix_shifts=wp.from_torch(
+                    neighbor_matrix_shifts,
+                    dtype=wp.vec3i,
+                ),
+                num_neighbors=wp.from_torch(num_neighbors, dtype=wp.int32),
+                wp_dtype=get_wp_dtype(dtype),
+                device=device,
+                max_atoms_per_system=None,
+                target_indices=wp.from_torch(target_indices, dtype=wp.int32),
+                strategy=strategy,
+            )
+            return neighbor_matrix, neighbor_matrix_shifts, num_neighbors
+
+        scalar = build("scalar")
+        tiled = build("tile")
+
+        assert torch.equal(tiled[2], scalar[2])
+        assert _neighbor_shift_sets(*tiled) == _neighbor_shift_sets(*scalar)
+
+    @pytest.mark.gpu
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_batched_pbc_prewrapped_tiled_matches_scalar(self, dtype):
+        """Explicit prewrapped PBC tile output matches scalar topology."""
+        device = "cuda:0"
+        atoms_per_system = [4, 5]
+        positions, cell, pbc, _ = create_batch_systems(
+            num_systems=len(atoms_per_system),
+            atoms_per_system=atoms_per_system,
+            dtype=dtype,
+            device=device,
+        )
+        batch_idx, batch_ptr = create_batch_idx_and_ptr(atoms_per_system, device)
+        cutoff = 1.2
+        max_neighbors = 25
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+            cell,
+            cutoff,
+            pbc,
+        )
+
+        def build(strategy: str) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            neighbor_matrix = torch.full(
+                (positions.shape[0], max_neighbors),
+                -1,
+                dtype=torch.int32,
+                device=device,
+            )
+            neighbor_matrix_shifts = torch.zeros(
+                (positions.shape[0], max_neighbors, 3),
+                dtype=torch.int32,
+                device=device,
+            )
+            num_neighbors = torch.zeros(
+                positions.shape[0],
+                dtype=torch.int32,
+                device=device,
+            )
+            batch_naive_neighbor_matrix_pbc(
+                positions=wp.from_torch(positions, dtype=get_wp_vec_dtype(dtype)),
+                cell=wp.from_torch(cell, dtype=get_wp_mat_dtype(dtype)),
+                cutoff=cutoff,
+                batch_ptr=wp.from_torch(batch_ptr, dtype=wp.int32),
+                batch_idx=wp.from_torch(batch_idx, dtype=wp.int32),
+                shift_range=wp.from_torch(shift_range, dtype=wp.vec3i),
+                num_shifts_arr=wp.from_torch(num_shifts, dtype=wp.int32),
+                max_shifts_per_system=max_shifts,
+                neighbor_matrix=wp.from_torch(neighbor_matrix, dtype=wp.int32),
+                neighbor_matrix_shifts=wp.from_torch(
+                    neighbor_matrix_shifts,
+                    dtype=wp.vec3i,
+                ),
+                num_neighbors=wp.from_torch(num_neighbors, dtype=wp.int32),
+                wp_dtype=get_wp_dtype(dtype),
+                device=device,
+                max_atoms_per_system=max(atoms_per_system),
+                wrap_positions=False,
+                strategy=strategy,
+            )
+            return neighbor_matrix, neighbor_matrix_shifts, num_neighbors
+
+        scalar = build("scalar")
+        tiled = build("tile")
+
+        assert torch.equal(tiled[2], scalar[2])
+        assert _neighbor_shift_sets(*tiled) == _neighbor_shift_sets(*scalar)
 
     @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])

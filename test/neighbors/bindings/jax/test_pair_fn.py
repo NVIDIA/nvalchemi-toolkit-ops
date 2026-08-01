@@ -145,7 +145,7 @@ def test_naive_pair_fn_no_pbc_matrix(dtype):
 
 
 def test_naive_pair_fn_target_indices_compact_rows():
-    """JAX naive ``target_indices + pair_fn`` uses compact source rows."""
+    """JAX naive ``target_indices + pair_fn`` uses compact central rows."""
     positions = jnp.array(
         [
             [0.0, 0.0, 0.0],

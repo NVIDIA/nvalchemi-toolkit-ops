@@ -19,7 +19,7 @@ Targeted Lennard-Jones Pair Outputs
 
 This example demonstrates four neighbor-list features used together:
 
-1. ``target_indices`` for compact source rows
+1. ``target_indices`` for compact central-atom rows
 2. Per-neighbor vectors and distances
 3. An inline Warp ``pair_fn`` that computes Lennard-Jones energies and forces
 4. ``CompiledPairFn`` for CUDA fixed-shape ``torch.compile(fullgraph=True)`` calls
@@ -122,7 +122,7 @@ print(f"\nFCC Argon box: {num_atoms} atoms")
 print(f"Box length: {cell[0, 0, 0].item():.2f} Å")
 print(f"LJ parameters: epsilon={EPSILON_AR:.4f} eV, sigma={SIGMA_AR:.2f} Å")
 print(f"Cutoff: {CUTOFF:.2f} Å")
-print(f"Targeted source rows: {target_indices.numel()} of {num_atoms}")
+print(f"Selected central atoms: {target_indices.numel()} of {num_atoms}")
 print(f"Estimated max_neighbors: {max_neighbors}")
 
 

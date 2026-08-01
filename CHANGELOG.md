@@ -34,6 +34,27 @@
 
 ### Added
 
+- JAX and Torch naive neighbor APIs now expose CUDA-only topology-only tiled compact
+  `target_indices` rows for no-PBC, wrapped PBC, and prewrapped PBC. For
+  native, Torch, and eager JAX single-system CUDA calls, partial topology-only
+  `auto` selects a strategy from the dtype and atom count. JAX traced partial
+  `auto` calls without `graph_mode="warp"` and batched partial `auto` calls
+  remain scalar; `graph_mode="warp"` routes partial `auto` to tile.
+  Explicit tile supports single and batched compact rows. Geometry and pair
+  outputs use scalar, and partial lists reject `rebuild_flags` under every
+  strategy. Scalar and tiled results have the same per-row neighbor and
+  periodic-shift multisets, but their entry ordering may differ; `max_neighbors`
+  still caps stored entries, while counts remain uncapped and COO conversion
+  raises `NeighborOverflowError` when a row exceeds the cap.
+- JAX `naive_neighbor_list(..., graph_mode="warp")` supports opt-in replay for
+  topology-only tiled `target_indices` calls. Replay resets caller-owned,
+  persistent compact output buffers, which must be donated through `jax.jit`;
+  wrapped PBC also requires stable inverse-cell and wrapping scratch buffers.
+  Cutoff, `half_fill`, and PBC shift metadata are statically specialized.
+- Batched PBC `max_atoms_per_system` is required only for full-row launch sizing;
+  every compact partial path, including geometry and pair-output paths, ignores
+  it. Naive partial lists reject `target_indices` combined with
+  `rebuild_flags`; cell-list behavior is unchanged.
 - Monopole Torch and JAX Ewald, PME, and slab entry points accept keyword-only
   `energy_reduction="atom" | "system"` (default `"atom"`). `"atom"` returns
   per-atom energies `(N,)`; `"system"` returns per-system totals `(B,)`.

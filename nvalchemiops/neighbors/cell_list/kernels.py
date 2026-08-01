@@ -753,7 +753,7 @@ def _fill_target_row_lookup(
     Parameters
     ----------
     target_indices : wp.array, shape (n_targets,), dtype=wp.int32
-        Target atom indices in compact row order.
+        Central-atom indices in compact row order.
     target_row_lookup : wp.array, shape (total_atoms,), dtype=wp.int32
         OUTPUT: Atom-id to compact row lookup.
 
@@ -1000,7 +1000,7 @@ def _make_atom_centric_kernel(
         cell_offsets : wp.array, shape (num_systems,), dtype=wp.int32
             Global cell offset per system. Sentinel in single-system mode.
         target_indices : wp.array, shape (n_targets,), dtype=wp.int32
-            Compact target rows for partial neighbor lists. Sentinel for full mode.
+            Central-atom indices for compact partial rows. Sentinel for full mode.
         neighbor_matrix : wp.array, shape (rows, max_neighbors), dtype=wp.int32
             OUTPUT: Neighbor atom indices.
         neighbor_matrix_shifts : wp.array, shape (rows, max_neighbors), dtype=wp.vec3i

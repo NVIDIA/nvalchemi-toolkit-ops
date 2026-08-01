@@ -26,12 +26,38 @@ import pytest
 
 from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
 from nvalchemiops.jax.neighbors.neighbor_utils import compute_naive_num_shifts
+from nvalchemiops.neighbors.neighbor_utils import NeighborOverflowError
 
 from .conftest import requires_gpu
 
 pytestmark = requires_gpu
 
 batch_naive_module = import_module("nvalchemiops.jax.neighbors.batch_naive")
+
+
+def _sorted_row_multisets(
+    neighbor_matrix: jax.Array,
+    num_neighbors: jax.Array,
+    neighbor_matrix_shifts: jax.Array | None = None,
+) -> list[list[tuple[int, ...]]]:
+    """Return active neighbor rows as sorted multisets for parity checks."""
+    matrix_np = np.asarray(neighbor_matrix)
+    counts_np = np.asarray(num_neighbors)
+    shifts_np = (
+        np.asarray(neighbor_matrix_shifts)
+        if neighbor_matrix_shifts is not None
+        else None
+    )
+    rows = []
+    for row, count in enumerate(counts_np):
+        values = []
+        for col in range(int(count)):
+            item = (int(matrix_np[row, col]),)
+            if shifts_np is not None:
+                item += tuple(int(value) for value in shifts_np[row, col])
+            values.append(item)
+        rows.append(sorted(values))
+    return rows
 
 
 def _distances_from_neighbor_list(
@@ -336,7 +362,6 @@ class TestBatchNaiveNeighborList:
                 shift_range_per_dimension=shift_range,
                 num_shifts_per_system=num_shifts,
                 max_shifts_per_system=max_shifts,
-                max_atoms_per_system=2,
                 target_indices=target_indices,
             )
 
@@ -371,19 +396,153 @@ class TestBatchNaiveNeighborList:
                 target_indices=jnp.array([2, 0], dtype=jnp.int32),
             )
 
-    def test_target_indices_rejects_tile_strategy(self):
-        """Explicit tiled batch naive mode does not support partial rows."""
-        positions = jnp.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=jnp.float32)
-        batch_idx = jnp.array([0, 0], dtype=jnp.int32)
-        with pytest.raises(NotImplementedError, match="target_indices"):
+    @pytest.mark.gpu
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    @pytest.mark.parametrize("half_fill", [False, True])
+    @pytest.mark.parametrize("pbc_mode", ["none", "wrapped", "prewrapped"])
+    def test_target_indices_tile_matches_scalar(self, dtype, half_fill, pbc_mode):
+        """Explicit tile matches scalar compact topology across batch systems."""
+        device = jax.devices("gpu")[0]
+        positions = jax.device_put(
+            jnp.array(
+                [
+                    [0.0, 0.0, 0.0],
+                    [3.5, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [2.0, 0.0, 0.0],
+                ],
+                dtype=dtype,
+            ),
+            device,
+        )
+        batch_idx = jax.device_put(jnp.array([0, 0, 1, 1], dtype=jnp.int32), device)
+        batch_ptr = jax.device_put(jnp.array([0, 2, 4], dtype=jnp.int32), device)
+        target_indices = jax.device_put(jnp.array([2, 0], dtype=jnp.int32), device)
+        kwargs = {}
+        if pbc_mode != "none":
+            cell = jax.device_put(
+                jnp.stack([jnp.eye(3, dtype=dtype) * 4.0] * 2),
+                device,
+            )
+            pbc = jax.device_put(jnp.ones((2, 3), dtype=jnp.bool_), device)
+            shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+                cell,
+                1.1,
+                pbc,
+            )
+            kwargs = {
+                "cell": cell,
+                "pbc": pbc,
+                "wrap_positions": pbc_mode == "wrapped",
+                "shift_range_per_dimension": shift_range,
+                "num_shifts_per_system": num_shifts,
+                "max_shifts_per_system": int(max_shifts),
+                "max_atoms_per_system": 2,
+            }
+        scalar = batch_naive_neighbor_list(
+            positions,
+            1.1,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=32,
+            half_fill=half_fill,
+            target_indices=target_indices,
+            strategy="scalar",
+            **kwargs,
+        )
+        tiled = batch_naive_neighbor_list(
+            positions,
+            1.1,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=32,
+            half_fill=half_fill,
+            target_indices=target_indices,
+            strategy="tile",
+            **kwargs,
+        )
+        np.testing.assert_array_equal(np.asarray(scalar[1]), np.asarray(tiled[1]))
+        scalar_shifts = scalar[2] if pbc_mode != "none" else None
+        tiled_shifts = tiled[2] if pbc_mode != "none" else None
+        assert _sorted_row_multisets(scalar[0], scalar[1], scalar_shifts) == (
+            _sorted_row_multisets(tiled[0], tiled[1], tiled_shifts)
+        )
+
+    @pytest.mark.gpu
+    def test_target_indices_tile_batch_contracts(self):
+        """Batched tile preserves COO, fill, empty, and overflow contracts."""
+        device = jax.devices("gpu")[0]
+        positions = jax.device_put(
+            jnp.array(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.4, 0.0, 0.0],
+                    [0.8, 0.0, 0.0],
+                    [3.0, 0.0, 0.0],
+                ],
+                dtype=jnp.float32,
+            ),
+            device,
+        )
+        batch_idx = jax.device_put(jnp.zeros(4, dtype=jnp.int32), device)
+        batch_ptr = jax.device_put(jnp.array([0, 4], dtype=jnp.int32), device)
+        targets = jax.device_put(jnp.array([0, 3], dtype=jnp.int32), device)
+        stale_matrix = jax.device_put(jnp.full((2, 1), 99, dtype=jnp.int32), device)
+        stale_counts = jax.device_put(jnp.full((2,), 99, dtype=jnp.int32), device)
+
+        matrix, counts = batch_naive_neighbor_list(
+            positions,
+            1.0,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=1,
+            fill_value=-7,
+            neighbor_matrix=stale_matrix,
+            num_neighbors=stale_counts,
+            target_indices=targets,
+            strategy="tile",
+        )
+        np.testing.assert_array_equal(np.asarray(counts), [2, 0])
+        assert int(matrix[1, 0]) == -7
+
+        with pytest.raises(NeighborOverflowError):
             batch_naive_neighbor_list(
                 positions,
                 1.0,
                 batch_idx=batch_idx,
-                max_neighbors=4,
-                target_indices=jnp.array([0], dtype=jnp.int32),
+                batch_ptr=batch_ptr,
+                max_neighbors=1,
+                fill_value=-7,
+                target_indices=targets,
                 strategy="tile",
+                return_neighbor_list=True,
             )
+
+        empty_matrix, empty_counts = batch_naive_neighbor_list(
+            positions,
+            1.0,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=4,
+            fill_value=-3,
+            target_indices=jnp.empty((0,), dtype=jnp.int32),
+            strategy="tile",
+        )
+        assert empty_matrix.shape == (0, 4)
+        assert empty_counts.shape == (0,)
+
+        zero_matrix, zero_counts = batch_naive_neighbor_list(
+            positions,
+            0.0,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=4,
+            fill_value=-3,
+            target_indices=targets,
+            strategy="tile",
+        )
+        np.testing.assert_array_equal(np.asarray(zero_counts), [0, 0])
+        np.testing.assert_array_equal(np.asarray(zero_matrix), -3)
 
     def test_topology_only_grad_no_pbc_is_zero(self):
         """Topology-only batch outputs do not differentiate through Warp FFI."""
@@ -760,10 +919,159 @@ class TestBatchNaiveJIT:
         assert num_neighbors.shape == (4,)
         assert jnp.all(num_neighbors >= 0)
 
+    @pytest.mark.gpu
+    def test_jit_tile_partial_no_pbc(self):
+        """JIT tiled partial output supports runtime compact targets."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [2.0, 0.0, 0.0],
+                [2.5, 0.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+
+        @jax.jit
+        def jitted_batch_naive(positions, neighbor_matrix, num_neighbors, targets):
+            return batch_naive_neighbor_list(
+                positions,
+                cutoff=0.75,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                neighbor_matrix=neighbor_matrix,
+                num_neighbors=num_neighbors,
+                target_indices=targets,
+                strategy="tile",
+            )
+
+        for targets in (
+            jnp.array([2, 0], dtype=jnp.int32),
+            jnp.array([0, 2], dtype=jnp.int32),
+        ):
+            tiled_nm, tiled_nn = jitted_batch_naive(
+                positions,
+                jnp.full((2, 4), 4, dtype=jnp.int32),
+                jnp.zeros((2,), dtype=jnp.int32),
+                targets,
+            )
+            scalar_nm, scalar_nn = batch_naive_neighbor_list(
+                positions,
+                0.75,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=4,
+                target_indices=targets,
+                strategy="scalar",
+            )
+            np.testing.assert_array_equal(np.asarray(tiled_nn), np.asarray(scalar_nn))
+            assert _sorted_row_multisets(tiled_nm, tiled_nn) == _sorted_row_multisets(
+                scalar_nm,
+                scalar_nn,
+            )
+
+    @pytest.mark.gpu
+    def test_jit_tile_partial_pbc(self):
+        """JIT tiled partial PBC output uses concrete launch dimensions."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [3.5, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [2.0, 0.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+        cell = jnp.stack([jnp.eye(3, dtype=jnp.float32) * 4.0] * 2)
+        pbc = jnp.ones((2, 3), dtype=jnp.bool_)
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, 1.1, pbc)
+
+        @jax.jit
+        def jitted_batch_naive(
+            positions,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            num_neighbors,
+            targets,
+        ):
+            return batch_naive_neighbor_list(
+                positions,
+                cutoff=1.1,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                cell=cell,
+                pbc=pbc,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                num_neighbors=num_neighbors,
+                shift_range_per_dimension=shift_range,
+                num_shifts_per_system=num_shifts,
+                max_shifts_per_system=int(max_shifts),
+                max_atoms_per_system=2,
+                target_indices=targets,
+                strategy="tile",
+            )
+
+        targets = jnp.array([2, 0], dtype=jnp.int32)
+        tiled_nm, tiled_nn, tiled_shifts = jitted_batch_naive(
+            positions,
+            jnp.full((2, 32), 4, dtype=jnp.int32),
+            jnp.zeros((2, 32, 3), dtype=jnp.int32),
+            jnp.zeros((2,), dtype=jnp.int32),
+            targets,
+        )
+        scalar_nm, scalar_nn, scalar_shifts = batch_naive_neighbor_list(
+            positions,
+            1.1,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=32,
+            max_atoms_per_system=2,
+            target_indices=targets,
+            strategy="scalar",
+        )
+        np.testing.assert_array_equal(np.asarray(tiled_nn), np.asarray(scalar_nn))
+        assert _sorted_row_multisets(tiled_nm, tiled_nn, tiled_shifts) == (
+            _sorted_row_multisets(scalar_nm, scalar_nn, scalar_shifts)
+        )
+
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
 class TestBatchNaiveSelectiveRebuildFlags:
     """Test selective rebuild (rebuild_flags) for batch_naive_neighbor_list JAX binding."""
+
+    def test_partial_rebuild_flags_are_rejected(self, dtype):
+        """Compact batch rows cannot be combined with selective rebuild flags."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [10.0, 0.0, 0.0],
+                [10.5, 0.0, 0.0],
+            ],
+            dtype=dtype,
+        )
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+        with pytest.raises(
+            NotImplementedError,
+            match=r"^Partial neighbor lists do not support rebuild_flags$",
+        ):
+            batch_naive_neighbor_list(
+                positions,
+                1.0,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=4,
+                target_indices=jnp.array([2, 0], dtype=jnp.int32),
+                rebuild_flags=jnp.ones((2,), dtype=jnp.bool_),
+            )
 
     def test_no_rebuild_preserves_data(self, dtype):
         """All flags False: neighbor data should remain unchanged for all systems."""

@@ -248,7 +248,8 @@ def neighbor_list(
             cell list construction.
         max_atoms_per_system : int, optional
             Maximum number of atoms per system. Used in batch naive implementation
-            with PBC. If not provided, it will be computed automatically.
+            with PBC for full-row launch sizing. Every compact partial path,
+            including geometry and pair-output paths, ignores this bound.
             Can be provided to avoid CUDA synchronization.
         return_distances : bool, default=False
             Also return per-pair distances ``|r_ij|``, differentiable w.r.t.
@@ -303,8 +304,8 @@ def neighbor_list(
               for partial lists. Row ``r`` contains neighbors for atom ``r`` or
               ``target_indices[r]`` respectively.
             - If ``return_neighbor_list=True``: Returns ``neighbor_list`` with shape
-              (2, num_pairs), dtype int32, in COO format [source_rows, target_atoms].
-              With ``target_indices``, source rows are compact row ids.
+              (2, num_pairs), dtype int32, in COO format [central_rows, neighbor_atoms].
+              With ``target_indices``, central rows are compact row ids.
 
         - **num_neighbor_data** (array): Information about the number of neighbors for each atom,
           format depends on ``return_neighbor_list``:

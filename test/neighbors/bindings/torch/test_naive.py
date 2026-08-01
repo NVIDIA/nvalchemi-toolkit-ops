@@ -21,8 +21,15 @@ import pytest
 import torch
 import warp as wp
 
-from nvalchemiops.torch.neighbors.naive import naive_neighbor_list
-from nvalchemiops.torch.neighbors.neighbor_utils import compute_naive_num_shifts
+from nvalchemiops.torch.neighbors.naive import (
+    _naive_neighbor_matrix_no_pbc,
+    _naive_neighbor_matrix_pbc,
+    naive_neighbor_list,
+)
+from nvalchemiops.torch.neighbors.neighbor_utils import (
+    NeighborOverflowError,
+    compute_naive_num_shifts,
+)
 
 from ...test_utils import (
     assert_neighbor_lists_equal,
@@ -31,6 +38,25 @@ from ...test_utils import (
     create_simple_cubic_system,
 )
 from .conftest import requires_vesin
+
+
+def _sorted_row_multisets(
+    neighbor_matrix: torch.Tensor,
+    num_neighbors: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor | None = None,
+) -> list[list[tuple[int, ...]]]:
+    """Return active neighbor rows as sorted multisets for parity checks."""
+    rows = []
+    for row, count_tensor in enumerate(num_neighbors):
+        count = int(count_tensor)
+        values = []
+        for col in range(count):
+            item = (int(neighbor_matrix[row, col]),)
+            if neighbor_matrix_shifts is not None:
+                item += tuple(int(value) for value in neighbor_matrix_shifts[row, col])
+            values.append(item)
+        rows.append(sorted(values))
+    return rows
 
 
 class TestNaiveCorrectness:
@@ -185,6 +211,11 @@ class TestNaiveCorrectness:
             0.75,
             max_neighbors=4,
             target_indices=target_indices,
+            neighbor_matrix_shifts=torch.zeros(
+                (target_indices.shape[0], 4, 3),
+                dtype=torch.int32,
+                device=device,
+            ),
         )
 
         assert partial_nm.shape == (2, 4)
@@ -197,7 +228,7 @@ class TestNaiveCorrectness:
             )
 
     def test_target_indices_coo_uses_compact_source_rows(self, device):
-        """COO source rows are compact target rows, not original atom ids."""
+        """COO central rows are compact row ids, not original atom ids."""
         positions = torch.tensor(
             [
                 [0.0, 0.0, 0.0],
@@ -222,6 +253,7 @@ class TestNaiveCorrectness:
         assert set(neighbor_list[0].cpu().tolist()) == {0, 1}
         assert set(map(tuple, neighbor_list.T.cpu().tolist())) == {(0, 3), (1, 1)}
 
+    @pytest.mark.gpu
     def test_target_indices_compile_fullgraph_with_compact_buffers(self, device):
         """target_indices without pair_fn stays behind a fullgraph custom op."""
         if not str(device).startswith("cuda"):
@@ -263,6 +295,7 @@ class TestNaiveCorrectness:
                 torch.sort(full_nm[atom, : int(full_nn[atom])].cpu()).values,
             )
 
+    @pytest.mark.gpu
     def test_target_indices_compile_fullgraph_pbc_pair_geometry(self, device):
         """PBC target_indices fullgraph path supports geometry buffers."""
         if not str(device).startswith("cuda"):
@@ -316,6 +349,119 @@ class TestNaiveCorrectness:
         assert partial_vec.shape == (1, 8, 3)
         assert int(partial_nn[0]) >= 1
 
+    @pytest.mark.gpu
+    def test_target_indices_tile_compile_fullgraph_runtime_targets(self, device):
+        """Tiled topology custom op accepts runtime compact targets."""
+        if not str(device).startswith("cuda"):
+            pytest.skip("CUDA is required for tiled fullgraph coverage.")
+        positions = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [2.0, 0.0, 0.0],
+                [2.5, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+            device=device,
+        )
+
+        @torch.compile(fullgraph=True)
+        def run(pos, nm, nn, targets):
+            return naive_neighbor_list(
+                pos,
+                0.75,
+                neighbor_matrix=nm,
+                num_neighbors=nn,
+                target_indices=targets,
+                strategy="tile",
+            )
+
+        for targets in (
+            torch.tensor([2, 0], dtype=torch.int32, device=device),
+            torch.tensor([0, 2], dtype=torch.int32, device=device),
+        ):
+            tiled_nm, tiled_nn = run(
+                positions,
+                torch.full((2, 4), 4, dtype=torch.int32, device=device),
+                torch.zeros((2,), dtype=torch.int32, device=device),
+                targets,
+            )
+            scalar_nm, scalar_nn = naive_neighbor_list(
+                positions,
+                0.75,
+                max_neighbors=4,
+                target_indices=targets,
+                strategy="scalar",
+            )
+            torch.testing.assert_close(tiled_nn, scalar_nn, rtol=0, atol=0)
+            assert _sorted_row_multisets(tiled_nm, tiled_nn) == _sorted_row_multisets(
+                scalar_nm,
+                scalar_nn,
+            )
+
+    @pytest.mark.gpu
+    def test_target_indices_tile_compile_fullgraph_pbc_runtime_targets(self, device):
+        """Tiled PBC topology custom op accepts runtime compact targets."""
+        if not str(device).startswith("cuda"):
+            pytest.skip("CUDA is required for tiled fullgraph coverage.")
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [3.5, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+            dtype=torch.float32,
+            device=device,
+        )
+        cell = torch.eye(3, dtype=torch.float32, device=device).unsqueeze(0) * 4.0
+        pbc = torch.ones((1, 3), dtype=torch.bool, device=device)
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, 1.1, pbc)
+
+        @torch.compile(fullgraph=True)
+        def run(pos, nm, nms, nn, targets):
+            return naive_neighbor_list(
+                pos,
+                1.1,
+                cell=cell,
+                pbc=pbc,
+                neighbor_matrix=nm,
+                neighbor_matrix_shifts=nms,
+                num_neighbors=nn,
+                shift_range_per_dimension=shift_range,
+                num_shifts_per_system=num_shifts,
+                max_shifts_per_system=max_shifts,
+                target_indices=targets,
+                strategy="tile",
+            )
+
+        for targets in (
+            torch.tensor([2, 0], dtype=torch.int32, device=device),
+            torch.tensor([0, 2], dtype=torch.int32, device=device),
+        ):
+            tiled_nm, tiled_nn, tiled_shifts = run(
+                positions,
+                torch.full((2, 32), 4, dtype=torch.int32, device=device),
+                torch.zeros((2, 32, 3), dtype=torch.int32, device=device),
+                torch.zeros((2,), dtype=torch.int32, device=device),
+                targets,
+            )
+            scalar_nm, scalar_nn, scalar_shifts = naive_neighbor_list(
+                positions,
+                1.1,
+                cell=cell,
+                pbc=pbc,
+                max_neighbors=32,
+                neighbor_matrix_shifts=torch.zeros(
+                    (2, 32, 3),
+                    dtype=torch.int32,
+                    device=device,
+                ),
+                target_indices=targets,
+                strategy="scalar",
+            )
+            torch.testing.assert_close(tiled_nn, scalar_nn, rtol=0, atol=0)
+            assert _sorted_row_multisets(
+                tiled_nm,
+                tiled_nn,
+                tiled_shifts,
+            ) == _sorted_row_multisets(scalar_nm, scalar_nn, scalar_shifts)
+
     def test_target_indices_rejects_full_size_user_buffers(self, device):
         """Partial lists require compact user buffers."""
         positions = torch.tensor(
@@ -337,20 +483,273 @@ class TestNaiveCorrectness:
                 target_indices=torch.tensor([2, 0], dtype=torch.int32, device=device),
             )
 
-    def test_target_indices_rejects_tile_strategy(self, device):
-        """Explicit tiled naive mode does not support partial rows."""
+    @pytest.mark.gpu
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    @pytest.mark.parametrize("half_fill", [False, True])
+    @pytest.mark.parametrize("pbc_mode", ["none", "wrapped", "prewrapped"])
+    def test_target_indices_tile_matches_scalar(
+        self,
+        device,
+        dtype,
+        half_fill,
+        pbc_mode,
+    ):
+        """Explicit tile matches scalar compact topology for all PBC modes."""
+        if not str(device).startswith("cuda"):
+            pytest.skip("Tiled partial parity is CUDA-only.")
+        positions = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [3.5, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [2.0, 0.0, 0.0],
+            ],
+            dtype=dtype,
+            device=device,
+        )
+        target_indices = torch.tensor([2, 0], dtype=torch.int32, device=device)
+        kwargs = {}
+        if pbc_mode != "none":
+            cell = torch.eye(3, dtype=dtype, device=device).unsqueeze(0) * 4.0
+            pbc = torch.ones((1, 3), dtype=torch.bool, device=device)
+            shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+                cell,
+                1.1,
+                pbc,
+            )
+            kwargs = {
+                "cell": cell,
+                "pbc": pbc,
+                "wrap_positions": pbc_mode == "wrapped",
+                "shift_range_per_dimension": shift_range,
+                "num_shifts_per_system": num_shifts,
+                "max_shifts_per_system": max_shifts,
+            }
+        scalar = naive_neighbor_list(
+            positions,
+            1.1,
+            max_neighbors=32,
+            half_fill=half_fill,
+            target_indices=target_indices,
+            strategy="scalar",
+            **kwargs,
+        )
+        tiled = naive_neighbor_list(
+            positions,
+            1.1,
+            max_neighbors=32,
+            half_fill=half_fill,
+            target_indices=target_indices,
+            strategy="tile",
+            **kwargs,
+        )
+        torch.testing.assert_close(scalar[1], tiled[1], rtol=0, atol=0)
+        scalar_shifts = scalar[2] if pbc_mode != "none" else None
+        tiled_shifts = tiled[2] if pbc_mode != "none" else None
+        assert _sorted_row_multisets(scalar[0], scalar[1], scalar_shifts) == (
+            _sorted_row_multisets(tiled[0], tiled[1], tiled_shifts)
+        )
+
+    def test_target_indices_tile_rejects_cpu(self, device):
+        """Explicit partial tile rejects CPU before native dispatch."""
+        if str(device).startswith("cuda"):
+            pytest.skip("CPU-only rejection case.")
         positions = torch.tensor(
             [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
             dtype=torch.float32,
             device=device,
         )
-        with pytest.raises(NotImplementedError, match="target_indices"):
+        with pytest.raises(ValueError, match="requires CUDA"):
             naive_neighbor_list(
                 positions,
                 1.0,
                 max_neighbors=4,
                 target_indices=torch.tensor([0], dtype=torch.int32, device=device),
                 strategy="tile",
+            )
+
+    @pytest.mark.gpu
+    def test_target_indices_rejects_cross_device(self, device):
+        """Partial targets must share the positions device."""
+        if not str(device).startswith("cuda"):
+            pytest.skip("CUDA is required for cross-device coverage.")
+        positions = torch.zeros((3, 3), dtype=torch.float32, device=device)
+        targets = torch.tensor([0], dtype=torch.int32, device="cpu")
+        with pytest.raises(ValueError, match="same device"):
+            naive_neighbor_list(
+                positions,
+                1.0,
+                max_neighbors=4,
+                target_indices=targets,
+                strategy="scalar",
+            )
+
+    @pytest.mark.gpu
+    def test_target_indices_rejects_cross_device_output_buffers(self, device):
+        """Compact output buffers must share the positions device."""
+        if not str(device).startswith("cuda"):
+            pytest.skip("CUDA is required for cross-device coverage.")
+        positions = torch.zeros((3, 3), dtype=torch.float32, device=device)
+        targets = torch.tensor([0], dtype=torch.int32, device=device)
+        with pytest.raises(ValueError, match="same device"):
+            naive_neighbor_list(
+                positions,
+                1.0,
+                max_neighbors=4,
+                target_indices=targets,
+                neighbor_matrix=torch.empty((1, 4), dtype=torch.int32),
+                num_neighbors=torch.empty((1,), dtype=torch.int32),
+                strategy="scalar",
+            )
+
+    @pytest.mark.gpu
+    def test_target_indices_geometry_rejects_cross_device_output_buffer(self, device):
+        """Partial geometry output buffers must share the positions device."""
+        if not str(device).startswith("cuda"):
+            pytest.skip("CUDA is required for cross-device coverage.")
+        positions = torch.zeros((3, 3), dtype=torch.float32, device=device)
+        targets = torch.tensor([0], dtype=torch.int32, device=device)
+        with pytest.raises(ValueError, match="same device"):
+            naive_neighbor_list(
+                positions,
+                1.0,
+                max_neighbors=4,
+                target_indices=targets,
+                neighbor_matrix=torch.empty((1, 4), dtype=torch.int32, device=device),
+                num_neighbors=torch.empty((1,), dtype=torch.int32, device=device),
+                neighbor_distances=torch.empty((1, 4), dtype=torch.float32),
+                return_distances=True,
+                strategy="scalar",
+            )
+
+    @pytest.mark.parametrize(
+        ("dtype", "num_atoms", "expected_cuda_strategy"),
+        [
+            (torch.float32, 1023, "scalar"),
+            (torch.float32, 1024, "tile"),
+            (torch.float64, 255, "scalar"),
+            (torch.float64, 256, "tile"),
+        ],
+    )
+    def test_target_indices_auto_forwards_native_dispatch(
+        self,
+        device,
+        monkeypatch,
+        dtype,
+        num_atoms,
+        expected_cuda_strategy,
+    ):
+        """Topology-only auto uses CUDA dtype thresholds and preserves targets."""
+        seen = {}
+
+        def fake_launcher(**kwargs):
+            seen.update(kwargs)
+
+        monkeypatch.setattr(
+            "nvalchemiops.torch.neighbors.naive._naive_neighbor_matrix_no_pbc",
+            fake_launcher,
+        )
+        positions = torch.zeros((num_atoms, 3), dtype=dtype, device=device)
+        targets = torch.tensor([num_atoms - 1, 0], dtype=torch.int32, device=device)
+        naive_neighbor_list(
+            positions,
+            1.0,
+            max_neighbors=4,
+            target_indices=targets,
+            strategy="auto",
+        )
+        expected_strategy = (
+            expected_cuda_strategy if str(device).startswith("cuda") else "scalar"
+        )
+        assert seen["strategy"] == expected_strategy
+        assert seen["target_indices"] is targets
+
+    @pytest.mark.gpu
+    @pytest.mark.parametrize(
+        ("dtype", "num_atoms"),
+        [
+            (torch.float32, 1024),
+            (torch.float64, 256),
+        ],
+    )
+    def test_target_indices_auto_compile_fullgraph_uses_tile_threshold(
+        self,
+        dtype,
+        num_atoms,
+    ):
+        """Compiled partial auto retains the eager CUDA tile routing decision."""
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA is required for torch.compile coverage.")
+        device = "cuda:0"
+        positions = (
+            torch.arange(num_atoms, dtype=dtype, device=device)[:, None]
+            .expand(num_atoms, 3)
+            .mul(2.0)
+            .contiguous()
+        )
+        targets = torch.tensor([num_atoms - 1, 0], dtype=torch.int32, device=device)
+
+        @torch.compile(fullgraph=True)
+        def run(pos, matrix, counts, runtime_targets):
+            return naive_neighbor_list(
+                pos,
+                1.0,
+                max_neighbors=4,
+                neighbor_matrix=matrix,
+                num_neighbors=counts,
+                target_indices=runtime_targets,
+                strategy="auto",
+            )
+
+        def outputs():
+            return (
+                torch.full((2, 4), num_atoms, dtype=torch.int32, device=device),
+                torch.zeros((2,), dtype=torch.int32, device=device),
+            )
+
+        matrix, counts = outputs()
+        explanation = torch._dynamo.explain(run)(positions, matrix, counts, targets)
+        assert explanation.graph_break_count == 0, explanation.break_reasons
+        graph_text = "\n".join(graph.code for graph in explanation.graphs)
+        assert "nvalchemiops._naive_neighbor_matrix_no_pbc" in graph_text
+        assert "tile" in graph_text
+
+        matrix, counts = outputs()
+        neighbor_matrix, num_neighbors = run(positions, matrix, counts, targets)
+        torch.testing.assert_close(neighbor_matrix, matrix)
+        torch.testing.assert_close(num_neighbors, torch.zeros_like(num_neighbors))
+
+    @pytest.mark.gpu
+    def test_target_indices_tile_overflow_contract(self, device):
+        """Partial tile preserves uncapped counts and compact overflow behavior."""
+        if not str(device).startswith("cuda"):
+            pytest.skip("CUDA is required for tiled overflow coverage.")
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [0.4, 0.0, 0.0], [0.8, 0.0, 0.0], [3.0, 0.0, 0.0]],
+            dtype=torch.float32,
+            device=device,
+        )
+        targets = torch.tensor([0, 3], dtype=torch.int32, device=device)
+        matrix, counts = naive_neighbor_list(
+            positions,
+            1.0,
+            max_neighbors=1,
+            fill_value=-7,
+            target_indices=targets,
+            strategy="tile",
+        )
+        assert counts.tolist() == [2, 0]
+        assert int(counts[1]) == 0
+        assert int(matrix[1, 0]) == -7
+        with pytest.raises(NeighborOverflowError):
+            naive_neighbor_list(
+                positions,
+                1.0,
+                max_neighbors=1,
+                fill_value=-7,
+                target_indices=targets,
+                strategy="tile",
+                return_neighbor_list=True,
             )
 
 
@@ -1035,6 +1434,81 @@ class TestNaivePerformance:
 class TestNaiveSelectiveRebuildFlags:
     """Test selective rebuild (rebuild_flags) for naive_neighbor_list torch binding."""
 
+    def test_partial_rebuild_flags_are_rejected(self, device):
+        """Compact rows cannot be combined with selective rebuild flags."""
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            dtype=torch.float32,
+            device=device,
+        )
+        with pytest.raises(
+            NotImplementedError,
+            match=r"^Partial neighbor lists do not support rebuild_flags$",
+        ):
+            naive_neighbor_list(
+                positions,
+                1.0,
+                max_neighbors=4,
+                target_indices=torch.tensor([0], dtype=torch.int32, device=device),
+                rebuild_flags=torch.ones(1, dtype=torch.bool, device=device),
+            )
+
+    def test_no_pbc_wrapper_rejects_partial_rebuild_before_mutation(self, device):
+        """The no-PBC custom op preserves counts on an unsupported request."""
+        positions = torch.zeros((2, 3), dtype=torch.float32, device=device)
+        neighbor_matrix = torch.full((1, 4), 2, dtype=torch.int32, device=device)
+        num_neighbors = torch.full((1,), 37, dtype=torch.int32, device=device)
+
+        with pytest.raises(
+            NotImplementedError,
+            match=r"^Partial neighbor lists do not support rebuild_flags$",
+        ):
+            _naive_neighbor_matrix_no_pbc(
+                positions=positions,
+                cutoff=1.0,
+                neighbor_matrix=neighbor_matrix,
+                num_neighbors=num_neighbors,
+                rebuild_flags=torch.ones(1, dtype=torch.bool, device=device),
+                target_indices=torch.tensor([0], dtype=torch.int32, device=device),
+            )
+
+        assert num_neighbors.tolist() == [37]
+
+    def test_pbc_wrapper_rejects_partial_rebuild_before_mutation(self, device):
+        """The PBC custom op preserves counts on an unsupported request."""
+        positions = torch.zeros((2, 3), dtype=torch.float32, device=device)
+        cell = torch.eye(3, dtype=torch.float32, device=device).unsqueeze(0)
+        pbc = torch.ones((1, 3), dtype=torch.bool, device=device)
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, 1.0, pbc)
+        neighbor_matrix = torch.full((1, 4), 2, dtype=torch.int32, device=device)
+        neighbor_matrix_shifts = torch.zeros(
+            (1, 4, 3),
+            dtype=torch.int32,
+            device=device,
+        )
+        num_neighbors = torch.full((1,), 37, dtype=torch.int32, device=device)
+
+        with pytest.raises(
+            NotImplementedError,
+            match=r"^Partial neighbor lists do not support rebuild_flags$",
+        ):
+            _naive_neighbor_matrix_pbc(
+                positions=positions,
+                cutoff=1.0,
+                cell=cell,
+                pbc=pbc,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                num_neighbors=num_neighbors,
+                shift_range_per_dimension=shift_range,
+                num_shifts_per_system=num_shifts,
+                max_shifts_per_system=max_shifts,
+                rebuild_flags=torch.ones(1, dtype=torch.bool, device=device),
+                target_indices=torch.tensor([0], dtype=torch.int32, device=device),
+            )
+
+        assert num_neighbors.tolist() == [37]
+
     def test_no_rebuild_preserves_data(self, device, dtype):
         """Flag=False: neighbor data should remain unchanged."""
         positions, _, _ = create_simple_cubic_system(
@@ -1159,6 +1633,52 @@ class TestNaiveAutograd:
             return_vectors=True,
         )
         assert d.requires_grad and v.requires_grad
+
+    @pytest.mark.slow
+    def test_partial_no_pbc_distance_gradcheck_matches_selected_full_rows(self, device):
+        """Compact no-PBC distance gradients use each target's source atom row."""
+        positions = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [0.7, 0.2, 0.0],
+                [2.4, 0.0, 0.0],
+                [3.2, -0.3, 0.0],
+            ],
+            dtype=torch.float64,
+            device=device,
+            requires_grad=True,
+        )
+        target_indices = torch.tensor([3, 0], dtype=torch.int32, device=device)
+
+        def partial_loss(pos):
+            _, _, distances = naive_neighbor_list(
+                pos,
+                1.1,
+                max_neighbors=4,
+                target_indices=target_indices,
+                return_distances=True,
+            )
+            return distances.sum()
+
+        assert torch.autograd.gradcheck(
+            partial_loss,
+            (positions,),
+            atol=1e-5,
+            eps=1e-6,
+            nondet_tol=1e-7,
+        )
+        partial_grad = torch.autograd.grad(partial_loss(positions), positions)[0]
+        _, _, full_distances = naive_neighbor_list(
+            positions,
+            1.1,
+            max_neighbors=4,
+            return_distances=True,
+        )
+        selected_full_loss = full_distances[target_indices.long()].sum()
+        selected_full_grad = torch.autograd.grad(selected_full_loss, positions)[0]
+
+        torch.testing.assert_close(partial_loss(positions), selected_full_loss)
+        torch.testing.assert_close(partial_grad, selected_full_grad)
 
     @pytest.mark.slow
     def test_gradcheck_distances_wrt_positions(self, device):
