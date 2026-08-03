@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.1 - 2026-08-03
 
 ### Added
 
@@ -24,6 +24,7 @@
   direct single-system fixed-state route instead.
 - JAX cluster-tile empty selective rebuilds now preserve false-flag state and
   clear true-flag pair and tile counts while retaining fixed-capacity storage.
+
 ### Changed (neighbors)
 
 - Improved JAX neighbor-list import performance by deferring dtype-specific
