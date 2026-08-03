@@ -43,7 +43,7 @@ TEST_GROUPS=(
 for entry in "${TEST_GROUPS[@]}"; do
   name="${entry%%:*}"
   args="${entry#*:}"
-  if [ -f "$OUT/$name.done" ]; then
+  if [[ -f "$OUT/$name.done" ]]; then
     echo "[skip] $name"
     continue
   fi
@@ -55,7 +55,7 @@ for entry in "${TEST_GROUPS[@]}"; do
   rc=$?
   tail -1 "$OUT/$name.log"
   echo "[done] $name rc=$rc at $(date -Is)"
-  if [ $rc -eq 0 ] || [ $rc -eq 5 ]; then touch "$OUT/$name.done"; fi
+  if [[ $rc -eq 0 || $rc -eq 5 ]]; then touch "$OUT/$name.done"; fi
 done
 
 echo "[all ] finished at $(date -Is)"
