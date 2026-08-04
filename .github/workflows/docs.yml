@@ -15,17 +15,35 @@
 
 name: "Docs"
 
-# Manual only for now.
+# On demand, and after the test suite passes on main. ``workflow_run`` is what
+# gets the second one without a workflow of its own: it fires when "CI" finishes
+# on main, and the build job below refuses to run unless that finish was a
+# success, so a red main never publishes.
+#
+# Watching "CI" alone is the whole gate, not a shortcut. The GPU suites run
+# inside it through ``workflow_call`` and report as part of its conclusion
+# rather than as workflows of their own, and its ``verify-status`` job fails the
+# run if any of them did. Listing more workflows here would not tighten
+# anything either: several entries fire when any one of them completes, not when
+# all of them have passed.
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    # The head branch of the triggering run. CI also runs on the copy-pr-bot's
+    # ``pull-request/*`` branches and in the merge queue; neither should publish.
+    branches: [main]
 
 defaults:
   run:
     shell: bash -x -e -u -o pipefail {0}
 
-concurrency:
-  group: github-pages
-  cancel-in-progress: false
+# Concurrency is declared per job rather than here, because the two jobs want
+# opposite things. A workflow-level group would force one policy on both: keep
+# ``cancel-in-progress: false`` and merges that land together queue up whole
+# eight-hour GPU builds behind each other, set it true and a deployment can be
+# killed half-written.
 
 env:
   UV_CACHE_DIR: /tmp/uv-cache
@@ -38,6 +56,19 @@ env:
 jobs:
   build:
     name: Build versioned documentation
+    # ``workflow_run`` fires on completion whatever the conclusion, so the
+    # success check belongs here. A manual run carries no workflow_run context
+    # and is always allowed. ``deploy`` needs this job, so it skips with it.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || github.event.workflow_run.conclusion == 'success'
+    # When several merges land close together their CI runs finish close
+    # together too, and every resulting build would checkout the same ``main``
+    # and produce the same site. Cancelling the superseded one hands the GPU
+    # runner back instead of leaving it building a site nobody will publish.
+    concurrency:
+      group: ${{ github.workflow }}-build
+      cancel-in-progress: true
     runs-on: linux-amd64-gpu-h100-latest-1
     timeout-minutes: 480
     permissions:
@@ -96,6 +127,12 @@ jobs:
   deploy:
     name: Deploy GitHub Pages
     needs: build
+    # The opposite policy to the build: a deployment that is cancelled part way
+    # through leaves the published site in whatever state it had reached, so
+    # these queue instead of superseding each other.
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       pages: write
