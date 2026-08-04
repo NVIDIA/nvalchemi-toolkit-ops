@@ -225,7 +225,9 @@ def isolate_gallery_examples() -> None:
     allocator setting, survives unloading all Warp modules, and no pair of
     examples triggers it on its own -- it takes the accumulated state of a
     dozen. Reordering the gallery therefore only changes which example dies.
-    ``tools/repro_d3_torch_then_jax.py`` has a short version.
+    To see it, run the examples of a gallery in one interpreter rather than
+    letting Sphinx-Gallery do it; the Torch DFT-D3 example followed by the JAX
+    one is the shortest case.
 
     A process per example is already how the rest of the repository runs this
     code: ``weekly-examples.yml`` forks per script and the Makefile forks per
