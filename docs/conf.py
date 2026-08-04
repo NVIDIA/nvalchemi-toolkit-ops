@@ -33,6 +33,20 @@ from sphinx_gallery.sorting import FileNameSortKey
 # Defaults build API docs, execute examples, and generate benchmark plots.
 dotenv.load_dotenv()
 os.environ.setdefault("JAX_ENABLE_X64", "1")
+
+# JAX's default GPU client preallocates a fraction of total device memory on its
+# first use and holds it for the life of the process: measured at 93.8 GiB of a
+# GB10's 121.7 GiB, which is unified with host RAM. The platform allocator drops
+# the pool entirely -- JAX allocates and frees through the driver per buffer, so
+# Torch's caching allocator is the only one holding memory and the whole gallery
+# peaks near 350 MiB. ``test/conftest.py`` does the same for pytest.
+#
+# Assigned rather than ``setdefault``: a preallocating value inherited from the
+# shell is exactly the failure this prevents, so the environment does not get a
+# vote. sphinx-multiversion passes this conf directory to every ref it builds,
+# so setting it here covers the historical tags too.
+os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 doc_version = os.getenv(
     "SPHINX_MULTIVERSION_NAME",
     os.getenv("DOC_VERSION", "main"),
