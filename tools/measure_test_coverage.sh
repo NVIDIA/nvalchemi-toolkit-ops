@@ -45,7 +45,7 @@ MODULES=(
 for entry in "${MODULES[@]}"; do
   name="${entry%%:*}"
   path="${entry#*:}"
-  if [ -f "$OUT/$name.done" ]; then
+  if [[ -f "$OUT/$name.done" ]]; then
     echo "[skip] $name already measured"
     continue
   fi
@@ -60,7 +60,7 @@ for entry in "${MODULES[@]}"; do
   rc=$?
   echo "[done] $name rc=$rc at $(date -Is)"
   # rc 5 == no tests collected; both 0 and 5 are acceptable outcomes here.
-  if [ $rc -eq 0 ] || [ $rc -eq 5 ]; then touch "$OUT/$name.done"; fi
+  if [[ $rc -eq 0 || $rc -eq 5 ]]; then touch "$OUT/$name.done"; fi
 done
 
 echo "[all ] finished at $(date -Is)"

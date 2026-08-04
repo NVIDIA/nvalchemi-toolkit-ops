@@ -38,10 +38,9 @@ on:
   schedule:
     - cron: "0 7 * * *" # 07:00 UTC daily, two hours after cache-warm
 
-permissions:
-  contents: read
-  pull-requests: read # get-pr-labels reads ciflow:* labels
-  actions: write # prune-caches.sh deletes superseded cache entries
+# Permissions are declared per job rather than here, so a job only ever holds
+# the scopes it actually uses: `pull-requests: read` exists for get-pr-labels
+# alone, and `actions: write` for the jobs whose runs call prune-caches.sh.
 
 defaults:
   run:
@@ -61,6 +60,8 @@ jobs:
   # ============================================================================
   changed-files:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       any_changed: ${{ steps.changed-files.outputs.any_changed }}
     steps:
@@ -95,6 +96,8 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -124,6 +127,9 @@ jobs:
 
   get-pr-labels:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read # reads ciflow:* labels off the pull request
     outputs:
       labels: ${{ steps.get-labels.outputs.labels || steps.get-labels-empty.outputs.labels }}
     steps:
@@ -171,13 +177,15 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3]
+    permissions:
+      contents: read
+      actions: write # prune-caches.sh deletes superseded cache entries
     uses: ./.github/workflows/reusable-gpu-tests.yml
     with:
       suite: minimal
       shard: ${{ matrix.shard }}
       save-warp-cache: ${{ matrix.shard == 1 }}
       timeout-minutes: 60
-    secrets: inherit
 
   # Runs alongside the minimal tier, never gating the fast verdict. Unbounded by
   # nature: a change to a core electrostatics file selects most of the suite.
@@ -190,11 +198,13 @@ jobs:
       !contains(fromJSON(needs.get-pr-labels.outputs.labels || '[]'), 'ciflow:skip') &&
       !contains(fromJSON(needs.get-pr-labels.outputs.labels || '[]'), 'ciflow:all') &&
       (needs.changed-files.outputs.any_changed == 'true')
+    permissions:
+      contents: read
+      actions: write # prune-caches.sh deletes superseded cache entries
     uses: ./.github/workflows/reusable-gpu-tests.yml
     with:
       suite: impacted
       timeout-minutes: 120
-    secrets: inherit
 
   # Applies the coverage threshold once, to the union of both tiers. Needs only
   # coverage and the source tree, so it runs on an ordinary runner rather than
@@ -208,6 +218,9 @@ jobs:
       needs.test-minimal.result == 'success' &&
       needs.test-impacted.result == 'success'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read # download-artifact reads this run's artifacts
     steps:
       - uses: actions/checkout@v4
 
@@ -261,6 +274,9 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
+    permissions:
+      contents: read
+      actions: write # prune-caches.sh deletes superseded cache entries
     uses: ./.github/workflows/reusable-gpu-tests.yml
     with:
       suite: full
@@ -269,7 +285,6 @@ jobs:
       # would delete each other's entry. Every other lane maintains its own.
       save-warp-cache: ${{ matrix.python-version != '3.12' }}
       timeout-minutes: 480
-    secrets: inherit
 
   test-cuda12:
     name: Full CUDA 12
@@ -279,6 +294,9 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
+    permissions:
+      contents: read
+      actions: write # prune-caches.sh deletes superseded cache entries
     uses: ./.github/workflows/reusable-gpu-tests.yml
     with:
       suite: full
@@ -288,7 +306,6 @@ jobs:
       jax-extra: jax-cu12
       save-warp-cache: true
       timeout-minutes: 480
-    secrets: inherit
 
   # ============================================================================
   # STATUS
@@ -304,6 +321,8 @@ jobs:
       - test-full
       - test-cuda12
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     if: always()
     steps:
       - name: Check job statuses

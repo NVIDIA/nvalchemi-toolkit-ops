@@ -5,10 +5,15 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="refresh" content="0; url=./main/">
     <title>ALCHEMI Toolkit-Ops Documentation</title>
   </head>
   <body>
     <p><a href="./main/">Continue to the latest development documentation.</a></p>
+    <!-- Redirect in script rather than a meta refresh: a meta refresh cannot be
+         cancelled by the reader, and the link above is the no-script fallback.
+         replace() rather than assign() so Back does not bounce off this page. -->
+    <script>
+      globalThis.location.replace("./main/");
+    </script>
   </body>
 </html>

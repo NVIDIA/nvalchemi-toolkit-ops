@@ -40,9 +40,8 @@ on:
     - cron: "0 5 * * *" # 05:00 UTC, two hours before the nightly test run
   workflow_dispatch:
 
-permissions:
-  contents: read
-  actions: write # prune-caches.sh deletes superseded entries
+# Declared per job rather than here: both jobs need the same scopes today, but
+# a job-level grant cannot silently widen when a new job is added.
 
 defaults:
   run:
@@ -57,6 +56,9 @@ jobs:
   warp:
     name: Warm Warp kernel cache (py3.12, CUDA 13)
     runs-on: linux-amd64-gpu-h100-latest-1
+    permissions:
+      contents: read
+      actions: write # prune-caches.sh deletes superseded entries
     timeout-minutes: 90
     container:
       image: nvcr.io/nvidia/cuda:13.1.0-runtime-ubuntu24.04
@@ -139,6 +141,9 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     needs: warp
     runs-on: linux-amd64-gpu-h100-latest-1
+    permissions:
+      contents: read
+      actions: write # prune-caches.sh deletes superseded entries
     timeout-minutes: 300
     container:
       image: nvcr.io/nvidia/cuda:13.1.0-runtime-ubuntu24.04

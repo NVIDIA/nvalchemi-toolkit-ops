@@ -8,6 +8,8 @@ This guide lists user-visible migrations by release.
 
 ## Unreleased
 
+## v0.4.1: Energy Output Layout
+
 ### Energy Output Layout (`energy_reduction`)
 
 Monopole Torch and JAX Ewald, PME, and slab entry points accept keyword-only

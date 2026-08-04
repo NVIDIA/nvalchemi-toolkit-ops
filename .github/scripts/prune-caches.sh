@@ -55,7 +55,7 @@ for entry in entries:
   exit 0
 }
 
-if [ -z "$ids" ]; then
+if [[ -z "$ids" ]]; then
   echo "No superseded caches matching '${PREFIX}' on ${GITHUB_REF}"
   exit 0
 fi
