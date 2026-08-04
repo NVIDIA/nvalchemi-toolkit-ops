@@ -15,13 +15,8 @@
 
 name: "Docs"
 
+# Manual only for now.
 on:
-  push:
-    branches:
-      - main
-      - "*.*.*-rc*"
-    tags:
-      - "v*.*.*"
   workflow_dispatch:
 
 defaults:
