@@ -83,7 +83,9 @@ jobs:
           enable-cache: true
 
       - name: Install documentation dependencies
-        run: uv sync --extra torch --extra jax
+        run: |
+          uv sync --extra torch --extra jax
+          make docs-install-examples
 
       - name: Install historical Warp versions
         run: |
