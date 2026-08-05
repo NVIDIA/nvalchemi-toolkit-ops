@@ -15,17 +15,21 @@
 
 name: "Docs"
 
-# Manual only for now.
+# runs on demand as well as after a successful CI run on main branch
+# this means we only try and build docs if and only if changes to main
+# aren't going to poison them
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    # The head branch of the triggering run. CI also runs on the copy-pr-bot's
+    # ``pull-request/*`` branches and in the merge queue; neither should publish.
+    branches: [main]
 
 defaults:
   run:
     shell: bash -x -e -u -o pipefail {0}
-
-concurrency:
-  group: github-pages
-  cancel-in-progress: false
 
 env:
   UV_CACHE_DIR: /tmp/uv-cache
@@ -38,6 +42,16 @@ env:
 jobs:
   build:
     name: Build versioned documentation
+    # ``workflow_run`` fires on completion whatever the conclusion
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    # cancel-in-progress makes it so that newer PRs that land around the same time
+    # in main will supercede older ones, so we don't redundantly
+    # try and build docs
+    concurrency:
+      group: ${{ github.workflow }}-build
+      cancel-in-progress: true
     runs-on: linux-amd64-gpu-h100-latest-1
     timeout-minutes: 480
     permissions:
@@ -96,6 +110,12 @@ jobs:
   deploy:
     name: Deploy GitHub Pages
     needs: build
+    # The opposite policy to the build: a deployment that is cancelled part way
+    # through leaves the published site in whatever state it had reached, so
+    # these queue instead of superseding each other.
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       pages: write

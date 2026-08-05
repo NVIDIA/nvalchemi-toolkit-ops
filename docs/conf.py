@@ -17,11 +17,15 @@
 #
 # For the full list of built-in configuration values, see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
+
 import logging
+import multiprocessing
 import os
 import pathlib
 import re
 import sys
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from importlib.metadata import version
 from inspect import signature
 
@@ -33,6 +37,21 @@ from sphinx_gallery.sorting import FileNameSortKey
 # Defaults build API docs, execute examples, and generate benchmark plots.
 dotenv.load_dotenv()
 os.environ.setdefault("JAX_ENABLE_X64", "1")
+
+# Examples run one per process (see ``isolate_gallery_examples``), but a single
+# JAX example still preallocates a fraction of total device memory on its first
+# use and holds it for that process's life: measured at 93.8 GiB of a GB10's
+# 121.7 GiB, which is unified with host RAM. The platform allocator drops the
+# pool entirely -- JAX allocates and frees through the driver per buffer, so
+# Torch's caching allocator is the only one holding memory and the whole gallery
+# peaks near 350 MiB. ``test/conftest.py`` does the same for pytest.
+#
+# Assigned rather than ``setdefault``: a preallocating value inherited from the
+# shell is exactly the failure this prevents, so the environment does not get a
+# vote. sphinx-multiversion passes this conf directory to every ref it builds,
+# so setting it here covers the historical tags too.
+os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 doc_version = os.getenv(
     "SPHINX_MULTIVERSION_NAME",
     os.getenv("DOC_VERSION", "main"),
@@ -77,6 +96,13 @@ if version_site_packages:
 # launched the build.
 source_root = pathlib.Path(os.getenv("SPHINX_MULTIVERSION_SOURCEDIR", root))
 sys.path.insert(0, source_root.parent.as_posix())
+
+# Sphinx does not make its own conf directory importable, and sphinxext.py next
+# to this file holds both the gallery reset hook and the entry point for the
+# processes that run examples, each reached by import path. Appended rather than
+# inserted so that ``docs/benchmarks`` cannot shadow the repository's top-level
+# ``benchmarks`` package.
+sys.path.append(root.as_posix())
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
@@ -187,6 +213,78 @@ html_theme_options = {
 }
 favicons = ["favicon.ico"]
 
+
+# -- Gallery example isolation -------------------------------------------------
+def isolate_gallery_examples() -> None:
+    """Run each gallery example in a process of its own.
+
+    Sphinx-Gallery executes examples in the Sphinx process, so every example
+    shares one CUDA context. Mixing the Torch and JAX examples in that context
+    corrupts it: a clean build dies part way through with
+    ``CUDA_ERROR_ILLEGAL_ADDRESS``. The fault reproduces under every XLA
+    allocator setting, survives unloading all Warp modules, and no pair of
+    examples triggers it on its own -- it takes the accumulated state of a
+    dozen. Reordering the gallery therefore only changes which example dies.
+    To see it, run the examples of a gallery in one interpreter rather than
+    letting Sphinx-Gallery do it; the Torch DFT-D3 example followed by the JAX
+    one is the shortest case.
+
+    A process per example is already how the rest of the repository runs this
+    code: ``weekly-examples.yml`` forks per script and the Makefile forks per
+    test group, both citing the same Torch/JAX interaction. It is also the only
+    arrangement that does not depend on which examples happen to coexist.
+
+    A pool of one, rebuilt per example, is what makes each call a new
+    interpreter rather than a reused worker. ``spawn`` keeps that interpreter
+    free of whatever the Sphinx process has already loaded, at the price of
+    everything crossing the boundary having to pickle -- which is why
+    ``reset_modules`` names its hook by import path instead of passing the
+    function.
+
+    A spawned interpreter starts from a bare ``sys.path``, so the entries this
+    file adds are handed over as ``PYTHONPATH``. Without the conf directory
+    there the hook would not import; without the source root, examples from a
+    tag built by sphinx-multiversion would import the installed package rather
+    than the tree being rendered.
+    """
+    from sphinx_gallery import gen_rst
+    from sphinxext import run_example
+
+    spawn = multiprocessing.get_context("spawn")
+    worker_path = os.pathsep.join(
+        entry
+        for entry in (
+            version_site_packages,
+            source_root.parent.as_posix(),
+            root.as_posix(),
+            os.environ.get("PYTHONPATH"),
+        )
+        if entry
+    )
+
+    def generate_file_rst_isolated(fname, *args, **kwargs):
+        original_path = os.environ.get("PYTHONPATH")
+        os.environ["PYTHONPATH"] = worker_path
+        try:
+            with ProcessPoolExecutor(max_workers=1, mp_context=spawn) as executor:
+                return executor.submit(run_example, fname, *args, **kwargs).result()
+        except BrokenProcessPool as exc:
+            # A CUDA abort kills the interpreter outright, so there is no
+            # traceback to fold into the example page. Name the example instead
+            # of letting a bare pool error reach the user.
+            raise RuntimeError(
+                f"example {fname} crashed the worker process running it; "
+                f"run it directly to see the fault ({exc})"
+            ) from exc
+        finally:
+            if original_path is None:
+                del os.environ["PYTHONPATH"]
+            else:
+                os.environ["PYTHONPATH"] = original_path
+
+    gen_rst.generate_file_rst = generate_file_rst_isolated
+
+
 # https://sphinx-gallery.github.io/stable/configuration.html
 # Multiple galleries: examples and benchmarks
 sphinx_gallery_conf = {
@@ -201,9 +299,11 @@ sphinx_gallery_conf = {
     "run_stale_examples": run_stale_examples,
     "backreferences_dir": "modules/backreferences",
     "doc_module": ("nvalchemiops",),
+    # Named by import path, not passed as a function: ``gallery_conf`` is
+    # pickled to the process each example runs in. See docs/sphinxext.py.
     "reset_modules": (
         "matplotlib",
-        "docs.sphinxext.reset_torch",
+        "sphinxext.reset_seeds",
     ),
     "reset_modules_order": "both",
     "show_memory": False,
@@ -263,6 +363,9 @@ def set_figure_alt_text(app, doctree, docname):  # noqa: ARG001
 
 def setup(app):
     """Sphinx setup hook to register event handlers."""
+    if run_examples:
+        # Before ``builder-inited``, which is when the gallery starts executing.
+        isolate_gallery_examples()
     app.connect("config-inited", set_multiversion_release, priority=999)
     app.connect("builder-inited", generate_benchmark_plots)
     app.connect("doctree-resolved", set_figure_alt_text)
