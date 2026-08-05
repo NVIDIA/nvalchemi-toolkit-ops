@@ -15,17 +15,9 @@
 
 name: "Docs"
 
-# On demand, and after the test suite passes on main. ``workflow_run`` is what
-# gets the second one without a workflow of its own: it fires when "CI" finishes
-# on main, and the build job below refuses to run unless that finish was a
-# success, so a red main never publishes.
-#
-# Watching "CI" alone is the whole gate, not a shortcut. The GPU suites run
-# inside it through ``workflow_call`` and report as part of its conclusion
-# rather than as workflows of their own, and its ``verify-status`` job fails the
-# run if any of them did. Listing more workflows here would not tighten
-# anything either: several entries fire when any one of them completes, not when
-# all of them have passed.
+# runs on demand as well as after a successful CI run on main branch
+# this means we only try and build docs if and only if changes to main
+# aren't going to poison them
 on:
   workflow_dispatch:
   workflow_run:
@@ -39,12 +31,6 @@ defaults:
   run:
     shell: bash -x -e -u -o pipefail {0}
 
-# Concurrency is declared per job rather than here, because the two jobs want
-# opposite things. A workflow-level group would force one policy on both: keep
-# ``cancel-in-progress: false`` and merges that land together queue up whole
-# eight-hour GPU builds behind each other, set it true and a deployment can be
-# killed half-written.
-
 env:
   UV_CACHE_DIR: /tmp/uv-cache
   WARP_CACHE_PATH: /tmp/warp-cache
@@ -56,16 +42,13 @@ env:
 jobs:
   build:
     name: Build versioned documentation
-    # ``workflow_run`` fires on completion whatever the conclusion, so the
-    # success check belongs here. A manual run carries no workflow_run context
-    # and is always allowed. ``deploy`` needs this job, so it skips with it.
+    # ``workflow_run`` fires on completion whatever the conclusion
     if: >-
-      github.event_name == 'workflow_dispatch'
-      || github.event.workflow_run.conclusion == 'success'
-    # When several merges land close together their CI runs finish close
-    # together too, and every resulting build would checkout the same ``main``
-    # and produce the same site. Cancelling the superseded one hands the GPU
-    # runner back instead of leaving it building a site nobody will publish.
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    # cancel-in-progress makes it so that newer PRs that land around the same time
+    # in main will supercede older ones, so we don't redundantly
+    # try and build docs
     concurrency:
       group: ${{ github.workflow }}-build
       cancel-in-progress: true
