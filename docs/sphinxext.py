@@ -12,45 +12,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Sphinx-Gallery hooks, and the entry point for the process an example runs in.
+"""Compatibility imports for the Sphinx-Gallery worker hooks."""
 
-Everything here is reached by import path rather than by passing an object,
-because each example runs in a spawned process and what crosses that boundary
-has to pickle. ``conf.py`` names the reset hook as ``"sphinxext.reset_seeds"``
-for that reason, and submits ``run_example`` rather than the Sphinx-Gallery
-function it wraps -- that one is monkeypatched in the parent, so pickling it by
-reference fails its own identity check.
+from _gallery_worker import reset_seeds, run_example
 
-The module is addressed as top-level ``sphinxext``, not ``docs.sphinxext``. That
-resolves it out of the Sphinx conf directory, which sphinx-multiversion takes
-from the branch driving the build. ``docs.sphinxext`` would instead resolve
-against whichever ref is being rendered, so the historical tags would silently
-run their own copy of this file.
-"""
-
-
-def run_example(*args, **kwargs):
-    """Render one gallery example, in the process created to hold it.
-
-    Imports Sphinx-Gallery here rather than at module scope: this runs in a
-    fresh interpreter, where the function is the unpatched original.
-    """
-    from sphinx_gallery.gen_rst import generate_file_rst
-
-    return generate_file_rst(*args, **kwargs)
-
-
-def reset_seeds(gallery_conf, fname):
-    """Seed NumPy and Torch so example output is stable across rebuilds.
-
-    Every example gets a fresh interpreter, so each one would otherwise start
-    from OS entropy and the examples that draw random numbers would rewrite
-    their own output on every build.
-    """
-    import numpy
-    import torch
-
-    numpy.random.seed(42)
-    torch.manual_seed(0)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(0)
+__all__ = ["reset_seeds", "run_example"]

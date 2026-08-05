@@ -97,7 +97,7 @@ if version_site_packages:
 source_root = pathlib.Path(os.getenv("SPHINX_MULTIVERSION_SOURCEDIR", root))
 sys.path.insert(0, source_root.parent.as_posix())
 
-# Sphinx does not make its own conf directory importable, and sphinxext.py next
+# Sphinx does not make its own conf directory importable, and _gallery_worker.py next
 # to this file holds both the gallery reset hook and the entry point for the
 # processes that run examples, each reached by import path. Appended rather than
 # inserted so that ``docs/benchmarks`` cannot shadow the repository's top-level
@@ -157,6 +157,7 @@ intersphinx_mapping = {
     "torch": ("https://pytorch.org/docs/stable", None),
     "warp": ("https://nvidia.github.io/warp/latest", None),
 }
+intersphinx_timeout = 30
 
 source_suffix = [".rst", ".md"]
 myst_enable_extensions = ["colon_fence", "dollarmath"]
@@ -247,8 +248,8 @@ def isolate_gallery_examples() -> None:
     tag built by sphinx-multiversion would import the installed package rather
     than the tree being rendered.
     """
+    from _gallery_worker import run_example
     from sphinx_gallery import gen_rst
-    from sphinxext import run_example
 
     spawn = multiprocessing.get_context("spawn")
     worker_path = os.pathsep.join(
@@ -300,10 +301,10 @@ sphinx_gallery_conf = {
     "backreferences_dir": "modules/backreferences",
     "doc_module": ("nvalchemiops",),
     # Named by import path, not passed as a function: ``gallery_conf`` is
-    # pickled to the process each example runs in. See docs/sphinxext.py.
+    # pickled to the process each example runs in. See docs/_gallery_worker.py.
     "reset_modules": (
         "matplotlib",
-        "sphinxext.reset_seeds",
+        "_gallery_worker.reset_seeds",
     ),
     "reset_modules_order": "both",
     "show_memory": False,
