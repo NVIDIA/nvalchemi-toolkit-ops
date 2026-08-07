@@ -66,14 +66,14 @@ jobs:
       SMV_SITE_PACKAGES_0_3_1_RC: /tmp/docs-deps/warp-1.11.0
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           # Site-wide tooling always comes from main. The fetched tags and RC
           # branches remain available to sphinx-multiversion as content refs.
           ref: main
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -81,9 +81,12 @@ jobs:
         uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
         with:
           enable-cache: true
+          version: "0.12.1"
 
       - name: Install documentation dependencies
-        run: uv sync --extra torch --extra jax
+        run: |
+          uv sync --extra torch --extra jax
+          make docs-install-examples
 
       - name: Install historical Warp versions
         run: |

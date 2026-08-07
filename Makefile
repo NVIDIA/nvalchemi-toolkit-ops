@@ -356,7 +356,7 @@ BENCHMARK_PLOT_JOBS ?= auto
 .PHONY: docs-install-examples
 docs-install-examples:  ## Install example dependencies
 	@echo "Installing example dependencies..."
-	@for req in examples/*/*-requires.txt; do \
+	@for req in examples/*-requires.txt examples/*/*-requires.txt; do \
 		if [ -f "$$req" ]; then \
 			echo "Installing dependencies from $$req"; \
 			uv pip install -r "$$req"; \
