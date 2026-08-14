@@ -77,6 +77,7 @@ from nvalchemiops.dynamics.utils.cell_filter import (
     pack_velocities_with_cell,
     unpack_velocities_with_cell,
 )
+from nvalchemiops.torch._warp_op_helpers import register_noop_fake, torch_custom_op
 
 # Torch dtype -> Warp dtype mappings
 _TORCH_TO_WP_VEC = {torch.float32: wp.vec3f, torch.float64: wp.vec3d}
@@ -318,6 +319,20 @@ def _coord_cell_mix_impl(
     )
 
 
+@torch_custom_op(
+    "nvalchemiops::fire2_step_coord",
+    mutates_args=(
+        "positions",
+        "velocities",
+        "alpha",
+        "dt",
+        "nsteps_inc",
+        "vf",
+        "v_sumsq",
+        "f_sumsq",
+        "max_norm",
+    ),
+)
 def fire2_step_coord(
     positions: torch.Tensor,
     velocities: torch.Tensor,
@@ -326,7 +341,6 @@ def fire2_step_coord(
     alpha: torch.Tensor,
     dt: torch.Tensor,
     nsteps_inc: torch.Tensor,
-    *,
     vf: torch.Tensor | None = None,
     v_sumsq: torch.Tensor | None = None,
     f_sumsq: torch.Tensor | None = None,
@@ -493,6 +507,24 @@ def fire2_step_coord(
     )
 
 
+@torch_custom_op(
+    "nvalchemiops::fire2_step_coord_cell",
+    mutates_args=(
+        "positions",
+        "velocities",
+        "cell",
+        "cell_velocities",
+        "alpha",
+        "dt",
+        "nsteps_inc",
+        "ext_velocities",
+        "ext_forces",
+        "vf",
+        "v_sumsq",
+        "f_sumsq",
+        "max_norm",
+    ),
+)
 def fire2_step_coord_cell(
     positions: torch.Tensor,
     velocities: torch.Tensor,
@@ -504,7 +536,6 @@ def fire2_step_coord_cell(
     alpha: torch.Tensor,
     dt: torch.Tensor,
     nsteps_inc: torch.Tensor,
-    *,
     atom_ptr: torch.Tensor | None = None,
     ext_atom_ptr: torch.Tensor | None = None,
     ext_positions: torch.Tensor | None = None,
@@ -820,6 +851,10 @@ def fire2_step_coord_cell(
         maxstep=maxstep,
         device=wp_device,
     )
+
+
+register_noop_fake(fire2_step_coord)
+register_noop_fake(fire2_step_coord_cell)
 
 
 def fire2_step_coord_cell_mix(

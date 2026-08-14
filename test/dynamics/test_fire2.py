@@ -36,6 +36,7 @@ import numpy as np
 import pytest
 import torch
 import warp as wp
+from torch.fx.experimental.proxy_tensor import make_fx
 
 from nvalchemiops.dynamics.optimizers import (
     fire2_apply_step,
@@ -1182,6 +1183,72 @@ class TestFire2Convergence:
 # ==============================================================================
 # Tests: PyTorch Adapter
 # ==============================================================================
+
+
+class TestFire2TorchRegistration:
+    """Tests for the registered PyTorch FIRE2 operators."""
+
+    def test_fire2_steps_trace_as_custom_ops(self):
+        """Both public FIRE2 steps should trace as opaque nvalchemiops nodes."""
+
+        def coord_step(positions, velocities, forces, batch_idx, alpha, dt, nsteps):
+            fire2_step_coord(
+                positions, velocities, forces, batch_idx, alpha, dt, nsteps
+            )
+
+        def coord_cell_step(
+            positions,
+            velocities,
+            forces,
+            cell,
+            cell_velocities,
+            cell_force,
+            batch_idx,
+            alpha,
+            dt,
+            nsteps,
+        ):
+            fire2_step_coord_cell(
+                positions,
+                velocities,
+                forces,
+                cell,
+                cell_velocities,
+                cell_force,
+                batch_idx,
+                alpha,
+                dt,
+                nsteps,
+            )
+
+        coord_args = (
+            torch.empty(2, 3),
+            torch.empty(2, 3),
+            torch.empty(2, 3),
+            torch.zeros(2, dtype=torch.int32),
+            torch.empty(1),
+            torch.empty(1),
+            torch.empty(1, dtype=torch.int32),
+        )
+        cell_args = (
+            *coord_args[:3],
+            torch.empty(1, 3, 3),
+            torch.empty(1, 3, 3),
+            torch.empty(1, 3, 3),
+            *coord_args[3:],
+        )
+
+        coord_graph = make_fx(coord_step, tracing_mode="fake")(*coord_args)
+        cell_graph = make_fx(coord_cell_step, tracing_mode="fake")(*cell_args)
+
+        assert any(
+            node.target is torch.ops.nvalchemiops.fire2_step_coord.default
+            for node in coord_graph.graph.nodes
+        )
+        assert any(
+            node.target is torch.ops.nvalchemiops.fire2_step_coord_cell.default
+            for node in cell_graph.graph.nodes
+        )
 
 
 class TestFire2TorchCoord:
