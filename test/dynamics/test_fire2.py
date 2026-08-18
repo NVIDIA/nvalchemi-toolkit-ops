@@ -1241,13 +1241,21 @@ class TestFire2TorchRegistration:
         coord_graph = make_fx(coord_step, tracing_mode="fake")(*coord_args)
         cell_graph = make_fx(coord_cell_step, tracing_mode="fake")(*cell_args)
 
-        assert any(
-            node.target is torch.ops.nvalchemiops.fire2_step_coord.default
+        coord_node = next(
+            node
             for node in coord_graph.graph.nodes
+            if node.target is torch.ops.nvalchemiops.fire2_step_coord.default
         )
-        assert any(
-            node.target is torch.ops.nvalchemiops.fire2_step_coord_cell.default
+        cell_node = next(
+            node
             for node in cell_graph.graph.nodes
+            if node.target is torch.ops.nvalchemiops.fire2_step_coord_cell.default
+        )
+        assert len(coord_node.args) == len(
+            torch.ops.nvalchemiops.fire2_step_coord.default._schema.arguments
+        )
+        assert len(cell_node.args) == len(
+            torch.ops.nvalchemiops.fire2_step_coord_cell.default._schema.arguments
         )
 
 
