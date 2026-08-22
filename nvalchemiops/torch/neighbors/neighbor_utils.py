@@ -486,7 +486,6 @@ def coo_pack_pair_geometry(
     return distances, vectors
 
 
-@torch.compile
 def prepare_batch_idx_ptr(
     batch_idx: torch.Tensor | None,
     batch_ptr: torch.Tensor | None,
