@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Added
+
+- Torch and JAX Ewald now expose caller-retained reciprocal Miller topology via
+  `generate_ewald_miller_indices(...)` and
+  `k_vectors_from_miller_indices(...)`. Full `ewald_summation(...)` accepts
+  keyword-only `miller_indices=` and materializes Cartesian reciprocal vectors
+  from the current cell. Both backends provide
+  `ewald_reciprocal_space_from_miller_indices(...)` for the reciprocal
+  component. This avoids rebuilding the integer index grid while preserving
+  the reciprocal vectors' dependence on the current cell.
+
+### Fixed
+
+- Fixed JAX autodiff through `ewald_reciprocal_space(...)` when `k_vectors`
+  are derived from the differentiated cell. The custom JVP previously
+  discarded the `k_vectors` tangent and omitted the reciprocal-cell
+  contribution to the cell gradient. It now differentiates through the
+  supplied JAX graph, matching Torch. Cartesian vectors remain fixed only when
+  they have zero tangent in the active JAX transformation, for example when
+  precomputed from a reference cell or passed through
+  `jax.lax.stop_gradient(k_vectors)`. Full
+  `ewald_summation(k_vectors=...)` semantics are unchanged.
+
 ## 0.4.1 - 2026-08-03
 
 ### Added

@@ -22,9 +22,11 @@ PI = math.pi
 TWOPI = 2.0 * PI
 
 __all__ = [
+    "generate_ewald_miller_indices",
     "generate_k_vectors_ewald_summation",
     "generate_k_vectors_pme",
     "generate_miller_indices",
+    "k_vectors_from_miller_indices",
 ]
 
 
@@ -75,16 +77,18 @@ def generate_miller_indices(
 _generate_miller_indices = generate_miller_indices
 
 
-def generate_k_vectors_ewald_summation(
+def generate_ewald_miller_indices(
     cell: jax.Array,
     k_cutoff: float | jax.Array,
     miller_bounds: tuple[int, int, int] | None = None,
 ) -> jax.Array:
-    r"""Generate reciprocal lattice vectors for Ewald summation (half-space).
+    r"""Generate the positive-half-space Miller topology for Ewald summation.
 
-    Creates k-vectors within the specified cutoff for the reciprocal space
-    summation in the Ewald method. Uses half-space optimization to reduce
-    computational cost by approximately 2x.
+    Derives conservative rectangular Miller bounds from ``k_cutoff`` for the
+    reciprocal-space Ewald sum. Supplying ``miller_bounds`` instead enumerates
+    that rectangle directly; neither mode applies a per-vector magnitude
+    filter. Uses half-space optimization to reduce computational cost by
+    approximately 2x.
 
     Half-Space Optimization
     -----------------------
@@ -127,33 +131,28 @@ def generate_k_vectors_ewald_summation(
         Unit cell matrix with lattice vectors as rows.
         Shape (3, 3) for single system or (B, 3, 3) for batch.
     k_cutoff : float or jax.Array
-        Maximum magnitude of k-vectors to include (:math:`|\mathbf{k}| \leq k_{\text{cutoff}}`).
-        Typical values: 8-12 :math:`\text{\AA}^{-1}` for molecular systems.
-        Higher values increase accuracy but also computational cost.
+        Reciprocal cutoff used to derive conservative per-axis Miller bounds.
+        The resulting rectangular topology can contain vectors whose magnitude
+        exceeds this value.
     miller_bounds : tuple[int, int, int] | None, optional
-        Precomputed maximum Miller indices (M_h, M_k, M_l) for each lattice
-        direction. When provided, the function skips the internal computation
-        of bounds from ``cell`` and ``k_cutoff``, making it compatible with
-        ``jax.jit`` (which requires static array shapes).
-        Use :func:`generate_miller_indices` to compute these bounds eagerly
-        before entering a JIT context. When ``None`` (default), bounds are
-        computed automatically from ``cell`` and ``k_cutoff``.
+        Explicit Miller half-bounds ``(M_h, M_k, M_l)``. When supplied, their
+        rectangle is enumerated directly and ``k_cutoff`` does not select
+        individual rows. Use the legacy :func:`generate_miller_indices` bounds
+        helper before ``jax.jit``; it returns bounds, not full index rows.
 
     Returns
     -------
     jax.Array
-        Reciprocal lattice vectors within the cutoff.
-        Shape (K, 3) for single system or (B, K, 3) for batch.
-        Excludes k=0 and includes only half-space vectors.
+        Signed integer Miller indices of shape ``(K, 3)``. The rows are
+        nonzero, unique, and in the positive half-space.
 
     Examples
     --------
     Single system with explicit k_cutoff::
 
         >>> cell = jnp.eye(3, dtype=jnp.float64) * 10.0
-        >>> k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
-        >>> k_vectors.shape
-        (...)  # Number depends on cell size and cutoff
+        >>> indices = generate_ewald_miller_indices(cell, k_cutoff=8.0)
+        >>> k_vectors = k_vectors_from_miller_indices(cell, indices)
 
     With automatic parameter estimation::
 
@@ -182,16 +181,11 @@ def generate_k_vectors_ewald_summation(
       as a concrete ``tuple[int, int, int]``. The bounds determine array shapes
       (via ``jnp.arange``), which must be statically known at trace time.
 
-    See Also
-    --------
-    ewald_reciprocal_space : Uses these k-vectors for reciprocal space energy.
-    estimate_ewald_parameters : Automatic parameter estimation including k_cutoff.
-    generate_miller_indices : Compute Miller bounds for JIT-compatible usage.
+    A retained topology must conservatively cover every cell state in which it
+    will be used. Enlarging it changes ``K`` and can recompile ``jax.jit``.
     """
     if cell.ndim == 2:
         cell = cell[None, ...]
-    dtype = cell.dtype
-
     # Get max Miller indices per direction: M_h, M_k, M_l
     if miller_bounds is not None:
         M_h, M_k, M_l = miller_bounds
@@ -203,21 +197,21 @@ def generate_k_vectors_ewald_summation(
 
     # Build half-space Miller indices directly (no boolean masking)
     # Block 1: h in [1, M_h], k in [-M_k, M_k], l in [-M_l, M_l]
-    h1 = jnp.arange(1, M_h + 1, dtype=dtype)
-    k1 = jnp.arange(-M_k, M_k + 1, dtype=dtype)
-    l1 = jnp.arange(-M_l, M_l + 1, dtype=dtype)
+    h1 = jnp.arange(1, M_h + 1, dtype=jnp.int32)
+    k1 = jnp.arange(-M_k, M_k + 1, dtype=jnp.int32)
+    l1 = jnp.arange(-M_l, M_l + 1, dtype=jnp.int32)
     h1_grid, k1_grid, l1_grid = jnp.meshgrid(h1, k1, l1, indexing="ij")
     block1 = jnp.stack(
         [h1_grid.reshape(-1), k1_grid.reshape(-1), l1_grid.reshape(-1)], axis=1
     )
 
     # Block 2: h = 0, k in [1, M_k], l in [-M_l, M_l]
-    k2 = jnp.arange(1, M_k + 1, dtype=dtype)
-    l2 = jnp.arange(-M_l, M_l + 1, dtype=dtype)
+    k2 = jnp.arange(1, M_k + 1, dtype=jnp.int32)
+    l2 = jnp.arange(-M_l, M_l + 1, dtype=jnp.int32)
     k2_grid, l2_grid = jnp.meshgrid(k2, l2, indexing="ij")
     block2 = jnp.stack(
         [
-            jnp.zeros(k2_grid.size, dtype=dtype),
+            jnp.zeros(k2_grid.size, dtype=jnp.int32),
             k2_grid.reshape(-1),
             l2_grid.reshape(-1),
         ],
@@ -225,23 +219,53 @@ def generate_k_vectors_ewald_summation(
     )
 
     # Block 3: h = 0, k = 0, l in [1, M_l]
-    l3 = jnp.arange(1, M_l + 1, dtype=dtype)
+    l3 = jnp.arange(1, M_l + 1, dtype=jnp.int32)
     block3 = jnp.stack(
-        [jnp.zeros(l3.size, dtype=dtype), jnp.zeros(l3.size, dtype=dtype), l3],
+        [jnp.zeros(l3.size, dtype=jnp.int32), jnp.zeros(l3.size, dtype=jnp.int32), l3],
         axis=1,
     )
 
-    # Concatenate all blocks
-    miller_indices = jnp.concatenate([block1, block2, block3], axis=0)
+    return jnp.concatenate([block1, block2, block3], axis=0)
 
-    # Compute reciprocal lattice vectors (2π times reciprocal of direct lattice)
-    reciprocal_cell = TWOPI * jnp.linalg.inv(
-        jnp.swapaxes(cell, -2, -1)
-    )  # Transpose for column vectors
+
+def k_vectors_from_miller_indices(
+    cell: jax.Array,
+    miller_indices: jax.Array,
+) -> jax.Array:
+    """Materialize reciprocal vectors from caller-retained Miller indices.
+
+    The supplied ``cell`` defines the live reciprocal transform. ``miller_indices``
+    must be a signed integer array of shape ``(K, 3)``; ``(0, 3)`` is valid.
+    Duplicate rows, zero rows, and half-space membership are caller
+    preconditions and are not checked. :func:`generate_ewald_miller_indices`
+    produces valid topology. The result has shape ``(K, 3)`` for one cell or
+    ``(B, K, 3)`` for a batch.
+    """
+    if cell.ndim not in (2, 3) or cell.shape[-2:] != (3, 3):
+        raise ValueError("cell must have shape (3, 3) or (B, 3, 3)")
+    if miller_indices.ndim != 2 or miller_indices.shape[-1] != 3:
+        raise ValueError("miller_indices must have shape (K, 3)")
+    if not jnp.issubdtype(miller_indices.dtype, jnp.signedinteger):
+        raise ValueError("miller_indices must have a signed integer dtype")
+    if cell.ndim == 2:
+        cell = cell[None, ...]
+    reciprocal_cell = TWOPI * jnp.linalg.inv(jnp.swapaxes(cell, -2, -1))
     k_vectors = miller_indices.astype(reciprocal_cell.dtype) @ reciprocal_cell
     if k_vectors.shape[0] == 1:
         return jnp.squeeze(k_vectors, axis=0)
     return k_vectors
+
+
+def generate_k_vectors_ewald_summation(
+    cell: jax.Array,
+    k_cutoff: float | jax.Array,
+    miller_bounds: tuple[int, int, int] | None = None,
+) -> jax.Array:
+    """Generate reciprocal lattice vectors for Ewald summation (half-space)."""
+    return k_vectors_from_miller_indices(
+        cell,
+        generate_ewald_miller_indices(cell, k_cutoff, miller_bounds),
+    )
 
 
 def generate_k_vectors_pme(

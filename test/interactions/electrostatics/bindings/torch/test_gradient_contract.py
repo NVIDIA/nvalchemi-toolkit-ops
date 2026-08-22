@@ -24,7 +24,9 @@ import torch
 from nvalchemiops.torch.interactions.electrostatics import (
     ewald_real_space,
     ewald_reciprocal_space,
+    ewald_reciprocal_space_from_miller_indices,
     ewald_summation,
+    generate_ewald_miller_indices,
     generate_k_vectors_ewald_summation,
     generate_k_vectors_pme,
     particle_mesh_ewald,
@@ -185,6 +187,40 @@ def test_compiled_ewald_first_order_gradients_match_eager() -> None:
     eager_loss = reciprocal_loss_fn(*eager_inputs)
     eager_grads = torch.autograd.grad(eager_loss, eager_inputs)
     compiled_loss = torch.compile(reciprocal_loss_fn)(*compiled_inputs)
+    compiled_grads = torch.autograd.grad(compiled_loss, compiled_inputs)
+    torch.testing.assert_close(compiled_loss, eager_loss)
+    for compiled_grad, eager_grad in zip(compiled_grads, eager_grads, strict=True):
+        torch.testing.assert_close(compiled_grad, eager_grad, rtol=5e-7, atol=5e-8)
+
+    miller_indices = generate_ewald_miller_indices(
+        cell,
+        k_cutoff=5.0,
+        miller_bounds=(5, 5, 5),
+    )
+
+    def retained_reciprocal_loss_fn(
+        pos: torch.Tensor,
+        q: torch.Tensor,
+        lattice: torch.Tensor,
+    ) -> torch.Tensor:
+        return ewald_reciprocal_space_from_miller_indices(
+            pos,
+            q,
+            lattice,
+            miller_indices,
+            alpha,
+        ).sum()
+
+    retained_reciprocal_loss_fn(positions, charges, cell).detach()
+    eager_inputs = (
+        positions.detach().requires_grad_(True),
+        charges.detach().requires_grad_(True),
+        cell.detach().requires_grad_(True),
+    )
+    compiled_inputs = tuple(t.detach().requires_grad_(True) for t in eager_inputs)
+    eager_loss = retained_reciprocal_loss_fn(*eager_inputs)
+    eager_grads = torch.autograd.grad(eager_loss, eager_inputs)
+    compiled_loss = torch.compile(retained_reciprocal_loss_fn)(*compiled_inputs)
     compiled_grads = torch.autograd.grad(compiled_loss, compiled_inputs)
     torch.testing.assert_close(compiled_loss, eager_loss)
     for compiled_grad, eager_grad in zip(compiled_grads, eager_grads, strict=True):

@@ -67,6 +67,34 @@ def test_ewald_miller_bounds_is_keyword_only_after_legacy_slots() -> None:
     assert params[names.index("miller_bounds")].kind is inspect.Parameter.KEYWORD_ONLY
 
 
+def test_reciprocal_miller_component_matches_jax_public_argument_order() -> None:
+    """Retained-index reciprocal API keeps the established JAX optional order."""
+    params = list(
+        inspect.signature(
+            electrostatics.ewald_reciprocal_space_from_miller_indices
+        ).parameters.values()
+    )
+    names = [param.name for param in params]
+    assert names[:6] == [
+        "positions",
+        "charges",
+        "cell",
+        "miller_indices",
+        "alpha",
+        "batch_idx",
+    ]
+    assert names[6:10] == [
+        "max_atoms_per_system",
+        "compute_forces",
+        "compute_charge_gradients",
+        "compute_virial",
+    ]
+    assert "hybrid_forces" not in names
+    energy_reduction = params[names.index("energy_reduction")]
+    assert energy_reduction.kind is inspect.Parameter.KEYWORD_ONLY
+    assert energy_reduction.default == "atom"
+
+
 @pytest.mark.parametrize(
     "name",
     [

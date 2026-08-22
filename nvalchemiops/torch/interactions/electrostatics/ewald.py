@@ -122,6 +122,7 @@ from nvalchemiops.torch.interactions.electrostatics._util import (
 )
 from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
     generate_k_vectors_ewald_summation,
+    k_vectors_from_miller_indices,
 )
 from nvalchemiops.torch.interactions.electrostatics.parameters import (
     estimate_ewald_parameters,
@@ -133,6 +134,7 @@ from nvalchemiops.torch.interactions.electrostatics.slab import (
 __all__ = [
     "ewald_real_space",
     "ewald_reciprocal_space",
+    "ewald_reciprocal_space_from_miller_indices",
     "ewald_summation",
 ]
 
@@ -201,6 +203,35 @@ def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, int]:
     if cell.dim() == 2:
         cell = cell.unsqueeze(0)
     return cell, cell.shape[0]
+
+
+def _validate_ewald_topology_inputs(
+    cell: torch.Tensor,
+    k_vectors: torch.Tensor | None,
+    k_cutoff: float | None,
+    miller_bounds: tuple[int, int, int] | torch.Tensor | None,
+    miller_indices: torch.Tensor | None,
+) -> None:
+    """Validate that full Ewald receives one reciprocal-topology source."""
+    if k_vectors is not None and miller_indices is not None:
+        raise ValueError("k_vectors cannot be combined with miller_indices")
+    if miller_indices is not None:
+        if k_cutoff is not None or miller_bounds is not None or k_vectors is not None:
+            raise ValueError(
+                "miller_indices cannot be combined with k_vectors, k_cutoff, or "
+                "miller_bounds"
+            )
+        if miller_indices.ndim != 2 or miller_indices.shape[-1] != 3:
+            raise ValueError("miller_indices must have shape (K, 3)")
+        if miller_indices.dtype not in {
+            torch.int8,
+            torch.int16,
+            torch.int32,
+            torch.int64,
+        }:
+            raise ValueError("miller_indices must have a signed integer dtype")
+        if cell.device != miller_indices.device:
+            raise ValueError("cell and miller_indices must be on the same device")
 
 
 ###########################################################################################
@@ -1243,11 +1274,10 @@ def ewald_reciprocal_space(
         Unit cell matrices.
     k_vectors : torch.Tensor
         Reciprocal lattice vectors. Shape (K, 3) for single system, (B, K, 3) for batch.
-        When both ``cell`` and ``k_vectors`` require gradients, the supplied
-        k-vector graph is preserved. Physical strain derivatives require vectors
-        generated from the same differentiable cell. Non-differentiable vectors,
-        and grad-bearing leaf vectors without a cell edge, are fixed Cartesian
-        metadata for cell derivatives.
+        If these vectors are computed from the differentiated ``cell`` without
+        detaching them, autograd follows that graph edge. A precomputed or
+        detached tensor has no cell edge and is fixed with respect to the cell
+        derivative.
     alpha : torch.Tensor, shape (1,) or (B,)
         Ewald splitting parameter(s).
     batch_idx : torch.Tensor, shape (N,), optional
@@ -1300,10 +1330,10 @@ def ewald_reciprocal_space(
     Energies are always float64 for numerical stability during accumulation.
     Forces, virial, and charge gradients match the input dtype (float32 or float64).
     For eager execution, a differentiable ``cell`` paired with fixed Cartesian
-    ``k_vectors`` emits a warning because its cell derivative is not the physical
-    Ewald strain virial. This advisory warning is suppressed under
-    ``torch.compile``. Generate vectors from the differentiable cell with fixed
-    Miller bounds for physical strain derivatives.
+    ``k_vectors`` emits a warning because its cell derivative omits the
+    reciprocal-vector dependence. This advisory warning is suppressed under
+    ``torch.compile``. A component cell derivative holds positions fixed; for a
+    homogeneous-strain derivative, deform positions and cell together.
 
     When ``charges`` is a non-leaf tensor that may depend on ``positions``
     (:math:`q = q(R)`), ordinary first-order losses may use cached partial
@@ -1347,6 +1377,43 @@ def ewald_reciprocal_space(
         hybrid_forces=hybrid_forces,
         allow_cell_grad_with_k_vectors=allow_cell_grad_with_k_vectors,
         preserve_k_vector_grad=allow_cell_grad_with_k_vectors,
+        max_atoms_per_system=max_atoms_per_system,
+        energy_reduction=energy_reduction,
+    )
+
+
+def ewald_reciprocal_space_from_miller_indices(
+    positions: torch.Tensor,
+    charges: torch.Tensor,
+    cell: torch.Tensor,
+    miller_indices: torch.Tensor,
+    alpha: torch.Tensor,
+    batch_idx: torch.Tensor | None = None,
+    compute_forces: bool = False,
+    compute_charge_gradients: bool = False,
+    compute_virial: bool = False,
+    hybrid_forces: bool = False,
+    *,
+    max_atoms_per_system: int | None = None,
+    energy_reduction: Literal["atom", "system"] = "atom",
+) -> torch.Tensor | tuple[torch.Tensor, ...]:
+    """Compute the reciprocal component from retained Miller indices.
+
+    Materializes Cartesian vectors from the supplied ``cell``, then delegates
+    to :func:`ewald_reciprocal_space`. Direct outputs, return order,
+    deprecation behavior, and energy reduction match that component.
+    """
+    return ewald_reciprocal_space(
+        positions=positions,
+        charges=charges,
+        cell=cell,
+        k_vectors=k_vectors_from_miller_indices(cell, miller_indices),
+        alpha=alpha,
+        batch_idx=batch_idx,
+        compute_forces=compute_forces,
+        compute_charge_gradients=compute_charge_gradients,
+        compute_virial=compute_virial,
+        hybrid_forces=hybrid_forces,
         max_atoms_per_system=max_atoms_per_system,
         energy_reduction=energy_reduction,
     )
@@ -1707,6 +1774,7 @@ def ewald_summation(
     slab_correction: bool = False,
     *,
     miller_bounds: tuple[int, int, int] | torch.Tensor | None = None,
+    miller_indices: torch.Tensor | None = None,
     max_atoms_per_system: int | None = None,
     energy_reduction: Literal["atom", "system"] = "atom",
 ) -> tuple[torch.Tensor, ...] | torch.Tensor:
@@ -1714,6 +1782,9 @@ def ewald_summation(
 
     Computes total Coulomb energy by combining real-space and reciprocal-space
     contributions with self-energy and background corrections.
+    Supply explicit ``k_vectors`` as fixed metadata, retained
+    ``miller_indices`` to materialize vectors from the current cell, or neither
+    to generate vectors from ``k_cutoff`` and optional ``miller_bounds``.
 
     Parameters
     ----------
@@ -1726,17 +1797,18 @@ def ewald_summation(
     alpha : float, torch.Tensor, or None, default=None
         Ewald splitting parameter. Auto-estimated if None.
     k_vectors : torch.Tensor, optional
-        Pre-computed reciprocal lattice vectors for fixed-cell reuse.
-        Caller-supplied vectors are static metadata assumed to correspond to the
-        current ``cell``; cache-generation derivatives are not recovered. For
-        physical cell/strain derivatives, omit ``k_vectors`` so vectors are
-        regenerated from the differentiable ``cell``.
+        Explicit reciprocal vectors, treated as fixed metadata. When omitted,
+        vectors are generated from ``k_cutoff`` or materialized from
+        ``miller_indices``.
     k_cutoff : float, optional
-        K-space cutoff for generating k_vectors.
+        Reciprocal cutoff used only when generating vectors internally.
     miller_bounds : tuple[int, int, int] or torch.Tensor, optional, keyword-only
-        Precomputed Miller-index half-bounds used when ``k_vectors`` is not
-        supplied. Passing Python integer bounds avoids deriving range sizes from
-        device tensors inside regenerated-k-vector loops.
+        Miller half-bounds used with internally generated vectors. Ignored when
+        explicit ``k_vectors`` are supplied for compatibility.
+    miller_indices : torch.Tensor, optional, keyword-only
+        Caller-retained signed integer topology of shape ``(K, 3)``. Full Ewald
+        materializes vectors from the current ``cell``. Do not combine it with
+        ``k_vectors``, ``k_cutoff``, or ``miller_bounds``.
     max_atoms_per_system : int, optional, keyword-only
         Maximum number of atoms in any single system when ``batch_idx`` is
         provided. See :func:`ewald_reciprocal_space` for the sync-free launch
@@ -1858,6 +1930,13 @@ def ewald_summation(
         ... )
     """
     _validate_energy_reduction(energy_reduction)
+    _validate_ewald_topology_inputs(
+        cell,
+        k_vectors,
+        k_cutoff,
+        miller_bounds,
+        miller_indices,
+    )
     if compute_forces or compute_virial or compute_charge_gradients or hybrid_forces:
         if torch.compiler.is_compiling():
             _compiled_direct_output_deprecation_signal("ewald_summation")
@@ -1874,11 +1953,13 @@ def ewald_summation(
 
     cell, num_systems = _prepare_cell(cell)
 
-    if alpha is None or (k_cutoff is None and k_vectors is None):
+    if alpha is None or (
+        k_cutoff is None and k_vectors is None and miller_indices is None
+    ):
         params = estimate_ewald_parameters(positions, cell, batch_idx, accuracy)
         if alpha is None:
             alpha = params.alpha
-        if k_cutoff is None:
+        if k_cutoff is None and miller_indices is None:
             k_cutoff = params.reciprocal_space_cutoff
 
     alpha_tensor = _detach_setup_tensor(
@@ -1886,7 +1967,9 @@ def ewald_summation(
     )
 
     generated_k_vectors = k_vectors is None
-    if k_vectors is None:
+    if miller_indices is not None:
+        k_vectors = k_vectors_from_miller_indices(cell, miller_indices)
+    elif k_vectors is None:
         k_vectors = generate_k_vectors_ewald_summation(
             cell, k_cutoff, miller_bounds=miller_bounds
         )
