@@ -54,6 +54,8 @@ forward inputs); the detached caches are first-order value only.
 
 from __future__ import annotations
 
+import warnings
+
 import torch
 import warp as wp
 
@@ -213,6 +215,14 @@ def _resolve_max_atoms_per_system(
     value = int(max_atoms_per_system_bound)
     if value > 0:
         return value
+    if torch.compiler.is_compiling():
+        warnings.warn(
+            "Missing `max_atoms_per_system`; inferring it from `atom_start` and "
+            "`atom_end` introduces a graph break under torch.compile. This will "
+            "become an error in a future release.",
+            FutureWarning,
+            stacklevel=2,
+        )
     return int((atom_end - atom_start).max().item())
 
 

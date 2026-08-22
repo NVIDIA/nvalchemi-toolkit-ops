@@ -15,6 +15,8 @@
 
 """Tests for PyTorch bindings of batched naive dual cutoff neighbor list methods."""
 
+import warnings
+
 import pytest
 import torch
 
@@ -1230,7 +1232,9 @@ class TestBatchNaiveDualCutoffCompile:
             )
 
         eager = run(positions, *alloc_outputs())
-        compiled = torch.compile(run)(positions, *alloc_outputs())
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            compiled = torch.compile(run)(positions, *alloc_outputs())
 
         (
             compiled_nm1,
@@ -1265,4 +1269,95 @@ class TestBatchNaiveDualCutoffCompile:
                 eager_shifts2,
                 eager_nn2,
                 atom_index,
+            )
+
+    @pytest.mark.slow
+    def test_compile_pbc_implicit_max_atoms_warns_and_matches_eager(
+        self, device, dtype
+    ):
+        """Compiled dual-cutoff PBC fallback warns while retaining eager output."""
+        atoms_per_system = [5, 6]
+        positions, cell, pbc, _ = create_batch_systems(
+            num_systems=2, atoms_per_system=atoms_per_system, dtype=dtype, device=device
+        )
+        batch_idx, batch_ptr = create_batch_idx_and_ptr(atoms_per_system, device)
+        cutoff1 = 1.0
+        cutoff2 = 1.5
+        fill_value = positions.shape[0]
+        max_neighbors1 = 20
+        max_neighbors2 = 30
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+            cell, cutoff2, pbc
+        )
+
+        def alloc_outputs():
+            return (
+                torch.full(
+                    (fill_value, max_neighbors1),
+                    fill_value,
+                    dtype=torch.int32,
+                    device=device,
+                ),
+                torch.zeros(fill_value, dtype=torch.int32, device=device),
+                torch.zeros(
+                    (fill_value, max_neighbors1, 3), dtype=torch.int32, device=device
+                ),
+                torch.full(
+                    (fill_value, max_neighbors2),
+                    fill_value,
+                    dtype=torch.int32,
+                    device=device,
+                ),
+                torch.zeros(fill_value, dtype=torch.int32, device=device),
+                torch.zeros(
+                    (fill_value, max_neighbors2, 3), dtype=torch.int32, device=device
+                ),
+            )
+
+        def run(pos, nm1, nn1, shifts1, nm2, nn2, shifts2):
+            return batch_naive_neighbor_list_dual_cutoff(
+                pos,
+                cutoff1,
+                cutoff2,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                pbc=pbc,
+                cell=cell,
+                fill_value=fill_value,
+                neighbor_matrix1=nm1,
+                num_neighbors1=nn1,
+                neighbor_matrix_shifts1=shifts1,
+                neighbor_matrix2=nm2,
+                num_neighbors2=nn2,
+                neighbor_matrix_shifts2=shifts2,
+                shift_range_per_dimension=shift_range,
+                num_shifts_per_system=num_shifts,
+                max_shifts_per_system=max_shifts,
+            )
+
+        eager = run(positions, *alloc_outputs())
+        with pytest.warns(FutureWarning, match="max_atoms_per_system"):
+            compiled = torch.compile(run)(positions, *alloc_outputs())
+
+        (
+            compiled_nm1,
+            compiled_nn1,
+            compiled_shifts1,
+            compiled_nm2,
+            compiled_nn2,
+            compiled_shifts2,
+        ) = compiled
+        eager_nm1, eager_nn1, eager_shifts1, eager_nm2, eager_nn2, eager_shifts2 = eager
+        assert torch.equal(compiled_nn1, eager_nn1)
+        assert torch.equal(compiled_nn2, eager_nn2)
+        for atom_index in range(fill_value):
+            assert _active_neighbor_shift_rows(
+                compiled_nm1, compiled_shifts1, compiled_nn1, atom_index
+            ) == _active_neighbor_shift_rows(
+                eager_nm1, eager_shifts1, eager_nn1, atom_index
+            )
+            assert _active_neighbor_shift_rows(
+                compiled_nm2, compiled_shifts2, compiled_nn2, atom_index
+            ) == _active_neighbor_shift_rows(
+                eager_nm2, eager_shifts2, eager_nn2, atom_index
             )

@@ -587,6 +587,15 @@ def _batch_query_cell_list_op(
     n_outer = None
     R_max = None
     if use_pair_centric:
+        if torch.compiler.is_compiling():
+            warnings.warn(
+                'Missing `strategy="atom_centric"`; inferring total-cell '
+                "allocation from `cells_per_system` introduces a graph break "
+                "under torch.compile. This will become an error in a future "
+                "release.",
+                FutureWarning,
+                stacklevel=2,
+            )
         total_cells = int(cells_per_system.sum().item())
         R_max = _max_radius_tuple(neighbor_search_radius)
         n_outer = compute_batch_pair_centric_n_outer(R_max, bool(half_fill))
@@ -1534,6 +1543,15 @@ def _batch_query_cell_list_optional(
     n_outer = None
     R_max = None
     if use_pair_centric:
+        if torch.compiler.is_compiling():
+            warnings.warn(
+                'Missing `strategy="atom_centric"`; inferring total-cell '
+                "allocation from `cells_per_system` introduces a graph break "
+                "under torch.compile. This will become an error in a future "
+                "release.",
+                FutureWarning,
+                stacklevel=2,
+            )
         total_cells = int(cells_per_system.sum().item())
         R_max = _max_radius_tuple(neighbor_search_radius)
         n_outer = compute_batch_pair_centric_n_outer(R_max, bool(half_fill))
@@ -1726,6 +1744,9 @@ def batch_cell_list(
         Pre-allocated tensor for start indices.
     cell_atom_list : torch.Tensor, shape (total_atoms,), dtype=int32, optional
         Pre-allocated tensor for atom list.
+        When compiling, provide this and the other cell-list cache buffers
+        explicitly. Implicit cache allocation emits a ``FutureWarning`` and
+        will become an error in a future release.
     cell_offsets : torch.Tensor, shape (num_systems,), dtype=int32, optional
         Accepted for API compatibility; computed internally and not used from
         this argument.
@@ -1899,6 +1920,15 @@ def batch_cell_list(
     )
     cell_list_min_cells = 1 if strategy == "atom_centric" else 4
     if allocated_cell_list:
+        if torch.compiler.is_compiling():
+            warnings.warn(
+                "Missing `cells_per_dimension` and related cache buffers; "
+                "inferring their allocation from `cell` and `pbc` introduces a "
+                "graph break under torch.compile. This will become an error in "
+                "a future release.",
+                FutureWarning,
+                stacklevel=2,
+            )
         max_total_cells, neighbor_search_radius = estimate_batch_cell_list_sizes(
             cell,
             pbc,

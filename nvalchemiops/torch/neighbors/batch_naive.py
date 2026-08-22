@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import torch
 import warp as wp
 
@@ -252,6 +254,14 @@ def _batch_naive_neighbor_matrix_pbc(
     )
 
     if max_atoms_per_system is None:
+        if torch.compiler.is_compiling():
+            warnings.warn(
+                "Missing `max_atoms_per_system`; inferring it from `batch_ptr` "
+                "introduces a graph break under torch.compile. This will become "
+                "an error in a future release.",
+                FutureWarning,
+                stacklevel=2,
+            )
         max_atoms_per_system = (batch_ptr[1:] - batch_ptr[:-1]).max().item()
 
     wp_rebuild_flags = None
@@ -1626,9 +1636,14 @@ def batch_naive_neighbor_list(
                 device=positions.device,
             )
         if pbc is not None and max_atoms_per_system is None:
-            # ``.item()`` is a CPU sync; it works in eager but triggers a
-            # graph break under ``torch.compile``.  Pass max_atoms_per_system
-            # explicitly to keep the autograd path graph-clean under compile.
+            if torch.compiler.is_compiling():
+                warnings.warn(
+                    "Missing `max_atoms_per_system`; inferring it from `batch_ptr` "
+                    "introduces a graph break under torch.compile. This will "
+                    "become an error in a future release.",
+                    FutureWarning,
+                    stacklevel=2,
+                )
             max_atoms_per_system = int((batch_ptr[1:] - batch_ptr[:-1]).max().item())
         forward_kwargs = {
             "cutoff": cutoff,
@@ -1719,6 +1734,14 @@ def batch_naive_neighbor_list(
         else:
             return neighbor_matrix, num_neighbors
     else:
+        if max_atoms_per_system is None and torch.compiler.is_compiling():
+            warnings.warn(
+                "Missing `max_atoms_per_system`; inferring it from `batch_ptr` "
+                "introduces a graph break under torch.compile. This will become "
+                "an error in a future release.",
+                FutureWarning,
+                stacklevel=2,
+            )
         _batch_naive_neighbor_matrix_pbc(
             positions=positions,
             cell=cell,

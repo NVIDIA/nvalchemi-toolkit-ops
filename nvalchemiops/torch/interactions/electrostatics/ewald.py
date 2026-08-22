@@ -116,6 +116,7 @@ from nvalchemiops.torch.interactions.electrostatics._util import (
     _InjectCachedEvalGrad,
     _InjectCachedEvalGradWithFallback,
     _InjectChargeGrad,
+    _is_static_single_system,
     _reduce_atom_energy,
     _unpack_electrostatic_outputs,
     _validate_energy_reduction,
@@ -183,7 +184,7 @@ def _prepare_alpha(
         raise TypeError(f"alpha must be float or torch.Tensor, got {type(alpha)}")
 
 
-def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, int]:
+def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, torch.SymInt]:
     """Ensure cell is 3D (B, 3, 3) and return number of systems.
 
     Parameters
@@ -195,7 +196,7 @@ def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, int]:
     -------
     cell : torch.Tensor, shape (B, 3, 3)
         Cell with batch dimension.
-    num_systems : int
+    num_systems : torch.SymInt
         Number of systems (B).
     """
     if cell.dim() == 2:
@@ -230,7 +231,7 @@ def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, int]:
 
 
 def _atom_ranges(
-    batch_idx: torch.Tensor, num_systems: int
+    batch_idx: torch.Tensor, num_systems: torch.SymInt
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Per-system [start, end) atom index ranges from a sorted ``batch_idx``.
 
@@ -238,14 +239,9 @@ def _atom_ranges(
     (the existing batched-Ewald contract); ``atom_start``/``atom_end`` are int32.
     """
     device = batch_idx.device
-    if num_systems == 1:
+    if _is_static_single_system(num_systems):
         starts = torch.zeros((1,), dtype=torch.int32, device=device)
-        ends = torch.full(
-            (1,),
-            batch_idx.shape[0],
-            dtype=torch.int32,
-            device=device,
-        )
+        ends = torch.full((1,), batch_idx.shape[0], dtype=torch.int32, device=device)
         return starts, ends
 
     counts = torch.zeros(num_systems, dtype=torch.long, device=device)
@@ -878,7 +874,7 @@ def ewald_real_space(
 
     """
     _validate_energy_reduction(energy_reduction)
-    num_systems = int(cell.shape[0]) if cell.dim() == 3 else 1
+    num_systems = cell.shape[0] if cell.dim() == 3 else 1
 
     def _select_energy(energy):
         if energy_reduction == "system":
@@ -1407,7 +1403,7 @@ def _ewald_reciprocal_space(
             k_vectors_2d = k_vectors[:1]
         else:
             k_vectors_2d = k_vectors.unsqueeze(0)
-    num_systems = int(k_vectors_2d.shape[0])
+    num_systems = k_vectors_2d.shape[0]
 
     def _select_energy(energy):
         if energy_reduction == "system":

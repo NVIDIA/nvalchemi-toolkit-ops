@@ -67,6 +67,8 @@ Examples
 
 from __future__ import annotations
 
+import warnings
+
 import torch
 import warp as wp
 
@@ -424,7 +426,9 @@ def dsf_coulomb(
     compute_virial : bool, default False
         Whether to compute virial tensor (requires PBC and compute_forces).
     num_systems : int, optional
-        Number of systems. Inferred from batch_idx or cell if not given.
+        Number of systems. Inferred from batch_idx or cell if not given. When
+        compiling without a cell, pass this explicitly; inference emits a
+        ``FutureWarning`` and will become an error in a future release.
     device : str, optional
         Warp device string. Inferred from positions if not given.
 
@@ -537,6 +541,14 @@ def dsf_coulomb(
         elif cell is not None:
             num_systems = cell.size(0)
         else:
+            if torch.compiler.is_compiling():
+                warnings.warn(
+                    "Missing `num_systems`; inferring it from `batch_idx` "
+                    "introduces a graph break under torch.compile. This will "
+                    "become an error in a future release.",
+                    FutureWarning,
+                    stacklevel=2,
+                )
             num_systems = int(batch_idx.max().item()) + 1
 
     # Ensure cell matches input dtype

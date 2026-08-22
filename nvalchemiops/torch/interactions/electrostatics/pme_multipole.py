@@ -33,6 +33,7 @@ Design:
 from __future__ import annotations
 
 import math
+import warnings
 from contextlib import nullcontext
 
 import torch
@@ -4346,6 +4347,10 @@ def multipole_pme_energy_corrections(
         where :math:`|Q_i|_F^2 = \sum_{\alpha\beta} Q_{i,\alpha\beta}^2` is
         the squared Frobenius norm; matches the direct-k
         ``_multipole_ewald_self_energy_per_atom`` convention.
+    n_systems : int, optional
+        Number of batched systems. When ``batch_idx`` is provided, pass this
+        explicitly when compiling; inference emits a ``FutureWarning`` and
+        will become an error in a future release.
 
     Returns
     -------
@@ -4410,8 +4415,14 @@ def multipole_pme_energy_corrections(
 
     # Batched: per-system total charge + per-system volume (B,).
     if n_systems is None:
-        # Eager fallback only; the batched composite passes n_systems to
-        # avoid this device sync (a torch.compile graph break) on the hot path.
+        if torch.compiler.is_compiling():
+            warnings.warn(
+                "Missing `n_systems`; inferring it from `batch_idx` introduces a "
+                "graph break under torch.compile. This will become an error in a "
+                "future release.",
+                FutureWarning,
+                stacklevel=2,
+            )
         n_systems = int(batch_idx.max().item()) + 1
     total_charge = torch.zeros(n_systems, dtype=torch.float64, device=device)
     total_charge.scatter_add_(0, batch_idx, charges_f64)
@@ -4504,6 +4515,14 @@ def multipole_pme_energy_corrections_per_atom(
         bg = inv_v * charges_f64 * total_charge
     else:
         if n_systems is None:
+            if torch.compiler.is_compiling():
+                warnings.warn(
+                    "Missing `n_systems`; inferring it from `batch_idx` introduces "
+                    "a graph break under torch.compile. This will become an error "
+                    "in a future release.",
+                    FutureWarning,
+                    stacklevel=2,
+                )
             n_systems = int(batch_idx.max().item()) + 1
         total_charge = torch.zeros(
             n_systems, dtype=torch.float64, device=charges.device

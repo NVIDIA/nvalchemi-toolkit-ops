@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 
 import numpy as np
 import pytest
@@ -897,6 +898,50 @@ class TestEnergyCorrections:
             sf_b = _path_a_pack_source_feats(charges[mask], dipoles[mask])
             expected_b = _multipole_ewald_self_energy_per_atom(sf_b, sigma, alpha).sum()
             torch.testing.assert_close(per_sys[b], expected_b, rtol=1e-15, atol=1e-15)
+
+    def test_compiled_batched_system_inference_warns(self):
+        """Compiled correction fallbacks warn and explicit counts remain silent."""
+        td = (
+            torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+        )
+        charges = torch.tensor([0.4, -0.1, 0.2, -0.3], dtype=torch.float64, device=td)
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=td)
+        volume = torch.tensor([500.0, 600.0], dtype=torch.float64, device=td)
+        common = {
+            "dipoles": None,
+            "sigma": 1.0,
+            "alpha": 0.4,
+            "volume": volume,
+            "batch_idx": batch_idx,
+        }
+
+        eager = multipole_pme_energy_corrections(charges, **common)
+        eager_per_atom = multipole_pme_energy_corrections_per_atom(
+            charges, None, 1.0, 0.4, volume, batch_idx=batch_idx
+        )
+        compiled = torch.compile(multipole_pme_energy_corrections)
+        with pytest.warns(FutureWarning, match="n_systems"):
+            inferred = compiled(charges, **common)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            explicit = compiled(charges, n_systems=2, **common)
+
+        torch.testing.assert_close(inferred, eager)
+        torch.testing.assert_close(explicit, eager)
+
+        compiled_per_atom = torch.compile(multipole_pme_energy_corrections_per_atom)
+        with pytest.warns(FutureWarning, match="n_systems"):
+            inferred_per_atom = compiled_per_atom(
+                charges, None, 1.0, 0.4, volume, batch_idx=batch_idx
+            )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            explicit_per_atom = compiled_per_atom(
+                charges, None, 1.0, 0.4, volume, batch_idx=batch_idx, n_systems=2
+            )
+
+        torch.testing.assert_close(inferred_per_atom, eager_per_atom)
+        torch.testing.assert_close(explicit_per_atom, eager_per_atom)
 
 
 class TestEnergyCorrectionsPerAtom:

@@ -58,13 +58,11 @@ def _validate_energy_reduction(energy_reduction: str) -> str:
 def _reduce_atom_energy(
     energy: torch.Tensor,
     batch_idx: torch.Tensor | None,
-    num_systems: int,
+    num_systems: torch.SymInt,
 ) -> torch.Tensor:
     """Sum an atom-major energy tensor into an explicit system-major layout."""
     flat = energy.reshape(-1)
     result = flat.new_zeros((num_systems,))
-    if flat.numel() == 0 or num_systems == 0:
-        return result
     if batch_idx is None:
         result[0] = flat.sum()
         return result
@@ -74,12 +72,10 @@ def _reduce_atom_energy(
 def _system_cotangent_to_atoms(
     grad_system: torch.Tensor,
     batch_idx: torch.Tensor | None,
-    num_atoms: int,
+    num_atoms: torch.SymInt,
 ) -> torch.Tensor:
     """Broadcast an explicit system cotangent to atom-major layout."""
     grad = grad_system.reshape(-1)
-    if num_atoms == 0:
-        return grad.new_zeros((0,))
     if batch_idx is None:
         return grad[0].expand(num_atoms)
     return grad.index_select(0, batch_idx.to(device=grad.device, dtype=torch.long))
@@ -352,17 +348,21 @@ def _component_direct_output_deprecation_msg(fn: str, flags: tuple[str, ...]) ->
     )
 
 
+def _is_static_single_system(num_systems: int | torch.SymInt) -> bool:
+    """Return whether a system count is the concrete single-system value."""
+    return type(num_systems) is int and num_systems == 1
+
+
 def _sum_atom_values_by_system(
     values: torch.Tensor,
     batch_idx: torch.Tensor | None,
-    num_systems: int,
+    num_systems: torch.SymInt,
 ) -> torch.Tensor:
     """Reduce atom-major values to per-system sums."""
-    if num_systems == 1:
+    if _is_static_single_system(num_systems):
         return values.sum(dim=0, keepdim=True)
-
     if batch_idx is None:
-        raise RuntimeError("batch_idx is required for multi-system atom reduction")
+        return values.sum(dim=0, keepdim=True)
 
     result = values.new_zeros((num_systems, *values.shape[1:]))
     return result.index_add(0, batch_idx, values)
@@ -371,12 +371,14 @@ def _sum_atom_values_by_system(
 def _mean_atom_values_by_system(
     values: torch.Tensor,
     batch_idx: torch.Tensor | None,
-    num_systems: int,
+    num_systems: torch.SymInt,
 ) -> torch.Tensor:
     """Reduce atom-major values to guarded per-system means."""
-    if values.shape[0] == 0:
-        return values.new_zeros((num_systems, *values.shape[1:]))
-    if num_systems == 1:
+    if _is_static_single_system(num_systems):
+        sums = values.sum(dim=0, keepdim=True)
+        counts = values.new_ones((values.shape[0],)).sum().clamp_min(1)
+        return sums / counts
+    if batch_idx is None:
         return values.mean(dim=0, keepdim=True)
 
     sums = _sum_atom_values_by_system(values, batch_idx, num_systems)
@@ -392,17 +394,14 @@ def _mean_atom_values_by_system(
 def _broadcast_system_values_to_atoms(
     per_system: torch.Tensor,
     batch_idx: torch.Tensor | None,
-    num_systems: int,
-    num_atoms: int,
+    num_systems: torch.SymInt,
+    num_atoms: torch.SymInt,
 ) -> torch.Tensor:
     """Broadcast per-system values to atom-major values."""
-    if num_atoms == 0:
-        return per_system.new_empty((0, *per_system.shape[1:]))
-    if num_systems == 1:
+    if _is_static_single_system(num_systems):
         return per_system[0].expand((num_atoms, *per_system.shape[1:]))
-
     if batch_idx is None:
-        raise RuntimeError("batch_idx is required for multi-system atom broadcast")
+        return per_system[0].expand((num_atoms, *per_system.shape[1:]))
 
     return per_system.index_select(0, batch_idx)
 
@@ -569,7 +568,7 @@ class _InjectCachedEvalGrad(torch.autograd.Function):
     ):
         """Return energy in the requested public layout."""
         if energy_reduction == "system":
-            count = int(cell.shape[0]) if num_systems is None else int(num_systems)
+            count = cell.shape[0] if num_systems is None else num_systems
             return _reduce_atom_energy(energy, batch_idx, count)
         return energy
 
@@ -593,12 +592,12 @@ class _InjectCachedEvalGrad(torch.autograd.Function):
             cell_grad_state,
             batch_idx,
         )
-        ctx.num_atoms = int(positions.shape[0])
+        ctx.num_atoms = positions.shape[0]
         ctx.energy_reduction = inputs[8] if len(inputs) > 8 else "atom"
         ctx.num_systems = (
-            int(inputs[9])
+            inputs[9]
             if len(inputs) > 9 and inputs[9] is not None
-            else (int(cell.shape[0]) if cell.dim() == 3 else 1)
+            else (cell.shape[0] if cell.dim() == 3 else 1)
         )
         ctx.num_inputs = len(inputs)
 
@@ -696,7 +695,7 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
     ):
         """Return energy in the requested public layout."""
         if energy_reduction == "system":
-            count = int(cell.shape[0]) if num_systems is None else int(num_systems)
+            count = cell.shape[0] if num_systems is None else num_systems
             return _reduce_atom_energy(energy, batch_idx, count)
         return energy
 
@@ -728,12 +727,12 @@ class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
         )
         ctx.fallback_fn = fallback_fn
         ctx.num_fallback_tensor_args = len(fallback_tensor_args)
-        ctx.num_atoms = int(positions.shape[0]) if positions.ndim else 1
+        ctx.num_atoms = positions.shape[0] if positions.ndim else 1
         ctx.energy_reduction = inputs[9] if len(inputs) > 9 else "atom"
         ctx.num_systems = (
-            int(inputs[10])
+            inputs[10]
             if len(inputs) > 10 and inputs[10] is not None
-            else (int(cell.shape[0]) if cell.dim() == 3 else 1)
+            else (cell.shape[0] if cell.dim() == 3 else 1)
         )
         ctx.force_fallback = bool(inputs[11]) if len(inputs) > 11 else False
         ctx.fallback_returns_system = bool(inputs[12]) if len(inputs) > 12 else False
@@ -920,9 +919,9 @@ class _InjectChargeGrad(torch.autograd.Function):
             else "atom"
         )
         if len(inputs) > 5 and inputs[5] is not None:
-            ctx.num_systems = int(inputs[5])
+            ctx.num_systems = inputs[5]
         elif ctx.energy_is_system:
-            ctx.num_systems = int(_energy.numel())
+            ctx.num_systems = _energy.numel()
         elif batch_idx is not None and batch_idx.numel() > 0:
             ctx.num_systems = int(batch_idx.max().item()) + 1
         else:
@@ -933,7 +932,7 @@ class _InjectChargeGrad(torch.autograd.Function):
     def backward(ctx, grad_energy):
         """Scale analytical ``dE/dq`` by the energy cotangent."""
         (charge_grad_state,) = ctx.saved_tensors
-        num_atoms = int(charge_grad_state.shape[0])
+        num_atoms = charge_grad_state.shape[0]
 
         if ctx.output_layout == "system":
             grad_system, atom_grad = _energy_cotangents(

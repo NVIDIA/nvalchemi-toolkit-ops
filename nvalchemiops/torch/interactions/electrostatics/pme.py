@@ -286,7 +286,7 @@ def _prepare_alpha(
         raise TypeError(f"alpha must be float or torch.Tensor, got {type(alpha)}")
 
 
-def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, int]:
+def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, torch.SymInt]:
     """Ensure cell is 3D (B, 3, 3) and return number of systems.
 
     Parameters
@@ -298,7 +298,7 @@ def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, int]:
     -------
     cell : torch.Tensor, shape (B, 3, 3)
         Cell with batch dimension.
-    num_systems : int
+    num_systems : torch.SymInt
         Number of systems (B).
     """
     if cell.dim() == 2:
@@ -1584,14 +1584,10 @@ def pme_energy_corrections(
         else:
             volumes = volume.to(input_dtype)
 
-        # Compute total charge per system
-        if num_systems == 1:
-            total_charges = charges.to(input_dtype).sum().reshape(1)
-        else:
-            total_charges = torch.zeros(
-                num_systems, dtype=input_dtype, device=raw_energies.device
-            )
-            total_charges.scatter_add_(0, batch_idx, charges.to(input_dtype))
+        total_charges = torch.zeros(
+            num_systems, dtype=input_dtype, device=raw_energies.device
+        )
+        total_charges.scatter_add_(0, batch_idx, charges.to(input_dtype))
 
         result = _batch_pme_energy_corrections(
             raw_energies,
@@ -1680,14 +1676,10 @@ def pme_energy_corrections_with_charge_grad(
         else:
             volumes = volume.to(input_dtype)
 
-        # Compute total charge per system
-        if num_systems == 1:
-            total_charges = charges.to(input_dtype).sum().reshape(1)
-        else:
-            total_charges = torch.zeros(
-                num_systems, dtype=input_dtype, device=raw_energies.device
-            )
-            total_charges.scatter_add_(0, batch_idx, charges.to(input_dtype))
+        total_charges = torch.zeros(
+            num_systems, dtype=input_dtype, device=raw_energies.device
+        )
+        total_charges.scatter_add_(0, batch_idx, charges.to(input_dtype))
 
         return _batch_pme_energy_corrections_with_charge_grad(
             raw_energies,
@@ -2253,7 +2245,7 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
         ctx.need_charge = bool(need_charge)
         ctx.need_cell = bool(need_cell)
         ctx.energy_reduction = energy_reduction
-        ctx.num_systems = int(num_systems)
+        ctx.num_systems = num_systems
         if energy_reduction == "system":
             return _reduce_atom_energy(energies, batch_idx, ctx.num_systems)
         return energies
@@ -2963,7 +2955,8 @@ def pme_reciprocal_space(
         Target mesh spacing in same units as cell. Mesh dimensions computed as
         ceil(cell_length / mesh_spacing). Typical value: ~1 Å. This setup path
         reads cell lengths into Python integers; pass explicit
-        ``mesh_dimensions`` when cell-dependent mesh sizing is not desired.
+        ``mesh_dimensions`` when compiling; implicit sizing emits a
+        ``FutureWarning`` and will become an error in a future release.
     spline_order : int, default=4
         B-spline interpolation order. Higher orders are more accurate but slower.
         - 4: Cubic B-splines (good balance, most common)
@@ -3151,6 +3144,14 @@ def pme_reciprocal_space(
     if mesh_dimensions is None:
         if mesh_spacing is None:
             raise ValueError("Either mesh_dimensions or mesh_spacing must be provided")
+        if torch.compiler.is_compiling():
+            warnings.warn(
+                "Missing `mesh_dimensions`; inferring it from `mesh_spacing` and "
+                "`cell` introduces a graph break under torch.compile. This will "
+                "become an error in a future release.",
+                FutureWarning,
+                stacklevel=2,
+            )
         cell_lengths = torch.norm(cell[0], dim=1)
         mesh_dimensions = tuple(
             int(torch.ceil(length / mesh_spacing).item()) for length in cell_lengths
