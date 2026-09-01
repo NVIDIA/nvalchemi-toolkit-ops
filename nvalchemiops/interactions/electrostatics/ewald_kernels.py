@@ -1058,31 +1058,33 @@ def _recip_atom_accumulate_fp32(
     the loop is dominated by the transcendentals, so they are always computed
     and the caller writes only what it needs.
     """
-    potential = wp.float64(0.0)
-    potential_uncharged = wp.float64(0.0)
-    fx = wp.float64(0.0)
-    fy = wp.float64(0.0)
-    fz = wp.float64(0.0)
+    q32 = wp.float32(charge)
+    potential = wp.float32(0.0)
+    potential_uncharged = wp.float32(0.0)
+    fx = wp.float32(0.0)
+    fy = wp.float32(0.0)
+    fz = wp.float32(0.0)
 
     for k_idx in range(k_start, num_k, k_stride):
         kvec = k_vectors[k_idx]
         phase = _recip_phase_fp32(px, py, pz, kvec)
-        cos_kr = wp.float64(phase[0])
-        sin_kr = wp.float64(phase[1])
+        cos_kr = phase[0]
+        sin_kr = phase[1]
 
-        s_real = real_structure_factors[k_idx]
-        s_imag = imag_structure_factors[k_idx]
+        s_real = wp.float32(real_structure_factors[k_idx])
+        s_imag = wp.float32(imag_structure_factors[k_idx])
 
         phase_sum = s_real * cos_kr + s_imag * sin_kr
-        potential += charge * phase_sum
+        potential += q32 * phase_sum
         potential_uncharged += phase_sum
 
-        force_scalar = charge * (s_real * sin_kr - s_imag * cos_kr)
-        fx += force_scalar * wp.float64(kvec[0])
-        fy += force_scalar * wp.float64(kvec[1])
-        fz += force_scalar * wp.float64(kvec[2])
+        force_scalar = q32 * (s_real * sin_kr - s_imag * cos_kr)
+        fx += force_scalar * wp.float32(kvec[0])
+        fy += force_scalar * wp.float32(kvec[1])
+        fz += force_scalar * wp.float32(kvec[2])
 
-    return _recip_vec5d(potential, fx, fy, fz, potential_uncharged)
+    return _recip_vec5d(wp.float64(potential), wp.float64(fx), wp.float64(fy),
+                        wp.float64(fz), wp.float64(potential_uncharged))
 
 
 @wp.kernel
