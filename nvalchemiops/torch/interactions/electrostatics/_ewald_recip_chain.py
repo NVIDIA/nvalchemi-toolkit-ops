@@ -65,11 +65,11 @@ from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     BATCH_BLOCK_SIZE,
     EIGHTPI,
     RECIP_TILED_BLOCK_DIM,
-    _batch_ewald_recip_compute_fp32_recompute,
+    _batch_ewald_recip_compute_fp32_recompute_tiled,
     _batch_ewald_recip_fill_sf_fp32_nostore,
     _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad,
     _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad_tiled,
-    _ewald_recip_compute_fp32_recompute,
+    _ewald_recip_compute_fp32_recompute_tiled,
     _ewald_recip_fill_sf_fp32_nostore,
     _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad,
     _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad_tiled,
@@ -561,8 +561,8 @@ def _run_fp32_nostore(
                 device=device,
                 block_dim=RECIP_TILED_BLOCK_DIM,
             )
-            wp.launch(
-                _batch_ewald_recip_compute_fp32_recompute,
+            wp.launch_tiled(
+                _batch_ewald_recip_compute_fp32_recompute_tiled,
                 dim=num_atoms,
                 inputs=[
                     wp_pos,
@@ -576,6 +576,7 @@ def _run_fp32_nostore(
                     wp_cg,
                 ],
                 device=device,
+                block_dim=RECIP_TILED_BLOCK_DIM,
             )
         else:
             wp.launch_tiled(
@@ -594,8 +595,8 @@ def _run_fp32_nostore(
                 device=device,
                 block_dim=RECIP_TILED_BLOCK_DIM,
             )
-            wp.launch(
-                _ewald_recip_compute_fp32_recompute,
+            wp.launch_tiled(
+                _ewald_recip_compute_fp32_recompute_tiled,
                 dim=num_atoms,
                 inputs=[
                     wp_pos,
@@ -608,6 +609,7 @@ def _run_fp32_nostore(
                     wp_cg,
                 ],
                 device=device,
+                block_dim=RECIP_TILED_BLOCK_DIM,
             )
 
 
