@@ -65,12 +65,17 @@ from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     BATCH_BLOCK_SIZE,
     EIGHTPI,
     RECIP_TILED_BLOCK_DIM,
+    _batch_ewald_recip_compute_fp32_recompute,
+    _batch_ewald_recip_fill_sf_fp32_nostore,
     _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad,
     _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad_tiled,
+    _ewald_recip_compute_fp32_recompute,
+    _ewald_recip_fill_sf_fp32_nostore,
     _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad,
     _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad_tiled,
     can_tile_ewald_recip_on_device,
     should_tile_ewald_recip_fill,
+    use_fp32_structure_factors,
 )
 from nvalchemiops.interactions.electrostatics.ewald_recip_factory import (
     _make_backward_kspace_from_cache_kernel,
@@ -453,6 +458,159 @@ def _atom_cotangent(grad_energy_atom, batch_idx, num_systems, num_atoms):
     )
 
 
+def _can_use_fp32_nostore(need_cell, input_dtype, torch_device) -> bool:
+    """Whether the float32 no-store reciprocal path may serve this call.
+
+    Covers energies, forces and dE/dq: the compute kernel recomputes the phases
+    in float32 rather than reading the ``(K, N)`` arrays this path never writes,
+    which is cheaper than the round-trip it replaces.
+
+    Cell gradients are excluded. The cellgrad fill accumulates extra per-k
+    quantities into a separate cache consumed by the O(S*K) kspace backward, and
+    that path has no recompute counterpart here.
+
+    float32 input is required: dropping the phase arithmetic to float32 is only
+    defensible when the caller already chose float32 positions.
+
+    Requires ``NVALCHEMIOPS_EWALD_RECIP_FP32_SF``; off by default because it
+    changes float32 results at the ~1e-07 level.
+    """
+    return (
+        use_fp32_structure_factors()
+        and not need_cell
+        and input_dtype == torch.float32
+        and torch_device.type == "cuda"
+    )
+
+
+def _run_fp32_nostore(
+    positions,
+    charges,
+    cell,
+    k_vectors_2d,
+    alpha,
+    batch_idx,
+    atom_start,
+    atom_end,
+    num_k,
+    num_systems,
+    num_atoms,
+    energies,
+    forces,
+    charge_grads,
+    wp_vec,
+    wp_scalar,
+    device,
+    batched,
+):
+    """Energy-only reciprocal space with float32 phases and no ``(K, N)`` store.
+
+    Two launches: a tiled fill reducing to the ``(K,)`` weighted structure
+    factors, then an atom-major pass that *recomputes* the phases rather than
+    reading them back. In float32 the recompute is far cheaper than the
+    round-trip it replaces, and peak memory becomes independent of ``K``.
+
+    Energies, forces and dE/dq are all produced: they share the k-loop, and the
+    extra work over energy alone is three FMAs per k against a transcendental
+    pair, so it is not worth branching on the derivative state here.
+
+    ``total_charge`` is written into a scratch buffer: the background correction
+    is applied by the caller from ``volume`` and the charges, so this path only
+    owes it the per-atom reciprocal quantities.
+    """
+    dev_t = positions.device
+    real_sf = torch.zeros(
+        (num_systems, num_k) if batched else (num_k,),
+        dtype=torch.float64,
+        device=dev_t,
+    )
+    imag_sf = torch.zeros_like(real_sf)
+    total_charge = torch.zeros(
+        num_systems if batched else 1, dtype=torch.float64, device=dev_t
+    )
+    wp_pos = _wp(positions, wp_vec)
+    wp_chg = _wp(charges, wp_scalar)
+    # k_vectors_2d is (S, K) of vec3 even for a single system; the single
+    # kernel takes a flat (K,) array, so hand it row 0.
+    wp_kv = _wp(k_vectors_2d, wp_vec)
+    wp_kv_single = _wp(k_vectors_2d[0].contiguous(), wp_vec)
+    wp_cell = _wp(cell, get_wp_mat_dtype(cell.dtype))
+    wp_alpha = _wp(alpha, wp_scalar)
+    wp_re, wp_im = _wp(real_sf, wp.float64), _wp(imag_sf, wp.float64)
+    wp_en = _wp(energies, wp.float64)
+    wp_f = _wp(forces, wp_vec)
+    wp_cg = _wp(charge_grads, wp.float64)
+
+    with _scoped_stream(dev_t):
+        if batched:
+            wp.launch_tiled(
+                _batch_ewald_recip_fill_sf_fp32_nostore,
+                dim=(num_k, num_systems),
+                inputs=[
+                    wp_pos,
+                    wp_chg,
+                    wp_kv,
+                    wp_cell,
+                    wp_alpha,
+                    _wp(atom_start, wp.int32),
+                    _wp(atom_end, wp.int32),
+                    _wp(total_charge, wp.float64),
+                    wp_re,
+                    wp_im,
+                ],
+                device=device,
+                block_dim=RECIP_TILED_BLOCK_DIM,
+            )
+            wp.launch(
+                _batch_ewald_recip_compute_fp32_recompute,
+                dim=num_atoms,
+                inputs=[
+                    wp_pos,
+                    wp_chg,
+                    _wp(batch_idx, wp.int32),
+                    wp_kv,
+                    wp_re,
+                    wp_im,
+                    wp_en,
+                    wp_f,
+                    wp_cg,
+                ],
+                device=device,
+            )
+        else:
+            wp.launch_tiled(
+                _ewald_recip_fill_sf_fp32_nostore,
+                dim=num_k,
+                inputs=[
+                    wp_pos,
+                    wp_chg,
+                    wp_kv_single,
+                    wp_cell,
+                    wp_alpha,
+                    _wp(total_charge, wp.float64),
+                    wp_re,
+                    wp_im,
+                ],
+                device=device,
+                block_dim=RECIP_TILED_BLOCK_DIM,
+            )
+            wp.launch(
+                _ewald_recip_compute_fp32_recompute,
+                dim=num_atoms,
+                inputs=[
+                    wp_pos,
+                    wp_chg,
+                    wp_kv_single,
+                    wp_re,
+                    wp_im,
+                    wp_en,
+                    wp_f,
+                    wp_cg,
+                ],
+                device=device,
+            )
+
+
 def _forward_impl(
     positions,
     charges,
@@ -506,6 +664,35 @@ def _forward_impl(
         deriv_state = _DerivState.E_F
     else:
         deriv_state = _DerivState.E
+    if _can_use_fp32_nostore(need_cell, input_dtype, positions.device):
+        forces_f = torch.zeros(num_atoms, 3, device=positions.device, dtype=input_dtype)
+        dEdq_f = torch.zeros(num_atoms, device=positions.device, dtype=torch.float64)
+        _run_fp32_nostore(
+            positions,
+            charges,
+            cell,
+            k_vectors_2d,
+            alpha,
+            batch_idx,
+            atom_start,
+            atom_end,
+            num_k,
+            num_systems,
+            num_atoms,
+            energies,
+            forces_f,
+            dEdq_f,
+            wp_vec,
+            wp_scalar,
+            device,
+            batched,
+        )
+        if need_pos:
+            dEdR = (-forces_f).detach()
+        if need_charge:
+            dEdq = dEdq_f.detach()
+        return energies, dEdR, dEdq, cellgrad_cache
+
     bundle = get_ewald_recip_kernel(
         wp_scalar, batched=batched, deriv_state=deriv_state, order="forward"
     )
