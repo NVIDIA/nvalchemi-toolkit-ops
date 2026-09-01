@@ -208,25 +208,6 @@ def _recip_tiling_override() -> bool | None:
     return value not in {"0", "false", "False", "off", "OFF"}
 
 
-def _use_fp32_structure_factors() -> bool:
-    """Return whether the float32 no-store reciprocal path is enabled.
-
-    Reads ``NVALCHEMIOPS_EWALD_RECIP_FP32_SF``; unset or empty means off, as
-    does any of ``0``/``false``/``off``. The path computes structure-factor
-    phases in float32 and recomputes them per atom instead of materializing the
-    ``(K, N)`` phase arrays.
-
-    Returns
-    -------
-    bool
-        ``True`` if the float32 no-store path is requested, ``False`` otherwise.
-    """
-    value = os.environ.get("NVALCHEMIOPS_EWALD_RECIP_FP32_SF")
-    if value is None or value == "":
-        return False
-    return value not in {"0", "false", "False", "off", "OFF"}
-
-
 def should_tile_ewald_recip_fill(num_atoms: int) -> bool:
     """Return whether reciprocal fill should use a tiled launch.
 
@@ -855,7 +836,7 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad_tiled(
 # replaces; the crossover depends on the part's transcendental throughput
 # against its memory bandwidth, so measure rather than assume.
 #
-# Opt in with NVALCHEMIOPS_EWALD_RECIP_FP32_SF=1. Off by default: it changes
+# Opt in with NVALCHEMIOPS_ELECTROSTATICS_FP32=1. Off by default: it changes
 # float32 results at the ~1e-07 level, which is a semantic change for existing
 # callers rather than a pure optimisation.
 
