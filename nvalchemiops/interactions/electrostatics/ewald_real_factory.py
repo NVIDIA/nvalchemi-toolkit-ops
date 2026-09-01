@@ -311,31 +311,42 @@ def _make_forward_pair_fn(
             ``dE/dsep``; ``n`` == integer shift). The block is f64 (``wp.mat33d``)
             regardless of ``wp_dtype`` to match the f64 cache the chain allocates.
             """
-            qj = wp.float64(charges[j])
+            # Pair math runs in input precision; only the accumulators stay
+            # float64. wp_erfc is an Abramowitz-Stegun polynomial with ~1.5e-7
+            # error, so evaluating it in float64 cannot beat evaluating it in
+            # float32 -- it just costs a float64 erfc, exp and several divides
+            # on every pair.
+            qj_s = charges[j]
             separation_vector = _periodic_separation(pos_i, pos_j, cell_t, shift_vec)
-            distance = wp.float64(wp.length(separation_vector))
+            distance = wp.length(separation_vector)
+            qi_s = type(distance)(qi)
+            alpha_s = type(distance)(alpha_)
 
-            if distance > wp.float64(_DISTANCE_EPSILON):
-                energy_acc += _ewald_real_space_energy_kernel_compute_energy(
-                    qi, qj, distance, alpha_
+            if distance > type(distance)(_DISTANCE_EPSILON):
+                energy_acc += wp.float64(
+                    _ewald_real_space_energy_kernel_compute_energy(
+                        qi_s, qj_s, distance, alpha_s
+                    )
                 )
                 if HAS_FORCE:
                     force_mag = _ewald_real_space_force_magnitude(
-                        qi, qj, distance, alpha_
+                        qi_s, qj_s, distance, alpha_s
                     )
                     force = type(pos_i)(
-                        type(pos_i[0])(force_mag) * separation_vector[0],
-                        type(pos_i[0])(force_mag) * separation_vector[1],
-                        type(pos_i[0])(force_mag) * separation_vector[2],
+                        force_mag * separation_vector[0],
+                        force_mag * separation_vector[1],
+                        force_mag * separation_vector[2],
                     )
                     force_i_acc -= force
                     wp.atomic_add(atomic_forces, j, force)
                     if HAS_CHARGE:
                         potential = _ewald_real_space_charge_grad_potential(
-                            distance, alpha_
+                            distance, alpha_s
                         )
-                        cg_i_acc += qj * potential
-                        wp.atomic_add(charge_gradients, j, qi * potential)
+                        cg_i_acc += wp.float64(qj_s * potential)
+                        wp.atomic_add(
+                            charge_gradients, j, wp.float64(qi_s * potential)
+                        )
                     if CELL_GRAD:
                         virial_acc += _pair_virial_outer(separation_vector, force)
                     # Literal dE/dcell block for atom i: n (x) dE/dsep, dE/dsep = -force.
@@ -380,29 +391,39 @@ def _make_forward_pair_fn(
         ``i``. ``HAS_FORCE``, ``HAS_CHARGE`` and ``CELL_GRAD`` are static
         specializations, so inactive sentinel buffers are not read.
         """
-        qj = wp.float64(charges[j])
+        # Pair math runs in input precision; only the accumulators stay float64.
+        # wp_erfc is an Abramowitz-Stegun polynomial with ~1.5e-7 error, so
+        # evaluating it in float64 cannot beat evaluating it in float32 -- it just
+        # costs a float64 erfc, exp and several divides on every pair.
+        qj_s = charges[j]
         separation_vector = _periodic_separation(pos_i, pos_j, cell_t, shift_vec)
-        distance = wp.float64(wp.length(separation_vector))
+        distance = wp.length(separation_vector)
+        qi_s = type(distance)(qi)
+        alpha_s = type(distance)(alpha_)
 
-        if distance > wp.float64(_DISTANCE_EPSILON):
-            energy_acc += _ewald_real_space_energy_kernel_compute_energy(
-                qi, qj, distance, alpha_
+        if distance > type(distance)(_DISTANCE_EPSILON):
+            energy_acc += wp.float64(
+                _ewald_real_space_energy_kernel_compute_energy(
+                    qi_s, qj_s, distance, alpha_s
+                )
             )
             if HAS_FORCE:
-                force_mag = _ewald_real_space_force_magnitude(qi, qj, distance, alpha_)
+                force_mag = _ewald_real_space_force_magnitude(
+                    qi_s, qj_s, distance, alpha_s
+                )
                 force = type(pos_i)(
-                    type(pos_i[0])(force_mag) * separation_vector[0],
-                    type(pos_i[0])(force_mag) * separation_vector[1],
-                    type(pos_i[0])(force_mag) * separation_vector[2],
+                    force_mag * separation_vector[0],
+                    force_mag * separation_vector[1],
+                    force_mag * separation_vector[2],
                 )
                 force_i_acc -= force
                 wp.atomic_add(atomic_forces, j, force)
                 if CELL_GRAD:
                     virial_acc += _pair_virial_outer(separation_vector, force)
             if HAS_CHARGE:
-                potential = _ewald_real_space_charge_grad_potential(distance, alpha_)
-                cg_i_acc += qj * potential
-                wp.atomic_add(charge_gradients, j, qi * potential)
+                potential = _ewald_real_space_charge_grad_potential(distance, alpha_s)
+                cg_i_acc += wp.float64(qj_s * potential)
+                wp.atomic_add(charge_gradients, j, wp.float64(qi_s * potential))
 
         return energy_acc, force_i_acc, cg_i_acc, virial_acc
 
@@ -449,13 +470,23 @@ def _make_backward_pair_fn(
         thread-local atom-``i`` accumulators. ``HAS_CHARGE`` and ``CELL_GRAD`` are
         static specializations, so inactive sentinel buffers are not read.
         """
-        qj = wp.float64(charges[j])
+        # Pair math runs in input precision; only the accumulators stay float64.
+        # wp_erfc is an Abramowitz-Stegun polynomial with ~1.5e-7 error, so
+        # evaluating it in float64 cannot beat evaluating it in float32 -- it just
+        # costs a float64 erfc, exp and several divides on every pair.
+        qj_s = charges[j]
         separation_vector = _periodic_separation(pos_i, pos_j, cell_t, shift_vec)
-        distance = wp.float64(wp.length(separation_vector))
-        if distance > wp.float64(_DISTANCE_EPSILON):
+        distance = wp.length(separation_vector)
+        qi_s = type(distance)(qi)
+        alpha_s = type(distance)(alpha_)
+        if distance > type(distance)(_DISTANCE_EPSILON):
             ge_fm = wp.float64(0.0)
             if HAS_FORCE or CELL_GRAD:
-                force_mag = _ewald_real_space_force_magnitude(qi, qj, distance, alpha_)
+                force_mag = wp.float64(
+                    _ewald_real_space_force_magnitude(
+                        qi_s, qj_s, distance, alpha_s
+                    )
+                )
                 ge_fm = ge * force_mag
                 if HAS_FORCE:
                     # dL/dR_i += ge*(+F); dL/dR_j += ge*(-F).
@@ -474,7 +505,10 @@ def _make_backward_pair_fn(
                         ),
                     )
             if HAS_CHARGE:
-                potential = _ewald_real_space_charge_grad_potential(distance, alpha_)
+                potential = wp.float64(
+                    _ewald_real_space_charge_grad_potential(distance, alpha_s)
+                )
+                qj = wp.float64(qj_s)
                 cg_i_acc += ge * qj * potential
                 wp.atomic_add(charge_gradients, j, ge * qi * potential)
             if CELL_GRAD:
