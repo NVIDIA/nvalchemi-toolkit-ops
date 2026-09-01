@@ -1036,8 +1036,16 @@ def _recip_atom_accumulate_fp32(
     real_structure_factors: wp.array(dtype=wp.float64),
     imag_structure_factors: wp.array(dtype=wp.float64),
     num_k: int,
+    k_start: int,
+    k_stride: int,
 ):
     """Per-atom reciprocal sums, recomputing phases rather than reading them.
+
+    ``k_start`` / ``k_stride`` select this thread's slice of the k range:
+    ``(0, 1)`` walks all of it, which is what the atom-major kernel wants, while
+    the tiled kernel passes ``(lane, block_dim)`` so a block's lanes split the
+    range and combine afterwards with ``wp.tile_reduce``. Keeping it a parameter
+    is what lets both kernels share this loop instead of duplicating it.
 
     Returns ``(potential, Fx, Fy, Fz, potential_uncharged)`` where
 
@@ -1056,7 +1064,7 @@ def _recip_atom_accumulate_fp32(
     fy = wp.float64(0.0)
     fz = wp.float64(0.0)
 
-    for k_idx in range(num_k):
+    for k_idx in range(k_start, num_k, k_stride):
         kvec = k_vectors[k_idx]
         phase = _recip_phase_fp32(px, py, pz, kvec)
         cos_kr = wp.float64(phase[0])
@@ -1106,6 +1114,8 @@ def _ewald_recip_compute_fp32_recompute(
         real_structure_factors,
         imag_structure_factors,
         num_k,
+        0,
+        1,
     )
     reciprocal_energies[atom_idx] = wp.float64(0.5) * acc[0]
     atomic_forces[atom_idx] = type(atomic_forces[atom_idx])(
@@ -1146,6 +1156,8 @@ def _batch_ewald_recip_compute_fp32_recompute(
         real_structure_factors[system_id],
         imag_structure_factors[system_id],
         num_k,
+        0,
+        1,
     )
     reciprocal_energies[atom_idx] = wp.float64(0.5) * acc[0]
     atomic_forces[atom_idx] = type(atomic_forces[atom_idx])(
@@ -1154,6 +1166,104 @@ def _batch_ewald_recip_compute_fp32_recompute(
         type(atomic_forces[atom_idx][0])(acc[3]),
     )
     charge_gradients[atom_idx] = acc[4]
+
+
+@wp.kernel
+def _ewald_recip_compute_fp32_recompute_tiled(
+    positions: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    k_vectors: wp.array(dtype=Any),
+    real_structure_factors: wp.array(dtype=wp.float64),
+    imag_structure_factors: wp.array(dtype=wp.float64),
+    reciprocal_energies: wp.array(dtype=wp.float64),
+    atomic_forces: wp.array(dtype=Any),
+    charge_gradients: wp.array(dtype=wp.float64),
+):
+    """Cooperative counterpart of :func:`_ewald_recip_compute_fp32_recompute`.
+
+    The atom-major kernel gives each thread the whole k range, which at
+    K ~ 6e4 is a very long serial loop and leaves the machine idle whenever
+    there are fewer atoms than it can occupy. Here one block owns one atom and
+    its lanes split the k range, mirroring how the fill kernel splits atoms
+    across lanes for a fixed k.
+
+    Thread launch
+    -------------
+    ``wp.launch_tiled(dim=N, block_dim=RECIP_TILED_BLOCK_DIM)``.
+    """
+    atom_idx, lane = wp.tid()
+    num_k = real_structure_factors.shape[0]
+    position = positions[atom_idx]
+    acc = _recip_atom_accumulate_fp32(
+        wp.float32(position[0]),
+        wp.float32(position[1]),
+        wp.float32(position[2]),
+        wp.float64(charges[atom_idx]),
+        k_vectors,
+        real_structure_factors,
+        imag_structure_factors,
+        num_k,
+        lane,
+        wp.static(RECIP_TILED_BLOCK_DIM),
+    )
+    pot = wp.tile_reduce(wp.add, wp.tile(acc[0]))
+    fx = wp.tile_reduce(wp.add, wp.tile(acc[1]))
+    fy = wp.tile_reduce(wp.add, wp.tile(acc[2]))
+    fz = wp.tile_reduce(wp.add, wp.tile(acc[3]))
+    unq = wp.tile_reduce(wp.add, wp.tile(acc[4]))
+    if lane == 0:
+        reciprocal_energies[atom_idx] = wp.float64(0.5) * wp.tile_extract(pot, 0)
+        atomic_forces[atom_idx] = type(atomic_forces[atom_idx])(
+            type(atomic_forces[atom_idx][0])(wp.tile_extract(fx, 0)),
+            type(atomic_forces[atom_idx][0])(wp.tile_extract(fy, 0)),
+            type(atomic_forces[atom_idx][0])(wp.tile_extract(fz, 0)),
+        )
+        charge_gradients[atom_idx] = wp.tile_extract(unq, 0)
+
+
+@wp.kernel
+def _batch_ewald_recip_compute_fp32_recompute_tiled(
+    positions: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    batch_idx: wp.array(dtype=wp.int32),
+    k_vectors: wp.array2d(dtype=Any),
+    real_structure_factors: wp.array2d(dtype=wp.float64),
+    imag_structure_factors: wp.array2d(dtype=wp.float64),
+    reciprocal_energies: wp.array(dtype=wp.float64),
+    atomic_forces: wp.array(dtype=Any),
+    charge_gradients: wp.array(dtype=wp.float64),
+):
+    """Batched counterpart of
+    :func:`_ewald_recip_compute_fp32_recompute_tiled`."""
+    atom_idx, lane = wp.tid()
+    system_id = batch_idx[atom_idx]
+    num_k = real_structure_factors.shape[1]
+    position = positions[atom_idx]
+    acc = _recip_atom_accumulate_fp32(
+        wp.float32(position[0]),
+        wp.float32(position[1]),
+        wp.float32(position[2]),
+        wp.float64(charges[atom_idx]),
+        k_vectors[system_id],
+        real_structure_factors[system_id],
+        imag_structure_factors[system_id],
+        num_k,
+        lane,
+        wp.static(RECIP_TILED_BLOCK_DIM),
+    )
+    pot = wp.tile_reduce(wp.add, wp.tile(acc[0]))
+    fx = wp.tile_reduce(wp.add, wp.tile(acc[1]))
+    fy = wp.tile_reduce(wp.add, wp.tile(acc[2]))
+    fz = wp.tile_reduce(wp.add, wp.tile(acc[3]))
+    unq = wp.tile_reduce(wp.add, wp.tile(acc[4]))
+    if lane == 0:
+        reciprocal_energies[atom_idx] = wp.float64(0.5) * wp.tile_extract(pot, 0)
+        atomic_forces[atom_idx] = type(atomic_forces[atom_idx])(
+            type(atomic_forces[atom_idx][0])(wp.tile_extract(fx, 0)),
+            type(atomic_forces[atom_idx][0])(wp.tile_extract(fy, 0)),
+            type(atomic_forces[atom_idx][0])(wp.tile_extract(fz, 0)),
+        )
+        charge_gradients[atom_idx] = wp.tile_extract(unq, 0)
 
 
 @wp.kernel
