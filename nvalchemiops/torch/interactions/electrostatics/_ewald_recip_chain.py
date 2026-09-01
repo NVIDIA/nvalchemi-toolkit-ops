@@ -519,9 +519,14 @@ def _run_fp32_nostore(
     owes it the per-atom reciprocal quantities.
     """
     dev_t = positions.device
+    # float32: the fill reduces across lanes in float64 and narrows only on the
+    # final store, so the values are as accurate as a float64 array would hold
+    # them -- but the recompute pass reads these K entries once per atom, so the
+    # width is on the hot path and float64 would cost a narrowing conversion per
+    # element as well as twice the traffic.
     real_sf = torch.zeros(
         (num_systems, num_k) if batched else (num_k,),
-        dtype=torch.float64,
+        dtype=torch.float32,
         device=dev_t,
     )
     imag_sf = torch.zeros_like(real_sf)
@@ -536,7 +541,7 @@ def _run_fp32_nostore(
     wp_kv_single = _wp(k_vectors_2d[0].contiguous(), wp_vec)
     wp_cell = _wp(cell, get_wp_mat_dtype(cell.dtype))
     wp_alpha = _wp(alpha, wp_scalar)
-    wp_re, wp_im = _wp(real_sf, wp.float64), _wp(imag_sf, wp.float64)
+    wp_re, wp_im = _wp(real_sf, wp.float32), _wp(imag_sf, wp.float32)
     wp_en = _wp(energies, wp.float64)
     wp_f = _wp(forces, wp_vec)
     wp_cg = _wp(charge_grads, wp.float64)
