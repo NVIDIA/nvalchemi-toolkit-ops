@@ -87,15 +87,25 @@ def _cell_gradient(sysd):
     positions = sysd["positions"]
     max_nb = estimate_max_neighbors(CUTOFF, atomic_density=2.0 * DENSITY)
     nbmat, _, shifts = neighbor_list(
-        positions, CUTOFF, cell=sysd["cell"], pbc=sysd["pbc"],
-        batch_idx=sysd["batch_idx"], return_neighbor_list=False,
-        half_fill=False, max_neighbors=max_nb,
+        positions,
+        CUTOFF,
+        cell=sysd["cell"],
+        pbc=sysd["pbc"],
+        batch_idx=sysd["batch_idx"],
+        return_neighbor_list=False,
+        half_fill=False,
+        max_neighbors=max_nb,
     )
     k_vectors = generate_k_vectors_ewald_summation(sysd["cell"], K_CUTOFF)
     cell = sysd["cell"].detach().clone().requires_grad_(True)
     energy = ewald_summation(
-        positions, sysd["charges"], cell, alpha=ALPHA, k_vectors=k_vectors,
-        neighbor_matrix=nbmat, neighbor_matrix_shifts=shifts,
+        positions,
+        sysd["charges"],
+        cell,
+        alpha=ALPHA,
+        k_vectors=k_vectors,
+        neighbor_matrix=nbmat,
+        neighbor_matrix_shifts=shifts,
         batch_idx=sysd["batch_idx"],
         max_atoms_per_system=sysd["atoms_per_system"],
     ).sum()
