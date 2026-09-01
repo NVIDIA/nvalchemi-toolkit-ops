@@ -82,6 +82,26 @@ def _make_system(n_atoms, n_systems=1, dtype=torch.float32, device="cuda:0", see
     )
 
 
+def _cell_gradient(sysd):
+    """dE/dcell through the same entry point, which selects the cellgrad fill."""
+    positions = sysd["positions"]
+    max_nb = estimate_max_neighbors(CUTOFF, atomic_density=2.0 * DENSITY)
+    nbmat, _, shifts = neighbor_list(
+        positions, CUTOFF, cell=sysd["cell"], pbc=sysd["pbc"],
+        batch_idx=sysd["batch_idx"], return_neighbor_list=False,
+        half_fill=False, max_neighbors=max_nb,
+    )
+    k_vectors = generate_k_vectors_ewald_summation(sysd["cell"], K_CUTOFF)
+    cell = sysd["cell"].detach().clone().requires_grad_(True)
+    energy = ewald_summation(
+        positions, sysd["charges"], cell, alpha=ALPHA, k_vectors=k_vectors,
+        neighbor_matrix=nbmat, neighbor_matrix_shifts=shifts,
+        batch_idx=sysd["batch_idx"],
+        max_atoms_per_system=sysd["atoms_per_system"],
+    ).sum()
+    return torch.autograd.grad(energy, cell)[0]
+
+
 def _energy_and_forces(sysd, want_forces=True):
     """Run ``ewald_summation``, returning (energy, forces or None)."""
     positions = sysd["positions"]
@@ -225,3 +245,27 @@ def test_gate_disabled_by_default(cuda_available, monkeypatch):
     monkeypatch.setattr(chain, "_can_use_fp32_nostore", counting)
     _energy_and_forces(_make_system(512), want_forces=False)
     assert counts["fast"] == 0
+
+
+@pytest.mark.parametrize("n_systems", [1, 4], ids=["single", "batched"])
+def test_cell_gradient_matches_default_path(cuda_available, gate_counter, n_systems):
+    """dE/dcell agrees: the fill variant emits the same unweighted per-k cache.
+
+    The cache is reduced in float64 even though the phases are float32, so most
+    entries round identically to the float64 fill's; this asserts agreement
+    rather than bitwise equality because the phase difference does surface at
+    some sizes.
+    """
+    if not cuda_available:
+        pytest.skip("No GPU")
+    sysd = _make_system(4096, n_systems=n_systems)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.delenv("NVALCHEMIOPS_EWALD_RECIP_FP32_SF", raising=False)
+        reference = _cell_gradient(sysd)
+
+    fast = _cell_gradient(sysd)
+
+    assert gate_counter["fast"] > 0, "fast path was never taken"
+    scale = reference.abs().max().clamp_min(1e-30)
+    assert float((fast - reference).abs().max() / scale) < 1e-5

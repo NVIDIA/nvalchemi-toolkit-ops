@@ -67,15 +67,17 @@ from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     RECIP_TILED_BLOCK_DIM,
     _batch_ewald_recip_compute_fp32_recompute_tiled,
     _batch_ewald_recip_fill_sf_fp32_nostore,
+    _batch_ewald_recip_fill_sf_fp32_nostore_cellgrad,
     _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad,
     _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad_tiled,
     _ewald_recip_compute_fp32_recompute_tiled,
     _ewald_recip_fill_sf_fp32_nostore,
+    _ewald_recip_fill_sf_fp32_nostore_cellgrad,
     _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad,
     _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad_tiled,
     can_tile_ewald_recip_on_device,
     should_tile_ewald_recip_fill,
-    use_fp32_structure_factors,
+    _use_fp32_structure_factors,
 )
 from nvalchemiops.interactions.electrostatics.ewald_recip_factory import (
     _make_backward_kspace_from_cache_kernel,
@@ -458,16 +460,18 @@ def _atom_cotangent(grad_energy_atom, batch_idx, num_systems, num_atoms):
     )
 
 
-def _can_use_fp32_nostore(need_cell, input_dtype, torch_device) -> bool:
+def _can_use_fp32_nostore(input_dtype, torch_device) -> bool:
     """Whether the float32 no-store reciprocal path may serve this call.
 
     Covers energies, forces and dE/dq: the compute kernel recomputes the phases
     in float32 rather than reading the ``(K, N)`` arrays this path never writes,
     which is cheaper than the round-trip it replaces.
 
-    Cell gradients are excluded. The cellgrad fill accumulates extra per-k
-    quantities into a separate cache consumed by the O(S*K) kspace backward, and
-    that path has no recompute counterpart here.
+    Cell gradients are served by the ``_cellgrad`` fill variants, which ride the
+    same reduction and additionally emit the unweighted per-k cache the O(S*K)
+    kspace backward consumes. Second-order (double-backward) cell gradients are
+    not affected: that path builds its own float64 ``(S, K)`` accumulators and
+    never reads these.
 
     float32 input is required: dropping the phase arithmetic to float32 is only
     defensible when the caller already chose float32 positions.
@@ -476,8 +480,7 @@ def _can_use_fp32_nostore(need_cell, input_dtype, torch_device) -> bool:
     changes float32 results at the ~1e-07 level.
     """
     return (
-        use_fp32_structure_factors()
-        and not need_cell
+        _use_fp32_structure_factors()
         and input_dtype == torch.float32
         and torch_device.type == "cuda"
     )
@@ -502,6 +505,7 @@ def _run_fp32_nostore(
     wp_scalar,
     device,
     batched,
+    cellgrad_cache=None,
 ):
     """Energy-only reciprocal space with float32 phases and no ``(K, N)`` store.
 
@@ -517,6 +521,10 @@ def _run_fp32_nostore(
     ``total_charge`` is written into a scratch buffer: the background correction
     is applied by the caller from ``volume`` and the charges, so this path only
     owes it the per-atom reciprocal quantities.
+
+    When ``cellgrad_cache`` is supplied the ``_cellgrad`` fill variants run
+    instead; they emit the same unweighted per-k reductions the float64 fill
+    does, so the kspace cell-gradient backward is unchanged.
     """
     dev_t = positions.device
     # float32: the fill reduces across lanes in float64 and narrows only on the
@@ -545,11 +553,14 @@ def _run_fp32_nostore(
     wp_en = _wp(energies, wp.float64)
     wp_f = _wp(forces, wp_vec)
     wp_cg = _wp(charge_grads, wp.float64)
+    # Distinct name: `wp_cg` above is the charge-gradient output array.
+    want_cellgrad = cellgrad_cache is not None
+    wp_cgcache = _wp(cellgrad_cache, wp.float64) if want_cellgrad else None
 
     with _scoped_stream(dev_t):
         if batched:
             wp.launch_tiled(
-                _batch_ewald_recip_fill_sf_fp32_nostore,
+                _batch_ewald_recip_fill_sf_fp32_nostore_cellgrad if want_cellgrad else _batch_ewald_recip_fill_sf_fp32_nostore,
                 dim=(num_k, num_systems),
                 inputs=[
                     wp_pos,
@@ -562,7 +573,8 @@ def _run_fp32_nostore(
                     _wp(total_charge, wp.float64),
                     wp_re,
                     wp_im,
-                ],
+                ]
+                + ([wp_cgcache] if want_cellgrad else []),
                 device=device,
                 block_dim=RECIP_TILED_BLOCK_DIM,
             )
@@ -585,7 +597,7 @@ def _run_fp32_nostore(
             )
         else:
             wp.launch_tiled(
-                _ewald_recip_fill_sf_fp32_nostore,
+                _ewald_recip_fill_sf_fp32_nostore_cellgrad if want_cellgrad else _ewald_recip_fill_sf_fp32_nostore,
                 dim=num_k,
                 inputs=[
                     wp_pos,
@@ -596,7 +608,8 @@ def _run_fp32_nostore(
                     _wp(total_charge, wp.float64),
                     wp_re,
                     wp_im,
-                ],
+                ]
+                + ([wp_cgcache] if want_cellgrad else []),
                 device=device,
                 block_dim=RECIP_TILED_BLOCK_DIM,
             )
@@ -671,9 +684,15 @@ def _forward_impl(
         deriv_state = _DerivState.E_F
     else:
         deriv_state = _DerivState.E
-    if _can_use_fp32_nostore(need_cell, input_dtype, positions.device):
+    if _can_use_fp32_nostore(input_dtype, positions.device):
         forces_f = torch.zeros(num_atoms, 3, device=positions.device, dtype=input_dtype)
         dEdq_f = torch.zeros(num_atoms, device=positions.device, dtype=torch.float64)
+        if need_cell:
+            # Same (S*K, 8) layout the float64 cellgrad fill produces, so the
+            # kspace backward consumes it without knowing which fill ran.
+            cellgrad_cache = torch.zeros(
+                num_systems * num_k, 8, device=positions.device, dtype=torch.float64
+            )
         _run_fp32_nostore(
             positions,
             charges,
@@ -693,6 +712,7 @@ def _forward_impl(
             wp_scalar,
             device,
             batched,
+            cellgrad_cache if need_cell else None,
         )
         if need_pos:
             dEdR = (-forces_f).detach()
