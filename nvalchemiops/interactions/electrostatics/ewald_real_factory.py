@@ -344,9 +344,7 @@ def _make_forward_pair_fn(
                             distance, alpha_s
                         )
                         cg_i_acc += wp.float64(qj_s * potential)
-                        wp.atomic_add(
-                            charge_gradients, j, wp.float64(qi_s * potential)
-                        )
+                        wp.atomic_add(charge_gradients, j, wp.float64(qi_s * potential))
                     if CELL_GRAD:
                         virial_acc += _pair_virial_outer(separation_vector, force)
                     # Literal dE/dcell block for atom i: n (x) dE/dsep, dE/dsep = -force.
@@ -483,9 +481,7 @@ def _make_backward_pair_fn(
             ge_fm = wp.float64(0.0)
             if HAS_FORCE or CELL_GRAD:
                 force_mag = wp.float64(
-                    _ewald_real_space_force_magnitude(
-                        qi_s, qj_s, distance, alpha_s
-                    )
+                    _ewald_real_space_force_magnitude(qi_s, qj_s, distance, alpha_s)
                 )
                 ge_fm = ge * force_mag
                 if HAS_FORCE:

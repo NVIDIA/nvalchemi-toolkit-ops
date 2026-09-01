@@ -1218,8 +1218,12 @@ def _batch_ewald_recip_fill_sf_fp32_nostore(
     charge_tile = wp.tile_reduce(wp.add, wp.tile(charge_sum))
 
     if lane == 0:
-        real_structure_factors[system_id, k_idx] = wp.float32(wp.tile_extract(real_tile, 0))
-        imag_structure_factors[system_id, k_idx] = wp.float32(wp.tile_extract(imag_tile, 0))
+        real_structure_factors[system_id, k_idx] = wp.float32(
+            wp.tile_extract(real_tile, 0)
+        )
+        imag_structure_factors[system_id, k_idx] = wp.float32(
+            wp.tile_extract(imag_tile, 0)
+        )
         if k_idx == 0:
             total_charge[system_id] = wp.tile_extract(charge_tile, 0)
 
@@ -1474,8 +1478,14 @@ def _recip_atom_accumulate_fp32(
         fy += force_scalar * wp.float32(kvec[1])
         fz += force_scalar * wp.float32(kvec[2])
 
-    return _recip_vec5d(wp.float64(potential), wp.float64(fx), wp.float64(fy),
-                        wp.float64(fz), wp.float64(potential_uncharged))
+    return _recip_vec5d(
+        wp.float64(potential),
+        wp.float64(fx),
+        wp.float64(fy),
+        wp.float64(fz),
+        wp.float64(potential_uncharged),
+    )
+
 
 @wp.kernel
 def _ewald_recip_compute_fp32_recompute(

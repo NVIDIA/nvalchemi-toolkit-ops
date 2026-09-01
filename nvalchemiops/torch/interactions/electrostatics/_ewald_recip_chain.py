@@ -75,9 +75,9 @@ from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     _ewald_recip_fill_sf_fp32_nostore_cellgrad,
     _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad,
     _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad_tiled,
+    _use_fp32_structure_factors,
     can_tile_ewald_recip_on_device,
     should_tile_ewald_recip_fill,
-    _use_fp32_structure_factors,
 )
 from nvalchemiops.interactions.electrostatics.ewald_recip_factory import (
     _make_backward_kspace_from_cache_kernel,
@@ -560,7 +560,9 @@ def _run_fp32_nostore(
     with _scoped_stream(dev_t):
         if batched:
             wp.launch_tiled(
-                _batch_ewald_recip_fill_sf_fp32_nostore_cellgrad if want_cellgrad else _batch_ewald_recip_fill_sf_fp32_nostore,
+                _batch_ewald_recip_fill_sf_fp32_nostore_cellgrad
+                if want_cellgrad
+                else _batch_ewald_recip_fill_sf_fp32_nostore,
                 dim=(num_k, num_systems),
                 inputs=[
                     wp_pos,
@@ -597,7 +599,9 @@ def _run_fp32_nostore(
             )
         else:
             wp.launch_tiled(
-                _ewald_recip_fill_sf_fp32_nostore_cellgrad if want_cellgrad else _ewald_recip_fill_sf_fp32_nostore,
+                _ewald_recip_fill_sf_fp32_nostore_cellgrad
+                if want_cellgrad
+                else _ewald_recip_fill_sf_fp32_nostore,
                 dim=num_k,
                 inputs=[
                     wp_pos,
