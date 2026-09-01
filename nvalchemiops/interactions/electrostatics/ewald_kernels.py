@@ -859,8 +859,8 @@ def _ewald_recip_fill_sf_fp32_nostore(
     cell: wp.array(dtype=Any),
     alpha: wp.array(dtype=Any),
     total_charge: wp.array(dtype=wp.float64),
-    real_structure_factors: wp.array(dtype=wp.float64),
-    imag_structure_factors: wp.array(dtype=wp.float64),
+    real_structure_factors: wp.array(dtype=wp.float32),
+    imag_structure_factors: wp.array(dtype=wp.float32),
 ):
     """Single-system weighted structure factors, float32 phases, no (K, N) store.
 
@@ -925,8 +925,12 @@ def _ewald_recip_fill_sf_fp32_nostore(
     imag_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(imag_sum * green_function)))
     charge_tile = wp.tile_reduce(wp.add, wp.tile(charge_sum))
 
-    wp.tile_store(real_structure_factors, real_tile, k_idx)
-    wp.tile_store(imag_structure_factors, imag_tile, k_idx)
+    # tile_store cannot narrow float64 -> float32, so extract and write the
+    # single reduced value from lane 0. total_charge stays a collective store:
+    # it is guarded by k_idx, which is block-uniform, unlike lane.
+    if lane == 0:
+        real_structure_factors[k_idx] = wp.float32(wp.tile_extract(real_tile, 0))
+        imag_structure_factors[k_idx] = wp.float32(wp.tile_extract(imag_tile, 0))
     if k_idx == 0:
         wp.tile_store(total_charge, charge_tile, 0)
 
@@ -941,8 +945,8 @@ def _batch_ewald_recip_fill_sf_fp32_nostore(
     atom_start: wp.array(dtype=wp.int32),
     atom_end: wp.array(dtype=wp.int32),
     total_charge: wp.array(dtype=wp.float64),
-    real_structure_factors: wp.array2d(dtype=wp.float64),
-    imag_structure_factors: wp.array2d(dtype=wp.float64),
+    real_structure_factors: wp.array2d(dtype=wp.float32),
+    imag_structure_factors: wp.array2d(dtype=wp.float32),
 ):
     """Batched counterpart of :func:`_ewald_recip_fill_sf_fp32_nostore`.
 
@@ -1000,8 +1004,8 @@ def _batch_ewald_recip_fill_sf_fp32_nostore(
     charge_tile = wp.tile_reduce(wp.add, wp.tile(charge_sum))
 
     if lane == 0:
-        real_structure_factors[system_id, k_idx] = wp.tile_extract(real_tile, 0)
-        imag_structure_factors[system_id, k_idx] = wp.tile_extract(imag_tile, 0)
+        real_structure_factors[system_id, k_idx] = wp.float32(wp.tile_extract(real_tile, 0))
+        imag_structure_factors[system_id, k_idx] = wp.float32(wp.tile_extract(imag_tile, 0))
         if k_idx == 0:
             total_charge[system_id] = wp.tile_extract(charge_tile, 0)
 
@@ -1031,10 +1035,10 @@ def _recip_atom_accumulate_fp32(
     px: wp.float32,
     py: wp.float32,
     pz: wp.float32,
-    charge: wp.float64,
+    charge: wp.float32,
     k_vectors: wp.array(dtype=Any),
-    real_structure_factors: wp.array(dtype=wp.float64),
-    imag_structure_factors: wp.array(dtype=wp.float64),
+    real_structure_factors: wp.array(dtype=wp.float32),
+    imag_structure_factors: wp.array(dtype=wp.float32),
     num_k: int,
     k_start: int,
     k_stride: int,
@@ -1058,7 +1062,6 @@ def _recip_atom_accumulate_fp32(
     the loop is dominated by the transcendentals, so they are always computed
     and the caller writes only what it needs.
     """
-    q32 = wp.float32(charge)
     potential = wp.float32(0.0)
     potential_uncharged = wp.float32(0.0)
     fx = wp.float32(0.0)
@@ -1071,14 +1074,14 @@ def _recip_atom_accumulate_fp32(
         cos_kr = phase[0]
         sin_kr = phase[1]
 
-        s_real = wp.float32(real_structure_factors[k_idx])
-        s_imag = wp.float32(imag_structure_factors[k_idx])
+        s_real = real_structure_factors[k_idx]
+        s_imag = imag_structure_factors[k_idx]
 
         phase_sum = s_real * cos_kr + s_imag * sin_kr
-        potential += q32 * phase_sum
+        potential += charge * phase_sum
         potential_uncharged += phase_sum
 
-        force_scalar = q32 * (s_real * sin_kr - s_imag * cos_kr)
+        force_scalar = charge * (s_real * sin_kr - s_imag * cos_kr)
         fx += force_scalar * wp.float32(kvec[0])
         fy += force_scalar * wp.float32(kvec[1])
         fz += force_scalar * wp.float32(kvec[2])
@@ -1092,8 +1095,8 @@ def _ewald_recip_compute_fp32_recompute(
     positions: wp.array(dtype=Any),
     charges: wp.array(dtype=Any),
     k_vectors: wp.array(dtype=Any),
-    real_structure_factors: wp.array(dtype=wp.float64),
-    imag_structure_factors: wp.array(dtype=wp.float64),
+    real_structure_factors: wp.array(dtype=wp.float32),
+    imag_structure_factors: wp.array(dtype=wp.float32),
     reciprocal_energies: wp.array(dtype=wp.float64),
     atomic_forces: wp.array(dtype=Any),
     charge_gradients: wp.array(dtype=wp.float64),
@@ -1111,7 +1114,7 @@ def _ewald_recip_compute_fp32_recompute(
         wp.float32(position[0]),
         wp.float32(position[1]),
         wp.float32(position[2]),
-        wp.float64(charges[atom_idx]),
+        wp.float32(charges[atom_idx]),
         k_vectors,
         real_structure_factors,
         imag_structure_factors,
@@ -1134,8 +1137,8 @@ def _batch_ewald_recip_compute_fp32_recompute(
     charges: wp.array(dtype=Any),
     batch_idx: wp.array(dtype=wp.int32),
     k_vectors: wp.array2d(dtype=Any),
-    real_structure_factors: wp.array2d(dtype=wp.float64),
-    imag_structure_factors: wp.array2d(dtype=wp.float64),
+    real_structure_factors: wp.array2d(dtype=wp.float32),
+    imag_structure_factors: wp.array2d(dtype=wp.float32),
     reciprocal_energies: wp.array(dtype=wp.float64),
     atomic_forces: wp.array(dtype=Any),
     charge_gradients: wp.array(dtype=wp.float64),
@@ -1153,7 +1156,7 @@ def _batch_ewald_recip_compute_fp32_recompute(
         wp.float32(position[0]),
         wp.float32(position[1]),
         wp.float32(position[2]),
-        wp.float64(charges[atom_idx]),
+        wp.float32(charges[atom_idx]),
         k_vectors[system_id],
         real_structure_factors[system_id],
         imag_structure_factors[system_id],
@@ -1175,8 +1178,8 @@ def _ewald_recip_compute_fp32_recompute_tiled(
     positions: wp.array(dtype=Any),
     charges: wp.array(dtype=Any),
     k_vectors: wp.array(dtype=Any),
-    real_structure_factors: wp.array(dtype=wp.float64),
-    imag_structure_factors: wp.array(dtype=wp.float64),
+    real_structure_factors: wp.array(dtype=wp.float32),
+    imag_structure_factors: wp.array(dtype=wp.float32),
     reciprocal_energies: wp.array(dtype=wp.float64),
     atomic_forces: wp.array(dtype=Any),
     charge_gradients: wp.array(dtype=wp.float64),
@@ -1200,7 +1203,7 @@ def _ewald_recip_compute_fp32_recompute_tiled(
         wp.float32(position[0]),
         wp.float32(position[1]),
         wp.float32(position[2]),
-        wp.float64(charges[atom_idx]),
+        wp.float32(charges[atom_idx]),
         k_vectors,
         real_structure_factors,
         imag_structure_factors,
@@ -1229,8 +1232,8 @@ def _batch_ewald_recip_compute_fp32_recompute_tiled(
     charges: wp.array(dtype=Any),
     batch_idx: wp.array(dtype=wp.int32),
     k_vectors: wp.array2d(dtype=Any),
-    real_structure_factors: wp.array2d(dtype=wp.float64),
-    imag_structure_factors: wp.array2d(dtype=wp.float64),
+    real_structure_factors: wp.array2d(dtype=wp.float32),
+    imag_structure_factors: wp.array2d(dtype=wp.float32),
     reciprocal_energies: wp.array(dtype=wp.float64),
     atomic_forces: wp.array(dtype=Any),
     charge_gradients: wp.array(dtype=wp.float64),
@@ -1245,7 +1248,7 @@ def _batch_ewald_recip_compute_fp32_recompute_tiled(
         wp.float32(position[0]),
         wp.float32(position[1]),
         wp.float32(position[2]),
-        wp.float64(charges[atom_idx]),
+        wp.float32(charges[atom_idx]),
         k_vectors[system_id],
         real_structure_factors[system_id],
         imag_structure_factors[system_id],
