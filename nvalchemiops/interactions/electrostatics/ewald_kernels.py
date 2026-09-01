@@ -257,11 +257,11 @@ def can_tile_ewald_recip_on_device(device: object) -> bool:
 
 @wp.func
 def _ewald_real_space_energy_kernel_compute_energy(
-    qi: wp.float64,
-    qj: wp.float64,
-    distance: wp.float64,
-    alpha: wp.float64,
-) -> wp.float64:
+    qi: Any,
+    qj: Any,
+    distance: Any,
+    alpha: Any,
+) -> Any:
     """Compute damped Coulomb energy for a single pair.
 
     Formula:
@@ -275,11 +275,11 @@ def _ewald_real_space_energy_kernel_compute_energy(
 
     Parameters
     ----------
-    qi, qj : wp.float64
-        Charges of atoms i and j.
-    distance : wp.float64
-        Distance |r_j - r_i|.
-    alpha : wp.float64
+    qi, qj : Any
+        Charges of atoms i and j, in the caller's precision.
+    distance : Any
+        Distance |r_j - r_i|, in the caller's precision.
+    alpha : Any
         Ewald splitting parameter.
 
     Returns
@@ -287,16 +287,16 @@ def _ewald_real_space_energy_kernel_compute_energy(
     wp.float64
         Damped Coulomb energy contribution.
     """
-    return wp.float64(0.5) * qi * qj * wp_erfc(alpha * distance) / distance
+    return type(distance)(0.5) * qi * qj * wp_erfc(alpha * distance) / distance
 
 
 @wp.func
 def _ewald_real_space_force_magnitude(
-    qi: wp.float64,
-    qj: wp.float64,
-    distance: wp.float64,
-    alpha: wp.float64,
-) -> wp.float64:
+    qi: Any,
+    qj: Any,
+    distance: Any,
+    alpha: Any,
+) -> Any:
     """Compute damped Coulomb force magnitude factor for a single pair.
 
     Returns the scalar part of the force:
@@ -309,11 +309,11 @@ def _ewald_real_space_force_magnitude(
 
     Parameters
     ----------
-    qi, qj : wp.float64
-        Charges of atoms i and j.
-    distance : wp.float64
-        Distance |r_j - r_i|.
-    alpha : wp.float64
+    qi, qj : Any
+        Charges of atoms i and j, in the caller's precision.
+    distance : Any
+        Distance |r_j - r_i|, in the caller's precision.
+    alpha : Any
         Ewald splitting parameter.
 
     Returns
@@ -321,9 +321,9 @@ def _ewald_real_space_force_magnitude(
     wp.float64
         Force magnitude factor.
     """
-    two_over_sqrt_pi = wp.float64(TWO_OVER_SQRT_PI)
+    two_over_sqrt_pi = type(distance)(TWO_OVER_SQRT_PI)
 
-    prefactor = wp.float64(0.5) * qi * qj
+    prefactor = type(distance)(0.5) * qi * qj
     alpha_r = alpha * distance
     alpha_r_squared = alpha_r * alpha_r
 
@@ -339,9 +339,9 @@ def _ewald_real_space_force_magnitude(
 
 @wp.func
 def _ewald_real_space_charge_grad_potential(
-    distance: wp.float64,
-    alpha: wp.float64,
-) -> wp.float64:
+    distance: Any,
+    alpha: Any,
+) -> Any:
     r"""Compute the damped Coulomb potential for charge gradient.
 
     Returns :math:`\frac{1}{2} \frac{\text{erfc}(\alpha r)}{r}`, which when multiplied by q_j gives
@@ -357,9 +357,9 @@ def _ewald_real_space_charge_grad_potential(
 
     Parameters
     ----------
-    distance : wp.float64
-        Distance |r_j - r_i|.
-    alpha : wp.float64
+    distance : Any
+        Distance |r_j - r_i|, in the caller's precision.
+    alpha : Any
         Ewald splitting parameter.
 
     Returns
@@ -367,7 +367,7 @@ def _ewald_real_space_charge_grad_potential(
     wp.float64
         Potential factor for charge gradient computation.
     """
-    return wp.float64(0.5) * wp_erfc(alpha * distance) / distance
+    return type(distance)(0.5) * wp_erfc(alpha * distance) / distance
 
 
 ###########################################################################################
