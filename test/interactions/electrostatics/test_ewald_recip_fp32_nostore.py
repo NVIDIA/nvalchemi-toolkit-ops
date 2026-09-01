@@ -15,7 +15,7 @@
 
 """Tests for the float32, no-store reciprocal structure-factor path.
 
-Enabled by ``NVALCHEMIOPS_EWALD_RECIP_FP32_SF``. It computes the phases in
+Enabled by ``NVALCHEMIOPS_ELECTROSTATICS_FP32``. It computes the phases in
 float32 and never materialises the ``(K, N)`` ``cos_k_dot_r`` / ``sin_k_dot_r``
 arrays, recomputing them in the per-atom pass instead. That trades a float64
 round-trip for float32 transcendentals, which is strongly favourable on parts
@@ -153,7 +153,7 @@ def gate_counter(monkeypatch):
     """
     import nvalchemiops.torch.interactions.electrostatics._ewald_recip_chain as chain
 
-    monkeypatch.setenv("NVALCHEMIOPS_EWALD_RECIP_FP32_SF", "1")
+    monkeypatch.setenv("NVALCHEMIOPS_ELECTROSTATICS_FP32", "1")
     counts = {"fast": 0, "slow": 0}
     original = chain._can_use_fp32_nostore
 
@@ -174,7 +174,7 @@ def test_energy_matches_default_path(cuda_available, gate_counter, n_systems):
     sysd = _make_system(1024, n_systems=n_systems)
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.delenv("NVALCHEMIOPS_EWALD_RECIP_FP32_SF", raising=False)
+        mp.delenv("NVALCHEMIOPS_ELECTROSTATICS_FP32", raising=False)
         reference, _ = _energy_and_forces(sysd, want_forces=False)
 
     fast, _ = _energy_and_forces(sysd, want_forces=False)
@@ -191,7 +191,7 @@ def test_forces_match_default_path(cuda_available, gate_counter, n_systems):
     sysd = _make_system(1024, n_systems=n_systems)
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.delenv("NVALCHEMIOPS_EWALD_RECIP_FP32_SF", raising=False)
+        mp.delenv("NVALCHEMIOPS_ELECTROSTATICS_FP32", raising=False)
         _, reference = _energy_and_forces(sysd)
 
     _, fast = _energy_and_forces(sysd)
@@ -219,7 +219,7 @@ def test_peak_memory_is_independent_of_k(cuda_available, gate_counter):
         return torch.cuda.max_memory_allocated()
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.delenv("NVALCHEMIOPS_EWALD_RECIP_FP32_SF", raising=False)
+        mp.delenv("NVALCHEMIOPS_ELECTROSTATICS_FP32", raising=False)
         stored = peak()
     nostore = peak()
 
@@ -243,7 +243,7 @@ def test_gate_disabled_by_default(cuda_available, monkeypatch):
         pytest.skip("No GPU")
     import nvalchemiops.torch.interactions.electrostatics._ewald_recip_chain as chain
 
-    monkeypatch.delenv("NVALCHEMIOPS_EWALD_RECIP_FP32_SF", raising=False)
+    monkeypatch.delenv("NVALCHEMIOPS_ELECTROSTATICS_FP32", raising=False)
     counts = {"fast": 0}
     original = chain._can_use_fp32_nostore
 
@@ -271,7 +271,7 @@ def test_cell_gradient_matches_default_path(cuda_available, gate_counter, n_syst
     sysd = _make_system(4096, n_systems=n_systems)
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.delenv("NVALCHEMIOPS_EWALD_RECIP_FP32_SF", raising=False)
+        mp.delenv("NVALCHEMIOPS_ELECTROSTATICS_FP32", raising=False)
         reference = _cell_gradient(sysd)
 
     fast = _cell_gradient(sysd)

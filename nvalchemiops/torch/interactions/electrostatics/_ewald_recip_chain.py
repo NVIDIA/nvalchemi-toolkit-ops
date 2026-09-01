@@ -59,6 +59,7 @@ import warp as wp
 
 from nvalchemiops.interactions.electrostatics._factory_common import (
     _DerivState,
+    _use_fp32_electrostatics,
     get_backward_scale_kernel,
 )
 from nvalchemiops.interactions.electrostatics.ewald_kernels import (
@@ -75,7 +76,6 @@ from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     _ewald_recip_fill_sf_fp32_nostore_cellgrad,
     _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad,
     _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad_tiled,
-    _use_fp32_structure_factors,
     can_tile_ewald_recip_on_device,
     should_tile_ewald_recip_fill,
 )
@@ -476,11 +476,12 @@ def _can_use_fp32_nostore(input_dtype, torch_device) -> bool:
     float32 input is required: dropping the phase arithmetic to float32 is only
     defensible when the caller already chose float32 positions.
 
-    Requires ``NVALCHEMIOPS_EWALD_RECIP_FP32_SF``; off by default because it
-    changes float32 results at the ~1e-07 level.
+    Requires ``NVALCHEMIOPS_ELECTROSTATICS_FP32``; off by default because it
+    changes float32 results at the ~1e-07 level. The same flag governs the
+    real-space per-pair cores, so both halves of the split move together.
     """
     return (
-        _use_fp32_structure_factors()
+        _use_fp32_electrostatics()
         and input_dtype == torch.float32
         and torch_device.type == "cuda"
     )

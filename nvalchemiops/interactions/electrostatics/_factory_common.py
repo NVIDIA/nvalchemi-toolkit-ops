@@ -42,6 +42,7 @@ orchestration stays outside, on Torch autograd.
 
 import enum
 import math
+import os
 from collections.abc import Iterable, Mapping, Sequence
 from functools import lru_cache
 from typing import Any, Literal, NamedTuple
@@ -124,6 +125,30 @@ _DISTANCE_EPSILON = 1e-8
 # Reciprocal-space ``k_sq`` guard: k-points with ``|k|^2`` below this (the k=0 term)
 # are skipped in the recip / PME convolve kernels.
 _K_SQUARED_EPSILON = 1e-10
+
+
+def _use_fp32_electrostatics() -> bool:
+    """Return whether float32 electrostatics kernels may compute in float32.
+
+    Reads ``NVALCHEMIOPS_ELECTROSTATICS_FP32``; unset or empty means off, as
+    does any of ``0``/``false``/``off``. Governs both halves of the monopole
+    split: the real-space per-pair cores below and the reciprocal structure
+    factors in ``ewald_kernels``. Real space is shared by Ewald and PME, so
+    this affects both.
+
+    Off by default because it changes float32 results at the ~1e-07 level,
+    which is a semantic change for existing callers rather than a pure
+    optimisation.
+
+    Returns
+    -------
+    bool
+        ``True`` if float32 evaluation is requested, ``False`` otherwise.
+    """
+    value = os.environ.get("NVALCHEMIOPS_ELECTROSTATICS_FP32")
+    if value is None or value == "":
+        return False
+    return value not in {"0", "false", "False", "off", "OFF"}
 
 
 # === Shared per-pair scalar cores (input precision) ===

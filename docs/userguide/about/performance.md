@@ -214,10 +214,12 @@ through as `rebuild_flags` instead to keep the decision on device under
 ```{note}
 As with neighbour lists, the API reference for the entry point lists what can be
 supplied: {func}`~nvalchemiops.torch.interactions.electrostatics.ewald_summation` and
-{func}`~nvalchemiops.torch.interactions.electrostatics.particle_mesh_ewald`. The real/reciprocal halves are separately
+{func}`~nvalchemiops.torch.interactions.electrostatics.particle_mesh_ewald`. The
+real/reciprocal halves are separately
 callable as {func}`~nvalchemiops.torch.interactions.electrostatics.ewald_real_space`,
 {func}`~nvalchemiops.torch.interactions.electrostatics.ewald_reciprocal_space` and
-{func}`~nvalchemiops.torch.interactions.electrostatics.pme_reciprocal_space`, which is what to profile against when
+{func}`~nvalchemiops.torch.interactions.electrostatics.pme_reciprocal_space`, which
+is what to profile against when
 attributing cost.
 ```
 
@@ -241,13 +243,16 @@ mesh = estimate_pme_mesh_dimensions(cell, params.alpha, accuracy=accuracy)
 ```
 
 Under NPT, refresh these on cell updates rather than per force evaluation.
-{func}`~nvalchemiops.torch.interactions.electrostatics.estimate_pme_parameters` returns alpha and the mesh together as a
-{class}`~nvalchemiops.torch.interactions.electrostatics.PMEParameters`; {func}`~nvalchemiops.torch.interactions.electrostatics.estimate_ewald_parameters` returns
+{func}`~nvalchemiops.torch.interactions.electrostatics.estimate_pme_parameters`
+returns alpha and the mesh together as a
+{class}`~nvalchemiops.torch.interactions.electrostatics.PMEParameters`;
+{func}`~nvalchemiops.torch.interactions.electrostatics.estimate_ewald_parameters`
+returns
 an {class}`~nvalchemiops.torch.interactions.electrostatics.EwaldParameters`.
 
 PME additionally precomputes B-spline moduli via
-{func}`~nvalchemiops.torch.interactions.electrostatics.compute_bspline_moduli_1d`, which depend only on the mesh and
-spline order.
+{func}`~nvalchemiops.torch.interactions.electrostatics.compute_bspline_moduli_1d`,
+which depend only on the mesh and spline order.
 
 Both methods consume a neighbour list for real space, so the neighbour-list
 section applies to that list as well. Pass the matrix and shifts you already
@@ -292,8 +297,10 @@ Reference tables are element-specific and independent of geometry. Build
 `D3Parameters` once and move it to the device at setup:
 
 ```{note}
-{func}`~nvalchemiops.torch.interactions.dispersion.dftd3` lists every optional buffer and table it accepts;
-{class}`~nvalchemiops.torch.interactions.dispersion.D3Parameters` documents the reference tables and their shapes.
+{func}`~nvalchemiops.torch.interactions.dispersion.dftd3` lists every
+optional buffer and table it accepts;
+{class}`~nvalchemiops.torch.interactions.dispersion.D3Parameters` documents
+the reference tables and their shapes.
 ```
 
 ```python
@@ -315,7 +322,8 @@ Set `compute_virial` only when the virial is needed.
 
 ### Sizing
 
-{func}`~nvalchemiops.torch.interactions.dispersion.dftd3` takes no cutoff argument: the cutoff is whatever the supplied
+{func}`~nvalchemiops.torch.interactions.dispersion.dftd3` takes no cutoff
+ argument: the cutoff is whatever the supplied
 neighbour list was built with.
 
 D3 cutoffs are typically several times larger than an electrostatics real-space
@@ -400,7 +408,7 @@ where a heuristic is wrong for a given workload.
 | `NVALCHEMIOPS_EWALD_RECIP_TILED` | Force the Ewald reciprocal fill to use (`1`) or avoid (`0`) a tiled launch. |
 | `NVALCHEMIOPS_EWALD_RECIP_MIN_ATOMS` | Atom-count threshold for automatic tiled fill selection. |
 | `NVALCHEMIOPS_EWALD_RECIP_TILE_DIM` | Block width for tiled reciprocal kernels. |
-| `NVALCHEMIOPS_EWALD_RECIP_FP32_SF` | Enable the float32 no-store reciprocal path (float32 CUDA inputs only). Changes float32 results at the ~1e-07 level. |
+| `NVALCHEMIOPS_ELECTROSTATICS_FP32` | Evaluate monopole electrostatics in float32 where the inputs are float32: the per-pair real-space cores and the no-store reciprocal path. Real space is shared by Ewald and PME, so both are affected. Changes float32 results at the ~1e-07 level. |
 | `NVALCHEMIOPS_DYNAMICS_TILE_DIM` | Block width for tiled dynamics kernels. |
 | `ALCH_EWALD_BATCH_BLOCK_SIZE` | Block size for batched Ewald kernels. |
 
