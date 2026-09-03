@@ -36,6 +36,7 @@ import numpy as np
 import pytest
 import torch
 import warp as wp
+from torch.fx.experimental.proxy_tensor import make_fx
 
 from nvalchemiops.dynamics.optimizers import (
     fire2_apply_step,
@@ -1182,6 +1183,172 @@ class TestFire2Convergence:
 # ==============================================================================
 # Tests: PyTorch Adapter
 # ==============================================================================
+
+
+class TestFire2TorchRegistration:
+    """Tests for the registered PyTorch FIRE2 operators."""
+
+    def test_fire2_steps_trace_as_custom_ops(self):
+        """Both public FIRE2 steps should trace as opaque nvalchemiops nodes."""
+
+        def coord_step(positions, velocities, forces, batch_idx, alpha, dt, nsteps):
+            fire2_step_coord(
+                positions, velocities, forces, batch_idx, alpha, dt, nsteps
+            )
+
+        def coord_cell_step(
+            positions,
+            velocities,
+            forces,
+            cell,
+            cell_velocities,
+            cell_force,
+            batch_idx,
+            alpha,
+            dt,
+            nsteps,
+        ):
+            fire2_step_coord_cell(
+                positions,
+                velocities,
+                forces,
+                cell,
+                cell_velocities,
+                cell_force,
+                batch_idx,
+                alpha,
+                dt,
+                nsteps,
+            )
+
+        coord_args = (
+            torch.empty(2, 3),
+            torch.empty(2, 3),
+            torch.empty(2, 3),
+            torch.zeros(2, dtype=torch.int32),
+            torch.empty(1),
+            torch.empty(1),
+            torch.empty(1, dtype=torch.int32),
+        )
+        cell_args = (
+            *coord_args[:3],
+            torch.empty(1, 3, 3),
+            torch.empty(1, 3, 3),
+            torch.empty(1, 3, 3),
+            *coord_args[3:],
+        )
+
+        coord_graph = make_fx(coord_step, tracing_mode="fake")(*coord_args)
+        cell_graph = make_fx(coord_cell_step, tracing_mode="fake")(*cell_args)
+
+        coord_node = next(
+            node
+            for node in coord_graph.graph.nodes
+            if node.target is torch.ops.nvalchemiops.fire2_step_coord.default
+        )
+        cell_node = next(
+            node
+            for node in cell_graph.graph.nodes
+            if node.target is torch.ops.nvalchemiops.fire2_step_coord_cell.default
+        )
+        assert len(coord_node.args) == len(
+            torch.ops.nvalchemiops.fire2_step_coord.default._schema.arguments
+        )
+        assert len(cell_node.args) == len(
+            torch.ops.nvalchemiops.fire2_step_coord_cell.default._schema.arguments
+        )
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_coord_step_compiles_fullgraph(self, device):
+        """The coordinate wrapper should match eager execution under compile."""
+        state = make_fire2_torch_state(
+            24, 2, torch.float32, device, rng=np.random.default_rng(71)
+        )[:7]
+        eager_args = tuple(tensor.clone() for tensor in state)
+        compiled_args = tuple(tensor.clone() for tensor in state)
+
+        def run(positions, velocities, forces, batch_idx, alpha, dt, nsteps_inc):
+            fire2_step_coord(
+                positions,
+                velocities,
+                forces,
+                batch_idx,
+                alpha,
+                dt,
+                nsteps_inc,
+                **FIRE2_DEFAULTS,
+            )
+            return positions, velocities, alpha, dt, nsteps_inc
+
+        expected = run(*eager_args)
+        torch._dynamo.reset()
+        compiled = torch.compile(run, fullgraph=True)
+        actual = compiled(*compiled_args)
+        torch.cuda.synchronize()
+
+        for actual_tensor, expected_tensor in zip(actual, expected, strict=True):
+            torch.testing.assert_close(actual_tensor, expected_tensor)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_coord_cell_step_compiles_fullgraph(self, device):
+        """The variable-cell wrapper should match eager execution under compile."""
+        rng = np.random.default_rng(72)
+        state = make_fire2_torch_state(24, 2, torch.float32, device, rng=rng)[:7]
+        cell = torch.tensor(
+            _make_upper_triangular_cell(2, np.float32, rng=rng),
+            dtype=torch.float32,
+            device=device,
+        )
+        cell_velocities = torch.zeros_like(cell)
+        cell_force = torch.tensor(
+            rng.standard_normal((2, 3, 3)).astype(np.float32) * 0.01,
+            device=device,
+        )
+        args = (
+            *state[:3],
+            cell,
+            cell_velocities,
+            cell_force,
+            *state[3:],
+        )
+        eager_args = tuple(tensor.clone() for tensor in args)
+        compiled_args = tuple(tensor.clone() for tensor in args)
+
+        def run(
+            positions,
+            velocities,
+            forces,
+            cell,
+            cell_velocities,
+            cell_force,
+            batch_idx,
+            alpha,
+            dt,
+            nsteps_inc,
+        ):
+            fire2_step_coord_cell(
+                positions,
+                velocities,
+                forces,
+                cell,
+                cell_velocities,
+                cell_force,
+                batch_idx,
+                alpha,
+                dt,
+                nsteps_inc,
+                **FIRE2_CELL_DEFAULTS,
+            )
+            return positions, velocities, cell, cell_velocities, alpha, dt, nsteps_inc
+
+        expected = run(*eager_args)
+        torch._dynamo.reset()
+        compiled = torch.compile(run, fullgraph=True)
+        actual = compiled(*compiled_args)
+        torch.cuda.synchronize()
+
+        for actual_tensor, expected_tensor in zip(actual, expected, strict=True):
+            torch.testing.assert_close(actual_tensor, expected_tensor)
 
 
 class TestFire2TorchCoord:
