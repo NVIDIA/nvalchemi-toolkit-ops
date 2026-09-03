@@ -15,6 +15,7 @@
 
 """Tests for PyTorch bindings of batched naive neighbor list methods."""
 
+import warnings
 from unittest import mock
 
 import pytest
@@ -1454,7 +1455,77 @@ class TestBatchNaiveCompile:
             )
 
         eager = run(positions, *alloc_outputs())
-        compiled = torch.compile(run)(positions, *alloc_outputs())
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            compiled = torch.compile(run)(positions, *alloc_outputs())
+
+        compiled_matrix, compiled_counts, compiled_shifts = compiled
+        eager_matrix, eager_counts, eager_shifts = eager
+        assert torch.equal(compiled_counts, eager_counts)
+        for atom_index in range(fill_value):
+            assert _active_neighbor_shift_rows(
+                compiled_matrix,
+                compiled_shifts,
+                compiled_counts,
+                atom_index,
+            ) == _active_neighbor_shift_rows(
+                eager_matrix,
+                eager_shifts,
+                eager_counts,
+                atom_index,
+            )
+
+    @pytest.mark.slow
+    def test_compile_pbc_implicit_max_atoms_warns_and_matches_eager(
+        self, device, dtype
+    ):
+        """Compiled PBC fallback warns while retaining eager neighbor output."""
+        atoms_per_system = [5, 6]
+        positions, cell, pbc, _ = create_batch_systems(
+            num_systems=2, atoms_per_system=atoms_per_system, dtype=dtype, device=device
+        )
+        batch_idx, batch_ptr = create_batch_idx_and_ptr(atoms_per_system, device)
+        cutoff = 1.5
+        fill_value = positions.shape[0]
+        max_neighbors = 30
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+            cell, cutoff, pbc
+        )
+
+        def alloc_outputs():
+            return (
+                torch.full(
+                    (fill_value, max_neighbors),
+                    fill_value,
+                    dtype=torch.int32,
+                    device=device,
+                ),
+                torch.zeros(fill_value, dtype=torch.int32, device=device),
+                torch.zeros(
+                    (fill_value, max_neighbors, 3), dtype=torch.int32, device=device
+                ),
+            )
+
+        def run(pos, neighbor_matrix, num_neighbors, neighbor_matrix_shifts):
+            return batch_naive_neighbor_list(
+                pos,
+                cutoff,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                pbc=pbc,
+                cell=cell,
+                fill_value=fill_value,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                num_neighbors=num_neighbors,
+                shift_range_per_dimension=shift_range,
+                num_shifts_per_system=num_shifts,
+                max_shifts_per_system=max_shifts,
+            )
+
+        eager = run(positions, *alloc_outputs())
+        with pytest.warns(FutureWarning, match="max_atoms_per_system"):
+            compiled = torch.compile(run)(positions, *alloc_outputs())
 
         compiled_matrix, compiled_counts, compiled_shifts = compiled
         eager_matrix, eager_counts, eager_shifts = eager

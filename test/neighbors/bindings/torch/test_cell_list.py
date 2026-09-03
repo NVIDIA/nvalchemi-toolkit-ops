@@ -19,6 +19,7 @@ import pytest
 import torch
 
 from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
+from nvalchemiops.torch.neighbors.batch_cell_list import batch_cell_list
 from nvalchemiops.torch.neighbors.cell_list import (
     build_cell_list,
     cell_list,
@@ -897,6 +898,33 @@ class TestCellListAtomCentricPathEquivalence:
 
 class TestCellListCompile:
     """Tests for torch.compile compatibility."""
+
+    def test_missing_cache_compilation_warning(self, device, dtype):
+        """Implicit cell-list cache allocation warns only during compilation."""
+        if not str(device).startswith("cuda"):
+            pytest.skip("Pair-centric batch cell-list routing is CUDA-only")
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.5, 0.0], [0.5, 0.5, 0.0]],
+            dtype=dtype,
+            device=device,
+        )
+        cell = torch.eye(3, dtype=dtype, device=device).expand(2, -1, -1).clone() * 4.0
+        pbc = torch.ones((2, 3), dtype=torch.bool, device=device)
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        common = {
+            "cutoff": 1.0,
+            "cell": cell,
+            "pbc": pbc,
+            "batch_idx": batch_idx,
+            "max_neighbors": 8,
+        }
+
+        eager = batch_cell_list(positions, strategy="pair_centric", **common)
+        compiled = torch.compile(batch_cell_list)
+        with pytest.warns(FutureWarning, match="cells_per_dimension"):
+            inferred = compiled(positions, strategy="pair_centric", **common)
+
+        torch.testing.assert_close(inferred[1], eager[1])
 
     @pytest.mark.slow
     def test_build_cell_list_compile(self, device, dtype):

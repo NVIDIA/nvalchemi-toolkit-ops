@@ -40,6 +40,7 @@ import numpy as np
 import pytest
 import torch
 import warp as wp
+from torch.fx.experimental.proxy_tensor import make_fx
 from torchpme.lib.kvectors import _generate_kvectors as _generate_kvectors_torchpme
 
 from nvalchemiops.interactions.electrostatics._factory_common import _DerivState
@@ -47,6 +48,7 @@ from nvalchemiops.torch.interactions.electrostatics import (
     _ewald_real_chain,
     _ewald_recip_chain,
 )
+from nvalchemiops.torch.interactions.electrostatics import ewald as _ewald_module
 from nvalchemiops.torch.interactions.electrostatics.ewald import (
     ewald_real_space,
     ewald_reciprocal_space,
@@ -104,6 +106,17 @@ from test.interactions.electrostatics.conftest import (
 # Tolerances
 TIGHT_TOL = 1e-6
 LOOSE_TOL = 1e-4
+
+
+def test_compiled_single_system_atom_ranges_have_no_atomic_scatter():
+    """Concrete B=1 atom-range setup avoids segmented reduction in compiled graphs."""
+    batch_idx = torch.zeros(3, dtype=torch.long)
+    graph = make_fx(lambda indices: _ewald_module._atom_ranges(indices, 1))(batch_idx)
+
+    assert "index_add" not in graph.code
+    starts, ends = graph(batch_idx)
+    assert torch.equal(starts, torch.tensor([0], dtype=torch.int32))
+    assert torch.equal(ends, torch.tensor([3], dtype=torch.int32))
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
@@ -10783,6 +10796,59 @@ class TestMaxAtomsPerSystem:
             positions, charges, cell, k_vectors, alpha, batch_idx=batch_idx
         )
         assert inference_calls >= 1
+
+    def test_compiling_inference_warns_and_explicit_bound_does_not(self):
+        """Only the compiled launch-bound fallback emits its migration warning."""
+        atom_start = torch.tensor([0, 1], dtype=torch.int32)
+        atom_end = torch.tensor([1, 4], dtype=torch.int32)
+        compiled = torch.compile(_ewald_recip_chain._resolve_max_atoms_per_system)
+
+        with pytest.warns(FutureWarning, match="max_atoms_per_system"):
+            assert compiled(0, atom_start, atom_end, 4) == 3
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            assert compiled(3, atom_start, atom_end, 4) == 3
+
+
+class TestReciprocalSymbolicMakeFx:
+    """Symbolic tracing coverage for batched reciprocal Ewald."""
+
+    @staticmethod
+    def _inputs(batch_size: int) -> tuple[torch.Tensor, ...]:
+        positions = torch.arange(batch_size * 6, dtype=torch.float64).reshape(-1, 3)
+        positions = positions.mul(0.01).add(0.1)
+        charges = torch.linspace(-0.4, 0.4, batch_size * 2, dtype=torch.float64)
+        cell = torch.eye(3, dtype=torch.float64).expand(batch_size, -1, -1).clone()
+        batch_idx = torch.arange(batch_size, dtype=torch.int32).repeat_interleave(2)
+        alpha = torch.full((batch_size,), 0.35, dtype=torch.float64)
+        k_vectors = torch.tensor([[[1.0, 0.0, 0.0]]], dtype=torch.float64).expand(
+            batch_size, -1, -1
+        )
+        return positions, charges, cell, batch_idx, alpha, k_vectors
+
+    @pytest.mark.parametrize("energy_reduction", ["atom", "system"])
+    def test_symbolic_make_fx_is_batch_size_independent(self, energy_reduction):
+        """Symbolic reciprocal graphs are independent of the concrete batch size."""
+
+        def reciprocal(positions, charges, cell, batch_idx, alpha, k_vectors):
+            return ewald_reciprocal_space(
+                positions,
+                charges,
+                cell,
+                k_vectors,
+                alpha,
+                batch_idx=batch_idx,
+                max_atoms_per_system=2,
+                energy_reduction=energy_reduction,
+            )
+
+        args4 = self._inputs(4)
+        args5 = self._inputs(5)
+        traced4 = make_fx(reciprocal, tracing_mode="symbolic")(*args4)
+        traced5 = make_fx(reciprocal, tracing_mode="symbolic")(*args5)
+
+        assert traced4.code == traced5.code
+        torch.testing.assert_close(traced4(*args5), reciprocal(*args5))
 
 
 if __name__ == "__main__":

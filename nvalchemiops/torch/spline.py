@@ -1155,7 +1155,7 @@ def _batch_spread_forward_launch(
     values: torch.Tensor,
     batch_idx: torch.Tensor,
     cell_inv_t: torch.Tensor,
-    num_systems: int,
+    num_systems: int | torch.SymInt,
     mesh_dims: tuple[int, int, int],
     spline_order: int,
 ) -> torch.Tensor:
@@ -1538,11 +1538,15 @@ def _batch_cell_inv_t_grad_from_force(
 
 # Batched spread + gather — same adjoint pattern as single-system, with
 # ``batch_idx`` (non-differentiable) at position 2. The batched spread
-# additionally carries an explicit ``num_systems: int`` arg at position 4
+# additionally carries an explicit ``num_systems: SymInt`` arg at position 4
 # (used to size the output mesh).
 register_warp_op_chain(
     name="nvalchemiops::batch_spline_spread",
     forward=_batch_spread_forward_launch,
+    forward_schema=(
+        "(Tensor positions, Tensor values, Tensor batch_idx, Tensor cell_inv_t, "
+        "SymInt num_systems, int[3] mesh_dims, int spline_order) -> Tensor"
+    ),
     forward_fake=lambda positions,
     values,
     batch_idx,
@@ -1709,7 +1713,7 @@ def _batch_spline_spread(
     values: torch.Tensor,
     batch_idx: torch.Tensor,
     cell: torch.Tensor,
-    num_systems: int,
+    num_systems: int | torch.SymInt,
     mesh_nx: int,
     mesh_ny: int,
     mesh_nz: int,
