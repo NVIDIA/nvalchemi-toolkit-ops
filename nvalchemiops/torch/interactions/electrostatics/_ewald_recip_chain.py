@@ -54,8 +54,6 @@ forward inputs); the detached caches are first-order value only.
 
 from __future__ import annotations
 
-import warnings
-
 import torch
 import warp as wp
 
@@ -80,6 +78,7 @@ from nvalchemiops.interactions.electrostatics.ewald_recip_factory import (
     get_ewald_recip_component_kernel,
     get_ewald_recip_kernel,
 )
+from nvalchemiops.torch._warnings import _warn_compile_missing_argument_inference
 from nvalchemiops.torch._warp_op_helpers import (
     register_warp_op_chain,
 )
@@ -215,14 +214,10 @@ def _resolve_max_atoms_per_system(
     value = int(max_atoms_per_system_bound)
     if value > 0:
         return value
-    if torch.compiler.is_compiling():
-        warnings.warn(
-            "Missing `max_atoms_per_system`; inferring it from `atom_start` and "
-            "`atom_end` introduces a graph break under torch.compile. This will "
-            "become an error in a future release.",
-            FutureWarning,
-            stacklevel=2,
-        )
+    _warn_compile_missing_argument_inference(
+        missing="`max_atoms_per_system`",
+        inference="inferring it from `atom_start` and `atom_end`",
+    )
     return int((atom_end - atom_start).max().item())
 
 

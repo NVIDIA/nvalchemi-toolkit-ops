@@ -17,8 +17,6 @@
 
 from __future__ import annotations
 
-import warnings
-
 import torch
 import warp as wp
 
@@ -29,6 +27,7 @@ from nvalchemiops.neighbors.naive import (
 from nvalchemiops.neighbors.neighbor_utils import (
     estimate_max_neighbors,
 )
+from nvalchemiops.torch._warnings import _warn_compile_missing_argument_inference
 from nvalchemiops.torch._warp_op_helpers import register_noop_fake
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     compute_naive_num_shifts,
@@ -203,14 +202,10 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff(
     )
 
     if max_atoms_per_system is None:
-        if torch.compiler.is_compiling():
-            warnings.warn(
-                "Missing `max_atoms_per_system`; inferring it from `batch_ptr` "
-                "introduces a graph break under torch.compile. This will become "
-                "an error in a future release.",
-                FutureWarning,
-                stacklevel=2,
-            )
+        _warn_compile_missing_argument_inference(
+            missing="`max_atoms_per_system`",
+            inference="inferring it from `batch_ptr`",
+        )
         max_atoms_per_system = (batch_ptr[1:] - batch_ptr[:-1]).max().item()
 
     wp_positions_wrapped = (
@@ -472,14 +467,10 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff_selective(
     )
 
     if max_atoms_per_system is None:
-        if torch.compiler.is_compiling():
-            warnings.warn(
-                "Missing `max_atoms_per_system`; inferring it from `batch_ptr` "
-                "introduces a graph break under torch.compile. This will become "
-                "an error in a future release.",
-                FutureWarning,
-                stacklevel=2,
-            )
+        _warn_compile_missing_argument_inference(
+            missing="`max_atoms_per_system`",
+            inference="inferring it from `batch_ptr`",
+        )
         max_atoms_per_system = (batch_ptr[1:] - batch_ptr[:-1]).max().item()
 
     batch_naive_neighbor_matrix_pbc_dual_cutoff(
@@ -875,13 +866,10 @@ def batch_naive_neighbor_list_dual_cutoff(
                 num_neighbors2,
             )
     else:
-        if max_atoms_per_system is None and torch.compiler.is_compiling():
-            warnings.warn(
-                "Missing `max_atoms_per_system`; inferring it from `batch_ptr` "
-                "introduces a graph break under torch.compile. This will become "
-                "an error in a future release.",
-                FutureWarning,
-                stacklevel=2,
+        if max_atoms_per_system is None:
+            _warn_compile_missing_argument_inference(
+                missing="`max_atoms_per_system`",
+                inference="inferring it from `batch_ptr`",
             )
         if rebuild_flags is not None:
             _batch_naive_neighbor_matrix_pbc_dual_cutoff_selective(

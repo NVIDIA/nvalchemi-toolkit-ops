@@ -33,7 +33,6 @@ Design:
 from __future__ import annotations
 
 import math
-import warnings
 from contextlib import nullcontext
 
 import torch
@@ -92,6 +91,7 @@ from nvalchemiops.math.spline import (
     spline_gather,
     spline_gather_gradient,
 )
+from nvalchemiops.torch._warnings import _warn_compile_missing_argument_inference
 from nvalchemiops.torch._warp_op_helpers import (
     register_warp_op_chain,
 )
@@ -4415,14 +4415,10 @@ def multipole_pme_energy_corrections(
 
     # Batched: per-system total charge + per-system volume (B,).
     if n_systems is None:
-        if torch.compiler.is_compiling():
-            warnings.warn(
-                "Missing `n_systems`; inferring it from `batch_idx` introduces a "
-                "graph break under torch.compile. This will become an error in a "
-                "future release.",
-                FutureWarning,
-                stacklevel=2,
-            )
+        _warn_compile_missing_argument_inference(
+            missing="`n_systems`",
+            inference="inferring it from `batch_idx`",
+        )
         n_systems = int(batch_idx.max().item()) + 1
     total_charge = torch.zeros(n_systems, dtype=torch.float64, device=device)
     total_charge.scatter_add_(0, batch_idx, charges_f64)
@@ -4515,14 +4511,10 @@ def multipole_pme_energy_corrections_per_atom(
         bg = inv_v * charges_f64 * total_charge
     else:
         if n_systems is None:
-            if torch.compiler.is_compiling():
-                warnings.warn(
-                    "Missing `n_systems`; inferring it from `batch_idx` introduces "
-                    "a graph break under torch.compile. This will become an error "
-                    "in a future release.",
-                    FutureWarning,
-                    stacklevel=2,
-                )
+            _warn_compile_missing_argument_inference(
+                missing="`n_systems`",
+                inference="inferring it from `batch_idx`",
+            )
             n_systems = int(batch_idx.max().item()) + 1
         total_charge = torch.zeros(
             n_systems, dtype=torch.float64, device=charges.device

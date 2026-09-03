@@ -60,6 +60,7 @@ from nvalchemiops.neighbors.neighbor_utils import (
 from nvalchemiops.neighbors.output_args import (
     _has_partial_or_pair_outputs,
 )
+from nvalchemiops.torch._warnings import _warn_compile_missing_argument_inference
 from nvalchemiops.torch._warp_op_helpers import register_noop_fake
 from nvalchemiops.torch.neighbors._autograd import (
     _flatten_active_pairs,
@@ -587,15 +588,10 @@ def _batch_query_cell_list_op(
     n_outer = None
     R_max = None
     if use_pair_centric:
-        if torch.compiler.is_compiling():
-            warnings.warn(
-                'Missing `strategy="atom_centric"`; inferring total-cell '
-                "allocation from `cells_per_system` introduces a graph break "
-                "under torch.compile. This will become an error in a future "
-                "release.",
-                FutureWarning,
-                stacklevel=2,
-            )
+        _warn_compile_missing_argument_inference(
+            missing='`strategy="atom_centric"`',
+            inference="inferring total-cell allocation from `cells_per_system`",
+        )
         total_cells = int(cells_per_system.sum().item())
         R_max = _max_radius_tuple(neighbor_search_radius)
         n_outer = compute_batch_pair_centric_n_outer(R_max, bool(half_fill))
@@ -1543,15 +1539,10 @@ def _batch_query_cell_list_optional(
     n_outer = None
     R_max = None
     if use_pair_centric:
-        if torch.compiler.is_compiling():
-            warnings.warn(
-                'Missing `strategy="atom_centric"`; inferring total-cell '
-                "allocation from `cells_per_system` introduces a graph break "
-                "under torch.compile. This will become an error in a future "
-                "release.",
-                FutureWarning,
-                stacklevel=2,
-            )
+        _warn_compile_missing_argument_inference(
+            missing='`strategy="atom_centric"`',
+            inference="inferring total-cell allocation from `cells_per_system`",
+        )
         total_cells = int(cells_per_system.sum().item())
         R_max = _max_radius_tuple(neighbor_search_radius)
         n_outer = compute_batch_pair_centric_n_outer(R_max, bool(half_fill))
@@ -1920,15 +1911,10 @@ def batch_cell_list(
     )
     cell_list_min_cells = 1 if strategy == "atom_centric" else 4
     if allocated_cell_list:
-        if torch.compiler.is_compiling():
-            warnings.warn(
-                "Missing `cells_per_dimension` and related cache buffers; "
-                "inferring their allocation from `cell` and `pbc` introduces a "
-                "graph break under torch.compile. This will become an error in "
-                "a future release.",
-                FutureWarning,
-                stacklevel=2,
-            )
+        _warn_compile_missing_argument_inference(
+            missing="`cells_per_dimension` and related cache buffers",
+            inference="inferring their allocation from `cell` and `pbc`",
+        )
         max_total_cells, neighbor_search_radius = estimate_batch_cell_list_sizes(
             cell,
             pbc,

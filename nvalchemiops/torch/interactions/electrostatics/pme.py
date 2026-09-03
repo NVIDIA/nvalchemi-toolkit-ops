@@ -183,6 +183,7 @@ from nvalchemiops.interactions.electrostatics.pme_kernels import (
 from nvalchemiops.interactions.electrostatics.pme_kernels import (
     pme_virial_bg_correction_backward as _pme_virial_bg_correction_backward_warp,
 )
+from nvalchemiops.torch._warnings import _warn_compile_missing_argument_inference
 from nvalchemiops.torch._warp_op_helpers import (
     attach_simple_backward,
     register_warp_op_chain,
@@ -3144,14 +3145,10 @@ def pme_reciprocal_space(
     if mesh_dimensions is None:
         if mesh_spacing is None:
             raise ValueError("Either mesh_dimensions or mesh_spacing must be provided")
-        if torch.compiler.is_compiling():
-            warnings.warn(
-                "Missing `mesh_dimensions`; inferring it from `mesh_spacing` and "
-                "`cell` introduces a graph break under torch.compile. This will "
-                "become an error in a future release.",
-                FutureWarning,
-                stacklevel=2,
-            )
+        _warn_compile_missing_argument_inference(
+            missing="`mesh_dimensions`",
+            inference="inferring it from `mesh_spacing` and `cell`",
+        )
         cell_lengths = torch.norm(cell[0], dim=1)
         mesh_dimensions = tuple(
             int(torch.ceil(length / mesh_spacing).item()) for length in cell_lengths
