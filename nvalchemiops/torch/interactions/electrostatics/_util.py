@@ -58,7 +58,7 @@ def _validate_energy_reduction(energy_reduction: str) -> str:
 def _reduce_atom_energy(
     energy: torch.Tensor,
     batch_idx: torch.Tensor | None,
-    num_systems: torch.SymInt,
+    num_systems: int | torch.SymInt,
 ) -> torch.Tensor:
     """Sum an atom-major energy tensor into an explicit system-major layout."""
     flat = energy.reshape(-1)
@@ -72,7 +72,7 @@ def _reduce_atom_energy(
 def _system_cotangent_to_atoms(
     grad_system: torch.Tensor,
     batch_idx: torch.Tensor | None,
-    num_atoms: torch.SymInt,
+    num_atoms: int | torch.SymInt,
 ) -> torch.Tensor:
     """Broadcast an explicit system cotangent to atom-major layout."""
     grad = grad_system.reshape(-1)
@@ -356,7 +356,7 @@ def _is_static_single_system(num_systems: int | torch.SymInt) -> bool:
 def _sum_atom_values_by_system(
     values: torch.Tensor,
     batch_idx: torch.Tensor | None,
-    num_systems: torch.SymInt,
+    num_systems: int | torch.SymInt,
 ) -> torch.Tensor:
     """Reduce atom-major values to per-system sums."""
     if _is_static_single_system(num_systems):
@@ -371,7 +371,7 @@ def _sum_atom_values_by_system(
 def _mean_atom_values_by_system(
     values: torch.Tensor,
     batch_idx: torch.Tensor | None,
-    num_systems: torch.SymInt,
+    num_systems: int | torch.SymInt,
 ) -> torch.Tensor:
     """Reduce atom-major values to guarded per-system means."""
     if _is_static_single_system(num_systems):
@@ -394,8 +394,8 @@ def _mean_atom_values_by_system(
 def _broadcast_system_values_to_atoms(
     per_system: torch.Tensor,
     batch_idx: torch.Tensor | None,
-    num_systems: torch.SymInt,
-    num_atoms: torch.SymInt,
+    num_systems: int | torch.SymInt,
+    num_atoms: int | torch.SymInt,
 ) -> torch.Tensor:
     """Broadcast per-system values to atom-major values."""
     if _is_static_single_system(num_systems):

@@ -184,7 +184,7 @@ def _prepare_alpha(
         raise TypeError(f"alpha must be float or torch.Tensor, got {type(alpha)}")
 
 
-def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, torch.SymInt]:
+def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, int | torch.SymInt]:
     """Ensure cell is 3D (B, 3, 3) and return number of systems.
 
     Parameters
@@ -196,7 +196,7 @@ def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, torch.SymInt]:
     -------
     cell : torch.Tensor, shape (B, 3, 3)
         Cell with batch dimension.
-    num_systems : torch.SymInt
+    num_systems : int or torch.SymInt
         Number of systems (B).
     """
     if cell.dim() == 2:
@@ -231,7 +231,7 @@ def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, torch.SymInt]:
 
 
 def _atom_ranges(
-    batch_idx: torch.Tensor, num_systems: torch.SymInt
+    batch_idx: torch.Tensor, num_systems: int | torch.SymInt
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Per-system [start, end) atom index ranges from a sorted ``batch_idx``.
 

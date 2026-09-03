@@ -1155,7 +1155,7 @@ def _batch_spread_forward_launch(
     values: torch.Tensor,
     batch_idx: torch.Tensor,
     cell_inv_t: torch.Tensor,
-    num_systems: torch.SymInt,
+    num_systems: int | torch.SymInt,
     mesh_dims: tuple[int, int, int],
     spline_order: int,
 ) -> torch.Tensor:
@@ -1713,7 +1713,7 @@ def _batch_spline_spread(
     values: torch.Tensor,
     batch_idx: torch.Tensor,
     cell: torch.Tensor,
-    num_systems: torch.SymInt,
+    num_systems: int | torch.SymInt,
     mesh_nx: int,
     mesh_ny: int,
     mesh_nz: int,
