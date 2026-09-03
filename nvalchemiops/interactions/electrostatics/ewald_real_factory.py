@@ -88,6 +88,7 @@ from nvalchemiops.interactions.electrostatics._factory_common import (
     _pair_virial_outer,
     _require_component,
     _require_supported_dtype,
+    _use_fp32_electrostatics,
     _validate_common_axes,
 )
 from nvalchemiops.interactions.electrostatics.ewald_kernels import (
@@ -256,6 +257,21 @@ def _name_and_document(
 # === Per-pair helper factories ===
 
 
+def _core_scalar(wp_dtype: type) -> type:
+    """Precision for the per-pair scalar cores.
+
+    float64 callers always evaluate in float64. float32 callers do so as well
+    unless ``NVALCHEMIOPS_ELECTROSTATICS_FP32`` is set, which keeps default
+    results bit-identical while making the faster path available.
+
+    Read at kernel-specialisation time, not per call: the value is part of the
+    ``lru_cache`` key on the ``_make_*_pair_fn`` builders.
+    """
+    if wp_dtype is wp.float64:
+        return wp.float64
+    return wp_dtype if _use_fp32_electrostatics() else wp.float64
+
+
 @lru_cache(maxsize=None)
 def _make_forward_pair_fn(
     wp_dtype: type,
@@ -263,6 +279,7 @@ def _make_forward_pair_fn(
     deriv_state: _DerivState,
     cell_grad: bool,
     cell_literal: bool = False,
+    core_scalar: type = wp.float64,
 ) -> wp.Function:
     """Build the specialized forward per-pair accumulator.
 
@@ -311,31 +328,41 @@ def _make_forward_pair_fn(
             ``dE/dsep``; ``n`` == integer shift). The block is f64 (``wp.mat33d``)
             regardless of ``wp_dtype`` to match the f64 cache the chain allocates.
             """
-            qj = wp.float64(charges[j])
+            # Pair math runs in input precision; only the accumulators stay
+            # float64. wp_erfc is an Abramowitz-Stegun polynomial with ~1.5e-7
+            # error, so evaluating it in float64 cannot beat evaluating it in
+            # float32 -- it just costs a float64 erfc, exp and several divides
+            # on every pair.
+            qj_s = core_scalar(charges[j])
             separation_vector = _periodic_separation(pos_i, pos_j, cell_t, shift_vec)
-            distance = wp.float64(wp.length(separation_vector))
+            distance = core_scalar(wp.length(separation_vector))
+            qi_s = core_scalar(qi)
+            alpha_s = core_scalar(alpha_)
 
-            if distance > wp.float64(_DISTANCE_EPSILON):
-                energy_acc += _ewald_real_space_energy_kernel_compute_energy(
-                    qi, qj, distance, alpha_
+            if distance > core_scalar(_DISTANCE_EPSILON):
+                energy_acc += wp.float64(
+                    _ewald_real_space_energy_kernel_compute_energy(
+                        qi_s, qj_s, distance, alpha_s
+                    )
                 )
                 if HAS_FORCE:
                     force_mag = _ewald_real_space_force_magnitude(
-                        qi, qj, distance, alpha_
+                        qi_s, qj_s, distance, alpha_s
                     )
+                    fm = type(pos_i[0])(force_mag)
                     force = type(pos_i)(
-                        type(pos_i[0])(force_mag) * separation_vector[0],
-                        type(pos_i[0])(force_mag) * separation_vector[1],
-                        type(pos_i[0])(force_mag) * separation_vector[2],
+                        fm * separation_vector[0],
+                        fm * separation_vector[1],
+                        fm * separation_vector[2],
                     )
                     force_i_acc -= force
                     wp.atomic_add(atomic_forces, j, force)
                     if HAS_CHARGE:
                         potential = _ewald_real_space_charge_grad_potential(
-                            distance, alpha_
+                            distance, alpha_s
                         )
-                        cg_i_acc += qj * potential
-                        wp.atomic_add(charge_gradients, j, qi * potential)
+                        cg_i_acc += wp.float64(qj_s * potential)
+                        wp.atomic_add(charge_gradients, j, wp.float64(qi_s * potential))
                     if CELL_GRAD:
                         virial_acc += _pair_virial_outer(separation_vector, force)
                     # Literal dE/dcell block for atom i: n (x) dE/dsep, dE/dsep = -force.
@@ -380,29 +407,40 @@ def _make_forward_pair_fn(
         ``i``. ``HAS_FORCE``, ``HAS_CHARGE`` and ``CELL_GRAD`` are static
         specializations, so inactive sentinel buffers are not read.
         """
-        qj = wp.float64(charges[j])
+        # Pair math runs in input precision; only the accumulators stay float64.
+        # wp_erfc is an Abramowitz-Stegun polynomial with ~1.5e-7 error, so
+        # evaluating it in float64 cannot beat evaluating it in float32 -- it just
+        # costs a float64 erfc, exp and several divides on every pair.
+        qj_s = core_scalar(charges[j])
         separation_vector = _periodic_separation(pos_i, pos_j, cell_t, shift_vec)
-        distance = wp.float64(wp.length(separation_vector))
+        distance = core_scalar(wp.length(separation_vector))
+        qi_s = core_scalar(qi)
+        alpha_s = core_scalar(alpha_)
 
-        if distance > wp.float64(_DISTANCE_EPSILON):
-            energy_acc += _ewald_real_space_energy_kernel_compute_energy(
-                qi, qj, distance, alpha_
+        if distance > core_scalar(_DISTANCE_EPSILON):
+            energy_acc += wp.float64(
+                _ewald_real_space_energy_kernel_compute_energy(
+                    qi_s, qj_s, distance, alpha_s
+                )
             )
             if HAS_FORCE:
-                force_mag = _ewald_real_space_force_magnitude(qi, qj, distance, alpha_)
+                force_mag = _ewald_real_space_force_magnitude(
+                    qi_s, qj_s, distance, alpha_s
+                )
+                fm = type(pos_i[0])(force_mag)
                 force = type(pos_i)(
-                    type(pos_i[0])(force_mag) * separation_vector[0],
-                    type(pos_i[0])(force_mag) * separation_vector[1],
-                    type(pos_i[0])(force_mag) * separation_vector[2],
+                    fm * separation_vector[0],
+                    fm * separation_vector[1],
+                    fm * separation_vector[2],
                 )
                 force_i_acc -= force
                 wp.atomic_add(atomic_forces, j, force)
                 if CELL_GRAD:
                     virial_acc += _pair_virial_outer(separation_vector, force)
             if HAS_CHARGE:
-                potential = _ewald_real_space_charge_grad_potential(distance, alpha_)
-                cg_i_acc += qj * potential
-                wp.atomic_add(charge_gradients, j, qi * potential)
+                potential = _ewald_real_space_charge_grad_potential(distance, alpha_s)
+                cg_i_acc += wp.float64(qj_s * potential)
+                wp.atomic_add(charge_gradients, j, wp.float64(qi_s * potential))
 
         return energy_acc, force_i_acc, cg_i_acc, virial_acc
 
@@ -415,6 +453,7 @@ def _make_backward_pair_fn(
     *,
     deriv_state: _DerivState,
     cell_grad: bool,
+    core_scalar: type = wp.float64,
 ) -> wp.Function:
     """Build the specialized backward per-pair accumulator."""
     info = _DTYPE_INFO[wp_dtype]
@@ -449,13 +488,21 @@ def _make_backward_pair_fn(
         thread-local atom-``i`` accumulators. ``HAS_CHARGE`` and ``CELL_GRAD`` are
         static specializations, so inactive sentinel buffers are not read.
         """
-        qj = wp.float64(charges[j])
+        # Pair math runs in input precision; only the accumulators stay float64.
+        # wp_erfc is an Abramowitz-Stegun polynomial with ~1.5e-7 error, so
+        # evaluating it in float64 cannot beat evaluating it in float32 -- it just
+        # costs a float64 erfc, exp and several divides on every pair.
+        qj_s = core_scalar(charges[j])
         separation_vector = _periodic_separation(pos_i, pos_j, cell_t, shift_vec)
-        distance = wp.float64(wp.length(separation_vector))
-        if distance > wp.float64(_DISTANCE_EPSILON):
+        distance = core_scalar(wp.length(separation_vector))
+        qi_s = core_scalar(qi)
+        alpha_s = core_scalar(alpha_)
+        if distance > core_scalar(_DISTANCE_EPSILON):
             ge_fm = wp.float64(0.0)
             if HAS_FORCE or CELL_GRAD:
-                force_mag = _ewald_real_space_force_magnitude(qi, qj, distance, alpha_)
+                force_mag = wp.float64(
+                    _ewald_real_space_force_magnitude(qi_s, qj_s, distance, alpha_s)
+                )
                 ge_fm = ge * force_mag
                 if HAS_FORCE:
                     # dL/dR_i += ge*(+F); dL/dR_j += ge*(-F).
@@ -474,7 +521,10 @@ def _make_backward_pair_fn(
                         ),
                     )
             if HAS_CHARGE:
-                potential = _ewald_real_space_charge_grad_potential(distance, alpha_)
+                potential = wp.float64(
+                    _ewald_real_space_charge_grad_potential(distance, alpha_s)
+                )
+                qj = wp.float64(qj_s)
                 cg_i_acc += ge * qj * potential
                 wp.atomic_add(charge_gradients, j, ge * qi * potential)
             if CELL_GRAD:
@@ -501,6 +551,7 @@ def _make_double_backward_pair_fn(
     *,
     deriv_state: _DerivState,
     cell_grad: bool,
+    core_scalar: type = wp.float64,
 ) -> wp.Function:
     """Build the specialized double-backward per-pair accumulator."""
     info = _DTYPE_INFO[wp_dtype]
@@ -934,7 +985,10 @@ def _make_forward_kernel(
         wp_dtype, BATCHED, neighbor_input, "forward", energy_layout=energy_layout
     )
     accumulate_pair = _make_forward_pair_fn(
-        wp_dtype, deriv_state=deriv_state, cell_grad=cell_grad
+        wp_dtype,
+        core_scalar=_core_scalar(wp_dtype),
+        deriv_state=deriv_state,
+        cell_grad=cell_grad,
     )
 
     @wp.kernel(module=module_name)
@@ -1092,7 +1146,11 @@ def _make_forward_kernel_cell_literal(
         energy_layout=energy_layout,
     )
     accumulate_pair = _make_forward_pair_fn(
-        wp_dtype, deriv_state=deriv_state, cell_grad=cell_grad, cell_literal=True
+        wp_dtype,
+        core_scalar=_core_scalar(wp_dtype),
+        deriv_state=deriv_state,
+        cell_grad=cell_grad,
+        cell_literal=True,
     )
 
     @wp.kernel(module=module_name)
@@ -1238,7 +1296,10 @@ def _make_forward_kernel_tiled(
         energy_layout=energy_layout,
     )
     accumulate_pair = _make_forward_pair_fn(
-        wp_dtype, deriv_state=deriv_state, cell_grad=cell_grad
+        wp_dtype,
+        core_scalar=_core_scalar(wp_dtype),
+        deriv_state=deriv_state,
+        cell_grad=cell_grad,
     )
 
     @wp.kernel(module=module_name)
@@ -1387,7 +1448,11 @@ def _make_forward_kernel_tiled_cell_literal(
         energy_layout=energy_layout,
     )
     accumulate_pair = _make_forward_pair_fn(
-        wp_dtype, deriv_state=deriv_state, cell_grad=cell_grad, cell_literal=True
+        wp_dtype,
+        core_scalar=_core_scalar(wp_dtype),
+        deriv_state=deriv_state,
+        cell_grad=cell_grad,
+        cell_literal=True,
     )
 
     @wp.kernel(module=module_name)
@@ -1546,7 +1611,10 @@ def _make_backward_kernel(
 
     module_name = _ewald_real_module_name(wp_dtype, BATCHED, neighbor_input, "backward")
     accumulate_pair = _make_backward_pair_fn(
-        wp_dtype, deriv_state=deriv_state, cell_grad=cell_grad
+        wp_dtype,
+        core_scalar=_core_scalar(wp_dtype),
+        deriv_state=deriv_state,
+        cell_grad=cell_grad,
     )
 
     @wp.kernel(module=module_name)
@@ -1724,7 +1792,10 @@ def _make_double_backward_kernel(
         wp_dtype, BATCHED, neighbor_input, "double_backward"
     )
     accumulate_pair = _make_double_backward_pair_fn(
-        wp_dtype, deriv_state=deriv_state, cell_grad=cell_grad
+        wp_dtype,
+        core_scalar=_core_scalar(wp_dtype),
+        deriv_state=deriv_state,
+        cell_grad=cell_grad,
     )
 
     @wp.kernel(module=module_name)
@@ -1915,7 +1986,10 @@ def _make_double_backward_kernel_tiled(
         wp_dtype, BATCHED, neighbor_input, "double_backward", tiled=True
     )
     accumulate_pair = _make_double_backward_pair_fn(
-        wp_dtype, deriv_state=deriv_state, cell_grad=cell_grad
+        wp_dtype,
+        core_scalar=_core_scalar(wp_dtype),
+        deriv_state=deriv_state,
+        cell_grad=cell_grad,
     )
 
     @wp.kernel(module=module_name)

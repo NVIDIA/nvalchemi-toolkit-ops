@@ -257,11 +257,11 @@ def can_tile_ewald_recip_on_device(device: object) -> bool:
 
 @wp.func
 def _ewald_real_space_energy_kernel_compute_energy(
-    qi: wp.float64,
-    qj: wp.float64,
-    distance: wp.float64,
-    alpha: wp.float64,
-) -> wp.float64:
+    qi: Any,
+    qj: Any,
+    distance: Any,
+    alpha: Any,
+) -> Any:
     """Compute damped Coulomb energy for a single pair.
 
     Formula:
@@ -275,11 +275,11 @@ def _ewald_real_space_energy_kernel_compute_energy(
 
     Parameters
     ----------
-    qi, qj : wp.float64
-        Charges of atoms i and j.
-    distance : wp.float64
-        Distance |r_j - r_i|.
-    alpha : wp.float64
+    qi, qj : Any
+        Charges of atoms i and j, in the caller's precision.
+    distance : Any
+        Distance |r_j - r_i|, in the caller's precision.
+    alpha : Any
         Ewald splitting parameter.
 
     Returns
@@ -287,16 +287,16 @@ def _ewald_real_space_energy_kernel_compute_energy(
     wp.float64
         Damped Coulomb energy contribution.
     """
-    return wp.float64(0.5) * qi * qj * wp_erfc(alpha * distance) / distance
+    return type(distance)(0.5) * qi * qj * wp_erfc(alpha * distance) / distance
 
 
 @wp.func
 def _ewald_real_space_force_magnitude(
-    qi: wp.float64,
-    qj: wp.float64,
-    distance: wp.float64,
-    alpha: wp.float64,
-) -> wp.float64:
+    qi: Any,
+    qj: Any,
+    distance: Any,
+    alpha: Any,
+) -> Any:
     """Compute damped Coulomb force magnitude factor for a single pair.
 
     Returns the scalar part of the force:
@@ -309,11 +309,11 @@ def _ewald_real_space_force_magnitude(
 
     Parameters
     ----------
-    qi, qj : wp.float64
-        Charges of atoms i and j.
-    distance : wp.float64
-        Distance |r_j - r_i|.
-    alpha : wp.float64
+    qi, qj : Any
+        Charges of atoms i and j, in the caller's precision.
+    distance : Any
+        Distance |r_j - r_i|, in the caller's precision.
+    alpha : Any
         Ewald splitting parameter.
 
     Returns
@@ -321,9 +321,9 @@ def _ewald_real_space_force_magnitude(
     wp.float64
         Force magnitude factor.
     """
-    two_over_sqrt_pi = wp.float64(TWO_OVER_SQRT_PI)
+    two_over_sqrt_pi = type(distance)(TWO_OVER_SQRT_PI)
 
-    prefactor = wp.float64(0.5) * qi * qj
+    prefactor = type(distance)(0.5) * qi * qj
     alpha_r = alpha * distance
     alpha_r_squared = alpha_r * alpha_r
 
@@ -339,9 +339,9 @@ def _ewald_real_space_force_magnitude(
 
 @wp.func
 def _ewald_real_space_charge_grad_potential(
-    distance: wp.float64,
-    alpha: wp.float64,
-) -> wp.float64:
+    distance: Any,
+    alpha: Any,
+) -> Any:
     r"""Compute the damped Coulomb potential for charge gradient.
 
     Returns :math:`\frac{1}{2} \frac{\text{erfc}(\alpha r)}{r}`, which when multiplied by q_j gives
@@ -357,9 +357,9 @@ def _ewald_real_space_charge_grad_potential(
 
     Parameters
     ----------
-    distance : wp.float64
-        Distance |r_j - r_i|.
-    alpha : wp.float64
+    distance : Any
+        Distance |r_j - r_i|, in the caller's precision.
+    alpha : Any
         Ewald splitting parameter.
 
     Returns
@@ -367,7 +367,7 @@ def _ewald_real_space_charge_grad_potential(
     wp.float64
         Potential factor for charge gradient computation.
     """
-    return wp.float64(0.5) * wp_erfc(alpha * distance) / distance
+    return type(distance)(0.5) * wp_erfc(alpha * distance) / distance
 
 
 ###########################################################################################
@@ -812,6 +812,953 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad_tiled(
         cellgrad_cache[k_idx, 5] = wp.tile_extract(rb_x_tile, 0)
         cellgrad_cache[k_idx, 6] = wp.tile_extract(rb_y_tile, 0)
         cellgrad_cache[k_idx, 7] = wp.tile_extract(rb_z_tile, 0)
+
+
+# ---------------------------------------------------------------------------
+# fp32, no-store reciprocal structure factors
+# ---------------------------------------------------------------------------
+#
+# The default fill kernels compute k.r, cos/sin and the accumulators in float64
+# and write the unweighted phases to two float64 (K, N) arrays. Both are costly:
+#
+#   * float64 transcendental throughput is a fraction of float32 on every part
+#     this runs on, and the ratio varies widely between them.
+#   * the (K, N) phases scale as the product of the k-vector and atom counts,
+#     so the traffic grows faster than either alone.
+#
+# These kernels do the phase arithmetic in float32 and never materialise
+# (K, N); the per-k reduction is still promoted to float64, which is where the
+# cross-atom cancellation that motivates float64 actually bites. Maximum
+# relative error on the structure factors is ~1e-07.
+#
+# Because the phases are not stored, the energy kernel below recomputes them.
+# Recomputing float32 cos/sin is cheaper than the float64 round-trip it
+# replaces; the crossover depends on the part's transcendental throughput
+# against its memory bandwidth, so measure rather than assume.
+#
+# Opt in with NVALCHEMIOPS_ELECTROSTATICS_FP32=1. Off by default: it changes
+# float32 results at the ~1e-07 level, which is a semantic change for existing
+# callers rather than a pure optimisation.
+
+
+@wp.kernel
+def _ewald_recip_fill_sf_fp32_nostore(
+    positions: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    k_vectors: wp.array(dtype=Any),
+    cell: wp.array(dtype=Any),
+    alpha: wp.array(dtype=Any),
+    total_charge: wp.array(dtype=wp.float64),
+    real_structure_factors: wp.array(dtype=wp.float32),
+    imag_structure_factors: wp.array(dtype=wp.float32),
+):
+    r"""Single-system weighted structure factors, float32 phases, no (K, N) store.
+
+    Phases are formed in float32 and accumulated in float32 per lane; the
+    cross-lane reduction widens to float64, so the stored values are as accurate
+    as a float64 array would hold them.
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N,), dtype=wp.vec3f
+        Atomic coordinates.
+    charges : wp.array, shape (N,), dtype=wp.float32
+        Atomic charges.
+    k_vectors : wp.array, shape (K,), dtype=wp.vec3f
+        Half-space reciprocal lattice vectors (excludes -k for each k).
+    cell : wp.array, shape (1, 3, 3), dtype=wp.mat33f
+        Unit cell matrix, used for the volume.
+    alpha : wp.array, shape (1,), dtype=wp.float32
+        Ewald splitting parameter.
+    total_charge : wp.array, shape (1,), dtype=wp.float64
+        OUTPUT: Q/V for the background correction. Only the k_idx == 0 block
+        accumulates it.
+    real_structure_factors : wp.array, shape (K,), dtype=wp.float32
+        OUTPUT: :math:`(G(k)/V) \sum_i q_i \cos(k \cdot r_i)`.
+    imag_structure_factors : wp.array, shape (K,), dtype=wp.float32
+        OUTPUT: :math:`(G(k)/V) \sum_i q_i \sin(k \cdot r_i)`.
+
+    Thread launch
+    -------------
+    ``wp.launch_tiled(dim=K, block_dim=RECIP_TILED_BLOCK_DIM)``. One block owns
+    one k-vector; its lanes cooperate over all atoms.
+
+    Modifies
+    --------
+    ``total_charge``, ``real_structure_factors``, ``imag_structure_factors``.
+    The unweighted phases are deliberately not written -- see the module note.
+    """
+    k_idx, lane = wp.tid()
+    num_atoms = positions.shape[0]
+    block = wp.static(RECIP_TILED_BLOCK_DIM)
+
+    alpha_ = wp.float32(alpha[0])
+    exp_factor = wp.float32(0.25) / (alpha_ * alpha_)
+    volume = wp.float32(wp.abs(wp.determinant(cell[0])))
+    inv_volume = wp.float32(1.0) / volume
+
+    k_vector = k_vectors[k_idx]
+    kx = wp.float32(k_vector[0])
+    ky = wp.float32(k_vector[1])
+    kz = wp.float32(k_vector[2])
+    k_squared = kx * kx + ky * ky + kz * kz
+
+    green_function = wp.float32(0.0)
+    if k_squared >= wp.float32(1e-10):
+        green_function = (
+            wp.exp(-exp_factor * k_squared)
+            / k_squared
+            * wp.float32(EIGHTPI)
+            * inv_volume
+        )
+
+    real_sum = wp.float32(0.0)
+    imag_sum = wp.float32(0.0)
+    charge_sum = wp.float64(0.0)
+
+    for atom_start in range(0, num_atoms, block):
+        atom_idx = atom_start + lane
+        if atom_idx < num_atoms:
+            charge = wp.float32(charges[atom_idx])
+            if k_idx == 0:
+                charge_sum += wp.float64(charge) * wp.float64(inv_volume)
+            if k_squared >= wp.float32(1e-10):
+                position = positions[atom_idx]
+                phase = _recip_phase_fp32(
+                    wp.float32(position[0]),
+                    wp.float32(position[1]),
+                    wp.float32(position[2]),
+                    k_vector,
+                )
+                real_sum += charge * phase[0]
+                imag_sum += charge * phase[1]
+
+    # Promote before the cross-lane reduction: the per-atom terms are O(q) but
+    # the sum over atoms cancels heavily, which is the part that needs float64.
+    real_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(real_sum * green_function)))
+    imag_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(imag_sum * green_function)))
+    charge_tile = wp.tile_reduce(wp.add, wp.tile(charge_sum))
+
+    # tile_store cannot narrow float64 -> float32, so extract and write the
+    # single reduced value from lane 0. total_charge stays a collective store:
+    # it is guarded by k_idx, which is block-uniform, unlike lane.
+    if lane == 0:
+        real_structure_factors[k_idx] = wp.float32(wp.tile_extract(real_tile, 0))
+        imag_structure_factors[k_idx] = wp.float32(wp.tile_extract(imag_tile, 0))
+    if k_idx == 0:
+        wp.tile_store(total_charge, charge_tile, 0)
+
+
+@wp.kernel
+def _ewald_recip_fill_sf_fp32_nostore_cellgrad(
+    positions: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    k_vectors: wp.array(dtype=Any),
+    cell: wp.array(dtype=Any),
+    alpha: wp.array(dtype=Any),
+    total_charge: wp.array(dtype=wp.float64),
+    real_structure_factors: wp.array(dtype=wp.float32),
+    imag_structure_factors: wp.array(dtype=wp.float32),
+    cellgrad_cache: wp.array2d(dtype=wp.float64),
+):
+    r"""Single-system float32 no-store fill, plus the cell-gradient cache.
+
+    Phases are formed in float32 and accumulated in float32 per lane; the
+    cross-lane reduction widens to float64, so the stored values are as accurate
+    as a float64 array would hold them.
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N,), dtype=wp.vec3f
+        Atomic coordinates.
+    charges : wp.array, shape (N,), dtype=wp.float32
+        Atomic charges.
+    k_vectors : wp.array, shape (K,), dtype=wp.vec3f
+        Half-space reciprocal lattice vectors (excludes -k for each k).
+    cell : wp.array, shape (1, 3, 3), dtype=wp.mat33f
+        Unit cell matrix, used for the volume.
+    alpha : wp.array, shape (1,), dtype=wp.float32
+        Ewald splitting parameter.
+    total_charge : wp.array, shape (1,), dtype=wp.float64
+        OUTPUT: Q/V for the background correction. Only the k_idx == 0 block
+        accumulates it.
+    real_structure_factors : wp.array, shape (K,), dtype=wp.float32
+        OUTPUT: :math:`(G(k)/V) \sum_i q_i \cos(k \cdot r_i)`.
+    imag_structure_factors : wp.array, shape (K,), dtype=wp.float32
+        OUTPUT: :math:`(G(k)/V) \sum_i q_i \sin(k \cdot r_i)`.
+    cellgrad_cache : wp.array2d, shape (K, 8), dtype=wp.float64
+        OUTPUT: per-k unweighted reductions consumed by the cell-gradient
+        backward -- ``[Sre, Sim, (Sre*r)_xyz, (Sim*r)_xyz]``. Unweighted means
+        before the Green's function, which the backward applies itself.
+
+    Thread launch
+    -------------
+    ``wp.launch_tiled(dim=K, block_dim=RECIP_TILED_BLOCK_DIM)``. One block owns
+    one k-vector; its lanes cooperate over all atoms.
+
+    Modifies
+    --------
+    ``total_charge``, ``real_structure_factors``, ``imag_structure_factors``,
+    ``cellgrad_cache``.
+    The unweighted phases are deliberately not written -- see the module note.
+    """
+    k_idx, lane = wp.tid()
+    num_atoms = positions.shape[0]
+    block = wp.static(RECIP_TILED_BLOCK_DIM)
+
+    alpha_ = wp.float32(alpha[0])
+    exp_factor = wp.float32(0.25) / (alpha_ * alpha_)
+    volume = wp.float32(wp.abs(wp.determinant(cell[0])))
+    inv_volume = wp.float32(1.0) / volume
+
+    k_vector = k_vectors[k_idx]
+    kx = wp.float32(k_vector[0])
+    ky = wp.float32(k_vector[1])
+    kz = wp.float32(k_vector[2])
+    k_squared = kx * kx + ky * ky + kz * kz
+
+    green_function = wp.float32(0.0)
+    if k_squared >= wp.float32(1e-10):
+        green_function = (
+            wp.exp(-exp_factor * k_squared)
+            / k_squared
+            * wp.float32(EIGHTPI)
+            * inv_volume
+        )
+
+    real_sum = wp.float32(0.0)
+    imag_sum = wp.float32(0.0)
+    # r-weighted phase sums for dE/dcell. Same reduction shape as the
+    # structure factors, so they ride along in the same pass.
+    ra_x = wp.float32(0.0)
+    ra_y = wp.float32(0.0)
+    ra_z = wp.float32(0.0)
+    rb_x = wp.float32(0.0)
+    rb_y = wp.float32(0.0)
+    rb_z = wp.float32(0.0)
+    charge_sum = wp.float64(0.0)
+
+    for atom_start in range(0, num_atoms, block):
+        atom_idx = atom_start + lane
+        if atom_idx < num_atoms:
+            charge = wp.float32(charges[atom_idx])
+            if k_idx == 0:
+                charge_sum += wp.float64(charge) * wp.float64(inv_volume)
+            if k_squared >= wp.float32(1e-10):
+                position = positions[atom_idx]
+                phase = _recip_phase_fp32(
+                    wp.float32(position[0]),
+                    wp.float32(position[1]),
+                    wp.float32(position[2]),
+                    k_vector,
+                )
+                qc = charge * phase[0]
+                qs = charge * phase[1]
+                real_sum += qc
+                imag_sum += qs
+                px = wp.float32(position[0])
+                py = wp.float32(position[1])
+                pz = wp.float32(position[2])
+                ra_x += qc * px
+                ra_y += qc * py
+                ra_z += qc * pz
+                rb_x += qs * px
+                rb_y += qs * py
+                rb_z += qs * pz
+
+    # Promote before the cross-lane reduction: the per-atom terms are O(q) but
+    # the sum over atoms cancels heavily, which is the part that needs float64.
+    real_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(real_sum * green_function)))
+    imag_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(imag_sum * green_function)))
+    charge_tile = wp.tile_reduce(wp.add, wp.tile(charge_sum))
+
+    # tile_store cannot narrow float64 -> float32, so extract and write the
+    # single reduced value from lane 0. total_charge stays a collective store:
+    # it is guarded by k_idx, which is block-uniform, unlike lane.
+    if lane == 0:
+        real_structure_factors[k_idx] = wp.float32(wp.tile_extract(real_tile, 0))
+        imag_structure_factors[k_idx] = wp.float32(wp.tile_extract(imag_tile, 0))
+    if k_idx == 0:
+        wp.tile_store(total_charge, charge_tile, 0)
+
+    # Cell-gradient cache: unweighted (pre-Green's-function) reductions.
+    # Reduced in float64 like the structure factors, so the cache is as
+    # accurate as the float64 fill's despite float32 accumulation per lane.
+    a_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(real_sum)))
+    b_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(imag_sum)))
+    rax_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(ra_x)))
+    ray_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(ra_y)))
+    raz_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(ra_z)))
+    rbx_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(rb_x)))
+    rby_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(rb_y)))
+    rbz_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(rb_z)))
+    if lane == 0:
+        cellgrad_cache[k_idx, 0] = wp.tile_extract(a_tile, 0)
+        cellgrad_cache[k_idx, 1] = wp.tile_extract(b_tile, 0)
+        cellgrad_cache[k_idx, 2] = wp.tile_extract(rax_tile, 0)
+        cellgrad_cache[k_idx, 3] = wp.tile_extract(ray_tile, 0)
+        cellgrad_cache[k_idx, 4] = wp.tile_extract(raz_tile, 0)
+        cellgrad_cache[k_idx, 5] = wp.tile_extract(rbx_tile, 0)
+        cellgrad_cache[k_idx, 6] = wp.tile_extract(rby_tile, 0)
+        cellgrad_cache[k_idx, 7] = wp.tile_extract(rbz_tile, 0)
+
+
+@wp.kernel
+def _batch_ewald_recip_fill_sf_fp32_nostore(
+    positions: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    k_vectors: wp.array2d(dtype=Any),
+    cell: wp.array(dtype=Any),
+    alpha: wp.array(dtype=Any),
+    atom_start: wp.array(dtype=wp.int32),
+    atom_end: wp.array(dtype=wp.int32),
+    total_charge: wp.array(dtype=wp.float64),
+    real_structure_factors: wp.array2d(dtype=wp.float32),
+    imag_structure_factors: wp.array2d(dtype=wp.float32),
+):
+    r"""Batched counterpart of :func:`_ewald_recip_fill_sf_fp32_nostore`.
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N_total,), dtype=wp.vec3f
+        Concatenated atomic coordinates for all systems.
+    charges : wp.array, shape (N_total,), dtype=wp.float32
+        Concatenated atomic charges.
+    k_vectors : wp.array2d, shape (S, K), dtype=wp.vec3f
+        Per-system half-space reciprocal lattice vectors.
+    cell : wp.array, shape (S, 3, 3), dtype=wp.mat33f
+        Per-system unit cell matrices.
+    alpha : wp.array, shape (S,), dtype=wp.float32
+        Per-system Ewald splitting parameters.
+    atom_start, atom_end : wp.array, shape (S,), dtype=wp.int32
+        Half-open atom range owned by each system.
+    total_charge : wp.array, shape (S,), dtype=wp.float64
+        OUTPUT: per-system Q/V for the background correction.
+    real_structure_factors : wp.array2d, shape (S, K), dtype=wp.float32
+        OUTPUT: per-system weighted real structure factors.
+    imag_structure_factors : wp.array2d, shape (S, K), dtype=wp.float32
+        OUTPUT: per-system weighted imaginary structure factors.
+
+    Thread launch
+    -------------
+    ``wp.launch_tiled(dim=(K, S), block_dim=RECIP_TILED_BLOCK_DIM)``. One block
+    owns one (k-vector, system) pair; its lanes cooperate over that system's
+    atoms.
+
+    Modifies
+    --------
+    ``total_charge``, ``real_structure_factors``, ``imag_structure_factors``.
+    """
+    k_idx, system_id, lane = wp.tid()
+    block = wp.static(RECIP_TILED_BLOCK_DIM)
+    start = atom_start[system_id]
+    end = atom_end[system_id]
+
+    alpha_ = wp.float32(alpha[system_id])
+    exp_factor = wp.float32(0.25) / (alpha_ * alpha_)
+    inv_volume = wp.float32(1.0) / wp.float32(wp.abs(wp.determinant(cell[system_id])))
+
+    k_vector = k_vectors[system_id, k_idx]
+    kx = wp.float32(k_vector[0])
+    ky = wp.float32(k_vector[1])
+    kz = wp.float32(k_vector[2])
+    k_squared = kx * kx + ky * ky + kz * kz
+
+    green_function = wp.float32(0.0)
+    if k_squared >= wp.float32(1e-10):
+        green_function = (
+            wp.exp(-exp_factor * k_squared)
+            / k_squared
+            * wp.float32(EIGHTPI)
+            * inv_volume
+        )
+
+    real_sum = wp.float32(0.0)
+    imag_sum = wp.float32(0.0)
+    charge_sum = wp.float64(0.0)
+
+    for offset in range(start, end, block):
+        atom_idx = offset + lane
+        if atom_idx < end:
+            charge = wp.float32(charges[atom_idx])
+            if k_idx == 0:
+                charge_sum += wp.float64(charge) * wp.float64(inv_volume)
+            if k_squared >= wp.float32(1e-10):
+                position = positions[atom_idx]
+                phase = _recip_phase_fp32(
+                    wp.float32(position[0]),
+                    wp.float32(position[1]),
+                    wp.float32(position[2]),
+                    k_vector,
+                )
+                real_sum += charge * phase[0]
+                imag_sum += charge * phase[1]
+
+    real_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(real_sum * green_function)))
+    imag_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(imag_sum * green_function)))
+    charge_tile = wp.tile_reduce(wp.add, wp.tile(charge_sum))
+
+    if lane == 0:
+        real_structure_factors[system_id, k_idx] = wp.float32(
+            wp.tile_extract(real_tile, 0)
+        )
+        imag_structure_factors[system_id, k_idx] = wp.float32(
+            wp.tile_extract(imag_tile, 0)
+        )
+        if k_idx == 0:
+            total_charge[system_id] = wp.tile_extract(charge_tile, 0)
+
+
+@wp.kernel
+def _batch_ewald_recip_fill_sf_fp32_nostore_cellgrad(
+    positions: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    k_vectors: wp.array2d(dtype=Any),
+    cell: wp.array(dtype=Any),
+    alpha: wp.array(dtype=Any),
+    atom_start: wp.array(dtype=wp.int32),
+    atom_end: wp.array(dtype=wp.int32),
+    total_charge: wp.array(dtype=wp.float64),
+    real_structure_factors: wp.array2d(dtype=wp.float32),
+    imag_structure_factors: wp.array2d(dtype=wp.float32),
+    cellgrad_cache: wp.array2d(dtype=wp.float64),
+):
+    r"""Batched counterpart of :func:`_ewald_recip_fill_sf_fp32_nostore_cellgrad`.
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N_total,), dtype=wp.vec3f
+        Concatenated atomic coordinates for all systems.
+    charges : wp.array, shape (N_total,), dtype=wp.float32
+        Concatenated atomic charges.
+    k_vectors : wp.array2d, shape (S, K), dtype=wp.vec3f
+        Per-system half-space reciprocal lattice vectors.
+    cell : wp.array, shape (S, 3, 3), dtype=wp.mat33f
+        Per-system unit cell matrices.
+    alpha : wp.array, shape (S,), dtype=wp.float32
+        Per-system Ewald splitting parameters.
+    atom_start, atom_end : wp.array, shape (S,), dtype=wp.int32
+        Half-open atom range owned by each system.
+    total_charge : wp.array, shape (S,), dtype=wp.float64
+        OUTPUT: per-system Q/V for the background correction.
+    real_structure_factors : wp.array2d, shape (S, K), dtype=wp.float32
+        OUTPUT: per-system weighted real structure factors.
+    imag_structure_factors : wp.array2d, shape (S, K), dtype=wp.float32
+        OUTPUT: per-system weighted imaginary structure factors.
+    cellgrad_cache : wp.array2d, shape (S*K, 8), dtype=wp.float64
+        OUTPUT: per-k unweighted reductions consumed by the cell-gradient
+        backward -- ``[Sre, Sim, (Sre*r)_xyz, (Sim*r)_xyz]``. Unweighted means
+        before the Green's function, which the backward applies itself.
+
+    Thread launch
+    -------------
+    ``wp.launch_tiled(dim=(K, S), block_dim=RECIP_TILED_BLOCK_DIM)``. One block
+    owns one (k-vector, system) pair; its lanes cooperate over that system's
+    atoms.
+
+    Modifies
+    --------
+    ``total_charge``, ``real_structure_factors``, ``imag_structure_factors``,
+    ``cellgrad_cache``.
+    """
+    k_idx, system_id, lane = wp.tid()
+    num_k = real_structure_factors.shape[1]
+    block = wp.static(RECIP_TILED_BLOCK_DIM)
+    start = atom_start[system_id]
+    end = atom_end[system_id]
+
+    alpha_ = wp.float32(alpha[system_id])
+    exp_factor = wp.float32(0.25) / (alpha_ * alpha_)
+    inv_volume = wp.float32(1.0) / wp.float32(wp.abs(wp.determinant(cell[system_id])))
+
+    k_vector = k_vectors[system_id, k_idx]
+    kx = wp.float32(k_vector[0])
+    ky = wp.float32(k_vector[1])
+    kz = wp.float32(k_vector[2])
+    k_squared = kx * kx + ky * ky + kz * kz
+
+    green_function = wp.float32(0.0)
+    if k_squared >= wp.float32(1e-10):
+        green_function = (
+            wp.exp(-exp_factor * k_squared)
+            / k_squared
+            * wp.float32(EIGHTPI)
+            * inv_volume
+        )
+
+    real_sum = wp.float32(0.0)
+    imag_sum = wp.float32(0.0)
+    # r-weighted phase sums for dE/dcell. Same reduction shape as the
+    # structure factors, so they ride along in the same pass.
+    ra_x = wp.float32(0.0)
+    ra_y = wp.float32(0.0)
+    ra_z = wp.float32(0.0)
+    rb_x = wp.float32(0.0)
+    rb_y = wp.float32(0.0)
+    rb_z = wp.float32(0.0)
+    charge_sum = wp.float64(0.0)
+
+    for offset in range(start, end, block):
+        atom_idx = offset + lane
+        if atom_idx < end:
+            charge = wp.float32(charges[atom_idx])
+            if k_idx == 0:
+                charge_sum += wp.float64(charge) * wp.float64(inv_volume)
+            if k_squared >= wp.float32(1e-10):
+                position = positions[atom_idx]
+                phase = _recip_phase_fp32(
+                    wp.float32(position[0]),
+                    wp.float32(position[1]),
+                    wp.float32(position[2]),
+                    k_vector,
+                )
+                qc = charge * phase[0]
+                qs = charge * phase[1]
+                real_sum += qc
+                imag_sum += qs
+                px = wp.float32(position[0])
+                py = wp.float32(position[1])
+                pz = wp.float32(position[2])
+                ra_x += qc * px
+                ra_y += qc * py
+                ra_z += qc * pz
+                rb_x += qs * px
+                rb_y += qs * py
+                rb_z += qs * pz
+
+    real_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(real_sum * green_function)))
+    imag_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(imag_sum * green_function)))
+    charge_tile = wp.tile_reduce(wp.add, wp.tile(charge_sum))
+
+    # Cell-gradient cache: unweighted (pre-Green's-function) reductions, in the
+    # flattened (S*K, 8) layout the backward expects. Reduced in float64 like the
+    # structure factors, so the cache is as accurate as the float64 fill's.
+    a_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(real_sum)))
+    b_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(imag_sum)))
+    rax_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(ra_x)))
+    ray_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(ra_y)))
+    raz_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(ra_z)))
+    rbx_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(rb_x)))
+    rby_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(rb_y)))
+    rbz_tile = wp.tile_reduce(wp.add, wp.tile(wp.float64(rb_z)))
+
+    if lane == 0:
+        real_structure_factors[system_id, k_idx] = wp.float32(
+            wp.tile_extract(real_tile, 0)
+        )
+        imag_structure_factors[system_id, k_idx] = wp.float32(
+            wp.tile_extract(imag_tile, 0)
+        )
+        if k_idx == 0:
+            total_charge[system_id] = wp.tile_extract(charge_tile, 0)
+        row = system_id * num_k + k_idx
+        cellgrad_cache[row, 0] = wp.tile_extract(a_tile, 0)
+        cellgrad_cache[row, 1] = wp.tile_extract(b_tile, 0)
+        cellgrad_cache[row, 2] = wp.tile_extract(rax_tile, 0)
+        cellgrad_cache[row, 3] = wp.tile_extract(ray_tile, 0)
+        cellgrad_cache[row, 4] = wp.tile_extract(raz_tile, 0)
+        cellgrad_cache[row, 5] = wp.tile_extract(rbx_tile, 0)
+        cellgrad_cache[row, 6] = wp.tile_extract(rby_tile, 0)
+        cellgrad_cache[row, 7] = wp.tile_extract(rbz_tile, 0)
+
+
+# Five float64 accumulators per atom: (charged potential, Fx, Fy, Fz,
+# uncharged potential). Returned as one value so the k-loop below can be shared
+# by every consumer instead of being copy-pasted per derivative state.
+_recip_vec5d = wp.types.vector(length=5, dtype=wp.float64)
+
+
+@wp.func
+def _recip_phase_fp32(px: wp.float32, py: wp.float32, pz: wp.float32, kvec: Any):
+    """cos(k.r) and sin(k.r) evaluated in float32, returned as a vec2f.
+
+    The single place phases are computed for the float32 reciprocal path, used
+    by both the structure-factor fill and the per-atom compute so the two can
+    never drift apart.
+    """
+    k_dot_r = (
+        wp.float32(kvec[0]) * px + wp.float32(kvec[1]) * py + wp.float32(kvec[2]) * pz
+    )
+    return wp.vec2f(wp.cos(k_dot_r), wp.sin(k_dot_r))
+
+
+@wp.func
+def _recip_atom_accumulate_fp32(
+    px: wp.float32,
+    py: wp.float32,
+    pz: wp.float32,
+    charge: wp.float32,
+    k_vectors: wp.array(dtype=Any),
+    real_structure_factors: wp.array(dtype=wp.float32),
+    imag_structure_factors: wp.array(dtype=wp.float32),
+    num_k: int,
+    k_start: int,
+    k_stride: int,
+):
+    r"""Per-atom reciprocal sums, recomputing phases rather than reading them.
+
+    The counterpart to :func:`_ewald_recip_fill_sf_fp32_nostore`: the fill
+    leaves the ``(K, N)`` phases unwritten, so this recomputes them. Forces and
+    the charge gradient cost three FMAs per k on top of the energy, against a
+    transcendental pair, so all five quantities are always computed and the
+    caller writes only what it needs.
+
+    .. math::
+
+        E_i = \tfrac{1}{2} \sum_k [S_{re} q_i \cos + S_{im} q_i \sin], \quad
+        F_i = \sum_k k [S_{re} q_i \sin - S_{im} q_i \cos], \quad
+        \frac{\partial E}{\partial q_i} = \sum_k [S_{re}\cos + S_{im}\sin]
+
+    Parameters
+    ----------
+    px, py, pz : wp.float32
+        Coordinates of the atom this call owns.
+    charge : wp.float32
+        Charge of that atom.
+    k_vectors : wp.array, shape (K,), dtype=wp.vec3f or wp.vec3d
+        Half-space reciprocal lattice vectors.
+    real_structure_factors : wp.array, shape (K,), dtype=wp.float32
+        Green's-function-weighted :math:`\sum_j q_j \cos(k \cdot r_j)`.
+    imag_structure_factors : wp.array, shape (K,), dtype=wp.float32
+        Green's-function-weighted :math:`\sum_j q_j \sin(k \cdot r_j)`.
+    num_k : int
+        Number of k-vectors.
+    k_start, k_stride : int
+        This thread's slice of the k range. The atom-major kernels pass
+        ``(0, 1)`` to walk all of it; the tiled kernels pass
+        ``(lane, block_dim)`` so a block's lanes split the range and combine
+        afterwards with ``wp.tile_reduce``. Keeping these as parameters is what
+        lets both kernel families share this loop instead of duplicating it.
+
+    Returns
+    -------
+    _recip_vec5d
+        ``(potential, Fx, Fy, Fz, potential_uncharged)``, widened to float64.
+    """
+    potential = wp.float32(0.0)
+    potential_uncharged = wp.float32(0.0)
+    fx = wp.float32(0.0)
+    fy = wp.float32(0.0)
+    fz = wp.float32(0.0)
+
+    for k_idx in range(k_start, num_k, k_stride):
+        kvec = k_vectors[k_idx]
+        phase = _recip_phase_fp32(px, py, pz, kvec)
+        cos_kr = phase[0]
+        sin_kr = phase[1]
+
+        s_real = real_structure_factors[k_idx]
+        s_imag = imag_structure_factors[k_idx]
+
+        phase_sum = s_real * cos_kr + s_imag * sin_kr
+        potential += charge * phase_sum
+        potential_uncharged += phase_sum
+
+        force_scalar = charge * (s_real * sin_kr - s_imag * cos_kr)
+        fx += force_scalar * wp.float32(kvec[0])
+        fy += force_scalar * wp.float32(kvec[1])
+        fz += force_scalar * wp.float32(kvec[2])
+
+    return _recip_vec5d(
+        wp.float64(potential),
+        wp.float64(fx),
+        wp.float64(fy),
+        wp.float64(fz),
+        wp.float64(potential_uncharged),
+    )
+
+
+@wp.kernel
+def _ewald_recip_compute_fp32_recompute(
+    positions: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    k_vectors: wp.array(dtype=Any),
+    real_structure_factors: wp.array(dtype=wp.float32),
+    imag_structure_factors: wp.array(dtype=wp.float32),
+    reciprocal_energies: wp.array(dtype=wp.float64),
+    atomic_forces: wp.array(dtype=Any),
+    charge_gradients: wp.array(dtype=wp.float64),
+):
+    r"""Single-system per-atom energies, forces and dE/dq, phases recomputed.
+
+    Atom-major, so each thread owns its outputs and no atomics are needed. The
+    counterpart to :func:`_ewald_recip_fill_sf_fp32_nostore`, which leaves the
+    ``(K, N)`` phases unwritten. Prefer
+    :func:`_ewald_recip_compute_fp32_recompute_tiled` -- one thread walking all
+    of K is a long serial loop and underfills the device when N is small.
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N,), dtype=wp.vec3f
+        Atomic coordinates.
+    charges : wp.array, shape (N,), dtype=wp.float32
+        Atomic charges.
+    k_vectors : wp.array, shape (K,), dtype=wp.vec3f
+        Half-space reciprocal lattice vectors.
+    real_structure_factors : wp.array, shape (K,), dtype=wp.float32
+        Weighted real structure factors from the fill kernel.
+    imag_structure_factors : wp.array, shape (K,), dtype=wp.float32
+        Weighted imaginary structure factors from the fill kernel.
+    reciprocal_energies : wp.array, shape (N,), dtype=wp.float64
+        OUTPUT: per-atom reciprocal-space energy.
+    atomic_forces : wp.array, shape (N,), dtype=wp.vec3f
+        OUTPUT: per-atom reciprocal-space force.
+    charge_gradients : wp.array, shape (N,), dtype=wp.float64
+        OUTPUT: per-atom :math:`\partial E / \partial q_i`.
+
+    Modifies
+    --------
+    ``reciprocal_energies``, ``atomic_forces``, ``charge_gradients``.
+
+    Thread launch
+    -------------
+    ``wp.launch(dim=N)``. One thread per atom.
+    """
+    atom_idx = wp.tid()
+    num_k = real_structure_factors.shape[0]
+    position = positions[atom_idx]
+    acc = _recip_atom_accumulate_fp32(
+        wp.float32(position[0]),
+        wp.float32(position[1]),
+        wp.float32(position[2]),
+        wp.float32(charges[atom_idx]),
+        k_vectors,
+        real_structure_factors,
+        imag_structure_factors,
+        num_k,
+        0,
+        1,
+    )
+    reciprocal_energies[atom_idx] = wp.float64(0.5) * acc[0]
+    atomic_forces[atom_idx] = type(atomic_forces[atom_idx])(
+        type(atomic_forces[atom_idx][0])(acc[1]),
+        type(atomic_forces[atom_idx][0])(acc[2]),
+        type(atomic_forces[atom_idx][0])(acc[3]),
+    )
+    charge_gradients[atom_idx] = acc[4]
+
+
+@wp.kernel
+def _batch_ewald_recip_compute_fp32_recompute(
+    positions: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    batch_idx: wp.array(dtype=wp.int32),
+    k_vectors: wp.array2d(dtype=Any),
+    real_structure_factors: wp.array2d(dtype=wp.float32),
+    imag_structure_factors: wp.array2d(dtype=wp.float32),
+    reciprocal_energies: wp.array(dtype=wp.float64),
+    atomic_forces: wp.array(dtype=Any),
+    charge_gradients: wp.array(dtype=wp.float64),
+):
+    r"""Batched counterpart of :func:`_ewald_recip_compute_fp32_recompute`.
+
+    Each system's row is sliced out of the 2D inputs and handed to the same
+    accumulation function the single-system kernel uses.
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N_total,), dtype=wp.vec3f
+        Atomic coordinates.
+    charges : wp.array, shape (N_total,), dtype=wp.float32
+        Atomic charges.
+    batch_idx : wp.array, shape (N_total,), dtype=wp.int32
+        System index for each atom.
+    k_vectors : wp.array2d, shape (S, K), dtype=wp.vec3f
+        Half-space reciprocal lattice vectors.
+    real_structure_factors : wp.array, shape (S, K), dtype=wp.float32
+        Per-system weighted real structure factors from the fill kernel.
+    imag_structure_factors : wp.array, shape (S, K), dtype=wp.float32
+        Per-system weighted imaginary structure factors from the fill kernel.
+    reciprocal_energies : wp.array, shape (N_total,), dtype=wp.float64
+        OUTPUT: per-atom reciprocal-space energy.
+    atomic_forces : wp.array, shape (N_total,), dtype=wp.vec3f
+        OUTPUT: per-atom reciprocal-space force.
+    charge_gradients : wp.array, shape (N_total,), dtype=wp.float64
+        OUTPUT: per-atom :math:`\partial E / \partial q_i`.
+
+    Modifies
+    --------
+    ``reciprocal_energies``, ``atomic_forces``, ``charge_gradients``.
+
+    Thread launch
+    -------------
+    ``wp.launch(dim=N_total)``. One thread per atom.
+    """
+    atom_idx = wp.tid()
+    system_id = batch_idx[atom_idx]
+    num_k = real_structure_factors.shape[1]
+    position = positions[atom_idx]
+    acc = _recip_atom_accumulate_fp32(
+        wp.float32(position[0]),
+        wp.float32(position[1]),
+        wp.float32(position[2]),
+        wp.float32(charges[atom_idx]),
+        k_vectors[system_id],
+        real_structure_factors[system_id],
+        imag_structure_factors[system_id],
+        num_k,
+        0,
+        1,
+    )
+    reciprocal_energies[atom_idx] = wp.float64(0.5) * acc[0]
+    atomic_forces[atom_idx] = type(atomic_forces[atom_idx])(
+        type(atomic_forces[atom_idx][0])(acc[1]),
+        type(atomic_forces[atom_idx][0])(acc[2]),
+        type(atomic_forces[atom_idx][0])(acc[3]),
+    )
+    charge_gradients[atom_idx] = acc[4]
+
+
+@wp.kernel
+def _ewald_recip_compute_fp32_recompute_tiled(
+    positions: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    k_vectors: wp.array(dtype=Any),
+    real_structure_factors: wp.array(dtype=wp.float32),
+    imag_structure_factors: wp.array(dtype=wp.float32),
+    reciprocal_energies: wp.array(dtype=wp.float64),
+    atomic_forces: wp.array(dtype=Any),
+    charge_gradients: wp.array(dtype=wp.float64),
+):
+    r"""Cooperative counterpart of :func:`_ewald_recip_compute_fp32_recompute`.
+
+    The atom-major kernel gives each thread the whole k range, which at
+    K ~ 6e4 is a very long serial loop and leaves the machine idle whenever
+    there are fewer atoms than it can occupy. Here one block owns one atom and
+    its lanes split the k range, mirroring how the fill kernel splits atoms
+    across lanes for a fixed k.
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N,), dtype=wp.vec3f
+        Atomic coordinates.
+    charges : wp.array, shape (N,), dtype=wp.float32
+        Atomic charges.
+    k_vectors : wp.array, shape (K,), dtype=wp.vec3f
+        Half-space reciprocal lattice vectors.
+    real_structure_factors : wp.array, shape (K,), dtype=wp.float32
+        Weighted real structure factors from the fill kernel.
+    imag_structure_factors : wp.array, shape (K,), dtype=wp.float32
+        Weighted imaginary structure factors from the fill kernel.
+    reciprocal_energies : wp.array, shape (N,), dtype=wp.float64
+        OUTPUT: per-atom reciprocal-space energy.
+    atomic_forces : wp.array, shape (N,), dtype=wp.vec3f
+        OUTPUT: per-atom reciprocal-space force.
+    charge_gradients : wp.array, shape (N,), dtype=wp.float64
+        OUTPUT: per-atom :math:`\partial E / \partial q_i`.
+
+    Modifies
+    --------
+    ``reciprocal_energies``, ``atomic_forces``, ``charge_gradients``.
+
+    Thread launch
+    -------------
+    ``wp.launch_tiled(dim=N, block_dim=RECIP_TILED_BLOCK_DIM)``. One block owns
+    one atom; its lanes split the k range and combine with ``wp.tile_reduce``.
+    """
+    atom_idx, lane = wp.tid()
+    num_k = real_structure_factors.shape[0]
+    position = positions[atom_idx]
+    acc = _recip_atom_accumulate_fp32(
+        wp.float32(position[0]),
+        wp.float32(position[1]),
+        wp.float32(position[2]),
+        wp.float32(charges[atom_idx]),
+        k_vectors,
+        real_structure_factors,
+        imag_structure_factors,
+        num_k,
+        lane,
+        wp.static(RECIP_TILED_BLOCK_DIM),
+    )
+    pot = wp.tile_reduce(wp.add, wp.tile(acc[0]))
+    fx = wp.tile_reduce(wp.add, wp.tile(acc[1]))
+    fy = wp.tile_reduce(wp.add, wp.tile(acc[2]))
+    fz = wp.tile_reduce(wp.add, wp.tile(acc[3]))
+    unq = wp.tile_reduce(wp.add, wp.tile(acc[4]))
+    if lane == 0:
+        reciprocal_energies[atom_idx] = wp.float64(0.5) * wp.tile_extract(pot, 0)
+        atomic_forces[atom_idx] = type(atomic_forces[atom_idx])(
+            type(atomic_forces[atom_idx][0])(wp.tile_extract(fx, 0)),
+            type(atomic_forces[atom_idx][0])(wp.tile_extract(fy, 0)),
+            type(atomic_forces[atom_idx][0])(wp.tile_extract(fz, 0)),
+        )
+        charge_gradients[atom_idx] = wp.tile_extract(unq, 0)
+
+
+@wp.kernel
+def _batch_ewald_recip_compute_fp32_recompute_tiled(
+    positions: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    batch_idx: wp.array(dtype=wp.int32),
+    k_vectors: wp.array2d(dtype=Any),
+    real_structure_factors: wp.array2d(dtype=wp.float32),
+    imag_structure_factors: wp.array2d(dtype=wp.float32),
+    reciprocal_energies: wp.array(dtype=wp.float64),
+    atomic_forces: wp.array(dtype=Any),
+    charge_gradients: wp.array(dtype=wp.float64),
+):
+    r"""Batched counterpart of :func:`_ewald_recip_compute_fp32_recompute_tiled`.
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N_total,), dtype=wp.vec3f
+        Atomic coordinates.
+    charges : wp.array, shape (N_total,), dtype=wp.float32
+        Atomic charges.
+    batch_idx : wp.array, shape (N_total,), dtype=wp.int32
+        System index for each atom.
+    k_vectors : wp.array2d, shape (S, K), dtype=wp.vec3f
+        Half-space reciprocal lattice vectors.
+    real_structure_factors : wp.array, shape (S, K), dtype=wp.float32
+        Per-system weighted real structure factors from the fill kernel.
+    imag_structure_factors : wp.array, shape (S, K), dtype=wp.float32
+        Per-system weighted imaginary structure factors from the fill kernel.
+    reciprocal_energies : wp.array, shape (N_total,), dtype=wp.float64
+        OUTPUT: per-atom reciprocal-space energy.
+    atomic_forces : wp.array, shape (N_total,), dtype=wp.vec3f
+        OUTPUT: per-atom reciprocal-space force.
+    charge_gradients : wp.array, shape (N_total,), dtype=wp.float64
+        OUTPUT: per-atom :math:`\partial E / \partial q_i`.
+
+    Modifies
+    --------
+    ``reciprocal_energies``, ``atomic_forces``, ``charge_gradients``.
+
+    Thread launch
+    -------------
+    ``wp.launch_tiled(dim=N_total, block_dim=RECIP_TILED_BLOCK_DIM)``. One block
+    owns one atom; its lanes split that system's k range.
+    """
+    atom_idx, lane = wp.tid()
+    system_id = batch_idx[atom_idx]
+    num_k = real_structure_factors.shape[1]
+    position = positions[atom_idx]
+    acc = _recip_atom_accumulate_fp32(
+        wp.float32(position[0]),
+        wp.float32(position[1]),
+        wp.float32(position[2]),
+        wp.float32(charges[atom_idx]),
+        k_vectors[system_id],
+        real_structure_factors[system_id],
+        imag_structure_factors[system_id],
+        num_k,
+        lane,
+        wp.static(RECIP_TILED_BLOCK_DIM),
+    )
+    pot = wp.tile_reduce(wp.add, wp.tile(acc[0]))
+    fx = wp.tile_reduce(wp.add, wp.tile(acc[1]))
+    fy = wp.tile_reduce(wp.add, wp.tile(acc[2]))
+    fz = wp.tile_reduce(wp.add, wp.tile(acc[3]))
+    unq = wp.tile_reduce(wp.add, wp.tile(acc[4]))
+    if lane == 0:
+        reciprocal_energies[atom_idx] = wp.float64(0.5) * wp.tile_extract(pot, 0)
+        atomic_forces[atom_idx] = type(atomic_forces[atom_idx])(
+            type(atomic_forces[atom_idx][0])(wp.tile_extract(fx, 0)),
+            type(atomic_forces[atom_idx][0])(wp.tile_extract(fy, 0)),
+            type(atomic_forces[atom_idx][0])(wp.tile_extract(fz, 0)),
+        )
+        charge_gradients[atom_idx] = wp.tile_extract(unq, 0)
 
 
 @wp.kernel
