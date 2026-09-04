@@ -28,8 +28,8 @@ Notes
 -----
 - These exercise the ``jax_kernel`` → Warp path, which requires a GPU device; the
   suite gate runs on CUDA (matching ``TestJaxNaiveAutograd`` in ``test_naive.py``).
-- Like the geometry-only pair-output path, a *traced* (jit'd) ``cutoff`` is not
-  supported yet (that is the #92 traceable-cutoff work); these run eagerly.
+- Jitted cases close over ``cutoff`` as a static specialization input; eager
+  cases pass the same Python scalar directly.
 - Under JAX (functional arrays) caller-supplied energy/force buffers cannot be
   written in place, so they are always auto-allocated and returned. The *return*
   contract matches Torch; the in-place-buffer aspect does not.
@@ -42,6 +42,7 @@ import pytest
 import warp as wp
 
 from nvalchemiops.jax.neighbors.naive import naive_neighbor_list
+from nvalchemiops.jax.neighbors.neighbor_utils import compute_naive_num_shifts
 
 from .conftest import create_simple_cubic_system_jax
 
@@ -207,6 +208,103 @@ def test_naive_pair_fn_coo_outputs_aligned(dtype):
     expected_e = pp_np[i_idx, 0] + pp_np[j_idx, 0] + d_np
     assert np.allclose(np.asarray(pe_coo), expected_e, rtol=1e-5, atol=1e-5)
     assert np.allclose(np.asarray(pf_coo), -np.asarray(v_coo), rtol=1e-5, atol=1e-5)
+
+
+@pytest.mark.parametrize(
+    ("max_neighbors", "coo_capacity", "expected_pairs", "expected_overflow"),
+    [
+        pytest.param(4, 8, 6, False, id="no-overflow"),
+        pytest.param(4, 4, 4, True, id="coo-capacity-overflow"),
+        pytest.param(1, 8, 3, True, id="matrix-row-overflow"),
+    ],
+)
+@pytest.mark.parametrize("use_pbc", [False, True], ids=["no-pbc", "pbc"])
+def test_naive_pair_fn_fixed_capacity_coo_jit(
+    max_neighbors,
+    coo_capacity,
+    expected_pairs,
+    expected_overflow,
+    use_pbc,
+):
+    """Fixed COO keeps all pair outputs aligned, including on overflow."""
+    if use_pbc:
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [9.5, 0.0, 0.0], [0.0, 0.5, 0.0]],
+            dtype=jnp.float32,
+        )
+        cell = jnp.eye(3, dtype=jnp.float32)[None, ...] * 10.0
+        pbc = jnp.ones((1, 3), dtype=jnp.bool_)
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+            cell,
+            1.0,
+            pbc,
+        )
+        pbc_kwargs = {
+            "cell": cell,
+            "pbc": pbc,
+            "shift_range_per_dimension": shift_range,
+            "num_shifts_per_system": num_shifts,
+            "max_shifts_per_system": max_shifts,
+        }
+    else:
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.5, 0.0]],
+            dtype=jnp.float32,
+        )
+        cell = None
+        pbc_kwargs = {}
+    pp = _pair_params(positions.shape[0], jnp.float32)
+
+    @jax.jit
+    def build(positions):
+        return naive_neighbor_list(
+            positions,
+            1.0,
+            max_neighbors=max_neighbors,
+            return_neighbor_list=True,
+            coo_capacity=coo_capacity,
+            return_distances=True,
+            return_vectors=True,
+            pair_fn=_sum_pair_fn_f32,
+            pair_params=pp,
+            **pbc_kwargs,
+        )
+
+    result = build(positions)
+    if use_pbc:
+        nl, ptr, shifts, overflow, distances, vectors, energies, forces = result
+    else:
+        nl, ptr, overflow, distances, vectors, energies, forces = result
+        shifts = jnp.zeros((coo_capacity, 3), dtype=jnp.int32)
+    num_pairs = int(ptr[-1])
+
+    assert nl.shape == (2, coo_capacity)
+    assert bool(overflow) is expected_overflow
+    assert num_pairs == expected_pairs
+    source = np.asarray(nl[0, :num_pairs])
+    target = np.asarray(nl[1, :num_pairs])
+    expected_energy = (
+        np.asarray(pp)[source, 0]
+        + np.asarray(pp)[target, 0]
+        + np.asarray(distances[:num_pairs])
+    )
+    expected_vectors = positions[target] - positions[source]
+    if use_pbc:
+        expected_vectors = expected_vectors + shifts[:num_pairs] @ cell[0]
+        assert jnp.any(shifts[:num_pairs] != 0)
+    np.testing.assert_allclose(vectors[:num_pairs], expected_vectors, atol=1e-5)
+    np.testing.assert_allclose(energies[:num_pairs], expected_energy, rtol=1e-5)
+    np.testing.assert_allclose(forces[:num_pairs], -vectors[:num_pairs], rtol=1e-5)
+    np.testing.assert_allclose(
+        distances[:num_pairs],
+        jnp.linalg.norm(vectors[:num_pairs], axis=1),
+        rtol=1e-5,
+    )
+    assert jnp.all(nl[:, num_pairs:] == positions.shape[0])
+    assert jnp.all(distances[num_pairs:] == 0)
+    assert jnp.all(vectors[num_pairs:] == 0)
+    assert jnp.all(energies[num_pairs:] == 0)
+    assert jnp.all(forces[num_pairs:] == 0)
 
 
 def test_naive_pair_fn_tail_without_geometry():
@@ -1116,6 +1214,57 @@ def test_cell_list_pair_centric_matches_atom_centric(dtype, use_pair_fn):
     assert np.array_equal(ai, pi) and np.array_equal(aj, pj)
 
 
+def test_cell_list_pair_centric_fixed_coo_pair_fn_jit():
+    """Static launch and COO capacities compile pair-centric pair outputs."""
+    from nvalchemiops.jax.neighbors.cell_list import (
+        cell_list,
+        estimate_cell_list_sizes,
+    )
+    from nvalchemiops.neighbors.cell_list import compute_batch_pair_centric_n_outer
+
+    pos, cell, pbc = _pc_safe_system(jnp.float32)
+    pp = _pair_params(pos.shape[0], jnp.float32)
+    max_total_cells, _, radius = estimate_cell_list_sizes(pos, cell, 1.1, pbc)
+    launch_radius = tuple(int(value) for value in radius)
+    n_outer = compute_batch_pair_centric_n_outer(launch_radius, False)
+    coo_capacity = pos.shape[0] * 64
+
+    @jax.jit
+    def build(positions):
+        return cell_list(
+            positions,
+            1.1,
+            cell,
+            pbc,
+            max_neighbors=64,
+            max_total_cells=max_total_cells,
+            neighbor_search_radius=radius,
+            strategy="pair_centric",
+            pair_centric_n_outer=n_outer,
+            return_neighbor_list=True,
+            coo_capacity=coo_capacity,
+            return_distances=True,
+            return_vectors=True,
+            pair_fn=_sum_pair_fn_f32,
+            pair_params=pp,
+        )
+
+    nl, ptr, _shifts, overflow, distances, vectors, energies, forces = build(pos)
+    num_pairs = int(ptr[-1])
+
+    assert num_pairs > 0
+    assert not bool(overflow)
+    source = np.asarray(nl[0, :num_pairs])
+    target = np.asarray(nl[1, :num_pairs])
+    expected_energy = (
+        np.asarray(pp)[source, 0]
+        + np.asarray(pp)[target, 0]
+        + np.asarray(distances[:num_pairs])
+    )
+    np.testing.assert_allclose(energies[:num_pairs], expected_energy, rtol=1e-5)
+    np.testing.assert_allclose(forces[:num_pairs], -vectors[:num_pairs], rtol=1e-5)
+
+
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["f32", "f64"])
 def test_cell_list_pair_centric_grad_matches_atom_centric(dtype):
     """Forward-only gradient through pair-centric pair outputs == atom-centric."""
@@ -1537,6 +1686,68 @@ def test_batch_cell_list_pair_centric_matches_atom_centric(dtype, use_pair_fn):
     ai, aj, _ = _canon_coo(ac[0], [ac[3]])
     pi, pj, _ = _canon_coo(pc[0], [pc[3]])
     assert np.array_equal(ai, pi) and np.array_equal(aj, pj)
+
+
+def test_batch_cell_list_pair_centric_fixed_coo_pair_fn_jit():
+    """Batched pair-centric pair outputs compile with explicit capacities."""
+    from nvalchemiops.jax.neighbors.batch_cell_list import (
+        batch_cell_list,
+        estimate_batch_cell_list_sizes,
+    )
+    from nvalchemiops.neighbors.cell_list import compute_batch_pair_centric_n_outer
+
+    pos, bidx, bptr, cell, pbc = _batch_pc_safe_system(jnp.float32)
+    pp = _pair_params(pos.shape[0], jnp.float32)
+    max_total_cells, cells_per_dimension, radius = estimate_batch_cell_list_sizes(
+        pos,
+        batch_idx=bidx,
+        batch_ptr=bptr,
+        cell=cell,
+        pbc=pbc,
+        cutoff=1.1,
+    )
+    total_cells = int(jnp.sum(jnp.prod(cells_per_dimension, axis=1)))
+    r_max = tuple(int(value) for value in jnp.max(radius, axis=0))
+    n_outer = compute_batch_pair_centric_n_outer(r_max, False)
+    coo_capacity = pos.shape[0] * 64
+
+    @jax.jit
+    def build(positions):
+        return batch_cell_list(
+            positions,
+            1.1,
+            cell,
+            pbc,
+            bidx,
+            bptr,
+            max_neighbors=64,
+            max_total_cells=max_total_cells,
+            strategy="pair_centric",
+            pair_centric_total_cells=total_cells,
+            pair_centric_n_outer=n_outer,
+            pair_centric_r_max=r_max,
+            return_neighbor_list=True,
+            coo_capacity=coo_capacity,
+            return_distances=True,
+            return_vectors=True,
+            pair_fn=_sum_pair_fn_f32,
+            pair_params=pp,
+        )
+
+    nl, ptr, _shifts, overflow, distances, vectors, energies, forces = build(pos)
+    num_pairs = int(ptr[-1])
+
+    assert num_pairs > 0
+    assert not bool(overflow)
+    source = np.asarray(nl[0, :num_pairs])
+    target = np.asarray(nl[1, :num_pairs])
+    expected_energy = (
+        np.asarray(pp)[source, 0]
+        + np.asarray(pp)[target, 0]
+        + np.asarray(distances[:num_pairs])
+    )
+    np.testing.assert_allclose(energies[:num_pairs], expected_energy, rtol=1e-5)
+    np.testing.assert_allclose(forces[:num_pairs], -vectors[:num_pairs], rtol=1e-5)
 
 
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["f32", "f64"])

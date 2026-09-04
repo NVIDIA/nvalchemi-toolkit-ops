@@ -31,6 +31,7 @@ from nvalchemiops.jax.neighbors.cell_list import (
     query_cell_list,
 )
 from nvalchemiops.jax.neighbors.naive import naive_neighbor_list
+from nvalchemiops.neighbors.cell_list import compute_batch_pair_centric_n_outer
 
 from .conftest import requires_gpu, requires_vesin
 
@@ -359,6 +360,47 @@ class TestCellListJIT:
         assert shifts.shape[0] == 2
         assert shifts.shape[2] == 3
 
+    def test_jit_fixed_capacity_coo(self):
+        """The one-shot cell-list API returns fixed COO with overflow state."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        cell = jnp.eye(3, dtype=jnp.float32)[jnp.newaxis, :, :] * 10.0
+        pbc = jnp.array([[True, True, True]])
+        neighbor_search_radius = jnp.ones(3, dtype=jnp.int32)
+
+        @jax.jit
+        def jitted_cell_list(positions, cell, pbc):
+            return cell_list(
+                positions,
+                cutoff=1.0,
+                cell=cell,
+                pbc=pbc,
+                max_neighbors=4,
+                max_total_cells=8,
+                neighbor_search_radius=neighbor_search_radius,
+                return_neighbor_list=True,
+                coo_capacity=4,
+                strategy="atom_centric",
+            )
+
+        neighbor_list, neighbor_ptr, shifts, overflow = jitted_cell_list(
+            positions,
+            cell,
+            pbc,
+        )
+
+        assert neighbor_list.shape == (2, 4)
+        assert neighbor_ptr.shape == (3,)
+        assert shifts.shape == (4, 3)
+        assert int(neighbor_ptr[-1]) == 2
+        assert not bool(overflow)
+        assert {
+            tuple(int(value) for value in pair)
+            for pair in np.asarray(neighbor_list[:, :2]).T
+        } == {(0, 1), (1, 0)}
+
     def test_jit_auto_falls_back_when_pair_centric_sizing_is_traced(self):
         """``strategy='auto'`` must not expose pair-centric host reads to JIT."""
         num_atoms = 200
@@ -389,8 +431,8 @@ class TestCellListJIT:
         assert num_neighbors.shape == (num_atoms,)
         assert shifts.shape == (num_atoms, max_neighbors, 3)
 
-    def test_jit_explicit_pair_centric_still_requires_concrete_sizing(self):
-        """Explicit pair-centric keeps the concrete launch-sizing contract."""
+    def test_jit_explicit_pair_centric_with_static_launch_matches_atom_centric(self):
+        """Static launch sizing makes explicit pair-centric JIT-compatible."""
         num_atoms = 200
         box_size = 15.0
         key = jax.random.PRNGKey(43)
@@ -399,6 +441,17 @@ class TestCellListJIT:
         )
         cell = jnp.eye(3, dtype=jnp.float32)[jnp.newaxis, :, :] * box_size
         pbc = jnp.array([[True, True, True]])
+        max_total_cells, _, neighbor_search_radius = estimate_cell_list_sizes(
+            positions,
+            cell * 1.5,
+            6.0,
+            pbc,
+        )
+        launch_radius = tuple(int(value) for value in neighbor_search_radius)
+        pair_centric_n_outer = compute_batch_pair_centric_n_outer(
+            launch_radius,
+            False,
+        )
 
         @jax.jit
         def jitted_cell_list(positions, cell, pbc):
@@ -408,12 +461,70 @@ class TestCellListJIT:
                 cell=cell * 1.5,
                 pbc=pbc,
                 max_neighbors=128,
-                max_total_cells=16,
+                max_total_cells=max_total_cells,
+                neighbor_search_radius=neighbor_search_radius,
                 strategy="pair_centric",
+                pair_centric_n_outer=pair_centric_n_outer,
             )
 
-        with pytest.raises(ValueError, match="needs a concrete neighbor_search_radius"):
-            jitted_cell_list(positions, cell, pbc)
+        pair_result = jitted_cell_list(positions, cell, pbc)
+        atom_result = cell_list(
+            positions,
+            cutoff=6.0,
+            cell=cell * 1.5,
+            pbc=pbc,
+            max_neighbors=128,
+            max_total_cells=max_total_cells,
+            neighbor_search_radius=neighbor_search_radius,
+            strategy="atom_centric",
+        )
+
+        assert _pair_shift_set(*pair_result) == _pair_shift_set(*atom_result)
+
+    def test_jit_pair_centric_stale_launch_metadata_reports_overflow(self):
+        """Live radius changes invalidate a compiled pair-centric launch safely."""
+        num_atoms = 64
+        box_size = 15.0
+        positions = (
+            jax.random.uniform(
+                jax.random.PRNGKey(44),
+                (num_atoms, 3),
+                dtype=jnp.float32,
+            )
+            * box_size
+        )
+        cell = jnp.eye(3, dtype=jnp.float32)[jnp.newaxis, :, :] * box_size
+        pbc = jnp.array([[True, True, True]])
+        max_total_cells, _, neighbor_search_radius = estimate_cell_list_sizes(
+            positions,
+            cell,
+            6.0,
+            pbc,
+        )
+        launch_radius = tuple(int(value) for value in neighbor_search_radius)
+        pair_centric_n_outer = compute_batch_pair_centric_n_outer(
+            launch_radius,
+            False,
+        )
+        stale_radius = neighbor_search_radius.at[0].add(1)
+
+        @jax.jit
+        def jitted_cell_list(positions, neighbor_search_radius):
+            return cell_list(
+                positions,
+                cutoff=6.0,
+                cell=cell,
+                pbc=pbc,
+                max_neighbors=32,
+                max_total_cells=max_total_cells,
+                neighbor_search_radius=neighbor_search_radius,
+                strategy="pair_centric",
+                pair_centric_n_outer=pair_centric_n_outer,
+            )
+
+        _, num_neighbors, _ = jitted_cell_list(positions, stale_radius)
+
+        np.testing.assert_array_equal(np.asarray(num_neighbors), np.full(num_atoms, 33))
 
 
 class TestEstimateCellListSizes:
