@@ -27,8 +27,10 @@ from nvalchemiops.jax.interactions.electrostatics import (
     ewald_real_space,
     ewald_reciprocal_space,
     ewald_summation,
+    generate_ewald_miller_indices,
     generate_k_vectors_ewald_summation,
     generate_k_vectors_pme,
+    k_vectors_from_miller_indices,
     particle_mesh_ewald,
     pme_reciprocal_space,
 )
@@ -248,10 +250,15 @@ def test_jax_pme_ignores_alpha_tangent(device) -> None:
 def test_jax_ewald_reciprocal_silently_accepts_cell_tangent_with_k_vectors(
     device,
 ) -> None:
-    """Public Ewald reciprocal k-vectors are static cell-JVP metadata."""
+    """Zero-tangent reciprocal vectors retain fixed-vector cell derivatives."""
     positions, charges, cell, alpha = _system(device)
     cell_static = jax.lax.stop_gradient(cell)
     k_vectors = generate_k_vectors_ewald_summation(cell_static, k_cutoff=5.0)
+    direction = jnp.array(
+        [[0.03, -0.02, 0.01], [0.01, 0.02, -0.01], [-0.02, 0.01, 0.03]],
+        dtype=cell.dtype,
+    )
+    epsilon = 1e-4
 
     def energy_cell(cell_arg):
         return ewald_reciprocal_space(
@@ -264,10 +271,56 @@ def test_jax_ewald_reciprocal_silently_accepts_cell_tangent_with_k_vectors(
 
     with warnings.catch_warnings(record=True) as records:
         warnings.simplefilter("always")
-        value, tangent = jax.jvp(energy_cell, (cell,), (jnp.ones_like(cell),))
+        value, tangent = jax.jvp(energy_cell, (cell,), (direction,))
+    finite_difference = (
+        energy_cell(cell + epsilon * direction)
+        - energy_cell(cell - epsilon * direction)
+    ) / (2.0 * epsilon)
     _assert_no_cache_warning(records)
     assert jnp.isfinite(value)
-    assert jnp.isfinite(tangent)
+    assert jnp.allclose(tangent, finite_difference, rtol=2e-4, atol=2e-6)
+
+
+def test_jax_ewald_reciprocal_preserves_graph_derived_k_vector_tangent(
+    device,
+) -> None:
+    """Graph-derived reciprocal vectors contribute partial cell derivatives."""
+    positions, charges, cell, alpha = _system(device)
+    indices = generate_ewald_miller_indices(cell, 5.0, (4, 4, 4))
+    direction = jnp.array(
+        [[0.03, -0.02, 0.01], [0.01, 0.02, -0.01], [-0.02, 0.01, 0.03]],
+        dtype=cell.dtype,
+    )
+    epsilon = 1e-4
+
+    def energy_cell(lattice):
+        return ewald_reciprocal_space(
+            positions,
+            charges,
+            lattice,
+            k_vectors_from_miller_indices(lattice, indices),
+            alpha,
+        ).sum()
+
+    value, tangent = jax.jvp(energy_cell, (cell,), (direction,))
+    gradient = jax.grad(energy_cell)(cell)
+    finite_difference = (
+        energy_cell(cell + epsilon * direction)
+        - energy_cell(cell - epsilon * direction)
+    ) / (2.0 * epsilon)
+    assert jnp.isfinite(value)
+    assert jnp.allclose(tangent, finite_difference, rtol=2e-4, atol=2e-6)
+    assert jnp.allclose(
+        jnp.vdot(gradient, direction), finite_difference, rtol=2e-4, atol=2e-6
+    )
+
+    cell_gradient = jax.grad(energy_cell)
+    _, hvp = jax.jvp(cell_gradient, (cell,), (direction,))
+    finite_difference_hvp = (
+        cell_gradient(cell + epsilon * direction)
+        - cell_gradient(cell - epsilon * direction)
+    ) / (2.0 * epsilon)
+    assert jnp.allclose(hvp, finite_difference_hvp, rtol=3e-3, atol=3e-5)
 
 
 @pytest.mark.parametrize(

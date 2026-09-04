@@ -8,6 +8,44 @@ This guide lists user-visible migrations by release.
 
 ## Unreleased
 
+### Retained Ewald Miller Topology
+
+Torch and JAX can now retain integer Miller topology separately from Cartesian
+reciprocal vectors:
+
+```python
+miller_indices = generate_ewald_miller_indices(reference_cell, k_cutoff=8.0)
+energy = ewald_summation(
+    ...,
+    cell=current_cell,
+    alpha=alpha,
+    miller_indices=miller_indices,
+)
+```
+
+The generator returns positive-half-space integer rows inside conservative
+rectangular Miller bounds. It does not filter individual Cartesian-vector
+magnitudes. The caller owns the topology and must choose bounds that cover all
+intended cell states. Changing its size changes `K` and may recompile JAX.
+
+Both Torch and JAX backends also provide
+`ewald_reciprocal_space_from_miller_indices(...)`. It materializes Cartesian
+vectors from the supplied cell, then calls the reciprocal component. Torch
+retains its component-only `hybrid_forces` option; JAX does not expose it.
+
+JAX `ewald_reciprocal_space(...)` now follows the tangent carried by
+`k_vectors`. Earlier releases dropped that tangent even when vectors were
+constructed from the differentiated cell, so the cell gradient omitted the
+reciprocal-vector contribution. This is fixed. A vector is fixed only when it
+has zero tangent in the active transformation, for example when it was
+precomputed from a reference cell or passed through
+`jax.lax.stop_gradient(k_vectors)`. Matching numerical values alone do not
+create a dependency. Full `ewald_summation(k_vectors=...)` still treats
+explicit vectors as fixed metadata.
+
+A reciprocal-component cell derivative holds positions fixed. For a
+homogeneous-strain derivative, deform positions and cell together.
+
 ## v0.4.1: Energy Output Layout
 
 ### Energy Output Layout (`energy_reduction`)

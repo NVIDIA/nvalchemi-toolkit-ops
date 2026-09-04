@@ -30,8 +30,10 @@ import torch
 
 from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
     _generate_miller_indices,
+    generate_ewald_miller_indices,
     generate_k_vectors_ewald_summation,
     generate_k_vectors_pme,
+    k_vectors_from_miller_indices,
 )
 
 try:
@@ -62,6 +64,30 @@ def generate_kvectors_for_pme_reference(cell, mesh_dimensions):
     return kvectors
 
 
+def _legacy_ewald_k_vectors(cell, k_cutoff, miller_bounds=None):
+    """Reproduce the pre-refactor Ewald vector enumeration exactly."""
+    if cell.ndim == 2:
+        cell = cell.unsqueeze(0)
+    if miller_bounds is None:
+        max_h, max_k, max_l = 2 * _generate_miller_indices(cell, k_cutoff) + 1
+    else:
+        max_h, max_k, max_l = (2 * bound + 1 for bound in miller_bounds)
+
+    h_range = torch.fft.fftfreq(max_h, device=cell.device, dtype=cell.dtype) * max_h
+    k_range = torch.fft.fftfreq(max_k, device=cell.device, dtype=cell.dtype) * max_k
+    l_range = torch.fft.fftfreq(max_l, device=cell.device, dtype=cell.dtype) * max_l
+    h_grid, k_grid, l_grid = torch.meshgrid(h_range, k_range, l_range, indexing="ij")
+    miller_indices = torch.stack(
+        [h_grid.flatten(), k_grid.flatten(), l_grid.flatten()], dim=1
+    )
+    h, k, m = miller_indices.unbind(dim=1)
+    halfspace = (h > 0) | ((h == 0) & (k > 0)) | ((h == 0) & (k == 0) & (m > 0))
+    reciprocal_cell = 2.0 * torch.pi * torch.linalg.inv_ex(cell.transpose(1, 2))[0]
+    return (
+        miller_indices[halfspace].to(reciprocal_cell.dtype) @ reciprocal_cell
+    ).squeeze(0)
+
+
 ###########################################################################################
 ########################### Ewald K-Vector Tests ##########################################
 ###########################################################################################
@@ -84,6 +110,108 @@ class TestKVectorsEwald:
         assert k_vectors.ndim == 2
         assert k_vectors.shape[1] == 3
         assert k_vectors.shape[0] > 0
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    @pytest.mark.parametrize(
+        ("dtype", "batch_size", "miller_bounds"),
+        [
+            (torch.float32, 0, None),
+            (torch.float64, 1, (2, 3, 4)),
+            (torch.float64, 2, None),
+        ],
+    )
+    def test_miller_topology_preserves_legacy_vectors(
+        self, device, dtype, batch_size, miller_bounds
+    ):
+        """Refactoring preserves historical values, order, and squeeze behavior."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        cell = torch.tensor(
+            [[6.0, 0.0, 0.0], [0.5, 7.0, 0.0], [0.2, 0.1, 8.0]],
+            dtype=dtype,
+            device=device,
+        )
+        if batch_size:
+            cell = cell.expand(batch_size, -1, -1).clone()
+            cell[1:] *= 1.1
+        k_cutoff = 2.0
+        indices = generate_ewald_miller_indices(cell, k_cutoff, miller_bounds)
+
+        actual = k_vectors_from_miller_indices(cell, indices)
+        expected = _legacy_ewald_k_vectors(cell, k_cutoff, miller_bounds)
+        public = generate_k_vectors_ewald_summation(cell, k_cutoff, miller_bounds)
+
+        assert indices.dtype == torch.int64
+        # Torch's float32 fftfreq grid can contain sub-ULP non-integer values;
+        # retained integer topology intentionally removes those artifacts.
+        torch.testing.assert_close(actual, expected, rtol=5e-7, atol=5e-7)
+        assert torch.equal(public, expected)
+        h, k, m = indices.unbind(dim=1)
+        assert torch.all(
+            (h > 0) | ((h == 0) & (k > 0)) | ((h == 0) & (k == 0) & (m > 0))
+        )
+        assert torch.unique(indices, dim=0).shape[0] == indices.shape[0]
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_miller_topology_rounds_fft_grid_before_integer_conversion(self, device):
+        """Integer topology does not truncate sub-ULP FFT-grid representation errors."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        dtype = torch.float32
+        bound = 20
+        cell = torch.eye(3, dtype=dtype, device=device)
+        indices = generate_ewald_miller_indices(cell, 1.0, (bound, 0, 0))
+        expected = torch.stack(
+            [
+                torch.arange(1, bound + 1, dtype=torch.int64, device=device),
+                torch.zeros(bound, dtype=torch.int64, device=device),
+                torch.zeros(bound, dtype=torch.int64, device=device),
+            ],
+            dim=1,
+        )
+
+        assert torch.equal(indices, expected)
+        assert torch.all(indices.any(dim=1))
+        assert torch.unique(indices, dim=0).shape[0] == indices.shape[0]
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_miller_topology_empty_and_batched_materialization(self, device):
+        """Empty topology and shared batched topology retain public shapes."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        cell = torch.stack(
+            [
+                torch.eye(3, dtype=torch.float64, device=device) * side
+                for side in (8.0, 9.0)
+            ]
+        )
+        indices = generate_ewald_miller_indices(cell, 1.0, (0, 0, 0))
+        assert indices.shape == (0, 3)
+        assert k_vectors_from_miller_indices(cell, indices).shape == (2, 0, 3)
+
+    @pytest.mark.parametrize(
+        "bad_indices",
+        [
+            torch.zeros((3,), dtype=torch.int64),
+            torch.zeros((2, 2), dtype=torch.int64),
+            torch.zeros((2, 3), dtype=torch.float64),
+        ],
+    )
+    def test_miller_materialization_rejects_invalid_structure(self, bad_indices):
+        """Materialization rejects unsupported index ranks, widths, and dtypes."""
+        cell = torch.eye(3, dtype=torch.float64)
+        with pytest.raises(ValueError, match="miller_indices"):
+            k_vectors_from_miller_indices(cell, bad_indices)
+
+    @pytest.mark.cuda
+    def test_miller_materialization_rejects_device_mismatch(self):
+        """Torch rejects retained topology on a different device than the cell."""
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        cell = torch.eye(3, dtype=torch.float64, device="cpu")
+        indices = torch.zeros((0, 3), dtype=torch.int64, device="cuda")
+        with pytest.raises(ValueError, match="same device"):
+            k_vectors_from_miller_indices(cell, indices)
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_output_shape_batch(self, device):
