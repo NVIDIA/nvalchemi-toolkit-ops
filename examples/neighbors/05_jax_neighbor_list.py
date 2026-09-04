@@ -273,7 +273,7 @@ max_neighbors = 128
 shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, cutoff, pbc)
 neighbor_matrix = jnp.full((num_atoms, max_neighbors), num_atoms, dtype=jnp.int32)
 num_neighbors = jnp.zeros((num_atoms,), dtype=jnp.int32)
-neighbor_matrix_shifts = jnp.zeros((num_atoms, max_neighbors, 3), dtype=jnp.int32)
+neighbor_shift_matrix = jnp.zeros((num_atoms, max_neighbors, 3), dtype=jnp.int32)
 
 
 @jax.jit
@@ -281,7 +281,7 @@ def compiled_naive_neighbors(
     positions,
     neighbor_matrix,
     num_neighbors,
-    shifts,
+    neighbor_shift_matrix,
 ):
     """Build a fixed-capacity periodic neighbor matrix inside ``jax.jit``."""
     return naive_neighbor_list(
@@ -292,18 +292,18 @@ def compiled_naive_neighbors(
         max_neighbors=max_neighbors,
         neighbor_matrix=neighbor_matrix,
         num_neighbors=num_neighbors,
-        neighbor_matrix_shifts=shifts,
+        neighbor_matrix_shifts=neighbor_shift_matrix,
         shift_range_per_dimension=shift_range,
         num_shifts_per_system=num_shifts,
         max_shifts_per_system=max_shifts,
     )
 
 
-neighbor_matrix, num_neighbors, neighbor_matrix_shifts = compiled_naive_neighbors(
+neighbor_matrix, num_neighbors, neighbor_shift_matrix = compiled_naive_neighbors(
     positions,
     neighbor_matrix,
     num_neighbors,
-    neighbor_matrix_shifts,
+    neighbor_shift_matrix,
 )
 print(f"Returned neighbor matrix shape: {neighbor_matrix.shape}")
 if int(jnp.max(num_neighbors)) > max_neighbors:
