@@ -20,7 +20,7 @@ registered with ``jax.custom_vjp`` and its backward is itself wrapped in a
 ``jax.custom_vjp`` so the second-order adjoint can be triggered by
 ``jax.grad(jax.grad(...))`` or ``jax.jacfwd(jax.jacrev(...))``.
 
-Kernel orchestration uses :func:`warp.jax_experimental.jax_callable`, which
+Kernel orchestration uses :func:`warp.jax_callable`, which
 runs the existing ``_launch_*`` Python wrappers directly on the JAX device
 arrays — no host roundtrip.
 
@@ -34,8 +34,8 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 import warp as wp
-from warp.jax_experimental import GraphMode
-from warp.jax_experimental import jax_callable as _raw_jax_callable
+from warp import JaxCallableGraphMode
+from warp import jax_callable as _raw_jax_callable
 
 from nvalchemiops.segment_ops import (
     segment_div as _wp_segment_div,
@@ -73,15 +73,15 @@ from nvalchemiops.segment_ops_backward import (
 
 
 def jax_callable(*args, **kwargs):
-    """Wrap warp.jax_experimental.jax_callable with ``GraphMode.WARP``.
+    """Wrap warp.jax_callable with ``JaxCallableGraphMode.WARP``.
 
-    The default ``GraphMode.JAX`` fails when the orchestrator issues more than
+    The default ``JaxCallableGraphMode.JAX`` fails when the orchestrator issues more than
     one Warp kernel launch (e.g. mean, rms_norm forward, dot/matvec double-
     backward), because JAX can't embed multi-command FFI calls as subgraphs
-    in nested ``jax.jit`` + ``jax.grad`` contexts.  ``GraphMode.WARP`` lets
+    in nested ``jax.jit`` + ``jax.grad`` contexts.  ``JaxCallableGraphMode.WARP`` lets
     Warp own the capture and presents the call as opaque to JAX.
     """
-    kwargs.setdefault("graph_mode", GraphMode.WARP)
+    kwargs.setdefault("graph_mode", JaxCallableGraphMode.WARP)
     return _raw_jax_callable(*args, **kwargs)
 
 

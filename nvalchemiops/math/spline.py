@@ -69,7 +69,7 @@ import warp as wp
 # Disable warp's automatic adjoint (backward) codegen for every kernel in
 # this module. All callers route through hand-written backward chains:
 # torch via register_warp_op_chain + register_autograd, JAX via
-# warp.jax_experimental.jax_kernel(..., enable_backward=False).
+# warp.jax_kernel(..., enable_backward=False).
 wp.set_module_options({"enable_backward": False})
 
 

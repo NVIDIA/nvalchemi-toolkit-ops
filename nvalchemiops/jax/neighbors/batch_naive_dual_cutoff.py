@@ -20,7 +20,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import warp as wp
-from warp.jax_experimental import jax_kernel
+from warp import jax_kernel
 
 from nvalchemiops.jax.neighbors._registration import _lazy_naive_kernel
 from nvalchemiops.jax.neighbors.neighbor_utils import (

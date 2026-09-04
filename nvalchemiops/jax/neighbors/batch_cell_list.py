@@ -23,7 +23,7 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 import warp as wp
-from warp.jax_experimental import GraphMode, jax_callable
+from warp import JaxCallableGraphMode, jax_callable
 
 from nvalchemiops.jax.neighbors._autograd import (
     _build_index_residuals,
@@ -258,14 +258,14 @@ def _construct_batch_cells_per_dimension(
 
 
 # ==============================================================================
-# Batched pair-centric query wrappers (GraphMode.NONE jax_callable)
+# Batched pair-centric query wrappers (JaxCallableGraphMode.NONE jax_callable)
 # ==============================================================================
 #
 # The batched pair-centric launcher
 # (:func:`batch_query_cell_list_pair_centric_sorted`) is CUDA-only and sizes its
 # launch grid from host-computed scalars (``total_cells``, ``n_outer``,
 # ``R_max``).  Those cannot be CUDA-graph-replayed across a changed radius, so we
-# wrap it with ``graph_mode=GraphMode.NONE`` (launch each call, no capture).  The
+# wrap it with ``graph_mode=JaxCallableGraphMode.NONE`` (launch each call, no capture).  The
 # launcher itself runs the gather into ``sorted_positions`` /
 # ``sorted_atom_periodic_shifts`` and the ``cell_to_system`` map fill before the
 # main pair-centric kernel, so this wrapper just forwards the donated scratch +
@@ -330,7 +330,7 @@ def _run_batch_query_cell_list_pair_centric(
     """
     num_neighbors.zero_()
 
-    # Graph-capture contract: this body runs under ``GraphMode.NONE`` (no CUDA
+    # Graph-capture contract: this body runs under ``JaxCallableGraphMode.NONE`` (no CUDA
     # graph capture), so ``str(positions.device)`` is read each call.  The
     # ``total_cells`` / ``n_outer`` / ``R_max`` scalars are baked at launch-build
     # time from the host-read radius in ``batch_query_cell_list``.
@@ -483,26 +483,26 @@ _BATCH_PAIR_CENTRIC_INOUT = [
     "neighbor_matrix_shifts",
     "num_neighbors",
 ]
-# GraphMode.NONE: the launch dim is baked from the host-read sizing scalars, so
+# JaxCallableGraphMode.NONE: the launch dim is baked from the host-read sizing scalars, so
 # CUDA-graph replay across a changed radius is unsafe.
 _jax_batch_query_cell_list_pair_centric_f32 = jax_callable(
     _batch_query_cell_list_pair_centric_f32,
     num_outputs=len(_BATCH_PAIR_CENTRIC_INOUT),
     in_out_argnames=_BATCH_PAIR_CENTRIC_INOUT,
-    graph_mode=GraphMode.NONE,
+    graph_mode=JaxCallableGraphMode.NONE,
 )
 _jax_batch_query_cell_list_pair_centric_f64 = jax_callable(
     _batch_query_cell_list_pair_centric_f64,
     num_outputs=len(_BATCH_PAIR_CENTRIC_INOUT),
     in_out_argnames=_BATCH_PAIR_CENTRIC_INOUT,
-    graph_mode=GraphMode.NONE,
+    graph_mode=JaxCallableGraphMode.NONE,
 )
 
 # --- Batched pair-centric PAIR-OUTPUT callables -----------------------------
 # Same launch mechanism as the matrix callables above, with per-pair geometry
 # (and optionally ``pair_fn`` energies / forces) written by the same kernel.
 # The sizing scalars (``total_cells`` / ``n_outer`` / ``R_max``) are host-read
-# statics, so ``GraphMode.NONE`` (eager-on-cutoff, like every pair-output path).
+# statics, so ``JaxCallableGraphMode.NONE`` (eager-on-cutoff, like every pair-output path).
 _BATCH_PAIR_CENTRIC_GEOM_INOUT = _BATCH_PAIR_CENTRIC_INOUT + [
     "neighbor_vectors",
     "neighbor_distances",
@@ -631,13 +631,13 @@ _jax_batch_query_cell_list_pair_centric_geom_f32 = jax_callable(
     _batch_query_cell_list_pair_centric_geom_f32,
     num_outputs=len(_BATCH_PAIR_CENTRIC_GEOM_INOUT),
     in_out_argnames=_BATCH_PAIR_CENTRIC_GEOM_INOUT,
-    graph_mode=GraphMode.NONE,
+    graph_mode=JaxCallableGraphMode.NONE,
 )
 _jax_batch_query_cell_list_pair_centric_geom_f64 = jax_callable(
     _batch_query_cell_list_pair_centric_geom_f64,
     num_outputs=len(_BATCH_PAIR_CENTRIC_GEOM_INOUT),
     in_out_argnames=_BATCH_PAIR_CENTRIC_GEOM_INOUT,
-    graph_mode=GraphMode.NONE,
+    graph_mode=JaxCallableGraphMode.NONE,
 )
 
 
@@ -647,7 +647,7 @@ def _get_jax_batch_cell_list_pair_centric_pair_fn_callable(pair_fn, wp_dtype):
     ``pair_fn`` (mirrors the single-system
     ``_get_jax_cell_list_pair_centric_pair_fn_callable``).  Two literal-typed
     callbacks keep the Warp annotations resolvable; cached by
-    ``(pair_fn identity, wp_dtype)``.  ``GraphMode.NONE`` + host-read static
+    ``(pair_fn identity, wp_dtype)``.  ``JaxCallableGraphMode.NONE`` + host-read static
     sizing scalars.
     """
     if wp_dtype == wp.float64:
@@ -784,7 +784,7 @@ def _get_jax_batch_cell_list_pair_centric_pair_fn_callable(pair_fn, wp_dtype):
         _callback,
         num_outputs=len(_BATCH_PAIR_CENTRIC_PAIR_FN_INOUT),
         in_out_argnames=_BATCH_PAIR_CENTRIC_PAIR_FN_INOUT,
-        graph_mode=GraphMode.NONE,
+        graph_mode=JaxCallableGraphMode.NONE,
     )
 
 
@@ -1241,7 +1241,7 @@ def batch_query_cell_list(
         raises a clear error under ``jax.jit`` with a traced radius.  ``"auto"``
         falls back to ``"atom_centric"`` when pair-centric launch sizing is
         traced.  It is full-fill only (``half_fill=True`` + explicit
-        ``pair_centric`` raises) and is registered with ``GraphMode.NONE``.
+        ``pair_centric`` raises) and is registered with ``JaxCallableGraphMode.NONE``.
     atom_centric_path : {"auto", "direct", "sorted"}, default "auto"
         Accepted for signature parity with the Torch binding.  JAX registers
         only the *sorted* atom-centric query kernel, so this option never
