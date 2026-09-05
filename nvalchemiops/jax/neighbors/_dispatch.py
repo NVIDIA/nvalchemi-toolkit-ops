@@ -24,7 +24,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import warp as wp
-from warp.jax_experimental import jax_kernel
+from warp import jax_kernel
 
 from nvalchemiops.neighbors.base_dispatch import (
     _FLAG_NAMES,

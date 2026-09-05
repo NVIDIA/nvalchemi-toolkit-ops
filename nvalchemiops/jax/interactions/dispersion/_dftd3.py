@@ -65,7 +65,7 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 import warp as wp
-from warp.jax_experimental import jax_kernel
+from warp import jax_kernel
 
 from nvalchemiops.interactions.dispersion._dftd3 import (
     _cn_forces_contrib_kernel_matrix_overload as wp_cn_forces_contrib_nm,
@@ -104,7 +104,7 @@ from nvalchemiops.interactions.dispersion._dftd3 import (
     _direct_forces_and_dE_dCN_kernel_virial_overload as wp_direct_forces_kernel_nl_virial,
 )
 
-# block_dim is hardcoded to 256 in warp.jax_experimental.ffi, so block_stride
+# block_dim is hardcoded to 256 in Warp's JAX FFI, so block_stride
 # and the second launch_dims component must both be 256.
 JAX_DFTD3_BLOCK_DIM = 256
 

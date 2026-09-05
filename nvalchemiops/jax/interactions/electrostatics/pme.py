@@ -49,7 +49,7 @@ import jax
 import jax.numpy as jnp
 import warp as wp
 from jax.interpreters import ad as jax_ad
-from warp.jax_experimental import GraphMode, jax_callable
+from warp import JaxCallableGraphMode, jax_callable
 
 from nvalchemiops.interactions.electrostatics.pme_factory import get_pme_kernel
 from nvalchemiops.interactions.electrostatics.pme_kernels import (
@@ -259,7 +259,7 @@ def _make_jax_pme_virial_bg_fused(wp_dtype):
         _fn,
         num_outputs=2,
         in_out_argnames=["total_charges"],
-        graph_mode=GraphMode.JAX,
+        graph_mode=JaxCallableGraphMode.JAX,
     )
 
 

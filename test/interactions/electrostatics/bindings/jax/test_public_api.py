@@ -16,12 +16,40 @@
 """Public API tests for JAX electrostatics exports."""
 
 import inspect
+import os
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 from typing import Literal, get_type_hints
 
 import pytest
 
 import nvalchemiops.jax.interactions.electrostatics as electrostatics
+
+
+def test_import_enables_jax_x64_when_initially_disabled() -> None:
+    """Importing electrostatics enables x64 before its kernels are registered."""
+    script = textwrap.dedent(
+        """
+        import jax
+
+        assert not jax.config.jax_enable_x64
+        import nvalchemiops.jax.interactions.electrostatics  # noqa: F401
+
+        assert jax.config.jax_enable_x64
+        """
+    )
+    environment = os.environ | {"JAX_ENABLE_X64": "False"}
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[5],
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_pme_metadata_preserves_legacy_positional_flag_order() -> None:

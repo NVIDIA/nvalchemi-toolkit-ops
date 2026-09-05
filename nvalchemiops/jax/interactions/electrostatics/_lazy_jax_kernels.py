@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 import warp as wp
-from warp.jax_experimental import jax_kernel
+from warp import jax_kernel
 
 __all__: list[str] = []
 
@@ -85,7 +85,7 @@ def _make_jax_kernels(
     -------
     _LazyJaxKernels
         Subscript with ``jnp.float32`` / ``jnp.float64`` to obtain a
-        :func:`warp.jax_experimental.jax_kernel` instance. The wrapper
+        :func:`warp.jax_kernel` instance. The wrapper
         for each dtype is built lazily on first access.
     """
     return _LazyJaxKernels(wp_overload_dict, num_outputs, in_out_argnames)
@@ -143,6 +143,6 @@ def _make_jax_kernel_factory(
     -------
     _LazyJaxKernelFactory
         Subscript with ``jnp.float32`` / ``jnp.float64`` to obtain a lazy
-        :func:`warp.jax_experimental.jax_kernel` wrapper.
+        :func:`warp.jax_kernel` wrapper.
     """
     return _LazyJaxKernelFactory(wp_kernel_factory, num_outputs, in_out_argnames)

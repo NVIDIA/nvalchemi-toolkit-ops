@@ -37,6 +37,12 @@ explicitly unsupported until a native transposable PME cell-HVP path is
 implemented and tested.
 Point-charge Ewald/PME inputs support ``float32`` and ``float64``. Keep all
 floating inputs and precomputed metadata in a call on a consistent dtype.
+Import :mod:`nvalchemiops.jax.interactions.electrostatics` before creating JAX
+arrays intended to be ``float64`` or compiling JAX functions that operate on
+``float64`` arrays. On import, the module sets JAX 64-bit support process-wide,
+including when it was previously disabled. This cannot restore precision in
+arrays already created as ``float32`` or update functions that JAX has already
+compiled. ``float32`` calculations remain supported.
 
 .. autofunction:: ewald_summation
 .. autofunction:: particle_mesh_ewald

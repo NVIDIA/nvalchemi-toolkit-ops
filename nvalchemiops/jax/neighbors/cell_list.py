@@ -23,7 +23,7 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 import warp as wp
-from warp.jax_experimental import GraphMode, jax_callable
+from warp import JaxCallableGraphMode, jax_callable
 
 from nvalchemiops.jax.neighbors._autograd import (
     _build_index_residuals,
@@ -1081,7 +1081,7 @@ _jax_graph_build_cell_list_f32 = jax_callable(
         "cell_atom_start_indices",
         "cell_atom_list",
     ],
-    graph_mode=GraphMode.WARP,
+    graph_mode=JaxCallableGraphMode.WARP,
 )
 _jax_graph_build_cell_list_f64 = jax_callable(
     _graph_build_cell_list_f64,
@@ -1094,7 +1094,7 @@ _jax_graph_build_cell_list_f64 = jax_callable(
         "cell_atom_start_indices",
         "cell_atom_list",
     ],
-    graph_mode=GraphMode.WARP,
+    graph_mode=JaxCallableGraphMode.WARP,
 )
 _GRAPH_QUERY_INOUT = [
     "sorted_positions",
@@ -1107,61 +1107,61 @@ _jax_graph_query_cell_list_f32 = jax_callable(
     _graph_query_cell_list_f32,
     num_outputs=len(_GRAPH_QUERY_INOUT),
     in_out_argnames=_GRAPH_QUERY_INOUT,
-    graph_mode=GraphMode.WARP,
+    graph_mode=JaxCallableGraphMode.WARP,
 )
 _jax_graph_query_cell_list_f64 = jax_callable(
     _graph_query_cell_list_f64,
     num_outputs=len(_GRAPH_QUERY_INOUT),
     in_out_argnames=_GRAPH_QUERY_INOUT,
-    graph_mode=GraphMode.WARP,
+    graph_mode=JaxCallableGraphMode.WARP,
 )
 _jax_graph_query_cell_list_selective_f32 = jax_callable(
     _graph_query_cell_list_selective_f32,
     num_outputs=len(_GRAPH_QUERY_INOUT),
     in_out_argnames=_GRAPH_QUERY_INOUT,
-    graph_mode=GraphMode.WARP,
+    graph_mode=JaxCallableGraphMode.WARP,
 )
 _jax_graph_query_cell_list_selective_f64 = jax_callable(
     _graph_query_cell_list_selective_f64,
     num_outputs=len(_GRAPH_QUERY_INOUT),
     in_out_argnames=_GRAPH_QUERY_INOUT,
-    graph_mode=GraphMode.WARP,
+    graph_mode=JaxCallableGraphMode.WARP,
 )
 # Pair-centric query callables.  The launch dim is baked from the static
 # ``n_outer`` scalar (host-read from ``neighbor_search_radius``), so CUDA-graph
 # replay across a changed radius would be unsafe -> register with
-# ``GraphMode.NONE`` (launch each call, no capture/replay).  These are the only
+# ``JaxCallableGraphMode.NONE`` (launch each call, no capture/replay).  These are the only
 # ``jax_callable`` instances on the non-graph path; they still participate in
-# JAX tracing and in/out buffer aliasing like the ``GraphMode.WARP`` callables.
+# JAX tracing and in/out buffer aliasing like the ``JaxCallableGraphMode.WARP`` callables.
 _jax_query_cell_list_pair_centric_f32 = jax_callable(
     _graph_query_cell_list_pair_centric_f32,
     num_outputs=len(_GRAPH_QUERY_INOUT),
     in_out_argnames=_GRAPH_QUERY_INOUT,
-    graph_mode=GraphMode.NONE,
+    graph_mode=JaxCallableGraphMode.NONE,
 )
 _jax_query_cell_list_pair_centric_f64 = jax_callable(
     _graph_query_cell_list_pair_centric_f64,
     num_outputs=len(_GRAPH_QUERY_INOUT),
     in_out_argnames=_GRAPH_QUERY_INOUT,
-    graph_mode=GraphMode.NONE,
+    graph_mode=JaxCallableGraphMode.NONE,
 )
 _jax_query_cell_list_pair_centric_selective_f32 = jax_callable(
     _graph_query_cell_list_pair_centric_selective_f32,
     num_outputs=len(_GRAPH_QUERY_INOUT),
     in_out_argnames=_GRAPH_QUERY_INOUT,
-    graph_mode=GraphMode.NONE,
+    graph_mode=JaxCallableGraphMode.NONE,
 )
 _jax_query_cell_list_pair_centric_selective_f64 = jax_callable(
     _graph_query_cell_list_pair_centric_selective_f64,
     num_outputs=len(_GRAPH_QUERY_INOUT),
     in_out_argnames=_GRAPH_QUERY_INOUT,
-    graph_mode=GraphMode.NONE,
+    graph_mode=JaxCallableGraphMode.NONE,
 )
 # --- Pair-centric PAIR-OUTPUT callables -------------------------------------
 # Pair-centric analogue of the matrix callables above, with per-pair geometry
 # (and optionally ``pair_fn`` energies / forces) written by the same kernel.
 # ``n_outer`` is a host-read static scalar (last positional arg); the launcher
-# gathers internally, so there is no separate gather kernel.  ``GraphMode.NONE``
+# gathers internally, so there is no separate gather kernel.  ``JaxCallableGraphMode.NONE``
 # (eager-on-cutoff, like every pair-output path).  ``selective=True`` + an
 # always-true ``rebuild_flags`` mirrors the atom-centric pair-output path.
 _GRAPH_QUERY_PAIR_INOUT = [
@@ -1285,13 +1285,13 @@ _jax_query_cell_list_pair_centric_geom_f32 = jax_callable(
     _graph_query_cell_list_pair_centric_geom_f32,
     num_outputs=len(_GRAPH_QUERY_PAIR_INOUT),
     in_out_argnames=_GRAPH_QUERY_PAIR_INOUT,
-    graph_mode=GraphMode.NONE,
+    graph_mode=JaxCallableGraphMode.NONE,
 )
 _jax_query_cell_list_pair_centric_geom_f64 = jax_callable(
     _graph_query_cell_list_pair_centric_geom_f64,
     num_outputs=len(_GRAPH_QUERY_PAIR_INOUT),
     in_out_argnames=_GRAPH_QUERY_PAIR_INOUT,
-    graph_mode=GraphMode.NONE,
+    graph_mode=JaxCallableGraphMode.NONE,
 )
 
 _GRAPH_QUERY_PAIR_FN_INOUT = _GRAPH_QUERY_PAIR_INOUT + [
@@ -1309,7 +1309,7 @@ def _get_jax_cell_list_pair_centric_pair_fn_callable(pair_fn, wp_dtype):
     the JAX trace boundary as data, so the callback closes over it and adds the
     ``pair_params`` input + ``pair_energies`` / ``pair_forces`` outputs.  Two
     literal-typed callbacks (f32 / f64) keep the Warp annotations resolvable;
-    cached by ``(pair_fn identity, wp_dtype)``.  ``GraphMode.NONE`` + host-read
+    cached by ``(pair_fn identity, wp_dtype)``.  ``JaxCallableGraphMode.NONE`` + host-read
     static ``n_outer``, like the geometry pair-centric callables.
     """
     if wp_dtype == wp.float64:
@@ -1438,7 +1438,7 @@ def _get_jax_cell_list_pair_centric_pair_fn_callable(pair_fn, wp_dtype):
         _callback,
         num_outputs=len(_GRAPH_QUERY_PAIR_FN_INOUT),
         in_out_argnames=_GRAPH_QUERY_PAIR_FN_INOUT,
-        graph_mode=GraphMode.NONE,
+        graph_mode=JaxCallableGraphMode.NONE,
     )
 
 
@@ -1459,13 +1459,13 @@ _jax_graph_cell_list_f32 = jax_callable(
     _graph_cell_list_f32,
     num_outputs=len(_GRAPH_CELL_LIST_INOUT),
     in_out_argnames=_GRAPH_CELL_LIST_INOUT,
-    graph_mode=GraphMode.WARP,
+    graph_mode=JaxCallableGraphMode.WARP,
 )
 _jax_graph_cell_list_f64 = jax_callable(
     _graph_cell_list_f64,
     num_outputs=len(_GRAPH_CELL_LIST_INOUT),
     in_out_argnames=_GRAPH_CELL_LIST_INOUT,
-    graph_mode=GraphMode.WARP,
+    graph_mode=JaxCallableGraphMode.WARP,
 )
 
 

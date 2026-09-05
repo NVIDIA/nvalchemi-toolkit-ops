@@ -199,11 +199,11 @@ wheels can be obtained from the [Warp GitHub Releases](https://github.com/NVIDIA
 page. Copy the URL of the appropriate `+cu13` wheel for your platform and pass it to
 `pip install`. Select the wheel matching your architecture:
 
-- **x86**: `manylinux_2_34_x86_64` variant
+- **x86**: `manylinux_2_28_x86_64` variant
 - **Arm** (e.g. DGX Spark): `manylinux_2_34_aarch64` variant
 
 ```bash
-$ uv pip install https://github.com/NVIDIA/warp/releases/download/v1.12.1/warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_aarch64.whl
+$ uv pip install https://github.com/NVIDIA/warp/releases/download/v1.17.0/warp_lang-1.17.0+cu13-py3-none-manylinux_2_34_aarch64.whl
 ```
 
 ```{tip}
@@ -249,8 +249,8 @@ $ uv pip install 'jax[cuda13]'
 
 ```bash
 $ uv venv --seed --python 3.12
-$ WARP_CU13_WHEEL="https://github.com/NVIDIA/warp/releases/download/v1.12.1/\
-warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_x86_64.whl"
+$ WARP_CU13_WHEEL="https://github.com/NVIDIA/warp/releases/download/v1.17.0/\
+warp_lang-1.17.0+cu13-py3-none-manylinux_2_28_x86_64.whl"
 $ uv pip install nvalchemi-toolkit-ops \
     "$WARP_CU13_WHEEL" \
     torch==2.11.0 \
@@ -263,8 +263,8 @@ $ uv pip install nvalchemi-toolkit-ops \
 
 ```bash
 $ uv venv --seed --python 3.12
-$ WARP_CU13_WHEEL="https://github.com/NVIDIA/warp/releases/download/v1.12.1/\
-warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_aarch64.whl"
+$ WARP_CU13_WHEEL="https://github.com/NVIDIA/warp/releases/download/v1.17.0/\
+warp_lang-1.17.0+cu13-py3-none-manylinux_2_34_aarch64.whl"
 $ uv pip install nvalchemi-toolkit-ops \
     "$WARP_CU13_WHEEL" \
     torch==2.11.0 \
@@ -285,8 +285,8 @@ $ uv pip install nvalchemi-toolkit-ops \
 $ git clone git@github.com:NVIDIA/nvalchemi-toolkit-ops.git
 $ cd nvalchemi-toolkit-ops
 $ uv sync --group dev
-$ WARP_CU13_WHEEL="https://github.com/NVIDIA/warp/releases/download/v1.12.1/\
-warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_x86_64.whl"
+$ WARP_CU13_WHEEL="https://github.com/NVIDIA/warp/releases/download/v1.17.0/\
+warp_lang-1.17.0+cu13-py3-none-manylinux_2_28_x86_64.whl"
 $ uv pip install \
     "$WARP_CU13_WHEEL" \
     torch==2.11.0 \
@@ -302,8 +302,8 @@ $ uv pip install \
 $ git clone git@github.com:NVIDIA/nvalchemi-toolkit-ops.git
 $ cd nvalchemi-toolkit-ops
 $ uv sync --group dev
-$ WARP_CU13_WHEEL="https://github.com/NVIDIA/warp/releases/download/v1.12.1/\
-warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_aarch64.whl"
+$ WARP_CU13_WHEEL="https://github.com/NVIDIA/warp/releases/download/v1.17.0/\
+warp_lang-1.17.0+cu13-py3-none-manylinux_2_34_aarch64.whl"
 $ uv pip install \
     "$WARP_CU13_WHEEL" \
     torch==2.11.0 \

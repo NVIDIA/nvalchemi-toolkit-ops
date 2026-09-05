@@ -17,7 +17,7 @@ __version__ = "0.4.1"
 
 import warp as wp
 
-wp.config.quiet = True
+wp.config.log_level = wp.LOG_WARNING
 try:
     wp.init()
 except RuntimeError as e:
