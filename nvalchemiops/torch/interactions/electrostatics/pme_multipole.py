@@ -4269,6 +4269,50 @@ register_warp_op_chain(
 )
 
 
+def _multipole_background_coefficient(alpha: float) -> float:
+    """Return the positive Ewald-background coefficient excluding volume."""
+    return FIELD_CONSTANT / (8.0 * alpha**2)
+
+
+def _multipole_background_energy_per_atom(
+    charges: torch.Tensor,
+    alpha: float,
+    volume: torch.Tensor,
+    *,
+    batch_idx: torch.Tensor | None = None,
+    n_systems: int | None = None,
+) -> torch.Tensor:
+    """Return the positive uniform-background correction per atom.
+
+    The caller subtracts this correction from a raw reciprocal-space energy.
+    """
+    charges_f64 = charges.to(torch.float64)
+    c_bg_no_v = _multipole_background_coefficient(alpha)
+    if batch_idx is None:
+        total_charge = charges_f64.sum()
+        return (
+            c_bg_no_v
+            * charges_f64
+            * total_charge
+            / volume.to(torch.float64).reshape(())
+        )
+
+    if n_systems is None:
+        n_systems = int(batch_idx.max().item()) + 1
+    total_charge = torch.zeros(
+        n_systems, dtype=torch.float64, device=charges.device
+    ).scatter_add(0, batch_idx, charges_f64)
+    vol_per_system = volume.to(torch.float64).reshape(-1)
+    if vol_per_system.numel() == 1 and n_systems > 1:
+        vol_per_system = vol_per_system.expand(n_systems)
+    return (
+        c_bg_no_v
+        * charges_f64
+        * total_charge.index_select(0, batch_idx)
+        / vol_per_system.index_select(0, batch_idx)
+    )
+
+
 def multipole_pme_energy_corrections(
     charges: torch.Tensor,
     dipoles: torch.Tensor | None,
@@ -4305,7 +4349,7 @@ def multipole_pme_energy_corrections(
 
     .. math::
 
-        E_\text{background} = \frac{F \pi}{2 \alpha^2 V}\, Q_\text{total}^2
+        E_\text{background} = \frac{F}{8 \alpha^2 V}\, Q_\text{total}^2
 
     For neutral systems (``Q_total = 0``) the background term vanishes;
     for non-neutral systems it is included via the standard
@@ -4350,9 +4394,9 @@ def multipole_pme_energy_corrections(
     Returns
     -------
     correction : torch.Tensor
-        ``E_self - E_background`` per system (or scalar). Caller
-        SUBTRACTS this from the raw reciprocal energy: ``E_recip_corr
-        = E_recip_raw - correction``.
+        ``E_self + E_background`` per system (or scalar), where
+        ``E_background`` is the positive magnitude. The caller subtracts this
+        from the raw reciprocal energy.
     """
     if dipoles is not None and dipoles.shape != (charges.shape[0], 3):
         raise ValueError(
@@ -4371,7 +4415,7 @@ def multipole_pme_energy_corrections(
     c_self_q = _corr_scalar_array(F / (8.0 * pi32 * sigma_c), device)
     c_self_mu = _corr_scalar_array(F / (48.0 * pi32 * sigma_c**3), device)
     c_self_q2 = _corr_scalar_array(F / (320.0 * pi32 * sigma_c**5), device)
-    c_bg_no_v = _corr_scalar_array(F * math.pi / (2.0 * alpha**2), device)
+    c_bg_no_v = _corr_scalar_array(_multipole_background_coefficient(alpha), device)
 
     charges_f64 = charges.to(torch.float64)
     # Optional moments → zeros (bit-for-bit equal to the explicit-zero call)
@@ -4463,11 +4507,11 @@ def multipole_pme_energy_corrections_per_atom(
         \text{self}_i &= \frac{F q_i^2}{8\pi^{3/2}\sigma_c}
           + \frac{F |\mu_i|^2}{48\pi^{3/2}\sigma_c^3}
           + \frac{F |Q_i|_F^2}{320\pi^{3/2}\sigma_c^5}, \\
-        \text{bg}_i &= \frac{F\pi}{2\alpha^2 V}\, q_i\, Q_\text{total}, \\
-        \text{correction}_i &= \text{self}_i - \text{bg}_i.
+        \text{bg}_i &= \frac{F}{8\alpha^2 V}\, q_i\, Q_\text{total}, \\
+        \text{correction}_i &= \text{self}_i + \text{bg}_i.
 
     The background is split per atom as :math:`q_i \cdot Q_\text{total}` so the per-atom sum
-    recovers the collective :math:`(F\pi / 2\alpha^2 V) Q_\text{total}^2`. Pure-torch
+    recovers the collective :math:`(F / 8\alpha^2 V) Q_\text{total}^2`. Pure-torch
     elementwise (twice-differentiable for free) — matches the
     ``multipole_pme_corrections`` Warp op's reduced value/grads to machine eps.
 
@@ -4486,7 +4530,6 @@ def multipole_pme_energy_corrections_per_atom(
     c_self_q = F / (8.0 * pi32 * sigma_c)
     c_self_mu = F / (48.0 * pi32 * sigma_c**3)
     c_self_q2 = F / (320.0 * pi32 * sigma_c**5)
-    c_bg_no_v = F * math.pi / (2.0 * alpha**2)
 
     charges_f64 = charges.to(torch.float64)
     self_e = c_self_q * charges_f64.square()
@@ -4497,24 +4540,13 @@ def multipole_pme_energy_corrections_per_atom(
             (-1, -2)
         )
 
-    # Background: per-atom share q_i · Q_total / V so Σ_i = Q_total² / V (× c_bg).
-    if batch_idx is None:
-        total_charge = charges_f64.sum()
-        inv_v = (c_bg_no_v / volume.to(torch.float64).reshape(())).reshape(())
-        bg = inv_v * charges_f64 * total_charge
-    else:
-        if n_systems is None:
-            n_systems = int(batch_idx.max().item()) + 1
-        total_charge = torch.zeros(
-            n_systems, dtype=torch.float64, device=charges.device
-        )
-        total_charge = total_charge.scatter_add(0, batch_idx, charges_f64)
-        vol_ps = volume.to(torch.float64).reshape(-1)
-        if vol_ps.numel() == 1 and n_systems > 1:
-            vol_ps = vol_ps.expand(n_systems)
-        per_atom_v = vol_ps.index_select(0, batch_idx)
-        per_atom_qtot = total_charge.index_select(0, batch_idx)
-        bg = c_bg_no_v * charges_f64 * per_atom_qtot / per_atom_v
+    bg = _multipole_background_energy_per_atom(
+        charges_f64,
+        alpha,
+        volume,
+        batch_idx=batch_idx,
+        n_systems=n_systems,
+    )
 
     return self_e + bg
 

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed
+
+- Corrected the multipole Ewald/PME uniform-background coefficient for
+  non-neutral cells. Split Ewald, PME, and cached Ewald now use the same
+  zero-mode convention as the direct reciprocal calculation, including charge
+  and cell derivatives.
+
 ## 0.4.1 - 2026-08-03
 
 ### Added

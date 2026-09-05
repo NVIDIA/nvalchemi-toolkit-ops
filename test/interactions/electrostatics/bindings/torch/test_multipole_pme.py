@@ -821,26 +821,32 @@ class TestEnergyCorrections:
         torch.testing.assert_close(ours, path_a, rtol=1e-15, atol=1e-15)
 
     def test_background_for_non_neutral(self):
-        """Background term ``F π Q² / (2 α² V)`` for non-neutral systems."""
+        """Background term ``F Q² / (8 α² V)`` and its derivatives."""
         td = (
             torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
         )
         N = 4
         L = 8.0
         # All-positive charges → Q_total = N · q.
-        charges = torch.full((N,), 1.0, dtype=torch.float64, device=td)
+        charges = torch.full(
+            (N,), 1.0, dtype=torch.float64, device=td, requires_grad=True
+        )
         dipoles = torch.zeros((N, 3), dtype=torch.float64, device=td)
-        volume = torch.tensor(L**3, device=td, dtype=torch.float64)
+        volume = torch.tensor(L**3, device=td, dtype=torch.float64, requires_grad=True)
         sigma = 1.0
         alpha = 0.5
 
         sigma_c = math.sqrt(sigma**2 + 1.0 / (4.0 * alpha**2))
         pi32 = math.pi**1.5
 
-        # Expected: E_self + E_bg.
+        # Expected correction: E_self + positive E_bg. The reciprocal
+        # composite subtracts this complete correction.
         F = 1.0 / 5.526349406e-3  # FIELD_CONSTANT.
-        e_self_expected = (F / (8.0 * pi32 * sigma_c)) * sum(c**2 for c in [1.0] * N)
-        e_bg_expected = (F * math.pi / (2.0 * alpha**2 * L**3)) * (N * 1.0) ** 2
+        c_self = F / (8.0 * pi32 * sigma_c)
+        c_bg = F / (8.0 * alpha**2)
+        total_charge = N * 1.0
+        e_self_expected = c_self * total_charge
+        e_bg_expected = c_bg * total_charge**2 / L**3
         expected = e_self_expected + e_bg_expected
 
         got = multipole_pme_energy_corrections(
@@ -852,6 +858,34 @@ class TestEnergyCorrections:
             rtol=1e-12,
             atol=1e-10,
         )
+
+        grad_q, grad_v = torch.autograd.grad(got, (charges, volume), create_graph=True)
+        expected_grad_q = torch.full_like(
+            charges, 2.0 * c_self + 2.0 * c_bg * total_charge / L**3
+        )
+        expected_grad_v = torch.tensor(
+            -c_bg * total_charge**2 / L**6, dtype=torch.float64, device=td
+        )
+        torch.testing.assert_close(grad_q, expected_grad_q, rtol=1e-12, atol=1e-10)
+        torch.testing.assert_close(grad_v, expected_grad_v, rtol=1e-12, atol=1e-10)
+
+        direction_q = torch.linspace(0.1, 0.4, N, dtype=torch.float64, device=td)
+        direction_v = torch.tensor(0.25, dtype=torch.float64, device=td)
+        hvp_q, hvp_v = torch.autograd.grad(
+            (grad_q * direction_q).sum() + grad_v * direction_v,
+            (charges, volume),
+        )
+        expected_hvp_q = (
+            2.0 * c_self * direction_q
+            + 2.0 * c_bg * direction_q.sum() / L**3
+            - 2.0 * c_bg * total_charge * direction_v / L**6
+        )
+        expected_hvp_v = (
+            -2.0 * c_bg * total_charge * direction_q.sum() / L**6
+            + 2.0 * c_bg * total_charge**2 * direction_v / L**9
+        )
+        torch.testing.assert_close(hvp_q, expected_hvp_q, rtol=1e-12, atol=1e-10)
+        torch.testing.assert_close(hvp_v, expected_hvp_v, rtol=1e-12, atol=1e-10)
 
     def test_batched_per_system_corrections(self):
         """Batched call returns per-system corrections of shape ``(B,)``."""
@@ -867,9 +901,10 @@ class TestEnergyCorrections:
 
         charges_list = []
         dipoles_list = []
-        for _ in range(B):
+        for system_idx in range(B):
             q = rng.uniform(-1.0, 1.0, N_per)
             q = q - q.mean()
+            q += 0.25 * (system_idx + 1) / N_per
             charges_list.append(q)
             dipoles_list.append(rng.standard_normal((N_per, 3)) * 0.4)
         charges = torch.from_numpy(np.concatenate(charges_list)).to(td, torch.float64)
@@ -891,11 +926,17 @@ class TestEnergyCorrections:
         )
         assert per_sys.shape == (B,)
 
-        # Each system independently: per-system Path A oracle.
+        # Each system independently: self plus the positive background
+        # magnitude that the composite subtracts.
+        c_bg = (1.0 / 5.526349406e-3) / (8.0 * alpha**2)
         for b in range(B):
             mask = batch_idx == b
             sf_b = _path_a_pack_source_feats(charges[mask], dipoles[mask])
-            expected_b = _multipole_ewald_self_energy_per_atom(sf_b, sigma, alpha).sum()
+            q_b = charges[mask].sum()
+            expected_b = (
+                _multipole_ewald_self_energy_per_atom(sf_b, sigma, alpha).sum()
+                + c_bg * q_b.square() / volume[b]
+            )
             torch.testing.assert_close(per_sys[b], expected_b, rtol=1e-15, atol=1e-15)
 
 
@@ -966,36 +1007,55 @@ class TestEnergyCorrectionsPerAtom:
         )
         torch.testing.assert_close(_reduce(per_atom), reduced, rtol=1e-13, atol=1e-13)
 
-        # Gradient: grad(Σ per-atom, charges) == grad(reduced, charges).
+        # Gradient and charge-volume HVP: the pure-Torch per-atom path must
+        # match the reduced Warp correction op.
         q1 = charges.clone().requires_grad_(True)
-        g_pa = torch.autograd.grad(
+        v1 = volume.clone().requires_grad_(True)
+        g_pa, gv_pa = torch.autograd.grad(
             _reduce(
                 multipole_pme_energy_corrections_per_atom(
                     q1,
                     dipoles,
                     sigma,
                     alpha,
-                    volume,
+                    v1,
                     batch_idx=batch_idx,
                     quadrupoles=quadrupoles,
                 )
             ).sum(),
-            q1,
-        )[0]
+            (q1, v1),
+            create_graph=True,
+        )
         q2 = charges.clone().requires_grad_(True)
-        g_red = torch.autograd.grad(
+        v2 = volume.clone().requires_grad_(True)
+        g_red, gv_red = torch.autograd.grad(
             multipole_pme_energy_corrections(
                 q2,
                 dipoles,
                 sigma=sigma,
                 alpha=alpha,
-                volume=volume,
+                volume=v2,
                 batch_idx=batch_idx,
                 quadrupoles=quadrupoles,
             ).sum(),
-            q2,
-        )[0]
+            (q2, v2),
+            create_graph=True,
+        )
         torch.testing.assert_close(g_pa, g_red, rtol=1e-12, atol=1e-12)
+        torch.testing.assert_close(gv_pa, gv_red, rtol=1e-12, atol=1e-12)
+
+        direction_q = torch.linspace(0.1, 0.8, N, dtype=torch.float64, device=td)
+        direction_v = torch.ones_like(v1) * 0.2
+        h_pa = torch.autograd.grad(
+            (g_pa * direction_q).sum() + (gv_pa * direction_v).sum(),
+            (q1, v1),
+        )
+        h_red = torch.autograd.grad(
+            (g_red * direction_q).sum() + (gv_red * direction_v).sum(),
+            (q2, v2),
+        )
+        torch.testing.assert_close(h_pa[0], h_red[0], rtol=1e-12, atol=1e-12)
+        torch.testing.assert_close(h_pa[1], h_red[1], rtol=1e-12, atol=1e-12)
 
 
 class TestReciprocalSpace:
@@ -1228,14 +1288,21 @@ def _o_n2_csr_neighbors(
 class TestParticleMeshEwald:
     """Top-level composite parity vs ``multipole_ewald_summation``.
 
-    The composite returns ``E_real + E_recip - E_self - E_bg``; Path A
-    omits the background (its reciprocal sum zeroes ``k=0``). For neutral
-    systems the background vanishes and the two agree to the
-    spline-truncation floor.
+    Both routes return ``E_real + E_recip - E_self - E_bg`` and use the
+    zero-mode/direct-space convention. They agree to the spline-truncation
+    floor, including for non-neutral systems.
     """
 
-    def _setup(self, N: int, L: float, seed: int, sigma: float, alpha: float):
-        """Build a neutral random system + matching CSR neighbor list."""
+    def _setup(
+        self,
+        N: int,
+        L: float,
+        seed: int,
+        sigma: float,
+        alpha: float,
+        total_charge: float = 0.0,
+    ):
+        """Build a random system with the requested total charge and CSR list."""
         td = (
             torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
         )
@@ -1243,6 +1310,7 @@ class TestParticleMeshEwald:
         positions_np = rng.uniform(0.5, L - 0.5, size=(N, 3))
         charges_np = rng.uniform(-1.0, 1.0, N)
         charges_np -= charges_np.mean()
+        charges_np += total_charge / N
         dipoles_np = rng.standard_normal((N, 3)) * 0.4
         cell_np = np.eye(3) * L
 
@@ -1275,13 +1343,13 @@ class TestParticleMeshEwald:
     @pytest.mark.parametrize("sigma", [0.8, 1.0, 1.2])
     @pytest.mark.parametrize("spline_order", [4, 5, 6])
     def test_charges_only_matches_path_a(self, sigma, alpha, spline_order):
-        """l_max=0 parity: Path A vs PME on a neutral random system."""
+        """l_max=0 parity: Ewald vs PME on a charged random system."""
         if not torch.cuda.is_available():
             pytest.skip("Path A reference uses Warp launchers (GPU-only)")
         N = 8
         L = 10.0
         _, positions, charges, _, cell, idx_j, nptr, sh, kcut = self._setup(
-            N=N, L=L, seed=0xABCD, sigma=sigma, alpha=alpha
+            N=N, L=L, seed=0xABCD, sigma=sigma, alpha=alpha, total_charge=1.5
         )
         sf = pack_charges_dipoles(charges, None)
 
@@ -1320,7 +1388,7 @@ class TestParticleMeshEwald:
         N = 8
         L = 10.0
         _, positions, charges, dipoles, cell, idx_j, nptr, sh, kcut = self._setup(
-            N=N, L=L, seed=0xBEEF, sigma=sigma, alpha=alpha
+            N=N, L=L, seed=0xBEEF, sigma=sigma, alpha=alpha, total_charge=-1.5
         )
         sf = pack_charges_dipoles(charges, dipoles)
 
@@ -1877,6 +1945,7 @@ class TestBatchedParticleMeshEwald:
             p = rng.uniform(0.5, L - 0.5, (size, 3))
             q = rng.uniform(-1, 1, size)
             q -= q.mean()
+            q += 0.25 / size
             d = rng.standard_normal((size, 3)) * 0.4
             systems.append((p, q, d))
 
@@ -2645,7 +2714,7 @@ def _small_quadrupole_fixture(device: str = "cuda:0"):
         dtype=dtype,
         device=device,
     )
-    charges = torch.tensor([1.0, -1.0, 0.5, -0.5], dtype=dtype, device=device)
+    charges = torch.tensor([1.0, -1.0, 0.5, -0.3], dtype=dtype, device=device)
     dipoles = torch.tensor(
         [[0.1, 0.2, 0.3], [-0.2, 0.1, -0.1], [0.05, 0.05, 0.05], [0.3, -0.2, 0.1]],
         dtype=dtype,
