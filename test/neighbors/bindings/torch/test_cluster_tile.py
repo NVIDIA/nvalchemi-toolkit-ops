@@ -18,7 +18,10 @@
 import pytest
 import torch
 
-from nvalchemiops.neighbors.neighbor_utils import NeighborOverflowError
+from nvalchemiops.neighbors.neighbor_utils import (
+    NeighborOverflowError,
+    TileBufferOverflow,
+)
 from nvalchemiops.torch.neighbors.cell_list import cell_list
 from nvalchemiops.torch.neighbors.cluster_tile import (
     TILE_GROUP_SIZE,
@@ -1699,60 +1702,13 @@ class TestClusterTileCellListParity:
         n, box, cutoff = 128, 12.0, 5.0
         pos = torch.rand(n, 3, dtype=dtype, device=device) * box
         cell = _orthorhombic_cell(box, device, dtype)
-        (
-            sai,
-            mc,
-            spx,
-            spy,
-            spz,
-            gcx,
-            gcy,
-            gcz,
-            gex,
-            gey,
-            gez,
-            num_tiles,
-            trg,
-            tcg,
-        ) = allocate_cluster_tile_list(
-            n, torch.device(device), dtype=dtype, max_tiles_per_group=1
-        )
-        build_cluster_tile_list(
-            pos,
-            cutoff,
-            cell,
-            sai,
-            mc,
-            spx,
-            spy,
-            spz,
-            gcx,
-            gcy,
-            gcz,
-            gex,
-            gey,
-            gez,
-            num_tiles,
-            trg,
-            tcg,
-        )
-        assert int(num_tiles.item()) > int(trg.shape[0])  # overflow really occurred
-        nm = torch.empty((n, 256), dtype=torch.int32, device=device)
-        nn = torch.zeros(n, dtype=torch.int32, device=device)
-        nms = torch.empty((n, 256, 3), dtype=torch.int32, device=device)
-        with pytest.raises(NeighborOverflowError):
-            query_cluster_tile(
-                sai,
-                spx,
-                spy,
-                spz,
-                num_tiles,
-                trg,
-                tcg,
-                cell,
+        with pytest.raises(TileBufferOverflow) as caught:
+            cluster_tile_neighbor_list(
+                pos,
                 cutoff,
-                n,
-                nm,
-                nn,
-                nms,
+                cell,
+                max_neighbors=256,
+                max_tiles_per_group=1,
             )
+        assert caught.value.num_tiles > caught.value.max_tiles
+        assert caught.value.system_index is None

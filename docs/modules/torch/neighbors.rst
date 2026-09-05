@@ -27,6 +27,17 @@ High-Level Interface
 
 .. autofunction:: nvalchemiops.torch.neighbors.neighbor_list
 
+Exceptions
+----------
+
+.. autoexception:: nvalchemiops.torch.neighbors.NeighborOverflowError
+   :no-index:
+   :show-inheritance:
+
+.. autoexception:: nvalchemiops.torch.neighbors.TileBufferOverflow
+   :no-index:
+   :show-inheritance:
+
 Method Selection
 ^^^^^^^^^^^^^^^^
 
