@@ -128,6 +128,7 @@ class TestKVectorsEwald:
         # Every vector should satisfy the half-space condition
         halfspace_ok = (h > 0) | ((h == 0) & (k > 0)) | ((h == 0) & (k == 0) & (m > 0))
         assert jnp.all(halfspace_ok), "All k-vectors must be in the positive half-space"
+        assert not jnp.any(jnp.all(k_vectors == 0.0, axis=1))
 
         # No duplicates
         unique_count = jnp.unique(

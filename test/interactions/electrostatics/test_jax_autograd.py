@@ -22,11 +22,15 @@ import pytest
 jax = pytest.importorskip("jax")
 jax.config.update("jax_enable_x64", True)
 jnp = pytest.importorskip("jax.numpy")
+SymbolicZero = pytest.importorskip("jax.custom_derivatives").SymbolicZero
 
 _autograd = pytest.importorskip(
     "nvalchemiops.jax.interactions.electrostatics._autograd"
 )
 _inject_charge_grad = _autograd._inject_charge_grad
+_ewald = pytest.importorskip("nvalchemiops.jax.interactions.electrostatics.ewald")
+_pme = pytest.importorskip("nvalchemiops.jax.interactions.electrostatics.pme")
+_slab = pytest.importorskip("nvalchemiops.jax.interactions.electrostatics.slab")
 
 
 def test_inject_charge_grad_single_system_uses_per_atom_cotangent():
@@ -73,3 +77,29 @@ def test_inject_charge_grad_batched_uses_per_atom_cotangent():
     charges = jnp.ones(4, dtype=jnp.float64)
     expected = charge_grad * grad_energy
     assert jnp.array_equal(jax.grad(loss)(charges), expected)
+
+
+def test_derivative_seams_recognize_public_symbolic_zero():
+    """Electrostatics custom-JVP seams accept JAX's public zero sentinel."""
+    tangents = []
+
+    @jax.custom_jvp
+    def product(x, y):
+        return x * y
+
+    def product_jvp(primals, input_tangents):
+        tangents.extend(input_tangents)
+        x, y = primals
+        x_tangent, _y_tangent = input_tangents
+        return product(x, y), x_tangent * y
+
+    product.defjvp(product_jvp, symbolic_zeros=True)
+
+    assert jax.grad(lambda x: product(x, jnp.float64(2.0)))(jnp.float64(1.0)) == 2.0
+    symbolic_zero = next(
+        tangent for tangent in tangents if isinstance(tangent, SymbolicZero)
+    )
+
+    assert _ewald._is_symbolic_zero(symbolic_zero)
+    assert _pme._is_symbolic_zero(symbolic_zero)
+    assert _slab._is_symbolic_zero(symbolic_zero)
