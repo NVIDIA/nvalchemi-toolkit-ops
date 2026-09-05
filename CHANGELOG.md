@@ -4,6 +4,8 @@
 
 ### Changed
 
+- JAX DFT-D3 now accepts `D3Parameters` directly as a runtime argument to
+  `jax.jit`, without unpacking and reconstructing its parameter arrays.
 - Raised the minimum supported Warp version to 1.15 and migrated JAX bindings
   from Warp's removed experimental JAX module to its public JAX API, restoring
   compatibility with `warp>=1.15`.
