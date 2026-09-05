@@ -72,6 +72,10 @@ def _is_jax_cpu_array(array: jax.Array) -> bool:
     """Return whether ``array`` is backed by a CPU device."""
     try:
         return all(device.platform == "cpu" for device in array.devices())
+    except jax.errors.ConcretizationTypeError:
+        # A tracer does not expose the device selected for lowering, which may
+        # differ from the global default. Defer platform validation to lowering.
+        return False
     except AttributeError:
         return True
 
@@ -386,8 +390,9 @@ def estimate_neighbor_list_costs(
 
     This launches one Warp kernel over systems (and over atoms when validating
     ``batch_idx`` contiguity) and reads back five costs plus nine flags, so it
-    is **host-only**: call it outside ``jax.jit`` and pass the chosen name as
-    an explicit ``method=`` to run compiled.
+    is **host-only**. Call it outside ``jax.jit``, then select the matching
+    method-specific public function and compile that fixed-capacity call.
+    ``neighbor_list(method=...)`` is an eager convenience API.
     """
     if batch_ptr.ndim != 1:
         raise ValueError("batch_ptr must be a 1-D array")
@@ -507,7 +512,8 @@ def suggest_neighbor_list_method(*args, **kwargs) -> str:
     :func:`nvalchemiops.jax.neighbors._dispatch.estimate_neighbor_list_costs`
     returning only the top-ranked strategy name.  Accepts the same arguments
     and carries the same host-only sync caveat: call outside ``jax.jit`` and
-    pass the result as an explicit ``method=`` argument.
+    use the result to select a method-specific compiled function.
+    ``neighbor_list(method=...)`` is available for eager execution.
 
     Parameters
     ----------

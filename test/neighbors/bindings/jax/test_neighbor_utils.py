@@ -26,6 +26,7 @@ import pytest
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     allocate_cell_list,
     compute_naive_num_shifts,
+    get_fixed_capacity_neighbor_list_from_neighbor_matrix,
     get_neighbor_list_from_neighbor_matrix,
     prepare_batch_idx_ptr,
 )
@@ -252,6 +253,67 @@ class TestGetNeighborListFromNeighborMatrix:
             get_neighbor_list_from_neighbor_matrix(
                 neighbor_matrix, num_neighbors, fill_value=-1
             )
+
+    @pytest.mark.parametrize("capacity, expected_overflow", [(8, False), (3, True)])
+    def test_fixed_capacity_jit_contract(self, capacity, expected_overflow):
+        """Fixed COO conversion is JIT-safe and reports global overflow."""
+        neighbor_matrix = jnp.array(
+            [[1, 2, -1], [0, -1, -1], [1, 0, -1]],
+            dtype=jnp.int32,
+        )
+        num_neighbors = jnp.array([2, 1, 2], dtype=jnp.int32)
+        shifts = jnp.arange(27, dtype=jnp.int32).reshape(3, 3, 3)
+
+        convert = jax.jit(
+            lambda matrix, counts, matrix_shifts: (
+                get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                    matrix,
+                    counts,
+                    capacity=capacity,
+                    neighbor_shift_matrix=matrix_shifts,
+                    fill_value=-1,
+                )
+            )
+        )
+        neighbor_list, neighbor_ptr, neighbor_shifts, overflow = convert(
+            neighbor_matrix,
+            num_neighbors,
+            shifts,
+        )
+
+        assert neighbor_list.shape == (2, capacity)
+        assert neighbor_shifts.shape == (capacity, 3)
+        assert bool(overflow) is expected_overflow
+        expected_stored = min(capacity, 5)
+        assert int(neighbor_ptr[-1]) == expected_stored
+        assert jnp.array_equal(
+            neighbor_list[:, :expected_stored],
+            jnp.array([[0, 0, 1, 2, 2], [1, 2, 0, 1, 0]], dtype=jnp.int32)[
+                :, :expected_stored
+            ],
+        )
+        if capacity > expected_stored:
+            assert jnp.all(neighbor_list[:, expected_stored:] == -1)
+
+    def test_fixed_capacity_reports_matrix_overflow(self):
+        """The device flag includes per-row matrix overflow."""
+        neighbor_matrix = jnp.array([[1, 2]], dtype=jnp.int32)
+        num_neighbors = jnp.array([3], dtype=jnp.int32)
+
+        neighbor_list, neighbor_ptr, overflow = jax.jit(
+            lambda matrix, counts: (
+                get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                    matrix,
+                    counts,
+                    capacity=4,
+                    fill_value=-1,
+                )
+            )
+        )(neighbor_matrix, num_neighbors)
+
+        assert neighbor_list.shape == (2, 4)
+        assert int(neighbor_ptr[-1]) == 2
+        assert bool(overflow)
 
 
 # ==============================================================================

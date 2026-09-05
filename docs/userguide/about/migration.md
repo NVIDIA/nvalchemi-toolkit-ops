@@ -8,6 +8,71 @@ This guide lists user-visible migrations by release.
 
 ## Unreleased
 
+### JAX Neighbor-List Compilation Boundary
+
+Use `neighbor_list(...)` for eager method selection, capacity estimation, and
+overflow retry. Compile a method-specific function such as
+`naive_neighbor_list(...)`, `cell_list(...)`, or
+`cluster_tile_neighbor_list(...)` after choosing the method and capacities.
+
+Replace a compiled unified-dispatch call:
+
+```python
+import jax
+
+from nvalchemiops.jax.neighbors import neighbor_list
+
+
+@jax.jit
+def build_neighbors(positions):
+    return neighbor_list(
+        positions,
+        cutoff,
+        cell=cell,
+        pbc=pbc,
+        method="naive",
+        max_neighbors=max_neighbors,
+    )
+```
+
+with a method-specific compiled call whose allocation and PBC launch metadata
+are prepared eagerly:
+
+```python
+from nvalchemiops.jax.neighbors import (
+    compute_naive_num_shifts,
+    naive_neighbor_list,
+)
+
+
+shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+    cell, cutoff, pbc
+)
+
+
+@jax.jit
+def build_neighbors(positions):
+    return naive_neighbor_list(
+        positions,
+        cutoff,
+        cell=cell,
+        pbc=pbc,
+        max_neighbors=max_neighbors,
+        shift_range_per_dimension=shift_range,
+        num_shifts_per_system=num_shifts,
+        max_shifts_per_system=max_shifts,
+    )
+```
+
+Treat `cell`, `pbc`, cutoff, allocation sizes, and derived PBC launch metadata
+as one specialization. Recompute the metadata and create another specialization
+when `cell`, `pbc`, cutoff, or an allocation-driving value changes. Search
+radii can be JAX arrays; pair-centric cell-list calls additionally close over
+launch metadata derived from those radii. For compiled COO output, pass a
+static `coo_capacity` and check the returned `overflow` flag outside `jax.jit`. See the
+[Neighbor Lists guide](../components/neighborlist.md) for complete
+single-system, batched, matrix, fixed-COO, and cluster-tile contracts.
+
 ## v0.4.1: Energy Output Layout
 
 ### Energy Output Layout (`energy_reduction`)

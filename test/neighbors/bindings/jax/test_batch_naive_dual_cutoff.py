@@ -24,7 +24,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from nvalchemiops.jax.neighbors import batch_naive_neighbor_list_dual_cutoff
+from nvalchemiops.jax.neighbors import (
+    batch_naive_neighbor_list_dual_cutoff,
+    compute_naive_num_shifts,
+)
 
 from .conftest import (
     create_batch_idx_and_ptr_jax,
@@ -236,6 +239,68 @@ class TestBatchNaiveDualCutoffJIT:
         assert nm2.shape == (16, 25)
         assert nn1.shape == (16,)
         assert nn2.shape == (16,)
+
+    @pytest.mark.parametrize("use_pbc", [False, True], ids=["no-pbc", "pbc"])
+    def test_jit_fixed_capacity_coo(self, use_pbc):
+        """Batched dual cutoffs have separate fixed COO capacities under JIT."""
+        positions1, cell1, pbc1 = create_simple_cubic_system_jax(
+            num_atoms=8, cell_size=2.0, dtype=jnp.float32
+        )
+        positions2, cell2, pbc2 = create_simple_cubic_system_jax(
+            num_atoms=8, cell_size=2.5, dtype=jnp.float32
+        )
+        positions = jnp.concatenate([positions1, positions2], axis=0)
+        batch_idx, batch_ptr = create_batch_idx_and_ptr_jax([8, 8])
+        pbc_kwargs = {}
+        if use_pbc:
+            cell = jnp.concatenate([cell1, cell2], axis=0)
+            pbc = jnp.concatenate([pbc1, pbc2], axis=0)
+            shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+                cell,
+                1.5,
+                pbc,
+            )
+            pbc_kwargs = {
+                "cell": cell,
+                "pbc": pbc,
+                "shift_range_per_dimension": shift_range,
+                "num_shifts_per_system": num_shifts,
+                "max_shifts_per_system": max_shifts,
+            }
+
+        @jax.jit
+        def jitted_batch_dual(positions, batch_idx, batch_ptr):
+            return batch_naive_neighbor_list_dual_cutoff(
+                positions,
+                cutoff1=1.0,
+                cutoff2=1.5,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors1=15,
+                max_neighbors2=25,
+                max_atoms_per_system=8,
+                return_neighbor_list=True,
+                coo_capacity=(128, 256),
+                **pbc_kwargs,
+            )
+
+        result = jitted_batch_dual(
+            positions,
+            batch_idx,
+            batch_ptr,
+        )
+        if use_pbc:
+            nl1, ptr1, shifts1, overflow1, nl2, ptr2, shifts2, overflow2 = result
+            assert shifts1.shape == (128, 3)
+            assert shifts2.shape == (256, 3)
+        else:
+            nl1, ptr1, overflow1, nl2, ptr2, overflow2 = result
+
+        assert nl1.shape == (2, 128)
+        assert nl2.shape == (2, 256)
+        assert ptr1.shape == ptr2.shape == (17,)
+        assert not bool(overflow1)
+        assert not bool(overflow2)
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])

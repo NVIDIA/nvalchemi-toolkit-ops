@@ -28,6 +28,7 @@ from nvalchemiops.jax.neighbors import _cluster_tile_preload
 from nvalchemiops.jax.neighbors.cluster_tile import (
     _CLUSTER_TILE_QUERIES,
     TILE_GROUP_SIZE,
+    _tile_buffer_max_tiles_per_group,
     build_cluster_tile_list,
     cluster_tile_neighbor_list,
     estimate_cluster_tile_list_sizes,
@@ -1322,48 +1323,102 @@ class TestJaxClusterTileNeighborListDispatcher:
             )
 
 
-class TestJaxClusterTileTileSizing:
-    """The JAX tile buffer must geometry-size (concrete) / fall back (traced).
+class TestJaxClusterTileCompiledBoundary:
+    """Public compiled cluster-tile behavior with fixed allocation metadata."""
 
-    Guards the fix that stopped the JAX default/auto-select path from silently
-    undercounting dense high-cutoff systems where a fixed
-    ``max_tiles_per_group=256`` cannot cover all neighboring row groups.
-    """
+    def test_eager_geometry_sizing_scales_with_cutoff(self):
+        """The tile-capacity planner covers dense, high-cutoff geometry."""
+        num_atoms = 32768
+        positions = jnp.zeros((num_atoms, 3), dtype=jnp.float32)
+        cell = _orthorhombic_cell(69.8)
 
-    def test_geometry_sizing_scales_with_cutoff_when_concrete(self):
-        from nvalchemiops.jax.neighbors.cluster_tile import (
-            _tile_buffer_max_tiles_per_group,
+        low = _tile_buffer_max_tiles_per_group(
+            positions,
+            num_atoms,
+            6.0,
+            cell,
+        )
+        high = _tile_buffer_max_tiles_per_group(
+            positions,
+            num_atoms,
+            25.0,
+            cell,
         )
 
-        n = 32768  # ngroup = 1024
-        pos = jnp.zeros((n, 3), dtype=jnp.float32)
-        cell = _orthorhombic_cell(69.8)
-        # Low cutoff: floor (256).  High cutoff: must scale up so the tile
-        # buffer (ngroup * min(ngroup, mtpg)) covers the dense tile count.
-        low = _tile_buffer_max_tiles_per_group(pos, n, 6.0, cell)
-        high = _tile_buffer_max_tiles_per_group(pos, n, 25.0, cell)
         assert low >= 256
         assert high > low
-        # 25 A on this cell needs ~ngroup neighbour groups per row (dense).
-        assert high >= 1024
+        assert high >= num_atoms // TILE_GROUP_SIZE
 
-    def test_traced_inputs_fall_back_to_ngroup(self):
-        from nvalchemiops.jax.neighbors.cluster_tile import (
-            _tile_buffer_max_tiles_per_group,
+    def test_jit_traced_positions_match_brute_force(self):
+        """A compiled public call preserves periodic pairs and shifts."""
+        rng = np.random.default_rng(19)
+        positions_np = rng.uniform(0, 8.0, size=(64, 3)).astype(np.float32)
+        positions = jnp.asarray(positions_np)
+        cell = _orthorhombic_cell(8.0)
+        cutoff = 1.5
+
+        @jax.jit
+        def build(positions):
+            return cluster_tile_neighbor_list(
+                positions,
+                cutoff,
+                cell,
+                max_neighbors=32,
+            )
+
+        neighbor_matrix, num_neighbors, shifts = build(positions)
+        got = _matrix_to_pair_set_full(
+            neighbor_matrix,
+            num_neighbors,
+            shifts,
+            positions_np.shape[0],
+        )
+        assert got == _brute_force_pairs_full(
+            positions_np,
+            np.asarray(cell),
+            cutoff,
+            pbc=True,
         )
 
-        n = 2048  # ngroup = 64
-        cell = _orthorhombic_cell(20.0)
+    def test_jit_requires_static_cutoff(self):
+        """A traced cutoff fails with the public fixed-boundary guidance."""
+        positions = jnp.zeros((32, 3), dtype=jnp.float32)
+        cell = _orthorhombic_cell(4.0)
 
-        # Tracing positions (e.g. grad/jit) -> trace-safe ngroup fallback.
-        def f(p):
-            return _tile_buffer_max_tiles_per_group(p, n, 5.0, cell)
+        @jax.jit
+        def build(positions, cutoff):
+            return cluster_tile_neighbor_list(
+                positions,
+                cutoff,
+                cell,
+                max_neighbors=32,
+            )
 
-        captured = {}
+        with pytest.raises(ValueError, match="close over cutoff before tracing"):
+            build(positions, jnp.asarray(1.0, dtype=jnp.float32))
 
-        def grab(p):
-            captured["mtpg"] = f(p)
-            return p.sum()
+    def test_jit_dense_tile_output_has_worst_case_capacity(self):
+        """Compiled tile output contains every dense upper-triangular group pair."""
+        num_groups = 512
+        positions = jnp.zeros(
+            (num_groups * TILE_GROUP_SIZE, 3),
+            dtype=jnp.float32,
+        )
+        cell = _orthorhombic_cell(64.0)
 
-        jax.grad(grab)(jnp.zeros((n, 3), dtype=jnp.float32))
-        assert captured["mtpg"] == 64  # ngroup, capacity ngroup**2 (no overflow)
+        @jax.jit
+        def build(positions):
+            return cluster_tile_neighbor_list(
+                positions,
+                1.0,
+                cell,
+                format="tile",
+            )
+
+        num_tiles, tile_row_group, tile_col_group, *_ = build(positions)
+        tile_count = int(num_tiles[0])
+        expected_tiles = num_groups * (num_groups + 1) // 2
+
+        assert tile_count == expected_tiles
+        assert tile_count <= tile_row_group.shape[0]
+        assert tile_row_group.shape == tile_col_group.shape

@@ -37,6 +37,7 @@ from nvalchemiops.jax.neighbors.neighbor_utils import (
     build_naive_kernel_tables,
     compute_naive_num_shifts,
     coo_pack_pair_geometry,
+    get_fixed_capacity_neighbor_list_from_neighbor_matrix,
     get_neighbor_list_from_neighbor_matrix,
 )
 from nvalchemiops.neighbors.naive.launchers import (
@@ -1443,6 +1444,7 @@ def naive_neighbor_list(
     per_atom_cell_offsets_buffer: jax.Array | None = None,
     strategy: str = "auto",
     *,
+    coo_capacity: int | None = None,
     return_distances: bool = False,
     return_vectors: bool = False,
     neighbor_vectors: jax.Array | None = None,
@@ -1507,20 +1509,16 @@ def naive_neighbor_list(
         reuse to XLA; note that JAX returns a new array rather than mutating the input.
         Must be provided if max_neighbors is not provided.
     shift_range_per_dimension : jax.Array, shape (1, 3), dtype=int32, optional
-        Shift range in each dimension for the system.  For eager topology-only
-        PBC calls these may be omitted and are computed inside the function.
-        For ``jax.jit`` partial/pair-output PBC calls (``return_distances``,
-        ``return_vectors``, ``pair_fn``, or ``target_indices``), precompute via
-        :func:`compute_naive_num_shifts` outside the jit boundary and pass
-        concrete values.
+        Shift range in each dimension for the system. For every PBC call under
+        ``jax.jit``, precompute it via :func:`compute_naive_num_shifts` outside
+        the jit boundary. It must correspond to the call's ``cell``, ``pbc``,
+        and static cutoff. Eager PBC calls may omit it.
     num_shifts_per_system : jax.Array, shape (1,), dtype=int32, optional
         Number of periodic shifts for the system.  Same ``jax.jit``
-        precomputation requirement as ``shift_range_per_dimension`` for
-        partial/pair-output PBC calls.
+        precomputation requirement as ``shift_range_per_dimension``.
     max_shifts_per_system : int, optional
         Maximum per-system shift count.  Same ``jax.jit`` precomputation
-        requirement as ``shift_range_per_dimension`` for partial/pair-output
-        PBC calls.
+        requirement as ``shift_range_per_dimension``.
     rebuild_flags : jax.Array, shape () or (1,), dtype=bool, optional
         Device-side selective-rebuild flag. When provided, the neighbor list is
         recomputed only if ``rebuild_flags[0]`` is True; otherwise existing
@@ -1568,6 +1566,10 @@ def naive_neighbor_list(
     return_neighbor_list : bool, optional - default = False
         If True, convert the neighbor matrix to a neighbor list (idx_i, idx_j) format by
         creating a mask over the fill_value, which can incur a performance penalty.
+    coo_capacity : int, optional
+        Static COO capacity. With ``return_neighbor_list=True``, returns padded
+        fixed-size COO arrays plus a scalar overflow flag and is compatible
+        with ``jax.jit``. If omitted, returns compact data-dependent COO arrays.
     neighbor_distances : jax.Array, shape (num_rows, max_neighbors), optional
         Pre-shaped distance output for ``return_distances=True`` or ``pair_fn``.
     neighbor_vectors : jax.Array, shape (num_rows, max_neighbors, 3), optional
@@ -1613,7 +1615,8 @@ def naive_neighbor_list(
         - With PBC, matrix format: ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``
         - With PBC, list format: ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)``
 
-        Requested pair outputs follow the applicable topology tuple in this
+        When ``coo_capacity`` is supplied, a scalar ``overflow`` flag follows
+        the topology tuple. Requested pair outputs then follow in this
         order: ``neighbor_distances`` when ``return_distances=True``, then
         ``neighbor_vectors`` when ``return_vectors=True``, then
         ``(pair_energies, pair_forces)`` when ``pair_fn`` is set.
@@ -1733,15 +1736,21 @@ def naive_neighbor_list(
     ``positions_wrapped`` and ``per_atom_cell_offsets`` must also be passed
     in with stable buffer pointers; the simplest way is to pre-allocate them
     once and capture them in the jit'ed closure (see the example above).
-    For ``jax.jit`` partial/pair-output PBC calls, also precompute
+    For every ``jax.jit`` PBC call, also precompute
     ``shift_range_per_dimension``, ``num_shifts_per_system``, and
     ``max_shifts_per_system`` via :func:`compute_naive_num_shifts` outside
-    the jit boundary.  Eager topology-only PBC calls may omit those kwargs.
+    the jit boundary. Eager PBC calls may omit those kwargs.
     Letting any of these allocate fresh inside ``naive_neighbor_list``
-    silently degrades the wrapped path to cold-capture-per-call (correct,
-    but significantly slower than the proposal's measured replay numbers).
+    prevents stable graph replay and adds repeated capture overhead.
     """
     graph_mode = _validate_graph_mode(graph_mode)
+
+    if coo_capacity is not None:
+        coo_capacity = int(coo_capacity)
+        if not return_neighbor_list:
+            raise ValueError("coo_capacity requires return_neighbor_list=True")
+        if coo_capacity < 0:
+            raise ValueError("coo_capacity must be non-negative")
 
     if strategy not in {"auto", "scalar", "tile"}:
         raise ValueError(
@@ -1929,7 +1938,28 @@ def naive_neighbor_list(
             distances_out, vectors_out, nm_out, nn_out, shifts_out = route_out
             pe_out = pf_out = None
         if return_neighbor_list:
-            if pbc is not None:
+            if coo_capacity is not None and pbc is not None:
+                nl, nptr, nl_shifts, overflow = (
+                    get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                        nm_out,
+                        num_neighbors=nn_out,
+                        capacity=coo_capacity,
+                        neighbor_shift_matrix=shifts_out,
+                        fill_value=int(fill_value),
+                    )
+                )
+                base = (nl, nptr, nl_shifts, overflow)
+            elif coo_capacity is not None:
+                nl, nptr, overflow = (
+                    get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                        nm_out,
+                        num_neighbors=nn_out,
+                        capacity=coo_capacity,
+                        fill_value=int(fill_value),
+                    )
+                )
+                base = (nl, nptr, overflow)
+            elif pbc is not None:
                 nl, nptr, nl_shifts = get_neighbor_list_from_neighbor_matrix(
                     nm_out,
                     num_neighbors=nn_out,
@@ -1948,10 +1978,12 @@ def naive_neighbor_list(
             # with ``nl``.  Eager-only, like the index conversion.
             active = nm_out != int(fill_value)
             distances_out, vectors_out = coo_pack_pair_geometry(
-                active, distances_out, vectors_out
+                active, distances_out, vectors_out, capacity=coo_capacity
             )
             if pair_fn is not None:
-                pe_out, pf_out = coo_pack_pair_geometry(active, pe_out, pf_out)
+                pe_out, pf_out = coo_pack_pair_geometry(
+                    active, pe_out, pf_out, capacity=coo_capacity
+                )
         elif pbc is not None:
             base = (nm_out, nn_out, shifts_out)
         else:
@@ -2084,23 +2116,26 @@ def naive_neighbor_list(
             if pbc is not None:
                 neighbor_matrix_shifts = neighbor_matrix_shifts.at[:].set(jnp.int32(0))
         if return_neighbor_list:
+            output_pairs = 0 if coo_capacity is None else int(coo_capacity)
+            overflow = jnp.zeros((), dtype=jnp.bool_)
             if pbc is not None:
-                return (
-                    jnp.zeros((2, 0), dtype=jnp.int32),
+                base = (
+                    jnp.full((2, output_pairs), fill_value, dtype=jnp.int32),
                     jnp.zeros(
                         (positions.shape[0] + 1,),
                         dtype=jnp.int32,
                     ),
-                    jnp.zeros((0, 3), dtype=jnp.int32),
+                    jnp.zeros((output_pairs, 3), dtype=jnp.int32),
                 )
             else:
-                return (
-                    jnp.zeros((2, 0), dtype=jnp.int32),
+                base = (
+                    jnp.full((2, output_pairs), fill_value, dtype=jnp.int32),
                     jnp.zeros(
                         (positions.shape[0] + 1,),
                         dtype=jnp.int32,
                     ),
                 )
+            return (*base, overflow) if coo_capacity is not None else base
         else:
             if pbc is not None:
                 return neighbor_matrix, num_neighbors, neighbor_matrix_shifts
@@ -2519,7 +2554,22 @@ def naive_neighbor_list(
                 )
 
     if return_neighbor_list:
-        if pbc is not None:
+        if coo_capacity is not None and pbc is not None:
+            return get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                neighbor_matrix,
+                num_neighbors=num_neighbors,
+                capacity=coo_capacity,
+                neighbor_shift_matrix=neighbor_matrix_shifts,
+                fill_value=fill_value,
+            )
+        elif coo_capacity is not None:
+            return get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                neighbor_matrix,
+                num_neighbors=num_neighbors,
+                capacity=coo_capacity,
+                fill_value=fill_value,
+            )
+        elif pbc is not None:
             neighbor_list, neighbor_ptr, neighbor_list_shifts = (
                 get_neighbor_list_from_neighbor_matrix(
                     neighbor_matrix,
