@@ -413,7 +413,7 @@ Removes the spurious self-interaction introduced by the Gaussian charge distribu
 **Background Correction** (for non-neutral systems):
 
 ```{math}
-E_{\text{background}} = \frac{\pi}{2\alpha^2 V} Q_{\text{total}}^2
+E_{\text{background}} = \frac{\mathrm{FIELD\_CONSTANT}}{8\alpha^2 V} Q_{\text{total}}^2
 ```
 
 ### Usage Examples
@@ -1673,14 +1673,26 @@ computes the full periodic multipole energy as a single composite call. It uses
 the GTO-Ewald split
 
 $$
-E = E_{\text{real}} + E_{\text{recip}} - E_{\text{self}},
+E = E_{\text{real}} + E_{\text{recip}} - E_{\text{self}} - E_{\text{background}},
 $$
 
 where the real-space term is a short-ranged pair sum over a neighbor list, the
 reciprocal term is a direct $k$-space sum, and the self term removes the
-spurious self-interaction of each smeared multipole. It supports $l_{\max}=0/1/2$
-energy, forces, stress, and force-loss ($\texttt{create\_graph=True}$) training,
-for both single systems and batches (via `batch_idx`).
+spurious self-interaction of each smeared multipole. For a non-neutral system,
+the positive correction subtracted from the split sum is
+
+$$
+E_{\text{background}} = \frac{\mathrm{FIELD\_CONSTANT}}{8\alpha^2 V} Q^2.
+$$
+
+This is the uniform-neutralizing-background convention. It makes the split
+Ewald and PME routes agree with `multipole_electrostatic_energy`, whose direct
+reciprocal sum omits the $k=0$ mode. The resulting charged-cell energy is a
+well-defined periodic reference, but its absolute value remains dependent on
+total charge, cell volume, and that convention; it is not a model of explicit
+counterions. It supports $l_{\max}=0/1/2$ energy, forces, stress, and force-loss
+($\texttt{create\_graph=True}$) training, for both single systems and batches
+(via `batch_idx`).
 
 The real-space term requires a CSR-style neighbor list: a flat `idx_j` (target
 atoms), a `neighbor_ptr` row pointer of shape $(N+1,)$, and per-pair PBC
@@ -2655,8 +2667,9 @@ higher-order support is limited to tested position and charge scalar losses.
 JAX PME stress/cell/strain, alpha, and precomputed-metadata higher-order
 derivatives are unsupported until implemented and tested, including high-level
 `particle_mesh_ewald(..., slab_correction=True)` calls. Energy-returning Ewald,
-PME, and slab paths support non-uniform per-atom losses such as `loss = (weights
-* energies).sum()` for positions, charges, and supported cell derivatives.
+PME, and slab paths support non-uniform per-atom losses such as
+`loss = (weights * energies).sum()` for positions, charges, and supported cell
+derivatives.
 Precomputed static caches still do not recover the derivative of how those
 caches were generated; omit the cache when that derivative is part of the
 intended loss.
@@ -3188,7 +3201,7 @@ For periodic systems, overall charge neutrality is required for the electrostati
 energy to be well-defined. Non-neutral systems include a background correction:
 
 ```{math}
-E_{\text{background}} = \frac{\pi}{2\alpha^2 V} Q_{\text{total}}^2
+E_{\text{background}} = \frac{\mathrm{FIELD\_CONSTANT}}{8\alpha^2 V} Q_{\text{total}}^2
 ```
 
 This term represents the interaction of the charged system with a uniform
