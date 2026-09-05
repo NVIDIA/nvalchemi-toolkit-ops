@@ -8,6 +8,31 @@ This guide lists user-visible migrations by release.
 
 ## Unreleased
 
+### Cluster-Tile Buffer Capacity
+
+Cluster-tile construction writes candidate tile pairs to a fixed-size
+intermediate buffer before producing a neighbor matrix or COO list. Previously,
+some eager return paths did not check whether construction filled that buffer,
+while existing guards reported the condition as `NeighborOverflowError`. All
+eager Torch and JAX cluster-tile paths now raise `TileBufferOverflow` when the
+required tile-pair count exceeds the allocated capacity. The exception provides
+the required count as `num_tiles`, the capacity as `max_tiles`, and the affected
+`system_index` for a segmented batch.
+
+The convenience functions continue to estimate the buffer size when
+`max_tiles_per_group` is `None`. An explicit value that is too small now raises
+instead of returning incomplete neighbor output. The
+{ref}`cluster-tile-buffer-capacity` section explains how the parameter changes
+the allocation and how to calculate a retry value from the exception.
+
+JAX transformations require `max_tiles_per_group` to be a positive static
+Python integer because it determines output shapes. Compiled output shapes
+remain fixed, and a compiled function cannot turn a data-dependent tile count
+into a Python exception. To detect an undersized bound, a compiled workflow can
+use the lower-level build and query functions to return the tile counts, then
+compare those counts with the buffer capacities after leaving the compiled
+region.
+
 ## v0.4.1: Energy Output Layout
 
 ### Energy Output Layout (`energy_reduction`)

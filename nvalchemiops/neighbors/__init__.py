@@ -55,6 +55,7 @@ from nvalchemiops.neighbors.naive import (
 )
 from nvalchemiops.neighbors.neighbor_utils import (
     NeighborOverflowError,
+    TileBufferOverflow,
     compute_naive_num_shifts,
     estimate_max_neighbors,
     zero_array,
@@ -123,6 +124,7 @@ def __getattr__(name: str):  # pragma: no cover
 # selectors live only at their canonical package paths.
 __all__ = [
     "NeighborOverflowError",
+    "TileBufferOverflow",
     "TILE_GROUP_SIZE",
     "batch_build_cell_list",
     "batch_build_cluster_tile_list",

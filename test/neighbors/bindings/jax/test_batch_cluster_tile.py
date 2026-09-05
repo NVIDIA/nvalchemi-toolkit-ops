@@ -37,6 +37,7 @@ from nvalchemiops.jax.neighbors.batch_cluster_tile import (
     estimate_batch_max_tiles_per_group,
 )
 from nvalchemiops.neighbors.cluster_tile import estimate_max_tiles_per_group
+from nvalchemiops.neighbors.neighbor_utils import TileBufferOverflow
 
 from .conftest import requires_gpu
 
@@ -153,6 +154,7 @@ class TestBatchTileNeighborListCorrectness:
                 cell_batch,
                 batch_ptr,
                 max_neighbors=32,
+                max_tiles_per_group=1,
             )
             return (
                 neighbor_matrix.astype(pos.dtype).sum()
@@ -280,6 +282,7 @@ class TestBatchClusterTileGraphPreload:
                 cell_batch,
                 batch_ptr,
                 max_neighbors=32,
+                max_tiles_per_group=1,
             )
 
         neighbor_matrix, num_neighbors, _shifts = query(positions)
@@ -474,6 +477,55 @@ class TestBatchTileNeighborListErrors:
         with pytest.raises(ValueError, match="cell_batch"):
             batch_cluster_tile_neighbor_list(positions, 1.0, cell_batch, batch_ptr)
 
+    def test_tile_buffer_overflow_raises(self):
+        """Compact and segmented eager paths report tile-buffer overflow."""
+        positions = jnp.zeros((128, 3), dtype=jnp.float32)
+        cell_batch = jnp.eye(3, dtype=jnp.float32)[None] * 12.0
+        batch_ptr = jnp.array([0, 128], dtype=jnp.int32)
+        for return_distances in (False, True):
+            with pytest.raises(TileBufferOverflow) as caught:
+                batch_cluster_tile_neighbor_list(
+                    positions,
+                    5.0,
+                    cell_batch,
+                    batch_ptr,
+                    max_neighbors=256,
+                    max_tiles_per_group=1,
+                    return_distances=return_distances,
+                )
+            assert caught.value.num_tiles > caught.value.max_tiles
+            assert caught.value.system_index is None
+
+        segmented_positions = jnp.zeros((160, 3), dtype=jnp.float32)
+        segmented_cells = jnp.tile(
+            jnp.eye(3, dtype=jnp.float32)[None] * 12.0, (2, 1, 1)
+        )
+        segmented_ptr = jnp.array([0, 32, 160], dtype=jnp.int32)
+        with pytest.raises(TileBufferOverflow) as segmented:
+            batch_cluster_tile_neighbor_list(
+                segmented_positions,
+                5.0,
+                segmented_cells,
+                segmented_ptr,
+                max_neighbors=256,
+                rebuild_flags=jnp.ones(2, dtype=jnp.bool_),
+                tile_offsets=jnp.array([0, 1, 2], dtype=jnp.int32),
+                previous_tile_counts=jnp.zeros(2, dtype=jnp.int32),
+                previous_num_tiles=jnp.zeros(1, dtype=jnp.int32),
+                previous_tile_row_group=jnp.zeros(2, dtype=jnp.int32),
+                previous_tile_col_group=jnp.zeros(2, dtype=jnp.int32),
+                previous_tile_system=jnp.zeros(2, dtype=jnp.int32),
+                previous_neighbor_matrix=jnp.empty((160, 256), dtype=jnp.int32),
+                previous_num_neighbors=jnp.zeros(160, dtype=jnp.int32),
+                previous_neighbor_matrix_shifts=jnp.empty(
+                    (160, 256, 3), dtype=jnp.int32
+                ),
+                max_tiles_per_group=1,
+            )
+        assert segmented.value.system_index == 1
+        assert segmented.value.max_tiles == 1
+        assert segmented.value.num_tiles > segmented.value.max_tiles
+
 
 class TestEstimateBatchSizes:
     """Pure-Python sizing helper tests."""
@@ -615,6 +667,7 @@ class TestJaxBatchClusterTileAutograd:
                 1.5,
                 cell_batch,
                 batch_ptr,
+                max_tiles_per_group=2,
                 return_distances=True,
                 return_vectors=True,
             )
@@ -633,6 +686,7 @@ class TestJaxBatchClusterTileAutograd:
                 1.5,
                 c,
                 batch_ptr,
+                max_tiles_per_group=2,
                 return_distances=True,
                 return_vectors=True,
             )
@@ -663,6 +717,7 @@ class TestJaxBatchClusterTileAutograd:
                 5.0,
                 cell_batch,
                 batch_ptr,
+                max_tiles_per_group=2,
                 return_distances=True,
                 return_vectors=True,
             )
@@ -706,6 +761,7 @@ class TestJaxBatchClusterTileAutograd:
                 1.5,
                 cell_batch,
                 batch_ptr,
+                max_tiles_per_group=2,
                 return_distances=True,
                 return_vectors=True,
             )

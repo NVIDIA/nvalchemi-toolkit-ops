@@ -29,6 +29,7 @@ from warp.jax_experimental import jax_kernel
 
 from nvalchemiops.neighbors.neighbor_utils import (
     NeighborOverflowError,
+    TileBufferOverflow,
     estimate_max_neighbors,
     get_compute_naive_num_shifts_kernel,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "allocate_cell_list",
     "estimate_max_neighbors",
     "NeighborOverflowError",
+    "TileBufferOverflow",
 ]
 
 

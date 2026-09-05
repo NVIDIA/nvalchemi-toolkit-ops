@@ -225,9 +225,50 @@ class NeighborOverflowError(Exception):
         self.system_index = system_index
 
 
+class TileBufferOverflow(Exception):
+    """Raised when an eager cluster-tile build exceeds its tile-pair buffer.
+
+    See :ref:`cluster-tile-buffer-capacity` for allocation and retry sizing.
+
+    Parameters
+    ----------
+    max_tiles : int
+        Number of tile-pair entries the compact buffer or overflowing system
+        segment can hold.
+    num_tiles : int
+        Number of tile-pair entries discovered by the compact build or
+        overflowing system.
+    system_index : int, optional
+        System index for a segmented batched tile buffer.
+    """
+
+    def __init__(self, max_tiles: int, num_tiles: int, system_index: int | None = None):
+        if system_index is None:
+            message = (
+                f"Cluster-tile construction required {num_tiles} tile-pair "
+                f"entries, but the buffer holds {max_tiles}. Allocate at least "
+                f"{num_tiles} entries before retrying. If you did not supply "
+                "the tile arrays, increase max_tiles_per_group."
+            )
+        else:
+            message = (
+                f"Cluster-tile construction for system {system_index} required "
+                f"{num_tiles} tile-pair entries, but its segment holds "
+                f"{max_tiles}. Reallocate the segmented tile state so that "
+                f"system has at least {num_tiles} entries before retrying. "
+                "When using estimate_batch_cluster_tile_segments, increase "
+                "max_tiles_per_group."
+            )
+        super().__init__(message)
+        self.max_tiles = max_tiles
+        self.num_tiles = num_tiles
+        self.system_index = system_index
+
+
 __all__ = [
     "DTYPE_INFO_ALL",
     "NeighborOverflowError",
+    "TileBufferOverflow",
     "dtype_info",
     "empty_sentinel",
     "compute_naive_num_shifts",
