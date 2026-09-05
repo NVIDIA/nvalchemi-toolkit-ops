@@ -119,6 +119,31 @@ def create_dipole_system(dtype=jnp.float64, separation=6.0, cell_size=10.0):
     )
 
 
+def create_skewed_dipole_system(dtype=jnp.float64):
+    """Create a neutral dipole with a triclinic periodic cell."""
+    cell = jnp.array(
+        [[[8.0, 0.0, 0.0], [1.5, 9.0, 0.0], [0.5, 1.0, 10.0]]],
+        dtype=dtype,
+    )
+    fractional_positions = jnp.array([[0.20, 0.20, 0.20], [0.56, 0.35, 0.42]])
+    positions = fractional_positions.astype(dtype) @ cell[0]
+    charges = jnp.array([1.0, -1.0], dtype=dtype)
+    neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
+        positions,
+        5.0,
+        cell,
+        jnp.array([[True, True, True]]),
+    )
+    return (
+        positions,
+        charges,
+        cell,
+        neighbor_matrix,
+        num_neighbors,
+        neighbor_matrix_shifts,
+    )
+
+
 def create_simple_system(dtype=jnp.float64, num_atoms=4, cell_size=10.0):
     """Create a simple test system with random positions and neutral charges.
 
@@ -985,7 +1010,7 @@ class TestEwaldSummationAPI:
         assert jnp.allclose(hybrid_grad, direct_charge_grads, rtol=1e-5, atol=1e-7)
 
     def test_position_hvp_matches_full_vector_finite_difference(self, device):
-        """Full-Ewald position HVP matches full-vector finite differences."""
+        """Skew-cell Ewald position HVP matches full-vector finite differences."""
         (
             positions,
             charges,
@@ -993,10 +1018,11 @@ class TestEwaldSummationAPI:
             neighbor_matrix,
             _num_neighbors,
             neighbor_matrix_shifts,
-        ) = create_dipole_system()
+        ) = create_skewed_dipole_system()
 
         alpha = 0.3
         k_cutoff = 8.0
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=k_cutoff)
 
         def energy_sum(pos):
             return ewald_summation(
@@ -1004,7 +1030,7 @@ class TestEwaldSummationAPI:
                 charges=charges,
                 cell=cell,
                 alpha=alpha,
-                k_cutoff=k_cutoff,
+                k_vectors=k_vectors,
                 neighbor_matrix=neighbor_matrix,
                 neighbor_matrix_shifts=neighbor_matrix_shifts,
             ).sum()
@@ -1022,9 +1048,15 @@ class TestEwaldSummationAPI:
 
         assert jnp.all(jnp.isfinite(hvp))
         assert jnp.allclose(hvp, fd, rtol=2e-3, atol=1e-6)
+        assert jnp.allclose(
+            jax.jit(lambda pos: jax.jvp(grad_fn, (pos,), (direction,))[1])(positions),
+            hvp,
+            rtol=1e-5,
+            atol=1e-7,
+        )
 
     def test_charge_hvp_matches_full_vector_finite_difference(self, device):
-        """Full-Ewald charge HVP matches full-vector finite differences."""
+        """Skew-cell Ewald charge HVP matches full-vector finite differences."""
         (
             positions,
             charges,
@@ -1032,7 +1064,7 @@ class TestEwaldSummationAPI:
             neighbor_matrix,
             _num_neighbors,
             neighbor_matrix_shifts,
-        ) = create_dipole_system()
+        ) = create_skewed_dipole_system()
 
         alpha = 0.3
         k_cutoff = 8.0
