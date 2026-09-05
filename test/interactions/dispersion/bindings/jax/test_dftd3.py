@@ -310,27 +310,51 @@ class TestDFT_D3Basic:
         assert jnp.all(jnp.isfinite(forces))
         assert jnp.all(jnp.isfinite(coord_num))
 
-    def test_empty_system(self, functional_params, d3_params):
-        """Test empty system (edge case)."""
+    @pytest.mark.parametrize("neighbor_format", ["matrix", "list"])
+    def test_empty_system(self, functional_params, d3_params, neighbor_format, device):
+        """Test empty systems through eager and JIT DFT-D3 calls."""
         positions = jnp.zeros((0, 3), dtype=jnp.float32)
         numbers = jnp.zeros((0,), dtype=jnp.int32)
-        neighbor_matrix = jnp.zeros((0, 1), dtype=jnp.int32)
+        if neighbor_format == "matrix":
+            neighbor_kwargs = {
+                "neighbor_matrix": jnp.zeros((0, 1), dtype=jnp.int32),
+            }
+        else:
+            neighbor_kwargs = {
+                "neighbor_list": jnp.zeros((2, 0), dtype=jnp.int32),
+                "neighbor_ptr": jnp.zeros(1, dtype=jnp.int32),
+            }
 
-        result = dftd3(
+        eager_result = dftd3(
             positions,
             numbers,
             a1=functional_params["a1"],
             a2=functional_params["a2"],
             s8=functional_params["s8"],
-            neighbor_matrix=neighbor_matrix,
             d3_params=d3_params,
+            **neighbor_kwargs,
         )
 
-        energy, forces, coord_num = result[0], result[1], result[2]
+        @jax.jit
+        def jitted_dftd3(positions, numbers, d3_params):
+            return dftd3(
+                positions,
+                numbers,
+                a1=functional_params["a1"],
+                a2=functional_params["a2"],
+                s8=functional_params["s8"],
+                d3_params=d3_params,
+                **neighbor_kwargs,
+            )
+
+        result = jitted_dftd3(positions, numbers, d3_params)
+        energy, forces, coord_num = result
 
         assert energy.shape == (1,)
         assert forces.shape == (0, 3)
         assert coord_num.shape == (0,)
+        for eager_value, jitted_value in zip(eager_result, result, strict=True):
+            assert jnp.allclose(jitted_value, eager_value)
 
     @pytest.mark.parametrize("compute_virial", [False, True])
     def test_csr_zero_edges_preserve_per_atom_shapes(
@@ -1330,17 +1354,9 @@ class TestDFT_D3JIT:
         numbers = jnp.array(h2_system["numbers"], dtype=jnp.int32)
         neighbor_matrix = jnp.array(h2_system["nbmat"], dtype=jnp.int32)
 
-        rcov = d3_params.rcov
-        r4r2 = d3_params.r4r2
-        c6ab = d3_params.c6ab
-        cn_ref = d3_params.cn_ref
-
-        # Define jitted function with array parameters as arguments
         # Scalar parameters must be static literals for Warp FFI compatibility
         @jax.jit
-        def jitted_dftd3(positions, numbers, neighbor_matrix, rcov, r4r2, c6ab, cn_ref):
-            # Construct D3Parameters inside jitted function
-            d3_params_jit = D3Parameters(rcov=rcov, r4r2=r4r2, c6ab=c6ab, cn_ref=cn_ref)
+        def jitted_dftd3(positions, numbers, neighbor_matrix, d3_params):
             return dftd3(
                 positions,
                 numbers,
@@ -1351,15 +1367,24 @@ class TestDFT_D3JIT:
                 k3=-4.0,
                 s6=1.0,
                 neighbor_matrix=neighbor_matrix,
-                d3_params=d3_params_jit,
+                d3_params=d3_params,
             )
 
-        # Call jitted function
-        result = jitted_dftd3(
-            positions, numbers, neighbor_matrix, rcov, r4r2, c6ab, cn_ref
+        eager_result = dftd3(
+            positions,
+            numbers,
+            a1=0.4,
+            a2=4.0,
+            s8=0.8,
+            k1=16.0,
+            k3=-4.0,
+            s6=1.0,
+            neighbor_matrix=neighbor_matrix,
+            d3_params=d3_params,
         )
+        result = jitted_dftd3(positions, numbers, neighbor_matrix, d3_params)
 
-        energy, forces, coord_num = result[0], result[1], result[2]
+        energy, forces, coord_num = result
 
         # Check output shapes
         assert energy.shape == (1,)
@@ -1370,9 +1395,43 @@ class TestDFT_D3JIT:
         assert jnp.all(jnp.isfinite(energy))
         assert jnp.all(jnp.isfinite(forces))
         assert jnp.all(jnp.isfinite(coord_num))
+        for eager_value, jitted_value in zip(eager_result, result, strict=True):
+            assert jnp.allclose(jitted_value, eager_value, rtol=1e-5, atol=1e-7)
 
         # Dispersion should be attractive (negative)
         assert energy[0] < 0.0
+
+        changed_params = D3Parameters(
+            rcov=d3_params.rcov,
+            r4r2=d3_params.r4r2,
+            c6ab=d3_params.c6ab * 1.1,
+            cn_ref=d3_params.cn_ref,
+        )
+        changed_eager_result = dftd3(
+            positions,
+            numbers,
+            a1=0.4,
+            a2=4.0,
+            s8=0.8,
+            k1=16.0,
+            k3=-4.0,
+            s6=1.0,
+            neighbor_matrix=neighbor_matrix,
+            d3_params=changed_params,
+        )
+        changed_result = jitted_dftd3(
+            positions,
+            numbers,
+            neighbor_matrix,
+            changed_params,
+        )
+        for eager_value, jitted_value in zip(
+            changed_eager_result,
+            changed_result,
+            strict=True,
+        ):
+            assert jnp.allclose(jitted_value, eager_value, rtol=1e-5, atol=1e-7)
+        assert not jnp.allclose(changed_result[0], energy)
 
     def test_jit_neighbor_list(self, h2_system, functional_params, d3_params, device):
         """Test H2 with neighbor list format works with jax.jit."""
@@ -1383,17 +1442,9 @@ class TestDFT_D3JIT:
         neighbor_list = jnp.array([[0, 1], [1, 0]], dtype=jnp.int32)
         neighbor_ptr = jnp.array([0, 1, 2], dtype=jnp.int32)
 
-        rcov = d3_params.rcov
-        r4r2 = d3_params.r4r2
-        c6ab = d3_params.c6ab
-        cn_ref = d3_params.cn_ref
-
-        # Define jitted function with array parameters as arguments
         # Scalar parameters must be static literals for Warp FFI compatibility
         @jax.jit
-        def jitted_dftd3(positions, numbers, nl, nptr, rcov, r4r2, c6ab, cn_ref):
-            # Construct D3Parameters inside jitted function
-            d3_params_jit = D3Parameters(rcov=rcov, r4r2=r4r2, c6ab=c6ab, cn_ref=cn_ref)
+        def jitted_dftd3(positions, numbers, nl, nptr, d3_params):
             return dftd3(
                 positions,
                 numbers,
@@ -1405,15 +1456,31 @@ class TestDFT_D3JIT:
                 s6=1.0,
                 neighbor_list=nl,
                 neighbor_ptr=nptr,
-                d3_params=d3_params_jit,
+                d3_params=d3_params,
             )
 
-        # Call jitted function
+        eager_result = dftd3(
+            positions,
+            numbers,
+            a1=0.4,
+            a2=4.0,
+            s8=0.8,
+            k1=16.0,
+            k3=-4.0,
+            s6=1.0,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            d3_params=d3_params,
+        )
         result = jitted_dftd3(
-            positions, numbers, neighbor_list, neighbor_ptr, rcov, r4r2, c6ab, cn_ref
+            positions,
+            numbers,
+            neighbor_list,
+            neighbor_ptr,
+            d3_params,
         )
 
-        energy, forces, coord_num = result[0], result[1], result[2]
+        energy, forces, coord_num = result
 
         # Check output shapes
         assert energy.shape == (1,)
@@ -1424,6 +1491,8 @@ class TestDFT_D3JIT:
         assert jnp.all(jnp.isfinite(energy))
         assert jnp.all(jnp.isfinite(forces))
         assert jnp.all(jnp.isfinite(coord_num))
+        for eager_value, jitted_value in zip(eager_result, result, strict=True):
+            assert jnp.allclose(jitted_value, eager_value, rtol=1e-5, atol=1e-7)
 
         # Dispersion should be attractive (negative)
         assert energy[0] < 0.0
@@ -1444,6 +1513,7 @@ class TestDFT_D3JIT:
             neighbor_ptr,
             cell,
             unit_shifts,
+            d3_params,
         ):
             return dftd3(
                 positions,
@@ -1466,6 +1536,7 @@ class TestDFT_D3JIT:
             jnp.zeros(3, dtype=jnp.int32),
             jnp.eye(3, dtype=jnp.float32)[jnp.newaxis, :, :],
             jnp.empty((0, 3), dtype=jnp.int32),
+            d3_params,
         )
 
         assert result[0].shape == (1,)

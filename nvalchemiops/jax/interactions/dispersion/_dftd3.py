@@ -1102,6 +1102,13 @@ class D3Parameters:
         return self.rcov.shape[0] - 1
 
 
+jax.tree_util.register_dataclass(
+    D3Parameters,
+    data_fields=["rcov", "r4r2", "c6ab", "cn_ref"],
+    meta_fields=["interp_mesh"],
+)
+
+
 # ==============================================================================
 # JAX Wrapper Functions
 # ==============================================================================
