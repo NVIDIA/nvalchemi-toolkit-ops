@@ -1588,27 +1588,50 @@ class TestNeighborListReturnFormats:
             slot_idx = torch.tensor([0, 1, 3, 0, 2])
             assert torch.equal(result[2], shifts[row_idx, slot_idx])
 
-    def test_fullgraph_compiled_conversion_handles_changing_edge_counts(self, device):
-        """Fullgraph conversion supports dynamic COO lengths across calls."""
+    @pytest.mark.parametrize("with_shifts", [False, True], ids=["no_shifts", "shifts"])
+    def test_fullgraph_compiled_conversion_handles_changing_edge_counts(
+        self, device, with_shifts
+    ):
+        """Fullgraph conversion preserves optional shifts across dynamic COO lengths."""
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA is required for this test parameter")
 
         @torch.compile(fullgraph=True)
-        def convert(matrix, counts):
-            return get_neighbor_list_from_neighbor_matrix(matrix, counts)
+        def convert(matrix, counts, shifts):
+            return get_neighbor_list_from_neighbor_matrix(
+                matrix,
+                counts,
+                neighbor_shift_matrix=shifts if with_shifts else None,
+            )
 
+        first_shifts = torch.arange(18, dtype=torch.int32, device=device).reshape(
+            2, 3, 3
+        )
         first = convert(
             torch.tensor([[0, 1, -1], [-1, -1, -1]], dtype=torch.int32, device=device),
             torch.tensor([2, 0], dtype=torch.int32, device=device),
+            first_shifts,
         )
+        second_shifts = torch.arange(
+            100, 118, dtype=torch.int32, device=device
+        ).reshape(2, 3, 3)
         second = convert(
             torch.tensor([[0, -1, -1], [2, 3, -1]], dtype=torch.int32, device=device),
             torch.tensor([1, 2], dtype=torch.int32, device=device),
+            second_shifts,
         )
         assert first[0].shape == (2, 2)
         assert second[0].shape == (2, 3)
         assert first[1].tolist() == [0, 2, 2]
         assert second[1].tolist() == [0, 1, 3]
+        if with_shifts:
+            assert torch.equal(first[2], first_shifts[0, :2])
+            assert torch.equal(
+                second[2],
+                torch.stack(
+                    [second_shifts[0, 0], second_shifts[1, 0], second_shifts[1, 1]]
+                ),
+            )
 
     def test_compiled_overflow_raises_on_cpu(self):
         """Compiled CPU overflow uses the assertion path, not eager fields."""
