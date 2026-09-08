@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- Torch matrix-to-COO conversion now supports `torch.compile(fullgraph=True)`
+  when the output edge count changes. Torch extras now require PyTorch >=2.10.
+
 ## 0.4.1 - 2026-08-03
 
 ### Added

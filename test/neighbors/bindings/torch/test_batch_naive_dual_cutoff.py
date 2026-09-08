@@ -27,6 +27,7 @@ from nvalchemiops.torch.neighbors.batch_naive_dual_cutoff import (
 from nvalchemiops.torch.neighbors.neighbor_utils import compute_naive_num_shifts
 
 from ...test_utils import (
+    assert_neighbor_lists_equal,
     create_batch_systems,
 )
 
@@ -542,6 +543,61 @@ class TestBatchNaiveDualCutoffOutputFormats:
 
         # Larger cutoff should find at least as many pairs
         assert neighbor_list2.shape[1] >= neighbor_list1.shape[1]
+
+        matrix_result = batch_naive_neighbor_list_dual_cutoff(
+            positions=positions_batch,
+            cutoff1=cutoff1,
+            cutoff2=cutoff2,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors1=30,
+            max_neighbors2=50,
+            pbc=pbc_batch,
+            cell=cell_batch,
+            half_fill=half_fill,
+            return_neighbor_list=False,
+        )
+
+        def expected_coo(matrix, counts, shifts):
+            """Build the expected row-major COO result from matrix rows."""
+            pairs = []
+            pair_shifts = []
+            ptr = [0]
+            for row, row_count in enumerate(counts.detach().cpu().tolist()):
+                for slot in range(row_count):
+                    pairs.append((row, int(matrix[row, slot].detach().cpu().item())))
+                    pair_shifts.append(shifts[row, slot])
+                ptr.append(ptr[-1] + row_count)
+            if pairs:
+                pair_list = torch.tensor(
+                    pairs,
+                    dtype=neighbor_list1.dtype,
+                    device=device,
+                ).T.contiguous()
+                pair_shifts = torch.stack(pair_shifts, dim=0)
+            else:
+                pair_list = torch.empty(
+                    (2, 0), dtype=neighbor_list1.dtype, device=device
+                )
+                pair_shifts = torch.empty((0, 3), dtype=shifts.dtype, device=device)
+            return (
+                pair_list,
+                torch.tensor(ptr, dtype=torch.int32, device=device),
+                pair_shifts,
+            )
+
+        expected1 = expected_coo(matrix_result[0], matrix_result[1], matrix_result[2])
+        expected2 = expected_coo(matrix_result[3], matrix_result[4], matrix_result[5])
+        assert torch.equal(neighbor_ptr1, expected1[1])
+        assert_neighbor_lists_equal(
+            (neighbor_list1[0], neighbor_list1[1], unit_shifts1),
+            (expected1[0][0], expected1[0][1], expected1[2]),
+        )
+        assert torch.equal(neighbor_ptr2, expected2[1])
+        assert_neighbor_lists_equal(
+            (neighbor_list2[0], neighbor_list2[1], unit_shifts2),
+            (expected2[0][0], expected2[0][1], expected2[2]),
+        )
 
     def test_max_neighbors_same_value(self, device, dtype):
         """Test that both matrices have correct shape with same max_neighbors."""

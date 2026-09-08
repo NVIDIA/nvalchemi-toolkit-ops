@@ -15,6 +15,11 @@
 
 """API tests for the generic neighbor_list wrapper function."""
 
+import os
+import subprocess
+import sys
+import tempfile
+
 import pytest
 import torch
 
@@ -39,7 +44,11 @@ from nvalchemiops.torch.neighbors.naive import (
 from nvalchemiops.torch.neighbors.naive_dual_cutoff import (
     naive_neighbor_list_dual_cutoff,
 )
-from nvalchemiops.torch.neighbors.neighbor_utils import prepare_batch_idx_ptr
+from nvalchemiops.torch.neighbors.neighbor_utils import (
+    NeighborOverflowError,
+    get_neighbor_list_from_neighbor_matrix,
+    prepare_batch_idx_ptr,
+)
 
 from ...test_utils import (
     assert_neighbor_matrix_equal,
@@ -1554,6 +1563,66 @@ class TestNeighborListReturnFormats:
         assert shifts.ndim == 2
         assert shifts.shape[1] == 3  # 3D shifts
 
+    @pytest.mark.parametrize("with_shifts", [False, True], ids=["no_shifts", "shifts"])
+    def test_matrix_to_coo_ordering_and_alignment(self, with_shifts):
+        """Matrix conversion preserves row-major pairs, pointers, and shifts."""
+        neighbor_matrix = torch.tensor(
+            [[5, 7, -1, 9], [-1, -1, -1, -1], [4, -1, 6, -1]],
+            dtype=torch.int32,
+        )
+        num_neighbors = torch.tensor([3, 0, 2], dtype=torch.int32)
+        shifts = torch.arange(36, dtype=torch.int32).reshape(3, 4, 3)
+        result = get_neighbor_list_from_neighbor_matrix(
+            neighbor_matrix,
+            num_neighbors,
+            neighbor_shift_matrix=shifts if with_shifts else None,
+        )
+
+        assert torch.equal(
+            result[0],
+            torch.tensor([[0, 0, 0, 2, 2], [5, 7, 9, 4, 6]], dtype=torch.int32),
+        )
+        assert torch.equal(result[1], torch.tensor([0, 3, 3, 5], dtype=torch.int32))
+        if with_shifts:
+            row_idx = torch.tensor([0, 0, 0, 2, 2])
+            slot_idx = torch.tensor([0, 1, 3, 0, 2])
+            assert torch.equal(result[2], shifts[row_idx, slot_idx])
+
+    def test_fullgraph_compiled_conversion_handles_changing_edge_counts(self, device):
+        """Fullgraph conversion supports dynamic COO lengths across calls."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA is required for this test parameter")
+
+        @torch.compile(fullgraph=True)
+        def convert(matrix, counts):
+            return get_neighbor_list_from_neighbor_matrix(matrix, counts)
+
+        first = convert(
+            torch.tensor([[0, 1, -1], [-1, -1, -1]], dtype=torch.int32, device=device),
+            torch.tensor([2, 0], dtype=torch.int32, device=device),
+        )
+        second = convert(
+            torch.tensor([[0, -1, -1], [2, 3, -1]], dtype=torch.int32, device=device),
+            torch.tensor([1, 2], dtype=torch.int32, device=device),
+        )
+        assert first[0].shape == (2, 2)
+        assert second[0].shape == (2, 3)
+        assert first[1].tolist() == [0, 2, 2]
+        assert second[1].tolist() == [0, 1, 3]
+
+    def test_compiled_overflow_raises_on_cpu(self):
+        """Compiled CPU overflow uses the assertion path, not eager fields."""
+
+        @torch.compile(fullgraph=True)
+        def convert(matrix, counts):
+            return get_neighbor_list_from_neighbor_matrix(matrix, counts)
+
+        with pytest.raises(RuntimeError, match="capacity|assert"):
+            convert(
+                torch.full((1, 1), -1, dtype=torch.int32),
+                torch.tensor([2], dtype=torch.int32),
+            )
+
 
 class TestNeighborListHalfFill:
     """Test half_fill parameter."""
@@ -2397,6 +2466,39 @@ class TestNeighborListKwargs:
 class TestNeighborListEdgeCases:
     """Test edge cases."""
 
+    def test_matrix_to_coo_zero_edges_and_empty_rows(self):
+        """Zero-edge and zero-row matrices retain documented output shapes."""
+        matrix = torch.full((2, 3), -1, dtype=torch.int32)
+        counts = torch.zeros(2, dtype=torch.int32)
+        shifts = torch.empty((2, 3, 3), dtype=torch.int32)
+        result = get_neighbor_list_from_neighbor_matrix(matrix, counts, shifts)
+        assert result[0].shape == (2, 0)
+        assert result[1].tolist() == [0, 0, 0]
+        assert result[2].shape == (0, 3)
+
+        empty_result = get_neighbor_list_from_neighbor_matrix(
+            torch.empty((0, 3), dtype=torch.int32),
+            torch.empty(0, dtype=torch.int32),
+            torch.empty((0, 3, 3), dtype=torch.int32),
+        )
+        assert empty_result[0].shape == (2, 0)
+        assert empty_result[1].shape == (1,)
+        assert empty_result[1].dtype == torch.int32
+        assert empty_result[2].shape == (0, 3)
+
+    def test_matrix_to_coo_eager_overflow_preserves_error_fields(self):
+        """Eager capacity errors retain capacity and observed count."""
+        with pytest.raises(NeighborOverflowError) as error_info:
+            get_neighbor_list_from_neighbor_matrix(
+                torch.full((2, 2), -1, dtype=torch.int32),
+                torch.tensor([3, 0], dtype=torch.int32),
+            )
+
+        error = error_info.value
+        assert error.max_neighbors == 2
+        assert error.num_neighbors == 3
+        assert error.system_index is None
+
     @pytest.mark.parametrize("device", ["cpu", "cuda"])
     def test_empty_system(self, device):
         """Test with empty system (0 atoms)."""
@@ -2589,3 +2691,46 @@ def test_host_only_naive_shift_metadata_rejects_inside_torch_compile():
 
     with pytest.raises(RuntimeError, match="compute_naive_num_shifts"):
         torch.compile(run)(cell, pbc)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_cuda_compiled_overflow_isolated_subprocess():
+    """A CUDA device assertion is checked in a fresh process."""
+    script = """
+import torch
+from nvalchemiops.torch.neighbors.neighbor_utils import (
+    get_neighbor_list_from_neighbor_matrix,
+)
+
+@torch.compile(fullgraph=True)
+def convert(matrix, counts):
+    return get_neighbor_list_from_neighbor_matrix(matrix, counts)
+
+matrix = torch.full((1, 1), -1, dtype=torch.int32, device="cuda")
+counts = torch.tensor([2], dtype=torch.int32, device="cuda")
+try:
+    convert(matrix, counts)
+    torch.cuda.synchronize()
+except RuntimeError as error:
+    message = str(error).lower()
+    if not any(token in message for token in ("assert", "capacity", "neighbor matrix")):
+        raise
+else:
+    raise AssertionError("compiled CUDA overflow did not raise")
+"""
+    with (
+        tempfile.TemporaryDirectory() as cache_dir,
+        tempfile.TemporaryDirectory() as inductor_cache_dir,
+    ):
+        environment = os.environ.copy()
+        environment["WARP_CACHE_PATH"] = cache_dir
+        environment["TORCHINDUCTOR_CACHE_DIR"] = inductor_cache_dir
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=environment,
+            timeout=120,
+        )
+    assert result.returncode == 0, result.stderr
