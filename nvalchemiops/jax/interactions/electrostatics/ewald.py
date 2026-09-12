@@ -75,6 +75,7 @@ from nvalchemiops.jax.interactions.electrostatics._utils import (
 )
 from nvalchemiops.jax.interactions.electrostatics.k_vectors import (
     generate_k_vectors_ewald_summation,
+    k_vectors_from_miller_indices,
 )
 from nvalchemiops.jax.interactions.electrostatics.parameters import (
     estimate_ewald_parameters,
@@ -90,6 +91,7 @@ from nvalchemiops.jax.interactions.electrostatics.slab import (
 __all__ = [
     "ewald_real_space",
     "ewald_reciprocal_space",
+    "ewald_reciprocal_space_from_miller_indices",
     "ewald_summation",
 ]
 
@@ -1106,6 +1108,49 @@ def _ewald_reciprocal_space_impl(
         num_k = k_vectors_cast.shape[0]
         num_systems = 1
 
+    if num_k == 0:
+        atom_system = (
+            jnp.zeros((num_atoms,), dtype=jnp.int32)
+            if batch_idx is None
+            else batch_idx.astype(jnp.int32)
+        )
+        energies = _reciprocal_space_energy_reference(
+            positions_cast,
+            charges_cast,
+            cell_cast,
+            k_vectors_cast,
+            alpha_arr,
+            batch_idx,
+        )
+        forces = jnp.zeros((num_atoms, 3), dtype=dtype) if compute_forces else None
+        charge_grads = None
+        if compute_charge_gradients:
+            atom_alpha = alpha_arr[atom_system]
+            charge_grads = -(
+                2.0 * atom_alpha * charges_cast / jnp.sqrt(PI)
+                + PI * total_charge_over_volume[atom_system] / (atom_alpha * atom_alpha)
+            )
+
+        virial = None
+        if compute_virial:
+            alpha_v = alpha_arr.astype(dtype)
+            e_bg = (
+                PI
+                * total_charge.astype(dtype) ** 2
+                / (2.0 * alpha_v**2 * volumes_for_background.astype(dtype))
+            )
+            virial = -e_bg[:, jnp.newaxis, jnp.newaxis] * jnp.eye(3, dtype=dtype)
+
+        return _build_electrostatic_result(
+            energies,
+            forces,
+            charge_grads,
+            virial,
+            compute_forces,
+            compute_charge_gradients,
+            compute_virial,
+        )
+
     # Allocate intermediate arrays for structure factors (always float64)
     if is_batched:
         cos_k_dot_r = jnp.zeros((num_k, num_atoms), dtype=jnp.float64)
@@ -1442,10 +1487,13 @@ def ewald_reciprocal_space(
     cell : jax.Array, shape (3, 3) or (B, 3, 3)
         Unit cell matrices. A 2-D input is promoted to (1, 3, 3) internally.
     k_vectors : jax.Array, shape (K, 3) or (B, K, 3)
-        Reciprocal-space lattice vectors. Gradients are stopped internally
-        so this argument must not depend on ``cell`` outside this function.
-        Use :func:`nvalchemiops.jax.interactions.electrostatics.ewald.ewald_summation`
-        for cell-differentiable k-vectors.
+        Reciprocal-space lattice vectors. Energy autodiff uses the tangent
+        carried by this argument. Vectors constructed from the differentiated
+        ``cell`` in the traced computation contribute their reciprocal-cell
+        derivative. A precomputed array, or one passed through
+        ``jax.lax.stop_gradient``, has zero tangent and is fixed with respect
+        to that differentiation. Matching values alone do not create a
+        dependency.
     alpha : float or jax.Array
         Ewald splitting parameter. A scalar float or array of shape (1,) or (B,).
     batch_idx : jax.Array or None, shape (N,), optional
@@ -1509,8 +1557,6 @@ def ewald_reciprocal_space(
             stacklevel=2,
         )
 
-    k_vectors = jax.lax.stop_gradient(k_vectors)
-
     if compute_forces or compute_charge_gradients or compute_virial:
         result = _ewald_reciprocal_space_impl(
             positions=positions,
@@ -1536,6 +1582,55 @@ def ewald_reciprocal_space(
         max_atoms_per_system,
     )
     return _apply_energy_reduction(result, energy_reduction, batch_idx, cell)
+
+
+def ewald_reciprocal_space_from_miller_indices(
+    positions: jax.Array,
+    charges: jax.Array,
+    cell: jax.Array,
+    miller_indices: jax.Array,
+    alpha: float | jax.Array,
+    batch_idx: jax.Array | None = None,
+    max_atoms_per_system: int | None = None,
+    compute_forces: bool = False,
+    compute_charge_gradients: bool = False,
+    compute_virial: bool = False,
+    *,
+    energy_reduction: Literal["atom", "system"] = "atom",
+) -> jax.Array | tuple[jax.Array, ...]:
+    """Compute the reciprocal component from retained Miller indices.
+
+    Materializes Cartesian vectors from the supplied ``cell``, then delegates
+    to :func:`ewald_reciprocal_space`. Direct outputs, return order, warnings,
+    and energy reduction match that component.
+
+    Parameters
+    ----------
+    positions, charges, cell, alpha, batch_idx, max_atoms_per_system,
+    compute_forces, compute_charge_gradients, compute_virial, energy_reduction
+        Match :func:`ewald_reciprocal_space`.
+    miller_indices : jax.Array, shape (K, 3)
+        Caller-retained signed integer topology. See
+        :func:`k_vectors_from_miller_indices` for its preconditions.
+
+    Returns
+    -------
+    jax.Array or tuple[jax.Array, ...]
+        Same result contract as :func:`ewald_reciprocal_space`.
+    """
+    return ewald_reciprocal_space(
+        positions=positions,
+        charges=charges,
+        cell=cell,
+        k_vectors=k_vectors_from_miller_indices(cell, miller_indices),
+        alpha=alpha,
+        batch_idx=batch_idx,
+        max_atoms_per_system=max_atoms_per_system,
+        compute_forces=compute_forces,
+        compute_charge_gradients=compute_charge_gradients,
+        compute_virial=compute_virial,
+        energy_reduction=energy_reduction,
+    )
 
 
 def _tangent_or_zeros(tangent, primal: jax.Array, dtype=None) -> jax.Array:
@@ -2556,7 +2651,7 @@ def _ewald_reciprocal_space_energy_jvp_rule(
         t_positions,
         t_charges,
         t_cell,
-        _t_k_vectors,
+        t_k_vectors,
         _t_alpha,
         _t_batch_idx,
     ) = tangents
@@ -2573,7 +2668,7 @@ def _ewald_reciprocal_space_energy_jvp_rule(
     tpos = _tangent_or_zeros(t_positions, positions, dtype=positions.dtype)
     tq = _tangent_or_zeros(t_charges, charges, dtype=charges.dtype)
     tcell = _tangent_or_zeros(t_cell, cell, dtype=cell.dtype)
-    tk = jnp.zeros_like(k_vectors)
+    tk = _tangent_or_zeros(t_k_vectors, k_vectors, dtype=k_vectors.dtype)
     charges_ref = charges.astype(jnp.float64)
     tq_ref = tq.astype(jnp.float64)
     _reference_out, tangent_out = jax.jvp(
@@ -2736,6 +2831,27 @@ _ewald_summation_energy_jvp.defjvp(
 )
 
 
+def _validate_ewald_topology_inputs(
+    k_vectors: jax.Array | None,
+    k_cutoff: float | jax.Array | None,
+    miller_bounds: tuple[int, int, int] | None,
+    miller_indices: jax.Array | None,
+) -> None:
+    """Validate that full Ewald receives one reciprocal-topology source."""
+    if k_vectors is not None and miller_indices is not None:
+        raise ValueError("k_vectors cannot be combined with miller_indices")
+    if miller_indices is not None:
+        if k_cutoff is not None or miller_bounds is not None or k_vectors is not None:
+            raise ValueError(
+                "miller_indices cannot be combined with k_vectors, k_cutoff, or "
+                "miller_bounds"
+            )
+        if miller_indices.ndim != 2 or miller_indices.shape[-1] != 3:
+            raise ValueError("miller_indices must have shape (K, 3)")
+        if not jnp.issubdtype(miller_indices.dtype, jnp.signedinteger):
+            raise ValueError("miller_indices must have a signed integer dtype")
+
+
 def _resolve_ewald_summation_parameters(
     positions: jax.Array,
     charges: jax.Array,
@@ -2744,11 +2860,13 @@ def _resolve_ewald_summation_parameters(
     k_vectors: jax.Array | None,
     k_cutoff: float | jax.Array | None,
     miller_bounds: tuple[int, int, int] | None,
+    miller_indices: jax.Array | None,
     batch_idx: jax.Array | None,
     accuracy: float,
 ) -> tuple[float | jax.Array, jax.Array]:
     """Resolve Ewald ``alpha`` and ``k_vectors`` once for forward/backward reuse."""
-    if alpha is None or k_cutoff is None:
+    needs_generated_vectors = k_vectors is None and miller_indices is None
+    if alpha is None or (needs_generated_vectors and k_cutoff is None):
         cell_3d = cell if cell.ndim == 3 else cell[jnp.newaxis, :, :]
         params = estimate_ewald_parameters(
             positions=positions,
@@ -2758,10 +2876,12 @@ def _resolve_ewald_summation_parameters(
         )
         if alpha is None:
             alpha = params.alpha
-        if k_cutoff is None:
+        if k_cutoff is None and needs_generated_vectors:
             k_cutoff = params.reciprocal_space_cutoff
 
-    if k_vectors is None:
+    if miller_indices is not None:
+        k_vectors = k_vectors_from_miller_indices(cell, miller_indices)
+    elif k_vectors is None:
         cell_3d = cell if cell.ndim == 3 else cell[jnp.newaxis, :, :]
         if k_cutoff is None:
             raise ValueError("k_cutoff must be provided if k_vectors is None")
@@ -2782,6 +2902,7 @@ def _ewald_summation_impl(
     k_vectors: jax.Array | None = None,
     k_cutoff: float | jax.Array | None = None,
     miller_bounds: tuple[int, int, int] | None = None,
+    miller_indices: jax.Array | None = None,
     batch_idx: jax.Array | None = None,
     max_atoms_per_system: int | None = None,
     neighbor_list: jax.Array | None = None,
@@ -2903,6 +3024,7 @@ def _ewald_summation_impl(
         k_vectors=k_vectors,
         k_cutoff=k_cutoff,
         miller_bounds=miller_bounds,
+        miller_indices=miller_indices,
         batch_idx=batch_idx,
         accuracy=accuracy,
     )
@@ -3061,9 +3183,14 @@ def ewald_summation(
     slab_correction: bool = False,
     *,
     miller_bounds: tuple[int, int, int] | None = None,
+    miller_indices: jax.Array | None = None,
     energy_reduction: Literal["atom", "system"] = "atom",
 ) -> jax.Array | tuple[jax.Array, ...]:
     """Compute complete Ewald summation.
+
+    Supply explicit ``k_vectors`` as fixed metadata, retained
+    ``miller_indices`` to materialize vectors from the current cell, or neither
+    to generate vectors from ``k_cutoff`` and optional ``miller_bounds``.
 
     Parameters
     ----------
@@ -3076,11 +3203,18 @@ def ewald_summation(
     alpha : float, jax.Array, or None, default=None
         Ewald splitting parameter. If ``None``, estimated automatically.
     k_vectors : jax.Array or None, default=None
-        Reciprocal lattice vectors. Generated from ``cell`` when omitted.
+        Explicit reciprocal vectors, treated as fixed metadata. When omitted,
+        vectors are generated from ``k_cutoff`` or materialized from
+        ``miller_indices``.
     k_cutoff : float, jax.Array, or None, default=None
-        K-space cutoff used when generating ``k_vectors``.
+        Reciprocal cutoff used only when generating vectors internally.
     miller_bounds : tuple[int, int, int] or None, default=None, keyword-only
-        Static Miller-index bounds for JIT-compatible k-vector generation.
+        Static Miller-index bounds used with internally generated vectors.
+        Ignored when explicit ``k_vectors`` are supplied for compatibility.
+    miller_indices : jax.Array or None, default=None, keyword-only
+        Caller-retained signed integer topology of shape ``(K, 3)``. Full
+        Ewald materializes vectors from the current cell. Do not combine it
+        with ``k_vectors``, ``k_cutoff``, or ``miller_bounds``.
     batch_idx : jax.Array or None, default=None
         System index for each atom. When provided, atoms must be grouped by
         system: ``batch_idx`` must be contiguous, nondecreasing, and use system
@@ -3143,6 +3277,12 @@ def ewald_summation(
     :func:`nvalchemiops.jax.interactions.electrostatics.k_vectors.generate_k_vectors_ewald_summation` : Generates k-vectors from cell and cutoff.
     """
     _validate_energy_reduction(energy_reduction)
+    _validate_ewald_topology_inputs(
+        k_vectors,
+        k_cutoff,
+        miller_bounds,
+        miller_indices,
+    )
     if compute_forces or compute_virial or compute_charge_gradients or hybrid_forces:
         warnings.warn(
             _direct_output_deprecation_msg("ewald_summation"),
@@ -3164,6 +3304,7 @@ def ewald_summation(
             k_vectors=k_vectors,
             k_cutoff=k_cutoff,
             miller_bounds=miller_bounds,
+            miller_indices=miller_indices,
             batch_idx=batch_idx,
             accuracy=accuracy,
         )
@@ -3206,6 +3347,7 @@ def ewald_summation(
             k_vectors=k_vectors,
             k_cutoff=k_cutoff,
             miller_bounds=miller_bounds,
+            miller_indices=miller_indices,
             batch_idx=batch_idx,
             max_atoms_per_system=max_atoms_per_system,
             neighbor_list=neighbor_list,
@@ -3233,6 +3375,7 @@ def ewald_summation(
         k_vectors=k_vectors,
         k_cutoff=k_cutoff,
         miller_bounds=miller_bounds,
+        miller_indices=miller_indices,
         batch_idx=batch_idx,
         accuracy=accuracy,
     )
