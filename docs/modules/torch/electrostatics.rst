@@ -11,13 +11,14 @@ DSF supports charge gradients via autograd; forces and virials are computed anal
 Setup parameters such as ``alpha``, cutoffs, mesh controls, batch metadata, and
 neighbor topology are treated as constants. On the full ``ewald_summation`` and
 ``particle_mesh_ewald`` APIs, cell-derived caches such as ``k_vectors``,
-``k_squared``, ``volume``, and ``cell_inv_t`` are accepted when
-``cell.requires_grad`` is true, but they are static metadata assumed to
-correspond to the current ``cell``; cache-generation derivatives are not
-recovered. The lower-level ``ewald_reciprocal_space`` component preserves a
-supplied ``k_vectors`` autograd graph when the cell also requires gradients;
-physical strain derivatives require vectors generated from the same
-differentiable cell. Energy-returning Ewald, PME, and slab paths support
+``k_squared``, ``volume``, and ``cell_inv_t`` are static metadata assumed to
+correspond to the current ``cell``. The lower-level
+``ewald_reciprocal_space`` component follows a ``k_vectors`` autograd edge
+from ``cell`` when one exists. For reusable changing-cell Ewald topology,
+retain signed Miller indices with ``generate_ewald_miller_indices`` and use
+``ewald_reciprocal_space_from_miller_indices`` or
+``ewald_summation(miller_indices=...)``. Energy-returning
+Ewald, PME, and slab paths support
 atom-weighted losses such as ``(weights * energies).sum()`` for positions,
 charges, and supported cell derivatives.
 
@@ -81,6 +82,7 @@ Individual components of the Ewald summation method.
 
 .. autofunction:: ewald_real_space
 .. autofunction:: ewald_reciprocal_space
+.. autofunction:: ewald_reciprocal_space_from_miller_indices
 
 PME Components
 --------------
@@ -94,6 +96,8 @@ K-Vector Generation
 -------------------
 
 .. autofunction:: generate_k_vectors_ewald_summation
+.. autofunction:: generate_ewald_miller_indices
+.. autofunction:: k_vectors_from_miller_indices
 .. autofunction:: generate_k_vectors_pme
 
 Parameter Estimation
