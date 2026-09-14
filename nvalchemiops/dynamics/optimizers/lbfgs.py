@@ -296,19 +296,30 @@ def _alpha_cap(
     """Largest step length whose Cartesian displacement stays within ``maxstep``.
 
     The displacement of an atom is ``alpha * a_lin + alpha**2 * b_quad`` in the
-    worst case, so bounding it by ``maxstep`` is a quadratic in ``alpha``. The
-    positive root is returned. On the coordinate-only path ``b_quad`` is zero
-    and this reduces to ``maxstep / a_lin``.
+    worst case, so bounding it by ``maxstep`` is a quadratic in ``alpha``. On
+    the coordinate-only path ``b_quad`` is zero and this reduces to
+    ``maxstep / a_lin``.
+
+    The positive root is taken in the form
+
+        alpha = 2 * maxstep / (a_lin + sqrt(a_lin**2 + 4 * b_quad * maxstep))
+
+    rather than the textbook ``(-a_lin + sqrt(...)) / (2 * b_quad)``. The two
+    are equivalent in exact arithmetic, but the textbook form subtracts two
+    nearly equal numbers whenever ``b_quad`` is small next to ``a_lin**2``, and
+    that is the *usual* case here: the quadratic term is second order in the
+    step. At ``b_quad ~ 1e-17`` the subtraction cancels completely and returns
+    zero, which would freeze the optimizer with a step length of exactly zero.
+    The form used here has no subtraction, so it stays accurate all the way
+    down to ``b_quad = 0``.
 
     A non-positive ``maxstep`` disables the trust region.
     """
     zero = wp.float64(0.0)
     if maxstep <= zero or a_lin <= zero:
         return wp.float64(_BIG)
-    if b_quad <= zero:
-        return maxstep / a_lin
     disc = a_lin * a_lin + wp.float64(4.0) * b_quad * maxstep
-    return (-a_lin + wp.sqrt(disc)) / (wp.float64(2.0) * b_quad)
+    return (wp.float64(2.0) * maxstep) / (a_lin + wp.sqrt(disc))
 
 
 @wp.func

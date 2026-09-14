@@ -63,6 +63,21 @@
   available if a larger system does not settle. Graph modes are bit-identical
   to the ungraphed baseline. The step is not differentiable, and `jax.grad`
   through it raises rather than returning a wrong answer.
+- Two new gallery examples: `examples/dynamics/12_lbfgs_optimization.py`
+  (coordinate relaxation of an LJ cluster, with a head-to-head force-evaluation
+  count against FIRE2 on the same geometry) and
+  `examples/dynamics/13_lbfgs_variable_cell.py` (joint atom and cell relaxation
+  of FCC argon, which recovers the expected 5.26 A lattice constant).
+- Fixed the variable-cell trust-region step cap losing all precision when the
+  quadratic displacement term is small. The cap solves
+  `b*alpha^2 + a*alpha = maxstep`; written as
+  `(-a + sqrt(a^2 + 4*b*maxstep)) / (2*b)` it cancels to exactly zero once
+  `4*b*maxstep` drops below the rounding of `a^2`, which froze the optimizer
+  with a zero step length and no error. It now uses the algebraically
+  equivalent `2*maxstep / (a + sqrt(a^2 + 4*b*maxstep))`, which has no
+  subtraction and stays accurate down to `b = 0`. This regime is the common one
+  on the variable-cell path, because the quadratic term is second order in the
+  step.
 - Both L-BFGS paths compile: `torch.compile(fullgraph=True)` traces the
   coordinate and variable-cell steps as a single graph with **zero graph
   breaks**, including a region that also contains the caller's force model, and

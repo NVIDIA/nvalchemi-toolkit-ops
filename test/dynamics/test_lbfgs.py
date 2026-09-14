@@ -1078,6 +1078,46 @@ class TestLBFGSVariableCell:
         )
 
     @pytest.mark.parametrize("device", DEVICES)
+    def test_tiny_quadratic_term_does_not_freeze_the_step(self, device):
+        """A small-but-positive quadratic term must not collapse the step to zero.
+
+        The trust-region cap solves ``B*a^2 + A*a = maxstep``. Written the
+        textbook way, ``(-A + sqrt(A^2 + 4*B*maxstep)) / (2*B)`` cancels
+        completely once ``4*B*maxstep`` falls below the rounding of ``A^2``, and
+        returns exactly zero — which freezes the optimizer with a step length of
+        zero and no error. That regime is the common one here, because the
+        quadratic term is second order in the step.
+
+        A near-perfect lattice reaches it immediately: the atomic forces cancel
+        by symmetry, so the direction lies almost entirely in the cell block and
+        ``dquad`` lands around 1e-17.
+        """
+        cell = np.diag([6.0, 6.5, 7.0])
+        # Atoms spread through the cell but sitting exactly at their targets,
+        # so the atomic forces vanish while the coordinates stay non-zero.
+        frac = np.random.default_rng(3).uniform(0.1, 0.9, size=(6, 3))
+        potential = CellPotential(frac)
+        positions = np.ascontiguousarray((cell @ frac.T).T)
+
+        d = CellDriver(positions, cell, potential, device)
+        d.evaluate()
+        d.step(force_tol=1e-8, stress_tol=1e-8, maxstep=0.2)
+
+        dquad = float(d.state.dquad.numpy()[0])
+        alpha = float(d.state.alpha_step.numpy()[0])
+        dmax = float(d.state.dmax.numpy()[0])
+        assert dmax > 0.0, (
+            "no displacement measured; the test is not exercising the cap"
+        )
+        assert alpha > 0.0, (
+            f"step length collapsed to zero with dmax={dmax:.3e}, dquad={dquad:.3e}; "
+            "the trust-region cap is losing precision"
+        )
+        # With a negligible quadratic term the cap must match the linear limit.
+        if dquad < 1e-12 * dmax * dmax:
+            np.testing.assert_allclose(alpha, min(1.0, 0.2 / dmax), rtol=1e-9)
+
+    @pytest.mark.parametrize("device", DEVICES)
     def test_relaxes_cell_and_coordinates(self, device):
         """A compressed cell expands to the target volume while atoms relax."""
         rng = np.random.default_rng(11)
