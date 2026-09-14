@@ -15,8 +15,16 @@
 """PyTorch bindings for dispersion corrections."""
 
 from nvalchemiops.torch.interactions.dispersion._dftd3 import D3Parameters, dftd3
+from nvalchemiops.torch.interactions.dispersion._fourier_dftd3 import (
+    FourierD3Parameters,
+    FourierD3Setup,
+    fourier_dftd3,
+)
 
 __all__ = [
     "dftd3",
     "D3Parameters",
+    "fourier_dftd3",
+    "FourierD3Parameters",
+    "FourierD3Setup",
 ]

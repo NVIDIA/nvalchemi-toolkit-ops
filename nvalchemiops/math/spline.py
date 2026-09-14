@@ -3573,6 +3573,135 @@ def batch_spline_gather_gradient_position_hessian(
 ###########################################################################################
 
 
+def batch_spline_spread_channels(
+    positions: wp.array,
+    values: wp.array,
+    group_idx: wp.array,
+    cell_inv_t: wp.array,
+    order: int,
+    num_channels: int,
+    mesh: wp.array,
+    wp_dtype: type,
+    device: str | None = None,
+) -> None:
+    """Spread multi-channel values from atoms to a grouped mesh using B-splines.
+
+    Framework-agnostic launcher for the batched multi-channel spread. Each atom writes only
+    into the group selected by ``group_idx``, so the cost scales with ``num_channels`` rather
+    than with the total number of mesh slabs.
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
+        Atomic positions for all systems.
+    values : wp.array2d, shape (N_total, num_channels), dtype=wp.float32 or wp.float64
+        Per-atom values to spread, one row per atom.
+    group_idx : wp.array, shape (N_total,), dtype=wp.int32
+        Mesh group each atom contributes to, indexing both ``cell_inv_t`` and the leading
+        mesh axis. For a plain batched spread this is the system index; callers that also
+        partition by a per-atom label (species, for instance) pass a composite index such as
+        ``system * num_labels + label``.
+    cell_inv_t : wp.array, shape (G,), dtype=wp.mat33f or wp.mat33d
+        Transpose of the inverse cell matrix for each group. Groups that share a cell repeat
+        the same matrix.
+    order : int
+        B-spline order (1-6).
+    num_channels : int
+        Channels per group.
+    mesh : wp.array4d, shape (G * num_channels, nx, ny, nz)
+        OUTPUT: mesh to accumulate into, addressed as
+        ``group_idx * num_channels + channel``. Must be zero-initialized.
+    wp_dtype : type
+        Warp scalar dtype (wp.float32 or wp.float64).
+    device : str | None
+        Warp device string. If None, inferred from arrays.
+
+    See Also
+    --------
+    batch_spline_gather_channels : The transpose of this operation.
+    """
+    num_atoms = positions.shape[0]
+    num_points = order**3
+
+    kernel = _batch_bspline_spread_channels_kernel_overload[wp_dtype]
+    wp.launch(
+        kernel,
+        dim=(num_atoms, num_points),
+        inputs=[
+            positions,
+            values,
+            group_idx,
+            cell_inv_t,
+            wp.int32(order),
+            wp.int32(num_channels),
+        ],
+        outputs=[mesh],
+        device=device,
+    )
+
+
+def batch_spline_gather_channels(
+    positions: wp.array,
+    group_idx: wp.array,
+    cell_inv_t: wp.array,
+    order: int,
+    num_channels: int,
+    mesh: wp.array,
+    output: wp.array,
+    wp_dtype: type,
+    device: str | None = None,
+) -> None:
+    """Gather multi-channel values from a grouped mesh to atoms using B-splines.
+
+    Framework-agnostic launcher for the batched multi-channel gather, the transpose of
+    :func:`batch_spline_spread_channels`. Each atom reads only from the group selected by
+    ``group_idx``.
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
+        Atomic positions for all systems.
+    group_idx : wp.array, shape (N_total,), dtype=wp.int32
+        Mesh group each atom reads from. Must match the value used when spreading.
+    cell_inv_t : wp.array, shape (G,), dtype=wp.mat33f or wp.mat33d
+        Transpose of the inverse cell matrix for each group.
+    order : int
+        B-spline order (1-6).
+    num_channels : int
+        Channels per group.
+    mesh : wp.array4d, shape (G * num_channels, nx, ny, nz)
+        Mesh to interpolate from, addressed as ``group_idx * num_channels + channel``.
+    output : wp.array2d, shape (N_total, num_channels)
+        OUTPUT: interpolated values per atom. Must be zero-initialized.
+    wp_dtype : type
+        Warp scalar dtype (wp.float32 or wp.float64).
+    device : str | None
+        Warp device string. If None, inferred from arrays.
+
+    See Also
+    --------
+    batch_spline_spread_channels : The transpose of this operation.
+    """
+    num_atoms = positions.shape[0]
+    num_points = order**3
+
+    kernel = _batch_bspline_gather_channels_kernel_overload[wp_dtype]
+    wp.launch(
+        kernel,
+        dim=(num_atoms, num_points),
+        inputs=[
+            positions,
+            group_idx,
+            cell_inv_t,
+            wp.int32(order),
+            wp.int32(num_channels),
+            mesh,
+        ],
+        outputs=[output],
+        device=device,
+    )
+
+
 __all__ = [
     # Warp functions (@wp.func)
     "bspline_weight",
@@ -3601,4 +3730,6 @@ __all__ = [
     "batch_spline_gather_gradient",
     "batch_spline_spread_gradient_weights",
     "batch_spline_gather_gradient_position_hessian",
+    "batch_spline_spread_channels",
+    "batch_spline_gather_channels",
 ]

@@ -21,6 +21,10 @@ This module provides JAX bindings for dispersion corrections (DFT-D3).
 from __future__ import annotations
 
 from nvalchemiops.jax.interactions.dispersion._dftd3 import D3Parameters, dftd3
+from nvalchemiops.jax.interactions.dispersion._fourier_dftd3 import (
+    FourierD3Parameters,
+    fourier_dftd3,
+)
 
 __all__ = [
     "dftd3",
