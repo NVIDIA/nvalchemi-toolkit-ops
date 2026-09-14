@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- Segmented sums no longer retain CUDA graph-pool allocations through cached Warp
+  launches when used from compiled PyTorch custom operators.
+
 ## 0.4.1 - 2026-08-03
 
 ### Added
