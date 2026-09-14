@@ -154,7 +154,7 @@ def _launch_sum(x: wp.array, idx: wp.array, out: wp.array) -> None:
         rem = N - full_blocks * _BLOCK_DIM
         if rem > 0:
             wp.launch(
-                _segmented_sum_overloads[x.dtype],
+                _segmented_sum_overloads[(x.dtype, idx.dtype)],
                 dim=rem,
                 inputs=[
                     x[full_blocks * _BLOCK_DIM :],
@@ -169,7 +169,7 @@ def _launch_sum(x: wp.array, idx: wp.array, out: wp.array) -> None:
     ept = compute_ept(N, max(device.sm_count, 1), x.dtype in _VEC_TYPES)
     dim = (N + ept - 1) // ept
     wp.launch(
-        _segmented_sum_overloads[x.dtype],
+        _segmented_sum_overloads[(x.dtype, idx.dtype)],
         dim=dim,
         inputs=[x, idx, out, N, ept],
         device=device,
