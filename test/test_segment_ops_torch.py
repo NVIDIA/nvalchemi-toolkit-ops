@@ -34,6 +34,7 @@ import pytest
 import torch
 import warp as wp
 
+from nvalchemiops.segment_ops import segmented_sum as warp_segmented_sum
 from nvalchemiops.torch.segment_ops import (
     segmented_dot,
     segmented_matvec,
@@ -44,6 +45,25 @@ from nvalchemiops.torch.segment_ops import (
 )
 
 wp.init()
+
+
+@torch.library.custom_op("nvalchemiops_test::segmented_sum", mutates_args=())
+def _raw_segmented_sum(
+    values: torch.Tensor, idx: torch.Tensor, num_segments: int
+) -> torch.Tensor:
+    """Call the raw Warp segmented-sum API behind an opaque Torch boundary."""
+    out = torch.zeros(num_segments, device=values.device, dtype=values.dtype)
+    warp_segmented_sum(
+        wp.from_torch(values.contiguous()),
+        wp.from_torch(idx.to(torch.int32)),
+        wp.from_torch(out),
+    )
+    return out
+
+
+@_raw_segmented_sum.register_fake
+def _(values: torch.Tensor, idx: torch.Tensor, num_segments: int) -> torch.Tensor:
+    return torch.empty(num_segments, device=values.device, dtype=values.dtype)
 
 
 # ---------------------------------------------------------------------------
@@ -1091,3 +1111,20 @@ class TestCompile:
         torch.testing.assert_close(out_c, out_ref)  # fullgraph => no break
         for gc, gr in zip(grads_c, grads_ref, strict=True):
             torch.testing.assert_close(gc, gr)
+
+    @pytest.mark.slow
+    def test_cuda_graph_does_not_retain_custom_op_inputs(self, device):
+        """Release transient custom-op inputs after a CUDA graph capture."""
+        if device == "cpu":
+            pytest.skip("CUDAGraph trees require CUDA")
+
+        values = torch.tensor([1.0, 2.0, 10.0, 20.0], device=device)
+        idx = torch.tensor([0, 0, 1, 1], device=device)
+
+        def reduce(x: torch.Tensor, batch_idx: torch.Tensor) -> torch.Tensor:
+            return _raw_segmented_sum(x, batch_idx, num_segments=2)
+
+        compiled = torch.compile(reduce, fullgraph=True, backend="cudagraphs")
+        result = compiled(values, idx)
+
+        torch.testing.assert_close(result, torch.tensor([3.0, 30.0], device=device))
