@@ -77,6 +77,7 @@ from nvalchemiops.dynamics.utils.cell_filter import (
     pack_velocities_with_cell,
     unpack_velocities_with_cell,
 )
+from nvalchemiops.torch._warp_op_helpers import register_noop_fake, torch_custom_op
 
 # Torch dtype -> Warp dtype mappings
 _TORCH_TO_WP_VEC = {torch.float32: wp.vec3f, torch.float64: wp.vec3d}
@@ -90,6 +91,18 @@ def _alloc_or_zero(
     if buf is None:
         return torch.zeros(size, dtype=dtype, device=device)
     buf.zero_()
+    return buf
+
+
+def _alloc_if_none(
+    buf: torch.Tensor | None,
+    *shape: int,
+    dtype: torch.dtype,
+    device: torch.device,
+) -> torch.Tensor:
+    """Return a buffer, allocating uninitialized storage if needed."""
+    if buf is None:
+        return torch.empty(*shape, dtype=dtype, device=device)
     return buf
 
 
@@ -318,6 +331,79 @@ def _coord_cell_mix_impl(
     )
 
 
+@torch_custom_op(
+    "nvalchemiops::fire2_step_coord",
+    mutates_args=(
+        "positions",
+        "velocities",
+        "alpha",
+        "dt",
+        "nsteps_inc",
+        "vf",
+        "v_sumsq",
+        "f_sumsq",
+        "max_norm",
+    ),
+)
+def _fire2_step_coord_op(
+    positions: torch.Tensor,
+    velocities: torch.Tensor,
+    forces: torch.Tensor,
+    batch_idx: torch.Tensor,
+    alpha: torch.Tensor,
+    dt: torch.Tensor,
+    nsteps_inc: torch.Tensor,
+    vf: torch.Tensor,
+    v_sumsq: torch.Tensor,
+    f_sumsq: torch.Tensor,
+    max_norm: torch.Tensor,
+    delaystep: int,
+    dtgrow: float,
+    dtshrink: float,
+    alphashrink: float,
+    alpha0: float,
+    tmax: float,
+    tmin: float,
+    maxstep: float,
+    compute_reductions: bool,
+) -> None:
+    """Run the registered coordinate-only FIRE2 operation."""
+    dtype = positions.dtype
+    vec_type = _TORCH_TO_WP_VEC[dtype]
+
+    if compute_reductions:
+        vf.zero_()
+        v_sumsq.zero_()
+        f_sumsq.zero_()
+    max_norm.zero_()
+
+    if positions.shape[0] == 0:
+        return
+
+    fire2_step(
+        wp.from_torch(positions.detach(), dtype=vec_type),
+        wp.from_torch(velocities.detach(), dtype=vec_type),
+        wp.from_torch(forces.detach(), dtype=vec_type),
+        wp.from_torch(batch_idx.detach(), dtype=wp.int32),
+        wp.from_torch(alpha.detach()),
+        wp.from_torch(dt.detach()),
+        wp.from_torch(nsteps_inc.detach(), dtype=wp.int32),
+        wp.from_torch(vf),
+        wp.from_torch(v_sumsq),
+        wp.from_torch(f_sumsq),
+        wp.from_torch(max_norm),
+        delaystep=delaystep,
+        dtgrow=dtgrow,
+        dtshrink=dtshrink,
+        alphashrink=alphashrink,
+        alpha0=alpha0,
+        tmax=tmax,
+        tmin=tmin,
+        maxstep=maxstep,
+        compute_reductions=compute_reductions,
+    )
+
+
 def fire2_step_coord(
     positions: torch.Tensor,
     velocities: torch.Tensor,
@@ -451,36 +537,112 @@ def fire2_step_coord(
     dtype = positions.dtype
     device = positions.device
     M = alpha.shape[0]
-    vec_type = _TORCH_TO_WP_VEC[dtype]
 
-    # Scratch buffers: allocate/zero when recomputing; require and preserve
-    # them when the caller supplies precomputed reductions.
     if compute_reductions:
-        vf = _alloc_or_zero(vf, M, dtype, device)
-        v_sumsq = _alloc_or_zero(v_sumsq, M, dtype, device)
-        f_sumsq = _alloc_or_zero(f_sumsq, M, dtype, device)
+        vf = _alloc_if_none(vf, M, dtype=dtype, device=device)
+        v_sumsq = _alloc_if_none(v_sumsq, M, dtype=dtype, device=device)
+        f_sumsq = _alloc_if_none(f_sumsq, M, dtype=dtype, device=device)
     elif vf is None or v_sumsq is None or f_sumsq is None:
         raise ValueError(
             "vf, v_sumsq, f_sumsq must be provided when compute_reductions=False"
         )
-    max_norm = _alloc_or_zero(max_norm, M, dtype, device)
+    max_norm = _alloc_if_none(max_norm, M, dtype=dtype, device=device)
 
-    if positions.shape[0] == 0:
-        return
+    _fire2_step_coord_op(
+        positions,
+        velocities,
+        forces,
+        batch_idx,
+        alpha,
+        dt,
+        nsteps_inc,
+        vf,
+        v_sumsq,
+        f_sumsq,
+        max_norm,
+        delaystep,
+        dtgrow,
+        dtshrink,
+        alphashrink,
+        alpha0,
+        tmax,
+        tmin,
+        maxstep,
+        compute_reductions,
+    )
 
-    # Delegate to the Warp-level fire2_step
-    fire2_step(
-        wp.from_torch(positions.detach(), dtype=vec_type),
-        wp.from_torch(velocities.detach(), dtype=vec_type),
-        wp.from_torch(forces.detach(), dtype=vec_type),
-        wp.from_torch(batch_idx.detach(), dtype=wp.int32),
-        wp.from_torch(alpha.detach()),
-        wp.from_torch(dt.detach()),
-        wp.from_torch(nsteps_inc.detach(), dtype=wp.int32),
-        wp.from_torch(vf),
-        wp.from_torch(v_sumsq),
-        wp.from_torch(f_sumsq),
-        wp.from_torch(max_norm),
+
+@torch_custom_op(
+    "nvalchemiops::fire2_step_coord_cell",
+    mutates_args=(
+        "positions",
+        "velocities",
+        "cell",
+        "cell_velocities",
+        "alpha",
+        "dt",
+        "nsteps_inc",
+        "ext_velocities",
+        "ext_forces",
+        "vf",
+        "v_sumsq",
+        "f_sumsq",
+        "max_norm",
+    ),
+)
+def _fire2_step_coord_cell_op(
+    positions: torch.Tensor,
+    velocities: torch.Tensor,
+    forces: torch.Tensor,
+    cell: torch.Tensor,
+    cell_velocities: torch.Tensor,
+    cell_force: torch.Tensor,
+    batch_idx: torch.Tensor,
+    alpha: torch.Tensor,
+    dt: torch.Tensor,
+    nsteps_inc: torch.Tensor,
+    atom_ptr: torch.Tensor | None,
+    ext_atom_ptr: torch.Tensor | None,
+    ext_positions: torch.Tensor | None,
+    ext_velocities: torch.Tensor,
+    ext_forces: torch.Tensor,
+    ext_batch_idx: torch.Tensor | None,
+    vf: torch.Tensor,
+    v_sumsq: torch.Tensor,
+    f_sumsq: torch.Tensor,
+    max_norm: torch.Tensor,
+    delaystep: int,
+    dtgrow: float,
+    dtshrink: float,
+    alphashrink: float,
+    alpha0: float,
+    tmax: float,
+    tmin: float,
+    maxstep: float,
+    cell_force_scale: float,
+    compute_reductions: bool,
+) -> None:
+    """Run the registered variable-cell FIRE2 operation."""
+    res = _coord_cell_mix_impl(
+        positions,
+        velocities,
+        forces,
+        cell,
+        cell_velocities,
+        cell_force,
+        batch_idx,
+        alpha,
+        dt,
+        nsteps_inc,
+        atom_ptr=atom_ptr,
+        ext_atom_ptr=ext_atom_ptr,
+        ext_velocities=ext_velocities,
+        ext_forces=ext_forces,
+        ext_batch_idx=ext_batch_idx,
+        vf=vf,
+        v_sumsq=v_sumsq,
+        f_sumsq=f_sumsq,
+        max_norm=max_norm,
         delaystep=delaystep,
         dtgrow=dtgrow,
         dtshrink=dtshrink,
@@ -488,8 +650,36 @@ def fire2_step_coord(
         alpha0=alpha0,
         tmax=tmax,
         tmin=tmin,
-        maxstep=maxstep,
+        cell_force_scale=cell_force_scale,
         compute_reductions=compute_reductions,
+        ext_positions=ext_positions,
+    )
+    if res is None:
+        return
+    (
+        wp_pos,
+        wp_vel,
+        wp_cell,
+        wp_cell_vel,
+        wp_dt,
+        wp_vf,
+        wp_ext_batch_idx,
+        wp_ext_atom_ptr,
+        wp_max_norm,
+        wp_device,
+    ) = res
+    _apply_fire2_coord_cell_step(
+        wp_pos,
+        wp_vel,
+        wp_cell,
+        wp_cell_vel,
+        wp_dt,
+        wp_vf,
+        wp_ext_batch_idx,
+        wp_ext_atom_ptr,
+        wp_max_norm,
+        maxstep=maxstep,
+        device=wp_device,
     )
 
 
@@ -761,7 +951,27 @@ def fire2_step_coord_cell(
     ...         f_sumsq=f_sumsq, max_norm=max_norm,
     ...     )
     """
-    res = _coord_cell_mix_impl(
+    dtype = positions.dtype
+    device = positions.device
+    N = positions.shape[0]
+    M = alpha.shape[0]
+    N_ext = N + 2 * M
+
+    ext_velocities = _alloc_if_none(
+        ext_velocities, N_ext, 3, dtype=dtype, device=device
+    )
+    ext_forces = _alloc_if_none(ext_forces, N_ext, 3, dtype=dtype, device=device)
+    if compute_reductions or N == 0:
+        vf = _alloc_if_none(vf, M, dtype=dtype, device=device)
+        v_sumsq = _alloc_if_none(v_sumsq, M, dtype=dtype, device=device)
+        f_sumsq = _alloc_if_none(f_sumsq, M, dtype=dtype, device=device)
+    elif vf is None or v_sumsq is None or f_sumsq is None:
+        raise ValueError(
+            "vf, v_sumsq, f_sumsq must be provided when compute_reductions=False"
+        )
+    max_norm = _alloc_if_none(max_norm, M, dtype=dtype, device=device)
+
+    _fire2_step_coord_cell_op(
         positions,
         velocities,
         forces,
@@ -772,54 +982,31 @@ def fire2_step_coord_cell(
         alpha,
         dt,
         nsteps_inc,
-        atom_ptr=atom_ptr,
-        ext_atom_ptr=ext_atom_ptr,
-        ext_velocities=ext_velocities,
-        ext_forces=ext_forces,
-        ext_batch_idx=ext_batch_idx,
-        vf=vf,
-        v_sumsq=v_sumsq,
-        f_sumsq=f_sumsq,
-        max_norm=max_norm,
-        delaystep=delaystep,
-        dtgrow=dtgrow,
-        dtshrink=dtshrink,
-        alphashrink=alphashrink,
-        alpha0=alpha0,
-        tmax=tmax,
-        tmin=tmin,
-        cell_force_scale=cell_force_scale,
-        compute_reductions=compute_reductions,
-        ext_positions=ext_positions,
+        atom_ptr,
+        ext_atom_ptr,
+        ext_positions,
+        ext_velocities,
+        ext_forces,
+        ext_batch_idx,
+        vf,
+        v_sumsq,
+        f_sumsq,
+        max_norm,
+        delaystep,
+        dtgrow,
+        dtshrink,
+        alphashrink,
+        alpha0,
+        tmax,
+        tmin,
+        maxstep,
+        cell_force_scale,
+        compute_reductions,
     )
-    if res is None:
-        return
-    (
-        wp_pos,
-        wp_vel,
-        wp_cell,
-        wp_cell_vel,
-        wp_dt,
-        wp_vf,
-        wp_ext_batch_idx,
-        wp_ext_atom_ptr,
-        wp_max_norm,
-        wp_device,
-    ) = res
-    # Couple + clamp + apply the affine cell update directly on positions/cells.
-    _apply_fire2_coord_cell_step(
-        wp_pos,
-        wp_vel,
-        wp_cell,
-        wp_cell_vel,
-        wp_dt,
-        wp_vf,
-        wp_ext_batch_idx,
-        wp_ext_atom_ptr,
-        wp_max_norm,
-        maxstep=maxstep,
-        device=wp_device,
-    )
+
+
+register_noop_fake(_fire2_step_coord_op)
+register_noop_fake(_fire2_step_coord_cell_op)
 
 
 def fire2_step_coord_cell_mix(
