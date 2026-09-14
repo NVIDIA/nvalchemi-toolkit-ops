@@ -40,6 +40,7 @@ import numpy as np
 import pytest
 import torch
 import warp as wp
+from torch.fx.experimental.proxy_tensor import make_fx
 from torchpme.lib.kvectors import _generate_kvectors as _generate_kvectors_torchpme
 
 from nvalchemiops.interactions.electrostatics._factory_common import _DerivState
@@ -47,14 +48,18 @@ from nvalchemiops.torch.interactions.electrostatics import (
     _ewald_real_chain,
     _ewald_recip_chain,
 )
+from nvalchemiops.torch.interactions.electrostatics import ewald as _ewald_module
 from nvalchemiops.torch.interactions.electrostatics.ewald import (
     ewald_real_space,
     ewald_reciprocal_space,
+    ewald_reciprocal_space_from_miller_indices,
     ewald_summation,
 )
 from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
     _generate_miller_indices,
+    generate_ewald_miller_indices,
     generate_k_vectors_ewald_summation,
+    k_vectors_from_miller_indices,
 )
 from nvalchemiops.torch.neighbors import batch_cell_list, cell_list
 
@@ -104,6 +109,17 @@ from test.interactions.electrostatics.conftest import (
 # Tolerances
 TIGHT_TOL = 1e-6
 LOOSE_TOL = 1e-4
+
+
+def test_compiled_single_system_atom_ranges_have_no_atomic_scatter():
+    """Concrete B=1 atom-range setup avoids segmented reduction in compiled graphs."""
+    batch_idx = torch.zeros(3, dtype=torch.long)
+    graph = make_fx(lambda indices: _ewald_module._atom_ranges(indices, 1))(batch_idx)
+
+    assert "index_add" not in graph.code
+    starts, ends = graph(batch_idx)
+    assert torch.equal(starts, torch.tensor([0], dtype=torch.int32))
+    assert torch.equal(ends, torch.tensor([3], dtype=torch.int32))
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
@@ -5990,6 +6006,87 @@ class TestEwaldReciprocalSpaceVirial:
         )
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_retained_miller_indices_match_strain_fd_and_direct_virial(self, device):
+        """Caller-retained topology preserves the issue-136 strain derivative."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell, alpha = self._triclinic_system(device)
+        miller_indices = generate_ewald_miller_indices(cell, 4.0, (4, 4, 4))
+
+        def energy_fn(pos, q, c):
+            return ewald_reciprocal_space_from_miller_indices(
+                pos, q, c, miller_indices, alpha
+            )
+
+        fd_virial = fd_strain_virial(
+            energy_fn,
+            positions,
+            charges,
+            cell,
+            eps=1e-6,
+        )
+        autograd_virial = autograd_strain_virial(energy_fn, positions, charges, cell)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            _, direct_virial = ewald_reciprocal_space_from_miller_indices(
+                positions,
+                charges,
+                cell,
+                miller_indices,
+                alpha,
+                compute_virial=True,
+            )
+
+        torch.testing.assert_close(autograd_virial, fd_virial, rtol=1e-5, atol=1e-6)
+        torch.testing.assert_close(
+            autograd_virial,
+            direct_virial,
+            rtol=1e-5,
+            atol=1e-6,
+        )
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_retained_miller_component_forwards_direct_outputs(self, device):
+        """The retained-index component preserves output order and warnings."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell, alpha = self._triclinic_system(device)
+        miller_indices = generate_ewald_miller_indices(cell, 4.0, (4, 4, 4))
+        k_vectors = k_vectors_from_miller_indices(cell, miller_indices)
+
+        with pytest.warns(DeprecationWarning):
+            retained = ewald_reciprocal_space_from_miller_indices(
+                positions,
+                charges,
+                cell,
+                miller_indices,
+                alpha,
+                compute_forces=True,
+                compute_charge_gradients=True,
+                compute_virial=True,
+                energy_reduction="system",
+            )
+        with pytest.warns(DeprecationWarning):
+            direct = ewald_reciprocal_space(
+                positions,
+                charges,
+                cell,
+                k_vectors,
+                alpha,
+                compute_forces=True,
+                compute_charge_gradients=True,
+                compute_virial=True,
+                energy_reduction="system",
+            )
+
+        assert len(retained) == 4
+        assert retained[0].shape == (1,)
+        for retained_value, direct_value in zip(retained, direct, strict=True):
+            torch.testing.assert_close(retained_value, direct_value)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_fixed_k_strain_autograd_matches_fixed_k_fd(self, device):
         """Fixed Cartesian reciprocal vectors retain fixed-k cell derivatives."""
         if device == "cuda" and not torch.cuda.is_available():
@@ -8400,6 +8497,190 @@ class TestEwaldMillerBounds:
 
         torch.testing.assert_close(explicit, generated, rtol=1e-12, atol=1e-12)
 
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_summation_retained_indices_match_generated_path(self, device):
+        """Full Ewald materializes caller-retained topology from the live cell."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = _contract_dipole(device)
+        pbc = torch.tensor([[True, True, True]], device=device)
+        nl, nptr, ns = cell_list(
+            positions,
+            5.0,
+            cell,
+            pbc,
+            return_neighbor_list=True,
+        )
+        bounds = (4, 4, 4)
+        miller_indices = generate_ewald_miller_indices(cell, 2.0, bounds)
+
+        generated = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=None,
+            k_cutoff=2.0,
+            miller_bounds=bounds,
+            neighbor_list=nl,
+            neighbor_ptr=nptr,
+            neighbor_shifts=ns,
+        )
+        retained = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=None,
+            miller_indices=miller_indices,
+            neighbor_list=nl,
+            neighbor_ptr=nptr,
+            neighbor_shifts=ns,
+        )
+
+        torch.testing.assert_close(retained, generated, rtol=1e-12, atol=1e-12)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_summation_rejects_conflicting_topology_sources(self, device):
+        """Indices conflict, while legacy explicit vectors still override bounds."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = _contract_dipole(device)
+        indices = generate_ewald_miller_indices(cell, 2.0, (4, 4, 4))
+        k_vectors = generate_k_vectors_ewald_summation(cell, 2.0, (4, 4, 4))
+        pbc = torch.tensor([[True, True, True]], device=device)
+        nl, nptr, ns = cell_list(
+            positions,
+            5.0,
+            cell,
+            pbc,
+            return_neighbor_list=True,
+        )
+
+        with pytest.raises(ValueError, match="miller_indices"):
+            ewald_summation(
+                positions,
+                charges,
+                cell,
+                alpha=0.3,
+                miller_indices=indices,
+                k_cutoff=2.0,
+            )
+        with pytest.raises(ValueError, match="k_vectors"):
+            ewald_summation(
+                positions,
+                charges,
+                cell,
+                alpha=0.3,
+                k_vectors=k_vectors,
+                miller_indices=indices,
+            )
+
+        explicit = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            k_vectors=k_vectors,
+            neighbor_list=nl,
+            neighbor_ptr=nptr,
+            neighbor_shifts=ns,
+        )
+        legacy_with_bounds = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            k_vectors=k_vectors,
+            miller_bounds=(1, 1, 1),
+            neighbor_list=nl,
+            neighbor_ptr=nptr,
+            neighbor_shifts=ns,
+        )
+        torch.testing.assert_close(legacy_with_bounds, explicit, rtol=0.0, atol=0.0)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_summation_retained_indices_strain_gradient_matches_virial(self, device):
+        """Full Ewald retained topology preserves the live-cell virial route."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = _contract_dipole(device)
+        pbc = torch.tensor([[True, True, True]], device=device)
+        nl, nptr, ns = cell_list(
+            positions,
+            5.0,
+            cell,
+            pbc,
+            return_neighbor_list=True,
+        )
+        alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+        miller_indices = generate_ewald_miller_indices(cell, 2.0, (4, 4, 4))
+
+        def energy_fn(pos, q, lattice):
+            return ewald_summation(
+                pos,
+                q,
+                lattice,
+                alpha=alpha,
+                miller_indices=miller_indices,
+                neighbor_list=nl,
+                neighbor_ptr=nptr,
+                neighbor_shifts=ns,
+            )
+
+        fd_virial = fd_strain_virial(energy_fn, positions, charges, cell, eps=1e-6)
+        autograd_virial = autograd_strain_virial(energy_fn, positions, charges, cell)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            _, direct_virial = ewald_summation(
+                positions,
+                charges,
+                cell,
+                alpha=alpha,
+                miller_indices=miller_indices,
+                neighbor_list=nl,
+                neighbor_ptr=nptr,
+                neighbor_shifts=ns,
+                compute_virial=True,
+            )
+
+        torch.testing.assert_close(autograd_virial, fd_virial, rtol=1e-5, atol=1e-6)
+        torch.testing.assert_close(
+            autograd_virial,
+            direct_virial,
+            rtol=1e-5,
+            atol=1e-6,
+        )
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_summation_accepts_empty_miller_topology(self, device):
+        """Full Ewald accepts empty retained reciprocal topology."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = _contract_dipole(device)
+        pbc = torch.tensor([[True, True, True]], device=device)
+        nl, nptr, ns = cell_list(
+            positions,
+            5.0,
+            cell,
+            pbc,
+            return_neighbor_list=True,
+        )
+        empty = torch.empty((0, 3), dtype=torch.int64, device=device)
+        energy = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            miller_indices=empty,
+            neighbor_list=nl,
+            neighbor_ptr=nptr,
+            neighbor_shifts=ns,
+        )
+        assert torch.isfinite(energy).all()
+
 
 class TestEwaldPerSystemUniformCotangentFastPath:
     """CUDA atom mode recognizes exact per-system-uniform materialized weights."""
@@ -10783,6 +11064,59 @@ class TestMaxAtomsPerSystem:
             positions, charges, cell, k_vectors, alpha, batch_idx=batch_idx
         )
         assert inference_calls >= 1
+
+    def test_compiling_inference_warns_and_explicit_bound_does_not(self):
+        """Only the compiled launch-bound fallback emits its migration warning."""
+        atom_start = torch.tensor([0, 1], dtype=torch.int32)
+        atom_end = torch.tensor([1, 4], dtype=torch.int32)
+        compiled = torch.compile(_ewald_recip_chain._resolve_max_atoms_per_system)
+
+        with pytest.warns(FutureWarning, match="max_atoms_per_system"):
+            assert compiled(0, atom_start, atom_end, 4) == 3
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            assert compiled(3, atom_start, atom_end, 4) == 3
+
+
+class TestReciprocalSymbolicMakeFx:
+    """Symbolic tracing coverage for batched reciprocal Ewald."""
+
+    @staticmethod
+    def _inputs(batch_size: int) -> tuple[torch.Tensor, ...]:
+        positions = torch.arange(batch_size * 6, dtype=torch.float64).reshape(-1, 3)
+        positions = positions.mul(0.01).add(0.1)
+        charges = torch.linspace(-0.4, 0.4, batch_size * 2, dtype=torch.float64)
+        cell = torch.eye(3, dtype=torch.float64).expand(batch_size, -1, -1).clone()
+        batch_idx = torch.arange(batch_size, dtype=torch.int32).repeat_interleave(2)
+        alpha = torch.full((batch_size,), 0.35, dtype=torch.float64)
+        k_vectors = torch.tensor([[[1.0, 0.0, 0.0]]], dtype=torch.float64).expand(
+            batch_size, -1, -1
+        )
+        return positions, charges, cell, batch_idx, alpha, k_vectors
+
+    @pytest.mark.parametrize("energy_reduction", ["atom", "system"])
+    def test_symbolic_make_fx_is_batch_size_independent(self, energy_reduction):
+        """Symbolic reciprocal graphs are independent of the concrete batch size."""
+
+        def reciprocal(positions, charges, cell, batch_idx, alpha, k_vectors):
+            return ewald_reciprocal_space(
+                positions,
+                charges,
+                cell,
+                k_vectors,
+                alpha,
+                batch_idx=batch_idx,
+                max_atoms_per_system=2,
+                energy_reduction=energy_reduction,
+            )
+
+        args4 = self._inputs(4)
+        args5 = self._inputs(5)
+        traced4 = make_fx(reciprocal, tracing_mode="symbolic")(*args4)
+        traced5 = make_fx(reciprocal, tracing_mode="symbolic")(*args5)
+
+        assert traced4.code == traced5.code
+        torch.testing.assert_close(traced4(*args5), reciprocal(*args5))
 
 
 if __name__ == "__main__":
