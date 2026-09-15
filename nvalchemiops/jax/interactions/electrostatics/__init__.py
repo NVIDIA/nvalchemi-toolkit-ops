@@ -13,22 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# ruff: noqa: E402
+
 """JAX bindings for electrostatics interactions."""
 
 from __future__ import annotations
 
 import inspect
 import warnings
-from warnings import warn
 
 import jax
 
-if not getattr(jax.config, "jax_enable_x64", False):
-    warn(
-        "Electrostatics kernels rely on FP64, and `jax_enable_x64` is set to False."
-        " `nvalchemiops` will set this value to True by default."
-    )
-    jax.config.update("jax_enable_x64", True)
+jax.config.update("jax_enable_x64", True)
 
 from nvalchemiops.jax.interactions.electrostatics.coulomb import (
     coulomb_energy,
