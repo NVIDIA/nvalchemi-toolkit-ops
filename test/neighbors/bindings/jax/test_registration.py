@@ -23,7 +23,7 @@ import importlib
 import jax.numpy as jnp
 import pytest
 import warp as wp
-from warp.jax_experimental import GraphMode
+from warp import JaxCallableGraphMode
 
 from nvalchemiops.jax.neighbors import _cluster_tile_preload, _registration
 
@@ -109,7 +109,7 @@ class TestRegistrationHelpers:
         result = _registration._register_jax_callable(
             "warp-callable",
             outputs,
-            graph_mode=GraphMode.NONE,
+            graph_mode=JaxCallableGraphMode.NONE,
         )
 
         assert result == "registered-callable"
@@ -119,7 +119,7 @@ class TestRegistrationHelpers:
                 {
                     "num_outputs": 2,
                     "in_out_argnames": ["sorted_positions", "neighbor_matrix"],
-                    "graph_mode": GraphMode.NONE,
+                    "graph_mode": JaxCallableGraphMode.NONE,
                 },
             )
         ]
@@ -1149,7 +1149,7 @@ class TestGraphRegistrationFactories:
                     "tile_col_group",
                     "tile_system",
                 ),
-                GraphMode.WARP,
+                JaxCallableGraphMode.WARP,
             )
         ]
 
@@ -1197,7 +1197,7 @@ class TestGraphRegistrationFactories:
                 "num_neighbors2",
                 "neighbor_matrix_shifts2",
             ),
-            GraphMode.WARP,
+            JaxCallableGraphMode.WARP,
         )
         assert calls[1] == (
             "pair-callback",
@@ -1210,7 +1210,7 @@ class TestGraphRegistrationFactories:
                 "pair_energies",
                 "pair_forces",
             ),
-            GraphMode.WARP,
+            JaxCallableGraphMode.WARP,
         )
 
     def test_coo_registration_uses_exact_abi_and_warp_graph_mode(
@@ -1249,12 +1249,12 @@ class TestGraphRegistrationFactories:
         assert calls[0] == (
             "compact-callback",
             ("pair_counter", "coo_list", "coo_shifts"),
-            GraphMode.WARP,
+            JaxCallableGraphMode.WARP,
         )
         assert calls[1] == (
             "segmented-callback",
             ("pair_counter", "pair_counts", "coo_list", "coo_shifts"),
-            GraphMode.WARP,
+            JaxCallableGraphMode.WARP,
         )
 
     def test_preload_closures_forward_exact_matrix_options(self, monkeypatch) -> None:

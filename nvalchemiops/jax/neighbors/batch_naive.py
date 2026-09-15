@@ -22,7 +22,7 @@ import functools
 import jax
 import jax.numpy as jnp
 import warp as wp
-from warp.jax_experimental import GraphMode, jax_callable, jax_kernel
+from warp import JaxCallableGraphMode, jax_callable, jax_kernel
 
 from nvalchemiops.jax.neighbors._autograd import (
     _build_index_residuals,
@@ -353,9 +353,9 @@ _BATCH_NAIVE_TILE_SPECS = {
 def _register_batch_naive_tile_callables() -> dict[
     tuple[bool, bool, jnp.dtype], object
 ]:
-    """Register GraphMode.NONE tile callables for the batched naive eager path.
+    """Register JaxCallableGraphMode.NONE tile callables for the batched naive eager path.
 
-    ``GraphMode.NONE`` (not WARP): the tile bodies assume the caller has
+    ``JaxCallableGraphMode.NONE`` (not WARP): the tile bodies assume the caller has
     already pre-filled the output buffers, which the eager
     ``batch_naive_neighbor_list`` path does before dispatch.
     """
@@ -366,7 +366,7 @@ def _register_batch_naive_tile_callables() -> dict[
                 spec[dtype],
                 num_outputs=spec["num_outputs"],
                 in_out_argnames=spec["in_out_argnames"],
-                graph_mode=GraphMode.NONE,
+                graph_mode=JaxCallableGraphMode.NONE,
             )
     return registered
 
