@@ -47,6 +47,46 @@ __all__ = [
 ]
 
 
+def _validate_coo_capacities(
+    coo_capacity: int | tuple[int, ...] | None,
+    return_neighbor_list: bool,
+    *,
+    num_cutoffs: int,
+) -> tuple[int, ...] | None:
+    """Validate and normalize fixed COO capacities for public wrappers."""
+    if coo_capacity is None:
+        return None
+    if not return_neighbor_list:
+        raise ValueError("coo_capacity requires return_neighbor_list=True")
+    if isinstance(coo_capacity, int):
+        capacities = (int(coo_capacity),) * num_cutoffs
+    else:
+        if len(coo_capacity) != num_cutoffs:
+            count = "two" if num_cutoffs == 2 else str(num_cutoffs)
+            raise ValueError(f"coo_capacity must contain exactly {count} values")
+        capacities = tuple(int(value) for value in coo_capacity)
+    if any(value < 0 for value in capacities):
+        if num_cutoffs == 1:
+            raise ValueError("coo_capacity must be non-negative")
+        raise ValueError("coo_capacity values must be non-negative")
+    return capacities
+
+
+def _validate_coo_capacity(
+    coo_capacity: int | None,
+    return_neighbor_list: bool,
+) -> int | None:
+    """Validate and normalize one public fixed COO capacity."""
+    if coo_capacity is None:
+        return None
+    capacities = _validate_coo_capacities(
+        int(coo_capacity),
+        return_neighbor_list,
+        num_cutoffs=1,
+    )
+    return capacities[0]
+
+
 def _fixed_capacity_flat_indices(
     active_mask: jax.Array,
     capacity: int,

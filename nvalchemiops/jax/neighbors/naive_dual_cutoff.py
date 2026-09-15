@@ -24,6 +24,7 @@ from warp import jax_kernel
 
 from nvalchemiops.jax.neighbors._registration import _lazy_naive_kernel
 from nvalchemiops.jax.neighbors.neighbor_utils import (
+    _validate_coo_capacities,
     compute_naive_num_shifts,
     get_fixed_capacity_neighbor_list_from_neighbor_matrix,
     get_neighbor_list_from_neighbor_matrix,
@@ -222,18 +223,11 @@ def naive_neighbor_list_dual_cutoff(
     nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_pbc_dual_cutoff : Core warp launcher (with PBC)
     naive_neighbor_list : Single cutoff version
     """
-    coo_capacities = None
-    if coo_capacity is not None:
-        if not return_neighbor_list:
-            raise ValueError("coo_capacity requires return_neighbor_list=True")
-        if isinstance(coo_capacity, int):
-            coo_capacities = (int(coo_capacity), int(coo_capacity))
-        else:
-            if len(coo_capacity) != 2:
-                raise ValueError("coo_capacity must contain exactly two values")
-            coo_capacities = tuple(int(value) for value in coo_capacity)
-        if any(value < 0 for value in coo_capacities):
-            raise ValueError("coo_capacity values must be non-negative")
+    coo_capacities = _validate_coo_capacities(
+        coo_capacity,
+        return_neighbor_list,
+        num_cutoffs=2,
+    )
 
     if pbc is None and cell is not None:
         raise ValueError("If cell is provided, pbc must also be provided")

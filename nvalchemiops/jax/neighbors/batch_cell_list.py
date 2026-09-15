@@ -46,6 +46,7 @@ from nvalchemiops.jax.neighbors.cell_list import (
     _validate_pair_kwargs,
 )
 from nvalchemiops.jax.neighbors.neighbor_utils import (
+    _validate_coo_capacity,
     allocate_cell_list,
     coo_pack_pair_geometry,
     get_fixed_capacity_neighbor_list_from_neighbor_matrix,
@@ -2194,12 +2195,7 @@ def batch_cell_list(
         pair_energies=pair_energies,
         pair_forces=pair_forces,
     )
-    if coo_capacity is not None:
-        coo_capacity = int(coo_capacity)
-        if not return_neighbor_list:
-            raise ValueError("coo_capacity requires return_neighbor_list=True")
-        if coo_capacity < 0:
-            raise ValueError("coo_capacity must be non-negative")
+    coo_capacity = _validate_coo_capacity(coo_capacity, return_neighbor_list)
     _validate_pair_kwargs(
         pair_fn=pair_fn,
         pair_params=pair_params,
@@ -2410,12 +2406,6 @@ def batch_cell_list(
                 pc_total_cells = int(pair_centric_total_cells)
                 pc_n_outer = int(pair_centric_n_outer)
                 pc_r_max = tuple(int(value) for value in pair_centric_r_max)
-                _validate_batch_pair_centric_metadata(
-                    pc_total_cells,
-                    pc_n_outer,
-                    pc_r_max,
-                    atoms_per_cell_count.shape[0],
-                )
             else:
                 try:
                     R_max_arr = jnp.max(neighbor_search_radius, axis=0)

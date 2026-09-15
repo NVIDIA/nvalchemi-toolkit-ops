@@ -35,6 +35,7 @@ from nvalchemiops.jax.neighbors._registration import (
     _lazy_cell_list_query_kernel,
 )
 from nvalchemiops.jax.neighbors.neighbor_utils import (
+    _validate_coo_capacity,
     _validate_graph_mode,
     coo_pack_pair_geometry,
     get_fixed_capacity_neighbor_list_from_neighbor_matrix,
@@ -2986,12 +2987,7 @@ def cell_list(
         pair_energies=pair_energies,
         pair_forces=pair_forces,
     )
-    if coo_capacity is not None:
-        coo_capacity = int(coo_capacity)
-        if not return_neighbor_list:
-            raise ValueError("coo_capacity requires return_neighbor_list=True")
-        if coo_capacity < 0:
-            raise ValueError("coo_capacity must be non-negative")
+    coo_capacity = _validate_coo_capacity(coo_capacity, return_neighbor_list)
     _validate_pair_kwargs(
         pair_fn=pair_fn,
         pair_params=pair_params,

@@ -426,6 +426,30 @@ class TestNaiveNeighborList:
 class TestNaiveEdgeCases:
     """Edge case tests for naive_neighbor_list."""
 
+    @pytest.mark.parametrize(
+        ("coo_capacity", "return_neighbor_list", "error"),
+        [
+            (4, False, "coo_capacity requires return_neighbor_list=True"),
+            (-1, True, "coo_capacity must be non-negative"),
+        ],
+    )
+    def test_coo_capacity_validation(
+        self,
+        coo_capacity,
+        return_neighbor_list,
+        error,
+    ):
+        """Fixed COO capacity rejects incompatible and negative values."""
+        positions = jnp.zeros((1, 3), dtype=jnp.float32)
+
+        with pytest.raises(ValueError, match=error):
+            naive_neighbor_list(
+                positions,
+                cutoff=1.0,
+                return_neighbor_list=return_neighbor_list,
+                coo_capacity=coo_capacity,
+            )
+
     def test_zero_cutoff_returns_no_neighbors(self):
         """Zero cutoff should find zero neighbors."""
         # 4 atoms in a cluster

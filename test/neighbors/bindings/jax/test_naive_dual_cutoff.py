@@ -236,6 +236,32 @@ class TestNaiveDualCutoffCorrectness:
 class TestNaiveDualCutoffEdgeCases:
     """Test edge cases for naive dual cutoff neighbor list."""
 
+    @pytest.mark.parametrize(
+        ("coo_capacity", "return_neighbor_list", "error"),
+        [
+            (4, False, "coo_capacity requires return_neighbor_list=True"),
+            ((1,), True, "coo_capacity must contain exactly two values"),
+            ((1, -1), True, "coo_capacity values must be non-negative"),
+        ],
+    )
+    def test_coo_capacity_validation(
+        self,
+        coo_capacity,
+        return_neighbor_list,
+        error,
+    ):
+        """Fixed COO capacities reject incompatible and malformed values."""
+        positions = jnp.zeros((1, 3), dtype=jnp.float32)
+
+        with pytest.raises(ValueError, match=error):
+            naive_neighbor_list_dual_cutoff(
+                positions,
+                cutoff1=1.0,
+                cutoff2=1.5,
+                return_neighbor_list=return_neighbor_list,
+                coo_capacity=coo_capacity,
+            )
+
     def test_single_atom(self):
         """Test with single atom (should have no neighbors)."""
         positions = jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32)

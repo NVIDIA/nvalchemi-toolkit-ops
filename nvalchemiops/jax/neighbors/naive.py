@@ -33,6 +33,7 @@ from nvalchemiops.jax.neighbors._autograd import (
 from nvalchemiops.jax.neighbors._dispatch import _is_jax_cpu_array
 from nvalchemiops.jax.neighbors._registration import _lazy_naive_kernel
 from nvalchemiops.jax.neighbors.neighbor_utils import (
+    _validate_coo_capacity,
     _validate_graph_mode,
     build_naive_kernel_tables,
     compute_naive_num_shifts,
@@ -1745,12 +1746,7 @@ def naive_neighbor_list(
     """
     graph_mode = _validate_graph_mode(graph_mode)
 
-    if coo_capacity is not None:
-        coo_capacity = int(coo_capacity)
-        if not return_neighbor_list:
-            raise ValueError("coo_capacity requires return_neighbor_list=True")
-        if coo_capacity < 0:
-            raise ValueError("coo_capacity must be non-negative")
+    coo_capacity = _validate_coo_capacity(coo_capacity, return_neighbor_list)
 
     if strategy not in {"auto", "scalar", "tile"}:
         raise ValueError(
