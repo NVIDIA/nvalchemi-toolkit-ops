@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- Raised the minimum supported Warp version to 1.15 and migrated JAX bindings
+  from Warp's removed experimental JAX module to its public JAX API, restoring
+  compatibility with `warp>=1.15`.
+- Warp initialization now retains warning-level diagnostics instead of
+  suppressing all Warp log output.
 ### Added
 
 - `TileBufferOverflow` reports how many cluster-tile pairs were required, how

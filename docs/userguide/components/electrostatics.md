@@ -80,6 +80,17 @@ in a consistent dtype within each call. The examples use `float64` because
 reciprocal-space electrostatics and gradient checks are accuracy sensitive;
 `float32` is supported when throughput is the priority.
 
+```{important}
+Import `nvalchemiops.jax.interactions.electrostatics` before creating JAX
+arrays intended to be `float64` or compiling JAX functions that operate on
+`float64` arrays.
+
+On import, the module sets JAX 64-bit support process-wide, including when it
+was previously disabled. This cannot restore precision in arrays already
+created as `float32` or update functions that JAX has already compiled.
+`float32` calculations remain supported.
+```
+
 ## Quick Start
 
 :::::::{tab-set}
