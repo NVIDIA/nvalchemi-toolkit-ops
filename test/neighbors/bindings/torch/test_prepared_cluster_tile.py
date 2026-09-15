@@ -16,6 +16,9 @@
 """Public-contract tests for prepared Torch cluster-tile execution."""
 
 import inspect
+import subprocess
+import sys
+import textwrap
 from dataclasses import FrozenInstanceError, is_dataclass
 
 import pytest
@@ -24,6 +27,7 @@ import torch
 import nvalchemiops.torch.neighbors.prepared_cluster_tile as prepared_module
 from nvalchemiops.torch.neighbors import (
     ClusterTileState,
+    NeighborOverflowError,
     batch_cluster_tile_neighbor_list,
     cluster_tile_neighbor_list,
     cluster_tile_neighbor_list_prepared,
@@ -45,6 +49,50 @@ def _inputs(
     positions = torch.rand((32, 3), dtype=torch.float32, device="cuda") * 8.0
     cell = torch.eye(3, dtype=torch.float32, device="cuda") * 8.0
     return positions, cell, None
+
+
+def _run_uninitialized_selective_fullgraph() -> subprocess.CompletedProcess[str]:
+    """Run one asynchronous initialization failure in a fresh process."""
+    script = textwrap.dedent(
+        """
+        import torch
+        from nvalchemiops.torch.neighbors import (
+            cluster_tile_neighbor_list_prepared,
+            prepare_cluster_tile,
+        )
+
+        positions = torch.rand((32, 3), dtype=torch.float32, device="cuda")
+        cell = torch.eye(3, dtype=torch.float32, device="cuda") * 8.0
+        state = prepare_cluster_tile(
+            positions,
+            1.0,
+            cell,
+            format="matrix",
+            selective=True,
+            max_neighbors=32,
+            max_tiles_per_group=2,
+        )
+
+        @torch.compile(fullgraph=True)
+        def run(values, flags):
+            return cluster_tile_neighbor_list_prepared(
+                values, cell, state, rebuild_flags=flags
+            )
+
+        flags = torch.zeros(1, dtype=torch.bool, device="cuda")
+        print("SELECTIVE_CALL_STARTED", flush=True)
+        run(positions, flags)
+        torch.cuda.synchronize()
+        print("SELECTIVE_CALL_RETURNED", flush=True)
+        """
+    )
+    return subprocess.run(  # noqa: S603
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
 
 
 def _direct(
@@ -885,6 +933,272 @@ def test_preparation_owns_default_capacities() -> None:
 
 
 @pytest.mark.gpu
+def test_selective_single_matrix_initializes_and_preserves() -> None:
+    """A single matrix must rebuild once before false can preserve it."""
+    positions, cell, _ = _inputs(False)
+    state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        selective=True,
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    false = torch.zeros(1, dtype=torch.bool, device="cuda")
+    with pytest.raises(ValueError, match="cannot preserve uninitialized"):
+        cluster_tile_neighbor_list_prepared(
+            positions,
+            cell,
+            state,
+            rebuild_flags=false,
+        )
+
+    true = torch.ones(1, dtype=torch.bool, device="cuda")
+    initial = cluster_tile_neighbor_list_prepared(
+        positions,
+        cell,
+        state,
+        rebuild_flags=true,
+    )
+    snapshot = tuple(value.clone() for value in initial)
+    preserved = cluster_tile_neighbor_list_prepared(
+        positions * 0.5,
+        cell,
+        state,
+        rebuild_flags=false,
+    )
+    assert all(torch.equal(value, saved) for value, saved in zip(preserved, snapshot))
+
+
+@pytest.mark.gpu
+def test_selective_partial_batch_rebuild_preserves_false_rows() -> None:
+    """Eager selective batching changes only the flagged system rows."""
+    positions, cell, batch_ptr = _inputs(True)
+    state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        batch_ptr=batch_ptr,
+        selective=True,
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    all_true = torch.ones(2, dtype=torch.bool, device="cuda")
+    initial = cluster_tile_neighbor_list_prepared(
+        positions,
+        cell,
+        state,
+        rebuild_flags=all_true,
+    )
+    snapshot = tuple(value.clone() for value in initial)
+    changed = positions.clone()
+    changed[17:] *= 0.5
+    mixed = torch.tensor([False, True], dtype=torch.bool, device="cuda")
+    output = cluster_tile_neighbor_list_prepared(
+        changed,
+        cell,
+        state,
+        rebuild_flags=mixed,
+    )
+    for value, saved in zip(output, snapshot):
+        assert torch.equal(value[:17], saved[:17])
+    expected = _direct(changed, cell, batch_ptr, format="matrix")
+    assert _matrix_records(output)[17:] == _matrix_records(expected)[17:]
+
+
+@pytest.mark.gpu
+@pytest.mark.slow
+def test_selective_dual_matrix_fullgraph_preserves_false_rows() -> None:
+    """Compiled selective dual cutoff preserves both unflagged triples."""
+    positions, cell, batch_ptr = _inputs(True)
+    state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        batch_ptr=batch_ptr,
+        selective=True,
+        cutoff2=1.6,
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    all_true = torch.ones(2, dtype=torch.bool, device="cuda")
+    initial = cluster_tile_neighbor_list_prepared(
+        positions,
+        cell,
+        state,
+        rebuild_flags=all_true,
+    )
+    snapshot = tuple(value.clone() for value in initial)
+    changed = positions.clone()
+    changed[17:] *= 0.5
+    mixed = torch.tensor([False, True], dtype=torch.bool, device="cuda")
+
+    @torch.compile(fullgraph=True)
+    def run(values: torch.Tensor, flags: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        return cluster_tile_neighbor_list_prepared(
+            values,
+            cell,
+            state,
+            rebuild_flags=flags,
+        )
+
+    output = run(changed, mixed)
+    torch.cuda.synchronize()
+    for value, saved in zip(output, snapshot):
+        assert torch.equal(value[:17], saved[:17])
+    expected = _direct(
+        changed,
+        cell,
+        batch_ptr,
+        format="matrix",
+        cutoff2=1.6,
+    )
+    for start in (0, 3):
+        assert (
+            _matrix_records(output, start)[17:] == _matrix_records(expected, start)[17:]
+        )
+
+
+@pytest.mark.gpu
+def test_failed_selective_rebuild_invalidates_preservation() -> None:
+    """A failed eager rebuild cannot expose partially overwritten topology."""
+    positions = torch.arange(32, dtype=torch.float32, device="cuda")[
+        :, None
+    ] * torch.tensor([3.0, 0.0, 0.0], device="cuda")
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 100.0
+    state = prepare_cluster_tile(
+        positions,
+        1.0,
+        cell,
+        format="matrix",
+        selective=True,
+        max_neighbors=1,
+        max_tiles_per_group=1,
+    )
+    true = torch.ones(1, dtype=torch.bool, device="cuda")
+    false = torch.zeros(1, dtype=torch.bool, device="cuda")
+    cluster_tile_neighbor_list_prepared(
+        positions,
+        cell,
+        state,
+        rebuild_flags=true,
+    )
+    dense = torch.zeros_like(positions)
+    with pytest.raises(NeighborOverflowError):
+        cluster_tile_neighbor_list_prepared(
+            dense,
+            cell,
+            state,
+            rebuild_flags=true,
+        )
+    with pytest.raises(ValueError, match="cannot preserve uninitialized"):
+        cluster_tile_neighbor_list_prepared(
+            dense,
+            cell,
+            state,
+            rebuild_flags=false,
+        )
+
+
+@pytest.mark.gpu
+def test_selective_configuration_and_flags_are_restricted() -> None:
+    """Selective preparation accepts only matrix topology and valid flags."""
+    positions, cell, _ = _inputs(False)
+    with pytest.raises(ValueError, match="matrix output only"):
+        prepare_cluster_tile(
+            positions,
+            1.2,
+            cell,
+            format="coo",
+            selective=True,
+        )
+    with pytest.raises(ValueError, match="matrix output only"):
+        prepare_cluster_tile(
+            positions,
+            1.2,
+            cell,
+            format="tile",
+            selective=True,
+        )
+    with pytest.raises(ValueError, match="does not support geometry"):
+        prepare_cluster_tile(
+            positions,
+            1.2,
+            cell,
+            format="matrix",
+            selective=True,
+            return_vectors=True,
+        )
+
+    state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        selective=True,
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    with pytest.raises(ValueError, match="requires rebuild_flags"):
+        cluster_tile_neighbor_list_prepared(positions, cell, state)
+    with pytest.raises(ValueError, match=r"shape \(num_systems,\)"):
+        cluster_tile_neighbor_list_prepared(
+            positions,
+            cell,
+            state,
+            rebuild_flags=torch.ones(2, dtype=torch.bool, device="cuda"),
+        )
+    with pytest.raises(ValueError, match="bool tensor"):
+        cluster_tile_neighbor_list_prepared(
+            positions,
+            cell,
+            state,
+            rebuild_flags=torch.ones(1, dtype=torch.int32, device="cuda"),
+        )
+    with pytest.raises(ValueError, match="prepared device"):
+        cluster_tile_neighbor_list_prepared(
+            positions,
+            cell,
+            state,
+            rebuild_flags=torch.ones(1, dtype=torch.bool),
+        )
+
+    plain = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    with pytest.raises(ValueError, match="requires a selective"):
+        cluster_tile_neighbor_list_prepared(
+            positions,
+            cell,
+            plain,
+            rebuild_flags=torch.ones(1, dtype=torch.bool, device="cuda"),
+        )
+
+
+@pytest.mark.gpu
+@pytest.mark.slow
+def test_selective_fullgraph_false_before_init_is_isolated() -> None:
+    """Compiled preservation before initialization fails without returning."""
+    result = _run_uninitialized_selective_fullgraph()
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "SELECTIVE_CALL_STARTED" in output
+    assert "SELECTIVE_CALL_RETURNED" not in output
+    assert (
+        "cannot preserve uninitialized" in output
+        or "device-side assert" in output.lower()
+    )
+
+
+@pytest.mark.gpu
 def test_prepared_configuration_is_frozen() -> None:
     """The public state is one frozen slotted dataclass."""
     positions, cell, _ = _inputs(False)
@@ -997,6 +1311,7 @@ def test_prepared_api_has_no_caller_owned_storage_or_pair_callback() -> None:
         "cell",
         "format",
         "batch_ptr",
+        "selective",
         "max_neighbors",
         "fill_value",
         "max_pairs",
@@ -1009,6 +1324,7 @@ def test_prepared_api_has_no_caller_owned_storage_or_pair_callback() -> None:
         "positions",
         "cell",
         "state",
+        "rebuild_flags",
     }
 
 
