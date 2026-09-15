@@ -393,14 +393,22 @@ def get_neighbor_list_from_neighbor_matrix(
 
     Raises
     ------
-    ValueError
-        If the max number of neighbors is larger than the neighbor matrix width.
+    NeighborOverflowError
+        If eager execution finds more neighbors than the neighbor matrix can
+        hold.  The exception retains the allocated capacity and the observed
+        maximum neighbor count in ``max_neighbors`` and ``num_neighbors``.
+    RuntimeError
+        If compiled execution finds an insufficient neighbor-matrix capacity.
+        The compiled assertion is device-side and may be reported
+        asynchronously by the active device runtime.
 
     Notes
     -----
     This is a pure PyTorch utility function with no warp dependencies. It converts
     from the fixed-width matrix format to the variable-width list format by masking
-    out fill values and flattening the result.
+    out fill values and flattening the result. Compiled callers use a device-side
+    capacity assertion to avoid converting a tensor to a Python scalar. Exact output
+    allocation through ``nonzero`` is data-dependent and requires host synchronization.
 
     See Also
     --------
@@ -424,20 +432,32 @@ def get_neighbor_list_from_neighbor_matrix(
         else:
             return neighbor_list, neighbor_ptr
 
-    # Validate that the neighbor matrix is large enough
+    # Validate that the neighbor matrix is large enough.  Eager callers retain
+    # the structured overflow exception; compiled callers need a device-side
+    # assertion because converting ``max_found`` to a Python scalar would break
+    # graph capture and would synchronize the device.
     max_found = num_neighbors.max()
-    if max_found > neighbor_matrix.shape[1]:
-        raise NeighborOverflowError(
-            neighbor_matrix.shape[1],
-            max_found.item() if hasattr(max_found, "item") else int(max_found),
+    if torch.compiler.is_compiling():
+        torch._assert_async(
+            max_found <= neighbor_matrix.shape[1],
+            "neighbor matrix capacity is insufficient for the requested COO output",
         )
+    else:
+        max_found_value = int(max_found.item())
+        if max_found_value > neighbor_matrix.shape[1]:
+            raise NeighborOverflowError(
+                neighbor_matrix.shape[1],
+                max_found_value,
+            )
 
-    # Create mask and extract neighbor pairs
+    # Create mask and extract neighbor pairs.  ``nonzero`` returns the row and
+    # slot coordinates together, avoiding separate dynamic mask compactions and
+    # retaining row-major ordering.
     mask = neighbor_matrix != fill_value
     dtype = neighbor_matrix.dtype
-    i_idx = torch.where(mask)[0].to(dtype)
-    j_idx = neighbor_matrix[mask].to(dtype)
-    neighbor_list = torch.stack([i_idx, j_idx], dim=0)
+    i_idx, slot_idx = mask.nonzero(as_tuple=True)
+    j_idx = neighbor_matrix[i_idx, slot_idx].to(dtype)
+    neighbor_list = torch.stack([i_idx.to(dtype), j_idx], dim=0)
 
     # Create CSR-style pointer array
     neighbor_ptr = torch.zeros(
@@ -446,7 +466,7 @@ def get_neighbor_list_from_neighbor_matrix(
     torch.cumsum(num_neighbors, dim=0, out=neighbor_ptr[1:])
 
     if neighbor_shift_matrix is not None:
-        neighbor_list_shifts = neighbor_shift_matrix[mask]
+        neighbor_list_shifts = neighbor_shift_matrix[i_idx, slot_idx]
         return neighbor_list, neighbor_ptr, neighbor_list_shifts
     else:
         return neighbor_list, neighbor_ptr
