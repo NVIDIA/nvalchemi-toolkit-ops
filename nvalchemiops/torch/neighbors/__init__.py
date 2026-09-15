@@ -89,6 +89,11 @@ from nvalchemiops.torch.neighbors.neighbor_utils import (
     synthesize_cell_for_batch,
     synthesize_cell_for_ss,
 )
+from nvalchemiops.torch.neighbors.prepared_cluster_tile import (
+    ClusterTileState,
+    cluster_tile_neighbor_list_prepared,
+    prepare_cluster_tile,
+)
 
 
 def neighbor_list(
@@ -622,6 +627,9 @@ __all__ = [
     "naive_neighbor_list",
     "naive_neighbor_list_dual_cutoff",
     "cluster_tile_neighbor_list",
+    "ClusterTileState",
+    "prepare_cluster_tile",
+    "cluster_tile_neighbor_list_prepared",
     "estimate_cell_list_sizes",
     # Batched algorithms
     "batch_cell_list",
