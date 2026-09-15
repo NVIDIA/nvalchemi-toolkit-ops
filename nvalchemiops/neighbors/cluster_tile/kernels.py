@@ -140,6 +140,25 @@ def _wrap_triclinic(
     return d_new, wp.vec3i(s_a, s_b, s_c)
 
 
+@wp.func
+def _direct_coo_pair_is_accepted(
+    i_sorted: wp.int32,
+    j_sorted: wp.int32,
+    i_orig: wp.int32,
+    j_orig: wp.int32,
+    natom: wp.int32,
+    distance_sq: wp.float32,
+    cutoff_sq: wp.float32,
+) -> wp.bool:
+    """Return the shared direct-CSR topology predicate."""
+    return (
+        i_sorted < j_sorted
+        and i_orig < natom
+        and j_orig < natom
+        and distance_sq < cutoff_sq
+    )
+
+
 @wp.kernel(enable_backward=False, module="morton_build")
 def _compute_morton_kernel(
     positions: wp.array(dtype=wp.vec3f),
@@ -1206,6 +1225,190 @@ def get_batch_query_cluster_tile_kernel(
         return_distances=bool(return_distances),
         pair_fn=pair_fn,
     )
+
+
+@lru_cache(maxsize=None)
+def _get_query_cluster_tile_direct_csr_count_kernel(*, batched: bool) -> wp.Kernel:
+    """Build the count pass for compact, source-owned exact COO."""
+    BATCHED = wp.constant(bool(batched))
+
+    @wp.kernel(enable_backward=False, module="unique")
+    def _kernel(
+        sorted_pos_x: wp.array(dtype=wp.float32),
+        sorted_pos_y: wp.array(dtype=wp.float32),
+        sorted_pos_z: wp.array(dtype=wp.float32),
+        sorted_atom_index: wp.array(dtype=wp.int32),
+        cell: wp.array(dtype=wp.mat33f),
+        inv_cell: wp.array(dtype=wp.mat33f),
+        cutoff_sq: wp.float32,
+        natom: wp.int32,
+        num_tiles: wp.array(dtype=wp.int32),
+        tile_row_group: wp.array(dtype=wp.int32),
+        tile_col_group: wp.array(dtype=wp.int32),
+        tile_system: wp.array(dtype=wp.int32),
+        row_counts: wp.array(dtype=wp.int32),
+    ) -> None:
+        tile = wp.tid()
+        if tile >= num_tiles[0]:
+            return
+        system_idx = wp.int32(0)
+        if BATCHED:
+            system_idx = tile_system[tile]
+        lane_tile = wp.tile_arange(TILE, dtype=wp.int32)
+        lane = wp.untile(lane_tile)
+        row_group = tile_row_group[tile]
+        col_group = tile_col_group[tile]
+        j_sorted = col_group * TILE + lane
+        j_orig = sorted_atom_index[j_sorted]
+        pj_x = sorted_pos_x[j_sorted]
+        pj_y = sorted_pos_y[j_sorted]
+        pj_z = sorted_pos_z[j_sorted]
+        pi_x_tile = wp.tile_load(sorted_pos_x, shape=TILE, offset=row_group * TILE)
+        pi_y_tile = wp.tile_load(sorted_pos_y, shape=TILE, offset=row_group * TILE)
+        pi_z_tile = wp.tile_load(sorted_pos_z, shape=TILE, offset=row_group * TILE)
+        i_orig_tile = wp.tile_load(
+            sorted_atom_index, shape=TILE, offset=row_group * TILE
+        )
+        cell_mat = cell[system_idx]
+        inv_cell_mat = inv_cell[system_idx]
+        for i_local in range(TILE_GROUP_SIZE):
+            i_sorted = row_group * TILE + i_local
+            i_orig = wp.tile_extract(i_orig_tile, i_local)
+            d = wp.vec3f(
+                pj_x - wp.tile_extract(pi_x_tile, i_local),
+                pj_y - wp.tile_extract(pi_y_tile, i_local),
+                pj_z - wp.tile_extract(pi_z_tile, i_local),
+            )
+            wrapped, _ = _wrap_triclinic(d, cell_mat, inv_cell_mat)
+            distance_sq = wp.dot(wrapped, wrapped)
+            if _direct_coo_pair_is_accepted(
+                i_sorted, j_sorted, i_orig, j_orig, natom, distance_sq, cutoff_sq
+            ):
+                wp.atomic_add(row_counts, i_orig, 1)
+                wp.atomic_add(row_counts, j_orig, 1)
+
+    return _kernel
+
+
+@lru_cache(maxsize=None)
+def _get_query_cluster_tile_direct_csr_fill_kernel(
+    *,
+    batched: bool,
+    return_vectors: bool = False,
+    return_distances: bool = False,
+    pair_fn: wp.Function | None = None,
+) -> wp.Kernel:
+    """Build the fill pass for compact, source-owned exact COO."""
+    BATCHED = wp.constant(bool(batched))
+    RETURN_VECTORS = wp.constant(bool(return_vectors))
+    RETURN_DISTANCES = wp.constant(bool(return_distances))
+    HAS_PAIR_FN = wp.constant(pair_fn is not None)
+
+    @wp.kernel(enable_backward=False, module="unique")
+    def _kernel(
+        sorted_pos_x: wp.array(dtype=wp.float32),
+        sorted_pos_y: wp.array(dtype=wp.float32),
+        sorted_pos_z: wp.array(dtype=wp.float32),
+        sorted_atom_index: wp.array(dtype=wp.int32),
+        cell: wp.array(dtype=wp.mat33f),
+        inv_cell: wp.array(dtype=wp.mat33f),
+        cutoff_sq: wp.float32,
+        natom: wp.int32,
+        physical_capacity: wp.int32,
+        num_tiles: wp.array(dtype=wp.int32),
+        tile_row_group: wp.array(dtype=wp.int32),
+        tile_col_group: wp.array(dtype=wp.int32),
+        tile_system: wp.array(dtype=wp.int32),
+        cursors: wp.array(dtype=wp.int32),
+        coo_list: wp.array2d(dtype=wp.int32),
+        coo_shifts: wp.array2d(dtype=wp.int32),
+        neighbor_vectors: wp.array(dtype=wp.vec3f),
+        neighbor_distances: wp.array(dtype=wp.float32),
+        pair_params: wp.array2d(dtype=wp.float32),
+        pair_energies: wp.array(dtype=wp.float32),
+        pair_forces: wp.array(dtype=wp.vec3f),
+    ) -> None:
+        tile = wp.tid()
+        if tile >= num_tiles[0]:
+            return
+        system_idx = wp.int32(0)
+        if BATCHED:
+            system_idx = tile_system[tile]
+        lane_tile = wp.tile_arange(TILE, dtype=wp.int32)
+        lane = wp.untile(lane_tile)
+        row_group = tile_row_group[tile]
+        col_group = tile_col_group[tile]
+        j_sorted = col_group * TILE + lane
+        j_orig = sorted_atom_index[j_sorted]
+        pj_x = sorted_pos_x[j_sorted]
+        pj_y = sorted_pos_y[j_sorted]
+        pj_z = sorted_pos_z[j_sorted]
+        pi_x_tile = wp.tile_load(sorted_pos_x, shape=TILE, offset=row_group * TILE)
+        pi_y_tile = wp.tile_load(sorted_pos_y, shape=TILE, offset=row_group * TILE)
+        pi_z_tile = wp.tile_load(sorted_pos_z, shape=TILE, offset=row_group * TILE)
+        i_orig_tile = wp.tile_load(
+            sorted_atom_index, shape=TILE, offset=row_group * TILE
+        )
+        cell_mat = cell[system_idx]
+        inv_cell_mat = inv_cell[system_idx]
+        for i_local in range(TILE_GROUP_SIZE):
+            i_sorted = row_group * TILE + i_local
+            i_orig = wp.tile_extract(i_orig_tile, i_local)
+            d = wp.vec3f(
+                pj_x - wp.tile_extract(pi_x_tile, i_local),
+                pj_y - wp.tile_extract(pi_y_tile, i_local),
+                pj_z - wp.tile_extract(pi_z_tile, i_local),
+            )
+            wrapped, shift = _wrap_triclinic(d, cell_mat, inv_cell_mat)
+            if _direct_coo_pair_is_accepted(
+                i_sorted,
+                j_sorted,
+                i_orig,
+                j_orig,
+                natom,
+                wp.dot(wrapped, wrapped),
+                cutoff_sq,
+            ):
+                forward = wp.atomic_add(cursors, i_orig, 1)
+                reverse = wp.atomic_add(cursors, j_orig, 1)
+                if forward < physical_capacity:
+                    coo_list[forward, 0] = i_orig
+                    coo_list[forward, 1] = j_orig
+                    coo_shifts[forward, 0] = shift[0]
+                    coo_shifts[forward, 1] = shift[1]
+                    coo_shifts[forward, 2] = shift[2]
+                    if RETURN_VECTORS:
+                        neighbor_vectors[forward] = wrapped
+                    if RETURN_DISTANCES or HAS_PAIR_FN:
+                        distance = wp.sqrt(wp.dot(wrapped, wrapped))
+                        if RETURN_DISTANCES:
+                            neighbor_distances[forward] = distance
+                        if HAS_PAIR_FN:
+                            energy, force = pair_fn(
+                                wrapped, distance, pair_params, i_orig, j_orig
+                            )
+                            pair_energies[forward] = energy
+                            pair_forces[forward] = force
+                if reverse < physical_capacity:
+                    coo_list[reverse, 0] = j_orig
+                    coo_list[reverse, 1] = i_orig
+                    coo_shifts[reverse, 0] = -shift[0]
+                    coo_shifts[reverse, 1] = -shift[1]
+                    coo_shifts[reverse, 2] = -shift[2]
+                    if RETURN_VECTORS:
+                        neighbor_vectors[reverse] = -wrapped
+                    if RETURN_DISTANCES or HAS_PAIR_FN:
+                        distance = wp.sqrt(wp.dot(wrapped, wrapped))
+                        if RETURN_DISTANCES:
+                            neighbor_distances[reverse] = distance
+                        if HAS_PAIR_FN:
+                            energy, force = pair_fn(
+                                -wrapped, distance, pair_params, j_orig, i_orig
+                            )
+                            pair_energies[reverse] = energy
+                            pair_forces[reverse] = force
+
+    return _kernel
 
 
 @lru_cache(maxsize=None)
