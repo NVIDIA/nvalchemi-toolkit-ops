@@ -615,6 +615,42 @@ later geometries. `TileBufferOverflow` reports exhaustion of the intermediate
 tile-pair buffer. `NeighborOverflowError` reports that the final matrix or COO
 neighbor output is too small.
 
+#### Compiled PyTorch direct APIs
+
+The direct PyTorch cluster-tile functions support
+`torch.compile(fullgraph=True)` for tile and matrix output. Matrix support
+includes dual cutoffs and differentiable vectors and distances. Exact COO
+output and pair callbacks remain eager-only.
+
+A compiled single-system call may allocate its scratch internally when
+`max_tiles_per_group` is a positive static integer:
+
+```python
+import torch
+
+from nvalchemiops.torch.neighbors import cluster_tile_neighbor_list
+
+@torch.compile(fullgraph=True)
+def compiled_matrix(positions, cell):
+    return cluster_tile_neighbor_list(
+        positions,
+        cutoff,
+        cell,
+        format="matrix",
+        max_neighbors=max_neighbors,
+        max_tiles_per_group=max_tiles_per_group,
+        return_distances=True,
+    )
+```
+
+For a batched compiled call, allocate once with
+`allocate_batch_cluster_tile_list` and pass every tensor in that 19-tensor
+scratch tuple through its corresponding keyword argument. Selective matrix
+calls additionally require fixed output buffers and tile segment metadata.
+Eager calls retain structured `TileBufferOverflow` and
+`NeighborOverflowError` exceptions. Compiled capacity failures are asynchronous
+device runtime errors.
+
 #### Compiled JAX
 
 JAX fixes array shapes while tracing a transformed or compiled function, and

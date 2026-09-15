@@ -2377,6 +2377,13 @@ def batch_cluster_tile_neighbor_list(
     - Cluster-tile is CUDA float32 only; float64 ``positions`` is rejected.
     - Cluster-tile does not support partial neighbor lists (no
       ``target_indices`` kwarg).
+    - ``torch.compile(fullgraph=True)`` supports tile and matrix output,
+      including dual-cutoff matrices and differentiable matrix geometry.
+      Compiled calls require the complete scratch tuple returned by
+      ``allocate_batch_cluster_tile_list``. Selective matrix calls also require
+      fixed tile offsets, counters, and output buffers. Compiled capacity
+      failures use asynchronous device assertions. Exact COO output and pair
+      callbacks remain eager-only.
     - The unified
       :func:`nvalchemiops.torch.neighbors.neighbor_list` entry point may
       select this binding automatically when the selector guards and cost
