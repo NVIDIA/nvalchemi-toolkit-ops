@@ -141,21 +141,6 @@ class TestScalarSegmentReduce:
         wp.synchronize()
         np.testing.assert_allclose(out.numpy(), ref, rtol=rtol)
 
-    def test_int64_indices(self, device):
-        """Accept native PyTorch-compatible int64 segment indices."""
-        N, M = 1200, 12
-        idx_np = np.repeat(np.arange(M, dtype=np.int64), N // M)
-        x_np = np.random.default_rng(42).standard_normal(N).astype(np.float32)
-        ref = _numpy_segmented_sum(x_np, idx_np, M)
-
-        x = wp.array(x_np, dtype=wp.float32, device=device)
-        idx = wp.array(idx_np, dtype=wp.int64, device=device)
-        out = wp.zeros(M, dtype=wp.float32, device=device)
-        segmented_sum(x, idx, out)
-        wp.synchronize()
-
-        np.testing.assert_allclose(out.numpy(), ref, rtol=1e-5)
-
     @pytest.mark.parametrize(
         "wp_dtype,np_dtype,rtol",
         [

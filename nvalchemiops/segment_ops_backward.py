@@ -154,7 +154,7 @@ def _launch_sum(x: wp.array, idx: wp.array, out: wp.array) -> None:
         rem = N - full_blocks * _BLOCK_DIM
         if rem > 0:
             wp.launch(
-                _segmented_sum_overloads[(x.dtype, idx.dtype)],
+                _segmented_sum_overloads[x.dtype],
                 dim=rem,
                 inputs=[
                     x[full_blocks * _BLOCK_DIM :],
@@ -169,7 +169,7 @@ def _launch_sum(x: wp.array, idx: wp.array, out: wp.array) -> None:
     ept = compute_ept(N, max(device.sm_count, 1), x.dtype in _VEC_TYPES)
     dim = (N + ept - 1) // ept
     wp.launch(
-        _segmented_sum_overloads[(x.dtype, idx.dtype)],
+        _segmented_sum_overloads[x.dtype],
         dim=dim,
         inputs=[x, idx, out, N, ept],
         device=device,
@@ -288,18 +288,20 @@ def _segmented_inner_products_backward_vec_kernel(
 
 _segmented_inner_products_backward_overloads = register_overloads(
     _segmented_inner_products_backward_scalar_kernel,
-    lambda t: [wp.array(dtype=t)] * 2
-    + [wp.array(dtype=wp.int32)]
-    + [wp.array(dtype=t)] * 5,
+    lambda t: (
+        [wp.array(dtype=t)] * 2 + [wp.array(dtype=wp.int32)] + [wp.array(dtype=t)] * 5
+    ),
     dtypes=_SCALAR_TYPES,
 )
 _segmented_inner_products_backward_overloads.update(
     register_overloads(
         _segmented_inner_products_backward_vec_kernel,
-        lambda v, s: [wp.array(dtype=v)] * 2
-        + [wp.array(dtype=wp.int32)]
-        + [wp.array(dtype=s)] * 3
-        + [wp.array(dtype=v)] * 2,
+        lambda v, s: (
+            [wp.array(dtype=v)] * 2
+            + [wp.array(dtype=wp.int32)]
+            + [wp.array(dtype=s)] * 3
+            + [wp.array(dtype=v)] * 2
+        ),
         dtype_pairs=_VEC_SCALAR_PAIRS,
     )
 )
@@ -895,18 +897,20 @@ def _segmented_inner_products_dbl_bwd_vec_kernel(
 
 _segmented_inner_products_dbl_bwd_overloads = register_overloads(
     _segmented_inner_products_dbl_bwd_scalar_kernel,
-    lambda t: [wp.array(dtype=t)] * 5
-    + [wp.array(dtype=wp.int32)]
-    + [wp.array(dtype=t)] * 2,
+    lambda t: (
+        [wp.array(dtype=t)] * 5 + [wp.array(dtype=wp.int32)] + [wp.array(dtype=t)] * 2
+    ),
     dtypes=_SCALAR_TYPES,
 )
 _segmented_inner_products_dbl_bwd_overloads.update(
     register_overloads(
         _segmented_inner_products_dbl_bwd_vec_kernel,
-        lambda v, s: [wp.array(dtype=v)] * 2
-        + [wp.array(dtype=s)] * 3
-        + [wp.array(dtype=wp.int32)]
-        + [wp.array(dtype=v)] * 2,
+        lambda v, s: (
+            [wp.array(dtype=v)] * 2
+            + [wp.array(dtype=s)] * 3
+            + [wp.array(dtype=wp.int32)]
+            + [wp.array(dtype=v)] * 2
+        ),
         dtype_pairs=_VEC_SCALAR_PAIRS,
     )
 )

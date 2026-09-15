@@ -60,7 +60,6 @@ _VEC_MAT_PAIRS = tuple(zip(_ALL_VEC_TYPES, _MAT_TYPES))
 
 # Reduction-safe types (atomic ops work)
 _SUPPORTED_TYPES = [wp.float32, wp.float64, wp.vec3f, wp.vec3d]
-_INDEX_TYPES = [wp.int32, wp.int64]
 # All types including float16/vec3h (for element-wise/broadcast ops)
 _ALL_SUPPORTED_TYPES = [
     wp.float16,
@@ -168,7 +167,7 @@ def _total_sum_tile_kernel(
 @wp.kernel(enable_backward=False)
 def _segmented_sum_kernel(
     x: wp.array(dtype=Any),
-    idx: wp.array(dtype=Any),
+    idx: wp.array(dtype=wp.int32),
     out: wp.array(dtype=Any),
     N: wp.int32,
     elems_per_thread: wp.int32,
@@ -212,10 +211,10 @@ def _segmented_sum_kernel(
         return
     end = wp.min(start + elems_per_thread, N)
 
-    s_cur = wp.int32(idx[start])
+    s_cur = idx[start]
     acc = x[start]
     for i in range(start + 1, end):
-        s = wp.int32(idx[i])
+        s = idx[i]
         if s == s_cur:
             acc = acc + x[i]
         else:
@@ -1370,19 +1369,14 @@ _total_sum_tile_overloads = register_overloads(
 
 _segmented_sum_overloads = register_overloads(
     _segmented_sum_kernel,
-    lambda value_type, index_type: [
-        wp.array(dtype=value_type),
-        wp.array(dtype=index_type),
-        wp.array(dtype=value_type),
+    lambda t: [
+        wp.array(dtype=t),
+        wp.array(dtype=wp.int32),
+        wp.array(dtype=t),
         wp.int32,
         wp.int32,
     ],
-    dtype_pairs=tuple(
-        (value_type, index_type)
-        for value_type in _SUPPORTED_TYPES
-        for index_type in _INDEX_TYPES
-    ),
-    key_fn=lambda value_type, index_type: (value_type, index_type),
+    dtypes=_SUPPORTED_TYPES,
 )
 
 _segmented_component_sum_overloads = register_overloads(
@@ -1670,8 +1664,8 @@ def segmented_sum(
     ----------
     x : wp.array, shape (N,)
         Input values. Supported dtypes: float32, float64, vec3f, vec3d.
-    idx : wp.array(dtype=int32 or int64), shape (N,)
-        Sorted segment indices in ``[0, M)``. Values must fit in int32.
+    idx : wp.array(dtype=int32), shape (N,)
+        Sorted segment indices in ``[0, M)``.
     out : wp.array, shape (M,), dtype matches x
         Per-segment sums. Zeroed internally before each use.
     """
@@ -1681,7 +1675,7 @@ def segmented_sum(
 
     device = x.device
     M = out.shape[0]
-    kernel = _segmented_sum_overloads[(x.dtype, idx.dtype)]
+    kernel = _segmented_sum_overloads[x.dtype]
 
     if device.is_cpu:
         out.zero_()
