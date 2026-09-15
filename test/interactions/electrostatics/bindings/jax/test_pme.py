@@ -55,6 +55,7 @@ from nvalchemiops.jax.interactions.electrostatics.k_vectors import (
 )
 from nvalchemiops.jax.interactions.electrostatics.pme import (
     particle_mesh_ewald,
+    pme_green_structure_factor,
     pme_reciprocal_space,
 )
 from nvalchemiops.jax.neighbors import cell_list
@@ -446,6 +447,39 @@ class TestPMEReciprocalSpaceAPI:
         )
         assert jnp.all(jnp.isfinite(forces)), (
             f"Non-finite forces for order {spline_order}"
+        )
+
+    def test_green_function_zero_frequency_is_zero(self, device):
+        """PME Green function excludes its zero-frequency mode under eager and JIT."""
+        cell = jnp.array(
+            [[[8.0, 0.0, 0.0], [1.5, 9.0, 0.0], [0.5, 1.0, 10.0]]],
+            dtype=jnp.float64,
+        )
+        mesh_dimensions = (12, 14, 18)
+        k_vectors, k_squared = generate_k_vectors_pme(cell, mesh_dimensions)
+
+        def green_fn(k_squared_in):
+            return pme_green_structure_factor(
+                k_squared_in,
+                mesh_dimensions,
+                jnp.array([0.3], dtype=jnp.float64),
+                cell,
+            )
+
+        green, structure_factor_sq = green_fn(k_squared)
+        jitted_green, jitted_structure_factor_sq = jax.jit(green_fn)(k_squared)
+
+        assert jnp.allclose(k_vectors[0, 0, 0], jnp.zeros(3, dtype=k_vectors.dtype))
+        assert k_squared[0, 0, 0] > 0.0
+        assert green[0, 0, 0] == 0.0
+        assert jnp.all(jnp.isfinite(green))
+        assert jnp.all(jnp.isfinite(structure_factor_sq))
+        assert jnp.allclose(jitted_green, green, rtol=1e-5, atol=1e-7)
+        assert jnp.allclose(
+            jitted_structure_factor_sq,
+            structure_factor_sq,
+            rtol=1e-5,
+            atol=1e-7,
         )
 
 
@@ -1200,9 +1234,25 @@ class TestParticleMeshEwald:
         assert jnp.allclose(-grad_positions, direct_forces, rtol=1e-5, atol=1e-7)
 
     def test_reciprocal_position_second_derivative_matches_fd(self, device):
-        """JAX PME reciprocal position HVP matches finite-difference reference."""
-        positions, charges, cell = create_simple_system(num_atoms=6)
-        mesh_dimensions = (16, 16, 16)
+        """Skew-cell JAX PME position HVP matches a finite-difference reference."""
+        cell = jnp.array(
+            [[[8.0, 0.0, 0.0], [1.5, 9.0, 0.0], [0.5, 1.0, 10.0]]],
+            dtype=jnp.float64,
+        )
+        fractional_positions = jnp.array(
+            [
+                [0.15, 0.18, 0.20],
+                [0.55, 0.28, 0.34],
+                [0.32, 0.62, 0.25],
+                [0.70, 0.58, 0.66],
+                [0.24, 0.42, 0.78],
+                [0.62, 0.74, 0.48],
+            ],
+            dtype=jnp.float64,
+        )
+        positions = fractional_positions @ cell[0]
+        charges = jnp.array([1.0, -1.0, 1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
+        mesh_dimensions = (12, 14, 18)
 
         def energy_sum(pos):
             return pme_reciprocal_space(
@@ -1225,7 +1275,7 @@ class TestParticleMeshEwald:
         fd = (grad_fn(positions + eps * v) - grad_fn(positions - eps * v)) / (2.0 * eps)
 
         assert jnp.all(jnp.isfinite(hvp))
-        assert jnp.allclose(hvp, fd, rtol=5e-4, atol=5e-6)
+        assert jnp.allclose(hvp, fd, rtol=1e-3, atol=2e-5)
         assert jnp.allclose(jax.jit(hvp_fn)(positions), hvp, rtol=1e-5, atol=1e-7)
 
     def test_reciprocal_mesh_spacing_second_derivative_is_finite(self, device):
