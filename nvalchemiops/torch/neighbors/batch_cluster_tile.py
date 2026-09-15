@@ -51,6 +51,7 @@ from nvalchemiops.neighbors.cluster_tile import (
 )
 from nvalchemiops.neighbors.neighbor_utils import (
     NeighborOverflowError,
+    TileBufferOverflow,
     estimate_max_neighbors,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
@@ -171,7 +172,9 @@ def estimate_batch_cluster_tile_list_sizes(
     batch_ptr : torch.Tensor, shape (num_systems + 1,), dtype=int32
         Cumulative atom counts defining per-system ranges.
     max_tiles_per_group : int, default 256
-        Upper bound on neighbor groups per row_group (dense-cutoff cap).
+        Sets the capacity of the tile-pair buffer shared by all row groups. If
+        the batch has ``ngroup_total`` groups, its compact capacity is
+        ``ngroup_total * min(ngroup_total, max_tiles_per_group)`` entries.
 
     Returns
     -------
@@ -183,7 +186,7 @@ def estimate_batch_cluster_tile_list_sizes(
         Group-array pad length for in-bounds ``wp.tile_load`` at any
         TILE-aligned offset.
     max_tiles : int
-        Upper bound on the tile pair list size.
+        Allocated tile-pair list capacity.
     num_systems : int
     """
     if batch_ptr.shape[0] < 2:
@@ -222,7 +225,9 @@ def estimate_batch_cluster_tile_segments(
     max_neighbors : int
         Upper bound on neighbors per atom used to size per-system COO segments.
     max_tiles_per_group : int, default 256
-        Upper bound on neighbor groups per row_group (dense-cutoff cap).
+        Sets each system's tile-pair segment capacity. A system with ``g_i``
+        groups receives ``g_i * min(g_i, max_tiles_per_group)`` entries. Its
+        group count is ``ceil(num_atoms_i / 32)``.
 
     Returns
     -------
@@ -288,8 +293,11 @@ def allocate_batch_cluster_tile_list(
     dtype : torch.dtype, default torch.float32
         Floating-point dtype for position and group-centroid tensors.
     max_tiles_per_group : int, default 256
-        Upper bound on neighbor groups per row_group; controls the tile buffer
-        size via :func:`estimate_batch_cluster_tile_list_sizes`.
+        Capacity factor for the intermediate tile-pair buffer. For ``g`` row
+        groups, the buffer holds ``g * min(g, max_tiles_per_group)`` tile pairs.
+        Increasing the value up to ``g`` uses more memory and accommodates more
+        candidate tile pairs. See :ref:`cluster-tile-buffer-capacity` for
+        sizing details.
 
     Returns
     -------
@@ -1086,7 +1094,7 @@ def batch_query_cluster_tile(
         else:
             n_tiles = int(num_tiles.item())
             if n_tiles > tile_capacity:
-                raise NeighborOverflowError(tile_capacity, n_tiles)
+                raise TileBufferOverflow(tile_capacity, n_tiles)
     else:
         n_tiles = 0  # segmented: count is per-system; full-buffer launch
         if tile_counts is not None:
@@ -1094,7 +1102,7 @@ def batch_query_cluster_tile(
             overflow = tile_counts > seg_caps
             if bool(overflow.any().item()):
                 isys = int(torch.nonzero(overflow, as_tuple=False)[0, 0].item())
-                raise NeighborOverflowError(
+                raise TileBufferOverflow(
                     int(seg_caps[isys].item()),
                     int(tile_counts[isys].item()),
                     system_index=isys,
@@ -1658,7 +1666,7 @@ def batch_query_cluster_tile_coo(
         else:
             n_tiles = int(num_tiles.item())
             if n_tiles > tile_capacity:
-                raise NeighborOverflowError(tile_capacity, n_tiles)
+                raise TileBufferOverflow(tile_capacity, n_tiles)
     else:
         n_tiles = 0  # segmented: full-buffer launch
         if tile_counts is not None:
@@ -1666,7 +1674,7 @@ def batch_query_cluster_tile_coo(
             overflow = tile_counts > seg_caps
             if bool(overflow.any().item()):
                 isys = int(torch.nonzero(overflow, as_tuple=False)[0, 0].item())
-                raise NeighborOverflowError(
+                raise TileBufferOverflow(
                     int(seg_caps[isys].item()),
                     int(tile_counts[isys].item()),
                     system_index=isys,
@@ -1757,6 +1765,7 @@ def _batch_cluster_tile_pair_outputs_forward(
     max_neighbors: int,
     fill_value: int,
     batch_idx_atom: torch.Tensor,
+    max_tiles_per_group: int | None,
 ) -> "_NeighborForwardOutput":
     """Forward closure for the torch batch_cluster_tile autograd path."""
     from nvalchemiops.torch.neighbors._autograd import (
@@ -1792,6 +1801,11 @@ def _batch_cluster_tile_pair_outputs_forward(
         batch_ptr,
         device,
         dtype=positions_det.dtype,
+        max_tiles_per_group=(
+            int(max_tiles_per_group)
+            if max_tiles_per_group is not None
+            else estimate_batch_max_tiles_per_group(batch_ptr, cutoff, cell_det)
+        ),
     )
     batch_build_cluster_tile_list(
         positions_det,
@@ -1999,7 +2013,7 @@ def batch_cluster_tile_neighbor_list(
     pair_forces: torch.Tensor | None = None,
     max_tiles_per_group: int | None = None,
 ) -> tuple[torch.Tensor, ...]:
-    """Build a batched cluster-pair tile neighbor list (one-shot convenience).
+    """Build and query a batched cluster-pair tile neighbor list in one call.
 
     Batched PyTorch binding for the cluster-pair tile algorithm.  Supports
     triclinic ``cell_batch`` of shape ``(num_systems, 3, 3)`` and arbitrary
@@ -2034,8 +2048,10 @@ def batch_cluster_tile_neighbor_list(
         Upper bound for COO output; defaults to
         ``total_atoms * max_neighbors``.
     cutoff2 : float, optional
-        Secondary cutoff for matrix output. Dual cutoff is matrix-only and
-        cannot be combined with pair-output buffers.
+        Cutoff for the second matrix. It is normally the outer cutoff and may
+        equal ``cutoff``. Either order is accepted because the tile buffer is
+        sized for the larger value. Dual cutoff is matrix-only and cannot be
+        combined with pair-output buffers.
     rebuild_flags : torch.Tensor, shape (num_systems,), dtype=torch.bool, optional
         Per-system selective rebuild flags. Supported for matrix output and
         segmented COO output. Across selective calls, callers must retain and
@@ -2126,9 +2142,13 @@ def batch_cluster_tile_neighbor_list(
         OUTPUT buffers, written only when the corresponding enable flag
         / ``pair_fn`` is active.
     max_tiles_per_group : int, optional
-        Upper bound on neighbor groups per row group for scratch allocation.
-        Passing this skips the geometry-aware sizing preflight, which otherwise
-        synchronizes per-system counts and cell volumes to the host.
+        Capacity factor for an internally allocated intermediate tile-pair
+        buffer. For ``g`` row groups, the buffer holds
+        ``g * min(g, max_tiles_per_group)`` tile pairs. Increasing the value up
+        to ``g`` uses more memory and accommodates more candidate tile pairs.
+        Eager calls estimate the value when it is ``None``. Caller-owned tile
+        arrays determine the actual capacity. See
+        :ref:`cluster-tile-buffer-capacity` for sizing details.
 
     Returns
     -------
@@ -2187,6 +2207,12 @@ def batch_cluster_tile_neighbor_list(
         raise ValueError(
             f"format must be 'matrix' | 'coo' | 'tile'; got {format!r}",
         )
+    if max_tiles_per_group is not None and (
+        not isinstance(max_tiles_per_group, int)
+        or isinstance(max_tiles_per_group, bool)
+        or max_tiles_per_group <= 0
+    ):
+        raise ValueError("max_tiles_per_group must be a positive integer")
     has_pair_outputs = (
         bool(return_vectors)
         or bool(return_distances)
@@ -2331,6 +2357,8 @@ def batch_cluster_tile_neighbor_list(
         max_tiles_per_group = estimate_batch_max_tiles_per_group(
             batch_ptr, build_cutoff, cell_batch
         )
+    else:
+        max_tiles_per_group = int(max_tiles_per_group)
     if (
         rebuild_flags is not None
         and format == "matrix"
@@ -2411,6 +2439,7 @@ def batch_cluster_tile_neighbor_list(
             "max_neighbors": int(max_neighbors),
             "fill_value": int(fill_value),
             "batch_idx_atom": batch_idx_atom,
+            "max_tiles_per_group": max_tiles_per_group,
         }
         distances_out, vectors_out, nm_out, nn_out, shifts_out = _route_pair_outputs(
             positions,
@@ -2540,7 +2569,7 @@ def batch_cluster_tile_neighbor_list(
         n_tiles = int(num_tiles.item())
         tile_capacity = int(tile_row_group.shape[0])
         if n_tiles > tile_capacity:
-            raise NeighborOverflowError(tile_capacity, n_tiles)
+            raise TileBufferOverflow(tile_capacity, n_tiles)
         return (
             num_tiles,
             tile_row_group,

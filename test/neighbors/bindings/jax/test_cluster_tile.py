@@ -33,6 +33,7 @@ from nvalchemiops.jax.neighbors.cluster_tile import (
     estimate_cluster_tile_list_sizes,
     query_cluster_tile_coo,
 )
+from nvalchemiops.neighbors.neighbor_utils import TileBufferOverflow
 
 from .conftest import requires_gpu
 
@@ -139,6 +140,7 @@ class TestTileNeighborListCorrectness:
                 2.0,
                 cell,
                 max_neighbors=32,
+                max_tiles_per_group=2,
             )
             return (
                 neighbor_matrix.astype(pos.dtype).sum()
@@ -223,6 +225,7 @@ class TestClusterTileGraphPreload:
                 1.0,
                 cell,
                 max_neighbors=32,
+                max_tiles_per_group=1,
             )
 
         neighbor_matrix, num_neighbors, _shifts = query(positions)
@@ -250,6 +253,7 @@ class TestClusterTileGraphPreload:
                 1.0,
                 cell,
                 max_neighbors=32,
+                max_tiles_per_group=1,
             )
 
         first = query(positions)
@@ -420,6 +424,24 @@ class TestTileNeighborListErrors:
         with pytest.raises(ValueError, match="format"):
             cluster_tile_neighbor_list(positions, 1.0, cell, format="bogus")
 
+    def test_tile_buffer_overflow_raises(self):
+        """Eager neighbor and pair-output paths report tile-buffer overflow."""
+        positions = jnp.zeros((128, 3), dtype=jnp.float32)
+        cell = _orthorhombic_cell(12.0)
+
+        for return_distances in (False, True):
+            with pytest.raises(TileBufferOverflow) as caught:
+                cluster_tile_neighbor_list(
+                    positions,
+                    5.0,
+                    cell,
+                    max_neighbors=256,
+                    max_tiles_per_group=1,
+                    return_distances=return_distances,
+                )
+            assert caught.value.num_tiles > caught.value.max_tiles
+            assert caught.value.system_index is None
+
 
 class TestEstimateSizes:
     """Pure-Python sizing helper tests."""
@@ -496,6 +518,7 @@ class TestJaxClusterTileAutograd:
                 p,
                 1.5,
                 cell,
+                max_tiles_per_group=2,
                 return_distances=True,
                 return_vectors=True,
             )
@@ -524,6 +547,7 @@ class TestJaxClusterTileAutograd:
                 p,
                 5.0,
                 cell,
+                max_tiles_per_group=1,
                 return_distances=True,
                 return_vectors=True,
             )
@@ -582,6 +606,7 @@ class TestJaxClusterTileAutograd:
                 p,
                 1.5,
                 cell,
+                max_tiles_per_group=2,
                 return_distances=True,
                 return_vectors=True,
             )
@@ -608,6 +633,7 @@ class TestJaxClusterTileAutograd:
                 cutoff,
                 cell,
                 max_neighbors=64,
+                max_tiles_per_group=2,
                 return_distances=True,
                 return_vectors=True,
             )
@@ -947,6 +973,7 @@ class TestJaxClusterTileCutoff2Selective:
                 2.0,
                 cell,
                 max_neighbors=64,
+                max_tiles_per_group=1,
                 format="coo",
                 rebuild_flags=jnp.array([False], dtype=jnp.bool_),
                 previous_num_tiles=num_tiles,
@@ -1323,12 +1350,7 @@ class TestJaxClusterTileNeighborListDispatcher:
 
 
 class TestJaxClusterTileTileSizing:
-    """The JAX tile buffer must geometry-size (concrete) / fall back (traced).
-
-    Guards the fix that stopped the JAX default/auto-select path from silently
-    undercounting dense high-cutoff systems where a fixed
-    ``max_tiles_per_group=256`` cannot cover all neighboring row groups.
-    """
+    """JAX estimates eager buffers and requires explicit bounds while tracing."""
 
     def test_geometry_sizing_scales_with_cutoff_when_concrete(self):
         from nvalchemiops.jax.neighbors.cluster_tile import (
@@ -1347,7 +1369,7 @@ class TestJaxClusterTileTileSizing:
         # 25 A on this cell needs ~ngroup neighbour groups per row (dense).
         assert high >= 1024
 
-    def test_traced_inputs_fall_back_to_ngroup(self):
+    def test_traced_inputs_require_explicit_bound(self):
         from nvalchemiops.jax.neighbors.cluster_tile import (
             _tile_buffer_max_tiles_per_group,
         )
@@ -1355,15 +1377,9 @@ class TestJaxClusterTileTileSizing:
         n = 2048  # ngroup = 64
         cell = _orthorhombic_cell(20.0)
 
-        # Tracing positions (e.g. grad/jit) -> trace-safe ngroup fallback.
+        # Geometry-dependent sizing cannot run while JAX is tracing the call.
         def f(p):
             return _tile_buffer_max_tiles_per_group(p, n, 5.0, cell)
 
-        captured = {}
-
-        def grab(p):
-            captured["mtpg"] = f(p)
-            return p.sum()
-
-        jax.grad(grab)(jnp.zeros((n, 3), dtype=jnp.float32))
-        assert captured["mtpg"] == 64  # ngroup, capacity ngroup**2 (no overflow)
+        with pytest.raises(ValueError, match="static Python integer"):
+            jax.make_jaxpr(f)(jnp.zeros((n, 3), dtype=jnp.float32))

@@ -57,7 +57,7 @@ from nvalchemiops.neighbors.cluster_tile import (
     estimate_batch_max_tiles_per_group as _estimate_batch_max_tiles_per_group,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
-    NeighborOverflowError,
+    TileBufferOverflow,
     estimate_max_neighbors,
 )
 
@@ -80,20 +80,20 @@ __all__ = [
 def _batch_tile_buffer_max_tiles_per_group(
     positions, batch_ptr, cutoff, cell_batch
 ) -> int:
-    """``max_tiles_per_group`` for the batched compact tile buffer.
+    """Choose ``max_tiles_per_group`` for a compact batched tile buffer.
 
-    The compact buffer is ``ngroup_total * min(ngroup_total, mtpg)``.
-    ``batch_ptr`` is structural (always concrete), so per-system ``ngroup`` is
-    available.  When ``positions`` and ``cell_batch`` are concrete we
-    density-size from each system's geometry and take the max.  When traced
-    (e.g. ``grad`` w.r.t. cell, or ``jit``) we fall back to ``max_i ngroup_i``:
-    the compact capacity ``ngroup_total * max_i ngroup_i >= sum_i ngroup_i**2``
-    then bounds the upper-triangular maximum, so it can never overflow.
+    Concrete eager inputs use the geometry estimator and take the largest
+    per-system result. When an input is traced, runtime geometry is unavailable
+    and the caller must provide ``max_tiles_per_group`` explicitly.
     """
-    counts = np.asarray(batch_ptr).reshape(-1)
+    try:
+        counts = np.asarray(batch_ptr).reshape(-1)
+    except Exception as exc:
+        raise ValueError(
+            "max_tiles_per_group must be provided as a positive static Python "
+            "integer when a cluster-tile call is transformed or compiled by JAX"
+        ) from exc
     per_sys = (counts[1:] - counts[:-1]).astype(np.int64)
-    ngroups = [(int(n) + TILE_GROUP_SIZE - 1) // TILE_GROUP_SIZE for n in per_sys]
-    max_ng = max(ngroups) if ngroups else 1
     cutoff_concrete = not isinstance(cutoff, jax.core.Tracer)
     vols = _concrete_cell_batch_volumes(cell_batch)
     empty_batch = len(per_sys) == 0 and vols == []
@@ -103,8 +103,42 @@ def _batch_tile_buffer_max_tiles_per_group(
         or empty_batch
         or not cutoff_concrete
     ):
-        return max(max_ng, 1)
+        raise ValueError(
+            "max_tiles_per_group must be provided as a positive static Python "
+            "integer when a cluster-tile call is transformed or compiled by JAX"
+        )
     return estimate_batch_max_tiles_per_group(batch_ptr, cutoff, cell_batch)
+
+
+def _check_eager_tile_buffer_capacity(
+    num_tiles: jax.Array,
+    tile_row_group: jax.Array,
+    *,
+    tile_offsets: jax.Array | None = None,
+    tile_counts: jax.Array | None = None,
+) -> None:
+    """Raise if a concrete compact or segmented tile build overflowed."""
+    if isinstance(num_tiles, jax.core.Tracer):
+        return
+    if tile_offsets is None:
+        discovered = int(num_tiles[0])
+        capacity = int(tile_row_group.shape[0])
+        if discovered > capacity:
+            raise TileBufferOverflow(capacity, discovered)
+        return
+    if tile_counts is None or isinstance(tile_counts, jax.core.Tracer):
+        return
+    counts = np.asarray(tile_counts).reshape(-1)
+    offsets = np.asarray(tile_offsets).reshape(-1)
+    capacities = offsets[1:] - offsets[:-1]
+    overflowing = np.nonzero(counts > capacities)[0]
+    if overflowing.size:
+        system_index = int(overflowing[0])
+        raise TileBufferOverflow(
+            int(capacities[system_index]),
+            int(counts[system_index]),
+            system_index=system_index,
+        )
 
 
 def _concrete_cell_batch_volumes(cell_batch) -> list[float] | None:
@@ -161,8 +195,8 @@ def estimate_batch_max_tiles_per_group(
     Raises
     ------
     ValueError
-        If ``batch_ptr`` or ``cell_batch`` is traced / not host-concrete, or if
-        ``cell_batch`` does not have shape ``(num_systems, 3, 3)``.
+        If ``batch_ptr`` or ``cell_batch`` is traced or unavailable to Python,
+        or if ``cell_batch`` does not have shape ``(num_systems, 3, 3)``.
     """
     ptr_values = _concrete_batch_ptr_values(batch_ptr)
     if ptr_values is None:
@@ -208,7 +242,9 @@ def estimate_batch_cluster_tile_list_sizes(
     batch_ptr : jax.Array, shape (num_systems + 1,), dtype=int32
         Cumulative atom counts across systems.
     max_tiles_per_group : int, default 256
-        Per-group tile capacity used to size the compact tile buffer.
+        Sets the capacity of the tile-pair buffer shared by all row groups. If
+        the batch has ``ngroup`` groups in total, its compact capacity is
+        ``ngroup * min(ngroup, max_tiles_per_group)`` entries.
 
     Returns
     -------
@@ -260,7 +296,9 @@ def estimate_batch_cluster_tile_segments(
     max_neighbors : int
         Per-atom neighbor capacity used to size the per-system COO segments.
     max_tiles_per_group : int, default 256
-        Per-group tile capacity used by the segment estimator.
+        Sets each system's tile-pair segment capacity. A system with ``g_i``
+        groups receives ``g_i * min(g_i, max_tiles_per_group)`` entries. Its
+        group count is ``ceil(num_atoms_i / 32)``.
 
     Returns
     -------
@@ -323,9 +361,11 @@ def allocate_batch_cluster_tile_list(
     batch_ptr : jax.Array, shape (S + 1,), dtype=int32
         Cumulative atom counts.
     max_neighbors : int
-        Per-atom neighbor capacity; sizes the per-system tile segments.
+        Per-atom neighbor capacity used to size the per-system COO segments.
     max_tiles_per_group : int, default 256
-        Per-group tile cap used by the segment estimator.
+        Sets each system's tile-pair segment capacity. A system with ``g_i``
+        groups receives ``g_i * min(g_i, max_tiles_per_group)`` tile-pair
+        entries. Its group count is ``ceil(num_atoms_i / 32)``.
 
     Returns
     -------
@@ -1032,6 +1072,7 @@ def batch_build_cluster_tile_list(
     cell_batch: jax.Array,
     batch_ptr: jax.Array,
     *,
+    max_tiles_per_group: int | None = None,
     rebuild_flags: jax.Array | None = None,
     tile_offsets: jax.Array | None = None,
     tile_counts: jax.Array | None = None,
@@ -1055,6 +1096,15 @@ def batch_build_cluster_tile_list(
         Per-system unit cell matrices.
     batch_ptr : jax.Array, shape (S + 1,), dtype=int32
         Cumulative atom counts.
+    max_tiles_per_group : int, optional
+        Capacity factor for an internally allocated intermediate tile-pair
+        buffer. For ``g`` row groups, the buffer holds
+        ``g * min(g, max_tiles_per_group)`` tile pairs. Increasing the value up
+        to ``g`` uses more memory and accommodates more candidate tile pairs.
+        Eager calls estimate the value when it is ``None``. Transformed or
+        compiled calls require a positive static Python integer. Caller-owned
+        tile arrays determine the actual capacity. See
+        :ref:`cluster-tile-buffer-capacity` for sizing details.
     rebuild_flags : jax.Array, shape (S,), dtype=bool, optional
         Per-system rebuild flags. When provided, only systems with a True
         flag have their tiles rebuilt. Requires ``tile_offsets`` and
@@ -1110,12 +1160,21 @@ def batch_build_cluster_tile_list(
         batch_ptr = batch_ptr.astype(jnp.int32)
     if int(batch_ptr.shape[0]) < 2:
         raise ValueError("batch_ptr must have length at least 2")
+    if max_tiles_per_group is not None and (
+        not isinstance(max_tiles_per_group, int)
+        or isinstance(max_tiles_per_group, bool)
+        or max_tiles_per_group <= 0
+    ):
+        raise ValueError("max_tiles_per_group must be a positive integer")
 
-    # Geometry-size the compact tile buffer so dense/high-cutoff systems don't
-    # silently overflow; trace-safe ``max_i ngroup_i`` fallback when traced.
-    max_tiles_per_group = _batch_tile_buffer_max_tiles_per_group(
-        positions, batch_ptr, cutoff, cell_batch
-    )
+    # Concrete eager calls use the geometry estimator. A transformed call must
+    # supply max_tiles_per_group because it determines an array shape.
+    if max_tiles_per_group is None:
+        max_tiles_per_group = _batch_tile_buffer_max_tiles_per_group(
+            positions, batch_ptr, cutoff, cell_batch
+        )
+    else:
+        max_tiles_per_group = int(max_tiles_per_group)
     n_padded, ngroup, ngroup_padded, max_tiles, _num_systems = (
         estimate_batch_cluster_tile_list_sizes(
             batch_ptr, max_tiles_per_group=max_tiles_per_group
@@ -1904,8 +1963,9 @@ def batch_cluster_tile_neighbor_list(
     neighbor_distances: jax.Array | None = None,
     pair_energies: jax.Array | None = None,
     pair_forces: jax.Array | None = None,
+    max_tiles_per_group: int | None = None,
 ) -> tuple[jax.Array, ...]:
-    """Build a batched cluster-pair tile neighbor list (one-shot convenience).
+    """Build and query a batched cluster-pair tile neighbor list in one call.
 
     Batched JAX binding for the cluster-pair tile algorithm.  Per-system
     Morton sort and padded SoA gather happen in JAX; bbox reduction,
@@ -1920,8 +1980,10 @@ def batch_cluster_tile_neighbor_list(
     cutoff : float
         Cutoff distance in Cartesian units. Must be positive.
     cutoff2 : float, optional
-        Matrix-format second cutoff. Cannot be combined with pair outputs
-        or COO/tile formats.
+        Cutoff for the second matrix. It is normally the outer cutoff and may
+        equal ``cutoff``. Either order is accepted because the tile buffer is
+        sized for the larger value. Cannot be combined with pair outputs or
+        COO/tile formats.
     rebuild_flags : jax.Array, shape (num_systems,), dtype=bool, optional
         Selective rebuild flags for matrix or segmented COO output. Requires
         fixed tile segments and previous output buffers.
@@ -1942,6 +2004,15 @@ def batch_cluster_tile_neighbor_list(
     max_pairs : int, optional
         Upper bound for compact COO output; defaults to
         ``total_atoms * max_neighbors``.
+    max_tiles_per_group : int, optional
+        Capacity factor for an internally allocated intermediate tile-pair
+        buffer. For ``g`` row groups, the buffer holds
+        ``g * min(g, max_tiles_per_group)`` tile pairs. Increasing the value up
+        to ``g`` uses more memory and accommodates more candidate tile pairs.
+        Eager calls estimate the value when it is ``None``. Transformed or
+        compiled calls require a positive static Python integer. Caller-owned
+        tile arrays determine the actual capacity. See
+        :ref:`cluster-tile-buffer-capacity` for sizing details.
     tile_offsets, previous_tile_counts, pair_offsets, previous_pair_counts : jax.Array, optional
         Fixed per-system segmented tile/COO buffers used with
         ``rebuild_flags``. Size them with
@@ -2016,6 +2087,10 @@ def batch_cluster_tile_neighbor_list(
     - Cluster-tile is CUDA float32 only.
     - Cluster-tile does not support partial neighbor lists (no
       ``target_indices`` kwarg).
+    - A transformed or compiled call cannot raise :class:`TileBufferOverflow`
+      from its runtime tile counts. To detect an undersized explicit bound, use
+      the lower-level build and query functions and check the returned compact
+      or per-system counts after leaving the transformed region.
     - The unified :func:`nvalchemiops.jax.neighbors.neighbor_list` entry
       point may select this binding automatically when the selector guards
       and cost model prefer it; pass ``method="batch_cluster_tile"`` to
@@ -2045,6 +2120,12 @@ def batch_cluster_tile_neighbor_list(
         raise ValueError(
             f"format must be 'matrix' | 'coo' | 'tile'; got {format!r}",
         )
+    if max_tiles_per_group is not None and (
+        not isinstance(max_tiles_per_group, int)
+        or isinstance(max_tiles_per_group, bool)
+        or max_tiles_per_group <= 0
+    ):
+        raise ValueError("max_tiles_per_group must be a positive integer")
     if pair_fn is not None and pair_params is None:
         raise ValueError(
             "pair_fn requires pair_params (a per-atom (n_atoms, K) parameter array).",
@@ -2262,7 +2343,14 @@ def batch_cluster_tile_neighbor_list(
                 trg,
                 tcg,
                 ts,
-            ) = batch_build_cluster_tile_list(p_det, cutoff, c_det, batch_ptr)
+            ) = batch_build_cluster_tile_list(
+                p_det,
+                cutoff,
+                c_det,
+                batch_ptr,
+                max_tiles_per_group=max_tiles_per_group,
+            )
+            _check_eager_tile_buffer_capacity(nt, trg)
             out = batch_query_cluster_tile(
                 sai,
                 spx,
@@ -2355,15 +2443,15 @@ def batch_cluster_tile_neighbor_list(
     positions_topology = jax.lax.stop_gradient(positions)
     cell_batch_topology = jax.lax.stop_gradient(cell_batch)
 
-    # Tile candidates must cover the larger radius so the cutoff2 matrix cannot
-    # miss pairs in the (cutoff, cutoff2] shell; the query filters each matrix
-    # by its own cutoff.
+    # Candidate tiles must cover both radii. The query filters each matrix with
+    # its own cutoff.
     build_cutoff = cutoff if cutoff2 is None else max(float(cutoff), float(cutoff2))
     build_out = batch_build_cluster_tile_list(
         positions_topology,
         build_cutoff,
         cell_batch_topology,
         batch_ptr,
+        max_tiles_per_group=max_tiles_per_group,
         rebuild_flags=rebuild_flags,
         tile_offsets=tile_offsets,
         tile_counts=previous_tile_counts,
@@ -2419,26 +2507,14 @@ def batch_cluster_tile_neighbor_list(
         ) = build_out
         tile_counts = None
 
-    # Eager guard: raise on tile-buffer overflow instead of silently dropping
-    # tiles.  Skipped under trace (the geometry fallback sizes the buffer so it
-    # can never overflow).  Compact path checks the global ``num_tiles``;
-    # segmented (selective) checks per-system ``tile_counts``.
-    if not isinstance(num_tiles, jax.core.Tracer):
-        tile_capacity = int(tile_row_group.shape[0])
-        if tile_offsets is None:
-            n_tiles_host = int(num_tiles[0])
-            if n_tiles_host > tile_capacity:
-                raise NeighborOverflowError(tile_capacity, n_tiles_host)
-        elif tile_counts is not None and not isinstance(tile_counts, jax.core.Tracer):
-            counts_host = np.asarray(tile_counts).reshape(-1)
-            offs = np.asarray(tile_offsets).reshape(-1)
-            seg_caps = offs[1:] - offs[:-1]
-            over = np.nonzero(counts_host > seg_caps)[0]
-            if over.size > 0:
-                isys = int(over[0])
-                raise NeighborOverflowError(
-                    int(seg_caps[isys]), int(counts_host[isys]), system_index=isys
-                )
+    # A traced/compiled callback cannot synchronize its data-dependent counts.
+    # Concrete eager calls fail before any query can consume truncated tiles.
+    _check_eager_tile_buffer_capacity(
+        num_tiles,
+        tile_row_group,
+        tile_offsets=tile_offsets,
+        tile_counts=tile_counts,
+    )
 
     if format == "tile":
         # 11-tuple matching the torch sibling at

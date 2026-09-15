@@ -25,7 +25,9 @@ from nvalchemiops.neighbors.cluster_tile import (
 from nvalchemiops.neighbors.cluster_tile import (
     estimate_max_tiles_per_group,
 )
-from nvalchemiops.neighbors.neighbor_utils import NeighborOverflowError
+from nvalchemiops.neighbors.neighbor_utils import (
+    TileBufferOverflow,
+)
 from nvalchemiops.torch.neighbors.batch_cluster_tile import (
     TILE_GROUP_SIZE,
     allocate_batch_cluster_tile_list,
@@ -84,7 +86,7 @@ def _make_batch(
 def _scratch_kwargs(
     scratch: tuple[torch.Tensor, ...],
 ) -> dict[str, torch.Tensor]:
-    """Map allocator outputs to one-shot API keyword arguments."""
+    """Map allocator outputs to combined build/query keyword arguments."""
     names = (
         "sorted_atom_index",
         "sort_inv",
@@ -362,7 +364,7 @@ class TestBatchClusterTileValidation:
 
 
 def test_batch_cluster_tile_max_tiles_per_group_bypasses_sizing(monkeypatch):
-    """Explicit max_tiles_per_group skips geometry-aware sizing sync."""
+    """An explicit allocation factor avoids synchronizing geometry to the host."""
 
     def fail_sizing(*args, **kwargs):
         del args, kwargs
@@ -814,77 +816,53 @@ class TestBatchTileNeighborListCorrectness:
             [256, 256], [8.0, 8.0], device=device, dtype=dtype, seed=9
         )
         cutoff = 4.0
-        N = positions.shape[0]
-        scratch = allocate_batch_cluster_tile_list(
-            batch_ptr, torch.device(device), dtype=dtype, max_tiles_per_group=1
-        )
-        (
-            sorted_atom_index,
-            sort_inv,
-            sorted_pos_x,
-            sorted_pos_y,
-            sorted_pos_z,
-            batch_idx_sorted,
-            batch_ptr_padded,
-            group_system,
-            group_ptr,
-            group_ctr_x,
-            group_ctr_y,
-            group_ctr_z,
-            group_ext_x,
-            group_ext_y,
-            group_ext_z,
-            num_tiles,
-            tile_row_group,
-            tile_col_group,
-            tile_system,
-        ) = scratch
-        batch_build_cluster_tile_list(
-            positions,
-            cutoff,
-            cell_batch,
-            batch_ptr,
-            sorted_atom_index,
-            sort_inv,
-            sorted_pos_x,
-            sorted_pos_y,
-            sorted_pos_z,
-            batch_idx_sorted,
-            batch_ptr_padded,
-            group_system,
-            group_ptr,
-            group_ctr_x,
-            group_ctr_y,
-            group_ctr_z,
-            group_ext_x,
-            group_ext_y,
-            group_ext_z,
-            num_tiles,
-            tile_row_group,
-            tile_col_group,
-            tile_system,
-        )
-        assert int(num_tiles.item()) > int(tile_row_group.shape[0])
-        nm = torch.empty((N, 64), dtype=torch.int32, device=device)
-        nn = torch.zeros(N, dtype=torch.int32, device=device)
-        nms = torch.empty((N, 64, 3), dtype=torch.int32, device=device)
-        with pytest.raises(NeighborOverflowError):
-            batch_query_cluster_tile(
-                sorted_atom_index,
-                sorted_pos_x,
-                sorted_pos_y,
-                sorted_pos_z,
-                cell_batch,
-                num_tiles,
-                tile_row_group,
-                tile_col_group,
-                tile_system,
+        with pytest.raises(TileBufferOverflow) as caught:
+            batch_cluster_tile_neighbor_list(
+                positions,
                 cutoff,
-                N,
-                nm,
-                nn,
-                nms,
+                cell_batch,
+                batch_ptr,
+                max_neighbors=256,
+                max_tiles_per_group=1,
             )
+        assert caught.value.num_tiles > caught.value.max_tiles
+        assert caught.value.system_index is None
+
+        segmented_positions = torch.zeros((160, 3), dtype=dtype, device=device)
+        segmented_cells = torch.eye(3, dtype=dtype, device=device).repeat(2, 1, 1)
+        segmented_cells *= 12.0
+        segmented_ptr = torch.tensor([0, 32, 160], dtype=torch.int32, device=device)
+        scratch = _scratch_kwargs(
+            allocate_batch_cluster_tile_list(
+                segmented_ptr,
+                torch.device(device),
+                dtype=dtype,
+                max_tiles_per_group=1,
+            )
+        )
+        with pytest.raises(TileBufferOverflow) as segmented:
+            batch_cluster_tile_neighbor_list(
+                segmented_positions,
+                cutoff,
+                segmented_cells,
+                segmented_ptr,
+                max_neighbors=256,
+                rebuild_flags=torch.ones(2, dtype=torch.bool, device=device),
+                neighbor_matrix=torch.empty(
+                    (160, 256), dtype=torch.int32, device=device
+                ),
+                num_neighbors=torch.zeros(160, dtype=torch.int32, device=device),
+                neighbor_matrix_shifts=torch.empty(
+                    (160, 256, 3), dtype=torch.int32, device=device
+                ),
+                tile_offsets=torch.tensor([0, 1, 2], dtype=torch.int32, device=device),
+                tile_counts=torch.zeros(2, dtype=torch.int32, device=device),
+                max_tiles_per_group=1,
+                **scratch,
+            )
+        assert segmented.value.system_index == 1
+        assert segmented.value.max_tiles == 1
+        assert segmented.value.num_tiles > segmented.value.max_tiles
 
 
 # =============================================================================
