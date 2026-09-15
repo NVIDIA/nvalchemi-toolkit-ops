@@ -47,10 +47,13 @@ import pytest
 from nvalchemiops.jax.interactions.electrostatics.ewald import (
     ewald_real_space,
     ewald_reciprocal_space,
+    ewald_reciprocal_space_from_miller_indices,
     ewald_summation,
 )
 from nvalchemiops.jax.interactions.electrostatics.k_vectors import (
+    generate_ewald_miller_indices,
     generate_k_vectors_ewald_summation,
+    k_vectors_from_miller_indices,
 )
 from nvalchemiops.jax.neighbors import batch_cell_list, cell_list
 from test.interactions.electrostatics.bindings.jax.conftest import (
@@ -682,6 +685,135 @@ class TestEwaldReciprocalSpaceAPI:
         assert jnp.all(jnp.isfinite(energies))
         assert jnp.all(jnp.isfinite(forces))
 
+    def test_retained_miller_component_matches_explicit_vectors(self, device):
+        """Retained component matches live explicit vectors and their gradients."""
+        positions, charges, cell = create_simple_system()
+        cell = cell[0]
+        alpha = jnp.array(0.3, dtype=jnp.float64)
+        indices = generate_ewald_miller_indices(cell, 4.0, (3, 3, 3))
+
+        def explicit(pos, q, lattice):
+            return ewald_reciprocal_space(
+                pos,
+                q,
+                lattice,
+                k_vectors_from_miller_indices(lattice, indices),
+                alpha,
+            )
+
+        def retained(pos, q, lattice, topology):
+            return ewald_reciprocal_space_from_miller_indices(
+                pos, q, lattice, topology, alpha
+            )
+
+        expected = explicit(positions, charges, cell)
+        actual = retained(positions, charges, cell, indices)
+        assert jnp.allclose(actual, expected, rtol=1e-12, atol=1e-12)
+        expected_grads = jax.grad(
+            lambda pos, q, lattice: explicit(pos, q, lattice).sum(), argnums=(0, 1, 2)
+        )(positions, charges, cell)
+        actual_grads = jax.grad(
+            lambda pos, q, lattice: retained(pos, q, lattice, indices).sum(),
+            argnums=(0, 1, 2),
+        )(positions, charges, cell)
+        for actual_grad, expected_grad in zip(
+            actual_grads, expected_grads, strict=True
+        ):
+            assert jnp.allclose(actual_grad, expected_grad, rtol=1e-8, atol=1e-9)
+
+        jitted = jax.jit(
+            lambda lattice, topology: retained(positions, charges, lattice, topology)
+        )
+        assert jnp.allclose(jitted(cell, indices), actual, rtol=1e-12, atol=1e-12)
+
+    def test_retained_miller_component_supports_jitted_shared_batch(self, device):
+        """A shared retained topology serves a jitted reciprocal-space batch."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0], [0.0, 0.0, 0.0], [3.0, 0.0, 0.0]],
+            dtype=jnp.float64,
+        )
+        charges = jnp.array([1.0, -1.0, 0.8, -0.8], dtype=jnp.float64)
+        cell = jnp.stack(
+            [jnp.eye(3, dtype=jnp.float64) * 10.0, jnp.eye(3, dtype=jnp.float64) * 12.0]
+        )
+        alpha = jnp.array([0.3, 0.4], dtype=jnp.float64)
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        indices = generate_ewald_miller_indices(cell, 2.0, (3, 3, 3))
+
+        def explicit(lattice):
+            return ewald_reciprocal_space(
+                positions,
+                charges,
+                lattice,
+                k_vectors_from_miller_indices(lattice, indices),
+                alpha,
+                batch_idx=batch_idx,
+                max_atoms_per_system=2,
+                energy_reduction="system",
+            )
+
+        def retained(lattice, topology):
+            return ewald_reciprocal_space_from_miller_indices(
+                positions,
+                charges,
+                lattice,
+                topology,
+                alpha,
+                batch_idx=batch_idx,
+                max_atoms_per_system=2,
+                energy_reduction="system",
+            )
+
+        expected = explicit(cell)
+        actual = retained(cell, indices)
+        assert actual.shape == (2,)
+        assert jnp.allclose(actual, expected, rtol=1e-12, atol=1e-12)
+        assert jnp.allclose(
+            jax.jit(retained)(cell, indices), actual, rtol=1e-12, atol=1e-12
+        )
+
+    def test_retained_miller_component_direct_outputs_match_explicit_vectors(
+        self, device
+    ):
+        """Retained component preserves direct-output warnings and tuple fields."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+            dtype=jnp.float64,
+        )
+        charges = jnp.array([1.0, 0.5, -0.7, 0.2], dtype=jnp.float64)
+        cell = jnp.stack(
+            [jnp.eye(3, dtype=jnp.float64) * 10.0, jnp.eye(3, dtype=jnp.float64) * 12.0]
+        )
+        alpha = jnp.array([0.3, 0.4], dtype=jnp.float64)
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        indices = generate_ewald_miller_indices(cell, 2.0, (2, 2, 2))
+        kwargs = {
+            "batch_idx": batch_idx,
+            "max_atoms_per_system": 2,
+            "compute_forces": True,
+            "compute_charge_gradients": True,
+            "compute_virial": True,
+            "energy_reduction": "system",
+        }
+
+        with pytest.warns(DeprecationWarning):
+            expected = ewald_reciprocal_space(
+                positions,
+                charges,
+                cell,
+                k_vectors_from_miller_indices(cell, indices),
+                alpha,
+                **kwargs,
+            )
+        with pytest.warns(DeprecationWarning):
+            actual = ewald_reciprocal_space_from_miller_indices(
+                positions, charges, cell, indices, alpha, **kwargs
+            )
+
+        assert len(actual) == 4
+        for actual_field, expected_field in zip(actual, expected, strict=True):
+            assert jnp.allclose(actual_field, expected_field, rtol=1e-12, atol=1e-12)
+
 
 class TestEwaldSummationAPI:
     """Test full Ewald summation API."""
@@ -714,6 +846,323 @@ class TestEwaldSummationAPI:
         assert jnp.all(jnp.isfinite(energies))
         # Opposite charges should produce negative energy
         assert energies.sum() < 0
+
+    def test_retained_miller_indices_match_generated_energy_and_gradients(self, device):
+        """Full Ewald retained topology preserves the internal-vector JVP."""
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            _num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system()
+        bounds = (8, 8, 8)
+        miller_indices = generate_ewald_miller_indices(cell, 8.0, bounds)
+
+        def retained(pos, q, c, indices):
+            return ewald_summation(
+                positions=pos,
+                charges=q,
+                cell=c,
+                alpha=None,
+                miller_indices=indices,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+            ).sum()
+
+        def generated(pos, q, c):
+            return ewald_summation(
+                positions=pos,
+                charges=q,
+                cell=c,
+                alpha=None,
+                k_cutoff=8.0,
+                miller_bounds=bounds,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+            ).sum()
+
+        assert jnp.allclose(
+            retained(positions, charges, cell, miller_indices),
+            generated(positions, charges, cell),
+            rtol=1e-12,
+            atol=1e-12,
+        )
+        retained_grads = jax.grad(retained, argnums=(0, 1, 2))(
+            positions, charges, cell, miller_indices
+        )
+        generated_grads = jax.grad(generated, argnums=(0, 1, 2))(
+            positions, charges, cell
+        )
+        for actual, expected in zip(retained_grads, generated_grads, strict=True):
+            assert jnp.allclose(actual, expected, rtol=1e-5, atol=1e-7)
+
+        cell_direction = jnp.array(
+            [[0.1, -0.2, 0.3], [0.2, 0.1, -0.1], [-0.1, 0.2, 0.1]],
+            dtype=cell.dtype,
+        )[None, ...]
+        retained_cell_grad = jax.grad(
+            lambda c: retained(positions, charges, c, miller_indices)
+        )
+        generated_cell_grad = jax.grad(lambda c: generated(positions, charges, c))
+        _, retained_hvp = jax.jvp(
+            retained_cell_grad,
+            (cell,),
+            (cell_direction,),
+        )
+        _, generated_hvp = jax.jvp(
+            generated_cell_grad,
+            (cell,),
+            (cell_direction,),
+        )
+        assert jnp.allclose(retained_hvp, generated_hvp, rtol=2e-3, atol=1e-6)
+
+        jitted = jax.jit(retained)
+        assert jnp.allclose(
+            jitted(positions, charges, cell, miller_indices),
+            retained(positions, charges, cell, miller_indices),
+            rtol=1e-12,
+            atol=1e-12,
+        )
+
+    def test_retained_miller_indices_reject_conflicting_topology_sources(self, device):
+        """Full Ewald rejects ambiguous reciprocal topology combinations."""
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            _num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system()
+        indices = generate_ewald_miller_indices(cell, 8.0, (8, 8, 8))
+        k_vectors = generate_k_vectors_ewald_summation(cell, 8.0, (8, 8, 8))
+
+        with pytest.raises(ValueError, match="miller_indices"):
+            ewald_summation(
+                positions,
+                charges,
+                cell,
+                alpha=0.3,
+                miller_indices=indices,
+                k_cutoff=8.0,
+            )
+        with pytest.raises(ValueError, match="k_vectors"):
+            ewald_summation(
+                positions,
+                charges,
+                cell,
+                alpha=0.3,
+                k_vectors=k_vectors,
+                miller_indices=indices,
+            )
+
+        explicit = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            k_vectors=k_vectors,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+        )
+        legacy_with_bounds = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            k_vectors=k_vectors,
+            miller_bounds=(1, 1, 1),
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+        )
+        assert jnp.array_equal(legacy_with_bounds, explicit)
+
+    def test_retained_miller_indices_support_jitted_shared_batch(self, device):
+        """One retained topology serves a jitted multi-system Ewald batch."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0], [0.0, 0.0, 0.0], [3.0, 0.0, 0.0]],
+            dtype=jnp.float64,
+        )
+        charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
+        cell = jnp.stack(
+            [jnp.eye(3, dtype=jnp.float64) * 10.0, jnp.eye(3, dtype=jnp.float64) * 12.0]
+        )
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+        pbc = jnp.array([[True, True, True], [True, True, True]])
+        neighbor_matrix, _num_neighbors, neighbor_matrix_shifts = batch_cell_list(
+            positions,
+            5.0,
+            cell,
+            pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=32,
+        )
+        alpha = jnp.array([0.3, 0.3], dtype=jnp.float64)
+        bounds = (4, 4, 4)
+        miller_indices = generate_ewald_miller_indices(cell, 2.0, bounds)
+
+        def retained(lattice):
+            return ewald_summation(
+                positions,
+                charges,
+                lattice,
+                alpha=alpha,
+                miller_indices=miller_indices,
+                batch_idx=batch_idx,
+                max_atoms_per_system=2,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+            ).sum()
+
+        def generated(lattice):
+            return ewald_summation(
+                positions,
+                charges,
+                lattice,
+                alpha=alpha,
+                k_cutoff=2.0,
+                miller_bounds=bounds,
+                batch_idx=batch_idx,
+                max_atoms_per_system=2,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+            ).sum()
+
+        assert jnp.allclose(retained(cell), generated(cell), rtol=1e-12, atol=1e-12)
+        assert jnp.allclose(
+            jax.grad(retained)(cell),
+            jax.grad(generated)(cell),
+            rtol=1e-5,
+            atol=1e-7,
+        )
+        assert jnp.allclose(
+            jax.jit(retained)(cell), retained(cell), rtol=1e-12, atol=1e-12
+        )
+
+    def test_summation_accepts_empty_miller_topology(self, device):
+        """Full Ewald accepts an empty caller-owned reciprocal topology."""
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            _num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system()
+        energy = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            miller_indices=jnp.empty((0, 3), dtype=jnp.int32),
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+        )
+        assert jnp.all(jnp.isfinite(energy))
+
+    def test_empty_reciprocal_topology_direct_fields_match_analytic_terms(self, device):
+        """Zero-length reciprocal topology preserves analytic correction fields."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+            dtype=jnp.float64,
+        )
+        charges = jnp.array([1.0, 0.5, -0.7, 0.2], dtype=jnp.float64)
+        cell = jnp.stack(
+            [jnp.eye(3, dtype=jnp.float64) * 10.0, jnp.eye(3, dtype=jnp.float64) * 12.0]
+        )
+        alpha = jnp.array([0.3, 0.4], dtype=jnp.float64)
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        empty = jnp.empty((0, 3), dtype=jnp.float64)
+        total_charge = jnp.array([1.5, -0.5], dtype=jnp.float64)
+        volume = jnp.abs(jnp.linalg.det(cell))
+        atom_alpha = alpha[batch_idx]
+        atom_volume = volume[batch_idx]
+        atom_charge = total_charge[batch_idx]
+        expected_energy = -(
+            atom_alpha * charges**2 / jnp.sqrt(jnp.pi)
+            + jnp.pi * charges * atom_charge / (2.0 * atom_alpha**2 * atom_volume)
+        )
+        expected_charge_grads = -(
+            2.0 * atom_alpha * charges / jnp.sqrt(jnp.pi)
+            + jnp.pi * atom_charge / (atom_alpha**2 * atom_volume)
+        )
+        expected_virial = -(jnp.pi * total_charge**2 / (2.0 * alpha**2 * volume))[
+            :, None, None
+        ] * jnp.eye(3, dtype=jnp.float64)
+
+        with pytest.warns(DeprecationWarning):
+            energy, forces, charge_grads, virial = ewald_reciprocal_space(
+                positions,
+                charges,
+                cell,
+                empty,
+                alpha,
+                batch_idx=batch_idx,
+                max_atoms_per_system=2,
+                compute_forces=True,
+                compute_charge_gradients=True,
+                compute_virial=True,
+            )
+
+        assert jnp.allclose(energy, expected_energy, rtol=1e-12, atol=1e-12)
+        assert jnp.array_equal(forces, jnp.zeros_like(forces))
+        assert jnp.allclose(charge_grads, expected_charge_grads, rtol=1e-12, atol=1e-12)
+        assert jnp.allclose(virial, expected_virial, rtol=1e-12, atol=1e-12)
+
+        def energy_sum(q, lattice):
+            return ewald_reciprocal_space(
+                positions,
+                q,
+                lattice,
+                empty,
+                alpha,
+                batch_idx=batch_idx,
+                max_atoms_per_system=2,
+            ).sum()
+
+        assert jnp.allclose(
+            jax.grad(energy_sum, argnums=0)(charges, cell),
+            expected_charge_grads,
+            rtol=1e-12,
+            atol=1e-12,
+        )
+
+        def strain_energy(strain):
+            transform = jnp.eye(3, dtype=cell.dtype) + strain
+            return energy_sum(charges, cell @ transform)
+
+        strain_gradient = jax.grad(strain_energy)(jnp.zeros((3, 3), dtype=cell.dtype))
+        assert jnp.allclose(
+            -strain_gradient,
+            expected_virial.sum(axis=0),
+            rtol=1e-12,
+            atol=1e-12,
+        )
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            jitted = jax.jit(
+                lambda: ewald_reciprocal_space(
+                    positions,
+                    charges,
+                    cell,
+                    empty,
+                    alpha,
+                    batch_idx=batch_idx,
+                    max_atoms_per_system=2,
+                    compute_forces=True,
+                    compute_charge_gradients=True,
+                    compute_virial=True,
+                )
+            )()
+        for actual, expected in zip(
+            jitted, (energy, forces, charge_grads, virial), strict=True
+        ):
+            assert jnp.allclose(actual, expected, rtol=1e-12, atol=1e-12)
 
     def test_energy_grad_positions_matches_direct_forces(self, device):
         """Energy-derived position gradients match direct forces."""

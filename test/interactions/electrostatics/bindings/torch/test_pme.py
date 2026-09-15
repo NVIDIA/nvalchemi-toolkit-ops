@@ -35,6 +35,7 @@ from importlib import import_module
 import pytest
 import torch
 import warp as wp
+from torch.fx.experimental.proxy_tensor import make_fx
 
 from nvalchemiops.torch.interactions.electrostatics import (
     compute_bspline_moduli_1d,
@@ -7492,6 +7493,68 @@ class TestDirectOutputDeprecation:
 
         energy = result[0] if isinstance(result, tuple) else result
         assert torch.isfinite(energy).all()
+
+
+class TestPMEReciprocalSymbolicMakeFx:
+    """Symbolic tracing coverage for batched reciprocal PME."""
+
+    @staticmethod
+    def _inputs(batch_size: int) -> tuple[torch.Tensor, ...]:
+        positions = torch.arange(batch_size * 6, dtype=torch.float64).reshape(-1, 3)
+        positions = positions.mul(0.01).add(0.1)
+        charges = torch.linspace(-0.4, 0.4, batch_size * 2, dtype=torch.float64)
+        cell = torch.eye(3, dtype=torch.float64).expand(batch_size, -1, -1).clone()
+        batch_idx = torch.arange(batch_size, dtype=torch.int32).repeat_interleave(2)
+        alpha = torch.full((batch_size,), 0.35, dtype=torch.float64)
+        return positions, charges, cell, batch_idx, alpha
+
+    @pytest.mark.parametrize("energy_reduction", ["atom", "system"])
+    def test_symbolic_make_fx_is_batch_size_independent(self, energy_reduction):
+        """Explicit mesh dimensions make symbolic PME traces shape-polymorphic."""
+
+        def reciprocal(positions, charges, cell, batch_idx, alpha):
+            return pme_reciprocal_space(
+                positions,
+                charges,
+                cell,
+                alpha,
+                mesh_dimensions=(4, 4, 4),
+                batch_idx=batch_idx,
+                energy_reduction=energy_reduction,
+            )
+
+        args4 = self._inputs(4)
+        args5 = self._inputs(5)
+        traced4 = make_fx(reciprocal, tracing_mode="symbolic")(*args4)
+        traced5 = make_fx(reciprocal, tracing_mode="symbolic")(*args5)
+
+        assert traced4.code == traced5.code
+        torch.testing.assert_close(traced4(*args5), reciprocal(*args5))
+
+    def test_compiling_mesh_spacing_warning(self):
+        """Compiled mesh-spacing setup warns while explicit dimensions do not."""
+        positions, charges, cell = create_simple_system(
+            torch.device("cpu"), num_atoms=4
+        )
+        compiled = torch.compile(pme_reciprocal_space)
+
+        with pytest.warns(FutureWarning, match="mesh_dimensions"):
+            compiled(
+                positions,
+                charges,
+                cell,
+                alpha=0.3,
+                mesh_spacing=2.0,
+            )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            compiled(
+                positions,
+                charges,
+                cell,
+                alpha=0.3,
+                mesh_dimensions=(4, 4, 4),
+            )
 
 
 if __name__ == "__main__":
