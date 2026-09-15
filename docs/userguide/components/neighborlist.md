@@ -539,6 +539,93 @@ steps; batched workflows accept `rebuild_flags` to re-enumerate only systems who
 atoms moved beyond the skin distance. Dual cutoff is supported in matrix format but
 cannot be combined with pair-potential outputs.
 
+(cluster-tile-buffer-capacity)=
+
+### Tile-buffer capacity
+
+Cluster-tile construction divides each system into groups of at most 32 atoms.
+A system with $N$ atoms has $\lceil N/32\rceil$ groups. Groups do not
+cross system boundaries, so a compact batch containing systems of sizes $N_i$
+has $g=\sum_i\lceil N_i/32\rceil$ groups in total.
+
+The build stores discovered tile pairs in one buffer shared by all row groups.
+If `max_tiles_per_group` is $m$, a compact build with $g$ groups reserves
+$C=g\,\min(g,m)$ records. Increasing $m$ by one adds $g$ records until $m$
+reaches $g$; larger values do not increase the allocation. Each record contains
+two `int32` group indices, so the tile-index arrays use $8C$ bytes for one
+system. A compact batch also records the system index and uses $12C$ bytes.
+Other scratch buffers and the neighbor output do not depend on $m$.
+
+#### Choosing a capacity
+
+`cluster_tile_neighbor_list` and `batch_cluster_tile_neighbor_list` construct
+the tile list and query the neighbor output in the same call. During eager
+execution, they call
+{func}`~nvalchemiops.neighbors.cluster_tile.estimate_max_tiles_per_group` when
+`max_tiles_per_group` is `None`. The estimator uses each system's atom count,
+cell volume, and cutoff; its `safety` parameter adds headroom for uneven density
+or changing geometries.
+
+There are three ways to choose a capacity:
+
+- Before execution, use the estimator for a heuristic based on the current
+  geometry.
+- After an eager overflow, use the reported tile count to calculate the exact
+  requirement for that geometry.
+- For a geometry-independent single-system bound, use the upper-triangular
+  maximum of $g(g+1)/2$ tile pairs. This requires
+  `max_tiles_per_group=ceil((g + 1) / 2)`.
+
+Dual-cutoff sizing uses `max(cutoff, cutoff2)`. By convention, `cutoff2` is the
+outer cutoff and is at least `cutoff`, but the cluster-tile convenience
+functions accept either order. Use the same larger cutoff when calling the
+estimator directly.
+
+#### Recovering from eager overflow
+
+`TileBufferOverflow` reports the required tile-pair count as
+`error.num_tiles` and the allocated capacity as `error.max_tiles`. For a compact
+single-system or batch build, the exact retry value for that geometry is
+
+$$
+m_{\mathrm{retry}} = \left\lceil\frac{\mathtt{error.num\_tiles}}{g}\right\rceil,
+$$
+
+where $g$ is the total group count for the compact build.
+
+A segmented batch gives each system its own interval in the tile buffer. System
+$i$ has capacity `tile_offsets[i + 1] - tile_offsets[i]` and reports its required
+count in `tile_counts[i]`. The exact shared retry value for the current batch is
+
+$$
+m_{\mathrm{retry}} =
+\max_{i:\,g_i>0}\left\lceil\frac{\mathtt{tile\_counts}[i]}{g_i}\right\rceil.
+$$
+
+For a trajectory, retain the largest observed requirement and add headroom for
+later geometries. `TileBufferOverflow` reports exhaustion of the intermediate
+tile-pair buffer. `NeighborOverflowError` reports that the final matrix or COO
+neighbor output is too small.
+
+#### Compiled JAX
+
+JAX fixes array shapes while tracing a transformed or compiled function, and
+`max_tiles_per_group` determines the tile-buffer shape. The value must therefore
+be a positive static Python integer. Close over it or mark the argument static
+with `static_argnames`.
+
+The runtime tile count cannot be converted to a Python value inside the compiled
+region, so an undersized bound does not raise `TileBufferOverflow` there. A
+compiled workflow can use the lower-level build and query functions and return
+the tile counters alongside the neighbor output. After the compiled call:
+
+- For a compact buffer, require
+  `int(num_tiles[0]) <= tile_row_group.shape[0]`.
+- For segmented buffers, require
+  `tile_counts <= tile_offsets[1:] - tile_offsets[:-1]` element by element.
+
+The neighbor output is incomplete when either check fails.
+
 (nl_performance)=
 
 ## Performance Tuning
@@ -552,6 +639,14 @@ cannot be combined with pair-potential outputs.
   as improve kernel performance. The `estimate_max_neighbors()` method will
   otherwise provide a **very** conservative estimate based on atomic
   density.
+
+`max_tiles_per_group`
+: Sets the capacity of the tile-pair buffer shared by all row groups. For $g$
+  32-atom groups, a value $m$ reserves $g\,\min(g,m)$ records. The tile-index
+  arrays use 8 bytes per record for one system and 12 bytes per record for a
+  compact batch. The combined build/query functions estimate the value during
+  eager execution when it is `None`. A transformed or compiled JAX call
+  requires a positive static Python integer.
 
 `atomic_density`
 : Atomic density in atoms per unit volume, used by `estimate_max_neighbors()`.
