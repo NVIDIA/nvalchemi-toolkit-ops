@@ -27,6 +27,7 @@ from nvalchemiops.torch.neighbors.batch_cluster_tile import (
     TILE_GROUP_SIZE,
     allocate_batch_cluster_tile_list,
     batch_cluster_tile_neighbor_list,
+    estimate_batch_cluster_tile_segments,
     estimate_batch_max_tiles_per_group,
 )
 from nvalchemiops.torch.neighbors.cluster_tile import (
@@ -65,12 +66,14 @@ class ClusterTileState:
     return_vectors: bool
     return_distances: bool
     max_tiles_per_group: int
+    selective: bool
     _batch_ptr: torch.Tensor | None = field(repr=False)
     _cell_shape: tuple[int, ...] = field(repr=False)
     _scratch: tuple[torch.Tensor, ...] = field(repr=False)
     _topology: tuple[torch.Tensor, ...] = field(repr=False)
     _neighbor_vectors: torch.Tensor | None = field(repr=False)
     _neighbor_distances: torch.Tensor | None = field(repr=False)
+    _selective_state: tuple[torch.Tensor, ...] = field(repr=False)
 
     @property
     def neighbor_vectors(self) -> torch.Tensor | None:
@@ -167,6 +170,7 @@ def prepare_cluster_tile(
     *,
     format: str,
     batch_ptr: torch.Tensor | None = None,
+    selective: bool = False,
     max_neighbors: int | None = None,
     fill_value: int | None = None,
     max_pairs: int | None = None,
@@ -190,6 +194,9 @@ def prepare_cluster_tile(
         Fixed output representation.
     batch_ptr : torch.Tensor, optional
         Int32 cumulative atom counts. Preparation copies the partition.
+    selective : bool, default=False
+        Require one Boolean rebuild flag per system during execution. Selective
+        preparation supports matrix output only.
     max_neighbors : int, optional
         Matrix row capacity. Also determines the default COO capacity.
     fill_value : int, optional
@@ -217,6 +224,8 @@ def prepare_cluster_tile(
     _validate_positions(positions)
     if format not in ("tile", "matrix", "coo"):
         raise ValueError(f"format must be 'matrix' | 'coo' | 'tile'; got {format!r}")
+    if not isinstance(selective, bool):
+        raise ValueError("selective must be a Boolean")
     if not isinstance(cutoff, (int, float)) or isinstance(cutoff, bool) or cutoff <= 0:
         raise ValueError("cutoff must be positive")
     if cutoff2 is not None and (
@@ -227,6 +236,10 @@ def prepare_cluster_tile(
         raise ValueError("cutoff2 must be positive")
     if cutoff2 is not None and format != "matrix":
         raise ValueError("cutoff2 is supported only with format='matrix'")
+    if selective and format != "matrix":
+        raise ValueError("selective prepared execution supports matrix output only")
+    if selective and (return_vectors or return_distances):
+        raise ValueError("selective prepared execution does not support geometry")
     if format == "tile" and (return_vectors or return_distances):
         raise ValueError("tile output does not support vectors or distances")
 
@@ -307,6 +320,28 @@ def prepare_cluster_tile(
         if return_distances
         else None
     )
+    selective_state: tuple[torch.Tensor, ...] = ()
+    if selective:
+        initialized = torch.zeros(
+            (protected_batch_ptr.numel() - 1 if protected_batch_ptr is not None else 1),
+            dtype=torch.bool,
+            device=positions.device,
+        )
+        selective_state = (initialized,)
+        if protected_batch_ptr is not None:
+            _, tile_offsets, _, _ = estimate_batch_cluster_tile_segments(
+                protected_batch_ptr,
+                max_neighbors,
+                max_tiles_per_group=max_tiles_per_group,
+            )
+            if int(tile_offsets[-1].item()) > scratch[16].numel():
+                raise RuntimeError("prepared tile segments exceed scratch capacity")
+            tile_counts = torch.zeros(
+                protected_batch_ptr.numel() - 1,
+                dtype=torch.int32,
+                device=positions.device,
+            )
+            selective_state = (initialized, tile_offsets, tile_counts)
     return ClusterTileState(
         format=format,
         is_batched=protected_batch_ptr is not None,
@@ -326,12 +361,14 @@ def prepare_cluster_tile(
         return_vectors=bool(return_vectors),
         return_distances=bool(return_distances),
         max_tiles_per_group=max_tiles_per_group,
+        selective=selective,
         _batch_ptr=protected_batch_ptr,
         _cell_shape=tuple(cell.shape),
         _scratch=scratch,
         _topology=topology,
         _neighbor_vectors=neighbor_vectors,
         _neighbor_distances=neighbor_distances,
+        _selective_state=selective_state,
     )
 
 
@@ -339,6 +376,8 @@ def cluster_tile_neighbor_list_prepared(
     positions: torch.Tensor,
     cell: torch.Tensor,
     state: ClusterTileState,
+    *,
+    rebuild_flags: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, ...]:
     """Execute a previously prepared cluster-tile configuration.
 
@@ -351,6 +390,10 @@ def cluster_tile_neighbor_list_prepared(
     state : ClusterTileState
         State returned by :func:`prepare_cluster_tile`. Capture it as a closure
         constant rather than passing it as a compiled graph input.
+    rebuild_flags : torch.Tensor, optional
+        Boolean flags of shape ``(num_systems,)``. Required by selective states
+        and rejected by nonselective states. False preserves an initialized
+        system's matrix topology.
 
     Returns
     -------
@@ -377,6 +420,33 @@ def cluster_tile_neighbor_list_prepared(
         raise TypeError("cell dtype does not match prepared state")
     if cell.device != state.device:
         raise ValueError("cell device does not match prepared state")
+    if rebuild_flags is not None and not state.selective:
+        raise ValueError("rebuild_flags requires a selective ClusterTileState")
+    if state.selective and rebuild_flags is None:
+        raise ValueError("selective ClusterTileState requires rebuild_flags")
+    if state.selective:
+        if (
+            rebuild_flags.dtype != torch.bool
+            or rebuild_flags.device != state.device
+            or rebuild_flags.shape != (state.num_systems,)
+        ):
+            raise ValueError(
+                "rebuild_flags must be a bool tensor on the prepared device "
+                "with shape (num_systems,)"
+            )
+        initialized = state._selective_state[0]
+        may_preserve = initialized | rebuild_flags
+        if torch.compiler.is_compiling():
+            torch._assert_async(
+                may_preserve.all(),
+                "selective ClusterTileState cannot preserve uninitialized systems",
+            )
+        elif not bool(may_preserve.all().item()):
+            raise ValueError(
+                "selective ClusterTileState cannot preserve uninitialized systems"
+            )
+        if not torch.compiler.is_compiling():
+            initialized.copy_(torch.where(rebuild_flags, False, initialized))
 
     topology = state._topology
     matrix_kwargs: dict[str, torch.Tensor] = {}
@@ -422,7 +492,7 @@ def cluster_tile_neighbor_list_prepared(
             tile_col_group,
             tile_system,
         ) = state._scratch
-        return batch_cluster_tile_neighbor_list(
+        output = batch_cluster_tile_neighbor_list(
             positions,
             state.cutoff,
             cell,
@@ -456,9 +526,15 @@ def cluster_tile_neighbor_list_prepared(
             tile_row_group=tile_row_group,
             tile_col_group=tile_col_group,
             tile_system=tile_system,
+            rebuild_flags=rebuild_flags,
+            tile_offsets=(state._selective_state[1] if state.selective else None),
+            tile_counts=(state._selective_state[2] if state.selective else None),
             **matrix_kwargs,
             **coo_kwargs,
         )
+        if state.selective:
+            initialized.copy_(initialized | rebuild_flags)
+        return output
 
     (
         sorted_atom_index,
@@ -476,7 +552,7 @@ def cluster_tile_neighbor_list_prepared(
         tile_row_group,
         tile_col_group,
     ) = state._scratch
-    return cluster_tile_neighbor_list(
+    output = cluster_tile_neighbor_list(
         positions,
         state.cutoff,
         cell,
@@ -504,6 +580,10 @@ def cluster_tile_neighbor_list_prepared(
         num_tiles=num_tiles,
         tile_row_group=tile_row_group,
         tile_col_group=tile_col_group,
+        rebuild_flags=rebuild_flags,
         **matrix_kwargs,
         **coo_kwargs,
     )
+    if state.selective:
+        initialized.copy_(initialized | rebuild_flags)
+    return output
