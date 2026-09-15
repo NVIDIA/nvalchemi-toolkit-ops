@@ -630,6 +630,200 @@ class TestClusterTileCompile:
             )
 
     @pytest.mark.slow
+    @pytest.mark.parametrize("prepared_scratch", [False, True])
+    def test_cluster_tile_matrix_fullgraph_static_capacity(
+        self, device, dtype, prepared_scratch
+    ):
+        """Matrix output supports fullgraph with static or prepared capacity."""
+        torch.manual_seed(3)
+        natom = 64
+        positions = torch.rand(natom, 3, dtype=dtype, device=device) * 6.0
+        cell = _orthorhombic_cell(6.0, device, dtype)
+        eager = cluster_tile_neighbor_list(
+            positions, 2.0, cell, max_neighbors=64, max_tiles_per_group=4
+        )
+        scratch = allocate_cluster_tile_list(
+            natom, torch.device(device), dtype=dtype, max_tiles_per_group=4
+        )
+
+        @torch.compile(fullgraph=True)
+        def run(runtime_positions):
+            kwargs = {"max_neighbors": 64}
+            if prepared_scratch:
+                kwargs.update(
+                    sorted_atom_index=scratch[0],
+                    morton_codes=scratch[1],
+                    sorted_pos_x=scratch[2],
+                    sorted_pos_y=scratch[3],
+                    sorted_pos_z=scratch[4],
+                    group_ctr_x=scratch[5],
+                    group_ctr_y=scratch[6],
+                    group_ctr_z=scratch[7],
+                    group_ext_x=scratch[8],
+                    group_ext_y=scratch[9],
+                    group_ext_z=scratch[10],
+                    num_tiles=scratch[11],
+                    tile_row_group=scratch[12],
+                    tile_col_group=scratch[13],
+                )
+            else:
+                kwargs["max_tiles_per_group"] = 4
+            return cluster_tile_neighbor_list(runtime_positions, 2.0, cell, **kwargs)
+
+        compiled = run(positions)
+        assert torch.equal(eager[1], compiled[1])
+        assert _per_atom_neighbor_sets(*eager, natom) == _per_atom_neighbor_sets(
+            *compiled, natom
+        )
+
+    @pytest.mark.slow
+    def test_cluster_tile_tile_fullgraph_explicit_capacity(self, device, dtype):
+        """Tile output supports fullgraph with explicit static capacity."""
+        positions = torch.rand(64, 3, dtype=dtype, device=device) * 6.0
+        cell = _orthorhombic_cell(6.0, device, dtype)
+        eager = cluster_tile_neighbor_list(
+            positions, 2.0, cell, format="tile", max_tiles_per_group=4
+        )
+
+        @torch.compile(fullgraph=True)
+        def run(runtime_positions):
+            return cluster_tile_neighbor_list(
+                runtime_positions, 2.0, cell, format="tile", max_tiles_per_group=4
+            )
+
+        compiled = run(positions)
+        assert len(compiled) == 7
+        assert all(
+            torch.equal(expected, actual) for expected, actual in zip(eager, compiled)
+        )
+
+    @pytest.mark.slow
+    def test_cluster_tile_fullgraph_requires_static_capacity(self, device, dtype):
+        """Unprepared compiled single calls name the required capacity input."""
+        positions = torch.rand(32, 3, dtype=dtype, device=device)
+        cell = _orthorhombic_cell(6.0, device, dtype)
+
+        @torch.compile(fullgraph=True)
+        def run(runtime_positions):
+            return cluster_tile_neighbor_list(runtime_positions, 2.0, cell)
+
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                "compiled cluster_tile_neighbor_list requires max_tiles_per_group "
+                "when scratch buffers are not provided"
+            ),
+        ):
+            run(positions)
+
+    @pytest.mark.slow
+    def test_cluster_tile_dual_matrix_fullgraph(self, device, dtype):
+        """Dual-cutoff matrix topology supports fullgraph execution."""
+        torch.manual_seed(4)
+        natom = 64
+        positions = torch.rand(natom, 3, dtype=dtype, device=device) * 6.0
+        cell = _orthorhombic_cell(6.0, device, dtype)
+        eager = cluster_tile_neighbor_list(
+            positions,
+            1.5,
+            cell,
+            cutoff2=2.0,
+            max_neighbors=64,
+            max_tiles_per_group=4,
+        )
+
+        @torch.compile(fullgraph=True)
+        def run(runtime_positions):
+            return cluster_tile_neighbor_list(
+                runtime_positions,
+                1.5,
+                cell,
+                cutoff2=2.0,
+                max_neighbors=64,
+                max_tiles_per_group=4,
+            )
+
+        compiled = run(positions)
+        for start in (0, 3):
+            assert torch.equal(eager[start + 1], compiled[start + 1])
+            assert _per_atom_neighbor_sets(*eager[start : start + 3], natom) == (
+                _per_atom_neighbor_sets(*compiled[start : start + 3], natom)
+            )
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("dual_cutoff", [False, True])
+    def test_cluster_tile_selective_matrix_fullgraph_reuses_buffers(
+        self, device, dtype, dual_cutoff
+    ):
+        """Selective matrix rebuild and skip preserve supplied state exactly."""
+        initial = torch.tensor(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=dtype, device=device
+        )
+        moved = torch.tensor(
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=dtype, device=device
+        )
+        cell = _orthorhombic_cell(8.0, device, dtype)
+        cutoff2 = 2.0 if dual_cutoff else None
+        base_kwargs = {"max_neighbors": 8}
+        if dual_cutoff:
+            base_kwargs["cutoff2"] = cutoff2
+        initial_outputs = cluster_tile_neighbor_list(initial, 1.0, cell, **base_kwargs)
+        tile_state = cluster_tile_neighbor_list(
+            initial,
+            cutoff2 if dual_cutoff else 1.0,
+            cell,
+            format="tile",
+            max_tiles_per_group=1,
+        )
+        outputs = [tensor.clone() for tensor in initial_outputs]
+        tiles = [tensor.clone() for tensor in tile_state[:3]]
+        kwargs = {
+            "return_state": True,
+            "num_tiles": tiles[0],
+            "tile_row_group": tiles[1],
+            "tile_col_group": tiles[2],
+            "neighbor_matrix": outputs[0],
+            "num_neighbors": outputs[1],
+            "neighbor_matrix_shifts": outputs[2],
+        }
+        if dual_cutoff:
+            kwargs.update(
+                neighbor_matrix2=outputs[3],
+                num_neighbors2=outputs[4],
+                neighbor_matrix_shifts2=outputs[5],
+            )
+
+        @torch.compile(fullgraph=True)
+        def run(runtime_positions, rebuild_flags):
+            return cluster_tile_neighbor_list(
+                runtime_positions,
+                1.0,
+                cell,
+                **base_kwargs,
+                rebuild_flags=rebuild_flags,
+                **kwargs,
+            )
+
+        rebuilt = run(moved, torch.ones(1, dtype=torch.bool, device=device))
+        output_count = 6 if dual_cutoff else 3
+        assert all(rebuilt[index] is outputs[index] for index in range(output_count))
+        assert all(rebuilt[-3 + index] is tiles[index] for index in range(3))
+        reference = cluster_tile_neighbor_list(moved, 1.0, cell, **base_kwargs)
+        for start in range(0, output_count, 3):
+            assert torch.equal(outputs[start + 1], reference[start + 1])
+            assert _per_atom_neighbor_sets(*outputs[start : start + 3], 2) == (
+                _per_atom_neighbor_sets(*reference[start : start + 3], 2)
+            )
+        output_snapshot = [tensor.clone() for tensor in outputs]
+        tile_snapshot = [tensor.clone() for tensor in tiles]
+        skipped = run(initial, torch.zeros(1, dtype=torch.bool, device=device))
+        assert all(skipped[index] is outputs[index] for index in range(output_count))
+        assert all(
+            torch.equal(outputs[i], output_snapshot[i]) for i in range(output_count)
+        )
+        assert all(torch.equal(tiles[i], tile_snapshot[i]) for i in range(3))
+
+    @pytest.mark.slow
     def test_build_then_convert_compile(self, device, dtype):
         """Component build + query_cluster_tile should compile cleanly."""
         torch.manual_seed(1)

@@ -15,6 +15,12 @@
 
 """Tests for the batched cluster-pair tile neighbor list PyTorch bindings."""
 
+import os
+import subprocess
+import sys
+import tempfile
+import textwrap
+
 import pytest
 import torch
 
@@ -110,6 +116,29 @@ def _scratch_kwargs(
         "tile_system",
     )
     return dict(zip(names, scratch))
+
+
+def _matrix_pair_sets(
+    neighbor_matrix: torch.Tensor,
+    num_neighbors: torch.Tensor,
+    neighbor_shifts: torch.Tensor,
+) -> list[frozenset[tuple[int, int, int, int]]]:
+    """Return order-independent ``(target, shift)`` rows for matrix output."""
+    matrix = neighbor_matrix.cpu()
+    counts = num_neighbors.cpu()
+    shifts = neighbor_shifts.cpu()
+    return [
+        frozenset(
+            (
+                int(matrix[source, slot]),
+                int(shifts[source, slot, 0]),
+                int(shifts[source, slot, 1]),
+                int(shifts[source, slot, 2]),
+            )
+            for slot in range(int(counts[source]))
+        )
+        for source in range(matrix.shape[0])
+    ]
 
 
 class TestBatchClusterTileValidation:
@@ -1507,7 +1536,7 @@ class TestBatchClusterTileCompile:
 
     @pytest.mark.slow
     def test_batch_cluster_tile_neighbor_list_compile(self, device, dtype):
-        """``batch_cluster_tile_neighbor_list`` should be compatible with ``torch.compile``."""
+        """Prepared batch matrix topology supports fullgraph compilation."""
         sizes = [64, 96]
         positions, cell_batch, batch_ptr = _make_batch(
             sizes,
@@ -1518,6 +1547,16 @@ class TestBatchClusterTileCompile:
         )
         cutoff = 2.5
 
+        eager_scratch = _scratch_kwargs(
+            allocate_batch_cluster_tile_list(
+                batch_ptr, torch.device(device), dtype=dtype, max_tiles_per_group=4
+            )
+        )
+        compiled_scratch = _scratch_kwargs(
+            allocate_batch_cluster_tile_list(
+                batch_ptr, torch.device(device), dtype=dtype, max_tiles_per_group=4
+            )
+        )
         nm_uncompiled, nn_uncompiled, _nms_uncompiled = (
             batch_cluster_tile_neighbor_list(
                 positions,
@@ -1525,10 +1564,11 @@ class TestBatchClusterTileCompile:
                 cell_batch,
                 batch_ptr,
                 max_neighbors=64,
+                **eager_scratch,
             )
         )
 
-        @torch.compile
+        @torch.compile(fullgraph=True)
         def compiled_batch_cluster_tile_neighbor_list(
             positions, cutoff, cell_batch, batch_ptr
         ):
@@ -1538,6 +1578,7 @@ class TestBatchClusterTileCompile:
                 cell_batch,
                 batch_ptr,
                 max_neighbors=64,
+                **compiled_scratch,
             )
 
         nm_compiled, nn_compiled, _nms_compiled = (
@@ -1555,6 +1596,241 @@ class TestBatchClusterTileCompile:
             assert s_uncompiled == s_compiled, (
                 f"Row {i} neighbor set mismatch under torch.compile"
             )
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("mode", ["tile", "dual"])
+    def test_batch_cluster_tile_other_formats_fullgraph(self, device, dtype, mode):
+        """Prepared tile and dual-matrix batch formats support fullgraph."""
+        positions, cell_batch, batch_ptr = _make_batch(
+            [33, 67, 19], [10.0, 8.0, 12.0], device=device, dtype=dtype, seed=11
+        )
+        eager_scratch = _scratch_kwargs(
+            allocate_batch_cluster_tile_list(
+                batch_ptr, torch.device(device), dtype=dtype, max_tiles_per_group=4
+            )
+        )
+        compiled_scratch = _scratch_kwargs(
+            allocate_batch_cluster_tile_list(
+                batch_ptr, torch.device(device), dtype=dtype, max_tiles_per_group=4
+            )
+        )
+        kwargs = (
+            {"format": "tile"}
+            if mode == "tile"
+            else {"max_neighbors": 64, "cutoff2": 2.5}
+        )
+        eager = batch_cluster_tile_neighbor_list(
+            positions, 2.0, cell_batch, batch_ptr, **kwargs, **eager_scratch
+        )
+
+        @torch.compile(fullgraph=True)
+        def run(runtime_positions):
+            return batch_cluster_tile_neighbor_list(
+                runtime_positions,
+                2.0,
+                cell_batch,
+                batch_ptr,
+                **kwargs,
+                **compiled_scratch,
+            )
+
+        compiled = run(positions)
+        if mode == "tile":
+            assert torch.equal(eager[0], compiled[0])
+            active = int(eager[0].item())
+            assert sorted(
+                zip(*[x[:active].cpu().tolist() for x in eager[1:4]])
+            ) == sorted(zip(*[x[:active].cpu().tolist() for x in compiled[1:4]]))
+            for expected, actual in zip(eager[4:], compiled[4:]):
+                assert torch.equal(expected, actual)
+        else:
+            for start in (0, 3):
+                assert torch.equal(eager[start + 1], compiled[start + 1])
+                assert _matrix_pair_sets(
+                    *eager[start : start + 3]
+                ) == _matrix_pair_sets(*compiled[start : start + 3])
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("partial", [False, True])
+    def test_batch_cluster_tile_fullgraph_requires_complete_scratch(
+        self, device, dtype, partial
+    ):
+        """Compiled convenience calls require the complete allocator state."""
+        positions, cell_batch, batch_ptr = _make_batch(
+            [2, 3], [8.0, 8.0], device=device, dtype=dtype, seed=52
+        )
+        kwargs = {}
+        if partial:
+            kwargs["sorted_atom_index"] = allocate_batch_cluster_tile_list(
+                batch_ptr, torch.device(device), dtype=dtype
+            )[0]
+
+        @torch.compile(fullgraph=True)
+        def run(runtime_positions):
+            return batch_cluster_tile_neighbor_list(
+                runtime_positions, 1.0, cell_batch, batch_ptr, max_neighbors=8, **kwargs
+            )
+
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                "compiled batch_cluster_tile_neighbor_list requires complete scratch "
+                "from allocate_batch_cluster_tile_list"
+            ),
+        ):
+            run(positions)
+
+    @pytest.mark.slow
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+    def test_batch_cluster_tile_fullgraph_bad_batch_total_is_isolated(self):
+        """Compiled batch-total assertions fail in an isolated CUDA process."""
+        script = textwrap.dedent(
+            """
+            import torch
+            from nvalchemiops.torch.neighbors.batch_cluster_tile import (
+                allocate_batch_cluster_tile_list,
+                batch_cluster_tile_neighbor_list,
+            )
+
+            device = torch.device("cuda")
+            positions = torch.zeros((9, 3), dtype=torch.float32, device=device)
+            cell_batch = torch.eye(3, dtype=torch.float32, device=device).reshape(1, 3, 3) * 20.0
+            allocation_ptr = torch.tensor([0, 9], dtype=torch.int32, device=device)
+            bad_batch_ptr = torch.tensor([0, 8], dtype=torch.int32, device=device)
+            names = (
+                "sorted_atom_index", "sort_inv", "sorted_pos_x", "sorted_pos_y",
+                "sorted_pos_z", "batch_idx_sorted", "batch_ptr_padded", "group_system",
+                "group_ptr", "group_ctr_x", "group_ctr_y", "group_ctr_z", "group_ext_x",
+                "group_ext_y", "group_ext_z", "num_tiles", "tile_row_group",
+                "tile_col_group", "tile_system",
+            )
+            scratch = dict(zip(names, allocate_batch_cluster_tile_list(
+                allocation_ptr, device, dtype=torch.float32, max_tiles_per_group=1
+            )))
+
+            @torch.compile(fullgraph=True)
+            def run(values):
+                return batch_cluster_tile_neighbor_list(
+                    values, 1.0, cell_batch, bad_batch_ptr, max_neighbors=8, **scratch
+                )
+
+            run(positions)
+            torch.cuda.synchronize()
+            """
+        )
+        with tempfile.TemporaryDirectory() as cache_dir:
+            env = os.environ.copy()
+            env["TORCHINDUCTOR_CACHE_DIR"] = os.path.join(cache_dir, "inductor")
+            env["WARP_CACHE_PATH"] = os.path.join(cache_dir, "warp")
+            result = subprocess.run(  # noqa: S603 - test isolates CUDA assertions
+                [sys.executable, "-c", script],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+            )
+        assert result.returncode != 0
+        assert "batch_ptr[-1] must equal positions.shape[0]" in (
+            result.stdout + result.stderr
+        )
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("dual", [False, True])
+    def test_batch_cluster_tile_selective_matrix_fullgraph_preserves_false_rows(
+        self, device, dtype, dual
+    ):
+        """Compiled selective batch matrix updates only true systems."""
+        batch_ptr = torch.tensor([0, 2, 6, 9], dtype=torch.int32, device=device)
+        cell_batch = torch.eye(3, dtype=dtype, device=device).repeat(3, 1, 1) * 20.0
+        initial = torch.zeros((9, 3), dtype=dtype, device=device)
+        moved = initial.clone()
+        moved[2:6, 0] = torch.arange(4, dtype=dtype, device=device) * 3.0
+        scratch = _scratch_kwargs(
+            allocate_batch_cluster_tile_list(
+                batch_ptr, torch.device(device), dtype=dtype, max_tiles_per_group=1
+            )
+        )
+        _tile_caps, tile_offsets, _pair_caps, _pair_offsets = (
+            estimate_batch_cluster_tile_segments(
+                batch_ptr, max_neighbors=8, max_tiles_per_group=1
+            )
+        )
+        tile_counts = torch.zeros(3, dtype=torch.int32, device=device)
+        primary = (
+            torch.full((9, 8), 9, dtype=torch.int32, device=device),
+            torch.zeros(9, dtype=torch.int32, device=device),
+            torch.zeros((9, 8, 3), dtype=torch.int32, device=device),
+        )
+        secondary = tuple(tensor.clone() for tensor in primary)
+        kwargs = {
+            "max_neighbors": 8,
+            "neighbor_matrix": primary[0],
+            "num_neighbors": primary[1],
+            "neighbor_matrix_shifts": primary[2],
+            "tile_offsets": tile_offsets,
+            "tile_counts": tile_counts,
+            "return_state": True,
+            **scratch,
+        }
+        if dual:
+            kwargs.update(
+                cutoff2=2.0,
+                neighbor_matrix2=secondary[0],
+                num_neighbors2=secondary[1],
+                neighbor_matrix_shifts2=secondary[2],
+            )
+        batch_cluster_tile_neighbor_list(
+            initial,
+            1.0,
+            cell_batch,
+            batch_ptr,
+            rebuild_flags=torch.ones(3, dtype=torch.bool, device=device),
+            **kwargs,
+        )
+        false_rows = torch.tensor([0, 1, 6, 7, 8], device=device)
+        snapshots = [tuple(tensor[false_rows].clone() for tensor in primary)]
+        if dual:
+            snapshots.append(tuple(tensor[false_rows].clone() for tensor in secondary))
+
+        @torch.compile(fullgraph=True)
+        def run(runtime_positions, runtime_flags):
+            return batch_cluster_tile_neighbor_list(
+                runtime_positions,
+                1.0,
+                cell_batch,
+                batch_ptr,
+                rebuild_flags=runtime_flags,
+                **kwargs,
+            )
+
+        result = run(moved, torch.tensor([False, True, False], device=device))
+        output_groups = (primary, secondary) if dual else (primary,)
+        reference = batch_cluster_tile_neighbor_list(
+            moved,
+            1.0,
+            cell_batch,
+            batch_ptr,
+            max_neighbors=8,
+            cutoff2=2.0 if dual else None,
+            max_tiles_per_group=1,
+        )
+        for group, snapshot in zip(output_groups, snapshots):
+            for tensor, expected in zip(group, snapshot):
+                assert torch.equal(tensor[false_rows], expected)
+        for group_index, group in enumerate(output_groups):
+            expected = reference[group_index * 3 : group_index * 3 + 3]
+            assert torch.equal(group[1][2:6], expected[1][2:6])
+            assert _matrix_pair_sets(*group)[2:6] == _matrix_pair_sets(*expected)[2:6]
+        state_start = 6 if dual else 3
+        state = (
+            tile_offsets,
+            tile_counts,
+            scratch["num_tiles"],
+            scratch["tile_row_group"],
+            scratch["tile_col_group"],
+            scratch["tile_system"],
+        )
+        assert all(result[state_start + i] is value for i, value in enumerate(state))
 
 
 # =============================================================================
