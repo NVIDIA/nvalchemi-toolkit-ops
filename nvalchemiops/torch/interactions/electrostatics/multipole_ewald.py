@@ -4897,6 +4897,32 @@ def _multipole_ewald_self_energy_per_atom(
     )
 
 
+def _multipole_ewald_background_energy_per_atom(
+    source_feats: torch.Tensor,
+    alpha: float,
+    volume: torch.Tensor,
+    *,
+    batch_idx: torch.Tensor | None = None,
+    n_systems: int | None = None,
+) -> torch.Tensor:
+    """Return the positive per-atom uniform-background correction.
+
+    This is subtracted from the split Ewald energy so it matches the direct-k
+    convention with the reciprocal zero mode removed.
+    """
+    from nvalchemiops.torch.interactions.electrostatics.pme_multipole import (
+        _multipole_background_energy_per_atom,
+    )
+
+    return _multipole_background_energy_per_atom(
+        source_feats[..., 0],
+        alpha,
+        volume,
+        batch_idx=batch_idx,
+        n_systems=n_systems,
+    )
+
+
 def multipole_ewald_summation(
     positions: torch.Tensor,
     multipole_moments: torch.Tensor,
@@ -4916,7 +4942,7 @@ def multipole_ewald_summation(
 ) -> torch.Tensor:
     r"""Full GTO-Ewald multipole electrostatic total energy.
 
-    Composes the three canonical Ewald pieces:
+    Composes the four canonical Ewald pieces:
 
     * **real-space**: GTO-Ewald-damped pair sum on a CSR neighbor list, via
       :func:`multipole_real_space_energy` or its batched analog, using
@@ -4930,6 +4956,9 @@ def multipole_ewald_summation(
     * **self-energy correction**: the analytical per-atom term from
       :func:`_multipole_ewald_self_energy_per_atom`, subtracted to remove the
       :math:`i=j`, :math:`n=0` image that the reciprocal sum includes.
+    * **background correction**: the positive per-atom uniform-background
+      magnitude :math:`F q_i Q/(8\alpha^2 V)`, subtracted for non-neutral
+      systems so the split sum matches the direct-k zero-mode convention.
 
     The total is mathematically identical to
     :func:`multipole_electrostatic_energy` (direct k-space) for any
@@ -5074,6 +5103,18 @@ def multipole_ewald_summation(
         if l_max >= 1
         else multipole_moments[:, :1].contiguous()
     )
+    volume = (
+        cache.volume
+        if cache is not None
+        else torch.abs(torch.det(cell.to(torch.float64)))
+    )
+    atom_background = _multipole_ewald_background_energy_per_atom(
+        source_feats,
+        alpha,
+        volume,
+        batch_idx=batch_idx,
+        n_systems=cell.shape[0] if is_batch else None,
+    )
 
     # l_max=2 path: full Ewald total = real-space + direct-k reciprocal − self.
     if l_max == 2:
@@ -5132,7 +5173,9 @@ def multipole_ewald_summation(
                 alpha,
                 quadrupoles=quadrupoles,
             )
-            return (e_real_atom + e_recip_atom - atom_self).to(torch.float64)
+            return (e_real_atom + e_recip_atom - atom_self - atom_background).to(
+                torch.float64
+            )
 
         if cell.ndim == 3:
             cell_l2 = cell
@@ -5169,7 +5212,7 @@ def multipole_ewald_summation(
             quadrupoles=quadrupoles,
         )
         # Per-atom (N,); caller owns the reduction.
-        return (e_real + e_recip - e_self).to(torch.float64)
+        return (e_real + e_recip - e_self - atom_background).to(torch.float64)
 
     # Delayed imports avoid a circular module graph.
     from nvalchemiops.torch.interactions.electrostatics.multipole_electrostatics import (
@@ -5219,7 +5262,7 @@ def multipole_ewald_summation(
             cache=cache,
         )
         atom_self = _multipole_ewald_self_energy_per_atom(source_feats, sigma, alpha)
-        return (e_real + e_recip - atom_self).to(torch.float64)
+        return (e_real + e_recip - atom_self - atom_background).to(torch.float64)
 
     sigma_t = torch.tensor([sigma], dtype=input_dtype, device=device)
     alpha_t = torch.tensor([alpha], dtype=input_dtype, device=device)
@@ -5245,4 +5288,4 @@ def multipole_ewald_summation(
         cache=cache,
     )
     e_self = _multipole_ewald_self_energy_per_atom(source_feats, sigma, alpha)
-    return (e_real + e_recip - e_self).to(torch.float64)
+    return (e_real + e_recip - e_self - atom_background).to(torch.float64)
