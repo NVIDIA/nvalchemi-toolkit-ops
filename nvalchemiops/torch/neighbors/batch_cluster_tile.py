@@ -2806,9 +2806,9 @@ def batch_cluster_tile_neighbor_list(
           buffers; otherwise returned geometry is the supplied or internally
           allocated buffer.
         - ``"coo"``: ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)``
-          via the direct ``batch_query_cluster_tile_coo`` path (no
-          matrix intermediate). ``neighbor_ptr`` is reconstructed from
-          ``bincount(neighbor_list[0])``. With segmented COO, returns
+          built directly in source-owned CSR rows without a matrix
+          intermediate. Pair order within a row is unspecified. With
+          segmented COO, returns
           ``(neighbor_list, pair_offsets, pair_counts, neighbor_list_shifts)``
           without trimming the caller-owned fixed segments; selective calls
           with ``return_state=True`` append the six state tensors above,
@@ -2825,12 +2825,14 @@ def batch_cluster_tile_neighbor_list(
     - Cluster-tile does not support partial neighbor lists (no
       ``target_indices`` kwarg).
     - ``torch.compile(fullgraph=True)`` supports tile and matrix output,
-      including dual-cutoff matrices and differentiable matrix geometry.
-      Compiled calls require the complete scratch tuple returned by
-      ``allocate_batch_cluster_tile_list``. Selective matrix calls also require
-      fixed tile offsets, counters, and output buffers. Compiled capacity
-      failures use asynchronous device assertions. Exact COO output and pair
-      callbacks remain eager-only.
+      including dual-cutoff matrices and differentiable geometry. On PyTorch
+      2.10 or newer, nonselective exact COO output also supports fullgraph and
+      may return a different pair count on each call. Compiled calls require
+      the complete scratch tuple returned by
+      ``allocate_batch_cluster_tile_list``. Selective matrix calls also
+      require fixed tile offsets, counters, and output buffers. Compiled
+      capacity failures use asynchronous device assertions. Pair callbacks
+      remain eager-only.
     - Build differentiable losses from returned geometry, not from supplied
       output buffers, which are non-differentiable value snapshots when
       reconstruction is required.

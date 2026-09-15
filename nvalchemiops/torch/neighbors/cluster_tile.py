@@ -2467,8 +2467,9 @@ def cluster_tile_neighbor_list(
           ``cell_list`` and ``naive``.
         - ``"coo"``: compact calls return
           ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)`` — a trimmed
-          flat pair list emitted directly by ``query_cluster_tile_coo``. With
-          ``rebuild_flags``, fixed-capacity segmented COO returns
+          flat pair list placed directly into source-owned CSR rows. Pair
+          order within a row is unspecified. With ``rebuild_flags``,
+          fixed-capacity segmented COO returns
           ``(neighbor_list, pair_offsets, pair_counts,
           neighbor_list_shifts)`` instead.
         - ``"tile"``: returns the native cluster-pair tile state as a
@@ -2574,11 +2575,13 @@ def cluster_tile_neighbor_list(
     - Cluster-tile does not support partial neighbor lists (no
       ``target_indices`` kwarg).
     - ``torch.compile(fullgraph=True)`` supports tile and matrix output,
-      including dual-cutoff matrices and differentiable matrix geometry. A
-      nonselective compiled call that allocates scratch internally requires a
-      positive static ``max_tiles_per_group``; complete caller-owned scratch
-      may be supplied instead. Compiled capacity failures use asynchronous
-      device assertions. Exact COO output and pair callbacks remain eager-only.
+      including dual-cutoff matrices and differentiable geometry. On PyTorch
+      2.10 or newer, nonselective exact COO output also supports fullgraph and
+      may return a different pair count on each call. A compiled call that
+      allocates scratch internally requires a positive static
+      ``max_tiles_per_group``; complete caller-owned scratch may be supplied
+      instead. Compiled capacity failures use asynchronous device assertions.
+      Pair callbacks remain eager-only.
     - Build differentiable losses from returned geometry, not from supplied
       output buffers, which are non-differentiable value snapshots when
       reconstruction is required.
@@ -2950,10 +2953,9 @@ def cluster_tile_neighbor_list(
             max_pairs = int(neighbor_list.shape[1])
         elif max_pairs is None:
             max_pairs = N * max_neighbors
-        # ``query_cluster_tile_coo`` writes row-major (max_pairs, 2); we transpose to
-        # package-canonical (2, num_pairs) on the way out.  Pre-allocation
-        # kwargs accept the package layout (2, max_pairs); we view-as-flat
-        # then reshape for the kernel.
+        # Kernels write row-major (max_pairs, 2); transpose to the public
+        # (2, num_pairs) layout on return. Pre-allocation kwargs accept the
+        # public (2, max_pairs) layout.
         if neighbor_list is None:
             coo_buf = torch.empty(
                 (max_pairs, 2),
