@@ -22,6 +22,8 @@
 
 ### Fixed
 
+- Segmented sums no longer retain CUDA graph-pool allocations through cached Warp
+  launches when used from compiled PyTorch custom operators.
 - Fixed JAX autodiff through `ewald_reciprocal_space(...)` when `k_vectors`
   are derived from the differentiated cell. The custom JVP previously
   discarded the `k_vectors` tangent and omitted the reciprocal-cell
