@@ -15,6 +15,12 @@
 
 """Tests for the single-system cluster-pair tile neighbor list PyTorch bindings."""
 
+import os
+import subprocess
+import sys
+import tempfile
+import textwrap
+
 import pytest
 import torch
 
@@ -62,6 +68,87 @@ def _orthorhombic_cell(
     cell_size: float, device: str, dtype=torch.float32
 ) -> torch.Tensor:
     return (torch.eye(3, dtype=dtype, device=device) * cell_size).reshape(1, 3, 3)
+
+
+def _run_isolated_fullgraph_overflow(kind: str) -> subprocess.CompletedProcess[str]:
+    """Run one invalid fullgraph call in a fresh process and cache."""
+    script = textwrap.dedent(
+        f"""
+        import torch
+        from nvalchemiops.torch.neighbors.cluster_tile import cluster_tile_neighbor_list
+
+        positions = torch.zeros((64, 3), dtype=torch.float32, device="cuda")
+        cell = torch.eye(3, dtype=torch.float32, device="cuda").reshape(1, 3, 3) * 6.0
+
+        if {kind!r} == "compact_tile":
+            @torch.compile(fullgraph=True)
+            def run(values):
+                return cluster_tile_neighbor_list(
+                    values, 2.0, cell, format="tile", max_neighbors=64,
+                    max_tiles_per_group=1,
+                )
+            run(positions)
+        elif {kind!r} == "prepared_matrix":
+            num_tiles, tile_row_group, tile_col_group, *_ = cluster_tile_neighbor_list(
+                positions, 2.0, cell, format="tile",
+            )
+            neighbor_matrix = torch.empty((64, 1), dtype=torch.int32, device="cuda")
+            num_neighbors = torch.zeros(64, dtype=torch.int32, device="cuda")
+            neighbor_shifts = torch.empty((64, 1, 3), dtype=torch.int32, device="cuda")
+
+            @torch.compile(fullgraph=True)
+            def run(values):
+                return cluster_tile_neighbor_list(
+                    values, 2.0, cell, max_neighbors=1,
+                    max_tiles_per_group=16,
+                    neighbor_matrix=neighbor_matrix,
+                    num_neighbors=num_neighbors,
+                    neighbor_matrix_shifts=neighbor_shifts,
+                    num_tiles=num_tiles,
+                    tile_row_group=tile_row_group,
+                    tile_col_group=tile_col_group,
+                )
+            run(positions)
+        else:
+            num_tiles, tile_row_group, tile_col_group, *_ = cluster_tile_neighbor_list(
+                positions, 2.0, cell, format="tile",
+            )
+            capacity = 64
+            neighbor_list = torch.empty((2, capacity), dtype=torch.int32, device="cuda")
+            neighbor_shifts = torch.empty((capacity, 3), dtype=torch.int32, device="cuda")
+            pair_offsets = torch.tensor([0, capacity], dtype=torch.int32, device="cuda")
+            pair_counts = torch.zeros(1, dtype=torch.int32, device="cuda")
+
+            @torch.compile(fullgraph=True)
+            def run(values):
+                return cluster_tile_neighbor_list(
+                    values, 2.0, cell, max_neighbors=64, format="coo",
+                    max_pairs=capacity, max_tiles_per_group=16,
+                    rebuild_flags=torch.ones(1, dtype=torch.bool, device="cuda"),
+                    return_state=True,
+                    num_tiles=num_tiles,
+                    tile_row_group=tile_row_group,
+                    tile_col_group=tile_col_group,
+                    neighbor_list=neighbor_list,
+                    pair_offsets=pair_offsets,
+                    pair_counts=pair_counts,
+                    neighbor_list_shifts=neighbor_shifts,
+                )
+            run(positions)
+        torch.cuda.synchronize()
+        """
+    )
+    with tempfile.TemporaryDirectory() as cache_dir:
+        env = os.environ.copy()
+        env["TORCHINDUCTOR_CACHE_DIR"] = os.path.join(cache_dir, "inductor")
+        env["WARP_CACHE_PATH"] = os.path.join(cache_dir, "warp")
+        return subprocess.run(  # noqa: S603 - test intentionally isolates CUDA asserts
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
 
 
 # =============================================================================
@@ -895,58 +982,19 @@ class TestClusterTileCompile:
         assert torch.all(neighbor_list_shifts == -77)
 
     @pytest.mark.slow
-    def test_selective_coo_wrapper_fullgraph_clamps_overflow_count(self, device, dtype):
-        """Compiled valid segments report at most their written capacity."""
-        natom = 64
-        capacity = 64
-        positions = torch.zeros((natom, 3), dtype=dtype, device=device)
-        cell = _orthorhombic_cell(6.0, device, dtype)
-        num_tiles, tile_row_group, tile_col_group, *_ = cluster_tile_neighbor_list(
-            positions,
-            2.0,
-            cell,
-            format="tile",
-        )
-        neighbor_list = torch.full(
-            (2, capacity),
-            -77,
-            dtype=torch.int32,
-            device=device,
-        )
-        neighbor_list_shifts = torch.full(
-            (capacity, 3),
-            -77,
-            dtype=torch.int32,
-            device=device,
-        )
-        pair_offsets = torch.tensor([0, capacity], dtype=torch.int32, device=device)
-        pair_counts = torch.zeros(1, dtype=torch.int32, device=device)
-
-        @torch.compile(fullgraph=True)
-        def run(runtime_pair_counts):
-            return cluster_tile_neighbor_list(
-                positions,
-                2.0,
-                cell,
-                max_neighbors=64,
-                format="coo",
-                rebuild_flags=torch.ones(1, dtype=torch.bool, device=device),
-                return_state=True,
-                num_tiles=num_tiles,
-                tile_row_group=tile_row_group,
-                tile_col_group=tile_col_group,
-                neighbor_list=neighbor_list,
-                pair_offsets=pair_offsets,
-                pair_counts=runtime_pair_counts,
-                neighbor_list_shifts=neighbor_list_shifts,
-            )
-
-        result = run(pair_counts)
-
-        assert result[2].data_ptr() == pair_counts.data_ptr()
-        assert int(pair_counts.item()) == capacity
-        assert torch.all(neighbor_list != -77)
-        assert torch.all(neighbor_list_shifts != -77)
+    @pytest.mark.parametrize(
+        ("kind", "message"),
+        [
+            ("compact_tile", "cluster-tile buffer capacity exceeded"),
+            ("prepared_matrix", "cluster-tile neighbor matrix capacity exceeded"),
+            ("segmented_coo", "cluster-tile COO pair capacity exceeded"),
+        ],
+    )
+    def test_fullgraph_overflow_isolated(self, device, kind, message):
+        """Each invalid fullgraph call fails in its own CUDA process."""
+        result = _run_isolated_fullgraph_overflow(kind)
+        assert result.returncode != 0
+        assert message in result.stderr
 
 
 # =============================================================================
@@ -1559,7 +1607,7 @@ class TestClusterTileCutoff2SelectiveOverflow:
             positions, 2.0, cell, format="tile"
         )
 
-        with pytest.raises(NeighborOverflowError):
+        with pytest.raises(NeighborOverflowError) as caught:
             cluster_tile_neighbor_list(
                 positions,
                 2.0,
@@ -1578,17 +1626,23 @@ class TestClusterTileCutoff2SelectiveOverflow:
                     (1, 3), dtype=torch.int32, device=device
                 ),
             )
+        assert caught.value.max_neighbors == 1
+        assert caught.value.num_neighbors > 1
+        assert caught.value.system_index is None
 
     def test_matrix_overflow_raises(self, device, dtype):
         positions = torch.rand(64, 3, dtype=dtype, device=device) * 8.0
         cell = _orthorhombic_cell(8.0, device, dtype)
-        with pytest.raises(NeighborOverflowError):
+        with pytest.raises(NeighborOverflowError) as caught:
             cluster_tile_neighbor_list(positions, 3.0, cell, max_neighbors=1)
+        assert caught.value.max_neighbors == 1
+        assert caught.value.num_neighbors > 1
+        assert caught.value.system_index is None
 
     def test_compact_coo_overflow_raises(self, device, dtype):
         positions = torch.rand(64, 3, dtype=dtype, device=device) * 8.0
         cell = _orthorhombic_cell(8.0, device, dtype)
-        with pytest.raises(NeighborOverflowError):
+        with pytest.raises(NeighborOverflowError) as caught:
             cluster_tile_neighbor_list(
                 positions,
                 3.0,
@@ -1597,6 +1651,9 @@ class TestClusterTileCutoff2SelectiveOverflow:
                 max_pairs=1,
                 format="coo",
             )
+        assert caught.value.max_neighbors == 1
+        assert caught.value.num_neighbors > 1
+        assert caught.value.system_index is None
 
 
 def _per_atom_neighbor_sets(nm, nn, nms, natom):

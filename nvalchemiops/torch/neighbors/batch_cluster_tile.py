@@ -49,11 +49,7 @@ from nvalchemiops.neighbors.cluster_tile import (
 from nvalchemiops.neighbors.cluster_tile import (
     estimate_batch_max_tiles_per_group as wp_estimate_batch_max_tiles_per_group,
 )
-from nvalchemiops.neighbors.neighbor_utils import (
-    NeighborOverflowError,
-    TileBufferOverflow,
-    estimate_max_neighbors,
-)
+from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
 from nvalchemiops.neighbors.neighbor_utils import (
     fill_neighbor_matrix_tail as wp_fill_neighbor_matrix_tail,
 )
@@ -61,7 +57,11 @@ from nvalchemiops.neighbors.neighbor_utils import (
     selective_zero_num_neighbors as wp_selective_zero_num_neighbors,
 )
 from nvalchemiops.neighbors.output_args import _has_partial_or_pair_outputs
-from nvalchemiops.torch.neighbors.neighbor_utils import _validate_segmented_coo_state
+from nvalchemiops.torch.neighbors.neighbor_utils import (
+    _check_neighbor_capacity,
+    _check_tile_buffer_capacity,
+    _validate_segmented_coo_state,
+)
 from nvalchemiops.torch.types import get_wp_dtype
 
 if TYPE_CHECKING:
@@ -1081,32 +1081,21 @@ def batch_query_cluster_tile(
     if inv_cell_batch is None:
         inv_cell_batch = torch.linalg.inv(cell_batch).contiguous()
 
-    # Host-sync the tile count to tighten the launch and raise on tile-buffer
-    # overflow.  The default (non-selective, non-COO-segmented) batch path uses
-    # a single compact ``num_tiles`` counter with contiguous tile writes, so the
-    # tight launch and a single global overflow check apply.  The segmented path
-    # (selective rebuild / segmented COO) keeps the full-buffer launch and is
-    # overflow-checked per system below.
+    # Eager execution tightens the launch to the emitted tile count. Compiled
+    # execution validates on device and launches the full static capacity. The
+    # segmented path keeps the full-buffer launch and is checked per system.
     tile_capacity = int(tile_row_group.shape[0])
     if tile_offsets is None:
-        if torch.compiler.is_compiling():
-            n_tiles = tile_capacity
-        else:
-            n_tiles = int(num_tiles.item())
-            if n_tiles > tile_capacity:
-                raise TileBufferOverflow(tile_capacity, n_tiles)
+        n_tiles = _check_tile_buffer_capacity(num_tiles, tile_capacity)
     else:
-        n_tiles = 0  # segmented: count is per-system; full-buffer launch
+        n_tiles = 0
         if tile_counts is not None:
             seg_caps = tile_offsets[1:] - tile_offsets[:-1]
-            overflow = tile_counts > seg_caps
-            if bool(overflow.any().item()):
-                isys = int(torch.nonzero(overflow, as_tuple=False)[0, 0].item())
-                raise TileBufferOverflow(
-                    int(seg_caps[isys].item()),
-                    int(tile_counts[isys].item()),
-                    system_index=isys,
-                )
+            _check_tile_buffer_capacity(
+                tile_counts,
+                seg_caps,
+                segmented=True,
+            )
 
     needs_direct = (
         cutoff2 is not None
@@ -1656,29 +1645,21 @@ def batch_query_cluster_tile_coo(
         inv_cell_batch = torch.linalg.inv(cell_batch).contiguous()
     pair_counter.zero_()
 
-    # Host-sync the tile count: tighten the launch on the compact path and
-    # raise on tile-buffer overflow (missing tiles -> missing pairs).  The
-    # segmented path is overflow-checked per system.
+    # Eager execution tightens the launch to the emitted tile count. Compiled
+    # execution validates on device and launches the full static capacity. The
+    # segmented path keeps the full-buffer launch and is checked per system.
     tile_capacity = int(tile_row_group.shape[0])
     if tile_offsets is None:
-        if torch.compiler.is_compiling():
-            n_tiles = tile_capacity
-        else:
-            n_tiles = int(num_tiles.item())
-            if n_tiles > tile_capacity:
-                raise TileBufferOverflow(tile_capacity, n_tiles)
+        n_tiles = _check_tile_buffer_capacity(num_tiles, tile_capacity)
     else:
-        n_tiles = 0  # segmented: full-buffer launch
+        n_tiles = 0
         if tile_counts is not None:
             seg_caps = tile_offsets[1:] - tile_offsets[:-1]
-            overflow = tile_counts > seg_caps
-            if bool(overflow.any().item()):
-                isys = int(torch.nonzero(overflow, as_tuple=False)[0, 0].item())
-                raise TileBufferOverflow(
-                    int(seg_caps[isys].item()),
-                    int(tile_counts[isys].item()),
-                    system_index=isys,
-                )
+            _check_tile_buffer_capacity(
+                tile_counts,
+                seg_caps,
+                segmented=True,
+            )
 
     needs_direct = (
         rebuild_flags is not None
@@ -2566,10 +2547,8 @@ def batch_cluster_tile_neighbor_list(
     if format == "tile":
         # Raw-tile callers must not receive a silently truncated tile list
         # (format='tile' is always the compact, non-selective path).
-        n_tiles = int(num_tiles.item())
         tile_capacity = int(tile_row_group.shape[0])
-        if n_tiles > tile_capacity:
-            raise TileBufferOverflow(tile_capacity, n_tiles)
+        _check_tile_buffer_capacity(num_tiles, tile_capacity)
         return (
             num_tiles,
             tile_row_group,
@@ -2645,14 +2624,12 @@ def batch_cluster_tile_neighbor_list(
         )
         if segmented_coo:
             segment_caps = pair_offsets[1:] - pair_offsets[:-1]
-            overflow = pair_counts > segment_caps
-            if bool(overflow.any().item()):
-                isys = int(torch.nonzero(overflow, as_tuple=False)[0, 0].item())
-                raise NeighborOverflowError(
-                    int(segment_caps[isys].item()),
-                    int(pair_counts[isys].item()),
-                    system_index=isys,
-                )
+            _check_neighbor_capacity(
+                pair_counts,
+                segment_caps,
+                segmented=True,
+                kind="coo",
+            )
             outputs = (
                 neighbor_list,
                 pair_offsets,
@@ -2671,9 +2648,16 @@ def batch_cluster_tile_neighbor_list(
                 )
             return outputs
 
-        npairs = int(pair_counter.item())
-        if npairs > int(max_pairs):
-            raise NeighborOverflowError(int(max_pairs), npairs)
+        checked_npairs = _check_neighbor_capacity(
+            pair_counter,
+            int(max_pairs),
+            kind="coo",
+        )
+        npairs = (
+            int(pair_counter.item())
+            if torch.compiler.is_compiling()
+            else checked_npairs
+        )
         nl = coo_buf[:npairs].transpose(0, 1).contiguous()
         nls = neighbor_list_shifts[:npairs].contiguous()
         per_atom_counts = torch.bincount(nl[0].long(), minlength=N).to(
@@ -2784,14 +2768,6 @@ def batch_cluster_tile_neighbor_list(
         pair_forces=pair_forces,
     )
 
-    max_seen = int(num_neighbors.max().item()) if N > 0 else 0
-    if max_seen > int(max_neighbors):
-        raise NeighborOverflowError(int(max_neighbors), max_seen)
-    if cutoff2 is not None and num_neighbors2 is not None:
-        max_seen2 = int(num_neighbors2.max().item()) if N > 0 else 0
-        if max_seen2 > int(max_neighbors):
-            raise NeighborOverflowError(int(max_neighbors), max_seen2)
-
     if max_neighbors > 0:
         _batch_cluster_tile_fill_neighbor_matrix_tail_op(
             num_neighbors,
@@ -2808,6 +2784,10 @@ def batch_cluster_tile_neighbor_list(
                 int(max_neighbors),
                 int(fill_value),
             )
+
+    _check_neighbor_capacity(num_neighbors, int(max_neighbors))
+    if cutoff2 is not None and num_neighbors2 is not None:
+        _check_neighbor_capacity(num_neighbors2, int(max_neighbors))
 
     if cutoff2 is not None:
         outputs = (

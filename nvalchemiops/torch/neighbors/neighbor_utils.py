@@ -20,6 +20,8 @@ This module contains PyTorch-specific helper functions for neighbor list operati
 
 from __future__ import annotations
 
+from typing import Literal
+
 import torch
 import warp as wp
 
@@ -53,6 +55,95 @@ def _raise_if_compiling_host_only(name: str, replacement: str) -> None:
             f"{name} is a host-only neighbor-list helper and cannot run inside "
             f"torch.compile. {replacement}"
         )
+
+
+def _check_tile_buffer_capacity(
+    counts: torch.Tensor,
+    capacities: int | torch.Tensor,
+    *,
+    segmented: bool = False,
+) -> int:
+    """Validate cluster-tile buffer capacity without breaking compilation.
+
+    Returns the observed compact count in eager execution, the static compact
+    capacity during compilation, and zero for segmented state.
+    """
+    if torch.compiler.is_compiling():
+        torch._assert_async(
+            torch.all(counts <= capacities),
+            "cluster-tile buffer capacity exceeded",
+        )
+        return 0 if segmented or not isinstance(capacities, int) else capacities
+
+    if segmented:
+        overflow = counts > capacities
+        if bool(overflow.any().item()):
+            system_index = int(overflow.nonzero(as_tuple=False)[0, 0].item())
+            max_tiles = int(capacities[system_index].item())
+            num_tiles = int(counts[system_index].item())
+            raise TileBufferOverflow(
+                max_tiles,
+                num_tiles,
+                system_index=system_index,
+            )
+        return 0
+
+    num_tiles = int(counts.max().item()) if counts.numel() > 0 else 0
+    max_tiles = (
+        int(capacities.item()) if isinstance(capacities, torch.Tensor) else capacities
+    )
+    if num_tiles > max_tiles:
+        raise TileBufferOverflow(max_tiles, num_tiles)
+    return num_tiles
+
+
+def _check_neighbor_capacity(
+    counts: torch.Tensor,
+    capacities: int | torch.Tensor,
+    *,
+    segmented: bool = False,
+    kind: Literal["matrix", "coo"] = "matrix",
+) -> int:
+    """Validate matrix or COO capacity without breaking compilation.
+
+    Returns the maximum observed count for a nonsegmented eager call. The
+    return value is zero for segmented state and is not meaningful while
+    compiling.
+    """
+    if kind == "matrix":
+        compiled_message = "cluster-tile neighbor matrix capacity exceeded"
+    elif kind == "coo":
+        compiled_message = "cluster-tile COO pair capacity exceeded"
+    else:
+        raise ValueError("kind must be 'matrix' or 'coo'")
+
+    if torch.compiler.is_compiling():
+        torch._assert_async(
+            torch.all(counts <= capacities),
+            compiled_message,
+        )
+        return 0
+
+    if segmented:
+        overflow = counts > capacities
+        if bool(overflow.any().item()):
+            system_index = int(overflow.nonzero(as_tuple=False)[0, 0].item())
+            max_neighbors = int(capacities[system_index].item())
+            num_neighbors = int(counts[system_index].item())
+            raise NeighborOverflowError(
+                max_neighbors,
+                num_neighbors,
+                system_index=system_index,
+            )
+        return 0
+
+    num_neighbors = int(counts.max().item()) if counts.numel() > 0 else 0
+    max_neighbors = (
+        int(capacities.item()) if isinstance(capacities, torch.Tensor) else capacities
+    )
+    if num_neighbors > max_neighbors:
+        raise NeighborOverflowError(max_neighbors, num_neighbors)
+    return num_neighbors
 
 
 def _validate_pair_params_present(
@@ -254,20 +345,32 @@ def _normalize_compiled_single_segment_coo_count(
     *,
     pair_offsets: torch.Tensor,
     pair_counts: torch.Tensor,
+    rebuild_flags: torch.Tensor,
     physical_capacity: int,
 ) -> None:
     """Fail closed for malformed compiled single-segment COO metadata.
 
-    This compiled-path helper uses only device-side int32 operations. A false
-    rebuild flag returns before the Warp query validates metadata, while an
-    overflowed attempted count is not final until every query block completes.
-    It therefore validates the exact fixed interval and clamps the final count
-    here. This is deliberately not a generic batched normalizer.
+    This compiled-path helper uses only device-side int32 operations. A true
+    rebuild asserts when the resulting count exceeds the fixed segment. A
+    skipped rebuild preserves a valid saved count, while malformed offsets or
+    an invalid saved count are normalized to zero. This is deliberately not a
+    generic batched normalizer.
     """
     offsets_valid = (pair_offsets[0] == 0) & (pair_offsets[1] == physical_capacity)
+    rebuilt_count = torch.where(
+        offsets_valid & rebuild_flags.flatten()[0],
+        pair_counts,
+        torch.zeros_like(pair_counts),
+    )
+    _check_neighbor_capacity(
+        rebuilt_count,
+        physical_capacity,
+        kind="coo",
+    )
     clamped_count = torch.clamp(pair_counts, min=0, max=physical_capacity)
+    saved_count_valid = (pair_counts >= 0) & (pair_counts <= physical_capacity)
     normalized_counts = torch.where(
-        offsets_valid,
+        offsets_valid & (rebuild_flags.flatten()[0] | saved_count_valid),
         clamped_count,
         torch.zeros_like(pair_counts),
     )

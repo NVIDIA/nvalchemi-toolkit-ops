@@ -26,6 +26,7 @@ from nvalchemiops.neighbors.cluster_tile import (
     estimate_max_tiles_per_group,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
+    NeighborOverflowError,
     TileBufferOverflow,
 )
 from nvalchemiops.torch.neighbors.batch_cluster_tile import (
@@ -863,6 +864,70 @@ class TestBatchTileNeighborListCorrectness:
         assert segmented.value.system_index == 1
         assert segmented.value.max_tiles == 1
         assert segmented.value.num_tiles > segmented.value.max_tiles
+
+    def test_matrix_overflow_reports_eager_fields(self, device, dtype):
+        """Batched matrix overflow identifies the compact capacity and count."""
+        positions = torch.zeros((128, 3), dtype=dtype, device=device)
+        cell_batch = torch.eye(3, dtype=dtype, device=device).repeat(2, 1, 1) * 8.0
+        batch_ptr = torch.tensor([0, 64, 128], dtype=torch.int32, device=device)
+
+        with pytest.raises(NeighborOverflowError) as caught:
+            batch_cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell_batch,
+                batch_ptr,
+                max_neighbors=1,
+            )
+        assert caught.value.max_neighbors == 1
+        assert caught.value.num_neighbors > 1
+        assert caught.value.system_index is None
+
+    def test_compact_coo_overflow_reports_eager_fields(self, device, dtype):
+        """Batched compact COO overflow reports its fixed pair capacity."""
+        positions = torch.zeros((128, 3), dtype=dtype, device=device)
+        cell_batch = torch.eye(3, dtype=dtype, device=device).repeat(2, 1, 1) * 8.0
+        batch_ptr = torch.tensor([0, 64, 128], dtype=torch.int32, device=device)
+
+        with pytest.raises(NeighborOverflowError) as caught:
+            batch_cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell_batch,
+                batch_ptr,
+                max_neighbors=64,
+                max_pairs=1,
+                format="coo",
+            )
+        assert caught.value.max_neighbors == 1
+        assert caught.value.num_neighbors > 1
+        assert caught.value.system_index is None
+
+    def test_segmented_coo_overflow_reports_first_system(self, device, dtype):
+        """Batched segmented COO overflow reports the first overflowing system."""
+        positions = torch.zeros((128, 3), dtype=dtype, device=device)
+        cell_batch = torch.eye(3, dtype=dtype, device=device).repeat(2, 1, 1) * 8.0
+        batch_ptr = torch.tensor([0, 64, 128], dtype=torch.int32, device=device)
+
+        with pytest.raises(NeighborOverflowError) as caught:
+            batch_cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell_batch,
+                batch_ptr,
+                max_neighbors=64,
+                format="coo",
+                rebuild_flags=torch.ones(2, dtype=torch.bool, device=device),
+                neighbor_list=torch.empty((2, 2), dtype=torch.int32, device=device),
+                neighbor_list_shifts=torch.empty(
+                    (2, 3), dtype=torch.int32, device=device
+                ),
+                pair_offsets=torch.tensor([0, 1, 2], dtype=torch.int32, device=device),
+                pair_counts=torch.zeros(2, dtype=torch.int32, device=device),
+            )
+        assert caught.value.max_neighbors == 1
+        assert caught.value.num_neighbors > 1
+        assert caught.value.system_index == 0
 
 
 # =============================================================================

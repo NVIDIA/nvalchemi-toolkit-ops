@@ -45,11 +45,7 @@ from nvalchemiops.neighbors.cluster_tile import (
 from nvalchemiops.neighbors.cluster_tile import (
     query_cluster_tile_coo as wp_query_cluster_tile_coo,
 )
-from nvalchemiops.neighbors.neighbor_utils import (
-    NeighborOverflowError,
-    TileBufferOverflow,
-    estimate_max_neighbors,
-)
+from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
 from nvalchemiops.neighbors.neighbor_utils import (
     fill_neighbor_matrix_tail as wp_fill_neighbor_matrix_tail,
 )
@@ -58,6 +54,8 @@ from nvalchemiops.neighbors.neighbor_utils import (
 )
 from nvalchemiops.neighbors.output_args import _has_partial_or_pair_outputs
 from nvalchemiops.torch.neighbors.neighbor_utils import (
+    _check_neighbor_capacity,
+    _check_tile_buffer_capacity,
     _normalize_compiled_single_segment_coo_count,
     _validate_segmented_coo_state,
 )
@@ -859,17 +857,10 @@ def query_cluster_tile(
     cell_mat, inv_cell_mat = _cell_invcell_from_cell(cell)
     cell_mat = cell_mat.to(sorted_pos_x.dtype)
     inv_cell_mat = inv_cell_mat.to(sorted_pos_x.dtype)
-    # Host-sync the emitted-tile count: this tightens the launch dimension
-    # to the real tiles (vs the full buffer) and lets us raise on tile-buffer
-    # overflow instead of silently dropping tiles.  This ``.item()`` makes the
-    # matrix path non-CUDA-graph/torch.compile-capturable by design.
+    # Eager execution tightens the launch to the emitted tile count. Compiled
+    # execution validates on device and launches the full static capacity.
     tile_capacity = int(tile_row_group.shape[0])
-    if torch.compiler.is_compiling():
-        n_tiles = tile_capacity
-    else:
-        n_tiles = int(num_tiles.item())
-        if n_tiles > tile_capacity:
-            raise TileBufferOverflow(tile_capacity, n_tiles)
+    n_tiles = _check_tile_buffer_capacity(num_tiles, tile_capacity)
 
     feature_path = (
         cutoff2 is not None
@@ -1702,16 +1693,10 @@ def query_cluster_tile_coo(
     cell_mat, inv_cell_mat = _cell_invcell_from_cell(cell)
     cell_mat = cell_mat.to(sorted_pos_x.dtype)
     inv_cell_mat = inv_cell_mat.to(sorted_pos_x.dtype)
-    # Host-sync the emitted-tile count to tighten the launch and raise on
-    # tile-buffer overflow (missing tiles -> missing pairs) instead of
-    # silently dropping them.
+    # Eager execution tightens the launch to the emitted tile count. Compiled
+    # execution validates on device and launches the full static capacity.
     tile_capacity = int(tile_row_group.shape[0])
-    if torch.compiler.is_compiling():
-        n_tiles = tile_capacity
-    else:
-        n_tiles = int(num_tiles.item())
-        if n_tiles > tile_capacity:
-            raise TileBufferOverflow(tile_capacity, n_tiles)
+    n_tiles = _check_tile_buffer_capacity(num_tiles, tile_capacity)
     pair_counter.zero_()
 
     if segmented:
@@ -1740,6 +1725,7 @@ def query_cluster_tile_coo(
             _normalize_compiled_single_segment_coo_count(
                 pair_offsets=pair_offsets,
                 pair_counts=pair_counts,
+                rebuild_flags=rebuild_flags,
                 physical_capacity=physical_capacity,
             )
         return
@@ -2482,10 +2468,8 @@ def cluster_tile_neighbor_list(
 
     if format == "tile":
         # Raw-tile callers must not receive a silently truncated tile list.
-        n_tiles = int(num_tiles.item())
         tile_capacity = int(tile_row_group.shape[0])
-        if n_tiles > tile_capacity:
-            raise TileBufferOverflow(tile_capacity, n_tiles)
+        _check_tile_buffer_capacity(num_tiles, tile_capacity)
         return (
             num_tiles,
             tile_row_group,
@@ -2555,9 +2539,11 @@ def cluster_tile_neighbor_list(
                 pair_capacity = int(pair_offsets[1].item()) - int(
                     pair_offsets[0].item()
                 )
-                pair_count = int(pair_counts[0].item())
-                if pair_count > pair_capacity:
-                    raise NeighborOverflowError(pair_capacity, pair_count)
+                _check_neighbor_capacity(
+                    pair_counts,
+                    pair_capacity,
+                    kind="coo",
+                )
             outputs = (
                 neighbor_list,
                 pair_offsets,
@@ -2568,11 +2554,16 @@ def cluster_tile_neighbor_list(
                 return (*outputs, num_tiles, tile_row_group, tile_col_group)
             return outputs
         # Trim to actual pair count and rebuild CSR neighbor_ptr.
-        # The ``.item()`` is the only sync; it's needed for the slice
-        # anyway, so the bincount is on a CPU-known-length tensor.
-        npairs = int(pair_counter.item())
-        if npairs > int(max_pairs):
-            raise NeighborOverflowError(int(max_pairs), npairs)
+        checked_npairs = _check_neighbor_capacity(
+            pair_counter,
+            int(max_pairs),
+            kind="coo",
+        )
+        npairs = (
+            int(pair_counter.item())
+            if torch.compiler.is_compiling()
+            else checked_npairs
+        )
         nl = coo_buf[:npairs].transpose(0, 1).contiguous()  # (2, npairs)
         nls = neighbor_list_shifts[:npairs].contiguous()
         per_atom_counts = torch.bincount(nl[0].long(), minlength=N).to(
@@ -2690,14 +2681,6 @@ def cluster_tile_neighbor_list(
         pair_forces=pair_forces,
     )
 
-    max_seen = int(num_neighbors.max().item()) if N > 0 else 0
-    if max_seen > int(max_neighbors):
-        raise NeighborOverflowError(int(max_neighbors), max_seen)
-    if dual_cutoff and num_neighbors2 is not None:
-        max_seen2 = int(num_neighbors2.max().item()) if N > 0 else 0
-        if max_seen2 > int(max_neighbors):
-            raise NeighborOverflowError(int(max_neighbors), max_seen2)
-
     # Skip-prefill tail fill: write ``fill_value`` into the unused columns
     # of ``neighbor_matrix``.  Pairs with the always-write-shifts kernel
     # above to eliminate the per-step ``neighbor_matrix.fill_`` and
@@ -2718,6 +2701,10 @@ def cluster_tile_neighbor_list(
                 int(max_neighbors),
                 int(fill_value),
             )
+
+    _check_neighbor_capacity(num_neighbors, int(max_neighbors))
+    if dual_cutoff and num_neighbors2 is not None:
+        _check_neighbor_capacity(num_neighbors2, int(max_neighbors))
 
     if dual_cutoff:
         outputs = (
