@@ -42,6 +42,7 @@ __all__ = [
     "_route_pair_outputs",
     "_flatten_active_pairs",
     "_reconstruct_matrix_geometry",
+    "_reconstruct_coo_geometry",
 ]
 
 #: Stabilization for ``d_safe = d.clamp(min=eps)`` in the reconstruction.
@@ -197,6 +198,36 @@ def _reconstruct_matrix_geometry(
         torch.where(active, distances, torch.zeros_like(distances)),
         torch.where(active.unsqueeze(-1), vectors, torch.zeros_like(vectors)),
     )
+
+
+def _reconstruct_coo_geometry(
+    positions: torch.Tensor,
+    cell: torch.Tensor,
+    neighbor_list: torch.Tensor,
+    neighbor_list_shifts: torch.Tensor,
+    batch_idx_atom: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Reconstruct differentiable compact-COO distances and vectors."""
+    i_idx, j_idx = neighbor_list
+    vectors = positions[j_idx.long()] - positions[i_idx.long()]
+    shifts = neighbor_list_shifts.to(positions.dtype)
+    if batch_idx_atom is None:
+        cell_3x3 = cell.squeeze(0) if cell.ndim == 3 else cell
+        vectors = vectors + shifts @ cell_3x3
+    else:
+        pair_batch = batch_idx_atom[i_idx.long()]
+        vectors = vectors + torch.einsum("pa,pab->pb", shifts, cell[pair_batch.long()])
+    raw = vectors.norm(dim=-1)
+    eps = _DISTANCE_DERIVATIVE_EPSILON.get(positions.dtype, 1e-6)
+    near_zero = raw < eps
+    potential = torch.where(
+        near_zero,
+        vectors.square().sum(dim=-1) / (2.0 * eps) + eps / 2.0,
+        torch.where(near_zero.unsqueeze(-1), torch.ones_like(vectors), vectors).norm(
+            dim=-1
+        ),
+    )
+    return potential + (raw - potential).detach(), vectors
 
 
 # Sentinel empty tensors used to stand in for ``None`` in saved_tensors.
