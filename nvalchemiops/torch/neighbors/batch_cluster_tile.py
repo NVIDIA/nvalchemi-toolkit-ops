@@ -26,8 +26,6 @@ Scope: float32, orthorhombic or triclinic PBC, one cell per system,
 arbitrary natom per system (padded internally).
 """
 
-from typing import TYPE_CHECKING
-
 import torch
 import warp as wp
 
@@ -60,15 +58,13 @@ from nvalchemiops.neighbors.neighbor_utils import (
     selective_zero_num_neighbors as wp_selective_zero_num_neighbors,
 )
 from nvalchemiops.neighbors.output_args import _has_partial_or_pair_outputs
+from nvalchemiops.torch.neighbors._autograd import _reconstruct_matrix_geometry
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     _check_neighbor_capacity,
     _check_tile_buffer_capacity,
     _validate_segmented_coo_state,
 )
 from nvalchemiops.torch.types import get_wp_dtype
-
-if TYPE_CHECKING:
-    from nvalchemiops.torch.neighbors._autograd import _NeighborForwardOutput
 
 __all__ = [
     "TILE_GROUP_SIZE",
@@ -880,7 +876,13 @@ def batch_build_cluster_tile_list(
 
 @torch.library.custom_op(
     "nvalchemiops::_batch_query_cluster_tile",
-    mutates_args=("neighbor_matrix", "num_neighbors", "neighbor_matrix_shifts"),
+    mutates_args=(
+        "neighbor_matrix",
+        "num_neighbors",
+        "neighbor_matrix_shifts",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ),
 )
 def _batch_query_cluster_tile_op(
     cutoff: float,
@@ -898,7 +900,11 @@ def _batch_query_cluster_tile_op(
     neighbor_matrix: torch.Tensor,
     num_neighbors: torch.Tensor,
     neighbor_matrix_shifts: torch.Tensor,
+    neighbor_vectors: torch.Tensor,
+    neighbor_distances: torch.Tensor,
     n_tiles: int,
+    return_vectors: bool,
+    return_distances: bool,
 ) -> None:
     # ``n_tiles`` (host-synced compact tile count) tightens the launch; the
     # kernel still guards per-tile defensively.  ``n_tiles <= 0`` (segmented
@@ -950,6 +956,18 @@ def _batch_query_cluster_tile_op(
         ),
         wp_dtype=wp_dtype,
         device=wp_device,
+        return_vectors=bool(return_vectors),
+        return_distances=bool(return_distances),
+        neighbor_vectors=(
+            wp.from_torch(neighbor_vectors, dtype=wp.vec3f, return_ctype=True)
+            if return_vectors
+            else None
+        ),
+        neighbor_distances=(
+            wp.from_torch(neighbor_distances, dtype=wp_dtype, return_ctype=True)
+            if return_distances
+            else None
+        ),
     )
 
 
@@ -970,7 +988,11 @@ def _(
     neighbor_matrix: torch.Tensor,
     num_neighbors: torch.Tensor,
     neighbor_matrix_shifts: torch.Tensor,
+    neighbor_vectors: torch.Tensor,
+    neighbor_distances: torch.Tensor,
     n_tiles: int,
+    return_vectors: bool,
+    return_distances: bool,
 ) -> None:
     return None
 
@@ -1316,6 +1338,17 @@ def batch_query_cluster_tile(
                 segmented=True,
             )
 
+    geometry_only = (
+        (return_vectors or return_distances)
+        and cutoff2 is None
+        and rebuild_flags is None
+        and tile_offsets is None
+        and tile_counts is None
+        and pair_fn is None
+        and pair_params is None
+        and pair_energies is None
+        and pair_forces is None
+    )
     needs_direct = (
         cutoff2 is not None
         or rebuild_flags is not None
@@ -1388,6 +1421,33 @@ def batch_query_cluster_tile(
             bool(tile_offsets is not None),
         )
         return
+    if geometry_only:
+        device = sorted_pos_x.device
+        dummy_vectors = torch.empty((1, 3), dtype=sorted_pos_x.dtype, device=device)
+        dummy_distances = torch.empty(1, dtype=sorted_pos_x.dtype, device=device)
+        _batch_query_cluster_tile_op(
+            cutoff,
+            natom,
+            sorted_atom_index,
+            sorted_pos_x,
+            sorted_pos_y,
+            sorted_pos_z,
+            cell_batch,
+            inv_cell_batch,
+            num_tiles,
+            tile_row_group,
+            tile_col_group,
+            tile_system,
+            neighbor_matrix,
+            num_neighbors,
+            neighbor_matrix_shifts,
+            neighbor_vectors if neighbor_vectors is not None else dummy_vectors,
+            neighbor_distances if neighbor_distances is not None else dummy_distances,
+            n_tiles,
+            bool(return_vectors),
+            bool(return_distances),
+        )
+        return
     if needs_direct:
         if rebuild_flags is not None:
             if batch_idx is None:
@@ -1456,7 +1516,11 @@ def batch_query_cluster_tile(
         neighbor_matrix,
         num_neighbors,
         neighbor_matrix_shifts,
+        torch.empty((1, 3), dtype=sorted_pos_x.dtype, device=sorted_pos_x.device),
+        torch.empty(1, dtype=sorted_pos_x.dtype, device=sorted_pos_x.device),
         n_tiles,
+        False,
+        False,
     )
 
 
@@ -2012,135 +2076,6 @@ def batch_query_cluster_tile_coo(
 # =============================================================================
 # High-level convenience
 # =============================================================================
-def _batch_cluster_tile_pair_outputs_forward(
-    positions: torch.Tensor,
-    cell_batch: torch.Tensor,
-    *,
-    batch_ptr: torch.Tensor,
-    cutoff: float,
-    max_neighbors: int,
-    fill_value: int,
-    batch_idx_atom: torch.Tensor,
-    max_tiles_per_group: int | None,
-) -> "_NeighborForwardOutput":
-    """Forward closure for the torch batch_cluster_tile autograd path."""
-    from nvalchemiops.torch.neighbors._autograd import (
-        _flatten_active_pairs,
-        _NeighborForwardOutput,
-    )
-
-    positions_det = positions.detach()
-    cell_det = cell_batch.detach()
-    device = positions_det.device
-    N = int(batch_ptr[-1].item())
-    (
-        sorted_atom_index,
-        sort_inv,
-        sorted_pos_x,
-        sorted_pos_y,
-        sorted_pos_z,
-        batch_idx_sorted,
-        batch_ptr_padded,
-        group_system,
-        group_ptr,
-        group_ctr_x,
-        group_ctr_y,
-        group_ctr_z,
-        group_ext_x,
-        group_ext_y,
-        group_ext_z,
-        num_tiles,
-        tile_row_group,
-        tile_col_group,
-        tile_system,
-    ) = allocate_batch_cluster_tile_list(
-        batch_ptr,
-        device,
-        dtype=positions_det.dtype,
-        max_tiles_per_group=(
-            int(max_tiles_per_group)
-            if max_tiles_per_group is not None
-            else estimate_batch_max_tiles_per_group(batch_ptr, cutoff, cell_det)
-        ),
-    )
-    batch_build_cluster_tile_list(
-        positions_det,
-        cutoff,
-        cell_det,
-        batch_ptr,
-        sorted_atom_index,
-        sort_inv,
-        sorted_pos_x,
-        sorted_pos_y,
-        sorted_pos_z,
-        batch_idx_sorted,
-        batch_ptr_padded,
-        group_system,
-        group_ptr,
-        group_ctr_x,
-        group_ctr_y,
-        group_ctr_z,
-        group_ext_x,
-        group_ext_y,
-        group_ext_z,
-        num_tiles,
-        tile_row_group,
-        tile_col_group,
-        tile_system,
-    )
-    nm = torch.empty((N, max_neighbors), dtype=torch.int32, device=device)
-    nn = torch.zeros(N, dtype=torch.int32, device=device)
-    nms = torch.empty((N, max_neighbors, 3), dtype=torch.int32, device=device)
-    nv = torch.zeros((N, max_neighbors, 3), dtype=positions_det.dtype, device=device)
-    nd = torch.zeros((N, max_neighbors), dtype=positions_det.dtype, device=device)
-    batch_query_cluster_tile(
-        sorted_atom_index,
-        sorted_pos_x,
-        sorted_pos_y,
-        sorted_pos_z,
-        cell_det,
-        num_tiles,
-        tile_row_group,
-        tile_col_group,
-        tile_system,
-        cutoff,
-        N,
-        nm,
-        nn,
-        nms,
-        return_vectors=True,
-        return_distances=True,
-        neighbor_vectors=nv,
-        neighbor_distances=nd,
-    )
-    if max_neighbors > 0:
-        _batch_cluster_tile_fill_neighbor_matrix_tail_op(
-            nn,
-            nm,
-            int(N),
-            int(max_neighbors),
-            int(fill_value),
-        )
-    i_idx, j_idx, shifts_flat, batch_idx_flat, mask = _flatten_active_pairs(
-        nm,
-        nn,
-        nms,
-        batch_idx=batch_idx_atom,
-    )
-    K, M = nm.shape
-    return _NeighborForwardOutput(
-        distances=nd,
-        vectors=nv,
-        extra_outputs=(nm, nn, nms),
-        i_idx_flat=i_idx,
-        j_idx_flat=j_idx,
-        shifts_flat=shifts_flat,
-        batch_idx_flat=batch_idx_flat,
-        active_mask=mask,
-        matrix_shape=(K, M),
-    )
-
-
 def _validate_batch_matrix_state(
     *,
     device: torch.device,
@@ -2721,45 +2656,14 @@ def batch_cluster_tile_neighbor_list(
     elif needs_segmented_tiles and tile_counts is None:
         raise ValueError("tile_counts is required when tile_offsets is provided")
 
-    # Autograd routing: distances/vectors only (no pair_fn).
-    if (
-        (bool(return_distances) or bool(return_vectors))
+    geometry_requested = (
+        (return_vectors or return_distances)
         and pair_fn is None
         and pair_params is None
         and pair_energies is None
         and pair_forces is None
         and format == "matrix"
-        and rebuild_flags is None
-    ):
-        from nvalchemiops.torch.neighbors._autograd import _route_pair_outputs
-
-        # Build atom -> system mapping for the backward (per-system cell grad).
-        per_sys_counts = batch_ptr[1:] - batch_ptr[:-1]
-        batch_idx_atom = torch.repeat_interleave(
-            torch.arange(per_sys_counts.shape[0], dtype=torch.int32, device=device),
-            per_sys_counts.to(torch.int64),
-            output_size=positions.shape[0],
-        )
-        forward_kwargs = {
-            "batch_ptr": batch_ptr,
-            "cutoff": cutoff,
-            "max_neighbors": int(max_neighbors),
-            "fill_value": int(fill_value),
-            "batch_idx_atom": batch_idx_atom,
-            "max_tiles_per_group": max_tiles_per_group,
-        }
-        distances_out, vectors_out, nm_out, nn_out, shifts_out = _route_pair_outputs(
-            positions,
-            cell_batch,
-            _batch_cluster_tile_pair_outputs_forward,
-            forward_kwargs,
-        )
-        base = (nm_out, nn_out, shifts_out)
-        if return_distances and return_vectors:
-            return (*base, distances_out, vectors_out)
-        if return_distances:
-            return (*base, distances_out)
-        return (*base, vectors_out)
+    )
 
     if sorted_atom_index is None:
         previous_tile_state = (
@@ -2841,9 +2745,9 @@ def batch_cluster_tile_neighbor_list(
         )
 
     batch_build_cluster_tile_list(
-        positions,
+        positions.detach() if geometry_requested else positions,
         build_cutoff,
-        cell_batch,
+        cell_batch.detach() if geometry_requested else cell_batch,
         batch_ptr,
         sorted_atom_index,
         sort_inv,
@@ -2864,7 +2768,11 @@ def batch_cluster_tile_neighbor_list(
         tile_row_group,
         tile_col_group,
         tile_system,
-        inv_cell_batch=inv_cell_batch,
+        inv_cell_batch=(
+            inv_cell_batch.detach()
+            if geometry_requested and inv_cell_batch is not None
+            else inv_cell_batch
+        ),
         rebuild_flags=rebuild_flags,
         tile_offsets=tile_offsets,
         tile_counts=tile_counts,
@@ -3056,7 +2964,7 @@ def batch_cluster_tile_neighbor_list(
             )
 
     batch_idx_atom = None
-    if rebuild_flags is not None:
+    if rebuild_flags is not None or geometry_requested:
         per_sys_counts = batch_ptr[1:] - batch_ptr[:-1]
         batch_idx_atom = torch.repeat_interleave(
             torch.arange(num_systems, dtype=torch.int32, device=device),
@@ -3087,12 +2995,12 @@ def batch_cluster_tile_neighbor_list(
         tile_offsets=tile_offsets,
         tile_counts=tile_counts,
         batch_idx=batch_idx_atom,
-        return_vectors=return_vectors,
-        return_distances=return_distances,
+        return_vectors=return_vectors and not geometry_requested,
+        return_distances=return_distances and not geometry_requested,
         pair_fn=pair_fn,
         pair_params=pair_params,
-        neighbor_vectors=neighbor_vectors,
-        neighbor_distances=neighbor_distances,
+        neighbor_vectors=None if geometry_requested else neighbor_vectors,
+        neighbor_distances=None if geometry_requested else neighbor_distances,
         pair_energies=pair_energies,
         pair_forces=pair_forces,
     )
@@ -3141,6 +3049,29 @@ def batch_cluster_tile_neighbor_list(
     if cutoff2 is not None and num_neighbors2 is not None:
         _check_neighbor_capacity(num_neighbors2, int(max_neighbors))
 
+    if geometry_requested:
+        distances, vectors = _reconstruct_matrix_geometry(
+            positions,
+            cell_batch,
+            neighbor_matrix,
+            num_neighbors,
+            neighbor_matrix_shifts,
+            batch_idx_atom,
+        )
+        row_update = (
+            rebuild_flags[batch_idx_atom.to(torch.long)]
+            if rebuild_flags is not None
+            else torch.ones(N, dtype=torch.bool, device=device)
+        )
+        if return_vectors:
+            neighbor_vectors.copy_(
+                torch.where(row_update[:, None, None], vectors, neighbor_vectors)
+            )
+        if return_distances:
+            neighbor_distances.copy_(
+                torch.where(row_update[:, None], distances, neighbor_distances)
+            )
+
     if cutoff2 is not None:
         outputs = (
             neighbor_matrix,
@@ -3152,6 +3083,11 @@ def batch_cluster_tile_neighbor_list(
         )
     else:
         outputs = (neighbor_matrix, num_neighbors, neighbor_matrix_shifts)
+    if geometry_requested and rebuild_flags is None:
+        if return_distances:
+            outputs = (*outputs, neighbor_distances)
+        if return_vectors:
+            outputs = (*outputs, neighbor_vectors)
     if return_state:
         return (
             *outputs,

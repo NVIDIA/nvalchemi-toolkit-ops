@@ -41,6 +41,7 @@ __all__ = [
     "_NeighborDistanceVectorFn",
     "_route_pair_outputs",
     "_flatten_active_pairs",
+    "_reconstruct_matrix_geometry",
 ]
 
 #: Stabilization for ``d_safe = d.clamp(min=eps)`` in the reconstruction.
@@ -143,6 +144,59 @@ def _flatten_active_pairs(
         batch_idx_flat = batch_idx.to(torch.int32)[i_idx_flat]
 
     return i_idx_flat, j_idx_flat, shifts_flat, batch_idx_flat, active_mask
+
+
+def _reconstruct_matrix_geometry(
+    positions: torch.Tensor,
+    cell: torch.Tensor,
+    neighbor_matrix: torch.Tensor,
+    num_neighbors: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor,
+    batch_idx_atom: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Reconstruct zero-padded matrix geometry from fixed topology tensors."""
+    n_rows, max_neighbors = neighbor_matrix.shape
+    slots = torch.arange(
+        max_neighbors, dtype=num_neighbors.dtype, device=neighbor_matrix.device
+    )
+    active = slots.unsqueeze(0) < num_neighbors.unsqueeze(1)
+    i_idx = torch.arange(n_rows, dtype=torch.int32, device=neighbor_matrix.device)
+    i_idx = i_idx.unsqueeze(1).expand_as(neighbor_matrix)
+    safe_i = torch.where(active, i_idx, 0).reshape(-1)
+    safe_j = torch.where(active, neighbor_matrix, 0).reshape(-1)
+    safe_shifts = torch.where(active.unsqueeze(-1), neighbor_matrix_shifts, 0).reshape(
+        -1, 3
+    )
+
+    shifts = safe_shifts.to(positions.dtype)
+    if batch_idx_atom is None:
+        cell_3x3 = cell.squeeze(0) if cell.ndim == 3 else cell
+        shift_displacement = shifts @ cell_3x3
+    else:
+        pair_batch_idx = batch_idx_atom[safe_i.to(torch.long)]
+        shift_displacement = torch.einsum(
+            "pa,pab->pb", shifts, cell[pair_batch_idx.to(torch.long)]
+        )
+    vectors = positions[safe_j.to(torch.long)] - positions[safe_i.to(torch.long)]
+    vectors = vectors + shift_displacement
+    raw = vectors.norm(dim=-1)
+    eps = _DISTANCE_DERIVATIVE_EPSILON.get(positions.dtype, 1e-6)
+    near_zero = raw < eps
+    far_vectors = torch.where(
+        near_zero.unsqueeze(-1), torch.ones_like(vectors), vectors
+    )
+    potential = torch.where(
+        near_zero,
+        vectors.square().sum(dim=-1) / (2.0 * eps) + eps / 2.0,
+        far_vectors.norm(dim=-1),
+    )
+    distances = potential + (raw - potential).detach()
+    distances = distances.reshape(n_rows, max_neighbors)
+    vectors = vectors.reshape(n_rows, max_neighbors, 3)
+    return (
+        torch.where(active, distances, torch.zeros_like(distances)),
+        torch.where(active.unsqueeze(-1), vectors, torch.zeros_like(vectors)),
+    )
 
 
 # Sentinel empty tensors used to stand in for ``None`` in saved_tensors.

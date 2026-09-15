@@ -872,6 +872,47 @@ class TestClusterTileCompile:
             assert s_ref == s_got, f"Row {i} neighbor set mismatch under torch.compile"
 
     @pytest.mark.slow
+    def test_direct_matrix_geometry_query_fullgraph(self, device, dtype):
+        """Direct fixed-matrix query declares Warp geometry-buffer mutation."""
+        N, cutoff = 64, 2.5
+        positions = torch.rand(N, 3, dtype=dtype, device=device) * 10.0
+        cell = _orthorhombic_cell(10.0, device, dtype)
+        state = allocate_cluster_tile_list(N, torch.device(device), dtype=dtype)
+        matrix = torch.full((N, 64), N, dtype=torch.int32, device=device)
+        counts = torch.zeros(N, dtype=torch.int32, device=device)
+        shifts = torch.zeros((N, 64, 3), dtype=torch.int32, device=device)
+        vectors = torch.zeros((N, 64, 3), dtype=dtype, device=device)
+        distances = torch.zeros((N, 64), dtype=dtype, device=device)
+
+        @torch.compile(fullgraph=True)
+        def run(runtime_positions):
+            build_cluster_tile_list(runtime_positions, cutoff, cell, *state)
+            query_cluster_tile(
+                state[0],
+                state[2],
+                state[3],
+                state[4],
+                state[11],
+                state[12],
+                state[13],
+                cell,
+                cutoff,
+                N,
+                matrix,
+                counts,
+                shifts,
+                return_vectors=True,
+                return_distances=True,
+                neighbor_vectors=vectors,
+                neighbor_distances=distances,
+            )
+
+        run(positions)
+        active = torch.arange(64, device=device)[None, :] < counts[:, None]
+        assert torch.equal(distances[~active], torch.zeros_like(distances[~active]))
+        assert torch.equal(vectors[~active], torch.zeros_like(vectors[~active]))
+
+    @pytest.mark.slow
     def test_segmented_coo_query_compile(self, device, dtype):
         """The selective segmented COO custom op matches eager execution."""
         torch.manual_seed(5)
@@ -1365,6 +1406,125 @@ class TestClusterTileAutograd:
         assert max_abs_diff / max_ref < 5e-2, (
             f"analytical vs FD relative disagreement {max_abs_diff / max_ref:.3e}"
         )
+
+    @pytest.mark.parametrize(
+        ("return_distances", "return_vectors"),
+        [(False, True), (True, False), (True, True)],
+    )
+    @pytest.mark.slow
+    def test_matrix_geometry_fullgraph_matches_eager(
+        self, device, return_distances, return_vectors
+    ):
+        """Compiled matrix geometry matches eager topology and periodic formula."""
+        pos, cell = self._make_system(device)
+
+        @torch.compile(fullgraph=True)
+        def run(runtime_positions, runtime_cell):
+            return cluster_tile_neighbor_list(
+                runtime_positions,
+                1.5,
+                runtime_cell,
+                max_neighbors=64,
+                max_tiles_per_group=4,
+                return_distances=return_distances,
+                return_vectors=return_vectors,
+            )
+
+        eager = cluster_tile_neighbor_list(
+            pos,
+            1.5,
+            cell,
+            max_neighbors=64,
+            max_tiles_per_group=4,
+            return_distances=return_distances,
+            return_vectors=return_vectors,
+        )
+        compiled = run(pos, cell)
+        matrix, counts, shifts = compiled[:3]
+        assert all(not value.requires_grad for value in compiled[:3])
+        assert torch.equal(eager[1], counts)
+        active = torch.arange(matrix.shape[1], device=device)[None, :] < counts[:, None]
+        neighbors = torch.where(active, matrix, 0).to(torch.long)
+        expected_vectors = pos[neighbors] - pos[:, None] + shifts.to(pos.dtype) @ cell
+        expected_vectors = torch.where(
+            active[..., None], expected_vectors, torch.zeros_like(expected_vectors)
+        )
+        offset = 3
+        if return_distances:
+            torch.testing.assert_close(compiled[offset], expected_vectors.norm(dim=-1))
+            offset += 1
+        if return_vectors:
+            torch.testing.assert_close(compiled[offset], expected_vectors)
+
+    @pytest.mark.slow
+    def test_matrix_geometry_compiled_position_and_cell_gradients(self, device):
+        """Default fullgraph compilation preserves first-order geometry gradients."""
+        pos, cell = self._make_system(device)
+
+        def eager_loss(runtime_positions, runtime_cell):
+            return cluster_tile_neighbor_list(
+                runtime_positions,
+                1.5,
+                runtime_cell,
+                max_neighbors=64,
+                max_tiles_per_group=4,
+                return_distances=True,
+            )[3].sum()
+
+        @torch.compile(fullgraph=True)
+        def compiled_loss(runtime_positions, runtime_cell):
+            return cluster_tile_neighbor_list(
+                runtime_positions,
+                1.5,
+                runtime_cell,
+                max_neighbors=64,
+                max_tiles_per_group=4,
+                return_distances=True,
+            )[3].sum()
+
+        eager_pos = pos.clone().requires_grad_(True)
+        eager_cell = cell.clone().requires_grad_(True)
+        expected = torch.autograd.grad(
+            eager_loss(eager_pos, eager_cell), (eager_pos, eager_cell)
+        )
+        actual_pos = pos.clone().requires_grad_(True)
+        actual_cell = cell.clone().requires_grad_(True)
+        actual = torch.autograd.grad(
+            compiled_loss(actual_pos, actual_cell), (actual_pos, actual_cell)
+        )
+        torch.testing.assert_close(actual, expected)
+
+    @pytest.mark.slow
+    def test_matrix_geometry_compiled_coincident_hvp(self, device):
+        """Compiled coincident geometry has finite stabilized higher derivatives.
+
+        The eager backend keeps the callable fullgraph-compiled while avoiding
+        PyTorch AOTAutograd's donated-buffer double-backward limitation.
+        """
+        cell = torch.eye(3, dtype=torch.float32, device=device) * 20.0
+
+        @torch.compile(fullgraph=True, backend="eager")
+        def compiled_loss(runtime_positions):
+            return cluster_tile_neighbor_list(
+                runtime_positions,
+                1.0,
+                cell,
+                max_neighbors=8,
+                max_tiles_per_group=1,
+                return_distances=True,
+            )[3].sum()
+
+        coincident = torch.zeros(
+            (2, 3), dtype=torch.float32, device=device, requires_grad=True
+        )
+        value = compiled_loss(coincident)
+        assert value.item() == 0.0
+        first = torch.autograd.grad(value, coincident, create_graph=True)[0]
+        assert torch.equal(first, torch.zeros_like(first))
+        second = torch.autograd.grad(
+            (first * torch.ones_like(first)).sum(), coincident
+        )[0]
+        assert torch.isfinite(second).all()
 
 
 class TestClusterTileCutoff2SelectiveOverflow:
