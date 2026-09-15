@@ -141,6 +141,35 @@ def _matrix_pair_sets(
     ]
 
 
+def _compact_coo_pair_sets(
+    neighbor_list: torch.Tensor,
+    neighbor_ptr: torch.Tensor,
+    shifts: torch.Tensor,
+) -> list[frozenset[tuple[int, int, int, int]]]:
+    """Validate compact CSR ownership and return order-independent rows."""
+    pointer = neighbor_ptr.cpu().tolist()
+    pairs = neighbor_list.cpu()
+    shifts_cpu = shifts.cpu()
+    assert pointer[0] == 0
+    assert pointer[-1] == neighbor_list.shape[1]
+    assert all(start <= stop for start, stop in zip(pointer[:-1], pointer[1:]))
+    rows = []
+    for source, (start, stop) in enumerate(zip(pointer[:-1], pointer[1:])):
+        assert torch.all(pairs[0, start:stop] == source)
+        rows.append(
+            frozenset(
+                (
+                    int(pairs[1, slot]),
+                    int(shifts_cpu[slot, 0]),
+                    int(shifts_cpu[slot, 1]),
+                    int(shifts_cpu[slot, 2]),
+                )
+                for slot in range(start, stop)
+            )
+        )
+    return rows
+
+
 class TestBatchClusterTileValidation:
     """Validate public option combinations rejected before kernel launch."""
 
@@ -1744,17 +1773,17 @@ class TestBatchTileNeighborListFormats:
         assert out[8] is scratch_kwargs["num_tiles"]
 
     def test_format_coo_returns_three_tuple(self, device, dtype):
-        sizes = [64, 64]
+        sizes = [33, 67, 19]
         positions, cell_batch, batch_ptr = _make_batch(
             sizes,
-            [10.0, 10.0],
+            [10.0, 8.0, 12.0],
             device=device,
             dtype=dtype,
             seed=11,
         )
         cutoff = 3.0
         # matrix-format reference for pair count
-        nm, nn, _ = batch_cluster_tile_neighbor_list(
+        nm, nn, matrix_shifts = batch_cluster_tile_neighbor_list(
             positions,
             cutoff,
             cell_batch,
@@ -1781,6 +1810,15 @@ class TestBatchTileNeighborListFormats:
         # Sources match nn (matrix per-atom counts).
         per_atom_from_ptr = (neighbor_ptr[1:] - neighbor_ptr[:-1]).to(torch.int32)
         torch.testing.assert_close(per_atom_from_ptr, nn)
+        assert _compact_coo_pair_sets(nl, neighbor_ptr, nls) == _matrix_pair_sets(
+            nm, nn, matrix_shifts
+        )
+        atom_system = torch.bucketize(
+            torch.arange(N, device=device, dtype=torch.int32),
+            batch_ptr[1:],
+            right=True,
+        )
+        assert torch.equal(atom_system[nl[0].long()], atom_system[nl[1].long()])
 
     def test_format_coo_with_preallocated_buffers(self, device, dtype):
         sizes = [48, 48]
@@ -2069,6 +2107,87 @@ class TestBatchClusterTileCompile:
                 assert _matrix_pair_sets(
                     *eager[start : start + 3]
                 ) == _matrix_pair_sets(*compiled[start : start + 3])
+
+    @pytest.mark.slow
+    def test_compact_coo_fullgraph_dynamic_unequal_batch(self, device, dtype):
+        """One fullgraph call handles changing exact batch lengths."""
+        batch_ptr = torch.tensor([0, 3, 7, 9], dtype=torch.int32, device=device)
+        cell_batch = torch.eye(3, dtype=dtype, device=device).repeat(3, 1, 1) * 20.0
+        close = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [0.4, 0.0, 0.0],
+                [0.8, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.3, 0.0, 0.0],
+                [0.6, 0.0, 0.0],
+                [0.9, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+            ],
+            dtype=dtype,
+            device=device,
+        )
+        empty = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+                [6.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+                [6.0, 0.0, 0.0],
+                [9.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+            ],
+            dtype=dtype,
+            device=device,
+        )
+        scratch = _scratch_kwargs(
+            allocate_batch_cluster_tile_list(
+                batch_ptr, torch.device(device), dtype=dtype, max_tiles_per_group=1
+            )
+        )
+
+        @torch.compile(fullgraph=True)
+        def run(runtime_positions):
+            return batch_cluster_tile_neighbor_list(
+                runtime_positions,
+                1.0,
+                cell_batch,
+                batch_ptr,
+                format="coo",
+                max_neighbors=8,
+                max_pairs=72,
+                **scratch,
+            )
+
+        atom_system = torch.bucketize(
+            torch.arange(close.shape[0], dtype=torch.int32, device=device),
+            batch_ptr[1:],
+            right=True,
+        )
+        counts = []
+        for positions in (close, empty):
+            eager = batch_cluster_tile_neighbor_list(
+                positions,
+                1.0,
+                cell_batch,
+                batch_ptr,
+                format="coo",
+                max_neighbors=8,
+                max_pairs=72,
+                max_tiles_per_group=1,
+            )
+            compiled = run(positions)
+            assert _compact_coo_pair_sets(*compiled) == _compact_coo_pair_sets(*eager)
+            assert torch.equal(
+                atom_system[compiled[0][0].long()],
+                atom_system[compiled[0][1].long()],
+            )
+            counts.append(compiled[0].shape[1])
+        assert counts[0] > 0
+        assert counts[1] == 0
 
     @pytest.mark.slow
     @pytest.mark.parametrize("partial", [False, True])
@@ -3074,3 +3193,82 @@ class TestBatchClusterTileAutograd:
         assert actual_distances.data_ptr() != distance_buffer.data_ptr()
         torch.testing.assert_close(distance_buffer, actual_distances.detach())
         assert not distance_buffer.requires_grad and distance_buffer.grad_fn is None
+
+    @pytest.mark.slow
+    def test_compact_coo_geometry_fullgraph_alignment_and_gradients(self, device):
+        """Batched exact COO geometry uses source cells and remains differentiable."""
+        batch_ptr = torch.tensor([0, 2, 5], dtype=torch.int32, device=device)
+        cell_batch = torch.stack(
+            (
+                torch.eye(3, dtype=torch.float32, device=device) * 20.0,
+                torch.diag(torch.tensor([22.0, 20.0, 18.0], device=device)),
+            )
+        )
+        positions = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.4, 0.0, 0.0],
+                [4.0, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+            device=device,
+        )
+        scratch = _scratch_kwargs(
+            allocate_batch_cluster_tile_list(
+                batch_ptr,
+                torch.device(device),
+                dtype=positions.dtype,
+                max_tiles_per_group=1,
+            )
+        )
+
+        @torch.compile(fullgraph=True)
+        def run(runtime_positions, runtime_cell, vectors, distances):
+            return batch_cluster_tile_neighbor_list(
+                runtime_positions,
+                1.0,
+                runtime_cell,
+                batch_ptr,
+                format="coo",
+                max_neighbors=8,
+                max_pairs=32,
+                return_vectors=True,
+                return_distances=True,
+                neighbor_vectors=vectors,
+                neighbor_distances=distances,
+                **scratch,
+            )
+
+        vectors = torch.full((32, 3), float("nan"), device=device)
+        distances = torch.full((32,), float("nan"), device=device)
+        grad_positions = positions.clone().requires_grad_(True)
+        grad_cell = cell_batch.clone().requires_grad_(True)
+        pairs, pointer, shifts = run(
+            grad_positions,
+            grad_cell,
+            vectors,
+            distances,
+        )
+        _compact_coo_pair_sets(pairs, pointer, shifts)
+        count = pairs.shape[1]
+        atom_system = torch.bucketize(
+            torch.arange(positions.shape[0], dtype=torch.int32, device=device),
+            batch_ptr[1:],
+            right=True,
+        )
+        pair_system = atom_system[pairs[0].long()]
+        expected_vectors = (
+            grad_positions[pairs[1].long()] - grad_positions[pairs[0].long()]
+        )
+        expected_vectors = expected_vectors + torch.einsum(
+            "pa,pab->pb", shifts.to(positions.dtype), grad_cell[pair_system.long()]
+        )
+        torch.testing.assert_close(vectors[:count], expected_vectors)
+        torch.testing.assert_close(distances[:count], expected_vectors.norm(dim=-1))
+        gradients = torch.autograd.grad(
+            distances[:count].sum(),
+            (grad_positions, grad_cell),
+        )
+        assert all(torch.isfinite(gradient).all() for gradient in gradients)
