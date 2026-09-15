@@ -24,7 +24,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import warp as wp
-from warp.jax_experimental import jax_kernel
+from warp import jax_kernel
 
 from nvalchemiops.neighbors.rebuild import (
     get_cell_list_rebuild_kernel,
