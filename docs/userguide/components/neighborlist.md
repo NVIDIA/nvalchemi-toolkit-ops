@@ -659,6 +659,61 @@ Eager calls retain structured `TileBufferOverflow` and
 `NeighborOverflowError` exceptions. Compiled capacity failures are asynchronous
 device runtime errors.
 
+#### Prepared PyTorch execution
+
+Use `prepare_cluster_tile` when repeated calls have the same atom count,
+single or batched partition, dtype, device, output format, and capacities.
+Preparation owns the fixed-capacity scratch and output buffers. Execution takes
+only the current positions, current cell, and prepared state:
+
+```python
+import torch
+
+from nvalchemiops.torch.neighbors import (
+    cluster_tile_neighbor_list_prepared,
+    prepare_cluster_tile,
+)
+
+state = prepare_cluster_tile(
+    positions,
+    cutoff,
+    cell,
+    format="matrix",
+    batch_ptr=batch_ptr,  # omit for one system
+    max_neighbors=max_neighbors,
+    max_tiles_per_group=max_tiles_per_group,
+    return_distances=True,
+)
+
+@torch.compile(fullgraph=True)
+def compiled_neighbors(current_positions, current_cell):
+    # Capture state as a closure constant; do not pass it as a graph input.
+    return cluster_tile_neighbor_list_prepared(
+        current_positions,
+        current_cell,
+        state,
+    )
+```
+
+Prepared execution supports single and batched tile, matrix, dual-cutoff
+matrix, and nonselective exact COO output. It preserves the corresponding
+direct function's return tuple. Matrix and tile results borrow state-owned
+storage and a later call overwrites them. Exact COO topology is newly sized on
+each call; requested COO vectors and distances remain fixed-capacity borrowed
+buffers available as `state.neighbor_vectors` and
+`state.neighbor_distances`. Only the active prefix matching the returned pair
+count is defined.
+
+Preparation avoids reallocating the fixed scratch and output buffers, but
+execution may still allocate temporary tensors and exact-sized COO results. It
+is not an allocation-free API. Finish backward, or copy every result that must
+survive, before reusing the same state. A second state owns distinct storage.
+
+Preparation fixes the atom count, batch partition, shape, dtype, and device.
+Execution rejects mismatches before launching kernels. Prepared pair callbacks,
+energies, forces, caller-provided buffers, and selective rebuilds are not
+supported.
+
 #### Compiled JAX
 
 JAX fixes array shapes while tracing a transformed or compiled function, and
