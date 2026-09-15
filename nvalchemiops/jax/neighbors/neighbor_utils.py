@@ -25,7 +25,7 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 import warp as wp
-from warp.jax_experimental import jax_kernel
+from warp import jax_kernel
 
 from nvalchemiops.neighbors.neighbor_utils import (
     NeighborOverflowError,

@@ -23,7 +23,7 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 import warp as wp
-from warp.jax_experimental import GraphMode, jax_callable, jax_kernel
+from warp import JaxCallableGraphMode, jax_callable, jax_kernel
 
 from nvalchemiops.jax.neighbors._autograd import (
     _build_index_residuals,
@@ -79,7 +79,7 @@ _DTYPE_TO_NAIVE_KERNELS = (wp.float32, wp.float64)
 )
 
 # Direct jax_kernel registrations are constructed lazily.  The retained
-# build_naive_kernel_tables tables below remain for GraphMode.WARP callbacks.
+# build_naive_kernel_tables tables below remain for JaxCallableGraphMode.WARP callbacks.
 
 
 _DIRECT_NAIVE_KERNELS = {
@@ -894,7 +894,7 @@ _GRAPH_NAIVE_DTYPE_TO_WARP_CALLABLES = {
 def _register_graph_naive_callables() -> dict[
     tuple[bool, bool, bool, jnp.dtype], object
 ]:
-    """Register GraphMode.WARP callables for all naive graph-mode paths."""
+    """Register JaxCallableGraphMode.WARP callables for all naive graph-mode paths."""
     registered: dict[tuple[bool, bool, bool, jnp.dtype], object] = {}
 
     for key, spec in _GRAPH_NAIVE_DTYPE_TO_WARP_CALLABLES.items():
@@ -910,7 +910,7 @@ def _register_graph_naive_callables() -> dict[
                 spec[dtype],
                 num_outputs=spec["num_outputs"],
                 in_out_argnames=spec["in_out_argnames"],
-                graph_mode=GraphMode.WARP,
+                graph_mode=JaxCallableGraphMode.WARP,
             )
             for wrap_positions in wrap_positions_values:
                 registered[(has_pbc, wrap_positions, selective, dtype)] = callable_obj
@@ -1146,9 +1146,9 @@ _GRAPH_NAIVE_TILE_SPECS = {
 def _register_graph_naive_tile_callables() -> dict[
     tuple[bool, bool, jnp.dtype], object
 ]:
-    """Register GraphMode.NONE tile callables for the naive eager path.
+    """Register JaxCallableGraphMode.NONE tile callables for the naive eager path.
 
-    ``GraphMode.NONE`` (not WARP): the tile bodies assume the caller has
+    ``JaxCallableGraphMode.NONE`` (not WARP): the tile bodies assume the caller has
     already pre-filled the output buffers, which only the eager
     (``graph_mode="none"``) path of ``naive_neighbor_list`` does.
     """
@@ -1159,7 +1159,7 @@ def _register_graph_naive_tile_callables() -> dict[
                 spec[dtype],
                 num_outputs=spec["num_outputs"],
                 in_out_argnames=spec["in_out_argnames"],
-                graph_mode=GraphMode.NONE,
+                graph_mode=JaxCallableGraphMode.NONE,
             )
     return registered
 
@@ -1599,7 +1599,7 @@ def naive_neighbor_list(
     graph_mode : {"none", "warp"}, default="none"
         Execution mode for the underlying Warp launches. ``"none"``
         preserves the existing per-kernel ``jax_kernel`` dispatch path.
-        ``"warp"`` uses fused ``jax_callable(..., graph_mode=GraphMode.WARP)``
+        ``"warp"`` uses fused ``jax_callable(..., graph_mode=JaxCallableGraphMode.WARP)``
         callbacks and is intended for ``jax.jit`` call sites that donate
         reusable output buffers.
 
@@ -1720,8 +1720,8 @@ def naive_neighbor_list(
     For lower host-side launch overhead on supported GPUs, setting
     ``XLA_FLAGS=--xla_gpu_enable_command_buffer=CUSTOM_CALL`` before
     importing JAX can improve the steady-state ``graph_mode="none"`` and
-    ``graph_mode="warp"`` paths. Advanced users can bound Warp's graph
-    cache via ``warp.jax_experimental.set_jax_callable_default_graph_cache_max(...)``.
+    ``graph_mode="warp"`` paths. Advanced users can bound each callable's graph
+    cache with the ``graph_cache_max`` argument to ``warp.jax_callable(...)``.
 
     For ``graph_mode="warp"`` to actually replay (rather than re-capture
     every call), every in/out buffer pointer the fused callable sees must
