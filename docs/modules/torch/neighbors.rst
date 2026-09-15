@@ -110,3 +110,4 @@ Utility Functions
 .. autofunction:: nvalchemiops.torch.neighbors.estimate_batch_cell_list_sizes
 .. autofunction:: nvalchemiops.torch.neighbors.neighbor_utils.allocate_cell_list
 .. autofunction:: nvalchemiops.torch.neighbors.neighbor_utils.prepare_batch_idx_ptr
+.. autofunction:: nvalchemiops.torch.neighbors.neighbor_utils.get_neighbor_list_from_neighbor_matrix

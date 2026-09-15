@@ -8,6 +8,17 @@ This guide lists user-visible migrations by release.
 
 ## Unreleased
 
+### Upgrade PyTorch for compiled COO output
+
+Applications that request exact COO output from a matrix-backed neighbor method
+inside `torch.compile(fullgraph=True)` must upgrade to PyTorch >=2.10. No code
+change is required for eager execution.
+
+Compiled callers should allocate sufficient matrix capacity instead of relying
+on `NeighborOverflowError`: overflow is reported by an asynchronous runtime
+assertion in a compiled graph. Exact output sizing uses `nonzero` and may
+synchronize the host.
+
 ### Retained Ewald Miller Topology
 
 Torch and JAX can now retain integer Miller topology separately from Cartesian

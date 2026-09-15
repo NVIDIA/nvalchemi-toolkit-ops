@@ -20,6 +20,11 @@
   component. This avoids rebuilding the integer index grid while preserving
   the reciprocal vectors' dependence on the current cell.
 
+### Changed
+
+- Torch matrix-to-COO conversion now supports `torch.compile(fullgraph=True)`
+  when the output edge count changes. Torch extras now require PyTorch >=2.10.
+
 ### Fixed
 
 - Fixed JAX autodiff through `ewald_reciprocal_space(...)` when `k_vectors`

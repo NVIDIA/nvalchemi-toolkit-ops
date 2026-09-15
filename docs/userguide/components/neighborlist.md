@@ -302,6 +302,14 @@ Setting `return_neighbor_list=True` incurs a conversion overhead. If you need
 both formats, compute the matrix format first and convert as needed.
 ```
 
+```{note}
+With PyTorch >=2.10, exact COO conversion supports
+`torch.compile(fullgraph=True)` when the edge count changes. Exact sizing via
+`nonzero` may synchronize the host. Capacity overflow raises
+`NeighborOverflowError` in eager execution and an asynchronous runtime error
+in compiled execution.
+```
+
 ## Method Dispatch
 
 ### Method and Strategy
