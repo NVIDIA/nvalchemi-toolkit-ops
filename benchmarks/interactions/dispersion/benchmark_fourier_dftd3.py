@@ -145,9 +145,12 @@ def benchmark_fourier_d3(
     Returns
     -------
     dict
-        ``time_total_seconds`` covers the list build and the evaluation;
-        ``time_eval_seconds`` is the evaluation alone, which is the marginal cost when the
-        coordination-number list is already available.
+        ``time_eval_seconds`` is the evaluation alone and is the reported metric, because
+        the kernel style guide requires neighbour-list construction to be pre-computed
+        separately rather than timed with the kernel. ``time_neighbor_seconds`` and
+        ``time_total_seconds`` are carried alongside it: the list a method needs is part of
+        what a converged dispersion correction costs, and for real-space D3 it grows with the
+        cutoff, so the total is worth seeing even though it is not the headline.
     """
     import torch
 
@@ -301,7 +304,7 @@ def run_from_config(config: dict, output_dir, backend: str = "torch") -> list[di
                 results.append(
                     build_result(
                         method=method,
-                        time_seconds=measured["time_total_seconds"],
+                        time_seconds=measured["time_eval_seconds"],
                         mem_info=measured["mem_info"],
                         timing_runs=num_runs,
                         warmup_runs=warmup_runs,
@@ -333,7 +336,7 @@ def run_from_config(config: dict, output_dir, backend: str = "torch") -> list[di
                 results.append(
                     build_result(
                         method=f"dftd3_cutoff_{cutoff:g}",
-                        time_seconds=measured["time_total_seconds"],
+                        time_seconds=measured["time_eval_seconds"],
                         mem_info=measured["mem_info"],
                         timing_runs=num_runs,
                         warmup_runs=warmup_runs,
@@ -410,18 +413,21 @@ def main():
 
     results = run_from_config(config, args.output_dir)
     print(
-        f"\ndensity {args.density} atoms/A^3;  times in ms, list build + evaluation\n"
+        f"\ndensity {args.density} atoms/A^3;  times in ms. 'eval' is the reported metric: "
+        f"the kernel style\nguide keeps neighbour-list construction out of kernel timing. "
+        f"'nlist' and 'total' are shown\nbecause the list a method needs is part of what a "
+        f"converged correction costs.\n"
     )
-    print(f"{'N':>7}  {'method':<22} {'total':>8} {'eval':>8} {'nlist':>8}")
+    print(f"{'N':>7}  {'method':<22} {'eval':>8} {'nlist':>8} {'total':>8}")
     for row in results:
         if not row.get("success", True):
             print(f"{row['atoms_per_system']:>7}  {row['method']:<22}    failed")
             continue
         print(
             f"{row['atoms_per_system']:>7}  {row['method']:<22} "
-            f"{row['time_total_seconds'] * 1e3:8.2f} "
             f"{row['time_eval_seconds'] * 1e3:8.2f} "
-            f"{row['time_neighbor_seconds'] * 1e3:8.2f}"
+            f"{row['time_neighbor_seconds'] * 1e3:8.2f} "
+            f"{row['time_total_seconds'] * 1e3:8.2f}"
         )
     return 0 if any(r.get("success", True) for r in results) else 1
 
