@@ -441,6 +441,10 @@ def cluster_tile_neighbor_list_prepared(
     the snapshot buffers. Exact COO tensors are exact-sized per call. Finish
     backward before reusing ``state``, and copy every borrowed result that must
     survive that reuse.
+
+    A selective eager call invalidates every selected system before rebuilding
+    it and marks the systems initialized only after the complete call succeeds.
+    After a failed rebuild, those systems cannot be preserved with false flags.
     """
     if not isinstance(state, ClusterTileState):
         raise TypeError("state must be a ClusterTileState")

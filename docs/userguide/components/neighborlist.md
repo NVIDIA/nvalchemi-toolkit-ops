@@ -772,8 +772,23 @@ For batches, it caches atom/system and padded-layout mappings derived only from
 that partition. Morton ordering, sorted coordinates, cell inverses, and group
 bounds are recomputed from the current positions and cells on every execution.
 Execution rejects mismatches before launching kernels. Prepared pair callbacks,
-energies, forces, caller-provided buffers, and selective rebuilds are not
-supported.
+energies, forces, and caller-provided buffers are not supported.
+
+Set `selective=True` during preparation to rebuild matrix topology only for
+selected systems. Selective prepared execution supports single and batched
+matrix output, including dual cutoffs. It does not support tile or COO output,
+vectors, distances, or pair callbacks. Each execution requires a Boolean
+`rebuild_flags` tensor on the prepared device with one value per system. A true
+flag rebuilds that system. A false flag preserves its initialized neighbor
+matrix, counts, and shifts byte-for-byte; preserving a system before its first
+successful rebuild raises an error.
+
+An eager call marks every selected system uninitialized before rebuilding it
+and marks it initialized only after the complete call succeeds. If an eager
+rebuild fails, for example because the matrix capacity is too small, a later
+call cannot preserve any system selected by the failed call. Retry those
+systems with true flags after changing the geometry, or prepare a new state
+with sufficient capacity.
 
 #### Compiled JAX
 

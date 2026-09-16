@@ -37,6 +37,12 @@
   Torch `cluster_tile_neighbor_list` and JAX `build_cluster_tile_list`,
   `batch_build_cluster_tile_list`, `cluster_tile_neighbor_list`, and
   `batch_cluster_tile_neighbor_list` now accept `max_tiles_per_group`.
+- PyTorch cluster-tile neighbor lists now support
+  `torch.compile(fullgraph=True)` for tile, matrix, dual-cutoff matrix, and
+  exact COO output, including differentiable pair geometry. Exact COO is
+  written directly in source-grouped CSR order. `prepare_cluster_tile` provides
+  reusable fixed-capacity storage, with optional selective matrix rebuilds for
+  single systems and batches.
 
 ### Changed
 
