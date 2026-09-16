@@ -1141,6 +1141,13 @@ def batch_build_cluster_tile_list(
         20-element tuple with ``tile_counts`` appended when
         ``rebuild_flags`` is provided.
 
+    Raises
+    ------
+    TileBufferOverflow
+        In eager execution, if a compact or per-system build requires more
+        tile pairs than fit in its output buffer. Caller-owned arrays determine
+        the actual capacity; ``max_tiles_per_group`` does not resize them.
+
     See Also
     --------
     :func:`nvalchemiops.jax.neighbors.batch_cluster_tile.batch_query_cluster_tile` : Converts the tile list to dense neighbor-matrix form.
@@ -1296,6 +1303,16 @@ def batch_build_cluster_tile_list(
             tile_col_group,
             tile_system,
             float(cutoff),
+        )
+
+    if rebuild_flags is None:
+        _check_eager_tile_buffer_capacity(num_tiles, tile_row_group)
+    else:
+        _check_eager_tile_buffer_capacity(
+            num_tiles,
+            tile_row_group,
+            tile_offsets=tile_offsets,
+            tile_counts=tile_counts,
         )
 
     del ngroup  # implicit in group_system.shape[0]

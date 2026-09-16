@@ -109,12 +109,20 @@ def _tile_buffer_max_tiles_per_group(positions, total_atoms: int, cutoff, cell) 
     When an input is traced, runtime geometry is unavailable and the caller
     must provide the value explicitly.
     """
+    if (
+        isinstance(positions, jax.core.Tracer)
+        or isinstance(cutoff, jax.core.Tracer)
+        or isinstance(cell, jax.core.Tracer)
+    ):
+        raise ValueError(
+            "max_tiles_per_group must be provided as a positive static Python "
+            "integer when a cluster-tile call is transformed or compiled by JAX"
+        )
     ngroup = (int(total_atoms) + TILE_GROUP_SIZE - 1) // TILE_GROUP_SIZE
     if ngroup <= 1:
         return 1
-    cutoff_concrete = not isinstance(cutoff, jax.core.Tracer)
     vol = _concrete_cell_volume(cell)
-    if isinstance(positions, jax.core.Tracer) or vol is None or not cutoff_concrete:
+    if vol is None:
         raise ValueError(
             "max_tiles_per_group must be provided as a positive static Python "
             "integer when a cluster-tile call is transformed or compiled by JAX"
@@ -912,6 +920,13 @@ def build_cluster_tile_list(
         group_ext_y, group_ext_z, num_tiles, tile_row_group,
         tile_col_group)``.
 
+    Raises
+    ------
+    TileBufferOverflow
+        In eager execution, if the build requires more tile pairs than fit in
+        ``tile_row_group``. Caller-owned arrays determine the actual capacity;
+        ``max_tiles_per_group`` does not resize them.
+
     Notes
     -----
     Float32 only.  The cluster-pair tile kernels currently only support
@@ -1023,6 +1038,8 @@ def build_cluster_tile_list(
             rf,
             float(cutoff),
         )
+
+    _check_eager_tile_buffer_capacity(num_tiles, tile_row_group)
 
     del ngroup  # implicit in group_*_x.shape[0]
     return (
