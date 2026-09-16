@@ -9,6 +9,11 @@
   compatibility with `warp>=1.15`.
 - Warp initialization now retains warning-level diagnostics instead of
   suppressing all Warp log output.
+- CUDA tiled direct-Warp multipole launchers now require caller-owned,
+  operation-specific scratch bundles. PyTorch bindings allocate and retain this
+  scratch internally, so their public APIs are unchanged; CPU direct-Warp paths
+  do not require scratch.
+
 ### Added
 
 - Torch and JAX Ewald now expose caller-retained reciprocal Miller topology via
@@ -22,6 +27,12 @@
 
 ### Fixed
 
+- Torch bindings now launch Warp work on the current PyTorch CUDA stream across
+  neighbors, dynamics, dispersion, electrostatics, spline, and math operations.
+  This prevents Warp from observing unfinished Torch inputs, Torch from
+  consuming incomplete Warp outputs, and Torch temporary storage from being
+  reused while Warp still references it. JAX bindings continue to use
+  XLA-provided streams through Warp's JAX adapters.
 - Fixed JAX autodiff through `ewald_reciprocal_space(...)` when `k_vectors`
   are derived from the differentiated cell. The custom JVP previously
   discarded the `k_vectors` tangent and omitted the reciprocal-cell
