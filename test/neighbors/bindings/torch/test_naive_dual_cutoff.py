@@ -54,6 +54,43 @@ def _active_neighbor_shift_rows(
 class TestNaiveDualCutoffCorrectness:
     """Test correctness of naive dual cutoff neighbor list against reference."""
 
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+    def test_current_stream_consumes_event_gated_input(self, torch_stream_runner):
+        """Both cutoff outputs feed Torch work on the caller's stream."""
+        device = torch.device("cuda:0")
+        source = torch.tensor(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [2.0, 0.0, 0.0], [2.5, 0.0, 0.0]],
+            dtype=torch.float32,
+            device=device,
+        )
+        positions = torch.empty_like(source)
+        outputs = (
+            torch.full((4, 3), 4, dtype=torch.int32, device=device),
+            torch.zeros(4, dtype=torch.int32, device=device),
+            torch.full((4, 3), 4, dtype=torch.int32, device=device),
+            torch.zeros(4, dtype=torch.int32, device=device),
+        )
+        kwargs = dict(
+            neighbor_matrix1=outputs[0],
+            num_neighbors1=outputs[1],
+            neighbor_matrix2=outputs[2],
+            num_neighbors2=outputs[3],
+        )
+        actual, snapshot, expected = torch_stream_runner(
+            source,
+            positions,
+            lambda value: naive_neighbor_list_dual_cutoff(value, 0.75, 1.6, **kwargs),
+            lambda: tuple(
+                value.fill_(4) if index % 2 == 0 else value.zero_()
+                for index, value in enumerate(outputs)
+            ),
+        )
+        assert all(
+            result is buffer for result, buffer in zip(actual, outputs, strict=True)
+        )
+        for result, reference in zip(snapshot, expected, strict=True):
+            torch.testing.assert_close(result, reference)
+
     @requires_vesin
     @pytest.mark.parametrize("fill_value", [-1, 8])
     def test_matrix_format_no_pbc(

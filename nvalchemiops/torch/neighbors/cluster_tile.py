@@ -56,6 +56,7 @@ from nvalchemiops.neighbors.neighbor_utils import (
     selective_zero_num_neighbors_single as wp_selective_zero_num_neighbors_single,
 )
 from nvalchemiops.neighbors.output_args import _has_partial_or_pair_outputs
+from nvalchemiops.torch._warp_op_helpers import scoped_torch_warp_stream
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     _normalize_compiled_single_segment_coo_count,
     _validate_segmented_coo_state,
@@ -80,6 +81,7 @@ __all__ = [
     "nvalchemiops::_cluster_tile_fill_neighbor_matrix_tail",
     mutates_args=("neighbor_matrix",),
 )
+@scoped_torch_warp_stream
 def _cluster_tile_fill_neighbor_matrix_tail_op(
     num_neighbors: torch.Tensor,
     neighbor_matrix: torch.Tensor,
@@ -326,6 +328,7 @@ def _cell_volume(cell: torch.Tensor) -> float:
     return float(torch.linalg.det(cell_mat.to(torch.float64)).abs().item())
 
 
+@scoped_torch_warp_stream
 def _mat33f_from_torch(mat: torch.Tensor):
     """Zero-copy view a ``(1, 3, 3)`` or ``(3, 3)`` torch tensor as a
     ``wp.array(dtype=wp.mat33f, shape=(1,))``.
@@ -367,6 +370,7 @@ def _mat33f_from_torch(mat: torch.Tensor):
         "tile_col_group",
     ),
 )
+@scoped_torch_warp_stream
 def _build_cluster_tile_list_op(
     positions: torch.Tensor,
     cutoff: float,
@@ -656,6 +660,7 @@ def build_cluster_tile_list(
     "nvalchemiops::_query_cluster_tile",
     mutates_args=("neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"),
 )
+@scoped_torch_warp_stream
 def _query_cluster_tile_op(
     cutoff: float,
     natom: int,
@@ -1071,6 +1076,7 @@ def _(
     return None
 
 
+@scoped_torch_warp_stream
 def _query_cluster_tile_optional(
     cell_mat: torch.Tensor,
     inv_cell_mat: torch.Tensor,
@@ -1206,6 +1212,7 @@ def _query_cluster_tile_optional(
     "nvalchemiops::_query_cluster_tile_coo",
     mutates_args=("pair_counter", "coo_list", "coo_shifts"),
 )
+@scoped_torch_warp_stream
 def _query_cluster_tile_coo_op(
     cutoff: float,
     natom: int,
@@ -1289,6 +1296,7 @@ def _(
     "nvalchemiops::_query_cluster_tile_coo_segmented",
     mutates_args=("pair_counter", "pair_counts", "coo_list", "coo_shifts"),
 )
+@scoped_torch_warp_stream
 def _query_cluster_tile_coo_segmented_op(
     cutoff: float,
     natom: int,
@@ -1452,6 +1460,7 @@ def _(
     return None
 
 
+@scoped_torch_warp_stream
 def _query_cluster_tile_coo_optional(
     cell_mat: torch.Tensor,
     inv_cell_mat: torch.Tensor,
@@ -1936,6 +1945,7 @@ def _cluster_tile_pair_outputs_forward(
     )
 
 
+@scoped_torch_warp_stream
 def cluster_tile_neighbor_list(
     positions: torch.Tensor,
     cutoff: float,

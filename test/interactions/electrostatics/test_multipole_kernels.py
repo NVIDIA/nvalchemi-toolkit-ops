@@ -21,12 +21,14 @@ import math
 
 import numpy as np
 import pytest
+import torch
 import warp as wp
 
 from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     ewald_real_space_energy,
 )
 from nvalchemiops.interactions.electrostatics.multipole_direct_kspace_kernels import (
+    ProjectFeaturesDipoleTiledScratch,
     apply_per_k_factor,
     assemble_rho_k_dipole,
     build_structure_factor_table,
@@ -40,6 +42,15 @@ from nvalchemiops.interactions.electrostatics.multipole_ewald_kernels import (
     multipole_real_space_monopole_csr_energy,
 )
 from nvalchemiops.torch.math.gto import NormMode, inv_cl
+
+
+@wp.kernel
+def _copy_project_features_kernel(
+    features: wp.array2d(dtype=wp.float64), output: wp.array2d(dtype=wp.float64)
+):
+    """Copy a direct-project output as a same-stream dependent Warp launch."""
+    i, j = wp.tid()
+    output[i, j] = features[i, j]
 
 
 class TestStructureFactorTable:
@@ -550,6 +561,76 @@ def _permuted_out_col_lut(n_sigma: int) -> np.ndarray:
 class TestProjectFeaturesDipole:
     """Tests for :func:`project_features_dipole`."""
 
+    @pytest.mark.gpu
+    def test_tiled_cuda_uses_caller_stream_and_scratch(self, device):
+        """The tiled direct Warp path retains the caller stream and scratch."""
+        if "cuda" not in str(device):
+            pytest.skip("requires CUDA")
+        n_k, n_sigma, n_atoms = 5, 1, 3
+        potential = wp.from_numpy(np.ones((n_k, 2)), dtype=wp.float64, device=device)
+        phi_wp = wp.ones((n_k, n_sigma, 4, 2), dtype=wp.float64, device=device)
+        cosines_wp = wp.ones((n_k, n_atoms), dtype=wp.float64, device=device)
+        sines_wp = wp.zeros((n_k, n_atoms), dtype=wp.float64, device=device)
+        k_factor = wp.from_numpy(np.ones(n_k), dtype=wp.float64, device=device)
+        source = wp.zeros((n_atoms, 4), dtype=wp.float64, device=device)
+        overlap = wp.zeros((n_sigma, 2), dtype=wp.float64, device=device)
+        lut = wp.from_numpy(
+            _identity_out_col_lut(n_sigma), dtype=wp.int32, device=device
+        )
+        features = wp.empty((n_atoms, n_sigma * 4), dtype=wp.float64, device=device)
+        copied = wp.empty_like(features)
+        scratch = ProjectFeaturesDipoleTiledScratch(
+            *(
+                wp.empty(shape, dtype=wp.float64, device=device)
+                for shape in ProjectFeaturesDipoleTiledScratch.expected_shapes(
+                    n_k, n_atoms, n_sigma
+                )
+            )
+        )
+
+        def project():
+            project_features_dipole(
+                potential,
+                phi_wp,
+                cosines_wp,
+                sines_wp,
+                k_factor,
+                source,
+                overlap,
+                False,
+                lut,
+                features,
+                device=device,
+                scratch=scratch,
+            )
+
+        project()
+        wp.launch(
+            _copy_project_features_kernel,
+            dim=(n_atoms, n_sigma * 4),
+            inputs=[features, copied],
+        )
+        features.zero_()
+        copied.zero_()
+        wp.synchronize_device(device)
+        producer = torch.cuda.Stream(str(device))
+        wrong_stream = torch.cuda.Stream(str(device))
+        with torch.cuda.stream(producer):
+            torch.cuda._sleep(1_000_000_000)
+        wrong_stream.wait_event(producer.record_event())
+        caller_stream = wp.Stream(device, priority=-1)
+        with torch.cuda.stream(wrong_stream):
+            with wp.ScopedStream(caller_stream, sync_enter=False):
+                project()
+                wp.launch(
+                    _copy_project_features_kernel,
+                    dim=(n_atoms, n_sigma * 4),
+                    inputs=[features, copied],
+                )
+        wp.synchronize_stream(caller_stream)
+        wrong_stream.synchronize()
+        np.testing.assert_allclose(copied.numpy(), n_k * 4.0 / (2.0 * math.pi) ** 3)
+
     def _launch(
         self,
         potential_np,
@@ -583,6 +664,21 @@ class TestProjectFeaturesDipole:
         oc = wp.from_numpy(overlap_constants_np, dtype=wp.float64, device=device)
         lut = wp.from_numpy(out_col_lut_np, dtype=wp.int32, device=device)
         features = wp.zeros((n_atoms, n_sigma * 4), dtype=wp.float64, device=device)
+        scratch = None
+        if "cuda" in str(device):
+            scratch = ProjectFeaturesDipoleTiledScratch(
+                wp.empty(
+                    (potential_np.shape[0], n_sigma * 4),
+                    dtype=wp.float64,
+                    device=device,
+                ),
+                wp.empty(
+                    (potential_np.shape[0], n_sigma * 4),
+                    dtype=wp.float64,
+                    device=device,
+                ),
+                wp.empty((n_atoms, n_sigma * 4), dtype=wp.float64, device=device),
+            )
         project_features_dipole(
             potential,
             phi,
@@ -595,6 +691,7 @@ class TestProjectFeaturesDipole:
             lut,
             features,
             device=device,
+            scratch=scratch,
         )
         # Identity LUT → reshape to natural (N_atoms, N_σ, 4); else return raw 2-D.
         if np.array_equal(out_col_lut_np, _identity_out_col_lut(n_sigma)):

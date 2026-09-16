@@ -93,6 +93,43 @@ def _configure_jax_allocator_environment() -> None:
 _configure_jax_allocator_environment()
 
 
+@pytest.fixture
+def torch_stream_runner():
+    """Run a warmed Torch operation behind a delayed CUDA input producer."""
+    torch = sys.modules["torch"]
+
+    def clone_output(output):
+        if isinstance(output, torch.Tensor):
+            return output.clone()
+        return tuple(clone_output(value) for value in output)
+
+    def run(source, target, operation, reset=None):
+        expected = clone_output(operation(clone_output(source)))
+        if reset is not None:
+            reset()
+        device = source.device if isinstance(source, torch.Tensor) else source[0].device
+        producer = torch.cuda.Stream(device)
+        consumer = torch.cuda.Stream(device)
+        ready = torch.cuda.Event()
+        producer.wait_stream(torch.cuda.current_stream(device))
+        with torch.cuda.stream(producer):
+            torch.cuda._sleep(10_000_000)
+            with torch.no_grad():
+                sources = (source,) if isinstance(source, torch.Tensor) else source
+                targets = (target,) if isinstance(target, torch.Tensor) else target
+                for destination, value in zip(targets, sources, strict=True):
+                    destination.copy_(value)
+            ready.record()
+        with torch.cuda.stream(consumer):
+            consumer.wait_event(ready)
+            actual = operation(target)
+            snapshot = clone_output(actual)
+        torch.cuda.current_stream(device).wait_stream(consumer)
+        return actual, snapshot, expected
+
+    return run
+
+
 # ==============================================================================
 # Framework Classification
 # ==============================================================================

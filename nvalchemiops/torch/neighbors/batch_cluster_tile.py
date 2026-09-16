@@ -60,6 +60,7 @@ from nvalchemiops.neighbors.neighbor_utils import (
     selective_zero_num_neighbors as wp_selective_zero_num_neighbors,
 )
 from nvalchemiops.neighbors.output_args import _has_partial_or_pair_outputs
+from nvalchemiops.torch._warp_op_helpers import scoped_torch_warp_stream
 from nvalchemiops.torch.neighbors.neighbor_utils import _validate_segmented_coo_state
 from nvalchemiops.torch.types import get_wp_dtype
 
@@ -83,6 +84,7 @@ __all__ = [
     "nvalchemiops::_batch_cluster_tile_fill_neighbor_matrix_tail",
     mutates_args=("neighbor_matrix",),
 )
+@scoped_torch_warp_stream
 def _batch_cluster_tile_fill_neighbor_matrix_tail_op(
     num_neighbors: torch.Tensor,
     neighbor_matrix: torch.Tensor,
@@ -526,6 +528,7 @@ def _batched_morton_sort_padded(
         "tile_counts",
     ),
 )
+@scoped_torch_warp_stream
 def _batch_build_cluster_tile_list_op(
     positions: torch.Tensor,
     cutoff: float,
@@ -864,6 +867,7 @@ def batch_build_cluster_tile_list(
     "nvalchemiops::_batch_query_cluster_tile",
     mutates_args=("neighbor_matrix", "num_neighbors", "neighbor_matrix_shifts"),
 )
+@scoped_torch_warp_stream
 def _batch_query_cluster_tile_op(
     cutoff: float,
     natom: int,
@@ -957,6 +961,7 @@ def _(
     return None
 
 
+@scoped_torch_warp_stream
 def batch_query_cluster_tile(
     sorted_atom_index: torch.Tensor,
     sorted_pos_x: torch.Tensor,
@@ -1188,6 +1193,7 @@ def batch_query_cluster_tile(
     )
 
 
+@scoped_torch_warp_stream
 def _batch_query_cluster_tile_optional(
     cell_batch: torch.Tensor,
     inv_cell_batch: torch.Tensor,
@@ -1320,6 +1326,7 @@ def _batch_query_cluster_tile_optional(
     "nvalchemiops::_batch_query_cluster_tile_coo",
     mutates_args=("pair_counter", "coo_list", "coo_shifts"),
 )
+@scoped_torch_warp_stream
 def _batch_query_cluster_tile_coo_op(
     cutoff: float,
     natom: int,
@@ -1403,6 +1410,7 @@ def _(
     return None
 
 
+@scoped_torch_warp_stream
 def _batch_query_cluster_tile_coo_optional(
     cell_batch: torch.Tensor,
     inv_cell_batch: torch.Tensor,

@@ -28,7 +28,10 @@ from nvalchemiops.neighbors.neighbor_utils import (
     estimate_max_neighbors,
     selective_zero_num_neighbors_single,
 )
-from nvalchemiops.torch._warp_op_helpers import register_noop_fake
+from nvalchemiops.torch._warp_op_helpers import (
+    register_noop_fake,
+    scoped_torch_warp_stream,
+)
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     compute_naive_num_shifts,
     get_neighbor_list_from_neighbor_matrix,
@@ -47,6 +50,7 @@ __all__ = ["naive_neighbor_list_dual_cutoff"]
         "num_neighbors2",
     ),
 )
+@scoped_torch_warp_stream
 def _naive_neighbor_matrix_no_pbc_dual_cutoff(
     positions: torch.Tensor,
     cutoff1: float,
@@ -111,6 +115,7 @@ def _naive_neighbor_matrix_no_pbc_dual_cutoff(
         "num_neighbors2",
     ),
 )
+@scoped_torch_warp_stream
 def _naive_neighbor_matrix_pbc_dual_cutoff(
     positions: torch.Tensor,
     cutoff1: float,
@@ -238,6 +243,7 @@ def _naive_neighbor_matrix_pbc_dual_cutoff(
         "num_neighbors2",
     ),
 )
+@scoped_torch_warp_stream
 def _naive_neighbor_matrix_no_pbc_dual_cutoff_selective(
     positions: torch.Tensor,
     cutoff1: float,
@@ -318,6 +324,7 @@ def _naive_neighbor_matrix_no_pbc_dual_cutoff_selective(
         "num_neighbors2",
     ),
 )
+@scoped_torch_warp_stream
 def _naive_neighbor_matrix_pbc_dual_cutoff_selective(
     positions: torch.Tensor,
     cutoff1: float,

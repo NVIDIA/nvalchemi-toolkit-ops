@@ -1448,6 +1448,24 @@ class TestPbcNoneHandling:
 class TestStandaloneSlabAPI:
     """Standalone compute_slab_correction() should validate output shapes and edges."""
 
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+    def test_current_stream_consumes_event_gated_input(self, torch_stream_runner):
+        device = torch.device("cuda:0")
+        source = _make_triclinic_slab_system(torch.float64, device)
+        actual_inputs = tuple(torch.empty_like(tensor) for tensor in source)
+        _, snapshots, expected = torch_stream_runner(
+            source,
+            actual_inputs,
+            lambda values: compute_slab_correction(
+                *values,
+                compute_forces=True,
+                compute_charge_gradients=True,
+                compute_virial=True,
+            ),
+        )
+        for result, reference in zip(snapshots, expected, strict=True):
+            torch.testing.assert_close(result, reference)
+
     def test_standalone_outputs_subset(self, device):
         """Standalone API should return the right tuple based on flags."""
         dtype = torch.float64

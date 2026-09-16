@@ -146,6 +146,9 @@ from nvalchemiops.math.spline import (
 from nvalchemiops.torch._warp_op_helpers import (
     register_warp_op_chain,
 )
+from nvalchemiops.torch._warp_op_helpers import (
+    scoped_warp_stream as _scoped_warp_stream,
+)
 from nvalchemiops.torch.autograd import (
     OutputSpec,
     WarpAutogradContextManager,
@@ -235,21 +238,6 @@ def _spline_weight(
 #
 # The Cartesian "force" returned by gather_gradient is ``-q · cell_inv_t.T · qgf``,
 # so we recover qgf as ``-(force @ cell.T)`` via a single matmul.
-
-
-def _scoped_warp_stream(device: torch.device):
-    """Bind Warp's current stream to PyTorch's current CUDA stream.
-
-    Required for ``torch.cuda.graph`` capture: without this, warp kernel
-    launches go to warp's default stream (separate from torch's capturing
-    stream) and aren't recorded into the graph, so replay silently no-ops.
-    """
-    if device.type != "cuda":
-        from contextlib import nullcontext
-
-        return nullcontext()
-    torch_stream = torch.cuda.current_stream(device)
-    return wp.ScopedStream(wp.stream_from_torch(torch_stream))
 
 
 def _wp_from_torch(tensor: torch.Tensor, dtype):

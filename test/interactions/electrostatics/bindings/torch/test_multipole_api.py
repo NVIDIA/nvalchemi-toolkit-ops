@@ -1400,6 +1400,34 @@ class TestCompileAutograd:
         )
 
 
+@pytest.mark.gpu
+def test_scf_energy_and_features_follow_a_nondefault_torch_stream(
+    device, torch_stream_runner
+):
+    """Public SCF routes consume event-gated inputs and feed Torch work on one stream."""
+    if not torch.cuda.is_available() or "cuda" not in str(device):
+        pytest.skip("CUDA is required for stream-interoperability coverage")
+
+    td = _torch_device(device)
+    positions, _, _, cell, source_feats = _build_test_system(
+        seed=41, n_atoms=4, box_len=5.0, device=td
+    )
+    cache = prepare_multipole_scf_cache(
+        cell, sigma=1.0, receiver_sigmas=[0.8, 1.2], k_cutoff=3.5
+    )
+    actual_positions = torch.empty_like(positions)
+    _, snapshots, expected = torch_stream_runner(
+        positions,
+        actual_positions,
+        lambda value: (
+            multipole_scf_step_energy(cache, value, source_feats),
+            multipole_scf_step_features(cache, value, source_feats),
+        ),
+    )
+    for actual, reference in zip(snapshots, expected, strict=True):
+        torch.testing.assert_close(actual, reference)
+
+
 class TestDoubleBackward:
     r"""Second-order autograd: ``create_graph=True`` on d E/d r so MLIP losses
     of the form ``l = w(E) + w(F) + w(S)`` flow gradients back to source_feats

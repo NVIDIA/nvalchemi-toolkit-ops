@@ -1316,6 +1316,31 @@ class TestParticleMeshEwald:
             k_cutoff,
         )
 
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+    def test_current_stream_consumes_event_gated_input(self, torch_stream_runner):
+        """The public PME result feeds Torch work on the caller's CUDA stream."""
+        setup = self._setup(N=4, L=8.0, seed=0xCAFE, sigma=1.0, alpha=0.5)
+        _, ref_positions, charges, dipoles, cell, idx_j, nptr, shifts, _ = setup
+        positions = torch.empty_like(ref_positions)
+        source_features = pack_charges_dipoles(charges, dipoles)
+        _, snapshot, expected = torch_stream_runner(
+            ref_positions,
+            positions,
+            lambda value: multipole_particle_mesh_ewald(
+                value,
+                source_features,
+                cell,
+                idx_j,
+                nptr,
+                shifts,
+                sigma=1.0,
+                alpha=0.5,
+                mesh_dimensions=(16, 16, 16),
+                spline_order=4,
+            ),
+        )
+        torch.testing.assert_close(snapshot, expected)
+
     @pytest.mark.parametrize("alpha", [0.4, 0.6])
     @pytest.mark.parametrize("sigma", [0.8, 1.0, 1.2])
     @pytest.mark.parametrize("spline_order", [4, 5, 6])

@@ -65,6 +65,23 @@ def _orthorhombic_cell(
 # Correctness
 # =============================================================================
 class TestTileNeighborListCorrectness:
+    def test_current_stream_consumes_event_gated_input(
+        self, device, dtype, torch_stream_runner
+    ):
+        """Cluster-tile temporaries and outputs stay on the caller's stream."""
+        source = torch.tensor(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=dtype, device=device
+        )
+        positions = torch.empty_like(source)
+        cell = _orthorhombic_cell(4.0, device, dtype)
+        _, snapshot, expected = torch_stream_runner(
+            source,
+            positions,
+            lambda value: cluster_tile_neighbor_list(value, 1.0, cell, max_neighbors=8),
+        )
+        for result, reference in zip(snapshot, expected, strict=True):
+            torch.testing.assert_close(result, reference)
+
     def test_single_atom_no_neighbors(self, device, dtype):
         """Single atom system should have no neighbors."""
         positions = torch.tensor([[0.0, 0.0, 0.0]], dtype=dtype, device=device)
