@@ -281,6 +281,12 @@ for step in range(max_evals):
 # a convergence claim: it means the line search could not make progress even
 # from a steepest-descent direction, and the positions have been restored to
 # the last accepted point.
+#
+# Note which force array to trust afterwards. ``forces`` is an input the
+# optimizer only reads, so after a rollback it still holds the forces at the
+# *rejected* trial and no longer matches ``positions``. ``force_base`` is
+# written alongside ``x_base`` at every accepted point, so it is the one that
+# describes the geometry actually handed back.
 
 final_status = int(status.numpy()[0])
 status_name = {

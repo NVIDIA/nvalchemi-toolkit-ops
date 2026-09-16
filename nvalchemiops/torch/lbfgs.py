@@ -90,6 +90,12 @@ keep going, ``LBFGS_CONVERGED`` means ``positions`` hold the answer, and
 ``LBFGS_LS_FAILED`` means the line search stalled even from a steepest-descent
 direction and ``positions`` were restored to the last accepted point.
 
+``forces`` is an input and is never written back, so after ``LBFGS_LS_FAILED``
+it still holds the forces at the *rejected* trial and no longer matches the
+restored ``positions``. Read ``force_base`` instead: it is written alongside
+``x_base`` at every accepted point, so ``(positions, force_base)`` is the
+consistent pair on every terminal status.
+
 These operations mutate their inputs and are not differentiable; they are
 registered as PyTorch custom operators so they trace correctly under
 ``torch.compile``.

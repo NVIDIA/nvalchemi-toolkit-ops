@@ -77,6 +77,17 @@ To restart a relaxation, rebuild the buffers in that initial state. There is
 no separate reset: in a functional setting resetting and allocating are the
 same operation.
 
+Matching forces after a rollback
+--------------------------------
+``forces`` is an input: it is read, never aliased or returned. After
+``LBFGS_LS_FAILED`` the optimizer moves ``positions`` *backwards* to the last
+accepted point, so the ``forces`` you passed in -- evaluated at the rejected
+trial -- no longer describe the returned ``positions``. Read ``force_base``
+instead, which is written alongside ``x_base`` at every accepted point and is
+returned with the other buffers, so ``(positions, force_base)`` is consistent on
+every terminal status. ``LBFGS_CONVERGED`` has no such hazard, since positions
+are never moved when it is decided.
+
 Donation and pointer stability
 ------------------------------
 Every mutable array is declared as an input-output alias, so XLA may reuse each

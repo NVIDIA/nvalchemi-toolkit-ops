@@ -57,7 +57,30 @@ Reading ``status``
     direction with no history*. ``positions`` have been restored to the last
     accepted point. This is *not* a convergence claim; if you consider a stalled
     search with acceptably small forces to be a success, apply that policy
-    yourself from ``status`` and the returned forces.
+    yourself from ``status`` and ``force_base`` -- **not** from your own
+    ``forces`` array, which is stale in exactly this case (see below).
+
+Matching forces after a rollback
+--------------------------------
+``forces`` is an input: you evaluate it, the optimizer reads it. It is never
+written back, so after a step it still holds whatever your model returned, at
+the geometry it was evaluated at.
+
+That matters for one status. ``LBFGS_LS_FAILED`` moves ``positions`` *backwards*
+to the last accepted point, so your ``forces`` array -- evaluated at the
+rejected trial -- no longer describes ``positions``. Deciding anything from it
+at that moment gives an answer for a geometry the optimizer has discarded.
+
+``force_base`` is the matching pair: it is written alongside ``x_base`` at every
+accepted point, and after the rollback ``positions == x_base``. So
+``(positions, force_base)`` is consistent on every terminal status, and
+``force_base`` is what a force-based policy should read. If you would rather
+have fresh forces, evaluate your model once more at the restored
+``positions``.
+
+``LBFGS_CONVERGED`` has no such hazard: convergence is only ever decided at an
+accepted point or at the very first evaluation, never at a rejected trial, so
+``positions`` are not moved and your ``forces`` still describe them.
 
 A line search that stalls while history is present is not reported as a
 failure. The optimizer rolls back to the last accepted point, discards the
@@ -277,6 +300,8 @@ LBFGS_NEED_EVAL = 0
 #: The system has converged; ``positions`` hold the relaxed geometry.
 LBFGS_CONVERGED = 1
 #: The line search stalled; ``positions`` were restored to the last good point.
+#: The caller's ``forces`` array is then stale, because it was evaluated at the
+#: rejected trial; read ``force_base`` for the forces at the restored geometry.
 LBFGS_LS_FAILED = 2
 
 # -----------------------------------------------------------------------------

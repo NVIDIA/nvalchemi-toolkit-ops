@@ -477,6 +477,37 @@ class TestLBFGSLineSearch:
         )
 
     @pytest.mark.parametrize("device", DEVICES)
+    def test_failure_leaves_force_base_matching_the_restored_geometry(self, device):
+        """After a rollback, ``force_base`` is the forces array that is valid.
+
+        ``forces`` is an input the optimizer only reads, so once the rollback
+        moves ``positions`` back it describes the *rejected* trial, not what
+        the caller is handed. A caller applying a force-based policy after
+        ``LBFGS_LS_FAILED`` must read ``force_base``, so pin both halves: that
+        it matches the restored geometry, and that the caller's own array does
+        not.
+        """
+        d = _one_atom(100.0, device)
+        for _ in range(2):
+            d.evaluate()
+            d.step(force_tol=1e-10, maxstep=1000.0, max_ls_iter=1)
+        assert d.status[0] == LBFGS_LS_FAILED
+
+        # What the forces actually are at the geometry handed back.
+        truth = d.potential.energy_forces(d.positions.numpy())[1]
+        np.testing.assert_allclose(
+            d.state["force_base"].numpy(), truth, rtol=1e-14, atol=0
+        )
+
+        # And the guarantee is worth something only because the input array is
+        # genuinely stale here; if this ever stopped holding, the test above
+        # would pass for the wrong reason.
+        assert not np.allclose(d.forces.numpy(), truth), (
+            "the caller's forces happen to match, so this case no longer "
+            "exercises the rollback hazard"
+        )
+
+    @pytest.mark.parametrize("device", DEVICES)
     def test_stall_with_history_restarts_instead_of_failing(self, device):
         """A stalled line search discards the history and keeps going.
 

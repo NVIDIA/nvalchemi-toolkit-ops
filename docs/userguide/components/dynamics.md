@@ -533,7 +533,16 @@ in the same order, since JAX arrays are immutable.
 
 `LBFGS_LS_FAILED` is not a convergence claim. If you consider a stalled search
 with acceptably small forces to be a success, apply that policy yourself from
-`status` and the returned forces.
+`status` and `force_base`.
+
+**Use `force_base`, not your own `forces`, after a failure.** `forces` is an
+input and is never written back, so it still holds what your model returned at
+the *rejected* trial, while `LBFGS_LS_FAILED` has moved `positions` back to the
+last accepted point — the two no longer describe the same geometry. `force_base`
+is written alongside `x_base` at every accepted point, so `(positions,
+force_base)` is the consistent pair on any terminal status. Alternatively,
+evaluate your model once more at the restored `positions`. `LBFGS_CONVERGED`
+has no such hazard: positions are not moved when it is decided.
 
 **Batching.** Systems are identified by a sorted `batch_idx` and relax
 independently: each runs its own line search and keeps its own history, and
