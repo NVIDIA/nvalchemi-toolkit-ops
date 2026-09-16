@@ -4285,7 +4285,43 @@ def _multipole_background_energy_per_atom(
 ) -> torch.Tensor:
     """Return the positive uniform-background correction per atom.
 
-    The caller subtracts this correction from a raw reciprocal-space energy.
+    Parameters
+    ----------
+    charges : torch.Tensor
+        Per-atom charges with shape ``(N,)``. The values are converted to
+        ``float64`` before the correction is evaluated.
+    alpha : float
+        Positive Ewald splitting parameter.
+    volume : torch.Tensor
+        Cell volume in the same length units used for ``alpha``. For one
+        system, this is a scalar or one-element tensor. For batched input, it
+        is either shape ``(B,)`` or a scalar shared by all ``B`` systems.
+    batch_idx : torch.Tensor, optional
+        ``int32`` or ``int64`` system index for each atom, with shape ``(N,)``.
+        When omitted, all atoms form one system.
+    n_systems : int, optional
+        Number of packed systems. It is required for compile-safe batched
+        calls; eager calls infer it from ``batch_idx`` when omitted.
+
+    Returns
+    -------
+    torch.Tensor
+        Positive ``float64`` tensor with shape ``(N,)``. Atom ``i`` receives
+        ``FIELD_CONSTANT * q_i * Q_b / (8 * alpha**2 * V_b)``, where ``b`` is
+        its system, ``Q_b`` is that system's total charge, and ``V_b`` is its
+        cell volume.
+
+    Notes
+    -----
+    The reciprocal-space PME sum omits its zero mode. Callers subtract this
+    positive correction to match the direct-k Ewald convention for charged
+    cells. The correction depends only on monopole charges; dipoles and
+    quadrupoles do not contribute.
+
+    See Also
+    --------
+    multipole_pme_energy_corrections
+        Combines this background term with the per-atom self-energy terms.
     """
     charges_f64 = charges.to(torch.float64)
     c_bg_no_v = _multipole_background_coefficient(alpha)

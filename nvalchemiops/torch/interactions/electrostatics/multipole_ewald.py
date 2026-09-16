@@ -4907,8 +4907,45 @@ def _multipole_ewald_background_energy_per_atom(
 ) -> torch.Tensor:
     """Return the positive per-atom uniform-background correction.
 
-    This is subtracted from the split Ewald energy so it matches the direct-k
-    convention with the reciprocal zero mode removed.
+    Parameters
+    ----------
+    source_feats : torch.Tensor
+        Per-atom monopole or multipole features with shape ``(N, C)``. The
+        monopole charge is read from ``source_feats[..., 0]``.
+    alpha : float
+        Positive Ewald splitting parameter.
+    volume : torch.Tensor
+        Cell volume in the same length units used for ``alpha``. For one
+        system, this is a scalar or one-element tensor. For batched input, it
+        is either shape ``(B,)`` or a scalar shared by all ``B`` systems.
+    batch_idx : torch.Tensor, optional
+        ``int32`` or ``int64`` system index for each atom, with shape ``(N,)``.
+        When omitted, all atoms form one system.
+    n_systems : int, optional
+        Number of packed systems. It is required for compile-safe batched
+        calls; eager calls infer it from ``batch_idx`` when omitted.
+
+    Returns
+    -------
+    torch.Tensor
+        Positive ``float64`` tensor with shape ``(N,)``. Atom ``i`` receives
+        ``FIELD_CONSTANT * q_i * Q_b / (8 * alpha**2 * V_b)``, where ``q_i``
+        is its monopole charge and ``Q_b`` and ``V_b`` are its system charge
+        and volume.
+
+    Notes
+    -----
+    This delegates to ``_multipole_background_energy_per_atom`` after
+    extracting the monopole channel. The split Ewald caller subtracts the
+    correction because the reciprocal sum omits the zero mode. Dipole and
+    quadrupole channels do not contribute.
+
+    See Also
+    --------
+    _multipole_background_energy_per_atom
+        PME implementation that evaluates the monopole correction.
+    multipole_ewald_summation
+        Full Ewald energy that subtracts this per-atom correction.
     """
     from nvalchemiops.torch.interactions.electrostatics.pme_multipole import (
         _multipole_background_energy_per_atom,
