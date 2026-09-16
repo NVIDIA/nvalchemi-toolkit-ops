@@ -532,6 +532,7 @@ def fourier_dftd3(
         int(mesh_ny),
         int(mesh_nz),
         int(num_bins),
+        int(FD3_KSPACE_BLOCK_SIZE),
         int(n_species),
         int(rank),
         bool(compute_virial),

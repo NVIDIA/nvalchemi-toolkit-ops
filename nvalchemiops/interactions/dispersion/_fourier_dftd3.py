@@ -661,6 +661,7 @@ def _fd3_kspace_kernel(
     mesh_ny: wp.int32,
     mesh_nz: wp.int32,
     num_bins: wp.int32,
+    block_size: wp.int32,
     n_species: wp.int32,
     rank: wp.int32,
     compute_virial: bool,
@@ -762,7 +763,9 @@ def _fd3_kspace_kernel(
                 ) * response
 
     contribution = wp.where(active, prefactor * accumulated, zero)
-    thread_in_block = flat % FD3_KSPACE_BLOCK_SIZE
+    # The launch block size, not the constant: on CPU a block is one thread, and
+    # reducing against the wrong width would silence every bin but the first of each.
+    thread_in_block = flat % block_size
 
     block_energy = wp.tile_sum(wp.tile(contribution))[0]
     if thread_in_block == 0:
@@ -1022,6 +1025,7 @@ for _scalar, _vector, _matrix, _pair in zip(_SCALARS, _VECTORS, _MATRICES, _PAIR
             wp.int32,
             wp.int32,
             wp.int32,
+            wp.int32,
             wp.bool,
             wp.array(dtype=_scalar),
             wp.array4d(dtype=_pair),
@@ -1149,7 +1153,9 @@ def fd3_kspace(
     num_systems = volumes.shape[0]
     mesh_nx, mesh_ny, mesh_nz = mesh_dimensions
     num_bins = mesh_nx * mesh_ny * (mesh_nz // 2 + 1)
-    block = FD3_KSPACE_BLOCK_SIZE
+    # Tile reductions need a real block launch, which only CUDA provides; on CPU a block is
+    # one thread, which reduces and accumulates its own bin.
+    block = FD3_KSPACE_BLOCK_SIZE if "cuda" in str(device) else 1
     padded_bins = -(-num_bins // block) * block
     wp.launch(
         _fd3_kspace_kernel_overload[wp_dtype],
@@ -1171,6 +1177,7 @@ def fd3_kspace(
             wp.int32(mesh_ny),
             wp.int32(mesh_nz),
             wp.int32(num_bins),
+            wp.int32(block),
             wp.int32(n_species),
             wp.int32(rank),
             compute_virial,

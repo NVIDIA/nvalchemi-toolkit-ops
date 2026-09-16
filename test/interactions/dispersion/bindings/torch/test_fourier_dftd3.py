@@ -718,6 +718,42 @@ class TestPrecision:
 
 
 @pytest.mark.gpu
+class TestDeviceAgreement:
+    """The same pipeline on CPU and on CUDA.
+
+    The Warp layer's end-to-end classes are GPU-only, so nothing else runs the mesh passes
+    on CPU. That matters because the two devices take different paths through the block
+    reductions: a block is a warp on CUDA and a single thread on CPU, and a reduction
+    written against the wrong width silences most of the mesh while leaving the forces --
+    which come from the cotangent field rather than a reduction -- untouched.
+    """
+
+    @pytest.mark.parametrize("mesh", [(16, 16, 16), (32, 32, 32)])
+    def test_energy_forces_and_virial_match_between_devices(self, mesh):
+        """Every output, not just the forces, has to agree across devices."""
+        results = {}
+        for device in ("cpu", "cuda:0"):
+            system = _system(device)
+            results[device] = _evaluate(
+                system, mesh_dimensions=mesh, compute_virial=True
+            )
+        cpu, gpu = results["cpu"], results["cuda:0"]
+        np.testing.assert_allclose(
+            cpu[0].cpu().numpy(), gpu[0].cpu().numpy(), rtol=1e-11
+        )
+        np.testing.assert_allclose(
+            cpu[1].cpu().numpy(),
+            gpu[1].cpu().numpy(),
+            atol=1e-11 * float(gpu[1].abs().max()),
+        )
+        np.testing.assert_allclose(
+            cpu[2].cpu().numpy(),
+            gpu[2].cpu().numpy(),
+            atol=1e-11 * float(gpu[2].abs().max()),
+        )
+
+
+@pytest.mark.gpu
 class TestTorchCompile:
     """The op has to survive tracing, and do so without falling out of the graph."""
 

@@ -117,7 +117,8 @@ def _evaluate(system, **kwargs):
         **DAMPING,
     )
     arguments.update(kwargs)
-    return fourier_dftd3(system["positions"], system["numbers"], **arguments)
+    positions = arguments.pop("positions", system["positions"])
+    return fourier_dftd3(positions, system["numbers"], **arguments)
 
 
 def _single(box, seed):
@@ -357,6 +358,47 @@ class TestNeighbourFormats:
         """Supplying no neighbour format is an error."""
         with pytest.raises(ValueError, match="Must provide either"):
             _evaluate(system, neighbor_list=None, neighbor_ptr=None, unit_shifts=None)
+
+
+@pytest.mark.gpu
+class TestPrecision:
+    """Both floating precisions are dispatched."""
+
+    def test_float32_tracks_float64(self, device, system):
+        """The single-precision path reproduces the double-precision one to its own accuracy.
+
+        The Warp kernels are dtype-overloaded, so a missing or mismatched overload shows up
+        as a dispatch failure or a silently different answer rather than as a type error.
+        """
+        numpy = system["numpy"]
+        outputs = {}
+        for dtype in (jnp.float64, jnp.float32):
+            parameters = FourierD3Parameters.from_tables(
+                numpy["rcov"],
+                numpy["r4r2"],
+                numpy["c6ab"],
+                numpy["cn_ref"],
+                numpy["species"],
+                dtype=dtype,
+            )
+            outputs[dtype] = _evaluate(
+                system,
+                positions=jnp.asarray(numpy["positions"], dtype=dtype),
+                cell=jnp.asarray(numpy["cell"], dtype=dtype),
+                fd3_params=parameters,
+            )
+        double, single = outputs[jnp.float64], outputs[jnp.float32]
+        assert single[0].dtype == jnp.float32
+        assert single[1].dtype == jnp.float32
+        # Single precision, so forces are compared against the magnitude of the result
+        # rather than component by component: the small components carry the cancellation.
+        np.testing.assert_allclose(float(single[0][0]), float(double[0][0]), rtol=1e-4)
+        np.testing.assert_allclose(
+            np.asarray(single[1]),
+            np.asarray(double[1]),
+            rtol=0.0,
+            atol=1e-4 * float(jnp.abs(double[1]).max()),
+        )
 
 
 @pytest.mark.gpu
