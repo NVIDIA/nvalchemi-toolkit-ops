@@ -284,8 +284,9 @@ def segmented_sum(
     x : torch.Tensor
         Shape ``(N,)`` or ``(N, 3)``.  dtype float32 or float64.
     idx : torch.Tensor
-        Shape ``(N,)``, dtype int32 or int64. Sorted segment indices in
-        ``[0, num_segments)``.
+        Shape ``(N,)``, dtype int32 or int64. Values must be representable as
+        int32 and lie in ``[0, num_segments)``. int64 inputs are converted to
+        int32 internally.
     num_segments : int
         Number of segments.
 
@@ -393,7 +394,9 @@ def segmented_dot(
     x, y : torch.Tensor
         Shape ``(N,)`` or ``(N, 3)``.  Same dtype and device.
     idx : torch.Tensor
-        Shape ``(N,)``, dtype int32 or int64.
+        Shape ``(N,)``, dtype int32 or int64. Values must be representable as
+        int32 and lie in ``[0, num_segments)``. int64 inputs are converted to
+        int32 internally.
     num_segments : int
         Number of segments.
 
@@ -501,7 +504,9 @@ def segmented_mul(
     y : torch.Tensor
         Shape ``(num_segments,)`` — one scalar per segment.
     idx : torch.Tensor
-        Shape ``(N,)``, dtype int32 or int64.
+        Shape ``(N,)``, dtype int32 or int64. Values must be representable as
+        int32 and lie in ``[0, num_segments)``. int64 inputs are converted to
+        int32 internally.
     num_segments : int
         Number of segments.  Must equal ``y.shape[0]``.
 
@@ -648,7 +653,9 @@ def segmented_mean(
     x : torch.Tensor
         Shape ``(N,)`` or ``(N, 3)``.
     idx : torch.Tensor
-        Shape ``(N,)``, dtype int32 or int64. Sorted.
+        Shape ``(N,)``, dtype int32 or int64. Sorted. Values must be
+        representable as int32 and lie in ``[0, num_segments)``. int64 inputs
+        are converted to int32 internally.
     num_segments : int
         Number of segments.
 
@@ -801,7 +808,9 @@ def segmented_rms_norm(
     x : torch.Tensor
         Shape ``(N, 3)``.  dtype float32 or float64.
     idx : torch.Tensor
-        Shape ``(N,)``, dtype int32 or int64. Sorted.
+        Shape ``(N,)``, dtype int32 or int64. Sorted. Values must be
+        representable as int32 and lie in ``[0, num_segments)``. int64 inputs
+        are converted to int32 internally.
     num_segments : int
         Number of segments.
 
@@ -909,7 +918,9 @@ def segmented_matvec(
     m : torch.Tensor
         Shape ``(num_segments, 3, 3)`` — one matrix per segment.
     idx : torch.Tensor
-        Shape ``(N,)``, dtype int32 or int64.
+        Shape ``(N,)``, dtype int32 or int64. Values must be representable as
+        int32 and lie in ``[0, num_segments)``. int64 inputs are converted to
+        int32 internally.
     num_segments : int
         Number of segments.  Must equal ``m.shape[0]``.
 

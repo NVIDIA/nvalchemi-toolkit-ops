@@ -9,6 +9,9 @@
   compatibility with `warp>=1.15`.
 - Warp initialization now retains warning-level diagnostics instead of
   suppressing all Warp log output.
+- PyTorch segmented operations now accept int64 segment indices whose values
+  fit in int32; these inputs are converted to int32 internally.
+
 ### Added
 
 - Torch and JAX Ewald now expose caller-retained reciprocal Miller topology via
