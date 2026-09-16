@@ -26,28 +26,21 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-try:
-    import torch
+# Imported rather than guarded by a flag, so that the module body cannot name ``torch``
+# while it is undefined. Default arguments, class bodies and decorator arguments all run at
+# import time, which is before a module-level skipif can fire, so a flag would turn a missing
+# optional dependency into a NameError during collection.
+torch = pytest.importorskip("torch", reason="PyTorch not installed.")
 
-    TORCH_AVAILABLE = True
-except ImportError:
-    TORCH_AVAILABLE = False
-
-if TORCH_AVAILABLE:
-    from nvalchemiops.torch.interactions.dispersion import (
-        FourierD3Parameters,
-        FourierD3Setup,
-        fourier_dftd3,
-    )
-    from test.interactions.dispersion.test_fourier_dftd3 import (
-        _neighbour_list,
-        _reference_tables,
-        _to_dense,
-    )
-
-pytestmark = pytest.mark.skipif(
-    not TORCH_AVAILABLE,
-    reason="PyTorch not installed - these tests require torch to be available",
+from nvalchemiops.torch.interactions.dispersion import (  # noqa: E402
+    FourierD3Parameters,
+    FourierD3Setup,
+    fourier_dftd3,
+)
+from test.interactions.dispersion.test_fourier_dftd3 import (  # noqa: E402
+    _neighbour_list,
+    _reference_tables,
+    _to_dense,
 )
 
 DAMPING = dict(a1=0.4289, a2=4.4407, s8=0.7875, s6=1.0)
@@ -55,8 +48,15 @@ R_CUT = 4.0
 MESH = (32, 32, 32)
 
 
-def _system(device, dtype=torch.float64, n_atoms=8, box=9.0, seed=0):
-    """A small periodic cell with its neighbour list in both formats."""
+def _system(device, dtype=None, n_atoms=8, box=9.0, seed=0):
+    """A small periodic cell with its neighbour list in both formats.
+
+    ``dtype`` defaults to ``torch.float64``, resolved on the call rather than written into
+    the signature. Default arguments are evaluated when the module body runs, which is
+    before pytest can apply the module-level skip, so naming ``torch`` there would raise a
+    NameError during collection wherever Torch is not installed instead of skipping.
+    """
+    dtype = torch.float64 if dtype is None else dtype
     rng = np.random.default_rng(seed)
     c6ab, cn_ref, species = _reference_tables()
     max_z = c6ab.shape[0]
