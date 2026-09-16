@@ -239,7 +239,9 @@ def prepare_cluster_tile(
     num_atoms = positions.shape[0]
     if max_neighbors is None:
         max_neighbors = max(
-            estimate_max_neighbors(cutoff2 if cutoff2 is not None else cutoff),
+            estimate_max_neighbors(
+                cutoff if cutoff2 is None else max(float(cutoff), float(cutoff2))
+            ),
             TILE_GROUP_SIZE,
         )
     if fill_value is None:

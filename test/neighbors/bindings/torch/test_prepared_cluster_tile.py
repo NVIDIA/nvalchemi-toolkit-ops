@@ -89,6 +89,37 @@ def _matrix_records(
     return records
 
 
+def _reference_matrix_records(
+    positions: torch.Tensor,
+    cutoff: float,
+    batch_ptr: torch.Tensor | None = None,
+) -> list[list[tuple[int, int, int, int]]]:
+    """Return matrix records from an independent non-periodic reference."""
+    values = positions.cpu().tolist()
+    cutoff_squared = cutoff * cutoff
+    segments = (
+        zip(batch_ptr.cpu().tolist(), batch_ptr.cpu().tolist()[1:])
+        if batch_ptr is not None
+        else [(0, len(values))]
+    )
+    records = [[] for _ in values]
+    for start, stop in segments:
+        for source in range(start, stop):
+            records[source] = sorted(
+                (target, 0, 0, 0)
+                for target in range(start, stop)
+                if target != source
+                and sum(
+                    (coordinate - source_coordinate) ** 2
+                    for coordinate, source_coordinate in zip(
+                        values[target], values[source]
+                    )
+                )
+                <= cutoff_squared
+            )
+    return records
+
+
 def _coo_records(output: tuple[torch.Tensor, ...]) -> list[tuple[int, ...]]:
     """Validate CSR ownership and return order-independent COO records."""
     pairs, pointer, shifts = output
@@ -193,6 +224,50 @@ def test_prepared_dual_matrix_matches_direct(batched: bool) -> None:
         cutoff2=1.6,
     )
     _assert_same(actual, expected, format="matrix", batched=batched, dual=True)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize(("cutoff", "cutoff2"), [(4.0, 0.91), (4.0, 4.0)])
+@pytest.mark.parametrize("batched", [False, True])
+def test_prepared_dual_matrix_default_capacity_matches_reference(
+    cutoff: float,
+    cutoff2: float,
+    batched: bool,
+) -> None:
+    """Default dual-cutoff capacity covers both independently referenced cutoffs."""
+    indices = torch.arange(80 if batched else 40, dtype=torch.float32, device="cuda")
+    local = indices.remainder(40)
+    positions = torch.stack(
+        (
+            local * 0.05,
+            torch.zeros_like(local),
+            torch.zeros_like(local),
+        ),
+        dim=1,
+    )
+    if batched:
+        cell = torch.eye(3, dtype=torch.float32, device="cuda").repeat(2, 1, 1) * 20.0
+        batch_ptr = torch.tensor([0, 40, 80], dtype=torch.int32, device="cuda")
+    else:
+        cell = torch.eye(3, dtype=torch.float32, device="cuda") * 20.0
+        batch_ptr = None
+    state = prepare_cluster_tile(
+        positions,
+        cutoff,
+        cell,
+        format="matrix",
+        batch_ptr=batch_ptr,
+        cutoff2=cutoff2,
+        max_tiles_per_group=4,
+    )
+    actual = cluster_tile_neighbor_list_prepared(positions, cell, state)
+    assert state.max_neighbors == 64
+    assert _matrix_records(actual, 0) == _reference_matrix_records(
+        positions, cutoff, batch_ptr
+    )
+    assert _matrix_records(actual, 3) == _reference_matrix_records(
+        positions, cutoff2, batch_ptr
+    )
 
 
 @pytest.mark.gpu
