@@ -802,6 +802,7 @@ class TestJaxBatchClusterTileAutograd:
 # slicing is enough to extend to the batched case.
 from test.neighbors.bindings.jax.test_cluster_tile import (  # noqa: E402
     _brute_force_pairs_full,
+    _matrix_to_pair_set_full,
 )
 
 
@@ -881,6 +882,34 @@ class TestJaxBatchClusterTileCutoff2Selective:
         assert len(out) == 6
         _nm1, nn1, _sh1, _nm2, nn2, _sh2 = out
         assert int(nn2.sum()) >= int(nn1.sum())
+
+    @pytest.mark.parametrize("cutoff2", [0.91, 4.0])
+    def test_default_capacity_uses_larger_dual_cutoff(self, cutoff2):
+        """Reversed and equal dual cutoffs preserve each input-order matrix."""
+        positions = jnp.stack(
+            (
+                jnp.arange(40, dtype=jnp.float32) * jnp.float32(0.05),
+                jnp.zeros(40, dtype=jnp.float32),
+                jnp.zeros(40, dtype=jnp.float32),
+            ),
+            axis=1,
+        )
+        cell_batch = jnp.eye(3, dtype=jnp.float32)[None] * 10.0
+        batch_ptr = jnp.array([0, 40], dtype=jnp.int32)
+        out = batch_cluster_tile_neighbor_list(
+            positions, 4.0, cell_batch, batch_ptr, cutoff2=cutoff2
+        )
+        for offset, reference_cutoff in ((0, 4.0), (3, cutoff2)):
+            got = _matrix_to_pair_set_full(
+                *out[offset : offset + 3], positions.shape[0]
+            )
+            reference = _brute_force_pairs_full(
+                np.asarray(positions),
+                np.asarray(cell_batch[0]),
+                reference_cutoff,
+                pbc=True,
+            )
+            assert got == reference
 
     def test_rebuild_flags_false_preserves_previous_batch_outputs(self):
         positions, cell_batch, batch_ptr = _make_batch([32, 64], [6.0, 6.0], seed=32)

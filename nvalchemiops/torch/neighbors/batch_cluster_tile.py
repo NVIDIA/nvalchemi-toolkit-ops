@@ -696,6 +696,124 @@ def _(
     return None
 
 
+def _validate_batch_cluster_tile_scratch(
+    *,
+    positions: torch.Tensor,
+    batch_ptr: torch.Tensor,
+    sorted_atom_index: torch.Tensor,
+    sort_inv: torch.Tensor,
+    sorted_pos_x: torch.Tensor,
+    sorted_pos_y: torch.Tensor,
+    sorted_pos_z: torch.Tensor,
+    batch_idx_sorted: torch.Tensor,
+    batch_ptr_padded: torch.Tensor,
+    group_system: torch.Tensor,
+    group_ptr: torch.Tensor,
+    group_ctr_x: torch.Tensor,
+    group_ctr_y: torch.Tensor,
+    group_ctr_z: torch.Tensor,
+    group_ext_x: torch.Tensor,
+    group_ext_y: torch.Tensor,
+    group_ext_z: torch.Tensor,
+    num_tiles: torch.Tensor,
+    tile_row_group: torch.Tensor,
+    tile_col_group: torch.Tensor,
+    tile_system: torch.Tensor,
+) -> None:
+    """Validate caller-owned batch build scratch before it is modified."""
+    int_tensors = {
+        "sorted_atom_index": sorted_atom_index,
+        "sort_inv": sort_inv,
+        "batch_idx_sorted": batch_idx_sorted,
+        "batch_ptr_padded": batch_ptr_padded,
+        "group_system": group_system,
+        "group_ptr": group_ptr,
+        "num_tiles": num_tiles,
+        "tile_row_group": tile_row_group,
+        "tile_col_group": tile_col_group,
+        "tile_system": tile_system,
+    }
+    float_tensors = {
+        "sorted_pos_x": sorted_pos_x,
+        "sorted_pos_y": sorted_pos_y,
+        "sorted_pos_z": sorted_pos_z,
+        "group_ctr_x": group_ctr_x,
+        "group_ctr_y": group_ctr_y,
+        "group_ctr_z": group_ctr_z,
+        "group_ext_x": group_ext_x,
+        "group_ext_y": group_ext_y,
+        "group_ext_z": group_ext_z,
+    }
+    for name, tensor in int_tensors.items():
+        if tensor.device != positions.device or tensor.dtype != torch.int32:
+            raise ValueError(f"{name} must be an int32 tensor on positions.device")
+        if tensor.ndim != 1:
+            raise ValueError(f"{name} must be 1D")
+    for name, tensor in float_tensors.items():
+        if tensor.device != positions.device or tensor.dtype != positions.dtype:
+            raise ValueError(f"{name} must match positions device and dtype")
+        if tensor.ndim != 1:
+            raise ValueError(f"{name} must be 1D")
+
+    n_atoms = positions.shape[0]
+    num_systems = batch_ptr.shape[0] - 1
+    if sort_inv.shape[0] != n_atoms:
+        raise ValueError("sort_inv must have length N")
+    if batch_ptr_padded.shape[0] != num_systems + 1:
+        raise ValueError("batch_ptr_padded must have length S + 1")
+    if group_ptr.shape[0] != num_systems + 1:
+        raise ValueError("group_ptr must have length S + 1")
+    if num_tiles.shape[0] != 1:
+        raise ValueError("num_tiles must have length 1")
+    tile_capacity = tile_row_group.shape[0]
+    if (
+        tile_col_group.shape[0] != tile_capacity
+        or tile_system.shape[0] != tile_capacity
+    ):
+        raise ValueError(
+            "tile_row_group, tile_col_group, and tile_system must have equal capacity"
+        )
+
+    padded_length = sorted_atom_index.shape[0]
+    padded_tensors = (sorted_pos_x, sorted_pos_y, sorted_pos_z, batch_idx_sorted)
+    if any(tensor.shape[0] != padded_length for tensor in padded_tensors):
+        raise ValueError("padded atom scratch tensors must have a common length")
+    if padded_length % TILE_GROUP_SIZE != 0:
+        raise ValueError(
+            "padded atom scratch length must be divisible by TILE_GROUP_SIZE"
+        )
+    ngroup = padded_length // TILE_GROUP_SIZE
+    if group_system.shape[0] != ngroup:
+        raise ValueError("group_system must have length ngroup")
+    group_padded = (
+        (ngroup + TILE_GROUP_SIZE - 1) // TILE_GROUP_SIZE
+    ) * TILE_GROUP_SIZE + TILE_GROUP_SIZE
+    if any(
+        tensor.shape[0] != group_padded
+        for tensor in (
+            group_ctr_x,
+            group_ctr_y,
+            group_ctr_z,
+            group_ext_x,
+            group_ext_y,
+            group_ext_z,
+        )
+    ):
+        raise ValueError("group bounding-box scratch must have padded ngroup length")
+
+    current_padded_atoms = (
+        ((batch_ptr[1:] - batch_ptr[:-1] + TILE_GROUP_SIZE - 1) // TILE_GROUP_SIZE)
+        * TILE_GROUP_SIZE
+    ).sum()
+    if torch.compiler.is_compiling():
+        torch._assert_async(
+            current_padded_atoms == padded_length,
+            "scratch padded atom length must match the current batch_ptr",
+        )
+    elif int(current_padded_atoms.item()) != padded_length:
+        raise ValueError("scratch padded atom length must match the current batch_ptr")
+
+
 def batch_build_cluster_tile_list(
     positions: torch.Tensor,
     cutoff: float,
@@ -819,6 +937,30 @@ def batch_build_cluster_tile_list(
         )
     elif int(batch_ptr[-1].item()) != N:
         raise ValueError(f"batch_ptr[-1] ({int(batch_ptr[-1])}) != N ({N})")
+
+    _validate_batch_cluster_tile_scratch(
+        positions=positions,
+        batch_ptr=batch_ptr,
+        sorted_atom_index=sorted_atom_index,
+        sort_inv=sort_inv,
+        sorted_pos_x=sorted_pos_x,
+        sorted_pos_y=sorted_pos_y,
+        sorted_pos_z=sorted_pos_z,
+        batch_idx_sorted=batch_idx_sorted,
+        batch_ptr_padded=batch_ptr_padded,
+        group_system=group_system,
+        group_ptr=group_ptr,
+        group_ctr_x=group_ctr_x,
+        group_ctr_y=group_ctr_y,
+        group_ctr_z=group_ctr_z,
+        group_ext_x=group_ext_x,
+        group_ext_y=group_ext_y,
+        group_ext_z=group_ext_z,
+        num_tiles=num_tiles,
+        tile_row_group=tile_row_group,
+        tile_col_group=tile_col_group,
+        tile_system=tile_system,
+    )
 
     if inv_cell_batch is None:
         inv_cell_batch = torch.linalg.inv(cell_batch).contiguous()
@@ -2229,8 +2371,8 @@ def batch_cluster_tile_neighbor_list(
         ``batch_idx`` argument, the dispatcher derives ``batch_ptr`` by
         assuming ``batch_idx`` is sorted by system — the same contract.
     max_neighbors : int, optional
-        Max neighbors per atom (``"matrix"`` format only). Falls back to
-        :func:`estimate_max_neighbors`.
+        Falls back to ``estimate_max_neighbors`` using the larger active cutoff.
+        Matrix format only.
     fill_value : int, optional
         Matrix sentinel; defaults to ``total_atoms``.
     format : {"matrix", "coo", "tile"}, default "matrix"
@@ -2585,7 +2727,9 @@ def batch_cluster_tile_neighbor_list(
 
     if max_neighbors is None:
         max_neighbors = max(
-            estimate_max_neighbors(cutoff2 if cutoff2 is not None else cutoff),
+            estimate_max_neighbors(
+                cutoff if cutoff2 is None else max(float(cutoff), float(cutoff2))
+            ),
             TILE_GROUP_SIZE,
         )
     if fill_value is None:

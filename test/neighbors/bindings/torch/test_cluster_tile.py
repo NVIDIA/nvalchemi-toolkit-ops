@@ -1548,6 +1548,43 @@ class TestClusterTileCutoff2SelectiveOverflow:
         assert int(nn2.sum().item()) > 0
         assert nm1.shape == nm2.shape == (3, 8)
 
+    @pytest.mark.parametrize("cutoff2", [0.91, 4.0])
+    @pytest.mark.parametrize(
+        "compiled",
+        [False, pytest.param(True, marks=pytest.mark.slow)],
+    )
+    def test_default_capacity_uses_larger_dual_cutoff(
+        self, device, dtype, cutoff2, compiled
+    ):
+        """Reversed and equal dual cutoffs retain independently referenced rows."""
+        positions = torch.arange(40, dtype=dtype, device=device).reshape(-1, 1)
+        positions = torch.cat(
+            (positions * 0.05, torch.zeros((40, 2), dtype=dtype, device=device)), dim=1
+        )
+        cell = _orthorhombic_cell(10.0, device, dtype)
+        pbc = torch.tensor([[True, True, True]], device=device)
+        if compiled:
+
+            @torch.compile(fullgraph=True)
+            def run(runtime_positions):
+                return cluster_tile_neighbor_list(
+                    runtime_positions,
+                    4.0,
+                    cell,
+                    cutoff2=cutoff2,
+                    max_tiles_per_group=2,
+                )
+
+            out = run(positions)
+        else:
+            out = cluster_tile_neighbor_list(positions, 4.0, cell, cutoff2=cutoff2)
+        for offset, reference_cutoff in ((0, 4.0), (3, cutoff2)):
+            got = _matrix_to_coo_full(*out[offset : offset + 3], positions.shape[0])
+            reference = brute_force_neighbors(positions, cell, pbc, reference_cutoff)[
+                :3
+            ]
+            assert_neighbor_lists_equal(got, reference)
+
     @pytest.mark.parametrize("rebuild_flag", [False, True])
     def test_return_state_preserves_caller_owned_buffers(
         self, device, dtype, rebuild_flag

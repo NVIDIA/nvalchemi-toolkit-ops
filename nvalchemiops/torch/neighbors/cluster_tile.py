@@ -2173,8 +2173,8 @@ def cluster_tile_neighbor_list(
     cell : torch.Tensor, shape (1, 3, 3) or (3, 3), dtype=float32
         Any non-degenerate cell (orthorhombic or triclinic).
     max_neighbors : int, optional
-        Falls back to ``estimate_max_neighbors(cutoff)``.  Matrix
-        format only.
+        Falls back to ``estimate_max_neighbors`` using the larger active cutoff.
+        Matrix format only.
     fill_value : int, optional
         Matrix sentinel; defaults to ``N``.
     format : {"matrix", "coo", "tile"}, default "matrix"
@@ -2408,7 +2408,9 @@ def cluster_tile_neighbor_list(
             int(neighbor_matrix.shape[1])
             if format == "matrix" and neighbor_matrix is not None
             else max(
-                estimate_max_neighbors(cutoff2 if cutoff2 is not None else cutoff),
+                estimate_max_neighbors(
+                    cutoff if cutoff2 is None else max(float(cutoff), float(cutoff2))
+                ),
                 TILE_GROUP_SIZE,
             )
         )

@@ -773,6 +773,26 @@ class TestJaxClusterTileCutoff2Selective:
         assert int(nn2.sum()) >= int(nn1.sum())
         assert int(nn2.sum()) > 0
 
+    @pytest.mark.parametrize("cutoff2", [0.91, 4.0])
+    def test_default_capacity_uses_larger_dual_cutoff(self, cutoff2):
+        """Reversed and equal dual cutoffs preserve independently referenced pairs."""
+        positions = jnp.stack(
+            (
+                jnp.arange(40, dtype=jnp.float32) * jnp.float32(0.05),
+                jnp.zeros(40, dtype=jnp.float32),
+                jnp.zeros(40, dtype=jnp.float32),
+            ),
+            axis=1,
+        )
+        cell = _orthorhombic_cell(10.0)
+        out = cluster_tile_neighbor_list(positions, 4.0, cell, cutoff2=cutoff2)
+        for offset, reference_cutoff in ((0, 4.0), (3, cutoff2)):
+            assert _matrix_to_pair_set_full(
+                *out[offset : offset + 3], positions.shape[0]
+            ) == _brute_force_pairs_full(
+                np.asarray(positions), np.asarray(cell), reference_cutoff, pbc=True
+            )
+
     def test_rebuild_flags_false_preserves_previous_single_system_outputs(self):
         rng = np.random.RandomState(23)
         positions = jnp.array(rng.uniform(0, 6, size=(64, 3)).astype(np.float32))
