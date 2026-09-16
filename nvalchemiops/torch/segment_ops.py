@@ -145,7 +145,9 @@ def _validate_idx(idx: torch.Tensor, num_segments: int, op: str) -> None:
     ------
     ValueError
         On dtype mismatch (not ``int32`` or ``int64``), wrong rank (not 1-D),
-        or — in eager mode only — any value outside ``[0, num_segments)``.
+        or — in eager mode only — any value outside ``[0, num_segments)`` or,
+        for ``int64`` input, any value not representable as ``int32`` (narrowing
+        would otherwise silently wrap out-of-range values).
 
     Notes
     -----
@@ -166,6 +168,11 @@ def _validate_idx(idx: torch.Tensor, num_segments: int, op: str) -> None:
         return
     idx_min = int(idx.min().item())
     idx_max = int(idx.max().item())
+    if idx.dtype == torch.int64 and idx_max > torch.iinfo(torch.int32).max:
+        raise ValueError(
+            f"{op}: idx contains int64 values not representable as int32 "
+            f"(max={idx_max}); all values must fit in the int32 range."
+        )
     if idx_min < 0:
         raise ValueError(
             f"{op}: idx contains negative values (min={idx_min}); all values "

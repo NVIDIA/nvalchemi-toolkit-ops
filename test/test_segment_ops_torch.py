@@ -552,6 +552,17 @@ class TestEdgeCases:
         with pytest.raises(ValueError, match="idx.*range"):
             segmented_sum(x, idx, num_segments=2)
 
+    def test_sum_idx_int64_not_int32_representable_raises(self, device):
+        """``segmented_sum`` must reject int64 values that overflow int32.
+
+        Narrowing to int32 would silently wrap, so the eager validation
+        rejects these inputs before the range check.
+        """
+        x = torch.ones(2, device=device)
+        idx = torch.tensor([0, 2**31], dtype=torch.int64, device=device)
+        with pytest.raises(ValueError, match="idx.*not representable as int32"):
+            segmented_sum(x, idx, num_segments=2)
+
     def test_sum_idx_negative_raises(self, device):
         x = torch.ones(2, device=device)
         idx = torch.tensor([0, -1], dtype=torch.int32, device=device)
