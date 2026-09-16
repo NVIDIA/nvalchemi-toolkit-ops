@@ -150,7 +150,26 @@ def _direct_coo_pair_is_accepted(
     distance_sq: wp.float32,
     cutoff_sq: wp.float32,
 ) -> wp.bool:
-    """Return the shared direct-CSR topology predicate."""
+    """Return whether a sorted tile lane defines an accepted pair
+
+    Parameters
+    ----------
+    i_sorted, j_sorted : wp.int32
+        Sorted-layout indices used to keep one orientation of each pair.
+    i_orig, j_orig : wp.int32
+        Original atom indices used to address the outputs.
+    natom : wp.int32
+        Number of real atoms; padded indices are rejected.
+    distance_sq : wp.float32
+        Squared minimum-image distance.
+    cutoff_sq : wp.float32
+        Squared query cutoff.
+
+    Returns
+    -------
+    wp.bool
+        True when the pair is unique, real, and strictly inside the cutoff.
+    """
     return (
         i_sorted < j_sorted
         and i_orig < natom
@@ -1248,6 +1267,45 @@ def _get_query_cluster_tile_direct_csr_count_kernel(*, batched: bool) -> wp.Kern
         tile_system: wp.array(dtype=wp.int32),
         row_counts: wp.array(dtype=wp.int32),
     ) -> None:
+        """Count accepted direct-CSR neighbors for each source atom
+
+        Parameters
+        ----------
+        sorted_pos_x, sorted_pos_y, sorted_pos_z : wp.array, shape (natom_padded,), dtype=wp.float32
+            Morton-sorted position components in padded group layout.
+        sorted_atom_index : wp.array, shape (natom_padded,), dtype=wp.int32
+            Original atom index for each sorted slot.
+        cell, inv_cell : wp.array, shape (num_systems,), dtype=wp.mat33f
+            Per-system cell matrices and inverse matrices.
+        cutoff_sq : wp.float32
+            Squared query cutoff.
+        natom : wp.int32
+            Total number of real atoms.
+        num_tiles : wp.array, shape (1,), dtype=wp.int32
+            Number of active tile pairs.
+        tile_row_group, tile_col_group : wp.array, shape (tile_capacity,), dtype=wp.int32
+            Row and column group for each tile pair.
+        tile_system : wp.array, shape (tile_capacity,), dtype=wp.int32
+            System index for each tile pair. Ignored by the single-system
+            specialization.
+        row_counts : wp.array, shape (natom,), dtype=wp.int32
+            MODIFIED: Accepted neighbor count for each source atom.
+
+        Returns
+        -------
+        None
+            This function updates ``row_counts`` in-place.
+
+        Notes
+        -----
+        - Thread launch: One tiled thread block per launched tile slot; slots at
+          or beyond ``num_tiles[0]`` return without writing.
+        - Modifies: ``row_counts`` through atomic increments for both pair directions.
+
+        See Also
+        --------
+        _get_query_cluster_tile_direct_csr_fill_kernel : Build the matching CSR fill pass.
+        """
         tid = wp.tid()
         if tid >= num_tiles[0]:
             return
@@ -1328,6 +1386,66 @@ def _get_query_cluster_tile_direct_csr_fill_kernel(
         pair_energies: wp.array(dtype=wp.float32),
         pair_forces: wp.array(dtype=wp.vec3f),
     ) -> None:
+        """Fill source-owned CSR rows and aligned pair outputs
+
+        Parameters
+        ----------
+        sorted_pos_x, sorted_pos_y, sorted_pos_z : wp.array, shape (natom_padded,), dtype=wp.float32
+            Morton-sorted position components in padded group layout.
+        sorted_atom_index : wp.array, shape (natom_padded,), dtype=wp.int32
+            Original atom index for each sorted slot.
+        cell, inv_cell : wp.array, shape (num_systems,), dtype=wp.mat33f
+            Per-system cell matrices and inverse matrices.
+        cutoff_sq : wp.float32
+            Squared query cutoff.
+        natom : wp.int32
+            Total number of real atoms.
+        physical_capacity : wp.int32
+            Number of writable pair slots in each output buffer.
+        num_tiles : wp.array, shape (1,), dtype=wp.int32
+            Number of active tile pairs.
+        tile_row_group, tile_col_group : wp.array, shape (tile_capacity,), dtype=wp.int32
+            Row and column group for each tile pair.
+        tile_system : wp.array, shape (tile_capacity,), dtype=wp.int32
+            System index for each tile pair. Ignored by the single-system
+            specialization.
+        cursors : wp.array, shape (natom,), dtype=wp.int32
+            MODIFIED: Per-source insertion cursors initialized from row pointers.
+        coo_list : wp.array, shape (physical_capacity, 2), dtype=wp.int32
+            MODIFIED: Directed source-target pairs in CSR row ownership.
+        coo_shifts : wp.array, shape (physical_capacity, 3), dtype=wp.int32
+            MODIFIED: Periodic shifts aligned with ``coo_list``.
+        neighbor_vectors : wp.array, shape (physical_capacity,), dtype=wp.vec3f
+            MODIFIED: Optional displacement vectors aligned with pairs. Sentinel
+            when disabled.
+        neighbor_distances : wp.array, shape (physical_capacity,), dtype=wp.float32
+            MODIFIED: Optional distances aligned with pairs. Sentinel when
+            disabled.
+        pair_params : wp.array, shape (natom, K), dtype=wp.float32
+            Pair-function parameters. Sentinel when no pair function is active.
+        pair_energies : wp.array, shape (physical_capacity,), dtype=wp.float32
+            MODIFIED: Optional pair-function energies aligned with pairs.
+            Sentinel when disabled.
+        pair_forces : wp.array, shape (physical_capacity,), dtype=wp.vec3f
+            MODIFIED: Optional pair-function forces aligned with pairs. Sentinel
+            when disabled.
+
+        Returns
+        -------
+        None
+            This function updates insertion cursors and enabled output buffers
+            in-place.
+
+        Notes
+        -----
+        - Thread launch: One tiled thread block per launched tile slot; slots at
+          or beyond ``num_tiles[0]`` return without writing.
+        - Modifies: ``cursors``, topology buffers, and enabled pair-output buffers.
+
+        See Also
+        --------
+        _get_query_cluster_tile_direct_csr_count_kernel : Build the preceding CSR count pass.
+        """
         tid = wp.tid()
         if tid >= num_tiles[0]:
             return
