@@ -598,6 +598,15 @@ def coo_pack_pair_geometry(
             active_mask,
             capacity,
         )
+        if active_mask.size == 0:
+            if distances is not None:
+                distances = jnp.zeros((capacity,), dtype=distances.dtype)
+            if vectors is not None:
+                vectors = jnp.zeros(
+                    (capacity, vectors.shape[-1]),
+                    dtype=vectors.dtype,
+                )
+            return distances, vectors
     if distances is not None:
         distances = jnp.take(distances.reshape(-1), flat_active, axis=0)
         if valid_slots is not None:

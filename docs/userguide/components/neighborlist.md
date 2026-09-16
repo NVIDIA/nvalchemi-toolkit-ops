@@ -652,9 +652,15 @@ concrete array sizes from traced data.
 
 **Setting `atomic_density`**: This should reflect the expected atomic density of
 your system in atoms per unit volume (using the same length units as `cutoff`).
-If set too low, the neighbor matrix may be too narrow and a
-`NeighborOverflowError` will be raised at runtime. If set too high, memory is
-wasted on unused columns.
+If set too low, the neighbor matrix may be too narrow. Matrix output keeps its
+fixed width but reports the required per-atom counts, which callers must compare
+with that width before consuming the result. Eager compact COO conversion raises
+`NeighborOverflowError` when those counts exceed the matrix width. Fixed-capacity
+COO instead returns an `overflow` flag covering both matrix-row and COO-capacity
+overflow; its pointer describes only the stored prefix. These rules apply to the
+naive and cell-list matrix/COO outputs. Cluster-tile methods use their documented
+tile and segmented-COO capacity contracts. If `atomic_density` is set too high,
+memory is wasted on unused columns.
 
 **Setting `safety_factor`**: This multiplier provides headroom for local density
 fluctuations (e.g., atoms clustering in one region). The default of 1.0 is

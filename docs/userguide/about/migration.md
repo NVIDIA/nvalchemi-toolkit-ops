@@ -10,10 +10,14 @@ This guide lists user-visible migrations by release.
 
 ### JAX Neighbor-List Compilation Boundary
 
-Use `neighbor_list(...)` for eager method selection, capacity estimation, and
-overflow retry. Compile a method-specific function such as
+Use `neighbor_list(...)` for eager method selection, capacity estimation,
+allocation, and dispatch. It returns the selected method's outputs without
+checking overflow or retrying. Compile a method-specific function such as
 `naive_neighbor_list(...)`, `cell_list(...)`, or
 `cluster_tile_neighbor_list(...)` after choosing the method and capacities.
+After a compiled call, inspect its counts or overflow result before consuming
+the output. If necessary, enlarge the buffers or recompute stale pair-centric
+launch metadata, then invoke another specialization.
 
 Replace a compiled unified-dispatch call:
 

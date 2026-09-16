@@ -28,12 +28,12 @@ from nvalchemiops.jax.neighbors import _cluster_tile_preload
 from nvalchemiops.jax.neighbors.cluster_tile import (
     _CLUSTER_TILE_QUERIES,
     TILE_GROUP_SIZE,
-    _tile_buffer_max_tiles_per_group,
     build_cluster_tile_list,
     cluster_tile_neighbor_list,
     estimate_cluster_tile_list_sizes,
     query_cluster_tile_coo,
 )
+from nvalchemiops.neighbors.cluster_tile import estimate_max_tiles_per_group
 
 from .conftest import requires_gpu
 
@@ -1329,20 +1329,17 @@ class TestJaxClusterTileCompiledBoundary:
     def test_eager_geometry_sizing_scales_with_cutoff(self):
         """The tile-capacity planner covers dense, high-cutoff geometry."""
         num_atoms = 32768
-        positions = jnp.zeros((num_atoms, 3), dtype=jnp.float32)
-        cell = _orthorhombic_cell(69.8)
+        cell_volume = 69.8**3
 
-        low = _tile_buffer_max_tiles_per_group(
-            positions,
+        low = estimate_max_tiles_per_group(
             num_atoms,
             6.0,
-            cell,
+            cell_volume,
         )
-        high = _tile_buffer_max_tiles_per_group(
-            positions,
+        high = estimate_max_tiles_per_group(
             num_atoms,
             25.0,
-            cell,
+            cell_volume,
         )
 
         assert low >= 256

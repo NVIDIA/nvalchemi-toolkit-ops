@@ -1214,8 +1214,115 @@ def test_cell_list_pair_centric_matches_atom_centric(dtype, use_pair_fn):
     assert np.array_equal(ai, pi) and np.array_equal(aj, pj)
 
 
-def test_cell_list_pair_centric_fixed_coo_pair_fn_jit():
-    """Static launch and COO capacities compile pair-centric pair outputs."""
+def _matrix_pair_shift_records(nm, nn, shifts):
+    """Return per-source sorted ``(target, sx, sy, sz)`` records."""
+    nm = np.asarray(nm)
+    nn = np.asarray(nn)
+    shifts = np.asarray(shifts)
+    return [
+        sorted(
+            (int(nm[source, slot]), *map(int, shifts[source, slot]))
+            for slot in range(int(nn[source]))
+        )
+        for source in range(nm.shape[0])
+    ]
+
+
+def _assert_fixed_coo_pair_output(
+    nl,
+    ptr,
+    shifts,
+    reference_matrix,
+    reference_counts,
+    reference_shifts,
+    capacity,
+    fill_value,
+):
+    """Compare fixed COO topology and pointers with a matrix reference."""
+    nl = np.asarray(nl)
+    ptr = np.asarray(ptr)
+    shifts = np.asarray(shifts)
+    expected_ptr = np.concatenate(
+        [np.array([0], dtype=np.int32), np.cumsum(np.asarray(reference_counts))]
+    )
+    assert ptr.shape == expected_ptr.shape
+    np.testing.assert_array_equal(ptr, expected_ptr)
+    assert ptr[0] == 0
+    assert np.all(np.diff(ptr) >= 0)
+    assert np.all((ptr >= 0) & (ptr <= capacity))
+    expected_records = _matrix_pair_shift_records(
+        reference_matrix,
+        reference_counts,
+        reference_shifts,
+    )
+    for source, records in enumerate(expected_records):
+        start, end = int(ptr[source]), int(ptr[source + 1])
+        assert np.all(nl[0, start:end] == source)
+        actual = sorted(
+            (int(nl[1, slot]), *map(int, shifts[slot])) for slot in range(start, end)
+        )
+        assert actual == records
+    num_pairs = int(ptr[-1])
+    if num_pairs < capacity:
+        np.testing.assert_array_equal(nl[:, num_pairs:], fill_value)
+        np.testing.assert_array_equal(shifts[num_pairs:], 0)
+    return num_pairs
+
+
+def _assert_pair_geometry_from_coo(
+    positions,
+    cell,
+    nl,
+    ptr,
+    shifts,
+    distances,
+    vectors,
+    energies,
+    forces,
+    pair_params,
+    batch_idx=None,
+):
+    """Check pair geometry and analytic outputs from a fixed COO result."""
+    positions = np.asarray(positions)
+    cell = np.asarray(cell)
+    if cell.ndim == 2:
+        cell = cell[None, ...]
+    nl = np.asarray(nl)
+    ptr = np.asarray(ptr)
+    shifts = np.asarray(shifts)
+    num_pairs = int(ptr[-1])
+    source = nl[0, :num_pairs]
+    target = nl[1, :num_pairs]
+    if batch_idx is None:
+        shifts_cartesian = shifts[:num_pairs] @ cell[0]
+    else:
+        source_system = np.asarray(batch_idx)[source]
+        shifts_cartesian = np.einsum(
+            "ij,ijk->ik",
+            shifts[:num_pairs],
+            cell[source_system],
+        )
+    expected_vectors = positions[target] - positions[source] + shifts_cartesian
+    expected_distances = np.linalg.norm(expected_vectors, axis=1)
+    np.testing.assert_allclose(vectors[:num_pairs], expected_vectors, atol=1e-5)
+    np.testing.assert_allclose(distances[:num_pairs], expected_distances, atol=1e-5)
+    expected_energies = (
+        np.asarray(pair_params)[source, 0]
+        + np.asarray(pair_params)[target, 0]
+        + expected_distances
+    )
+    np.testing.assert_allclose(energies[:num_pairs], expected_energies, rtol=1e-5)
+    np.testing.assert_allclose(forces[:num_pairs], -expected_vectors, rtol=1e-5)
+    if num_pairs < nl.shape[1]:
+        np.testing.assert_array_equal(distances[num_pairs:], 0)
+        np.testing.assert_array_equal(vectors[num_pairs:], 0)
+        np.testing.assert_array_equal(energies[num_pairs:], 0)
+        np.testing.assert_array_equal(forces[num_pairs:], 0)
+
+
+@pytest.mark.parametrize("stale_metadata", [False, True], ids=["valid", "stale"])
+def test_cell_list_pair_centric_fixed_coo_pair_fn_jit(stale_metadata):
+    """Static pair-centric launch metadata reports stale geometry safely."""
     from nvalchemiops.jax.neighbors.cell_list import (
         cell_list,
         estimate_cell_list_sizes,
@@ -1227,6 +1334,7 @@ def test_cell_list_pair_centric_fixed_coo_pair_fn_jit():
     max_total_cells, _, radius = estimate_cell_list_sizes(pos, cell, 1.1, pbc)
     launch_radius = tuple(int(value) for value in radius)
     n_outer = compute_batch_pair_centric_n_outer(launch_radius, False)
+    runtime_radius = radius + 1 if stale_metadata else radius
     coo_capacity = pos.shape[0] * 64
 
     @jax.jit
@@ -1238,7 +1346,7 @@ def test_cell_list_pair_centric_fixed_coo_pair_fn_jit():
             pbc,
             max_neighbors=64,
             max_total_cells=max_total_cells,
-            neighbor_search_radius=radius,
+            neighbor_search_radius=runtime_radius,
             strategy="pair_centric",
             pair_centric_n_outer=n_outer,
             return_neighbor_list=True,
@@ -1249,20 +1357,64 @@ def test_cell_list_pair_centric_fixed_coo_pair_fn_jit():
             pair_params=pp,
         )
 
-    nl, ptr, _shifts, overflow, distances, vectors, energies, forces = build(pos)
-    num_pairs = int(ptr[-1])
+    nl, ptr, shifts, overflow, distances, vectors, energies, forces = build(pos)
+    assert nl.shape == (2, coo_capacity)
+    assert ptr.shape == (pos.shape[0] + 1,)
+    assert shifts.shape == (coo_capacity, 3)
+    assert distances.shape == (coo_capacity,)
+    assert vectors.shape == (coo_capacity, 3)
+    assert energies.shape == (coo_capacity,)
+    assert forces.shape == (coo_capacity, 3)
+    if stale_metadata:
+        assert bool(overflow)
+        assert ptr[0] == 0
+        assert np.all(np.diff(np.asarray(ptr)) >= 0)
+        assert np.all((np.asarray(ptr) >= 0) & (np.asarray(ptr) <= coo_capacity))
+        num_pairs = int(ptr[-1])
+        if num_pairs < coo_capacity:
+            np.testing.assert_array_equal(nl[:, num_pairs:], pos.shape[0])
+            np.testing.assert_array_equal(shifts[num_pairs:], 0)
+            np.testing.assert_array_equal(distances[num_pairs:], 0)
+            np.testing.assert_array_equal(vectors[num_pairs:], 0)
+            np.testing.assert_array_equal(energies[num_pairs:], 0)
+            np.testing.assert_array_equal(forces[num_pairs:], 0)
+        return
 
+    reference = cell_list(
+        pos,
+        1.1,
+        cell,
+        pbc,
+        max_neighbors=64,
+        strategy="atom_centric",
+        return_distances=True,
+        return_vectors=True,
+    )
+    ref_nm, ref_nn, ref_shifts, _ref_distances, _ref_vectors = reference
+    num_pairs = _assert_fixed_coo_pair_output(
+        nl,
+        ptr,
+        shifts,
+        ref_nm,
+        ref_nn,
+        ref_shifts,
+        coo_capacity,
+        pos.shape[0],
+    )
     assert num_pairs > 0
     assert not bool(overflow)
-    source = np.asarray(nl[0, :num_pairs])
-    target = np.asarray(nl[1, :num_pairs])
-    expected_energy = (
-        np.asarray(pp)[source, 0]
-        + np.asarray(pp)[target, 0]
-        + np.asarray(distances[:num_pairs])
+    _assert_pair_geometry_from_coo(
+        pos,
+        cell,
+        nl,
+        ptr,
+        shifts,
+        distances,
+        vectors,
+        energies,
+        forces,
+        pp,
     )
-    np.testing.assert_allclose(energies[:num_pairs], expected_energy, rtol=1e-5)
-    np.testing.assert_allclose(forces[:num_pairs], -vectors[:num_pairs], rtol=1e-5)
 
 
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["f32", "f64"])
@@ -1688,8 +1840,9 @@ def test_batch_cell_list_pair_centric_matches_atom_centric(dtype, use_pair_fn):
     assert np.array_equal(ai, pi) and np.array_equal(aj, pj)
 
 
-def test_batch_cell_list_pair_centric_fixed_coo_pair_fn_jit():
-    """Batched pair-centric pair outputs compile with explicit capacities."""
+@pytest.mark.parametrize("stale_metadata", [False, True], ids=["valid", "stale"])
+def test_batch_cell_list_pair_centric_fixed_coo_pair_fn_jit(stale_metadata):
+    """Batched pair-centric metadata preserves ownership and reports staleness."""
     from nvalchemiops.jax.neighbors.batch_cell_list import (
         batch_cell_list,
         estimate_batch_cell_list_sizes,
@@ -1710,6 +1863,7 @@ def test_batch_cell_list_pair_centric_fixed_coo_pair_fn_jit():
     r_max = tuple(int(value) for value in jnp.max(radius, axis=0))
     n_outer = compute_batch_pair_centric_n_outer(r_max, False)
     coo_capacity = pos.shape[0] * 64
+    static_total_cells = total_cells - 1 if stale_metadata else total_cells
 
     @jax.jit
     def build(positions):
@@ -1723,7 +1877,7 @@ def test_batch_cell_list_pair_centric_fixed_coo_pair_fn_jit():
             max_neighbors=64,
             max_total_cells=max_total_cells,
             strategy="pair_centric",
-            pair_centric_total_cells=total_cells,
+            pair_centric_total_cells=static_total_cells,
             pair_centric_n_outer=n_outer,
             pair_centric_r_max=r_max,
             return_neighbor_list=True,
@@ -1734,20 +1888,70 @@ def test_batch_cell_list_pair_centric_fixed_coo_pair_fn_jit():
             pair_params=pp,
         )
 
-    nl, ptr, _shifts, overflow, distances, vectors, energies, forces = build(pos)
-    num_pairs = int(ptr[-1])
+    nl, ptr, shifts, overflow, distances, vectors, energies, forces = build(pos)
+    assert nl.shape == (2, coo_capacity)
+    assert ptr.shape == (pos.shape[0] + 1,)
+    assert shifts.shape == (coo_capacity, 3)
+    assert distances.shape == (coo_capacity,)
+    assert vectors.shape == (coo_capacity, 3)
+    assert energies.shape == (coo_capacity,)
+    assert forces.shape == (coo_capacity, 3)
+    if stale_metadata:
+        assert bool(overflow)
+        assert ptr[0] == 0
+        assert np.all(np.diff(np.asarray(ptr)) >= 0)
+        assert np.all((np.asarray(ptr) >= 0) & (np.asarray(ptr) <= coo_capacity))
+        num_pairs = int(ptr[-1])
+        if num_pairs < coo_capacity:
+            np.testing.assert_array_equal(nl[:, num_pairs:], pos.shape[0])
+            np.testing.assert_array_equal(shifts[num_pairs:], 0)
+            np.testing.assert_array_equal(distances[num_pairs:], 0)
+            np.testing.assert_array_equal(vectors[num_pairs:], 0)
+            np.testing.assert_array_equal(energies[num_pairs:], 0)
+            np.testing.assert_array_equal(forces[num_pairs:], 0)
+        return
 
+    reference = batch_cell_list(
+        pos,
+        1.1,
+        cell,
+        pbc,
+        batch_idx=bidx,
+        batch_ptr=bptr,
+        max_neighbors=64,
+        strategy="atom_centric",
+        return_distances=True,
+        return_vectors=True,
+    )
+    ref_nm, ref_nn, ref_shifts, _ref_distances, _ref_vectors = reference
+    num_pairs = _assert_fixed_coo_pair_output(
+        nl,
+        ptr,
+        shifts,
+        ref_nm,
+        ref_nn,
+        ref_shifts,
+        coo_capacity,
+        pos.shape[0],
+    )
     assert num_pairs > 0
     assert not bool(overflow)
     source = np.asarray(nl[0, :num_pairs])
     target = np.asarray(nl[1, :num_pairs])
-    expected_energy = (
-        np.asarray(pp)[source, 0]
-        + np.asarray(pp)[target, 0]
-        + np.asarray(distances[:num_pairs])
+    np.testing.assert_array_equal(np.asarray(bidx)[source], np.asarray(bidx)[target])
+    _assert_pair_geometry_from_coo(
+        pos,
+        cell,
+        nl,
+        ptr,
+        shifts,
+        distances,
+        vectors,
+        energies,
+        forces,
+        pp,
+        batch_idx=bidx,
     )
-    np.testing.assert_allclose(energies[:num_pairs], expected_energy, rtol=1e-5)
-    np.testing.assert_allclose(forces[:num_pairs], -vectors[:num_pairs], rtol=1e-5)
 
 
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["f32", "f64"])

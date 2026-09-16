@@ -757,6 +757,52 @@ class TestNaiveNeighborListJIT:
         assert jnp.all(distances[num_pairs:] == 0)
         assert jnp.all(vectors[num_pairs:] == 0)
 
+        empty_positions = jnp.empty((0, 3), dtype=jnp.float32)
+        fill_value = 17
+        for capacity in (3, 0):
+
+            def build_empty(positions):
+                return naive_neighbor_list(
+                    positions,
+                    cutoff=1.0,
+                    max_neighbors=4,
+                    return_neighbor_list=True,
+                    coo_capacity=capacity,
+                    fill_value=fill_value,
+                    return_distances=True,
+                    return_vectors=True,
+                )
+
+            for result in (
+                build_empty(empty_positions),
+                jax.jit(build_empty)(empty_positions),
+            ):
+                assert len(result) == 5
+                (
+                    empty_list,
+                    empty_ptr,
+                    empty_overflow,
+                    empty_distances,
+                    empty_vectors,
+                ) = result
+                assert empty_list.shape == (2, capacity)
+                assert empty_ptr.shape == (1,)
+                assert empty_distances.shape == (capacity,)
+                assert empty_vectors.shape == (capacity, 3)
+                assert empty_list.dtype == jnp.int32
+                assert empty_ptr.dtype == jnp.int32
+                assert empty_overflow.dtype == jnp.bool_
+                assert empty_distances.dtype == empty_positions.dtype
+                assert empty_vectors.dtype == empty_positions.dtype
+                np.testing.assert_array_equal(
+                    empty_ptr,
+                    np.array([0], dtype=np.int32),
+                )
+                assert not bool(empty_overflow)
+                assert jnp.all(empty_list == fill_value)
+                assert jnp.all(empty_distances == 0)
+                assert jnp.all(empty_vectors == 0)
+
     def test_jit_with_pbc_requires_precomputed_shifts(self):
         """The traced shift-sizing path should fail with a JAX concrete error."""
         positions = jnp.array(
