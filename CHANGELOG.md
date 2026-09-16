@@ -4,11 +4,20 @@
 
 ### Changed
 
+- Added fixed-capacity ``jax.jit`` support to the method-specific JAX neighbor
+  APIs. Naive and cell-list methods, including batched variants, accept
+  ``coo_capacity`` for padded COO output with a device overflow flag. Batched
+  pair-centric cell-list calls additionally need static launch metadata under
+  ``jax.jit``. Invalid static launch relationships raise before the CUDA query,
+  while runtime sizing changes use the existing overflow signal.
+  ``neighbor_list`` performs eager orchestration, and compact COO output uses
+  eager shape compaction.
 - Raised the minimum supported Warp version to 1.15 and migrated JAX bindings
   from Warp's removed experimental JAX module to its public JAX API, restoring
   compatibility with `warp>=1.15`.
 - Warp initialization now retains warning-level diagnostics instead of
   suppressing all Warp log output.
+
 ### Added
 
 - Torch and JAX Ewald now expose caller-retained reciprocal Miller topology via

@@ -28,7 +28,6 @@ from nvalchemiops.jax.neighbors import _cluster_tile_preload
 from nvalchemiops.jax.neighbors.batch_cluster_tile import (
     _BATCH_CLUSTER_TILE_QUERIES,
     TILE_GROUP_SIZE,
-    _batch_tile_buffer_max_tiles_per_group,
     allocate_batch_cluster_tile_list,
     batch_build_cluster_tile_list,
     batch_cluster_tile_neighbor_list,
@@ -525,6 +524,14 @@ class TestEstimateBatchSizes:
         with pytest.raises(ValueError, match="cell_batch.*shape"):
             estimate_batch_max_tiles_per_group(batch_ptr, 2.0, cell_batch)
 
+    def test_batch_max_tiles_per_group_rejects_cell_count_mismatch(self):
+        """Public sizing requires one cell per batch segment."""
+        batch_ptr = jnp.array([0, 32], dtype=jnp.int32)
+        cell_batch = jnp.zeros((0, 3, 3), dtype=jnp.float32)
+
+        with pytest.raises(ValueError, match="cell_volumes"):
+            estimate_batch_max_tiles_per_group(batch_ptr, 2.0, cell_batch)
+
     def test_batch_max_tiles_per_group_rejects_traced_cell_batch(self):
         """Public batch max-tile sizing requires concrete cell_batch."""
         batch_ptr = jnp.array([0, 32], dtype=jnp.int32)
@@ -547,19 +554,65 @@ class TestEstimateBatchSizes:
         with pytest.raises(ValueError, match="batch_ptr.*concrete"):
             call_with_traced_batch_ptr(jnp.array([0, 32], dtype=jnp.int32))
 
-    def test_batch_tile_buffer_max_tiles_per_group_rejects_cell_batch_mismatch(self):
-        """Non-empty batch pointers still validate against cell_batch length."""
-        positions = jnp.zeros((32, 3), dtype=jnp.float32)
-        batch_ptr = jnp.array([0, 32], dtype=jnp.int32)
-        cell_batch = jnp.zeros((0, 3, 3), dtype=jnp.float32)
+    def test_jit_requires_static_batch_ptr_for_tile_allocation(self):
+        """A dynamic batch pointer cannot determine tile buffer capacity."""
+        positions, cell_batch, batch_ptr = _make_batch([32], [4.0])
 
-        with pytest.raises(ValueError, match="cell_volumes"):
-            _batch_tile_buffer_max_tiles_per_group(
+        @jax.jit
+        def build(positions, batch_ptr):
+            return batch_cluster_tile_neighbor_list(
                 positions,
-                batch_ptr,
-                2.0,
+                1.0,
                 cell_batch,
+                batch_ptr,
+                max_neighbors=32,
             )
+
+        with pytest.raises(ValueError, match="close over batch_ptr"):
+            build(positions, batch_ptr)
+
+    def test_jit_requires_static_cutoff_for_tile_allocation(self):
+        """A dynamic cutoff cannot determine tile buffer capacity."""
+        positions, cell_batch, batch_ptr = _make_batch([32], [4.0])
+
+        @jax.jit
+        def build(positions, cutoff):
+            return batch_cluster_tile_neighbor_list(
+                positions,
+                cutoff,
+                cell_batch,
+                batch_ptr,
+                max_neighbors=32,
+            )
+
+        with pytest.raises(ValueError, match="close over cutoff before tracing"):
+            build(positions, jnp.asarray(1.0, dtype=jnp.float32))
+
+    def test_jit_dense_tile_output_has_worst_case_capacity(self):
+        """Compiled batched output contains every dense group-pair tile."""
+        num_groups = 512
+        num_atoms = num_groups * TILE_GROUP_SIZE
+        positions = jnp.zeros((num_atoms, 3), dtype=jnp.float32)
+        cell_batch = (jnp.eye(3, dtype=jnp.float32) * 64.0)[None]
+        batch_ptr = jnp.array([0, num_atoms], dtype=jnp.int32)
+
+        @jax.jit
+        def build(positions):
+            return batch_cluster_tile_neighbor_list(
+                positions,
+                1.0,
+                cell_batch,
+                batch_ptr,
+                format="tile",
+            )
+
+        num_tiles, tile_row_group, tile_col_group, tile_system, *_ = build(positions)
+        tile_count = int(num_tiles[0])
+        expected_tiles = num_groups * (num_groups + 1) // 2
+
+        assert tile_count == expected_tiles
+        assert tile_count <= tile_row_group.shape[0]
+        assert tile_row_group.shape == tile_col_group.shape == tile_system.shape
 
     def test_aligned_two_systems(self):
         batch_ptr = jnp.array([0, 64, 192], dtype=jnp.int32)

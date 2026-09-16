@@ -32,6 +32,7 @@ from nvalchemiops.jax.neighbors.batch_cell_list import (
     estimate_batch_cell_list_sizes,
 )
 from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
+from nvalchemiops.neighbors.cell_list import compute_batch_pair_centric_n_outer
 
 from .conftest import requires_gpu
 
@@ -1009,6 +1010,45 @@ class TestBatchCellListJIT:
         assert shifts.shape[0] == 4
         assert shifts.shape[2] == 3
 
+    def test_jit_fixed_capacity_coo(self):
+        """The batched one-shot API returns fixed COO with overflow state."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        cells = jnp.stack([jnp.eye(3), jnp.eye(3)]).astype(jnp.float32) * 10.0
+        pbcs = jnp.ones((2, 3), dtype=jnp.bool_)
+        batch_idx = jnp.array([0, 0, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 3], dtype=jnp.int32)
+
+        @jax.jit
+        def jitted_batch_cell_list(positions, cells, pbcs):
+            return batch_cell_list(
+                positions,
+                cutoff=1.0,
+                cell=cells,
+                pbc=pbcs,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=4,
+                max_total_cells=16,
+                return_neighbor_list=True,
+                coo_capacity=4,
+                strategy="atom_centric",
+            )
+
+        neighbor_list, neighbor_ptr, shifts, overflow = jitted_batch_cell_list(
+            positions,
+            cells,
+            pbcs,
+        )
+
+        assert neighbor_list.shape == (2, 4)
+        assert neighbor_ptr.shape == (4,)
+        assert shifts.shape == (4, 3)
+        assert int(neighbor_ptr[-1]) == 2
+        assert not bool(overflow)
+
     def test_jit_auto_falls_back_when_pair_centric_sizing_is_traced(self):
         """``strategy='auto'`` must not expose pair-centric host reads to JIT."""
         atoms_per_system = 200
@@ -1068,8 +1108,8 @@ class TestBatchCellListJIT:
         assert nn.shape == (total_atoms,)
         assert shifts.shape == (total_atoms, max_neighbors, 3)
 
-    def test_jit_explicit_pair_centric_still_requires_concrete_sizing(self):
-        """Explicit pair-centric keeps the concrete launch-sizing contract."""
+    def test_jit_explicit_pair_centric_with_static_launch_matches_atom_centric(self):
+        """Static launch sizing makes batched pair-centric JIT-compatible."""
         atoms_per_system = 200
         total_atoms = atoms_per_system * 2
         box_size = 15.0
@@ -1103,6 +1143,24 @@ class TestBatchCellListJIT:
             ]
         )
         batch_ptr = jnp.array([0, atoms_per_system, total_atoms], dtype=jnp.int32)
+        max_total_cells, cells_per_dimension, neighbor_search_radius = (
+            estimate_batch_cell_list_sizes(
+                positions,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                cell=cells * 1.5,
+                pbc=pbcs,
+                cutoff=6.0,
+            )
+        )
+        pair_centric_total_cells = int(jnp.sum(jnp.prod(cells_per_dimension, axis=1)))
+        pair_centric_r_max = tuple(
+            int(value) for value in jnp.max(neighbor_search_radius, axis=0)
+        )
+        pair_centric_n_outer = compute_batch_pair_centric_n_outer(
+            pair_centric_r_max,
+            False,
+        )
 
         @jax.jit
         def jitted_batch_cell_list(positions, cells, pbcs, batch_idx, batch_ptr):
@@ -1114,12 +1172,137 @@ class TestBatchCellListJIT:
                 batch_idx=batch_idx,
                 batch_ptr=batch_ptr,
                 max_neighbors=128,
-                max_total_cells=32,
+                max_total_cells=max_total_cells,
                 strategy="pair_centric",
+                pair_centric_total_cells=pair_centric_total_cells,
+                pair_centric_n_outer=pair_centric_n_outer,
+                pair_centric_r_max=pair_centric_r_max,
             )
 
-        with pytest.raises(ValueError, match="needs a concrete neighbor_search_radius"):
-            jitted_batch_cell_list(positions, cells, pbcs, batch_idx, batch_ptr)
+        pair_result = jitted_batch_cell_list(
+            positions,
+            cells,
+            pbcs,
+            batch_idx,
+            batch_ptr,
+        )
+        atom_result = batch_cell_list(
+            positions,
+            cutoff=6.0,
+            cell=cells * 1.5,
+            pbc=pbcs,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=128,
+            max_total_cells=max_total_cells,
+            strategy="atom_centric",
+        )
+
+        assert _compact_pair_shift_set(
+            *pair_result,
+            jnp.arange(total_atoms, dtype=jnp.int32),
+        ) == _compact_pair_shift_set(
+            *atom_result,
+            jnp.arange(total_atoms, dtype=jnp.int32),
+        )
+
+    def test_jit_pair_centric_stale_cell_count_reports_overflow(self):
+        """Live cell-count changes invalidate a compiled launch safely."""
+        atoms_per_system = 32
+        total_atoms = 2 * atoms_per_system
+        box_size = 15.0
+        positions = (
+            jax.random.uniform(
+                jax.random.PRNGKey(45),
+                (total_atoms, 3),
+                dtype=jnp.float32,
+            )
+            * box_size
+        )
+        cells = jnp.stack([jnp.eye(3, dtype=jnp.float32) * box_size] * 2)
+        pbcs = jnp.ones((2, 3), dtype=jnp.bool_)
+        batch_idx = jnp.repeat(jnp.arange(2, dtype=jnp.int32), atoms_per_system)
+        batch_ptr = jnp.array([0, atoms_per_system, total_atoms], dtype=jnp.int32)
+        max_total_cells, cells_per_dimension, neighbor_search_radius = (
+            estimate_batch_cell_list_sizes(
+                positions,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                cell=cells,
+                pbc=pbcs,
+                cutoff=6.0,
+            )
+        )
+        total_cells = int(jnp.sum(jnp.prod(cells_per_dimension, axis=1)))
+        r_max = tuple(int(value) for value in jnp.max(neighbor_search_radius, axis=0))
+        n_outer = compute_batch_pair_centric_n_outer(r_max, False)
+
+        @jax.jit
+        def jitted_batch_cell_list(positions):
+            return batch_cell_list(
+                positions,
+                cutoff=6.0,
+                cell=cells,
+                pbc=pbcs,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=32,
+                max_total_cells=max_total_cells,
+                strategy="pair_centric",
+                pair_centric_total_cells=total_cells - 1,
+                pair_centric_n_outer=n_outer,
+                pair_centric_r_max=r_max,
+            )
+
+        _, num_neighbors, _ = jitted_batch_cell_list(positions)
+
+        np.testing.assert_array_equal(
+            np.asarray(num_neighbors), np.full(total_atoms, 33)
+        )
+
+    def test_pair_centric_rejects_inconsistent_static_launch_metadata(self):
+        """Host-static pair-centric metadata must describe one launch grid."""
+        positions = jnp.zeros((2, 3), dtype=jnp.float32)
+        cells = jnp.stack([jnp.eye(3, dtype=jnp.float32) * 10.0] * 2)
+        pbcs = jnp.ones((2, 3), dtype=jnp.bool_)
+        batch_idx = jnp.arange(2, dtype=jnp.int32)
+        batch_ptr = jnp.arange(3, dtype=jnp.int32)
+        r_max = (1, 1, 1)
+
+        with pytest.raises(ValueError, match="must match pair_centric_r_max"):
+            batch_cell_list(
+                positions,
+                cutoff=1.0,
+                cell=cells,
+                pbc=pbcs,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=4,
+                max_total_cells=16,
+                strategy="pair_centric",
+                pair_centric_total_cells=2,
+                pair_centric_n_outer=1,
+                pair_centric_r_max=r_max,
+            )
+
+        n_outer = compute_batch_pair_centric_n_outer(r_max, False)
+        with pytest.raises(
+            ValueError, match="exceeds the allocated cell-list capacity"
+        ):
+            batch_cell_list(
+                positions,
+                cutoff=1.0,
+                cell=cells,
+                pbc=pbcs,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=4,
+                max_total_cells=16,
+                strategy="pair_centric",
+                pair_centric_total_cells=17,
+                pair_centric_n_outer=n_outer,
+                pair_centric_r_max=r_max,
+            )
 
 
 class TestBatchCellListReturnNeighborList:

@@ -84,20 +84,45 @@ __all__ = [
 # =============================================================================
 # Sizing + allocation helpers (pure JAX, no Warp launches)
 # =============================================================================
+_CONCRETE_VALUE_ERRORS = (
+    jax.errors.ConcretizationTypeError,
+    jax.errors.TracerArrayConversionError,
+    TypeError,
+)
+
+
+def _host_array_or_none(value) -> np.ndarray | None:
+    """Return a host array when ``value`` is concrete."""
+    try:
+        return np.asarray(value)
+    except _CONCRETE_VALUE_ERRORS:
+        return None
+
+
+def _require_concrete_cutoff(cutoff) -> float:
+    """Return a host cutoff or explain the fixed compiled-boundary contract."""
+    try:
+        return float(cutoff)
+    except _CONCRETE_VALUE_ERRORS as exc:
+        raise ValueError(
+            "cutoff must be a concrete Python value when cluster_tile is used "
+            "under jax.jit; close over cutoff before tracing"
+        ) from exc
+
+
 def _concrete_cell_volume(cell) -> float | None:
     """Return ``abs(det(cell))`` if ``cell`` is concrete, else ``None``.
 
     Under ``jit``/``grad`` the cell may be a tracer; ``np.asarray`` raises and
     we return ``None`` so the caller falls back to a trace-safe static size.
     """
-    try:
-        arr = np.asarray(cell)
-    except Exception:
+    arr = _host_array_or_none(cell)
+    if arr is None:
         return None
     try:
         arr = arr.reshape(-1, 3, 3)[0] if arr.ndim == 3 else arr.reshape(3, 3)
         return float(abs(np.linalg.det(arr)))
-    except Exception:
+    except (TypeError, ValueError, np.linalg.LinAlgError):
         return None
 
 
@@ -113,14 +138,16 @@ def _tile_buffer_max_tiles_per_group(positions, total_atoms: int, cutoff, cell) 
     the upper-triangular maximum, which can *never* overflow (at the cost of
     more memory for very large traced systems).
     """
+    cutoff_value = _require_concrete_cutoff(cutoff)
     ngroup = (int(total_atoms) + TILE_GROUP_SIZE - 1) // TILE_GROUP_SIZE
     if ngroup <= 1:
         return 1
-    cutoff_concrete = not isinstance(cutoff, jax.core.Tracer)
     vol = _concrete_cell_volume(cell)
-    if isinstance(positions, jax.core.Tracer) or vol is None or not cutoff_concrete:
+    # Probe an empty slice so eager CUDA calls do not copy the N x 3 position
+    # payload to the host merely to distinguish them from traced calls.
+    if _host_array_or_none(positions.reshape(-1)[:0]) is None or vol is None:
         return ngroup  # trace-safe upper-triangular cap (capacity ngroup**2)
-    return _estimate_max_tiles_per_group(int(total_atoms), float(cutoff), vol)
+    return _estimate_max_tiles_per_group(int(total_atoms), cutoff_value, vol)
 
 
 def estimate_cluster_tile_list_sizes(
@@ -1880,6 +1907,11 @@ def cluster_tile_neighbor_list(
     - Cluster-tile is CUDA float32 only.
     - Cluster-tile does not support partial neighbor lists; there is no
       ``target_indices`` kwarg.
+    - For ``jax.jit``, close over ``cutoff`` and ``cutoff2``. Traced positions
+      and cells use a
+      conservative tile-buffer bound derived from static atom count; fixed
+      matrix or segmented-COO capacities are supplied by the caller.
+      Compact COO has data-dependent length and is eager-only.
     - The unified
       :func:`nvalchemiops.jax.neighbors.neighbor_list` entry point selects
       this binding automatically for fully-periodic float32 CUDA inputs
@@ -2183,8 +2215,9 @@ def cluster_tile_neighbor_list(
     # Eager guard: raise on tile-buffer overflow instead of silently dropping
     # tiles.  Skipped under trace (positions/num_tiles are tracers) -- there the
     # ``ngroup**2`` geometry fallback guarantees the buffer never overflows.
-    if not isinstance(num_tiles, jax.core.Tracer):
-        n_tiles_host = int(num_tiles[0])
+    num_tiles_host = _host_array_or_none(num_tiles)
+    if num_tiles_host is not None:
+        n_tiles_host = int(num_tiles_host[0])
         tile_capacity = int(tile_row_group.shape[0])
         if n_tiles_host > tile_capacity:
             raise NeighborOverflowError(tile_capacity, n_tiles_host)

@@ -77,6 +77,32 @@ __all__ = [
 # =============================================================================
 # Sizing helper (pure JAX, no Warp launches)
 # =============================================================================
+_CONCRETE_VALUE_ERRORS = (
+    jax.errors.ConcretizationTypeError,
+    jax.errors.TracerArrayConversionError,
+    TypeError,
+)
+
+
+def _host_array_or_none(value) -> np.ndarray | None:
+    """Return a host array when ``value`` is concrete."""
+    try:
+        return np.asarray(value)
+    except _CONCRETE_VALUE_ERRORS:
+        return None
+
+
+def _require_concrete_cutoff(cutoff) -> float:
+    """Return a host cutoff or explain the fixed compiled-boundary contract."""
+    try:
+        return float(cutoff)
+    except _CONCRETE_VALUE_ERRORS as exc:
+        raise ValueError(
+            "cutoff must be a concrete Python value when batch_cluster_tile is "
+            "used under jax.jit; close over cutoff before tracing"
+        ) from exc
+
+
 def _batch_tile_buffer_max_tiles_per_group(
     positions, batch_ptr, cutoff, cell_batch
 ) -> int:
@@ -90,28 +116,35 @@ def _batch_tile_buffer_max_tiles_per_group(
     the compact capacity ``ngroup_total * max_i ngroup_i >= sum_i ngroup_i**2``
     then bounds the upper-triangular maximum, so it can never overflow.
     """
-    counts = np.asarray(batch_ptr).reshape(-1)
+    ptr_values = _concrete_batch_ptr_values(batch_ptr)
+    if ptr_values is None:
+        raise ValueError(
+            "batch_ptr must be concrete when batch_cluster_tile allocates tile "
+            "buffers; close over batch_ptr or precompute the build state outside "
+            "jax.jit"
+        )
+    counts = np.asarray(ptr_values, dtype=np.int64)
     per_sys = (counts[1:] - counts[:-1]).astype(np.int64)
     ngroups = [(int(n) + TILE_GROUP_SIZE - 1) // TILE_GROUP_SIZE for n in per_sys]
     max_ng = max(ngroups) if ngroups else 1
-    cutoff_concrete = not isinstance(cutoff, jax.core.Tracer)
+    cutoff_value = _require_concrete_cutoff(cutoff)
     vols = _concrete_cell_batch_volumes(cell_batch)
     empty_batch = len(per_sys) == 0 and vols == []
     if (
-        isinstance(positions, jax.core.Tracer)
+        # Probe an empty slice so eager CUDA calls do not copy the N x 3
+        # position payload to the host merely to detect tracing.
+        _host_array_or_none(positions.reshape(-1)[:0]) is None
         or vols is None
         or empty_batch
-        or not cutoff_concrete
     ):
         return max(max_ng, 1)
-    return estimate_batch_max_tiles_per_group(batch_ptr, cutoff, cell_batch)
+    return estimate_batch_max_tiles_per_group(batch_ptr, cutoff_value, cell_batch)
 
 
 def _concrete_cell_batch_volumes(cell_batch) -> list[float] | None:
     """Per-system ``abs(det(cell))`` if ``cell_batch`` is concrete, else None."""
-    try:
-        arr = np.asarray(cell_batch)
-    except Exception:
+    arr = _host_array_or_none(cell_batch)
+    if arr is None:
         return None
     if arr.ndim != 3 or arr.shape[1:] != (3, 3):
         return None
@@ -120,13 +153,12 @@ def _concrete_cell_batch_volumes(cell_batch) -> list[float] | None:
 
 def _concrete_batch_ptr_values(batch_ptr) -> list[int] | None:
     """Host ``batch_ptr`` values if concrete, else None."""
-    try:
-        values = np.asarray(batch_ptr).reshape(-1)
-    except Exception:
+    values = _host_array_or_none(batch_ptr)
+    if values is None:
         return None
     try:
         return [int(v) for v in values]
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -174,18 +206,18 @@ def estimate_batch_max_tiles_per_group(
 
     vols = _concrete_cell_batch_volumes(cell_batch)
     if vols is None:
-        try:
-            arr = np.asarray(cell_batch)
-        except Exception as exc:
+        arr = _host_array_or_none(cell_batch)
+        if arr is None:
             raise ValueError(
                 "cell_batch must be concrete to estimate batch max_tiles_per_group"
-            ) from exc
+            )
         if arr.ndim != 3 or arr.shape[1:] != (3, 3):
             raise ValueError("cell_batch must have shape (num_systems, 3, 3)")
 
+    cutoff_value = _require_concrete_cutoff(cutoff)
     return _estimate_batch_max_tiles_per_group(
         ptr_values,
-        cutoff,
+        cutoff_value,
         vols,
         safety=safety,
         floor=floor,
@@ -224,12 +256,15 @@ def estimate_batch_cluster_tile_list_sizes(
     num_systems : int
         Number of systems (``batch_ptr.shape[0] - 1``).
     """
-    try:
-        ptr_values = np.asarray(batch_ptr, dtype=np.int64).reshape(-1)
-    except Exception as exc:
+    ptr_host = _host_array_or_none(batch_ptr)
+    if ptr_host is None:
         raise ValueError(
             "batch_ptr must be concrete to estimate batch cluster-tile sizes"
-        ) from exc
+        )
+    try:
+        ptr_values = np.asarray(ptr_host, dtype=np.int64).reshape(-1)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("batch_ptr must contain concrete integer values") from exc
     if len(ptr_values) < 2:
         raise ValueError("batch_ptr must have length at least 2")
     num_systems = len(ptr_values) - 1
@@ -2016,6 +2051,10 @@ def batch_cluster_tile_neighbor_list(
     - Cluster-tile is CUDA float32 only.
     - Cluster-tile does not support partial neighbor lists (no
       ``target_indices`` kwarg).
+    - For ``jax.jit``, close over ``cutoff``, ``cutoff2``, and the
+      allocation-driving ``batch_ptr``. Traced positions and cells use a
+      conservative tile-buffer bound; compact COO has data-dependent length
+      and is eager-only.
     - The unified :func:`nvalchemiops.jax.neighbors.neighbor_list` entry
       point may select this binding automatically when the selector guards
       and cost model prefer it; pass ``method="batch_cluster_tile"`` to
@@ -2423,22 +2462,28 @@ def batch_cluster_tile_neighbor_list(
     # tiles.  Skipped under trace (the geometry fallback sizes the buffer so it
     # can never overflow).  Compact path checks the global ``num_tiles``;
     # segmented (selective) checks per-system ``tile_counts``.
-    if not isinstance(num_tiles, jax.core.Tracer):
+    num_tiles_host = _host_array_or_none(num_tiles)
+    if num_tiles_host is not None:
         tile_capacity = int(tile_row_group.shape[0])
         if tile_offsets is None:
-            n_tiles_host = int(num_tiles[0])
+            n_tiles_host = int(num_tiles_host[0])
             if n_tiles_host > tile_capacity:
                 raise NeighborOverflowError(tile_capacity, n_tiles_host)
-        elif tile_counts is not None and not isinstance(tile_counts, jax.core.Tracer):
-            counts_host = np.asarray(tile_counts).reshape(-1)
-            offs = np.asarray(tile_offsets).reshape(-1)
-            seg_caps = offs[1:] - offs[:-1]
-            over = np.nonzero(counts_host > seg_caps)[0]
-            if over.size > 0:
-                isys = int(over[0])
-                raise NeighborOverflowError(
-                    int(seg_caps[isys]), int(counts_host[isys]), system_index=isys
-                )
+        elif tile_counts is not None:
+            counts_host = _host_array_or_none(tile_counts)
+            offs = _host_array_or_none(tile_offsets)
+            if counts_host is not None and offs is not None:
+                counts_host = counts_host.reshape(-1)
+                offs = offs.reshape(-1)
+                seg_caps = offs[1:] - offs[:-1]
+                over = np.nonzero(counts_host > seg_caps)[0]
+                if over.size > 0:
+                    isys = int(over[0])
+                    raise NeighborOverflowError(
+                        int(seg_caps[isys]),
+                        int(counts_host[isys]),
+                        system_index=isys,
+                    )
 
     if format == "tile":
         # 11-tuple matching the torch sibling at

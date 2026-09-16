@@ -28,7 +28,7 @@ In this example you will learn:
 - Using ``half_fill`` mode for symmetric neighbor lists
 - Building compact partial lists with ``target_indices``
 - Validating neighbor distances are within cutoff
-- ``jax.jit`` compilation of the neighbor matrix
+- ``jax.jit`` compilation of matrix and fixed-capacity COO outputs
 - Estimating dispatch cost with ``estimate_neighbor_list_costs`` /
   ``suggest_neighbor_list_method``
 - Evaluating an inline Warp ``pair_fn`` (per-pair energy and force)
@@ -55,6 +55,7 @@ try:
     import warp as wp
 
     from nvalchemiops.jax.neighbors import (
+        compute_naive_num_shifts,
         estimate_neighbor_list_costs,
         neighbor_list,
         suggest_neighbor_list_method,
@@ -259,59 +260,82 @@ else:
 # %%
 # JIT compilation
 # ===============
-# Demonstrate usage of `jax.jit` to include neighborhood computation
+# Demonstrate the fixed-capacity method-specific JIT boundary.
 
 print("\n" + "=" * 70)
 print("JIT compilation example")
 print("=" * 70)
 
 
+max_neighbors = 128
+# This specialization closes over cell, pbc, cutoff, and matching shift metadata.
+# Recompute the metadata and create another specialization if any of them changes.
+shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, cutoff, pbc)
+neighbor_matrix = jnp.full((num_atoms, max_neighbors), num_atoms, dtype=jnp.int32)
+num_neighbors = jnp.zeros((num_atoms,), dtype=jnp.int32)
+neighbor_shift_matrix = jnp.zeros((num_atoms, max_neighbors, 3), dtype=jnp.int32)
+
+
 @jax.jit
-def run_compute_loop(
+def compiled_naive_neighbors(
     positions,
-    cell,
-    pbc,
-    max_neighbors: int = 128,
-    max_total_cells: int = 16,
-    cutoff: float = 6.0,
-    max_num_atoms: int = 200,
-) -> jax.Array:
-    """Example of encapsulating a compute loop"""
-    num_loops = 100
-    all_neighbors = jnp.zeros(
-        (num_loops, max_num_atoms, max_neighbors), dtype=jnp.int32
+    neighbor_matrix,
+    num_neighbors,
+    neighbor_shift_matrix,
+):
+    """Build a fixed-capacity periodic neighbor matrix inside ``jax.jit``."""
+    return naive_neighbor_list(
+        positions,
+        cutoff,
+        cell=cell,
+        pbc=pbc,
+        max_neighbors=max_neighbors,
+        neighbor_matrix=neighbor_matrix,
+        num_neighbors=num_neighbors,
+        neighbor_matrix_shifts=neighbor_shift_matrix,
+        shift_range_per_dimension=shift_range,
+        num_shifts_per_system=num_shifts,
+        max_shifts_per_system=max_shifts,
     )
-    # generate some random positions
-    key = jax.random.PRNGKey(64)
-    for i in range(num_loops):
-        new_positions = (
-            jax.random.normal(key, (max_num_atoms, 3), dtype=positions.dtype)
-            + positions
-        )
-        # for JIT compilation, max_neighbors and total cells **must** be specified to
-        # accommodate static array shapes
-        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
-            new_positions,
-            cutoff,
-            cell * 1.5,
-            pbc,
-            max_neighbors=max_neighbors,
-            max_total_cells=max_total_cells,
-        )
-        # in this example we don't do any additional computation
-        # other than neighborhoods; include your computation logic
-        # within this scope
-        _ = num_neighbors, neighbor_matrix_shifts
-        all_neighbors = all_neighbors.at[i].set(neighbor_matrix)
-    return all_neighbors
 
 
-# run the compute loop N times
-num_loops = 100
+neighbor_matrix, num_neighbors, neighbor_shift_matrix = compiled_naive_neighbors(
+    positions,
+    neighbor_matrix,
+    num_neighbors,
+    neighbor_shift_matrix,
+)
+print(f"Returned neighbor matrix shape: {neighbor_matrix.shape}")
+if int(jnp.max(num_neighbors)) > max_neighbors:
+    raise RuntimeError("neighbor matrix capacity overflow; grow it outside jax.jit")
 
-print(f"\nRun neighbor computation loop {num_loops} times.")
-all_neighbors = run_compute_loop(positions, cell, pbc)
-print(f"Returned neighbor matrix shape: {all_neighbors.shape}")
+coo_capacity = num_atoms * max_neighbors
+
+
+@jax.jit
+def compiled_naive_coo(positions):
+    """Build padded COO arrays and return a device overflow flag."""
+    return naive_neighbor_list(
+        positions,
+        cutoff,
+        cell=cell,
+        pbc=pbc,
+        max_neighbors=max_neighbors,
+        return_neighbor_list=True,
+        coo_capacity=coo_capacity,
+        shift_range_per_dimension=shift_range,
+        num_shifts_per_system=num_shifts,
+        max_shifts_per_system=max_shifts,
+    )
+
+
+fixed_coo, fixed_ptr, fixed_shifts, coo_overflow = compiled_naive_coo(positions)
+if bool(coo_overflow):
+    raise RuntimeError("COO capacity overflow; grow it outside jax.jit")
+num_pairs = int(fixed_ptr[-1])
+print(f"Returned fixed COO shape: {fixed_coo.shape}")
+print(f"Valid COO prefix: {num_pairs} pairs")
+print(f"Fixed shift shape: {fixed_shifts.shape}")
 
 # %%
 # Cost-model dispatch
@@ -336,7 +360,9 @@ for method_name, cost in cost_report:
 suggested_method = suggest_neighbor_list_method(batch_ptr, cell, pbc, cutoff)
 print(f"\nSuggested method: {suggested_method}")
 
-# Reuse the suggestion as an explicit ``method=`` on the unified entry point.
+# Reuse the suggestion as an explicit ``method=`` on the eager entry point.
+# For JIT, select the matching direct public method and close its strategy over
+# a fixed-capacity wrapper like ``compiled_naive_neighbors`` above.
 nm_suggested, num_suggested, _ = neighbor_list(
     positions, cutoff, cell=cell, pbc=pbc, method=suggested_method
 )
@@ -459,13 +485,16 @@ print("  Auto-allocated, returned, and forward-only.")
 # - **Cost-model dispatch**: ``estimate``/``suggest`` helpers pick a method
 # - **Partial lists**: Compact ``target_indices`` rows for selected atoms
 # - **Inline pair_fn**: Per-pair energy/force during enumeration
+# - **Compiled COO**: Padded fixed-capacity arrays plus a device overflow flag
 
 print("\n" + "=" * 70)
 print("SUMMARY")
 print("=" * 70)
 print("\nKey takeaways:")
-print("  - Use neighbor_list() as the unified JAX entry point")
+print("  - Use neighbor_list() for eager dispatch and capacity management")
+print("  - Compile method-specific functions with fixed capacities")
 print("  - Use return_neighbor_list=True for COO format (GNNs)")
+print("  - Add coo_capacity for fixed-shape COO inside jax.jit")
 print("  - Use half_fill=True to store only unique pairs")
 print("  - naive_neighbor_list performs O(N²) all-pairs checks")
 print("  - cell_list uses spatial decomposition")

@@ -426,6 +426,30 @@ class TestNaiveNeighborList:
 class TestNaiveEdgeCases:
     """Edge case tests for naive_neighbor_list."""
 
+    @pytest.mark.parametrize(
+        ("coo_capacity", "return_neighbor_list", "error"),
+        [
+            (4, False, "coo_capacity requires return_neighbor_list=True"),
+            (-1, True, "coo_capacity must be non-negative"),
+        ],
+    )
+    def test_coo_capacity_validation(
+        self,
+        coo_capacity,
+        return_neighbor_list,
+        error,
+    ):
+        """Fixed COO capacity rejects incompatible and negative values."""
+        positions = jnp.zeros((1, 3), dtype=jnp.float32)
+
+        with pytest.raises(ValueError, match=error):
+            naive_neighbor_list(
+                positions,
+                cutoff=1.0,
+                return_neighbor_list=return_neighbor_list,
+                coo_capacity=coo_capacity,
+            )
+
     def test_zero_cutoff_returns_no_neighbors(self):
         """Zero cutoff should find zero neighbors."""
         # 4 atoms in a cluster
@@ -616,8 +640,82 @@ class TestNaiveEdgeCases:
 class TestNaiveNeighborListJIT:
     """Smoke tests for naive_neighbor_list compatibility with jax.jit."""
 
-    def test_jit_no_pbc(self):
-        """Test naive_neighbor_list without PBC works with jax.jit."""
+    @pytest.mark.parametrize("strategy", ["scalar", "tile"])
+    def test_jit_no_pbc_fixed_buffers_match_expected_pairs(self, strategy):
+        """Scalar and tile calls reuse fixed buffers with identical pair sets."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.5, 0.0]],
+            dtype=jnp.float32,
+        )
+        neighbor_matrix = jnp.full((3, 10), -1, dtype=jnp.int32)
+        num_neighbors = jnp.full((3,), -1, dtype=jnp.int32)
+
+        @jax.jit
+        def jitted_naive(positions, neighbor_matrix, num_neighbors):
+            return naive_neighbor_list(
+                positions,
+                cutoff=1.0,
+                max_neighbors=10,
+                strategy=strategy,
+                neighbor_matrix=neighbor_matrix,
+                num_neighbors=num_neighbors,
+            )
+
+        neighbor_matrix, num_neighbors = jitted_naive(
+            positions,
+            neighbor_matrix,
+            num_neighbors,
+        )
+
+        assert neighbor_matrix.shape == (3, 10)
+        assert num_neighbors.shape == (3,)
+        np.testing.assert_array_equal(np.asarray(num_neighbors), np.array([2, 2, 2]))
+        expected = ({1, 2}, {0, 2}, {0, 1})
+        for row, expected_row in enumerate(expected):
+            assert {int(value) for value in neighbor_matrix[row, :2]} == expected_row
+
+    def test_jit_empty_fixed_buffers_keep_two_array_layout(self):
+        """An empty fixed-capacity non-periodic call keeps its public layout."""
+        positions = jnp.empty((0, 3), dtype=jnp.float32)
+        neighbor_matrix = jnp.full((0, 4), -1, dtype=jnp.int32)
+        num_neighbors = jnp.full((0,), -1, dtype=jnp.int32)
+
+        @jax.jit
+        def jitted_naive(positions, neighbor_matrix, num_neighbors):
+            return naive_neighbor_list(
+                positions,
+                cutoff=1.0,
+                max_neighbors=4,
+                neighbor_matrix=neighbor_matrix,
+                num_neighbors=num_neighbors,
+            )
+
+        out_matrix, out_counts = jitted_naive(
+            positions,
+            neighbor_matrix,
+            num_neighbors,
+        )
+        assert out_matrix.shape == (0, 4)
+        assert out_counts.shape == (0,)
+
+    def test_jit_overflow_reports_full_counts(self):
+        """Compiled fixed-width output exposes overflow through its counts."""
+        positions = jnp.zeros((4, 3), dtype=jnp.float32)
+
+        @jax.jit
+        def jitted_naive(positions):
+            return naive_neighbor_list(
+                positions,
+                cutoff=1.0,
+                max_neighbors=1,
+            )
+
+        neighbor_matrix, num_neighbors = jitted_naive(positions)
+        assert neighbor_matrix.shape == (4, 1)
+        np.testing.assert_array_equal(np.asarray(num_neighbors), np.full(4, 3))
+
+    def test_jit_fixed_capacity_coo_keeps_pair_geometry_aligned(self):
+        """Fixed COO topology, distances, and vectors share one padded order."""
         positions = jnp.array(
             [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.5, 0.0]],
             dtype=jnp.float32,
@@ -625,13 +723,85 @@ class TestNaiveNeighborListJIT:
 
         @jax.jit
         def jitted_naive(positions):
-            return naive_neighbor_list(positions, cutoff=1.0, max_neighbors=10)
+            return naive_neighbor_list(
+                positions,
+                cutoff=1.0,
+                max_neighbors=4,
+                return_neighbor_list=True,
+                coo_capacity=8,
+                return_distances=True,
+                return_vectors=True,
+            )
 
-        neighbor_matrix, num_neighbors = jitted_naive(positions)
+        neighbor_list, neighbor_ptr, overflow, distances, vectors = jitted_naive(
+            positions
+        )
 
-        assert neighbor_matrix.shape == (3, 10)
-        assert num_neighbors.shape == (3,)
-        assert jnp.all(num_neighbors >= 0)
+        assert neighbor_list.shape == (2, 8)
+        assert neighbor_ptr.shape == (4,)
+        assert distances.shape == (8,)
+        assert vectors.shape == (8, 3)
+        assert not bool(overflow)
+        num_pairs = int(neighbor_ptr[-1])
+        assert num_pairs == 6
+        source = neighbor_list[0, :num_pairs]
+        target = neighbor_list[1, :num_pairs]
+        expected_vectors = positions[target] - positions[source]
+        np.testing.assert_allclose(vectors[:num_pairs], expected_vectors, atol=1e-6)
+        np.testing.assert_allclose(
+            distances[:num_pairs],
+            jnp.linalg.norm(expected_vectors, axis=1),
+            atol=1e-6,
+        )
+        assert jnp.all(neighbor_list[:, num_pairs:] == positions.shape[0])
+        assert jnp.all(distances[num_pairs:] == 0)
+        assert jnp.all(vectors[num_pairs:] == 0)
+
+        empty_positions = jnp.empty((0, 3), dtype=jnp.float32)
+        fill_value = 17
+        for capacity in (3, 0):
+
+            def build_empty(positions):
+                return naive_neighbor_list(
+                    positions,
+                    cutoff=1.0,
+                    max_neighbors=4,
+                    return_neighbor_list=True,
+                    coo_capacity=capacity,
+                    fill_value=fill_value,
+                    return_distances=True,
+                    return_vectors=True,
+                )
+
+            for result in (
+                build_empty(empty_positions),
+                jax.jit(build_empty)(empty_positions),
+            ):
+                assert len(result) == 5
+                (
+                    empty_list,
+                    empty_ptr,
+                    empty_overflow,
+                    empty_distances,
+                    empty_vectors,
+                ) = result
+                assert empty_list.shape == (2, capacity)
+                assert empty_ptr.shape == (1,)
+                assert empty_distances.shape == (capacity,)
+                assert empty_vectors.shape == (capacity, 3)
+                assert empty_list.dtype == jnp.int32
+                assert empty_ptr.dtype == jnp.int32
+                assert empty_overflow.dtype == jnp.bool_
+                assert empty_distances.dtype == empty_positions.dtype
+                assert empty_vectors.dtype == empty_positions.dtype
+                np.testing.assert_array_equal(
+                    empty_ptr,
+                    np.array([0], dtype=np.int32),
+                )
+                assert not bool(empty_overflow)
+                assert jnp.all(empty_list == fill_value)
+                assert jnp.all(empty_distances == 0)
+                assert jnp.all(empty_vectors == 0)
 
     def test_jit_with_pbc_requires_precomputed_shifts(self):
         """The traced shift-sizing path should fail with a JAX concrete error."""

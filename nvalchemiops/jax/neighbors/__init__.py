@@ -95,6 +95,7 @@ from nvalchemiops.jax.neighbors.neighbor_utils import (
     allocate_cell_list,
     compute_naive_num_shifts,
     estimate_max_neighbors,
+    get_fixed_capacity_neighbor_list_from_neighbor_matrix,
     get_neighbor_list_from_neighbor_matrix,
     prepare_batch_idx_ptr,
 )
@@ -114,6 +115,7 @@ from nvalchemiops.neighbors.base_dispatch import (
     NEIGHBOR_LIST_STRATEGIES,
     neighbor_list_strategy_run_args,
 )
+from nvalchemiops.neighbors.cell_list import compute_batch_pair_centric_n_outer
 
 
 def neighbor_list(
@@ -131,11 +133,13 @@ def neighbor_list(
     wrap_positions: bool = True,
     **kwargs: dict,
 ):
-    """Compute neighbor list using the appropriate method based on the provided parameters.
+    """Compute an eager neighbor list using the appropriate method.
 
-    This is the main entry point for JAX users of the neighbor list API. It automatically
-    selects the most appropriate algorithm (naive :math:`O(N^2)` or cell list :math:`O(N)`) based on system
-    size and parameters.
+    This convenience entry point may select an algorithm, inspect host values,
+    and allocate buffers. It is therefore intentionally an eager API, not a
+    supported ``jax.jit`` boundary. For compiled execution, select a method
+    outside ``jax.jit`` and call its method-specific public function with fixed
+    capacities and, where useful, reusable buffers.
 
     Parameters
     ----------
@@ -264,13 +268,26 @@ def neighbor_list(
             Boolean flags selecting which systems to re-enumerate; systems whose
             flag is ``False`` keep their previous output.
 
-    Note
-    ----
+    Notes
+    -----
+    Cost estimation, automatic dispatch, overflow detection, and capacity
+    growth belong outside ``jax.jit``. The direct compiled boundaries are
+    :func:`naive_neighbor_list`, :func:`batch_naive_neighbor_list`,
+    their dual-cutoff variants,
+    :func:`cell_list`, :func:`batch_cell_list`,
+    :func:`cluster_tile_neighbor_list`, and
+    :func:`batch_cluster_tile_neighbor_list`. Their allocation-driving values
+    must be static, and matrix/segmented outputs require fixed capacity.
+    Naive scalar and tile strategies support this boundary. Cell-list compiled
+    calls support atom-centric queries directly. Pair-centric queries require
+    static launch metadata computed from concrete cell-list sizing outside
+    ``jax.jit``.
+
     ``pair_fn`` is supported by the JAX bindings for single-cutoff neighbor
     lists. The naive and atom-centric cell-list paths use JAX kernel wrappers,
     while tiled paths use ``jax_callable``. Cluster-tile pair outputs are
-    limited to CUDA float32 eligible systems; COO pair outputs on that path are
-    eager-only. ``target_indices`` is supported by naive and cell-list paths,
+    limited to CUDA float32 eligible systems; compact COO pair outputs on that
+    path use eager shape compaction. ``target_indices`` is supported by naive and cell-list paths,
     including batched naive/cell-list and low-level cell-list query wrappers,
     with compact target rows. The ``pair_centric`` strategy and cluster-tile
     methods reject ``target_indices``; use ``atom_centric`` for equivalent
@@ -644,9 +661,11 @@ __all__ = [
     "check_neighbor_list_rebuild_needed",
     # Utilities
     "compute_naive_num_shifts",
+    "get_fixed_capacity_neighbor_list_from_neighbor_matrix",
     "get_neighbor_list_from_neighbor_matrix",
     "prepare_batch_idx_ptr",
     "allocate_cell_list",
     "estimate_max_neighbors",
+    "compute_batch_pair_centric_n_outer",
     "NeighborOverflowError",
 ]

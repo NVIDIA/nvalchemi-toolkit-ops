@@ -38,12 +38,71 @@ _INT32_HALF_MAX = (_INT32_MAX - 1) // 2
 
 __all__ = [
     "compute_naive_num_shifts",
+    "get_fixed_capacity_neighbor_list_from_neighbor_matrix",
     "get_neighbor_list_from_neighbor_matrix",
     "prepare_batch_idx_ptr",
     "allocate_cell_list",
     "estimate_max_neighbors",
     "NeighborOverflowError",
 ]
+
+
+def _validate_coo_capacities(
+    coo_capacity: int | tuple[int, ...] | None,
+    return_neighbor_list: bool,
+    *,
+    num_cutoffs: int,
+) -> tuple[int, ...] | None:
+    """Validate and normalize fixed COO capacities for public wrappers."""
+    if coo_capacity is None:
+        return None
+    if not return_neighbor_list:
+        raise ValueError("coo_capacity requires return_neighbor_list=True")
+    if isinstance(coo_capacity, int):
+        capacities = (int(coo_capacity),) * num_cutoffs
+    else:
+        if len(coo_capacity) != num_cutoffs:
+            count = "two" if num_cutoffs == 2 else str(num_cutoffs)
+            raise ValueError(f"coo_capacity must contain exactly {count} values")
+        capacities = tuple(int(value) for value in coo_capacity)
+    if any(value < 0 for value in capacities):
+        if num_cutoffs == 1:
+            raise ValueError("coo_capacity must be non-negative")
+        raise ValueError("coo_capacity values must be non-negative")
+    return capacities
+
+
+def _validate_coo_capacity(
+    coo_capacity: int | None,
+    return_neighbor_list: bool,
+) -> int | None:
+    """Validate and normalize one public fixed COO capacity."""
+    if coo_capacity is None:
+        return None
+    capacities = _validate_coo_capacities(
+        int(coo_capacity),
+        return_neighbor_list,
+        num_cutoffs=1,
+    )
+    return capacities[0]
+
+
+def _fixed_capacity_flat_indices(
+    active_mask: jax.Array,
+    capacity: int,
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Return fixed-size flat active indices, a valid-slot mask, and count."""
+    capacity = int(capacity)
+    if capacity < 0:
+        raise ValueError(f"capacity must be non-negative, got {capacity}")
+    active_count = jnp.sum(active_mask, dtype=jnp.int32)
+    flat_indices = jnp.nonzero(
+        active_mask.reshape(-1),
+        size=capacity,
+        fill_value=0,
+    )[0]
+    valid_slots = jnp.arange(capacity, dtype=jnp.int32) < active_count
+    return flat_indices, valid_slots, active_count
 
 
 def build_naive_kernel_tables(
@@ -388,10 +447,122 @@ def get_neighbor_list_from_neighbor_matrix(
         return neighbor_list, neighbor_ptr
 
 
+def get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+    neighbor_matrix: jax.Array,
+    num_neighbors: jax.Array,
+    capacity: int,
+    neighbor_shift_matrix: jax.Array | None = None,
+    fill_value: int = -1,
+) -> (
+    tuple[jax.Array, jax.Array, jax.Array]
+    | tuple[jax.Array, jax.Array, jax.Array, jax.Array]
+):
+    """Convert a neighbor matrix to fixed-capacity COO form under ``jax.jit``.
+
+    Parameters
+    ----------
+    neighbor_matrix : jax.Array, shape (num_rows, max_neighbors), dtype=int32
+        Fixed-width neighbor indices.
+    num_neighbors : jax.Array, shape (num_rows,), dtype=int32
+        Unclipped neighbor counts produced by the neighbor query.
+    capacity : int
+        Static number of COO columns to return.
+    neighbor_shift_matrix : jax.Array, shape (num_rows, max_neighbors, 3), optional
+        Shift vectors aligned with ``neighbor_matrix``.
+    fill_value : int, default=-1
+        Matrix sentinel and padding value for unused COO columns.
+
+    Returns
+    -------
+    neighbor_list : jax.Array, shape (2, capacity), dtype=int32
+        Row-major COO pairs padded with ``fill_value``.
+    neighbor_ptr : jax.Array, shape (num_rows + 1,), dtype=int32
+        Pointers into the stored prefix. Values are clipped to ``capacity`` so
+        they are safe to consume even when ``overflow`` is true.
+    neighbor_list_shifts : jax.Array, shape (capacity, 3), dtype=int32
+        Shift vectors aligned with ``neighbor_list``. Returned before
+        ``overflow`` when ``neighbor_shift_matrix`` is supplied.
+    overflow : jax.Array, shape (), dtype=bool
+        True when either a matrix row exceeds ``max_neighbors`` or the stored
+        COO pairs exceed ``capacity``.
+
+    Notes
+    -----
+    ``capacity`` determines every output shape, while pair counts stay on the
+    device. This makes the conversion compatible with ``jax.jit``. An eager
+    caller should inspect ``overflow`` and retry with larger matrix or COO
+    capacities before consuming a truncated result.
+
+    See Also
+    --------
+    get_neighbor_list_from_neighbor_matrix : Compact eager conversion.
+    """
+    capacity = int(capacity)
+    if capacity < 0:
+        raise ValueError(f"capacity must be non-negative, got {capacity}")
+    if neighbor_matrix.size == 0:
+        neighbor_list = jnp.full(
+            (2, capacity),
+            fill_value,
+            dtype=neighbor_matrix.dtype,
+        )
+        neighbor_ptr = jnp.zeros(num_neighbors.shape[0] + 1, dtype=jnp.int32)
+        overflow = jnp.any(num_neighbors > neighbor_matrix.shape[1])
+        if neighbor_shift_matrix is not None:
+            neighbor_list_shifts = jnp.zeros(
+                (capacity, 3),
+                dtype=neighbor_shift_matrix.dtype,
+            )
+            return neighbor_list, neighbor_ptr, neighbor_list_shifts, overflow
+        return neighbor_list, neighbor_ptr, overflow
+
+    active_mask = neighbor_matrix != fill_value
+    flat_indices, valid_slots, active_count = _fixed_capacity_flat_indices(
+        active_mask,
+        capacity,
+    )
+    _, matrix_width = neighbor_matrix.shape
+    source_indices = flat_indices // matrix_width
+    target_indices = neighbor_matrix.reshape(-1)[flat_indices]
+    pad = jnp.asarray(fill_value, dtype=neighbor_matrix.dtype)
+    source_indices = jnp.where(valid_slots, source_indices, pad)
+    target_indices = jnp.where(valid_slots, target_indices, pad)
+    neighbor_list = jnp.stack(
+        [
+            source_indices.astype(neighbor_matrix.dtype),
+            target_indices.astype(neighbor_matrix.dtype),
+        ],
+        axis=0,
+    )
+
+    stored_per_row = jnp.sum(active_mask, axis=1, dtype=jnp.int32)
+    neighbor_ptr = jnp.concatenate(
+        [
+            jnp.zeros(1, dtype=jnp.int32),
+            jnp.minimum(
+                jnp.cumsum(stored_per_row, dtype=jnp.int32),
+                jnp.int32(capacity),
+            ),
+        ]
+    )
+    overflow = (active_count > capacity) | jnp.any(num_neighbors > matrix_width)
+
+    if neighbor_shift_matrix is not None:
+        flat_shifts = neighbor_shift_matrix.reshape(-1, 3)[flat_indices]
+        neighbor_list_shifts = jnp.where(
+            valid_slots[:, None],
+            flat_shifts,
+            jnp.zeros_like(flat_shifts),
+        )
+        return neighbor_list, neighbor_ptr, neighbor_list_shifts, overflow
+    return neighbor_list, neighbor_ptr, overflow
+
+
 def coo_pack_pair_geometry(
     active_mask: jax.Array,
     distances: jax.Array | None = None,
     vectors: jax.Array | None = None,
+    capacity: int | None = None,
 ) -> tuple[jax.Array | None, jax.Array | None]:
     """Repack matrix-layout per-pair geometry into COO order.
 
@@ -399,8 +570,9 @@ def coo_pack_pair_geometry(
     row-major order yields the active-slot indices in the same order
     :func:`get_neighbor_list_from_neighbor_matrix` uses, so the gathered
     distances ``(num_pairs,)`` and vectors ``(num_pairs, 3)`` index-align with
-    the returned neighbor list.  Eager-only, like the index conversion (the
-    pair count is data-dependent).
+    the returned neighbor list. With ``capacity=None`` the pair count is
+    data-dependent and the conversion is eager. A static ``capacity`` returns
+    padded fixed-size arrays compatible with ``jax.jit``.
 
     Parameters
     ----------
@@ -410,17 +582,43 @@ def coo_pack_pair_geometry(
         Per-pair distances in matrix layout, or ``None``.
     vectors : jax.Array | None, shape (total_atoms, max_neighbors, 3)
         Per-pair displacement vectors in matrix layout, or ``None``.
+    capacity : int, optional
+        Static number of output pairs. Unused tail entries are zero.
 
     Returns
     -------
     tuple of (jax.Array | None, jax.Array | None)
         ``(distances, vectors)`` in COO layout, each unchanged if ``None``.
     """
-    flat_active = jnp.nonzero(active_mask.reshape(-1))[0]
+    if capacity is None:
+        flat_active = jnp.nonzero(active_mask.reshape(-1))[0]
+        valid_slots = None
+    else:
+        flat_active, valid_slots, _ = _fixed_capacity_flat_indices(
+            active_mask,
+            capacity,
+        )
+        if active_mask.size == 0:
+            if distances is not None:
+                distances = jnp.zeros((capacity,), dtype=distances.dtype)
+            if vectors is not None:
+                vectors = jnp.zeros(
+                    (capacity, vectors.shape[-1]),
+                    dtype=vectors.dtype,
+                )
+            return distances, vectors
     if distances is not None:
         distances = jnp.take(distances.reshape(-1), flat_active, axis=0)
+        if valid_slots is not None:
+            distances = jnp.where(valid_slots, distances, jnp.zeros_like(distances))
     if vectors is not None:
         vectors = jnp.take(vectors.reshape(-1, vectors.shape[-1]), flat_active, axis=0)
+        if valid_slots is not None:
+            vectors = jnp.where(
+                valid_slots[:, None],
+                vectors,
+                jnp.zeros_like(vectors),
+            )
     return distances, vectors
 
 
