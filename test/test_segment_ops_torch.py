@@ -172,7 +172,7 @@ class TestSegmentedSum:
 
     @pytest.mark.slow
     def test_int64_idx_compiled(self, device):
-        """Keep int64 index conversion inside the full TorchDynamo graph."""
+        """Keep int64 index conversion inside the full TorchDynamo graph, fwd and bwd."""
         idx = _make_idx(device).to(torch.int64)
         x = _leaf((N,), device)
         compiled = torch.compile(
@@ -185,6 +185,8 @@ class TestSegmentedSum:
             0, idx, x.detach()
         )
         torch.testing.assert_close(out.detach(), ref, **_tols(x.dtype))
+        out.sum().backward()
+        torch.testing.assert_close(x.grad, torch.ones_like(x))
 
     def test_gradcheck_scalar(self, device):
         idx = _make_idx(device)
