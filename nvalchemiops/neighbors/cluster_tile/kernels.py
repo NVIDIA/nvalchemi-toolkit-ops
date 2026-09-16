@@ -1248,16 +1248,16 @@ def _get_query_cluster_tile_direct_csr_count_kernel(*, batched: bool) -> wp.Kern
         tile_system: wp.array(dtype=wp.int32),
         row_counts: wp.array(dtype=wp.int32),
     ) -> None:
-        tile = wp.tid()
-        if tile >= num_tiles[0]:
+        tid = wp.tid()
+        if tid >= num_tiles[0]:
             return
         system_idx = wp.int32(0)
         if BATCHED:
-            system_idx = tile_system[tile]
+            system_idx = tile_system[tid]
         lane_tile = wp.tile_arange(TILE, dtype=wp.int32)
         lane = wp.untile(lane_tile)
-        row_group = tile_row_group[tile]
-        col_group = tile_col_group[tile]
+        row_group = tile_row_group[tid]
+        col_group = tile_col_group[tid]
         j_sorted = col_group * TILE + lane
         j_orig = sorted_atom_index[j_sorted]
         pj_x = sorted_pos_x[j_sorted]
@@ -1328,16 +1328,16 @@ def _get_query_cluster_tile_direct_csr_fill_kernel(
         pair_energies: wp.array(dtype=wp.float32),
         pair_forces: wp.array(dtype=wp.vec3f),
     ) -> None:
-        tile = wp.tid()
-        if tile >= num_tiles[0]:
+        tid = wp.tid()
+        if tid >= num_tiles[0]:
             return
         system_idx = wp.int32(0)
         if BATCHED:
-            system_idx = tile_system[tile]
+            system_idx = tile_system[tid]
         lane_tile = wp.tile_arange(TILE, dtype=wp.int32)
         lane = wp.untile(lane_tile)
-        row_group = tile_row_group[tile]
-        col_group = tile_col_group[tile]
+        row_group = tile_row_group[tid]
+        col_group = tile_col_group[tid]
         j_sorted = col_group * TILE + lane
         j_orig = sorted_atom_index[j_sorted]
         pj_x = sorted_pos_x[j_sorted]
