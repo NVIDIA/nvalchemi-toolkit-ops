@@ -1854,12 +1854,39 @@ def _make_selective_fill_neighbor_matrix_tail_kernel(*, batched: bool, block_dim
         fill_value: wp.int32,
         neighbor_matrix: wp.array2d(dtype=wp.int32),
     ) -> None:
-        """Fill tails only for rows belonging to rebuilt systems.
+        """Fill unused columns for selectively rebuilt atom rows
+
+        Parameters
+        ----------
+        num_neighbors : wp.array, shape (natom,), dtype=wp.int32
+            Active-slot count for each atom row.
+        batch_idx : wp.array, shape (natom,), dtype=wp.int32
+            System index for each atom. Ignored by the single-system
+            specialization.
+        rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool
+            Per-system flags selecting rows to update.
+        natom : wp.int32
+            Number of atom rows to process.
+        max_neighbors : wp.int32
+            Number of columns in ``neighbor_matrix``.
+        fill_value : wp.int32
+            Value written to unused columns.
+        neighbor_matrix : wp.array, shape (natom, max_neighbors), dtype=wp.int32
+            MODIFIED: Neighbor matrix whose selected inactive tails are filled.
+
+        Returns
+        -------
+        None
+            This function modifies ``neighbor_matrix`` in-place.
 
         Notes
         -----
         - Thread launch: One tiled thread block per atom row.
-        - Modifies: Tail columns of rebuilt ``neighbor_matrix`` rows only.
+        - Modifies: Tail columns of rows whose system rebuild flag is true.
+
+        See Also
+        --------
+        _selective_fill_neighbor_matrix_tail : Launch this selective tail-fill kernel.
         """
         row = wp.tid()
         if row >= natom:
