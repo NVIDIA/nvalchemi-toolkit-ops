@@ -73,6 +73,14 @@ RUNNERS = {
         "config": SCRIPT_DIR / "interactions" / "dispersion" / "benchmark_config.yaml",
         "module": "benchmarks.interactions.dispersion.benchmark_dftd3",
     },
+    "fd3": {
+        "label": "FD3",
+        "config": SCRIPT_DIR
+        / "interactions"
+        / "dispersion"
+        / "benchmark_fourier_config.yaml",
+        "module": "benchmarks.interactions.dispersion.benchmark_fourier_dftd3",
+    },
     "el": {
         "label": "EL",
         "config": SCRIPT_DIR
@@ -94,6 +102,7 @@ REPORTABLE_CSV_NAMES = {
 SUPPORTED_BACKENDS = {
     "nl": {"torch", "jax", "warp"},
     "d3": {"torch", "jax"},
+    "fd3": {"torch"},
     "el": {"torch", "jax"},
 }
 NL_DOC_CUTOFFS = (6.0, 15.0, 25.0)

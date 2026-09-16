@@ -920,3 +920,195 @@ calculations (C6 interpolation, damping, energy/force accumulation) use
 ## API Reference
 
 For detailed API documentation, see the [PyTorch API](../../modules/torch/dispersion), [JAX API](../../modules/jax/dispersion), and [Warp API](../../modules/warp/dispersion) references.
+
+## FourierD3: Dispersion Without a Real-Space Cutoff
+
+`fourier_dftd3` evaluates the same DFT-D3(BJ) correction on a particle mesh, in
+`O(N log N)`, with **no real-space cutoff on the dispersion sum**. The only real-space cutoff
+left is the short coordination-number list, which a machine-learned force field already builds
+for its own descriptors.
+
+### Choosing between `dftd3` and `fourier_dftd3`
+
+The two are not interchangeable, and neither is uniformly better.
+
+| | `dftd3` | `fourier_dftd3` |
+|---|---|---|
+| Boundary conditions | periodic or open | **periodic only** |
+| Dispersion cutoff | yours to choose, and to converge | none |
+| Cost with accuracy | grows as the cutoff cubed | flat, set by the mesh |
+| Coordination-number function | standard D3 | modified, decays to zero at the list cutoff |
+| Best for | molecules in vacuum, small cells, cheap approximate corrections | condensed phases, and anything where the truncation error matters |
+
+The reason to reach for `fourier_dftd3` is convergence rather than raw speed. A `1/r^6`
+interaction summed over three dimensions leaves a truncation error decaying only as `1/r^3`,
+so converging `dftd3` to sub-meV/atom needs a cutoff far beyond an MLFF's own, and the
+neighbour list then dominates the step. `fourier_dftd3` removes the cutoff instead of
+enlarging it.
+
+```{important}
+The two do not produce identical numbers, and are not expected to. `fourier_dftd3` uses a
+modified coordination-number function that decays to zero at the list cutoff, where the
+standard D3 function tends to a non-zero constant. That difference is what makes the
+coordination numbers independent of the list used to build them; without it, no choice of
+cutoff converges.
+
+In practice the gap is small. On diamond with the published tables, `fourier_dftd3` reading
+only a 6 Angstrom list agrees to `5.9e-06` relative with `dftd3` extrapolated to an infinite
+cutoff --- where `dftd3` at that same 6 Angstrom cutoff is still 10% short. Treat a
+difference of that order as the model difference; treat a large one as a bug report.
+```
+
+```{note}
+`rcov` follows the same convention as `dftd3`. The shipped table already folds in Grimme's
+4/3 scale, so the counting function crosses one half at a separation equal to the sum of the
+two tabulated radii. Pass both functions the same table; do not rescale it for one of them.
+```
+
+### Quick Start
+
+```python
+import torch
+from nvalchemiops.torch.interactions.dispersion import (
+    FourierD3Parameters, fourier_dftd3,
+)
+from nvalchemiops.torch.neighbors import neighbor_list
+
+# Decompose the reference tables once, for the species present. Independent of the
+# functional, so one instance serves every damping parametrisation.
+params = FourierD3Parameters.from_tables(
+    rcov, r4r2, c6ab, cn_ref, species=[1, 6, 8], device="cuda",
+)
+
+r_cut = 11.34  # 6 Angstrom in Bohr; see Units below
+neighbors, pointer, shifts = neighbor_list(
+    positions, cutoff=r_cut, cell=cell, pbc=pbc,
+    return_neighbor_list=True, method="cell_list",
+)
+
+energy, forces = fourier_dftd3(
+    positions, numbers,
+    a1=0.4289, a2=4.4407, s8=0.7875,      # PBE-D3(BJ)
+    fd3_params=params, cell=cell, r_cut=r_cut,
+    mesh_dimensions=(32, 32, 32),
+    neighbor_list=neighbors, neighbor_ptr=pointer, unit_shifts=shifts,
+)
+```
+
+### `r_cut` Must Match the Neighbour List
+
+```{warning}
+`r_cut` has no default, and must equal the cutoff the neighbour list was built with. The
+modified coordination-number function is constructed to reach zero exactly at `r_cut`; if the
+list was truncated somewhere else, the discontinuity the modification exists to remove comes
+straight back.
+
+There is no default because the D3 reference parameters are conventionally in atomic units,
+so a value written as `6.0` and meant as 6 Angstrom would silently act as 6 Bohr, roughly half
+the intended cutoff, with no error and no obvious symptom.
+```
+
+### Choosing a Spline Order
+
+`spline_order` runs from 2 to 6 and defaults to 4. Every order converges to the same
+energy --- the lattice sum does not depend on how it was interpolated --- but accuracy at a
+fixed mesh improves sharply with order. Measured on an 8-atom cell at a 96³ mesh, against a
+converged reference:
+
+| order | relative error |
+|---|---|
+| 2 | `2.8e-05` |
+| 3 | `2.5e-07` |
+| 4 | `2.0e-09` |
+| 5 | `1.4e-10` |
+
+Raising the order is usually cheaper than refining the mesh, since the spread and gather
+cost `order³` per atom while the transform cost grows with the mesh volume. Order 3 is
+noticeably noisier than its neighbours and its error does not fall cleanly with refinement,
+so prefer an even order unless you have measured otherwise.
+
+### Choosing a Mesh
+
+Exactly one of `mesh_dimensions` or `mesh_spacing` is required; there is no accuracy-based
+default to fall back on, so neither and both are errors. As a starting point, from the
+FourierD3 paper:
+
+| System size | Mesh |
+|---|---|
+| up to 200 atoms | 16³ |
+| up to 2,000 | 32³ |
+| up to 20,000 | 64³ |
+| beyond | 128³ |
+
+To size the mesh from a target reciprocal cutoff instead, `k_max = pi * N / L` gives
+`N = ceil(k_cut * L / pi)`.
+
+The mesh carries `num_systems * n_species * rank` channels, where `rank` comes from the
+decomposition and is typically 4 to 8. Memory grows with all three, so batching chemically
+dissimilar systems together costs more than batching similar ones.
+
+### B-spline Deconvolution
+
+Interpolating onto a mesh attenuates each frequency, and dividing that attenuation out is what
+recovers the structure factor the mesh stands in for. Two conventions exist: the discrete
+modulus, which is the magnitude of the DFT of the spline coefficients and is what
+interpolation on a finite mesh actually applies, and `sinc(m/N)**p`, its continuous
+approximation, which the electrostatics PME path in this package uses.
+
+FourierD3 uses the **discrete** form by default. Measured against an independent
+implementation of the same method, the discrete form agrees to machine precision while the
+continuous one leaves a force discrepancy around `1e-5` at a 48-cubed mesh. Pass
+`exact_moduli=False` only to reproduce the PME convention.
+
+### Making It Fast
+
+Two things matter, and neither is `torch.compile` on its own.
+
+**Precompute the cell-derived setup.** `FourierD3Setup.build` derives the inverse cell, the
+volume, the reciprocal lattice and the B-spline moduli. None of them change while the cell and
+mesh are fixed, and deriving them costs a matrix inversion per call.
+
+```python
+from nvalchemiops.torch.interactions.dispersion import FourierD3Setup
+
+setup = FourierD3Setup.build(cell, params.n_species, mesh_dimensions=(32, 32, 32))
+for step in trajectory:                      # constant-volume dynamics
+    energy, forces = fourier_dftd3(..., setup=setup)
+```
+
+Measured on an RTX PRO 6000, this alone is worth **1.3x to 1.7x**, the larger figure on small
+systems where the per-call setup is a bigger share of the total.
+
+It is also **required for `torch.compile(mode="reduce-overhead")`**: that mode records a CUDA
+graph, and `torch.linalg.inv` cannot be recorded into one. Without a precomputed setup the
+compilation fails rather than falling back.
+
+**`torch.compile` adds a little more.** Around 1.05x on top of the precomputed setup. The time
+is dominated by Warp kernels and FFTs, which compilation cannot fuse into, so do not expect
+more. It does trace without graph breaks.
+
+| N | eager | + setup | + `torch.compile` |
+|---|---|---|---|
+| 200 | 3.78 ms | 2.37 ms | 2.22 ms |
+| 2,000 | 4.25 ms | 2.77 ms | 2.68 ms |
+| 20,000 | 6.50 ms | 5.04 ms | 5.04 ms |
+
+```{important}
+For the JAX binding, `jax.jit` is not optional. Unjitted, every operation dispatches
+separately and the evaluation takes around 92 ms regardless of system size; jitted it is
+2.6 to 4.4 ms, a **21x to 35x** difference. Always wrap the call in `jax.jit`.
+```
+
+### What FourierD3 Returns
+
+`energy` and `forces` always, and `virial` when `compute_virial=True`. The virial is
+`dE/d(strain)`, the same convention as `dftd3`.
+
+Forces are an explicit output rather than something recovered by differentiating the energy,
+again matching `dftd3`.
+
+```{note}
+Energies are reduced with atomic adds, whose summation order varies between launches, so two
+identical calls can differ in the last bit. Regression fixtures should compare with a
+tolerance rather than for exact equality.
+```
