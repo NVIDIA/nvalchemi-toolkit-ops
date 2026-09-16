@@ -1008,6 +1008,23 @@ so a value written as `6.0` and meant as 6 Angstrom would silently act as 6 Bohr
 the intended cutoff, with no error and no obvious symptom.
 ```
 
+### The Neighbour List Must Hold Both Directions
+
+```{warning}
+Whichever neighbour format you pass must contain **both directions of every pair**. That is
+what `neighbor_list` and the dense builders produce by default; a list requested with
+`half_fill=True` does not.
+
+FourierD3 accumulates each atom's coordination number, and the chain rule from it, out of
+that atom's own row alone --- the reverse edge is walked by the other atom. A half-filled
+list therefore loses half of every atom's coordination, which shifts the energy by around a
+percent and leaves the forces non-conservative, with nothing in the output to say so.
+
+`fourier_dftd3` rejects such a list rather than using it. The check is a cheap necessary
+condition, not a proof: a full directed list sums `source - target` and the image shifts to
+exactly zero, so a valid list never trips it, but a pathological one could slip through.
+```
+
 ### Choosing a Spline Order
 
 `spline_order` runs from 2 to 6 and defaults to 4. Every order converges to the same

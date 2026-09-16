@@ -102,6 +102,44 @@ def _system(device, dtype=torch.float64, n_atoms=8, box=9.0, seed=0):
     }
 
 
+def _halve(system):
+    """Keep one direction of each pair, the shape a ``half_fill=True`` builder produces."""
+    sources = system["neighbor_list"][0].cpu().numpy()
+    targets = system["neighbor_list"][1].cpu().numpy()
+    shifts = system["unit_shifts"].cpu().numpy()
+    # Between distinct atoms keep the ascending direction; an atom paired with its own
+    # periodic image appears as (i, i, s) and (i, i, -s), so break that tie on the shift.
+    lexicographic = np.where(
+        shifts[:, 0] != 0,
+        shifts[:, 0],
+        np.where(shifts[:, 1] != 0, shifts[:, 1], shifts[:, 2]),
+    )
+    keep = (sources < targets) | ((sources == targets) & (lexicographic > 0))
+    sources, targets, shifts = sources[keep], targets[keep], shifts[keep]
+    order = np.argsort(sources, kind="stable")
+    sources, targets, shifts = sources[order], targets[order], shifts[order]
+    n_atoms = system["n_atoms"]
+    pointer = np.zeros(n_atoms + 1, dtype=np.int32)
+    np.add.at(pointer, sources + 1, 1)
+    pointer = np.cumsum(pointer).astype(np.int32)
+
+    def tensor(array, dtype):
+        return torch.as_tensor(
+            np.ascontiguousarray(array), dtype=dtype, device=system["positions"].device
+        )
+
+    matrix, matrix_shifts = _to_dense(targets, pointer, shifts, n_atoms)
+    return {
+        "neighbor_list": torch.stack(
+            [tensor(sources, torch.int32), tensor(targets, torch.int32)]
+        ),
+        "neighbor_ptr": tensor(pointer, torch.int32),
+        "unit_shifts": tensor(shifts, torch.int32),
+        "neighbor_matrix": tensor(matrix, torch.int32),
+        "neighbor_matrix_shifts": tensor(matrix_shifts, torch.int32),
+    }
+
+
 def _batched(systems):
     """Concatenate single-system dictionaries into one batch, in both neighbour formats.
 
@@ -315,6 +353,37 @@ class TestNeighbourFormats:
             dense[1].cpu().numpy(),
             atol=1e-11 * float(csr[1].abs().max()),
         )
+
+    def test_rejects_a_half_filled_list(self):
+        """A half-filled list silently loses coordination, so it must not be accepted.
+
+        Each atom's coordination number is accumulated from its own row alone, with the
+        reverse edge walked by the other atom. Half of the contributions simply go missing,
+        which shifts the energy and leaves the forces non-conservative rather than raising.
+        """
+        system = _system("cuda:0", box=5.0)
+        half = _halve(system)
+        with pytest.raises(ValueError, match="both directions of every pair"):
+            _evaluate(
+                system,
+                neighbor_list=half["neighbor_list"],
+                neighbor_ptr=half["neighbor_ptr"],
+                unit_shifts=half["unit_shifts"],
+            )
+
+    def test_rejects_a_half_filled_matrix(self):
+        """The dense format carries the same requirement."""
+        system = _system("cuda:0", box=5.0)
+        half = _halve(system)
+        with pytest.raises(ValueError, match="both directions of every pair"):
+            _evaluate(
+                system,
+                neighbor_list=None,
+                neighbor_ptr=None,
+                unit_shifts=None,
+                neighbor_matrix=half["neighbor_matrix"],
+                neighbor_matrix_shifts=half["neighbor_matrix_shifts"],
+            )
 
     def test_rejects_both_formats(self):
         """Supplying both neighbour formats is an error."""
