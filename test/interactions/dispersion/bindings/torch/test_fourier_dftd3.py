@@ -102,6 +102,71 @@ def _system(device, dtype=torch.float64, n_atoms=8, box=9.0, seed=0):
     }
 
 
+def _batched(systems):
+    """Concatenate single-system dictionaries into one batch, in both neighbour formats.
+
+    The systems are expected to have different cells. A batch whose cells are identical
+    cannot detect a shift conversion that uses the wrong one, which is the whole point of
+    exercising the bindings here rather than only at the Warp layer.
+    """
+    device = systems[0]["positions"].device
+    counts = [system["n_atoms"] for system in systems]
+    offsets = np.cumsum([0] + counts[:-1]).astype(np.int64)
+    total = int(sum(counts))
+
+    batch_idx = torch.cat(
+        [
+            torch.full((count,), index, dtype=torch.int32, device=device)
+            for index, count in enumerate(counts)
+        ]
+    )
+
+    sources, targets, unit_shifts = [], [], []
+    pointer = [torch.zeros(1, dtype=torch.int32, device=device)]
+    edges_so_far = 0
+    for system, offset in zip(systems, offsets):
+        sources.append(system["neighbor_list"][0] + int(offset))
+        targets.append(system["neighbor_list"][1] + int(offset))
+        unit_shifts.append(system["unit_shifts"])
+        pointer.append(system["neighbor_ptr"][1:] + edges_so_far)
+        edges_so_far += int(system["neighbor_ptr"][-1])
+
+    # Dense rows are padded to a common width, and padding must point past every atom.
+    width = max(int(system["neighbor_matrix"].shape[1]) for system in systems)
+    matrices, matrix_shifts = [], []
+    for system, offset in zip(systems, offsets):
+        own = system["neighbor_matrix"]
+        matrix = torch.full(
+            (system["n_atoms"], width), total, dtype=torch.int32, device=device
+        )
+        shifts = torch.zeros(
+            (system["n_atoms"], width, 3), dtype=torch.int32, device=device
+        )
+        padded = own >= system["n_atoms"]
+        matrix[:, : own.shape[1]] = torch.where(
+            padded, torch.full_like(own, total), own + int(offset)
+        )
+        shifts[:, : own.shape[1]] = system["neighbor_matrix_shifts"]
+        matrices.append(matrix)
+        matrix_shifts.append(shifts)
+
+    return {
+        "positions": torch.cat([system["positions"] for system in systems]),
+        "numbers": torch.cat([system["numbers"] for system in systems]),
+        "cell": torch.stack([system["cell"] for system in systems]),
+        "params": systems[0]["params"],
+        "batch_idx": batch_idx,
+        "num_systems": len(systems),
+        "neighbor_list": torch.stack([torch.cat(sources), torch.cat(targets)]),
+        "neighbor_ptr": torch.cat(pointer),
+        "unit_shifts": torch.cat(unit_shifts),
+        "neighbor_matrix": torch.cat(matrices),
+        "neighbor_matrix_shifts": torch.cat(matrix_shifts),
+        "fill_value": total,
+        "n_atoms": total,
+    }
+
+
 def _evaluate(system, **kwargs):
     """Call the public API with the CSR neighbour list unless told otherwise."""
     arguments = dict(
@@ -281,6 +346,77 @@ class TestNeighbourFormats:
         system = _system("cuda:0")
         with pytest.raises(ValueError, match="unit_shifts is required"):
             _evaluate(system, unit_shifts=None)
+
+
+@pytest.mark.gpu
+class TestBatching:
+    """Several systems in one call.
+
+    The bindings build the Cartesian shifts themselves, so the Warp-layer batching tests do
+    not cover this; the cells must differ for the coverage to mean anything.
+    """
+
+    @staticmethod
+    def _systems():
+        # Both boxes must be small enough relative to R_CUT to have periodic neighbours
+        # well inside the cutoff. At box 13 there are none at all, and a system whose image
+        # shifts are all zero cannot detect which cell they were multiplied by.
+        return [
+            _system("cuda:0", box=5.0, seed=0),
+            _system("cuda:0", box=7.0, seed=1),
+        ]
+
+    @staticmethod
+    def _dense(arguments, system):
+        """Swap the CSR arguments for the dense matrix ones."""
+        arguments.update(
+            neighbor_list=None,
+            neighbor_ptr=None,
+            unit_shifts=None,
+            neighbor_matrix=system["neighbor_matrix"],
+            neighbor_matrix_shifts=system["neighbor_matrix_shifts"],
+            fill_value=system.get("fill_value"),
+        )
+        return arguments
+
+    @pytest.mark.parametrize("dense", [False, True])
+    def test_each_system_keeps_its_own_cell(self, dense):
+        """A system's periodic images must be built from its own lattice.
+
+        Converting every image shift with the first system's cell leaves systems after the
+        first with neighbours in the wrong places, which corrupts their coordination numbers
+        and so their energies, forces and virial. It is invisible in a batch of identical
+        cells.
+        """
+        systems = self._systems()
+        batch = _batched(systems)
+        extra = {"compute_virial": True}
+        together = _evaluate(
+            batch,
+            batch_idx=batch["batch_idx"],
+            num_systems=batch["num_systems"],
+            **(self._dense(dict(extra), batch) if dense else extra),
+        )
+        start = 0
+        for index, system in enumerate(systems):
+            alone = _evaluate(
+                system, **(self._dense(dict(extra), system) if dense else extra)
+            )
+            stop = start + system["n_atoms"]
+            np.testing.assert_allclose(
+                together[0][index].item(), alone[0][0].item(), rtol=1e-11
+            )
+            np.testing.assert_allclose(
+                together[1][start:stop].cpu().numpy(),
+                alone[1].cpu().numpy(),
+                atol=1e-11 * float(alone[1].abs().max()),
+            )
+            np.testing.assert_allclose(
+                together[2][index].cpu().numpy(),
+                alone[2][0].cpu().numpy(),
+                atol=1e-11 * float(alone[2].abs().max()),
+            )
+            start = stop
 
 
 @pytest.mark.gpu

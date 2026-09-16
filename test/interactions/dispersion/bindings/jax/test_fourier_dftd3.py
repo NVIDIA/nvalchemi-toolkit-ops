@@ -120,6 +120,124 @@ def _evaluate(system, **kwargs):
     return fourier_dftd3(system["positions"], system["numbers"], **arguments)
 
 
+def _single(box, seed):
+    """One periodic cell, as plain NumPy, with its neighbour list in both formats."""
+    rng = np.random.default_rng(seed)
+    c6ab, cn_ref, species = _reference_tables()
+    max_z = c6ab.shape[0]
+    rcov = np.zeros(max_z)
+    rcov[[1, 6, 8]] = [0.6, 1.2, 1.1]
+    r4r2 = np.zeros(max_z)
+    r4r2[[1, 6, 8]] = [1.0, 1.4, 1.2]
+    n_atoms = 8
+    positions = rng.uniform(0.0, box, (n_atoms, 3))
+    numbers = rng.choice(species, n_atoms)
+    cell = np.eye(3) * box
+    targets, pointer, shifts, _ = _neighbour_list(positions, cell, R_CUT)
+    matrix, matrix_shifts = _to_dense(targets, pointer, shifts, n_atoms)
+    return dict(
+        positions=positions,
+        numbers=numbers,
+        cell=cell,
+        matrix=matrix,
+        matrix_shifts=matrix_shifts,
+        n_atoms=n_atoms,
+        params=FourierD3Parameters.from_tables(rcov, r4r2, c6ab, cn_ref, species),
+    )
+
+
+def _dense_call(
+    parts, cells, matrix, matrix_shifts, batch_idx, num_systems, fill_value
+):
+    """Evaluate in the dense neighbour format."""
+    return fourier_dftd3(
+        jnp.asarray(parts["positions"]),
+        jnp.asarray(parts["numbers"], dtype=jnp.int32),
+        **DAMPING,
+        fd3_params=parts["params"],
+        cell=jnp.asarray(cells),
+        r_cut=R_CUT,
+        mesh_dimensions=MESH,
+        neighbor_matrix=jnp.asarray(matrix, dtype=jnp.int32),
+        neighbor_matrix_shifts=jnp.asarray(matrix_shifts, dtype=jnp.int32),
+        fill_value=fill_value,
+        batch_idx=None
+        if batch_idx is None
+        else jnp.asarray(batch_idx, dtype=jnp.int32),
+        num_systems=num_systems,
+    )
+
+
+@pytest.mark.gpu
+class TestBatching:
+    """Several systems in one call, with different cells.
+
+    The binding builds the Cartesian shifts itself, so this is not covered by the Warp-layer
+    batching tests. The boxes are small enough relative to ``R_CUT`` that both systems have
+    periodic neighbours well inside it; a system whose image shifts are all zero cannot
+    detect which cell they were multiplied by.
+    """
+
+    def test_dense_batch_keeps_each_systems_cell(self, device):
+        """A system's periodic images must be built from its own lattice."""
+        systems = [_single(5.0, 0), _single(7.0, 1)]
+        counts = [s["n_atoms"] for s in systems]
+        total = int(sum(counts))
+        offsets = np.cumsum([0] + counts[:-1]).astype(np.int64)
+        width = max(s["matrix"].shape[1] for s in systems)
+
+        rows, row_shifts = [], []
+        for system, offset in zip(systems, offsets):
+            own = system["matrix"]
+            row = np.full((system["n_atoms"], width), total, dtype=np.int32)
+            shift = np.zeros((system["n_atoms"], width, 3), dtype=np.int32)
+            padded = own >= system["n_atoms"]
+            row[:, : own.shape[1]] = np.where(padded, total, own + int(offset))
+            shift[:, : own.shape[1]] = system["matrix_shifts"]
+            rows.append(row)
+            row_shifts.append(shift)
+
+        batch = dict(
+            positions=np.concatenate([s["positions"] for s in systems]),
+            numbers=np.concatenate([s["numbers"] for s in systems]),
+            params=systems[0]["params"],
+        )
+        batch_idx = np.concatenate(
+            [np.full(count, index) for index, count in enumerate(counts)]
+        )
+        together = _dense_call(
+            batch,
+            np.stack([s["cell"] for s in systems]),
+            np.concatenate(rows),
+            np.concatenate(row_shifts),
+            batch_idx,
+            len(systems),
+            total,
+        )
+
+        start = 0
+        for index, system in enumerate(systems):
+            alone = _dense_call(
+                system,
+                system["cell"][None],
+                system["matrix"],
+                system["matrix_shifts"],
+                None,
+                None,
+                system["n_atoms"],
+            )
+            stop = start + system["n_atoms"]
+            np.testing.assert_allclose(
+                float(together[0][index]), float(alone[0][0]), rtol=1e-11
+            )
+            np.testing.assert_allclose(
+                np.asarray(together[1][start:stop]),
+                np.asarray(alone[1]),
+                atol=1e-11 * float(jnp.abs(alone[1]).max()),
+            )
+            start = stop
+
+
 @pytest.mark.gpu
 class TestAgreementWithWarpLayer:
     """The binding must reproduce what the Warp layer already validated."""

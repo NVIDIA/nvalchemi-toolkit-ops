@@ -365,7 +365,12 @@ def fourier_dftd3(
     cell_inv_grouped = jnp.repeat(cell_inv_t, n_species, axis=0)
 
     if matrix_given:
-        cartesian_shifts = jnp.asarray(neighbor_matrix_shifts, dtype=dtype) @ cells[0]
+        shifts = jnp.asarray(neighbor_matrix_shifts, dtype=dtype)
+        if cells.shape[0] == 1:
+            cartesian_shifts = shifts @ cells[0]
+        else:
+            # A row holds one atom's neighbours and shifts by that atom's own lattice.
+            cartesian_shifts = shifts @ cells[batch_idx]
         neighbours = jnp.asarray(neighbor_matrix, dtype=jnp.int32)
     else:
         shifts = jnp.asarray(unit_shifts, dtype=dtype)

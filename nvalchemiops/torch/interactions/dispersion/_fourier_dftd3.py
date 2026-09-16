@@ -979,8 +979,14 @@ def fourier_dftd3(
     cell_inv_grouped = setup.cell_inv_grouped
 
     if neighbor_matrix is not None:
-        shifts = neighbor_matrix_shifts.to(positions.dtype) @ cells[0]
-        cartesian_shifts = shifts.contiguous()
+        shifts = neighbor_matrix_shifts.to(positions.dtype)
+        if cells.shape[0] == 1:
+            cartesian_shifts = (shifts @ cells[0]).contiguous()
+        else:
+            # A row of the matrix holds one atom's neighbours, so the whole row shifts by
+            # that atom's own lattice. Using a single cell here would place the periodic
+            # images of every system after the first on the wrong lattice.
+            cartesian_shifts = (shifts @ cells[batch_idx.long()]).contiguous()
     else:
         shifts = unit_shifts.to(positions.dtype)
         if cells.shape[0] == 1:
