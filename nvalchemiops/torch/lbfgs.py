@@ -19,29 +19,74 @@ L-BFGS reaches a given force tolerance in far fewer energy/force evaluations
 than the FIRE optimizers, which is the cost that dominates relaxation with a
 machine-learned potential.
 
-You own the loop. Each :func:`lbfgs_step_coord` call consumes exactly one
-energy/force evaluation and mutates the state in place::
+Caller-owned buffers
+--------------------
+As with the FIRE optimizers, **you allocate, initialize and retain every
+buffer**; nothing is allocated here. That keeps allocation out of the step,
+which is what makes it capturable in a CUDA graph. See
+:mod:`nvalchemiops.dynamics.optimizers.lbfgs` for the full table of shapes and
+required initial contents. In short, for ``P`` degrees of freedom, ``M``
+systems and history depth ``m``::
 
-    from nvalchemiops.torch.lbfgs import (
-        LBFGS_NEED_EVAL, lbfgs_allocate_state, lbfgs_step_coord,
+    kw = dict(dtype=positions.dtype, device=positions.device)
+    f64 = dict(dtype=torch.float64, device=positions.device)
+    i32 = dict(dtype=torch.int32, device=positions.device)
+
+    buffers = dict(
+        x_base=torch.zeros(P, 3, **kw),
+        force_base=torch.zeros(P, 3, **kw),
+        direction=torch.zeros(P, 3, **kw),
+        s_history=torch.zeros(m, P, 3, **kw),
+        y_history=torch.zeros(m, P, 3, **kw),
+        ys=torch.zeros(m, M, **f64),
+        yy=torch.zeros(m, M, **f64),
+        alpha_hist=torch.zeros(m, M, **f64),
+        beta_hist=torch.zeros(m, M, **f64),
+        ss=torch.zeros(M, **f64),
+        f_base=torch.zeros(M, **f64),
+        gg=torch.zeros(M, **f64),
+        gd=torch.zeros(M, **f64),
+        fmax=torch.zeros(M, **f64),
+        frms_sq=torch.zeros(M, **f64),
+        smax=torch.zeros(M, **f64),
+        d0=torch.zeros(M, **f64),
+        dmax=torch.zeros(M, **f64),
+        dquad=torch.zeros(M, **f64),
+        alpha_step=torch.ones(M, **f64),       # one, not zero
+        status=torch.zeros(M, **i32),          # LBFGS_NEED_EVAL is zero
+        iteration=torch.full((M,), -1, **i32),  # minus one
+        end=torch.zeros(M, **i32),
+        n_loop=torch.zeros(M, **i32),
+        ls_trials=torch.zeros(M, **i32),
+        history_count=torch.zeros(M, **i32),
     )
 
-    state = lbfgs_allocate_state(
-        num_dofs=positions.shape[0], num_systems=num_systems,
-        dtype=positions.dtype, device=positions.device,
-    )
+Per-system scalars are float64 whatever the coordinate precision: the line
+search compares a difference of *total* energies, and a single-precision
+accumulator would be coarser than the differences being tested.
+
+Restoring those same values is what resets the optimizer; there is no reset
+helper, because there is no state object to reset.
+
+Usage
+-----
+You own the loop. Each call consumes exactly one energy/force evaluation and
+mutates its buffers in place::
+
+    from nvalchemiops.torch.lbfgs import LBFGS_NEED_EVAL, lbfgs_step_coord
 
     while True:
-        energy, forces = model(positions)     # energy per system, float64
+        per_atom_energy, forces = model(positions)
+        lbfgs_reduce_energy(per_atom_energy, batch_idx, energy)
         lbfgs_step_coord(
-            positions, state, forces, energy, batch_idx, n_particles,
-            force_tol=0.05, maxstep=0.2,
+            positions, forces, energy, batch_idx, n_particles,
+            **buffers, force_tol=0.05, maxstep=0.2,
         )
-        if not (state.status == LBFGS_NEED_EVAL).any():
+        if not (buffers["status"] == LBFGS_NEED_EVAL).any():
             break
 
-``state.status`` is the only value you need to inspect: ``LBFGS_NEED_EVAL``
-means keep going, ``LBFGS_CONVERGED`` means ``positions`` hold the answer, and
+``status`` is the only value you need to inspect: ``LBFGS_NEED_EVAL`` means
+keep going, ``LBFGS_CONVERGED`` means ``positions`` hold the answer, and
 ``LBFGS_LS_FAILED`` means the line search stalled even from a steepest-descent
 direction and ``positions`` were restored to the last accepted point.
 
@@ -62,15 +107,14 @@ caller, so wrap the capture::
             lbfgs_step_coord(...)
 
 Without that scope the capture records nothing and replay silently does no
-work. Every buffer must be pre-allocated and reused, which
-:func:`lbfgs_allocate_state` gives you; the step itself allocates nothing and
-does all of its zeroing on the device.
+work. Every buffer must be pre-allocated and reused; the step itself allocates
+nothing and does all of its zeroing on the device.
 
 See Also
 --------
 nvalchemiops.dynamics.optimizers.lbfgs : the underlying Warp implementation,
-    which documents the algorithm, the sign convention and the precision
-    policy in detail.
+    which documents the algorithm, the sign convention and the precision policy
+    in detail.
 """
 
 from __future__ import annotations
@@ -81,17 +125,17 @@ import torch
 import warp as wp
 
 from nvalchemiops.dynamics.optimizers.lbfgs import (
+    _CELL_BUFFERS,
+    _CELL_SCRATCH,
+    _OPTIMIZER_BUFFERS,
     LBFGS_CONVERGED,
     LBFGS_LS_FAILED,
     LBFGS_NEED_EVAL,
-    LBFGSCellState,
-    LBFGSState,
 )
 from nvalchemiops.dynamics.optimizers.lbfgs import lbfgs_cell_kappa as _wp_cell_kappa
 from nvalchemiops.dynamics.optimizers.lbfgs import (
     lbfgs_reduce_energy as _wp_reduce_energy,
 )
-from nvalchemiops.dynamics.optimizers.lbfgs import lbfgs_reset as _wp_reset
 from nvalchemiops.dynamics.optimizers.lbfgs import (
     lbfgs_set_reference_cell as _wp_set_reference_cell,
 )
@@ -106,15 +150,11 @@ from nvalchemiops.torch._warp_op_helpers import (
 )
 
 __all__ = [
-    "LBFGSCellState",
-    "LBFGSState",
     "LBFGS_CONVERGED",
     "LBFGS_LS_FAILED",
     "LBFGS_NEED_EVAL",
-    "lbfgs_allocate_state",
+    "lbfgs_cell_kappa",
     "lbfgs_reduce_energy",
-    "lbfgs_reset",
-    "lbfgs_allocate_cell_state",
     "lbfgs_set_reference_cell",
     "lbfgs_step_coord",
     "lbfgs_step_coord_cell",
@@ -123,10 +163,11 @@ __all__ = [
 
 _TORCH_TO_WP_VEC = {torch.float32: wp.vec3f, torch.float64: wp.vec3d}
 _TORCH_TO_WP_MAT = {torch.float32: wp.mat33f, torch.float64: wp.mat33d}
+_TORCH_TO_WP_SCALAR = {torch.float32: wp.float32, torch.float64: wp.float64}
 
-#: Every tensor the step operator writes to. Derived from the state container
-#: so the two cannot drift apart.
-_MUTATED = ("positions",) + LBFGSState._fields
+#: Every tensor the coordinate step writes to. Derived from the shared buffer
+#: order so the two cannot drift apart.
+_MUTATED = ("positions",) + _OPTIMIZER_BUFFERS
 
 
 def _wp(tensor: torch.Tensor, dtype):
@@ -252,138 +293,17 @@ def _lbfgs_step_op(
 register_noop_fake(_lbfgs_step_op)
 
 # The operator signature is written out by hand, so pin its parameter names to
-# the state container. Registration already rejects a name in ``mutates_args``
-# that does not exist, but only this catches a *reordering*, which would
-# silently swap two tensors.
-_STATE_SLICE = slice(5, 5 + len(LBFGSState._fields))
-_op_state_params = tuple(inspect.signature(_lbfgs_step_op).parameters)[_STATE_SLICE]
-if _op_state_params != LBFGSState._fields:
+# the shared buffer order. Registration already rejects a name in
+# ``mutates_args`` that does not exist, but only this catches a *reordering*,
+# which would silently swap two tensors.
+_STATE_SLICE = slice(5, 5 + len(_OPTIMIZER_BUFFERS))
+_op_buffer_params = tuple(inspect.signature(_lbfgs_step_op).parameters)[_STATE_SLICE]
+if _op_buffer_params != _OPTIMIZER_BUFFERS:
     # Raised rather than asserted so the guard survives `python -O`.
     raise RuntimeError(
-        "LBFGSState fields and _lbfgs_step_op parameters have diverged:\n"
-        f"  state:    {LBFGSState._fields}\n"
-        f"  operator: {_op_state_params}"
-    )
-
-
-def lbfgs_allocate_state(
-    num_dofs: int,
-    num_systems: int,
-    *,
-    dtype: torch.dtype,
-    device: torch.device | str,
-    history_size: int = 6,
-) -> LBFGSState:
-    """Allocate a ready-to-use optimizer state.
-
-    Field initialization is exactly:
-
-    - ``iteration`` to ``-1``, the "never evaluated" marker;
-    - ``alpha_step`` to ``1.0``;
-    - ``status`` to ``LBFGS_NEED_EVAL``;
-    - everything else to zero.
-
-    Only those three are non-zero, which is why neither this nor
-    :func:`lbfgs_reset` can be a blanket ``zero_()``.
-
-    Parameters
-    ----------
-    num_dofs : int
-        Degrees of freedom the optimizer moves. For coordinate-only relaxation
-        this is the atom count.
-    num_systems : int
-        Number of independent systems in the batch.
-    dtype : torch.dtype
-        Coordinate precision, ``float32`` or ``float64``. Per-system scalars
-        are always float64 regardless, because the Armijo test compares a
-        difference of total energies.
-    history_size : int, optional
-        Number of stored curvature pairs. Memory is dominated by
-        ``2 * history_size`` arrays of ``num_dofs`` vectors; 3 to 7 is typical.
-
-    Returns
-    -------
-    LBFGSState
-        Freshly reset state.
-    """
-    if dtype not in _TORCH_TO_WP_VEC:
-        raise ValueError(f"dtype must be float32 or float64; got {dtype}")
-    if history_size < 1:
-        raise ValueError(f"history_size must be >= 1; got {history_size}")
-    fields = {
-        "x_base": torch.zeros(num_dofs, 3, dtype=dtype, device=device),
-        "force_base": torch.zeros(num_dofs, 3, dtype=dtype, device=device),
-        "direction": torch.zeros(num_dofs, 3, dtype=dtype, device=device),
-        "s_history": torch.zeros(history_size, num_dofs, 3, dtype=dtype, device=device),
-        "y_history": torch.zeros(history_size, num_dofs, 3, dtype=dtype, device=device),
-        "ys": torch.zeros(
-            history_size, num_systems, dtype=torch.float64, device=device
-        ),
-        "yy": torch.zeros(
-            history_size, num_systems, dtype=torch.float64, device=device
-        ),
-        "alpha_hist": torch.zeros(
-            history_size, num_systems, dtype=torch.float64, device=device
-        ),
-        "beta_hist": torch.zeros(
-            history_size, num_systems, dtype=torch.float64, device=device
-        ),
-        "ss": torch.zeros(num_systems, dtype=torch.float64, device=device),
-        "f_base": torch.zeros(num_systems, dtype=torch.float64, device=device),
-        "gg": torch.zeros(num_systems, dtype=torch.float64, device=device),
-        "gd": torch.zeros(num_systems, dtype=torch.float64, device=device),
-        "fmax": torch.zeros(num_systems, dtype=torch.float64, device=device),
-        "frms_sq": torch.zeros(num_systems, dtype=torch.float64, device=device),
-        "smax": torch.zeros(num_systems, dtype=torch.float64, device=device),
-        "d0": torch.zeros(num_systems, dtype=torch.float64, device=device),
-        "dmax": torch.zeros(num_systems, dtype=torch.float64, device=device),
-        "dquad": torch.zeros(num_systems, dtype=torch.float64, device=device),
-        "alpha_step": torch.zeros(num_systems, dtype=torch.float64, device=device),
-        "status": torch.zeros(num_systems, dtype=torch.int32, device=device),
-        "iteration": torch.zeros(num_systems, dtype=torch.int32, device=device),
-        "end": torch.zeros(num_systems, dtype=torch.int32, device=device),
-        "n_loop": torch.zeros(num_systems, dtype=torch.int32, device=device),
-        "ls_trials": torch.zeros(num_systems, dtype=torch.int32, device=device),
-        "history_count": torch.zeros(num_systems, dtype=torch.int32, device=device),
-    }
-    state = LBFGSState(**fields)
-    lbfgs_reset(state)
-    return state
-
-
-def lbfgs_reset(state: LBFGSState) -> None:
-    """Return a state to its pre-first-step condition, in place.
-
-    Call this to discard the accumulated history, for instance after changing
-    the potential or moving the atoms behind the optimizer's back.
-    """
-    _wp_reset(
-        x_base=_wp(state.x_base, _TORCH_TO_WP_VEC[state.x_base.dtype]),
-        force_base=_wp(state.force_base, _TORCH_TO_WP_VEC[state.x_base.dtype]),
-        direction=_wp(state.direction, _TORCH_TO_WP_VEC[state.x_base.dtype]),
-        s_history=_wp(state.s_history, _TORCH_TO_WP_VEC[state.x_base.dtype]),
-        y_history=_wp(state.y_history, _TORCH_TO_WP_VEC[state.x_base.dtype]),
-        ys=_wp(state.ys, wp.float64),
-        yy=_wp(state.yy, wp.float64),
-        alpha_hist=_wp(state.alpha_hist, wp.float64),
-        beta_hist=_wp(state.beta_hist, wp.float64),
-        ss=_wp(state.ss, wp.float64),
-        f_base=_wp(state.f_base, wp.float64),
-        gg=_wp(state.gg, wp.float64),
-        gd=_wp(state.gd, wp.float64),
-        fmax=_wp(state.fmax, wp.float64),
-        frms_sq=_wp(state.frms_sq, wp.float64),
-        smax=_wp(state.smax, wp.float64),
-        d0=_wp(state.d0, wp.float64),
-        dmax=_wp(state.dmax, wp.float64),
-        dquad=_wp(state.dquad, wp.float64),
-        alpha_step=_wp(state.alpha_step, wp.float64),
-        status=_wp(state.status, wp.int32),
-        iteration=_wp(state.iteration, wp.int32),
-        end=_wp(state.end, wp.int32),
-        n_loop=_wp(state.n_loop, wp.int32),
-        ls_trials=_wp(state.ls_trials, wp.int32),
-        history_count=_wp(state.history_count, wp.int32),
+        "_OPTIMIZER_BUFFERS and _lbfgs_step_op parameters have diverged:\n"
+        f"  expected: {_OPTIMIZER_BUFFERS}\n"
+        f"  operator: {_op_buffer_params}"
     )
 
 
@@ -421,16 +341,41 @@ def lbfgs_reduce_energy(
 
 def lbfgs_step_coord(
     positions: torch.Tensor,
-    state: LBFGSState,
     forces: torch.Tensor,
     energy: torch.Tensor,
     batch_idx: torch.Tensor,
     n_particles: torch.Tensor,
+    x_base: torch.Tensor,
+    force_base: torch.Tensor,
+    direction: torch.Tensor,
+    s_history: torch.Tensor,
+    y_history: torch.Tensor,
+    ys: torch.Tensor,
+    yy: torch.Tensor,
+    alpha_hist: torch.Tensor,
+    beta_hist: torch.Tensor,
+    ss: torch.Tensor,
+    f_base: torch.Tensor,
+    gg: torch.Tensor,
+    gd: torch.Tensor,
+    fmax: torch.Tensor,
+    frms_sq: torch.Tensor,
+    smax: torch.Tensor,
+    d0: torch.Tensor,
+    dmax: torch.Tensor,
+    dquad: torch.Tensor,
+    alpha_step: torch.Tensor,
+    status: torch.Tensor,
+    iteration: torch.Tensor,
+    end: torch.Tensor,
+    n_loop: torch.Tensor,
+    ls_trials: torch.Tensor,
+    history_count: torch.Tensor,
     *,
     force_tol: float = 0.05,
     rms_tol: float = 0.0,
     stress_tol: float = 0.0,
-    ftol: float = 1e-4,
+    ftol: float = 0.0001,
     wolfe: float = 0.9,
     step_scale_down: float = 0.5,
     step_scale_up: float = 2.1,
@@ -443,15 +388,13 @@ def lbfgs_step_coord(
 ) -> None:
     """Advance one batched L-BFGS step, consuming one force evaluation.
 
-    Mutates ``positions`` and every field of ``state`` in place. Progress is
-    reported through ``state.status``; see the module docstring.
+    Mutates ``positions`` and every optimizer buffer in place. Progress is
+    reported through ``status``; see the module docstring.
 
     Parameters
     ----------
     positions : torch.Tensor, shape (num_atoms, 3)
         Current geometry. Advanced to the next trial point.
-    state : LBFGSState
-        From :func:`lbfgs_allocate_state`.
     forces : torch.Tensor, shape (num_atoms, 3)
         Forces at ``positions``. Forces, not gradients.
     energy : torch.Tensor, shape (num_systems,), dtype float64
@@ -461,6 +404,9 @@ def lbfgs_step_coord(
         Sorted system index per atom.
     n_particles : torch.Tensor, shape (num_systems,), dtype int32
         Atom count per system, for the optional RMS convergence criterion.
+    x_base, ..., history_count : torch.Tensor
+        The caller-owned optimizer buffers, in this fixed order. See the module
+        docstring for shapes and required initial contents.
     force_tol : float, optional
         Convergence threshold on the largest per-atom force magnitude, in the
         force units you supplied. Zero disables it.
@@ -486,14 +432,39 @@ def lbfgs_step_coord(
     --------
     lbfgs_step_extended : the same operator on caller-packed degrees of freedom.
     """
-    _validate(positions, forces, energy, batch_idx, n_particles, state)
+    _validate(positions, forces, energy, batch_idx, n_particles, s_history, status)
     _lbfgs_step_op(
         positions,
         forces,
         energy,
         batch_idx,
         n_particles,
-        *state,
+        x_base,
+        force_base,
+        direction,
+        s_history,
+        y_history,
+        ys,
+        yy,
+        alpha_hist,
+        beta_hist,
+        ss,
+        f_base,
+        gg,
+        gd,
+        fmax,
+        frms_sq,
+        smax,
+        d0,
+        dmax,
+        dquad,
+        alpha_step,
+        status,
+        iteration,
+        end,
+        n_loop,
+        ls_trials,
+        history_count,
         force_tol,
         rms_tol,
         stress_tol,
@@ -512,11 +483,36 @@ def lbfgs_step_coord(
 
 def lbfgs_step_extended(
     ext_positions: torch.Tensor,
-    state: LBFGSState,
     ext_forces: torch.Tensor,
     energy: torch.Tensor,
     ext_batch_idx: torch.Tensor,
     n_particles: torch.Tensor,
+    x_base: torch.Tensor,
+    force_base: torch.Tensor,
+    direction: torch.Tensor,
+    s_history: torch.Tensor,
+    y_history: torch.Tensor,
+    ys: torch.Tensor,
+    yy: torch.Tensor,
+    alpha_hist: torch.Tensor,
+    beta_hist: torch.Tensor,
+    ss: torch.Tensor,
+    f_base: torch.Tensor,
+    gg: torch.Tensor,
+    gd: torch.Tensor,
+    fmax: torch.Tensor,
+    frms_sq: torch.Tensor,
+    smax: torch.Tensor,
+    d0: torch.Tensor,
+    dmax: torch.Tensor,
+    dquad: torch.Tensor,
+    alpha_step: torch.Tensor,
+    status: torch.Tensor,
+    iteration: torch.Tensor,
+    end: torch.Tensor,
+    n_loop: torch.Tensor,
+    ls_trials: torch.Tensor,
+    history_count: torch.Tensor,
     **kwargs,
 ) -> None:
     """Advance one step on caller-packed degrees of freedom.
@@ -528,15 +524,46 @@ def lbfgs_step_extended(
 
     Note that convergence is evaluated on whatever ``ext_forces`` contains. If
     those are not Cartesian atomic forces, ``force_tol`` will not mean a force
-    per atom, and you should drive convergence yourself from ``state.status``
-    and your own reductions.
+    per atom, and you should drive convergence yourself from ``status`` and
+    your own reductions.
     """
     lbfgs_step_coord(
-        ext_positions, state, ext_forces, energy, ext_batch_idx, n_particles, **kwargs
+        ext_positions,
+        ext_forces,
+        energy,
+        ext_batch_idx,
+        n_particles,
+        x_base,
+        force_base,
+        direction,
+        s_history,
+        y_history,
+        ys,
+        yy,
+        alpha_hist,
+        beta_hist,
+        ss,
+        f_base,
+        gg,
+        gd,
+        fmax,
+        frms_sq,
+        smax,
+        d0,
+        dmax,
+        dquad,
+        alpha_step,
+        status,
+        iteration,
+        end,
+        n_loop,
+        ls_trials,
+        history_count,
+        **kwargs,
     )
 
 
-def _validate(positions, forces, energy, batch_idx, n_particles, state) -> None:
+def _validate(positions, forces, energy, batch_idx, n_particles, s_history, status):
     """Check the shapes and dtypes that would otherwise fail deep in a kernel."""
     num_dofs = positions.shape[0]
     if positions.dtype not in _TORCH_TO_WP_VEC:
@@ -556,7 +583,7 @@ def _validate(positions, forces, energy, batch_idx, n_particles, state) -> None:
         )
     if energy.dtype != torch.float64:
         raise ValueError(f"energy must be float64; got {energy.dtype}")
-    num_systems = state.status.shape[0]
+    num_systems = status.shape[0]
     if energy.shape[0] != num_systems:
         raise ValueError(
             f"energy length {energy.shape[0]} != number of systems {num_systems}"
@@ -566,9 +593,9 @@ def _validate(positions, forces, energy, batch_idx, n_particles, state) -> None:
             f"n_particles length {n_particles.shape[0]} != number of systems "
             f"{num_systems}"
         )
-    if state.s_history.shape[1] != num_dofs:
+    if s_history.shape[1] != num_dofs:
         raise ValueError(
-            f"history buffers hold {state.s_history.shape[1]} degrees of freedom, "
+            f"history buffers hold {s_history.shape[1]} degrees of freedom, "
             f"but positions has {num_dofs}"
         )
 
@@ -577,27 +604,10 @@ def _validate(positions, forces, energy, batch_idx, n_particles, state) -> None:
 # Variable-cell relaxation
 # =============================================================================
 
-#: Tensors the variable-cell step writes to. ``ext_batch_idx`` and
-#: ``ext_atom_ptr`` are topology, written once at allocation, so they are
-#: inputs rather than mutated state.
-_CELL_MUTATED = (
-    ("positions", "cell")
-    + LBFGSState._fields
-    + (
-        "ref_cell",
-        "ref_cell_inv",
-        "kappa",
-        "phi",
-        "phi_inv",
-        "d_phi",
-        "cell_dof_a",
-        "cell_dof_b",
-        "cell_force_a",
-        "cell_force_b",
-        "ext_positions",
-        "ext_forces",
-    )
-)
+#: Tensors the variable-cell step writes to. ``ref_cell``, ``ref_cell_inv``,
+#: ``kappa``, ``ext_batch_idx`` and ``ext_atom_ptr`` are read-only
+#: configuration and topology, so they are inputs rather than mutated buffers.
+_CELL_MUTATED = ("positions", "cell") + _OPTIMIZER_BUFFERS + _CELL_SCRATCH
 
 
 @torch_custom_op("nvalchemiops::lbfgs_step_coord_cell", mutates_args=_CELL_MUTATED)
@@ -665,6 +675,7 @@ def _lbfgs_step_coord_cell_op(
     """Run one registered variable-cell L-BFGS step."""
     vec = _TORCH_TO_WP_VEC[positions.dtype]
     mat = _TORCH_TO_WP_MAT[positions.dtype]
+    scalar = _TORCH_TO_WP_SCALAR[positions.dtype]
     with scoped_warp_stream(positions.device):
         _wp_step_cell(
             positions=_wp(positions, vec),
@@ -674,50 +685,46 @@ def _lbfgs_step_coord_cell_op(
             energy=_wp(energy, wp.float64),
             batch_idx=_wp(batch_idx, wp.int32),
             n_particles=_wp(n_particles, wp.int32),
-            cell_state=LBFGSCellState(
-                ref_cell=_wp(ref_cell, mat),
-                ref_cell_inv=_wp(ref_cell_inv, mat),
-                kappa=_wp(kappa, wp.float64),
-                ext_batch_idx=_wp(ext_batch_idx, wp.int32),
-                ext_atom_ptr=_wp(ext_atom_ptr, wp.int32),
-                phi=_wp(phi, mat),
-                phi_inv=_wp(phi_inv, mat),
-                d_phi=_wp(d_phi, mat),
-                cell_dof_a=_wp(cell_dof_a, vec),
-                cell_dof_b=_wp(cell_dof_b, vec),
-                cell_force_a=_wp(cell_force_a, vec),
-                cell_force_b=_wp(cell_force_b, vec),
-                ext_positions=_wp(ext_positions, vec),
-                ext_forces=_wp(ext_forces, vec),
-            ),
-            state=LBFGSState(
-                x_base=_wp(x_base, vec),
-                force_base=_wp(force_base, vec),
-                direction=_wp(direction, vec),
-                s_history=_wp(s_history, vec),
-                y_history=_wp(y_history, vec),
-                ys=_wp(ys, wp.float64),
-                yy=_wp(yy, wp.float64),
-                alpha_hist=_wp(alpha_hist, wp.float64),
-                beta_hist=_wp(beta_hist, wp.float64),
-                ss=_wp(ss, wp.float64),
-                f_base=_wp(f_base, wp.float64),
-                gg=_wp(gg, wp.float64),
-                gd=_wp(gd, wp.float64),
-                fmax=_wp(fmax, wp.float64),
-                frms_sq=_wp(frms_sq, wp.float64),
-                smax=_wp(smax, wp.float64),
-                d0=_wp(d0, wp.float64),
-                dmax=_wp(dmax, wp.float64),
-                dquad=_wp(dquad, wp.float64),
-                alpha_step=_wp(alpha_step, wp.float64),
-                status=_wp(status, wp.int32),
-                iteration=_wp(iteration, wp.int32),
-                end=_wp(end, wp.int32),
-                n_loop=_wp(n_loop, wp.int32),
-                ls_trials=_wp(ls_trials, wp.int32),
-                history_count=_wp(history_count, wp.int32),
-            ),
+            x_base=_wp(x_base, vec),
+            force_base=_wp(force_base, vec),
+            direction=_wp(direction, vec),
+            s_history=_wp(s_history, vec),
+            y_history=_wp(y_history, vec),
+            ys=_wp(ys, wp.float64),
+            yy=_wp(yy, wp.float64),
+            alpha_hist=_wp(alpha_hist, wp.float64),
+            beta_hist=_wp(beta_hist, wp.float64),
+            ss=_wp(ss, wp.float64),
+            f_base=_wp(f_base, wp.float64),
+            gg=_wp(gg, wp.float64),
+            gd=_wp(gd, wp.float64),
+            fmax=_wp(fmax, wp.float64),
+            frms_sq=_wp(frms_sq, wp.float64),
+            smax=_wp(smax, wp.float64),
+            d0=_wp(d0, wp.float64),
+            dmax=_wp(dmax, wp.float64),
+            dquad=_wp(dquad, wp.float64),
+            alpha_step=_wp(alpha_step, wp.float64),
+            status=_wp(status, wp.int32),
+            iteration=_wp(iteration, wp.int32),
+            end=_wp(end, wp.int32),
+            n_loop=_wp(n_loop, wp.int32),
+            ls_trials=_wp(ls_trials, wp.int32),
+            history_count=_wp(history_count, wp.int32),
+            ref_cell=_wp(ref_cell, mat),
+            ref_cell_inv=_wp(ref_cell_inv, mat),
+            kappa=_wp(kappa, scalar),
+            ext_batch_idx=_wp(ext_batch_idx, wp.int32),
+            ext_atom_ptr=_wp(ext_atom_ptr, wp.int32),
+            phi=_wp(phi, mat),
+            phi_inv=_wp(phi_inv, mat),
+            d_phi=_wp(d_phi, mat),
+            cell_dof_a=_wp(cell_dof_a, vec),
+            cell_dof_b=_wp(cell_dof_b, vec),
+            cell_force_a=_wp(cell_force_a, vec),
+            cell_force_b=_wp(cell_force_b, vec),
+            ext_positions=_wp(ext_positions, vec),
+            ext_forces=_wp(ext_forces, vec),
             force_tol=force_tol,
             rms_tol=rms_tol,
             stress_tol=stress_tol,
@@ -735,127 +742,124 @@ def _lbfgs_step_coord_cell_op(
 
 register_noop_fake(_lbfgs_step_coord_cell_op)
 
-_CELL_STATE_SLICE = slice(
-    7 + len(LBFGSState._fields),
-    7 + len(LBFGSState._fields) + len(LBFGSCellState._fields),
-)
+_n_opt = len(_OPTIMIZER_BUFFERS)
 _cell_params = tuple(inspect.signature(_lbfgs_step_coord_cell_op).parameters)
-if _cell_params[7 : 7 + len(LBFGSState._fields)] != LBFGSState._fields:
-    raise RuntimeError("LBFGSState fields and the cell operator have diverged")
-if _cell_params[_CELL_STATE_SLICE] != LBFGSCellState._fields:
-    raise RuntimeError("LBFGSCellState fields and the cell operator have diverged")
+if _cell_params[7 : 7 + _n_opt] != _OPTIMIZER_BUFFERS:
+    raise RuntimeError("_OPTIMIZER_BUFFERS and the cell operator have diverged")
+if _cell_params[7 + _n_opt : 7 + _n_opt + len(_CELL_BUFFERS)] != _CELL_BUFFERS:
+    raise RuntimeError("_CELL_BUFFERS and the cell operator have diverged")
 
 
-def lbfgs_allocate_cell_state(
-    num_atoms: int,
-    num_systems: int,
-    *,
-    dtype: torch.dtype,
-    device: torch.device | str,
-    cell_force_scale: float | None = None,
-) -> LBFGSCellState:
-    """Allocate the working arrays for variable-cell relaxation.
-
-    Assumes every system has the same atom count, ``num_atoms // num_systems``.
-
-    The reference cell is left zeroed; capture it with
-    :func:`lbfgs_set_reference_cell` once the starting geometry is known.
-    Everything else that depends only on topology -- the coordinate scaling and
-    the packed index arrays -- is filled here.
-
-    Parameters
-    ----------
-    cell_force_scale : float, optional
-        Multiplier on the atom count giving the cell coordinate scaling.
-        Defaults to ``1 / atoms_per_system``, which makes the scaling one and
-        puts cell and atom degrees of freedom on a comparable footing. Raise it
-        to make the cell move less per step.
-
-    Returns
-    -------
-    LBFGSCellState
-    """
-    if dtype not in _TORCH_TO_WP_VEC:
-        raise ValueError(f"dtype must be float32 or float64; got {dtype}")
-    if num_atoms % num_systems:
-        raise ValueError(
-            f"num_atoms {num_atoms} is not divisible by num_systems {num_systems}; "
-            "ragged batches are not supported by this allocator"
-        )
-    per_system = num_atoms // num_systems
-    num_ext = num_atoms + 2 * num_systems
-    if cell_force_scale is None:
-        cell_force_scale = 1.0 / per_system
-
-    ext_atom_ptr = torch.tensor(
-        [s * per_system + 2 * s for s in range(num_systems + 1)],
-        dtype=torch.int32,
-        device=device,
-    )
-    ext_batch_idx = torch.repeat_interleave(
-        torch.arange(num_systems, dtype=torch.int32, device=device), per_system + 2
-    )
-    fields = {
-        "ref_cell": torch.zeros(num_systems, 3, 3, dtype=dtype, device=device),
-        "ref_cell_inv": torch.zeros(num_systems, 3, 3, dtype=dtype, device=device),
-        "kappa": torch.zeros(num_systems, dtype=dtype, device=device),
-        "ext_batch_idx": ext_batch_idx,
-        "ext_atom_ptr": ext_atom_ptr,
-        "phi": torch.zeros(num_systems, 3, 3, dtype=dtype, device=device),
-        "phi_inv": torch.zeros(num_systems, 3, 3, dtype=dtype, device=device),
-        "d_phi": torch.zeros(num_systems, 3, 3, dtype=dtype, device=device),
-        "cell_dof_a": torch.zeros(num_systems, 3, dtype=dtype, device=device),
-        "cell_dof_b": torch.zeros(num_systems, 3, dtype=dtype, device=device),
-        "cell_force_a": torch.zeros(num_systems, 3, dtype=dtype, device=device),
-        "cell_force_b": torch.zeros(num_systems, 3, dtype=dtype, device=device),
-        "ext_positions": torch.zeros(num_ext, 3, dtype=dtype, device=device),
-        "ext_forces": torch.zeros(num_ext, 3, dtype=dtype, device=device),
-    }
-    cell_state = LBFGSCellState(**fields)
-    n_atoms_per_system = torch.full(
-        (num_systems,), per_system, dtype=torch.int32, device=device
-    )
-    _wp_cell_kappa(
-        _wp(n_atoms_per_system, wp.int32),
-        _wp(cell_state.kappa, wp.float32 if dtype == torch.float32 else wp.float64),
-        cell_force_scale=cell_force_scale,
-    )
-    return cell_state
-
-
-def lbfgs_set_reference_cell(cell: torch.Tensor, cell_state: LBFGSCellState) -> None:
+def lbfgs_set_reference_cell(
+    cell: torch.Tensor, ref_cell: torch.Tensor, ref_cell_inv: torch.Tensor
+) -> None:
     """Capture the reference cell that defines the variable-cell chart.
+
+    Writes the caller's ``ref_cell`` and ``ref_cell_inv`` buffers in place.
 
     Coordinates are measured relative to a cell held fixed for the whole
     relaxation, which is what makes history pairs from different iterations
-    comparable. Call this once, before the first step.
+    comparable. Call this once, before the first step. Calling it again
+    re-references the chart and invalidates every stored curvature pair, so
+    restore the optimizer buffers to their initial contents if you do.
 
-    Calling it again re-references the chart and invalidates every stored
-    curvature pair, so follow it with :func:`lbfgs_reset`.
+    Parameters
+    ----------
+    cell : torch.Tensor, shape (num_systems, 3, 3)
+        Current cell, lattice vectors as columns.
+    ref_cell, ref_cell_inv : torch.Tensor, shape (num_systems, 3, 3)
+        OUTPUT. Caller-owned buffers for the reference cell and its inverse.
     """
     mat = _TORCH_TO_WP_MAT[cell.dtype]
-    _wp_set_reference_cell(
-        _wp(cell, mat),
-        _wp(cell_state.ref_cell, mat),
-        _wp(cell_state.ref_cell_inv, mat),
+    _wp_set_reference_cell(_wp(cell, mat), _wp(ref_cell, mat), _wp(ref_cell_inv, mat))
+
+
+def lbfgs_cell_kappa(
+    n_particles: torch.Tensor,
+    kappa: torch.Tensor,
+    *,
+    cell_force_scale: float = 1.0,
+) -> None:
+    """Fill the per-system cell coordinate scaling, in place.
+
+    The cell coordinate is ``kappa * Phi`` and its conjugate force is divided
+    by the same ``kappa``, which is what keeps ``g . dx`` independent of the
+    scaling. Depends only on topology, so compute it once and reuse it.
+
+    Parameters
+    ----------
+    n_particles : torch.Tensor, shape (num_systems,), dtype int32
+        Atom count per system.
+    kappa : torch.Tensor, shape (num_systems,)
+        OUTPUT. Must match the **coordinate** precision, not float64, because
+        it scales matrices.
+    cell_force_scale : float, optional
+        Multiplier on the atom count. Larger values make the cell move less per
+        step relative to the atoms; ``1 / atoms_per_system`` puts the two on a
+        comparable footing.
+    """
+    if kappa.dtype not in _TORCH_TO_WP_SCALAR:
+        raise ValueError(f"kappa must be float32 or float64; got {kappa.dtype}")
+    _wp_cell_kappa(
+        _wp(n_particles, wp.int32),
+        _wp(kappa, _TORCH_TO_WP_SCALAR[kappa.dtype]),
+        cell_force_scale=cell_force_scale,
     )
 
 
 def lbfgs_step_coord_cell(
     positions: torch.Tensor,
     cell: torch.Tensor,
-    state: LBFGSState,
-    cell_state: LBFGSCellState,
     forces: torch.Tensor,
     stress: torch.Tensor,
     energy: torch.Tensor,
     batch_idx: torch.Tensor,
     n_particles: torch.Tensor,
+    x_base: torch.Tensor,
+    force_base: torch.Tensor,
+    direction: torch.Tensor,
+    s_history: torch.Tensor,
+    y_history: torch.Tensor,
+    ys: torch.Tensor,
+    yy: torch.Tensor,
+    alpha_hist: torch.Tensor,
+    beta_hist: torch.Tensor,
+    ss: torch.Tensor,
+    f_base: torch.Tensor,
+    gg: torch.Tensor,
+    gd: torch.Tensor,
+    fmax: torch.Tensor,
+    frms_sq: torch.Tensor,
+    smax: torch.Tensor,
+    d0: torch.Tensor,
+    dmax: torch.Tensor,
+    dquad: torch.Tensor,
+    alpha_step: torch.Tensor,
+    status: torch.Tensor,
+    iteration: torch.Tensor,
+    end: torch.Tensor,
+    n_loop: torch.Tensor,
+    ls_trials: torch.Tensor,
+    history_count: torch.Tensor,
+    ref_cell: torch.Tensor,
+    ref_cell_inv: torch.Tensor,
+    kappa: torch.Tensor,
+    ext_batch_idx: torch.Tensor,
+    ext_atom_ptr: torch.Tensor,
+    phi: torch.Tensor,
+    phi_inv: torch.Tensor,
+    d_phi: torch.Tensor,
+    cell_dof_a: torch.Tensor,
+    cell_dof_b: torch.Tensor,
+    cell_force_a: torch.Tensor,
+    cell_force_b: torch.Tensor,
+    ext_positions: torch.Tensor,
+    ext_forces: torch.Tensor,
     *,
     force_tol: float = 0.05,
     rms_tol: float = 0.0,
     stress_tol: float = 0.0,
-    ftol: float = 1e-4,
+    ftol: float = 0.0001,
     wolfe: float = 0.9,
     step_scale_down: float = 0.5,
     step_scale_up: float = 2.1,
@@ -867,12 +871,17 @@ def lbfgs_step_coord_cell(
 ) -> None:
     """Advance one variable-cell step, relaxing coordinates and cell together.
 
-    Mutates ``positions``, ``cell`` and both state objects in place. Consumes
-    exactly one energy/force/stress evaluation, and reports progress through
-    ``state.status`` exactly like the coordinate-only path.
+    Mutates ``positions``, ``cell``, every optimizer buffer and the cell
+    scratch buffers in place. Consumes exactly one energy/force/stress
+    evaluation, and reports progress through ``status`` exactly like the
+    coordinate-only path.
 
-    ``state`` must be sized for ``num_atoms + 2 * num_systems`` degrees of
-    freedom, since the cell contributes two entries per system.
+    The optimizer buffers must be sized for ``num_atoms + 2 * num_systems``
+    degrees of freedom, since the cell contributes two entries per system.
+
+    Call :func:`lbfgs_set_reference_cell` and :func:`lbfgs_cell_kappa` once
+    before the first step, and build ``ext_batch_idx`` / ``ext_atom_ptr``
+    yourself so ragged batches are expressible.
 
     Parameters
     ----------
@@ -883,6 +892,12 @@ def lbfgs_step_coord_cell(
         Cauchy stress. Drives the cell degrees of freedom and is what
         ``stress_tol`` is compared against; the packed cell force cannot be
         used for that, since it carries units of energy rather than stress.
+    x_base, ..., history_count : torch.Tensor
+        The caller-owned optimizer buffers, in the same order as
+        :func:`lbfgs_step_coord`.
+    ref_cell, ..., ext_forces : torch.Tensor
+        The caller-owned cell buffers. The first five are read-only
+        configuration and topology; the rest is scratch.
     force_tol, rms_tol, stress_tol : float, optional
         Convergence thresholds, always evaluated on the Cartesian forces and
         the stress, so ``force_tol`` keeps its meaning as a force per atom
@@ -890,23 +905,15 @@ def lbfgs_step_coord_cell(
     maxstep : float, optional
         Largest Cartesian distance an atom may move in one step.
 
-    Examples
-    --------
-    >>> cell_state = lbfgs_allocate_cell_state(
-    ...     num_atoms, num_systems, dtype=positions.dtype, device=positions.device
-    ... )
-    >>> lbfgs_set_reference_cell(cell, cell_state)
-    >>> state = lbfgs_allocate_state(
-    ...     num_atoms + 2 * num_systems, num_systems,
-    ...     dtype=positions.dtype, device=positions.device,
-    ... )
-
     See Also
     --------
     lbfgs_set_reference_cell : must be called first.
+    lbfgs_cell_kappa : must be called first.
     lbfgs_step_coord : the coordinate-only equivalent.
     """
-    _validate_cell(positions, forces, cell, stress, energy, batch_idx, state)
+    _validate_cell(
+        positions, forces, cell, stress, energy, batch_idx, s_history, status
+    )
     _lbfgs_step_coord_cell_op(
         forces,
         stress,
@@ -915,8 +922,46 @@ def lbfgs_step_coord_cell(
         n_particles,
         positions,
         cell,
-        *state,
-        *cell_state,
+        x_base,
+        force_base,
+        direction,
+        s_history,
+        y_history,
+        ys,
+        yy,
+        alpha_hist,
+        beta_hist,
+        ss,
+        f_base,
+        gg,
+        gd,
+        fmax,
+        frms_sq,
+        smax,
+        d0,
+        dmax,
+        dquad,
+        alpha_step,
+        status,
+        iteration,
+        end,
+        n_loop,
+        ls_trials,
+        history_count,
+        ref_cell,
+        ref_cell_inv,
+        kappa,
+        ext_batch_idx,
+        ext_atom_ptr,
+        phi,
+        phi_inv,
+        d_phi,
+        cell_dof_a,
+        cell_dof_b,
+        cell_force_a,
+        cell_force_b,
+        ext_positions,
+        ext_forces,
         force_tol,
         rms_tol,
         stress_tol,
@@ -932,10 +977,12 @@ def lbfgs_step_coord_cell(
     )
 
 
-def _validate_cell(positions, forces, cell, stress, energy, batch_idx, state) -> None:
+def _validate_cell(
+    positions, forces, cell, stress, energy, batch_idx, s_history, status
+):
     """Check the variable-cell shapes that would otherwise fail in a kernel."""
     num_atoms = positions.shape[0]
-    num_systems = state.status.shape[0]
+    num_systems = status.shape[0]
     if positions.dtype not in _TORCH_TO_WP_VEC:
         raise ValueError(f"positions must be float32 or float64; got {positions.dtype}")
     if forces.shape != positions.shape:
@@ -960,9 +1007,9 @@ def _validate_cell(positions, forces, cell, stress, energy, batch_idx, state) ->
             f"batch_idx length {batch_idx.shape[0]} != number of atoms {num_atoms}"
         )
     expected = num_atoms + 2 * num_systems
-    if state.s_history.shape[1] != expected:
+    if s_history.shape[1] != expected:
         raise ValueError(
-            f"state is sized for {state.s_history.shape[1]} degrees of freedom, but "
-            f"the variable-cell path needs {expected} "
+            f"optimizer buffers are sized for {s_history.shape[1]} degrees of "
+            f"freedom, but the variable-cell path needs {expected} "
             f"(num_atoms + 2 * num_systems)"
         )

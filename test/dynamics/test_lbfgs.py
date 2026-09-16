@@ -43,13 +43,11 @@ from nvalchemiops.dynamics.optimizers.lbfgs import (
     LBFGS_CONVERGED,
     LBFGS_LS_FAILED,
     LBFGS_NEED_EVAL,
-    LBFGSState,
     lbfgs_apply_step,
     lbfgs_cell_trust_region,
     lbfgs_pack_cell,
     lbfgs_prepare_step,
     lbfgs_reduce_energy,
-    lbfgs_reset,
     lbfgs_set_reference_cell,
     lbfgs_step,
     lbfgs_step_coord_cell,
@@ -107,7 +105,6 @@ class Driver:
         self.state = make_lbfgs_state(
             self.num_dofs, num_systems, history_size, vec_dtype, device
         )
-        lbfgs_reset(**self.state)
         self.n_evals = 0
 
     def evaluate(self):
@@ -586,7 +583,8 @@ class TestLBFGSConvergence:
         """A relaxed geometry is reported converged and left untouched.
 
         The base buffers must still be seeded, or they would stay at the zeros
-        left by ``lbfgs_reset`` while the positions hold the real geometry.
+        left by the required initial contents while the positions hold the
+        real geometry.
         """
         start = np.full((3, 3), 1e-9)
         d = Driver(start, 1, wp.vec3d, np.float64, device)
@@ -706,7 +704,6 @@ class TestLBFGSEdgeCases:
     def test_empty_system(self, device):
         """Zero degrees of freedom is a no-op rather than a crash."""
         state = make_lbfgs_state(0, 1, HISTORY_SIZE, wp.vec3d, device)
-        lbfgs_reset(**state)
         lbfgs_step(
             positions=wp.zeros(0, dtype=wp.vec3d, device=device),
             forces=wp.zeros(0, dtype=wp.vec3d, device=device),
@@ -819,12 +816,12 @@ class CellDriver:
 
         self.cell_state = make_lbfgs_cell_state(self.num_atoms, 1, v, device)
         lbfgs_set_reference_cell(
-            self.cell, self.cell_state.ref_cell, self.cell_state.ref_cell_inv
+            self.cell,
+            self.cell_state["ref_cell"],
+            self.cell_state["ref_cell_inv"],
         )
 
         self.state_dict = make_lbfgs_state(self.num_ext, 1, history_size, v, device)
-        lbfgs_reset(**self.state_dict)
-        self.state = LBFGSState(**self.state_dict)
         self.n_evals = 0
 
     def evaluate(self):
@@ -843,29 +840,29 @@ class CellDriver:
             self.forces,
             self.cell,
             self.stress,
-            cs.ref_cell_inv,
-            cs.kappa,
-            cs.ext_batch_idx,
-            cs.ext_atom_ptr,
-            cs.phi,
-            cs.phi_inv,
-            cs.cell_dof_a,
-            cs.cell_dof_b,
-            cs.cell_force_a,
-            cs.cell_force_b,
-            cs.ext_positions,
-            cs.ext_forces,
+            cs["ref_cell_inv"],
+            cs["kappa"],
+            cs["ext_batch_idx"],
+            cs["ext_atom_ptr"],
+            cs["phi"],
+            cs["phi_inv"],
+            cs["cell_dof_a"],
+            cs["cell_dof_b"],
+            cs["cell_force_a"],
+            cs["cell_force_b"],
+            cs["ext_positions"],
+            cs["ext_forces"],
         )
 
     def unpack(self):
         cs = self.cell_state
         lbfgs_unpack_cell(
-            cs.ext_positions,
-            cs.ref_cell,
-            cs.kappa,
+            cs["ext_positions"],
+            cs["ref_cell"],
+            cs["kappa"],
             self.batch_idx,
-            cs.ext_atom_ptr,
-            cs.phi,
+            cs["ext_atom_ptr"],
+            cs["phi"],
             self.positions,
             self.cell,
         )
@@ -880,8 +877,8 @@ class CellDriver:
             self.energy,
             self.batch_idx,
             self.n_atoms_per_system,
-            self.cell_state,
-            self.state,
+            *self.state_dict.values(),
+            *self.cell_state.values(),
             **kwargs,
         )
         wp.synchronize()
@@ -895,10 +892,10 @@ class CellDriver:
         cs, st = self.cell_state, self.state_dict
         self.pack()
         lbfgs_update(
-            positions=cs.ext_positions,
-            forces=cs.ext_forces,
+            positions=cs["ext_positions"],
+            forces=cs["ext_forces"],
             energy=self.energy,
-            batch_idx=cs.ext_batch_idx,
+            batch_idx=cs["ext_batch_idx"],
             n_particles=self.n_atoms_per_system,
             cart_forces=self.forces,
             atom_batch_idx=self.batch_idx,
@@ -908,13 +905,13 @@ class CellDriver:
             **st,
         )
         lbfgs_cell_trust_region(
-            cs.ext_positions,
+            cs["ext_positions"],
             st["direction"],
-            cs.phi,
-            cs.d_phi,
+            cs["phi"],
+            cs["d_phi"],
             self.batch_idx,
-            cs.ext_atom_ptr,
-            cs.kappa,
+            cs["ext_atom_ptr"],
+            cs["kappa"],
             st["status"],
             st["n_loop"],
             st["dmax"],
@@ -934,12 +931,12 @@ class CellDriver:
             maxstep=kwargs.get("maxstep", 0.2),
         )
         lbfgs_apply_step(
-            positions=cs.ext_positions,
-            forces=cs.ext_forces,
+            positions=cs["ext_positions"],
+            forces=cs["ext_forces"],
             x_base=st["x_base"],
             force_base=st["force_base"],
             direction=st["direction"],
-            batch_idx=cs.ext_batch_idx,
+            batch_idx=cs["ext_batch_idx"],
             status=st["status"],
             n_loop=st["n_loop"],
             gg=st["gg"],
@@ -952,7 +949,7 @@ class CellDriver:
         for _ in range(max_evals):
             self.evaluate()
             self.step(**kwargs)
-            if self.state.status.numpy()[0] != LBFGS_NEED_EVAL:
+            if self.state_dict["status"].numpy()[0] != LBFGS_NEED_EVAL:
                 break
         return self
 
@@ -980,8 +977,8 @@ class TestLBFGSVariableCell:
         # Re-reference so the chart is not the identity.
         lbfgs_set_reference_cell(
             wp.array(ref[None], dtype=wp.mat33d, device=device),
-            d.cell_state.ref_cell,
-            d.cell_state.ref_cell_inv,
+            d.cell_state["ref_cell"],
+            d.cell_state["ref_cell_inv"],
         )
         d.evaluate()
         d.pack()
@@ -1007,18 +1004,18 @@ class TestLBFGSVariableCell:
         d = CellDriver(positions, cell, potential, device)
         lbfgs_set_reference_cell(
             wp.array(ref[None], dtype=wp.mat33d, device=device),
-            d.cell_state.ref_cell,
-            d.cell_state.ref_cell_inv,
+            d.cell_state["ref_cell"],
+            d.cell_state["ref_cell_inv"],
         )
         d.evaluate()
         d.pack()
         wp.synchronize()
-        packed = d.cell_state.ext_positions.numpy().copy()
-        packed_force = d.cell_state.ext_forces.numpy().copy()
+        packed = d.cell_state["ext_positions"].numpy().copy()
+        packed_force = d.cell_state["ext_forces"].numpy().copy()
         direction = rng.normal(size=packed.shape) * 0.05
 
         def energy_at(t):
-            d.cell_state.ext_positions.assign(packed + t * direction)
+            d.cell_state["ext_positions"].assign(packed + t * direction)
             d.unpack()
             wp.synchronize()
             return potential.energy_forces_stress(
@@ -1042,10 +1039,10 @@ class TestLBFGSVariableCell:
         wp.synchronize()
         n = d.num_atoms
         np.testing.assert_allclose(
-            d.cell_state.ext_positions.numpy()[:n], positions, atol=1e-12
+            d.cell_state["ext_positions"].numpy()[:n], positions, atol=1e-12
         )
         np.testing.assert_allclose(
-            d.cell_state.ext_forces.numpy()[:n], d.forces.numpy(), atol=1e-12
+            d.cell_state["ext_forces"].numpy()[:n], d.forces.numpy(), atol=1e-12
         )
 
     @pytest.mark.parametrize("device", DEVICES)
@@ -1071,10 +1068,10 @@ class TestLBFGSVariableCell:
             two.step_composed(force_tol=1e-9, stress_tol=1e-9, maxstep=0.2)
             np.testing.assert_array_equal(one.positions.numpy(), two.positions.numpy())
             np.testing.assert_array_equal(one.cell.numpy(), two.cell.numpy())
-            if one.state.status.numpy()[0] != LBFGS_NEED_EVAL:
+            if one.state_dict["status"].numpy()[0] != LBFGS_NEED_EVAL:
                 break
         np.testing.assert_array_equal(
-            one.state.status.numpy(), two.state.status.numpy()
+            one.state_dict["status"].numpy(), two.state_dict["status"].numpy()
         )
 
     @pytest.mark.parametrize("device", DEVICES)
@@ -1103,9 +1100,9 @@ class TestLBFGSVariableCell:
         d.evaluate()
         d.step(force_tol=1e-8, stress_tol=1e-8, maxstep=0.2)
 
-        dquad = float(d.state.dquad.numpy()[0])
-        alpha = float(d.state.alpha_step.numpy()[0])
-        dmax = float(d.state.dmax.numpy()[0])
+        dquad = float(d.state_dict["dquad"].numpy()[0])
+        alpha = float(d.state_dict["alpha_step"].numpy()[0])
+        dmax = float(d.state_dict["dmax"].numpy()[0])
         assert dmax > 0.0, (
             "no displacement measured; the test is not exercising the cap"
         )
@@ -1130,12 +1127,115 @@ class TestLBFGSVariableCell:
         d = CellDriver(positions, cell, potential, device).run(
             force_tol=1e-6, stress_tol=1e-6, maxstep=0.2
         )
-        assert d.state.status.numpy()[0] == LBFGS_CONVERGED, (
-            f"status {d.state.status.numpy()[0]} after {d.n_evals} evaluations"
+        assert d.state_dict["status"].numpy()[0] == LBFGS_CONVERGED, (
+            f"status {d.state_dict['status'].numpy()[0]} after {d.n_evals} evaluations"
         )
         volume = abs(np.linalg.det(d.cell.numpy()[0]))
         np.testing.assert_allclose(volume, potential.target_volume, rtol=1e-4)
         frac_final = (np.linalg.inv(d.cell.numpy()[0]) @ d.positions.numpy().T).T
         np.testing.assert_allclose(
             frac_final, np.broadcast_to(s0, frac.shape), atol=1e-5
+        )
+
+
+class TestLBFGSRaggedVariableCell:
+    """Variable-cell relaxation of a batch whose systems differ in size."""
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_ragged_batch_relaxes_every_system(self, device):
+        """Each system reaches its own target volume.
+
+        Nothing in the packed layout requires a uniform atom count: the
+        extended CSR pointers and per-entry system index come from the generic
+        batch utilities, so a ragged batch is expressible by construction.
+        This would pass trivially with equal counts, so the counts are
+        deliberately different and the cells are deliberately dissimilar.
+        """
+        counts = [4, 7]
+        num_atoms, num_systems = sum(counts), len(counts)
+        num_ext = num_atoms + 2 * num_systems
+
+        rng = np.random.default_rng(3)
+        potentials = [
+            CellPotential(np.array([0.1, -0.2, 0.05]), p=0.35, c=140.0),
+            CellPotential(np.array([-0.05, 0.15, 0.2]), p=0.5, c=180.0),
+        ]
+        cells_np = np.stack([np.diag([6.0, 6.5, 7.0]), np.diag([5.0, 5.4, 6.2])])
+        blocks = []
+        for s, n in enumerate(counts):
+            frac = potentials[s].s0 + rng.normal(size=(n, 3)) * 0.05
+            blocks.append((cells_np[s] @ frac.T).T)
+        positions_np = np.ascontiguousarray(np.vstack(blocks))
+
+        v, m, f = wp.vec3d, wp.mat33d, wp.float64
+        positions = wp.array(positions_np, dtype=v, device=device)
+        cell = wp.array(cells_np, dtype=m, device=device)
+        forces = wp.zeros(num_atoms, dtype=v, device=device)
+        stress = wp.zeros(num_systems, dtype=m, device=device)
+        energy = wp.zeros(num_systems, dtype=f, device=device)
+        batch_idx = wp.array(
+            np.repeat(np.arange(num_systems), counts).astype(np.int32),
+            dtype=wp.int32,
+            device=device,
+        )
+        n_particles = wp.array(
+            np.asarray(counts, np.int32), dtype=wp.int32, device=device
+        )
+
+        cell_state = make_lbfgs_cell_state(
+            num_atoms, num_systems, v, device, counts=counts
+        )
+        lbfgs_set_reference_cell(
+            cell, cell_state["ref_cell"], cell_state["ref_cell_inv"]
+        )
+        state = make_lbfgs_state(num_ext, num_systems, HISTORY_SIZE, v, device)
+
+        # The packed layout interleaves each system's atoms with its two cell
+        # entries, so the pointers must follow the ragged counts.
+        np.testing.assert_array_equal(
+            cell_state["ext_atom_ptr"].numpy(), [0, counts[0] + 2, num_ext]
+        )
+
+        offsets = np.concatenate([[0], np.cumsum(counts)])
+        for _ in range(400):
+            xs = positions.numpy()
+            cells = cell.numpy()
+            e = np.zeros(num_systems)
+            all_f = np.zeros_like(xs)
+            all_s = np.zeros((num_systems, 3, 3))
+            for s in range(num_systems):
+                lo, hi = offsets[s], offsets[s + 1]
+                e[s], all_f[lo:hi], all_s[s] = potentials[s].energy_forces_stress(
+                    xs[lo:hi], cells[s]
+                )
+            forces.assign(np.ascontiguousarray(all_f))
+            stress.assign(np.ascontiguousarray(all_s))
+            energy.assign(e)
+
+            lbfgs_step_coord_cell(
+                positions,
+                forces,
+                cell,
+                stress,
+                energy,
+                batch_idx,
+                n_particles,
+                *state.values(),
+                *cell_state.values(),
+                force_tol=1e-6,
+                stress_tol=1e-6,
+                maxstep=0.2,
+            )
+            wp.synchronize()
+            if not (state["status"].numpy() == LBFGS_NEED_EVAL).any():
+                break
+
+        np.testing.assert_array_equal(
+            state["status"].numpy(), np.full(num_systems, LBFGS_CONVERGED)
+        )
+        volumes = np.abs(np.linalg.det(cell.numpy()))
+        np.testing.assert_allclose(
+            volumes,
+            [p.target_volume for p in potentials],
+            rtol=1e-4,
         )

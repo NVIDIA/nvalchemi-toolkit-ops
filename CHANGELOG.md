@@ -4,106 +4,41 @@
 
 ### Added
 
-- New Warp-level L-BFGS geometry optimizer in
-  `nvalchemiops.dynamics.optimizers.lbfgs`, exposing `lbfgs_step`,
-  `lbfgs_update`, `lbfgs_prepare_step`, `lbfgs_apply_step`, `lbfgs_reduce`,
-  `lbfgs_reduce_energy` and `lbfgs_reset`. The optimizer is batched over a
-  sorted `batch_idx` and is caller-driven: each `lbfgs_step` call consumes
-  exactly one energy/force evaluation and reports progress through a per-system
-  `status` array taking the values `LBFGS_NEED_EVAL`, `LBFGS_CONVERGED` or
-  `LBFGS_LS_FAILED`. Systems in a batch stay in lock step in evaluations while
-  diverging in iterations, so no per-system host control flow is needed.
-  Coordinates may be float32 or float64; every per-system scalar is float64 in
-  both cases, because the Armijo test compares a difference of total energies.
-  `lbfgs_reduce_energy` sums per-atom energies into per-system totals in
-  float64 and is the recommended way to supply energy. A line search that
-  stalls while history is present is not reported as a failure: the optimizer
-  rolls back to the last accepted point, discards the history and continues
-  from steepest descent, so `LBFGS_LS_FAILED` is reserved for a search that
-  stalls with no history left. The PyTorch and JAX bindings are not included in
-  this change.
-- L-BFGS supports variable-cell relaxation through `lbfgs_set_reference_cell`,
-  `lbfgs_cell_kappa`, `lbfgs_pack_cell`, `lbfgs_unpack_cell` and
-  `lbfgs_cell_trust_region`. Positions and cell are mapped into a single packed
-  coordinate vector, so the two-loop recursion couples them with no changes of
-  its own. The coordinates follow ASE's `UnitCellFilter` convention: with a
-  reference cell `H0` fixed at the start and lattice vectors held as columns,
-  the deformation gradient is `Phi = H H0^-1`, atoms are stored as
-  `u = Phi^-1 r` and the cell as `kappa * Phi`, with conjugate forces
-  `Phi^T F` and `-(V sigma) Phi^-T / kappa`. Scaling the cell coordinate and
-  dividing its force by the same `kappa` keeps `g . dx` independent of the
-  chart, which is what makes the stored pairs genuine secant pairs.
-  Convergence is always evaluated on the Cartesian forces and the stress, never
-  on packed norms, so `force_tol` keeps its meaning as the cell deforms and
-  `stress_tol` is compared against a stress rather than the packed cell force,
-  which carries units of energy.
-- New PyTorch bindings for L-BFGS in `nvalchemiops.torch.lbfgs`:
-  `lbfgs_allocate_state`, `lbfgs_reset`, `lbfgs_reduce_energy`,
-  `lbfgs_step_coord` and `lbfgs_step_extended`, plus the shared `LBFGSState`
-  container. The step is a registered `torch.library` custom operator, so it
-  traces under `make_fx` and compiles under `torch.compile(fullgraph=True)`.
-  `LBFGSState._fields` is the single source of truth for the operator's
-  argument order; an import-time check rejects any divergence, which catches a
-  reordering that registration alone would not. Unlike the FIRE2 adapter, the
-  step binds Warp launches to PyTorch's current stream, so it can be captured
-  in a CUDA graph -- wrap the capture in
-  `wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream()))`, or the
-  capture records nothing. A step allocates no memory when the state is
-  pre-allocated.
-- New JAX bindings for L-BFGS in `nvalchemiops.jax.lbfgs`, covering both the
-  coordinate and variable-cell paths: `lbfgs_allocate_state`,
-  `lbfgs_step_coord`, `lbfgs_converged`, `lbfgs_allocate_cell_state`,
-  `lbfgs_set_reference_cell` and `lbfgs_step_coord_cell`. JAX arrays are
-  immutable, so these return a new state rather than mutating one; every
-  mutable array is declared as an input-output alias, and callers should donate
-  the state with `jax.jit(donate_argnums=...)` so XLA can reuse the buffers.
-  Steps are captured and replayed as CUDA graphs under the default
-  `graph_mode="warp"`; measurements show the capture working set settling at
-  four to five graphs and staying there, and `graph_mode="warp_staged"` is
-  available if a larger system does not settle. Graph modes are bit-identical
-  to the ungraphed baseline. The step is not differentiable, and `jax.grad`
-  through it raises rather than returning a wrong answer.
-- Two new gallery examples: `examples/dynamics/12_lbfgs_optimization.py`
-  (coordinate relaxation of an LJ cluster, with a head-to-head force-evaluation
-  count against FIRE2 on the same geometry) and
-  `examples/dynamics/13_lbfgs_variable_cell.py` (joint atom and cell relaxation
-  of FCC argon, which recovers the expected 5.26 A lattice constant).
-- Fixed the variable-cell trust-region step cap losing all precision when the
-  quadratic displacement term is small. The cap solves
-  `b*alpha^2 + a*alpha = maxstep`; written as
-  `(-a + sqrt(a^2 + 4*b*maxstep)) / (2*b)` it cancels to exactly zero once
-  `4*b*maxstep` drops below the rounding of `a^2`, which froze the optimizer
-  with a zero step length and no error. It now uses the algebraically
-  equivalent `2*maxstep / (a + sqrt(a^2 + 4*b*maxstep))`, which has no
-  subtraction and stays accurate down to `b = 0`. This regime is the common one
-  on the variable-cell path, because the quadratic term is second order in the
-  step.
-- Both L-BFGS paths compile: `torch.compile(fullgraph=True)` traces the
-  coordinate and variable-cell steps as a single graph with **zero graph
-  breaks**, including a region that also contains the caller's force model, and
-  the compiled result matches eager exactly. On the JAX side both paths run
-  under `jax.jit` with the state donated and are bit-identical to the
-  uncompiled result.
-- L-BFGS variable-cell relaxation is now available as a single call,
-  `lbfgs_step_coord_cell`, at the Warp level and through both framework
-  bindings, alongside `lbfgs_allocate_cell_state` and `lbfgs_set_reference_cell`.
-  Previously the cell path had to be driven by composing six separate calls.
-  The Warp orchestrator is bit-identical to that sequence, which is asserted in
-  the tests.
-- PyTorch L-BFGS entry points now reject non-contiguous tensors with a clear
-  error instead of copying them. These operations write through a zero-copy
-  view, so a copy would discard every update and leave the optimizer appearing
-  not to move. Note that `torch.tensor` preserves NumPy strides, so an array
-  built from a transpose is non-contiguous.
-- `benchmarks/dynamics/benchmark_lbfgs.py --gates` measures per-step optimizer
-  cost against FIRE2, the speed-up from CUDA-graph replay, and the model cost
-  above which L-BFGS wins end to end.
-- New `benchmarks/dynamics/benchmark_lbfgs.py`, comparing L-BFGS and FIRE2 by
-  energy/force evaluations to convergence on Lennard-Jones clusters. FIRE2's
-  timestep and step cap are swept per case and its best result reported, so the
-  baseline is not handicapped. On 13- and 32-atom clusters at a force tolerance
-  of 1e-4 the geometric mean evaluation ratio is 0.21 in favour of L-BFGS, with
-  a worst case of 0.53.
+- New L-BFGS geometry optimizer: a Warp core in
+  `nvalchemiops.dynamics.optimizers.lbfgs` with PyTorch and JAX bindings in
+  `nvalchemiops.torch.lbfgs` and `nvalchemiops.jax.lbfgs`, covering both
+  coordinate-only and variable-cell relaxation. It is batched over a sorted
+  `batch_idx` and caller-driven: each step consumes exactly one energy/force
+  evaluation and reports progress through a per-system `status` array taking
+  `LBFGS_NEED_EVAL`, `LBFGS_CONVERGED` or `LBFGS_LS_FAILED`, so a whole batch
+  relaxes in one stream of kernel launches with no per-system host control flow.
+  Every buffer is caller-owned -- the package allocates nothing, initializes
+  nothing and keeps no hidden state between calls, so a step allocates no
+  memory; the module docstrings give the required shapes and initial contents.
+  Coordinates may be float32 or float64, but every per-system scalar is float64
+  because the Armijo test compares a difference of total energies, and
+  `lbfgs_reduce_energy` accumulates per-atom energies to match. The
+  variable-cell path packs positions and cell into a single coordinate vector
+  following ASE's `UnitCellFilter` convention, so the quasi-Newton recursion
+  couples them with no special handling; it supports ragged batches, and
+  convergence is always evaluated on the Cartesian forces and the stress, so
+  `force_tol` and `stress_tol` keep their physical meaning as the cell deforms.
+  The PyTorch step is a registered `torch.library` custom operator that traces
+  under `make_fx`, compiles under `torch.compile(fullgraph=True)` with zero
+  graph breaks, and captures in a CUDA graph; the JAX step declares every
+  mutable array as an input-output alias for donation, replays as a CUDA graph
+  bit-identically to the ungraphed baseline, and is deliberately not
+  differentiable. On Lennard-Jones clusters it reaches a given force tolerance
+  in roughly a seventh of the energy/force evaluations a per-case tuned FIRE2
+  needs -- worst case 0.53 -- which is the cost that dominates relaxation driven
+  by a machine-learned potential.
+- Two gallery examples, `examples/dynamics/12_lbfgs_optimization.py` (LJ
+  cluster, with a head-to-head evaluation count against FIRE2) and
+  `13_lbfgs_variable_cell.py` (FCC argon, recovering the expected 5.26 A lattice
+  constant), plus `benchmarks/dynamics/benchmark_lbfgs.py`, which compares the
+  two optimizers by evaluations to convergence and, with `--gates`, by per-step
+  cost, CUDA-graph replay speed-up and break-even model cost. Its settings live
+  in the `lbfgs` section of `benchmarks/dynamics/benchmark_config.yaml`.
 
 ## 0.4.1 - 2026-08-03
 

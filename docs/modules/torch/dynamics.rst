@@ -44,17 +44,25 @@ L-BFGS Optimizer
 ----------------
 
 Quasi-Newton relaxation with a strong Wolfe line search. Each step consumes one
-energy/force evaluation and reports progress through ``state.status``.
+energy/force evaluation and reports progress through the ``status`` buffer.
 
-.. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_allocate_state
-.. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_reset
+.. note::
+   Every optimizer buffer is caller-owned: nothing here allocates or
+   initializes state on your behalf. Zero the buffers, then set ``alpha_step``
+   to ``1.0``, ``iteration`` to ``-1`` and ``status`` to ``LBFGS_NEED_EVAL``.
+   The module documentation lists the required shapes and dtypes.
+
 .. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_reduce_energy
 .. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_step_coord
 .. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_step_extended
 
 Variable-cell relaxation maps coordinates and cell into one packed coordinate
-vector, so the two-loop recursion couples them automatically.
+vector, so the two-loop recursion couples them automatically. Build
+``ext_atom_ptr`` and ``ext_batch_idx`` with
+:func:`~nvalchemiops.dynamics.utils.cell_filter.extend_atom_ptr` and
+:func:`~nvalchemiops.batch_utils.atom_ptr_to_batch_idx`, which handle ragged
+batches as well as uniform ones.
 
-.. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_allocate_cell_state
 .. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_set_reference_cell
+.. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_cell_kappa
 .. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_step_coord_cell

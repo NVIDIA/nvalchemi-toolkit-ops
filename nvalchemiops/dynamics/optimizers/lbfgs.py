@@ -84,6 +84,69 @@ at ``E ~ -1e4 eV`` a float32 ULP is ``~1e-3 eV``, so a single-precision
 accumulator would make the line search a coin flip near convergence. The
 per-system arrays are ``O(num_systems)`` and the cost is negligible.
 
+Caller-owned buffers
+--------------------
+The package allocates and initializes **nothing**: every persistent and scratch
+buffer is yours to create, initialize and keep alive across steps, exactly as
+with the FIRE optimizers. That keeps allocation out of the step, which is what
+makes the step capturable in a CUDA graph and free of per-call allocation.
+
+For ``P`` degrees of freedom, ``M`` systems and history depth ``m``:
+
+============================================  ==========================  =========
+Buffer                                        Shape                       dtype
+============================================  ==========================  =========
+``x_base``, ``force_base``, ``direction``     ``(P,)``                    vec3f/vec3d
+``s_history``, ``y_history``                  ``(m, P)``                  vec3f/vec3d
+``ys``, ``yy``, ``alpha_hist``, ``beta_hist`` ``(m, M)``                  float64
+``ss``, ``f_base``, ``gg``, ``gd``            ``(M,)``                    float64
+``fmax``, ``frms_sq``, ``smax``               ``(M,)``                    float64
+``d0``, ``dmax``, ``dquad``, ``alpha_step``   ``(M,)``                    float64
+``status``, ``iteration``, ``end``            ``(M,)``                    int32
+``n_loop``, ``ls_trials``, ``history_count``  ``(M,)``                    int32
+============================================  ==========================  =========
+
+Per-system scalars are float64 whatever the coordinate precision; see
+`Precision`_ below.
+
+Initial contents, before the first step:
+
+- **zero** for every buffer except the two below;
+- ``alpha_step`` to **one**;
+- ``iteration`` to **minus one**, the "never evaluated" marker.
+
+``status`` starts at ``LBFGS_NEED_EVAL``, which is numerically zero, so zeroing
+it is correct. Reset the optimizer -- to discard the history after changing the
+potential, say -- by restoring those same values.
+
+Variable-cell relaxation adds, for the packed path with
+``P = num_atoms + 2 * M``:
+
+=====================================================  ====================  ==========
+Buffer                                                 Shape                 dtype
+=====================================================  ====================  ==========
+``ref_cell``, ``ref_cell_inv``, ``phi``, ``phi_inv``   ``(M,)``              mat33f/mat33d
+``d_phi``                                              ``(M,)``              mat33f/mat33d
+``kappa``                                              ``(M,)``              float32/float64
+``cell_dof_a/b``, ``cell_force_a/b``                   ``(M,)``              vec3f/vec3d
+``ext_positions``, ``ext_forces``                      ``(P,)``              vec3f/vec3d
+``ext_batch_idx``                                      ``(P,)``              int32
+``ext_atom_ptr``                                       ``(M + 1,)``          int32
+=====================================================  ====================  ==========
+
+``kappa`` matches the *coordinate* precision, not float64, because it scales
+matrices. ``ref_cell``, ``ref_cell_inv`` and ``kappa`` are filled once by
+:func:`lbfgs_set_reference_cell` and :func:`lbfgs_cell_kappa`; the rest is
+scratch and may start as anything.
+
+Build the packed topology yourself, so ragged batches are expressible::
+
+    from nvalchemiops.batch_utils import atom_ptr_to_batch_idx
+    from nvalchemiops.dynamics.utils.cell_filter import extend_atom_ptr
+
+    extend_atom_ptr(atom_ptr, ext_atom_ptr)        # ext_atom_ptr[s] = atom_ptr[s] + 2s
+    atom_ptr_to_batch_idx(ext_atom_ptr, ext_batch_idx)
+
 Memory
 ------
 The optimizer state costs, for ``P`` degrees of freedom, ``M`` systems and a
@@ -112,7 +175,7 @@ and 7.
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple
+from typing import Any
 
 import warp as wp
 
@@ -120,8 +183,6 @@ from nvalchemiops.dynamics.utils.cell_utils import compute_cell_inverse
 from nvalchemiops.segment_ops import compute_ept
 
 __all__ = [
-    "LBFGSCellState",
-    "LBFGSState",
     "LBFGS_CONVERGED",
     "LBFGS_LS_FAILED",
     "LBFGS_NEED_EVAL",
@@ -132,7 +193,6 @@ __all__ = [
     "lbfgs_prepare_step",
     "lbfgs_reduce",
     "lbfgs_reduce_energy",
-    "lbfgs_reset",
     "lbfgs_set_reference_cell",
     "lbfgs_step",
     "lbfgs_step_coord_cell",
@@ -145,78 +205,67 @@ __all__ = [
 # =============================================================================
 
 
-class LBFGSState(NamedTuple):
-    """The optimizer's arrays, in the order the bindings pass them.
+# =============================================================================
+# Buffer ordering
+#
+# Every buffer is owned, allocated and retained by the caller, as with the FIRE
+# optimizers. These tuples are the single source of truth for the order the
+# public entry points take them in, and exist only so the bindings can validate
+# their own signatures against it. They deliberately do not hold arrays.
+# =============================================================================
 
-    Framework-neutral: the PyTorch and JAX bindings both build this from their
-    own array type, and ``LBFGSState._fields`` is the single source of truth
-    for the argument order they use. Field order is therefore part of the
-    interface -- do not reorder.
+#: Optimizer buffers, in the order every coordinate-path entry point takes them.
+_OPTIMIZER_BUFFERS: tuple[str, ...] = (
+    "x_base",
+    "force_base",
+    "direction",
+    "s_history",
+    "y_history",
+    "ys",
+    "yy",
+    "alpha_hist",
+    "beta_hist",
+    "ss",
+    "f_base",
+    "gg",
+    "gd",
+    "fmax",
+    "frms_sq",
+    "smax",
+    "d0",
+    "dmax",
+    "dquad",
+    "alpha_step",
+    "status",
+    "iteration",
+    "end",
+    "n_loop",
+    "ls_trials",
+    "history_count",
+)
 
-    ``positions`` is deliberately *not* a field. It is the geometry the caller
-    owns and reads back, so it stays an explicit argument rather than being
-    buried in optimizer state.
+#: Variable-cell buffers, appended after the optimizer buffers on that path.
+#: The first five are read-only configuration and topology; the rest is scratch
+#: the step writes to.
+_CELL_BUFFERS: tuple[str, ...] = (
+    "ref_cell",
+    "ref_cell_inv",
+    "kappa",
+    "ext_batch_idx",
+    "ext_atom_ptr",
+    "phi",
+    "phi_inv",
+    "d_phi",
+    "cell_dof_a",
+    "cell_dof_b",
+    "cell_force_a",
+    "cell_force_b",
+    "ext_positions",
+    "ext_forces",
+)
 
-    Sign convention: ``force_base`` holds forces, not gradients
-    (``g = -force_base``), and ``y_history`` holds gradient differences,
-    computed as ``force_base - forces``.
-    """
-
-    x_base: Any
-    force_base: Any
-    direction: Any
-    s_history: Any
-    y_history: Any
-    ys: Any
-    yy: Any
-    alpha_hist: Any
-    beta_hist: Any
-    ss: Any
-    f_base: Any
-    gg: Any
-    gd: Any
-    fmax: Any
-    frms_sq: Any
-    smax: Any
-    d0: Any
-    dmax: Any
-    dquad: Any
-    alpha_step: Any
-    status: Any
-    iteration: Any
-    end: Any
-    n_loop: Any
-    ls_trials: Any
-    history_count: Any
-
-
-class LBFGSCellState(NamedTuple):
-    """Working arrays for the variable-cell chart.
-
-    Companion to :class:`LBFGSState`, holding everything the packed
-    coordinate mapping needs. Like that container, field order is the argument
-    order the bindings use.
-
-    ``ref_cell`` and ``ref_cell_inv`` define the chart and are written once by
-    :func:`lbfgs_set_reference_cell`; ``kappa``, ``ext_batch_idx`` and
-    ``ext_atom_ptr`` depend only on topology and are written once at
-    allocation. The rest is genuine per-step scratch.
-    """
-
-    ref_cell: Any
-    ref_cell_inv: Any
-    kappa: Any
-    ext_batch_idx: Any
-    ext_atom_ptr: Any
-    phi: Any
-    phi_inv: Any
-    d_phi: Any
-    cell_dof_a: Any
-    cell_dof_b: Any
-    cell_force_a: Any
-    cell_force_b: Any
-    ext_positions: Any
-    ext_forces: Any
+#: The subset of ``_CELL_BUFFERS`` the step mutates.
+_CELL_SCRATCH: tuple[str, ...] = _CELL_BUFFERS[5:]
 
 
 # =============================================================================
@@ -1499,81 +1548,6 @@ for _t in (wp.float32, wp.float64):
 # =============================================================================
 
 
-def lbfgs_reset(
-    x_base: wp.array,
-    force_base: wp.array,
-    direction: wp.array,
-    s_history: wp.array,
-    y_history: wp.array,
-    ys: wp.array,
-    yy: wp.array,
-    alpha_hist: wp.array,
-    beta_hist: wp.array,
-    ss: wp.array,
-    f_base: wp.array,
-    gg: wp.array,
-    gd: wp.array,
-    fmax: wp.array,
-    frms_sq: wp.array,
-    smax: wp.array,
-    d0: wp.array,
-    dmax: wp.array,
-    dquad: wp.array,
-    alpha_step: wp.array,
-    status: wp.array,
-    iteration: wp.array,
-    end: wp.array,
-    n_loop: wp.array,
-    ls_trials: wp.array,
-    history_count: wp.array,
-) -> None:
-    """Return the optimizer state to its pre-first-step condition.
-
-    Zeroes everything except the three fields whose initial values are not
-    zero: ``iteration`` becomes ``-1`` (the "never evaluated" marker),
-    ``alpha_step`` becomes ``1.0``, and ``status`` becomes
-    ``LBFGS_NEED_EVAL``.
-
-    Allocates nothing. Call this once before the first step, and again whenever
-    you want to discard the accumulated history -- after changing the potential
-    or moving the atoms behind the optimizer's back, for instance.
-
-    Notes
-    -----
-    A variable-cell reference cell is deliberately *not* touched here, because
-    zeroing it would leave a singular matrix. Set it separately.
-    """
-    for arr in (
-        x_base,
-        force_base,
-        direction,
-        s_history,
-        y_history,
-        ys,
-        yy,
-        alpha_hist,
-        beta_hist,
-        ss,
-        f_base,
-        gg,
-        gd,
-        fmax,
-        frms_sq,
-        smax,
-        d0,
-        dmax,
-        dquad,
-    ):
-        arr.zero_()
-    status.fill_(LBFGS_NEED_EVAL)
-    iteration.fill_(-1)
-    end.zero_()
-    n_loop.zero_()
-    ls_trials.zero_()
-    history_count.zero_()
-    alpha_step.fill_(1.0)
-
-
 def lbfgs_reduce_energy(
     per_atom_energy: wp.array,
     batch_idx: wp.array,
@@ -2275,7 +2249,6 @@ def lbfgs_step(
     See Also
     --------
     lbfgs_reduce_energy : build the per-system energies this consumes.
-    lbfgs_reset : initialize the state before the first call.
     """
     lbfgs_update(
         positions=positions,
@@ -2777,11 +2750,11 @@ def lbfgs_set_reference_cell(
     at different iterations comparable. Call this once before the first step.
 
     Calling it again re-references the chart and invalidates every stored
-    ``(s, y)`` pair, so it must be followed by :func:`lbfgs_reset`.
+    ``(s, y)`` pair, so restore the optimizer buffers to their required initial
+    contents if you do.
 
-    This is deliberately separate from :func:`lbfgs_reset`, which sees only the
-    optimizer's own arrays and would zero the reference cell into a singular
-    matrix.
+    The reference cell is deliberately not part of that reset: zeroing it, as
+    the other buffers are zeroed, would leave a singular matrix.
 
     Parameters
     ----------
@@ -3031,8 +3004,46 @@ def lbfgs_step_coord_cell(
     energy: wp.array,
     batch_idx: wp.array,
     n_particles: wp.array,
-    cell_state: LBFGSCellState,
-    state: LBFGSState,
+    x_base: wp.array,
+    force_base: wp.array,
+    direction: wp.array,
+    s_history: wp.array,
+    y_history: wp.array,
+    ys: wp.array,
+    yy: wp.array,
+    alpha_hist: wp.array,
+    beta_hist: wp.array,
+    ss: wp.array,
+    f_base: wp.array,
+    gg: wp.array,
+    gd: wp.array,
+    fmax: wp.array,
+    frms_sq: wp.array,
+    smax: wp.array,
+    d0: wp.array,
+    dmax: wp.array,
+    dquad: wp.array,
+    alpha_step: wp.array,
+    status: wp.array,
+    iteration: wp.array,
+    end: wp.array,
+    n_loop: wp.array,
+    ls_trials: wp.array,
+    history_count: wp.array,
+    ref_cell: wp.array,
+    ref_cell_inv: wp.array,
+    kappa: wp.array,
+    ext_batch_idx: wp.array,
+    ext_atom_ptr: wp.array,
+    phi: wp.array,
+    phi_inv: wp.array,
+    d_phi: wp.array,
+    cell_dof_a: wp.array,
+    cell_dof_b: wp.array,
+    cell_force_a: wp.array,
+    cell_force_b: wp.array,
+    ext_positions: wp.array,
+    ext_forces: wp.array,
     *,
     force_tol: float = 0.05,
     rms_tol: float = 0.0,
@@ -3055,11 +3066,12 @@ def lbfgs_step_coord_cell(
 
     Consumes exactly one energy/force/stress evaluation, like the
     coordinate-only :func:`lbfgs_step`. Progress is reported the same way,
-    through ``state.status``.
+    through ``status``.
 
-    Call :func:`lbfgs_set_reference_cell` and :func:`lbfgs_cell_kappa` once
-    before the first step; both depend only on the starting cell and the
-    topology.
+    Every buffer is caller-owned; nothing is allocated here. Call
+    :func:`lbfgs_set_reference_cell` and :func:`lbfgs_cell_kappa` once before
+    the first step, and build ``ext_batch_idx`` / ``ext_atom_ptr`` yourself so
+    ragged batches are expressible.
 
     Parameters
     ----------
@@ -3074,14 +3086,32 @@ def lbfgs_step_coord_cell(
         Cauchy stress per system. This drives the cell degrees of freedom, and
         is also what ``stress_tol`` is compared against.
     energy : wp.array(dtype=float64), shape (num_systems,)
-        Per-system total energy.
+        Per-system total energy at ``positions``.
+    batch_idx : wp.array(dtype=int32), shape (num_atoms,)
+        Sorted system index per atom.
     n_particles : wp.array(dtype=int32), shape (num_systems,)
         Atom count per system.
-    cell_state : LBFGSCellState
-        Chart definition and scratch.
-    state : LBFGSState
-        Optimizer state, sized for ``num_atoms + 2 * num_systems`` degrees of
-        freedom rather than ``num_atoms``.
+    x_base, ..., history_count
+        The optimizer buffers, sized for ``num_atoms + 2 * num_systems``
+        degrees of freedom rather than ``num_atoms``. See :func:`lbfgs_update`
+        for shapes and required initial contents.
+    ref_cell, ref_cell_inv : wp.array(dtype=mat33), shape (num_systems,)
+        The reference cell and its inverse, from
+        :func:`lbfgs_set_reference_cell`. Read only.
+    kappa : wp.array, shape (num_systems,)
+        Cell coordinate scaling, from :func:`lbfgs_cell_kappa`. Read only, and
+        at the coordinate precision rather than float64.
+    ext_batch_idx : wp.array(dtype=int32), shape (num_atoms + 2 * num_systems,)
+        Sorted system index for each packed degree of freedom. Read only.
+    ext_atom_ptr : wp.array(dtype=int32), shape (num_systems + 1,)
+        Start offset of each system in the packed array, where system ``s``
+        begins at ``atom_ptr[s] + 2 * s``. Read only.
+    phi, phi_inv, d_phi : wp.array(dtype=mat33), shape (num_systems,)
+        Scratch for the deformation gradient and the direction's cell block.
+    cell_dof_a, cell_dof_b, cell_force_a, cell_force_b : wp.array, shape (num_systems,)
+        Scratch for the six packed cell coordinates and their conjugate forces.
+    ext_positions, ext_forces : wp.array, shape (num_atoms + 2 * num_systems,)
+        Scratch for the packed coordinates and forces.
     force_tol, rms_tol, stress_tol : float, optional
         Convergence thresholds. These are always evaluated on the **Cartesian**
         forces and the stress, never on packed norms, so ``force_tol`` keeps its
@@ -3094,6 +3124,7 @@ def lbfgs_step_coord_cell(
     See Also
     --------
     lbfgs_set_reference_cell : must be called first.
+    lbfgs_cell_kappa : must be called first.
     lbfgs_step : the coordinate-only equivalent.
     """
     lbfgs_pack_cell(
@@ -3101,29 +3132,55 @@ def lbfgs_step_coord_cell(
         forces,
         cell,
         stress,
-        cell_state.ref_cell_inv,
-        cell_state.kappa,
-        cell_state.ext_batch_idx,
-        cell_state.ext_atom_ptr,
-        cell_state.phi,
-        cell_state.phi_inv,
-        cell_state.cell_dof_a,
-        cell_state.cell_dof_b,
-        cell_state.cell_force_a,
-        cell_state.cell_force_b,
-        cell_state.ext_positions,
-        cell_state.ext_forces,
+        ref_cell_inv,
+        kappa,
+        ext_batch_idx,
+        ext_atom_ptr,
+        phi,
+        phi_inv,
+        cell_dof_a,
+        cell_dof_b,
+        cell_force_a,
+        cell_force_b,
+        ext_positions,
+        ext_forces,
     )
     lbfgs_update(
-        positions=cell_state.ext_positions,
-        forces=cell_state.ext_forces,
-        batch_idx=cell_state.ext_batch_idx,
+        positions=ext_positions,
+        forces=ext_forces,
+        batch_idx=ext_batch_idx,
         energy=energy,
         n_particles=n_particles,
         cart_forces=forces,
         atom_batch_idx=batch_idx,
         stress=stress,
         measure_trust_region=False,
+        x_base=x_base,
+        force_base=force_base,
+        direction=direction,
+        s_history=s_history,
+        y_history=y_history,
+        ys=ys,
+        yy=yy,
+        alpha_hist=alpha_hist,
+        beta_hist=beta_hist,
+        ss=ss,
+        f_base=f_base,
+        gg=gg,
+        gd=gd,
+        fmax=fmax,
+        frms_sq=frms_sq,
+        smax=smax,
+        d0=d0,
+        dmax=dmax,
+        dquad=dquad,
+        alpha_step=alpha_step,
+        status=status,
+        iteration=iteration,
+        end=end,
+        n_loop=n_loop,
+        ls_trials=ls_trials,
+        history_count=history_count,
         force_tol=force_tol,
         rms_tol=rms_tol,
         stress_tol=stress_tol,
@@ -3136,55 +3193,54 @@ def lbfgs_step_coord_cell(
         max_ls_iter=max_ls_iter,
         maxstep=maxstep,
         curvature_eps=curvature_eps,
-        **state._asdict(),
     )
     # The displacement a direction produces is not its magnitude here, so the
     # trust region gets its own measure before the step length is finalized.
     lbfgs_cell_trust_region(
-        cell_state.ext_positions,
-        state.direction,
-        cell_state.phi,
-        cell_state.d_phi,
+        ext_positions,
+        direction,
+        phi,
+        d_phi,
         batch_idx,
-        cell_state.ext_atom_ptr,
-        cell_state.kappa,
-        state.status,
-        state.n_loop,
-        state.dmax,
-        state.dquad,
+        ext_atom_ptr,
+        kappa,
+        status,
+        n_loop,
+        dmax,
+        dquad,
     )
     lbfgs_prepare_step(
-        gg=state.gg,
-        d0=state.d0,
-        dmax=state.dmax,
-        dquad=state.dquad,
-        alpha_step=state.alpha_step,
-        status=state.status,
-        end=state.end,
-        n_loop=state.n_loop,
-        ls_trials=state.ls_trials,
-        history_count=state.history_count,
+        gg=gg,
+        d0=d0,
+        dmax=dmax,
+        dquad=dquad,
+        alpha_step=alpha_step,
+        status=status,
+        end=end,
+        n_loop=n_loop,
+        ls_trials=ls_trials,
+        history_count=history_count,
         maxstep=maxstep,
     )
     lbfgs_apply_step(
-        positions=cell_state.ext_positions,
-        forces=cell_state.ext_forces,
-        x_base=state.x_base,
-        force_base=state.force_base,
-        direction=state.direction,
-        batch_idx=cell_state.ext_batch_idx,
-        status=state.status,
-        n_loop=state.n_loop,
-        gg=state.gg,
-        alpha_step=state.alpha_step,
+        positions=ext_positions,
+        forces=ext_forces,
+        x_base=x_base,
+        force_base=force_base,
+        direction=direction,
+        batch_idx=ext_batch_idx,
+        status=status,
+        n_loop=n_loop,
+        gg=gg,
+        alpha_step=alpha_step,
     )
     lbfgs_unpack_cell(
-        cell_state.ext_positions,
-        cell_state.ref_cell,
-        cell_state.kappa,
+        ext_positions,
+        ref_cell,
+        kappa,
         batch_idx,
-        cell_state.ext_atom_ptr,
-        cell_state.phi,
+        ext_atom_ptr,
+        phi,
         positions,
         cell,
     )

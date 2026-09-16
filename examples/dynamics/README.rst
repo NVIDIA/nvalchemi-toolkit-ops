@@ -92,6 +92,8 @@ Geometry Optimization Examples
     - Quasi-Newton search direction with a strong Wolfe line search
     - Caller-driven loop: one force evaluation per ``lbfgs_step`` call
     - Progress reported through a per-system ``status`` array
+    - Shows the full caller-owned buffer allocation, including the three
+      buffers whose initial values are not zero
     - Head-to-head force-evaluation count against FIRE2 on the same cluster
 
 13_lbfgs_variable_cell.py
@@ -102,6 +104,8 @@ Geometry Optimization Examples
       quasi-Newton recursion couples them with no special handling
     - Shows why the reference cell is captured once, and why positions must
       not be wrapped mid-relaxation
+    - Builds the extended topology with the generic batch utilities, which is
+      what makes ragged batches expressible
 
 11_fire2_variable_cell.py
     Variable-cell FIRE2 optimization for joint atom + cell relaxation.

@@ -462,6 +462,28 @@ iteration while the line search settles, but converges in fewer evaluations
 overall on smooth potentials. If your force evaluation is expensive relative to
 a handful of microseconds of kernel time, prefer L-BFGS.
 
+**You own the buffers.** The optimizer allocates nothing, initializes nothing
+and keeps no hidden state between calls. You allocate the 26 buffers once and
+pass them to every step, which means a step allocates no memory and the arrays
+can come from whatever pool you already have.
+
+Zero every buffer, then set exactly three:
+
+| Buffer | Initial value |
+| --- | --- |
+| `alpha_step` | `1.0` — the line-search step length for a new direction |
+| `iteration` | `-1` — the "never evaluated" marker |
+| `status` | `LBFGS_NEED_EVAL`, which is numerically zero |
+
+That is the whole of initialization, and repeating it is how you restart a
+relaxation. See the `nvalchemiops.dynamics.optimizers.lbfgs` module
+documentation for the shapes; briefly, with `P` degrees of freedom, `M` systems
+and history size `m`: `x_base`, `force_base` and `direction` are `(P,)` vectors,
+`s_history` and `y_history` are `(m, P)`, `ys`/`yy`/`alpha_hist`/`beta_hist` are
+`(m, M)` float64, `ss` through `alpha_step` are `(M,)` float64, and `status`
+through `history_count` are `(M,)` int32. The per-system scalars stay float64
+whatever precision the coordinates use.
+
 **You own the loop.** Each `lbfgs_step` call consumes exactly one energy/force
 evaluation. Inspect `status` to decide when to stop:
 
@@ -471,12 +493,14 @@ import warp as wp
 from nvalchemiops.dynamics.optimizers import (
     LBFGS_NEED_EVAL,
     lbfgs_reduce_energy,
-    lbfgs_reset,
     lbfgs_step,
 )
 
-# `state` holds the optimizer's arrays; allocate once and reuse.
-lbfgs_reset(**state)
+# `buffers` is your own dict of the 26 arrays, in the canonical order.
+buffers["alpha_step"].fill_(1.0)
+buffers["iteration"].fill_(-1)
+buffers["status"].fill_(LBFGS_NEED_EVAL)
+status = buffers["status"]
 
 while True:
     per_atom_energy, forces = model(positions)
@@ -489,11 +513,15 @@ while True:
         n_particles=n_particles,
         force_tol=0.05,   # eV/A, on the largest per-atom force
         maxstep=0.2,      # A, largest displacement in one step
-        **state,
+        **buffers,
     )
     if not (status.numpy() == LBFGS_NEED_EVAL).any():
         break
 ```
+
+The PyTorch binding takes the same buffers positionally and mutates them in
+place; the JAX binding takes them individually and returns them as a flat tuple
+in the same order, since JAX arrays are immutable.
 
 `status` takes three values per system:
 
@@ -518,6 +546,14 @@ rather than summing them yourself in single precision. The Armijo test compares
 a difference of *total* energies, and at `E ~ -1e4 eV` a float32 total is
 rounded to about `1e-3 eV` — enough to make the line search unreliable near
 convergence. Summing per-atom values in float64 avoids this.
+
+**Variable cell.** The packed layout interleaves each system's atoms with its
+two cell entries, so the buffers must be sized for `num_atoms + 2 * num_systems`
+degrees of freedom. Build `ext_atom_ptr` and `ext_batch_idx` with the generic
+`extend_atom_ptr` and `atom_ptr_to_batch_idx` utilities; because nothing
+assumes a uniform split, ragged batches whose systems have different atom
+counts work the same way uniform ones do. Call `lbfgs_set_reference_cell` and
+`lbfgs_cell_kappa` once, before the first step.
 
 **Memory.** The history dominates: `2 * m` vectors of `num_dofs` each. At
 `m = 6` and float32 coordinates that is roughly `192` bytes per degree of

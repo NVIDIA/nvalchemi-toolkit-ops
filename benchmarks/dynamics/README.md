@@ -288,6 +288,14 @@ timestep and step cap are swept per case and its best configuration reported,
 so the comparison is not skewed by an untuned baseline.
 
 ```bash
+python -m benchmarks.dynamics.benchmark_lbfgs --output-dir ./benchmark_results
+```
+
+Defaults come from the `lbfgs` section of `benchmark_config.yaml`, next to the
+script, so the sizes, tolerance, evaluation cap, history size and FIRE2 sweep
+grid live alongside the FIRE and FIRE2 settings. Any flag overrides the file:
+
+```bash
 python -m benchmarks.dynamics.benchmark_lbfgs \
     --sizes 13 32 55 --seeds 5 --force-tol 1e-4 \
     --output-dir ./benchmark_results
@@ -306,3 +314,11 @@ Reports optimizer-only step time against FIRE2 at scale, what CUDA-graph replay
 recovers, and the break-even model cost. The step issues far more kernels than
 FIRE2, so at small sizes it is entirely Python-launch-bound; capture the step in
 a CUDA graph if that matters for your workload.
+
+The break-even figure needs the measured evaluation ratio, which is read from
+`lbfgs.gates.eval_ratio` in the config. Re-run the evaluation-count benchmark
+above and update that value if you change the sizes or the tolerance, or pass
+`--eval-ratio` to try one without editing the file.
+
+Per-step times here are launch-bound and vary a few percent between runs; treat
+the FIRE2 ratio as approximate rather than as a three-digit measurement.

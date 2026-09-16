@@ -134,10 +134,19 @@ array, so a whole batch relaxes in one stream of kernel launches.
 .. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_apply_step
 .. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_reduce
 .. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_reduce_energy
-.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_reset
+
+.. note::
+   Every optimizer buffer is caller-owned: nothing here allocates or
+   initializes state on your behalf. Zero the buffers, then set ``alpha_step``
+   to ``1.0``, ``iteration`` to ``-1`` and ``status`` to ``LBFGS_NEED_EVAL``.
+   The module documentation lists the required shapes and dtypes.
 
 Variable-cell relaxation maps positions and cell into a single packed
-coordinate vector, so the two-loop recursion couples them automatically.
+coordinate vector, so the two-loop recursion couples them automatically. Build
+``ext_atom_ptr`` and ``ext_batch_idx`` with
+:func:`~nvalchemiops.dynamics.utils.cell_filter.extend_atom_ptr` and
+:func:`~nvalchemiops.batch_utils.atom_ptr_to_batch_idx`, which handle ragged
+batches as well as uniform ones.
 
 .. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_set_reference_cell
 .. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_cell_kappa

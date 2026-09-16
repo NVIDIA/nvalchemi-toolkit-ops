@@ -19,27 +19,63 @@ L-BFGS reaches a given force tolerance in far fewer energy/force evaluations
 than the FIRE optimizers, which is the cost that dominates relaxation with a
 machine-learned potential.
 
-JAX arrays are immutable, so unlike the PyTorch binding these entry points
-**return** a new state rather than mutating one::
+Every optimizer buffer is yours: this module allocates nothing and hides
+nothing. You pass the same 26 arrays to every step and get 26 back, in the
+same order. JAX arrays are immutable, so unlike the PyTorch binding these
+entry points **return** new arrays rather than writing them in place::
 
-    import functools, jax
-    from nvalchemiops.jax.lbfgs import (
-        LBFGS_NEED_EVAL, lbfgs_allocate_state, lbfgs_step_coord,
-    )
+    import functools, jax, jax.numpy as jnp
+    from nvalchemiops.jax.lbfgs import LBFGS_NEED_EVAL, lbfgs_step_coord
 
-    state = lbfgs_allocate_state(num_dofs, num_systems, dtype=jnp.float64)
+    m, P, M = 6, num_atoms, num_systems
+    dt = jnp.float64
+    buffers = [
+        jnp.zeros((P, 3), dt), jnp.zeros((P, 3), dt), jnp.zeros((P, 3), dt),
+        jnp.zeros((m, P, 3), dt), jnp.zeros((m, P, 3), dt),
+        *[jnp.zeros((m, M), jnp.float64) for _ in range(4)],
+        *[jnp.zeros((M,), jnp.float64) for _ in range(10)],
+        jnp.ones((M,), jnp.float64),                  # alpha_step starts at 1
+        jnp.zeros((M,), jnp.int32),                   # status = LBFGS_NEED_EVAL
+        jnp.full((M,), -1, jnp.int32),                # iteration = -1
+        *[jnp.zeros((M,), jnp.int32) for _ in range(4)],
+    ]
 
-    @functools.partial(jax.jit, donate_argnums=(0, 1))
-    def relax_step(positions, state, forces, energy):
+    @functools.partial(jax.jit, donate_argnums=tuple(range(len(buffers) + 1)))
+    def relax_step(positions, *buffers, forces=None, energy=None):
         return lbfgs_step_coord(
-            positions, state, forces, energy, batch_idx, n_particles,
+            positions, forces, energy, batch_idx, n_particles, *buffers,
         )
 
     while True:
         energy, forces = model(positions)
-        positions, state = relax_step(positions, state, forces, energy)
-        if not (state.status == LBFGS_NEED_EVAL).any():
+        positions, *buffers = relax_step(
+            positions, *buffers, forces=forces, energy=energy
+        )
+        if bool(lbfgs_converged(buffers[20])):
             break
+
+Required buffer contents
+------------------------
+The optimizer never initializes anything, so the first step reads whatever you
+hand it. Zero every buffer, then set exactly three things:
+
+=================  ========================================================
+``alpha_step``     ``1.0`` -- the line-search step length for a new direction
+``iteration``      ``-1`` -- the "never evaluated" marker
+``status``         ``LBFGS_NEED_EVAL``, which is numerically zero
+=================  ========================================================
+
+Shapes, with ``P`` degrees of freedom, ``M`` systems and history size ``m``:
+``x_base``, ``force_base`` and ``direction`` are ``(P, 3)``; ``s_history`` and
+``y_history`` are ``(m, P, 3)``; ``ys``, ``yy``, ``alpha_hist`` and
+``beta_hist`` are ``(m, M)`` float64; ``ss`` through ``alpha_step`` are
+``(M,)`` float64; ``status`` through ``history_count`` are ``(M,)`` int32.
+The float64 scalars stay float64 whatever precision the coordinates use,
+because the Armijo test compares a difference of total energies.
+
+To restart a relaxation, rebuild the buffers in that initial state. There is
+no separate reset: in a functional setting resetting and allocating are the
+same operation.
 
 Donation and pointer stability
 ------------------------------
@@ -47,12 +83,11 @@ Every mutable array is declared as an input-output alias, so XLA may reuse each
 input buffer for the matching output. Two things follow, and both matter for
 performance rather than correctness:
 
-- **Donate the state.** ``jax.jit(donate_argnums=...)`` over ``positions`` and
-  ``state`` lets the buffers round-trip at stable addresses. Without donation
+- **Donate the buffers.** ``jax.jit(donate_argnums=...)`` over ``positions``
+  and all 26 buffers lets them round-trip at stable addresses. Without donation
   JAX copies, which doubles peak memory and moves the pointers.
-- **Keep the topology out of the state.** ``batch_idx`` and ``n_particles``
-  never change, so close over them rather than threading them through as
-  donated leaves.
+- **Keep the topology out of the donated set.** ``batch_idx`` and
+  ``n_particles`` never change, so close over them rather than donating them.
 
 Under ``GraphMode.WARP`` the step is captured and replayed as a CUDA graph. The
 capture is keyed on the input buffer addresses, so a fresh ``forces`` array each
@@ -83,40 +118,36 @@ import inspect
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 import warp as wp
 from warp.jax_experimental import GraphMode, jax_callable
 
 from nvalchemiops.dynamics.optimizers.lbfgs import (
+    _CELL_BUFFERS,
+    _CELL_SCRATCH,
+    _OPTIMIZER_BUFFERS,
     LBFGS_CONVERGED,
     LBFGS_LS_FAILED,
     LBFGS_NEED_EVAL,
-    LBFGSCellState,
-    LBFGSState,
 )
-from nvalchemiops.dynamics.optimizers.lbfgs import lbfgs_cell_kappa as _warp_cell_kappa
 from nvalchemiops.dynamics.optimizers.lbfgs import lbfgs_step as _warp_step
 from nvalchemiops.dynamics.optimizers.lbfgs import (
     lbfgs_step_coord_cell as _warp_step_cell,
 )
 
 __all__ = [
-    "LBFGSCellState",
-    "LBFGSState",
     "LBFGS_CONVERGED",
     "LBFGS_LS_FAILED",
     "LBFGS_NEED_EVAL",
-    "lbfgs_allocate_state",
-    "lbfgs_allocate_cell_state",
+    "lbfgs_cell_kappa",
     "lbfgs_converged",
     "lbfgs_set_reference_cell",
     "lbfgs_step_coord",
     "lbfgs_step_coord_cell",
 ]
 
-#: The mutable arrays, in the order the callable takes them. Derived from the
-#: shared state container so the two cannot drift apart.
-_LBFGS_IN_OUT_ARGS: tuple[str, ...] = ("positions",) + LBFGSState._fields
+#: The mutable arrays, in the order the callable takes them, which is also the
+#: order :func:`lbfgs_step_coord` returns them in.
+_LBFGS_IN_OUT_ARGS: tuple[str, ...] = ("positions",) + _OPTIMIZER_BUFFERS
 
 _GRAPH_MODES = {
     "none": GraphMode.NONE,
@@ -323,17 +354,17 @@ def _lbfgs_body_f64(
 
 _BODIES = {jnp.float32: _lbfgs_body_f32, jnp.float64: _lbfgs_body_f64}
 
-# The bodies are written out by hand, so pin their parameter names to the state
-# container. A reordering would silently swap two arrays, and neither warp nor
-# XLA would notice.
-_STATE_SLICE = slice(5, 5 + len(LBFGSState._fields))
+# The bodies are written out by hand, so pin their parameter names to the
+# canonical buffer order. A reordering would silently swap two arrays, and
+# neither warp nor XLA would notice.
+_STATE_SLICE = slice(5, 5 + len(_OPTIMIZER_BUFFERS))
 for _name, _body in (("f32", _lbfgs_body_f32), ("f64", _lbfgs_body_f64)):
     _params = tuple(inspect.signature(_body).parameters)[_STATE_SLICE]
-    if _params != LBFGSState._fields:
+    if _params != _OPTIMIZER_BUFFERS:
         raise RuntimeError(
-            f"LBFGSState fields and _lbfgs_body_{_name} parameters have diverged:\n"
-            f"  state: {LBFGSState._fields}\n"
-            f"  body:  {_params}"
+            f"_OPTIMIZER_BUFFERS and _lbfgs_body_{_name} parameters have diverged:\n"
+            f"  expected: {_OPTIMIZER_BUFFERS}\n"
+            f"  body:     {_params}"
         )
 
 _CALLABLES: dict[tuple, object] = {}
@@ -371,96 +402,43 @@ def _get_callable(dtype, graph_mode: str):
     return _CALLABLES[key]
 
 
-def lbfgs_allocate_state(
-    num_dofs: int,
-    num_systems: int,
-    *,
-    dtype=jnp.float64,
-    history_size: int = 6,
-) -> LBFGSState:
-    """Allocate a state ready for the first step.
-
-    Field initialization is exactly: ``iteration`` to ``-1``, the "never
-    evaluated" marker; ``alpha_step`` to ``1.0``; ``status`` to
-    ``LBFGS_NEED_EVAL``; everything else to zero. Only those three are
-    non-zero.
-
-    There is no separate reset in the JAX binding: in a functional setting
-    resetting and allocating are the same operation, so call this again to
-    discard the history.
-
-    Parameters
-    ----------
-    num_dofs : int
-        Degrees of freedom the optimizer moves; the atom count for
-        coordinate-only relaxation.
-    num_systems : int
-        Number of independent systems in the batch.
-    dtype : optional
-        Coordinate precision, ``float32`` or ``float64``. Per-system scalars
-        are float64 regardless, because the Armijo test compares a difference
-        of total energies. ``float64`` requires ``JAX_ENABLE_X64``.
-    history_size : int, optional
-        Stored curvature pairs; 3 to 7 is typical. Memory is dominated by
-        ``2 * history_size`` arrays of ``num_dofs`` vectors.
-
-    Returns
-    -------
-    LBFGSState
-    """
-    dtype = jnp.dtype(dtype).type
-    if dtype not in _BODIES:
-        raise ValueError(f"dtype must be float32 or float64; got {dtype}")
-    if history_size < 1:
-        raise ValueError(f"history_size must be >= 1; got {history_size}")
-    if dtype is jnp.float64 and jnp.zeros(1, jnp.float64).dtype != jnp.float64:
-        raise RuntimeError(
-            "float64 requested but JAX x64 is disabled; set JAX_ENABLE_X64=1 "
-            "or call jax.config.update('jax_enable_x64', True) before use"
-        )
-    fields = {
-        "x_base": jnp.zeros((num_dofs, 3), dtype),
-        "force_base": jnp.zeros((num_dofs, 3), dtype),
-        "direction": jnp.zeros((num_dofs, 3), dtype),
-        "s_history": jnp.zeros((history_size, num_dofs, 3), dtype),
-        "y_history": jnp.zeros((history_size, num_dofs, 3), dtype),
-        "ys": jnp.zeros((history_size, num_systems), jnp.float64),
-        "yy": jnp.zeros((history_size, num_systems), jnp.float64),
-        "alpha_hist": jnp.zeros((history_size, num_systems), jnp.float64),
-        "beta_hist": jnp.zeros((history_size, num_systems), jnp.float64),
-        "ss": jnp.zeros((num_systems,), jnp.float64),
-        "f_base": jnp.zeros((num_systems,), jnp.float64),
-        "gg": jnp.zeros((num_systems,), jnp.float64),
-        "gd": jnp.zeros((num_systems,), jnp.float64),
-        "fmax": jnp.zeros((num_systems,), jnp.float64),
-        "frms_sq": jnp.zeros((num_systems,), jnp.float64),
-        "smax": jnp.zeros((num_systems,), jnp.float64),
-        "d0": jnp.zeros((num_systems,), jnp.float64),
-        "dmax": jnp.zeros((num_systems,), jnp.float64),
-        "dquad": jnp.zeros((num_systems,), jnp.float64),
-        "alpha_step": jnp.ones((num_systems,), jnp.float64),
-        "status": jnp.zeros((num_systems,), jnp.int32),
-        "iteration": jnp.full((num_systems,), -1, jnp.int32),
-        "end": jnp.zeros((num_systems,), jnp.int32),
-        "n_loop": jnp.zeros((num_systems,), jnp.int32),
-        "ls_trials": jnp.zeros((num_systems,), jnp.int32),
-        "history_count": jnp.zeros((num_systems,), jnp.int32),
-    }
-    return LBFGSState(**fields)
-
-
 def lbfgs_step_coord(
     positions: jax.Array,
-    state: LBFGSState,
     forces: jax.Array,
     energy: jax.Array,
     batch_idx: jax.Array,
     n_particles: jax.Array,
+    x_base: jax.Array,
+    force_base: jax.Array,
+    direction: jax.Array,
+    s_history: jax.Array,
+    y_history: jax.Array,
+    ys: jax.Array,
+    yy: jax.Array,
+    alpha_hist: jax.Array,
+    beta_hist: jax.Array,
+    ss: jax.Array,
+    f_base: jax.Array,
+    gg: jax.Array,
+    gd: jax.Array,
+    fmax: jax.Array,
+    frms_sq: jax.Array,
+    smax: jax.Array,
+    d0: jax.Array,
+    dmax: jax.Array,
+    dquad: jax.Array,
+    alpha_step: jax.Array,
+    status: jax.Array,
+    iteration: jax.Array,
+    end: jax.Array,
+    n_loop: jax.Array,
+    ls_trials: jax.Array,
+    history_count: jax.Array,
     *,
     force_tol: float = 0.05,
     rms_tol: float = 0.0,
     stress_tol: float = 0.0,
-    ftol: float = 1e-4,
+    ftol: float = 0.0001,
     wolfe: float = 0.9,
     step_scale_down: float = 0.5,
     step_scale_up: float = 2.1,
@@ -470,18 +448,16 @@ def lbfgs_step_coord(
     maxstep: float = 0.2,
     curvature_eps: float = 1e-10,
     graph_mode: str = "warp",
-) -> tuple[jax.Array, LBFGSState]:
+) -> tuple[jax.Array, ...]:
     """Advance one batched L-BFGS step, consuming one force evaluation.
 
     Returns new arrays; nothing is mutated in place. Donate ``positions`` and
-    ``state`` so XLA can reuse their buffers.
+    every buffer so XLA can reuse their memory.
 
     Parameters
     ----------
     positions : jax.Array, shape (num_atoms, 3)
         Current geometry.
-    state : LBFGSState
-        From :func:`lbfgs_allocate_state`.
     forces : jax.Array, shape (num_atoms, 3)
         Forces at ``positions``. Forces, not gradients.
     energy : jax.Array, shape (num_systems,), dtype float64
@@ -491,6 +467,9 @@ def lbfgs_step_coord(
         Sorted system index per atom. Static topology, so close over it.
     n_particles : jax.Array, shape (num_systems,), dtype int32
         Atom count per system, for the optional RMS criterion.
+    x_base, ..., history_count : jax.Array
+        The 26 caller-owned optimizer buffers, in the fixed order documented in
+        the module docstring. They must be passed positionally.
     force_tol : float, optional
         Threshold on the largest per-atom force magnitude. Zero disables it.
     rms_tol, stress_tol : float, optional
@@ -506,49 +485,83 @@ def lbfgs_step_coord(
 
     Returns
     -------
-    positions, state
-        The advanced geometry and the new optimizer state.
+    tuple of jax.Array
+        27 arrays: the advanced ``positions`` followed by the 26 buffers, in
+        exactly the order they were passed in.
 
     Raises
     ------
     ValueError
         If dtypes or shapes are inconsistent.
     """
-    _validate(positions, forces, energy, batch_idx, n_particles, state)
+    _validate(positions, forces, energy, batch_idx, n_particles, s_history, status)
     call = _get_callable(positions.dtype, graph_mode)
-    outputs = call(
-        forces,
-        energy,
-        batch_idx,
-        n_particles,
-        positions,
-        *state,
-        float(force_tol),
-        float(rms_tol),
-        float(stress_tol),
-        float(ftol),
-        float(wolfe),
-        float(step_scale_down),
-        float(step_scale_up),
-        float(min_step),
-        float(max_step),
-        int(max_ls_iter),
-        float(maxstep),
-        float(curvature_eps),
+    return tuple(
+        call(
+            forces,
+            energy,
+            batch_idx,
+            n_particles,
+            positions,
+            x_base,
+            force_base,
+            direction,
+            s_history,
+            y_history,
+            ys,
+            yy,
+            alpha_hist,
+            beta_hist,
+            ss,
+            f_base,
+            gg,
+            gd,
+            fmax,
+            frms_sq,
+            smax,
+            d0,
+            dmax,
+            dquad,
+            alpha_step,
+            status,
+            iteration,
+            end,
+            n_loop,
+            ls_trials,
+            history_count,
+            float(force_tol),
+            float(rms_tol),
+            float(stress_tol),
+            float(ftol),
+            float(wolfe),
+            float(step_scale_down),
+            float(step_scale_up),
+            float(min_step),
+            float(max_step),
+            int(max_ls_iter),
+            float(maxstep),
+            float(curvature_eps),
+        )
     )
-    return outputs[0], LBFGSState(*outputs[1:])
 
 
-def lbfgs_converged(state: LBFGSState) -> jax.Array:
+def lbfgs_converged(status: jax.Array) -> jax.Array:
     """Whether every system has finished, as a device-side boolean.
 
     Reading this back costs a host synchronization, so a caller that wants to
     amortize it can check every few steps instead of every step.
+
+    Parameters
+    ----------
+    status : jax.Array, shape (num_systems,), dtype int32
+        The ``status`` buffer returned by the last step.
     """
-    return jnp.all(state.status != LBFGS_NEED_EVAL)
+    return jnp.all(status != LBFGS_NEED_EVAL)
 
 
-def _validate(positions, forces, energy, batch_idx, n_particles, state) -> None:
+def _validate(
+    positions, forces, energy, batch_idx, n_particles, s_history, status
+) -> None:
     """Check the shapes and dtypes that would otherwise fail inside the FFI."""
     num_dofs = positions.shape[0]
     if jnp.dtype(positions.dtype).type not in _BODIES:
@@ -567,7 +580,7 @@ def _validate(positions, forces, energy, batch_idx, n_particles, state) -> None:
         )
     if jnp.dtype(energy.dtype) != jnp.dtype(jnp.float64):
         raise ValueError(f"energy must be float64; got {energy.dtype}")
-    num_systems = state.status.shape[0]
+    num_systems = status.shape[0]
     if energy.shape[0] != num_systems:
         raise ValueError(
             f"energy length {energy.shape[0]} != number of systems {num_systems}"
@@ -577,9 +590,9 @@ def _validate(positions, forces, energy, batch_idx, n_particles, state) -> None:
             f"n_particles length {n_particles.shape[0]} != number of systems "
             f"{num_systems}"
         )
-    if state.s_history.shape[1] != num_dofs:
+    if s_history.shape[1] != num_dofs:
         raise ValueError(
-            f"history buffers hold {state.s_history.shape[1]} degrees of freedom, "
+            f"history buffers hold {s_history.shape[1]} degrees of freedom, "
             f"but positions has {num_dofs}"
         )
 
@@ -645,7 +658,12 @@ def _lbfgs_cell_body_f32(
     maxstep: wp.float64,
     curvature_eps: wp.float64,
 ) -> None:
-    """Advance one variable-cell L-BFGS step on f32 coordinates."""
+    """Advance one variable-cell L-BFGS step on f32 coordinates.
+
+    The first five cell arrays are read-only configuration and topology, so
+    they are plain inputs; everything else is aliased through
+    ``_CELL_IN_OUT_ARGS``.
+    """
     _warp_step_cell(
         positions=positions,
         forces=forces,
@@ -654,50 +672,46 @@ def _lbfgs_cell_body_f32(
         energy=energy,
         batch_idx=batch_idx,
         n_particles=n_particles,
-        cell_state=LBFGSCellState(
-            ref_cell=ref_cell,
-            ref_cell_inv=ref_cell_inv,
-            kappa=kappa,
-            ext_batch_idx=ext_batch_idx,
-            ext_atom_ptr=ext_atom_ptr,
-            phi=phi,
-            phi_inv=phi_inv,
-            d_phi=d_phi,
-            cell_dof_a=cell_dof_a,
-            cell_dof_b=cell_dof_b,
-            cell_force_a=cell_force_a,
-            cell_force_b=cell_force_b,
-            ext_positions=ext_positions,
-            ext_forces=ext_forces,
-        ),
-        state=LBFGSState(
-            x_base=x_base,
-            force_base=force_base,
-            direction=direction,
-            s_history=s_history,
-            y_history=y_history,
-            ys=ys,
-            yy=yy,
-            alpha_hist=alpha_hist,
-            beta_hist=beta_hist,
-            ss=ss,
-            f_base=f_base,
-            gg=gg,
-            gd=gd,
-            fmax=fmax,
-            frms_sq=frms_sq,
-            smax=smax,
-            d0=d0,
-            dmax=dmax,
-            dquad=dquad,
-            alpha_step=alpha_step,
-            status=status,
-            iteration=iteration,
-            end=end,
-            n_loop=n_loop,
-            ls_trials=ls_trials,
-            history_count=history_count,
-        ),
+        x_base=x_base,
+        force_base=force_base,
+        direction=direction,
+        s_history=s_history,
+        y_history=y_history,
+        ys=ys,
+        yy=yy,
+        alpha_hist=alpha_hist,
+        beta_hist=beta_hist,
+        ss=ss,
+        f_base=f_base,
+        gg=gg,
+        gd=gd,
+        fmax=fmax,
+        frms_sq=frms_sq,
+        smax=smax,
+        d0=d0,
+        dmax=dmax,
+        dquad=dquad,
+        alpha_step=alpha_step,
+        status=status,
+        iteration=iteration,
+        end=end,
+        n_loop=n_loop,
+        ls_trials=ls_trials,
+        history_count=history_count,
+        ref_cell=ref_cell,
+        ref_cell_inv=ref_cell_inv,
+        kappa=kappa,
+        ext_batch_idx=ext_batch_idx,
+        ext_atom_ptr=ext_atom_ptr,
+        phi=phi,
+        phi_inv=phi_inv,
+        d_phi=d_phi,
+        cell_dof_a=cell_dof_a,
+        cell_dof_b=cell_dof_b,
+        cell_force_a=cell_force_a,
+        cell_force_b=cell_force_b,
+        ext_positions=ext_positions,
+        ext_forces=ext_forces,
         force_tol=force_tol,
         rms_tol=rms_tol,
         stress_tol=stress_tol,
@@ -774,7 +788,12 @@ def _lbfgs_cell_body_f64(
     maxstep: wp.float64,
     curvature_eps: wp.float64,
 ) -> None:
-    """Advance one variable-cell L-BFGS step on f64 coordinates."""
+    """Advance one variable-cell L-BFGS step on f64 coordinates.
+
+    The first five cell arrays are read-only configuration and topology, so
+    they are plain inputs; everything else is aliased through
+    ``_CELL_IN_OUT_ARGS``.
+    """
     _warp_step_cell(
         positions=positions,
         forces=forces,
@@ -783,50 +802,46 @@ def _lbfgs_cell_body_f64(
         energy=energy,
         batch_idx=batch_idx,
         n_particles=n_particles,
-        cell_state=LBFGSCellState(
-            ref_cell=ref_cell,
-            ref_cell_inv=ref_cell_inv,
-            kappa=kappa,
-            ext_batch_idx=ext_batch_idx,
-            ext_atom_ptr=ext_atom_ptr,
-            phi=phi,
-            phi_inv=phi_inv,
-            d_phi=d_phi,
-            cell_dof_a=cell_dof_a,
-            cell_dof_b=cell_dof_b,
-            cell_force_a=cell_force_a,
-            cell_force_b=cell_force_b,
-            ext_positions=ext_positions,
-            ext_forces=ext_forces,
-        ),
-        state=LBFGSState(
-            x_base=x_base,
-            force_base=force_base,
-            direction=direction,
-            s_history=s_history,
-            y_history=y_history,
-            ys=ys,
-            yy=yy,
-            alpha_hist=alpha_hist,
-            beta_hist=beta_hist,
-            ss=ss,
-            f_base=f_base,
-            gg=gg,
-            gd=gd,
-            fmax=fmax,
-            frms_sq=frms_sq,
-            smax=smax,
-            d0=d0,
-            dmax=dmax,
-            dquad=dquad,
-            alpha_step=alpha_step,
-            status=status,
-            iteration=iteration,
-            end=end,
-            n_loop=n_loop,
-            ls_trials=ls_trials,
-            history_count=history_count,
-        ),
+        x_base=x_base,
+        force_base=force_base,
+        direction=direction,
+        s_history=s_history,
+        y_history=y_history,
+        ys=ys,
+        yy=yy,
+        alpha_hist=alpha_hist,
+        beta_hist=beta_hist,
+        ss=ss,
+        f_base=f_base,
+        gg=gg,
+        gd=gd,
+        fmax=fmax,
+        frms_sq=frms_sq,
+        smax=smax,
+        d0=d0,
+        dmax=dmax,
+        dquad=dquad,
+        alpha_step=alpha_step,
+        status=status,
+        iteration=iteration,
+        end=end,
+        n_loop=n_loop,
+        ls_trials=ls_trials,
+        history_count=history_count,
+        ref_cell=ref_cell,
+        ref_cell_inv=ref_cell_inv,
+        kappa=kappa,
+        ext_batch_idx=ext_batch_idx,
+        ext_atom_ptr=ext_atom_ptr,
+        phi=phi,
+        phi_inv=phi_inv,
+        d_phi=d_phi,
+        cell_dof_a=cell_dof_a,
+        cell_dof_b=cell_dof_b,
+        cell_force_a=cell_force_a,
+        cell_force_b=cell_force_b,
+        ext_positions=ext_positions,
+        ext_forces=ext_forces,
         force_tol=force_tol,
         rms_tol=rms_tol,
         stress_tol=stress_tol,
@@ -842,19 +857,25 @@ def _lbfgs_cell_body_f64(
     )
 
 
+#: Everything the variable-cell step writes, in return order. ``ref_cell``,
+#: ``ref_cell_inv``, ``kappa``, ``ext_batch_idx`` and ``ext_atom_ptr`` are
+#: read-only configuration and topology, so they are not aliased and not
+#: returned.
 _CELL_IN_OUT_ARGS: tuple[str, ...] = (
-    ("positions", "cell") + LBFGSState._fields + LBFGSCellState._fields
+    ("positions", "cell") + _OPTIMIZER_BUFFERS + _CELL_SCRATCH
 )
 
 _CELL_BODIES = {jnp.float32: _lbfgs_cell_body_f32, jnp.float64: _lbfgs_cell_body_f64}
 
 for _name, _body in (("f32", _lbfgs_cell_body_f32), ("f64", _lbfgs_cell_body_f64)):
     _p = tuple(inspect.signature(_body).parameters)
-    _n = len(LBFGSState._fields)
-    if _p[7 : 7 + _n] != LBFGSState._fields:
-        raise RuntimeError(f"LBFGSState and _lbfgs_cell_body_{_name} have diverged")
-    if _p[7 + _n : 7 + _n + len(LBFGSCellState._fields)] != LBFGSCellState._fields:
-        raise RuntimeError(f"LBFGSCellState and _lbfgs_cell_body_{_name} have diverged")
+    _n = len(_OPTIMIZER_BUFFERS)
+    if _p[7 : 7 + _n] != _OPTIMIZER_BUFFERS:
+        raise RuntimeError(
+            f"_OPTIMIZER_BUFFERS and _lbfgs_cell_body_{_name} have diverged"
+        )
+    if _p[7 + _n : 7 + _n + len(_CELL_BUFFERS)] != _CELL_BUFFERS:
+        raise RuntimeError(f"_CELL_BUFFERS and _lbfgs_cell_body_{_name} have diverged")
 
 _CELL_CALLABLES: dict[tuple, object] = {}
 
@@ -885,115 +906,123 @@ def _get_cell_callable(dtype, graph_mode: str):
     return _CELL_CALLABLES[key]
 
 
-def lbfgs_allocate_cell_state(
-    num_atoms: int,
-    num_systems: int,
-    *,
-    dtype=jnp.float64,
-    cell_force_scale: float | None = None,
-) -> LBFGSCellState:
-    """Allocate the working arrays for variable-cell relaxation.
+def lbfgs_set_reference_cell(cell: jax.Array) -> tuple[jax.Array, jax.Array]:
+    """Capture the reference cell that defines the variable-cell chart.
 
-    Assumes every system has the same atom count, ``num_atoms // num_systems``.
+    Coordinates are measured relative to a cell held fixed for the whole
+    relaxation, which is what makes history pairs from different iterations
+    comparable. Call this once before the first step. Calling it again
+    re-references the chart and invalidates every stored curvature pair, so
+    rebuild the optimizer buffers in their initial state if you do.
 
-    The reference cell is left zeroed; capture it with
-    :func:`lbfgs_set_reference_cell` once the starting geometry is known.
-    Everything that depends only on topology is filled here.
+    The reference is returned as an independent copy. Sharing a buffer with the
+    caller's live ``cell`` would make it impossible to donate both to the same
+    jitted step, because XLA rejects the same buffer being donated twice.
 
     Parameters
     ----------
-    cell_force_scale : float, optional
-        Multiplier on the atom count giving the cell coordinate scaling.
-        Defaults to ``1 / atoms_per_system``, which puts cell and atom degrees
-        of freedom on a comparable footing. Raise it to make the cell move less
-        per step.
+    cell : jax.Array, shape (num_systems, 3, 3)
+        Current cell, lattice vectors as columns.
 
     Returns
     -------
-    LBFGSCellState
+    ref_cell, ref_cell_inv : jax.Array, shape (num_systems, 3, 3)
+        Pass these to every :func:`lbfgs_step_coord_cell` call. They are
+        read-only, so do not donate them.
     """
-    dtype = jnp.dtype(dtype).type
+    return jnp.array(cell, copy=True), jnp.linalg.inv(cell)
+
+
+def lbfgs_cell_kappa(
+    n_particles: jax.Array,
+    *,
+    cell_force_scale: float = 1.0,
+    dtype=None,
+) -> jax.Array:
+    """Return the per-system cell coordinate scaling.
+
+    The cell coordinate is ``kappa * Phi`` and its conjugate force is divided
+    by the same ``kappa``, which is what keeps ``g . dx`` independent of the
+    scaling. Depends only on topology, so compute it once and reuse it.
+
+    Parameters
+    ----------
+    n_particles : jax.Array, shape (num_systems,), dtype int32
+        Atom count per system.
+    cell_force_scale : float, optional
+        Multiplier on the atom count. Larger values make the cell move less per
+        step relative to the atoms; ``1 / atoms_per_system`` puts the two on a
+        comparable footing.
+    dtype : optional
+        Result precision, defaulting to the coordinate precision in use.
+        ``kappa`` scales matrices, so it must match the **coordinates**, not
+        the float64 per-system scalars.
+
+    Returns
+    -------
+    jax.Array, shape (num_systems,)
+    """
+    if cell_force_scale <= 0.0:
+        raise ValueError(f"cell_force_scale must be positive; got {cell_force_scale}")
+    dtype = jnp.float64 if dtype is None else jnp.dtype(dtype).type
     if dtype not in _CELL_BODIES:
         raise ValueError(f"dtype must be float32 or float64; got {dtype}")
-    if num_atoms % num_systems:
-        raise ValueError(
-            f"num_atoms {num_atoms} is not divisible by num_systems {num_systems}; "
-            "ragged batches are not supported by this allocator"
-        )
-    per_system = num_atoms // num_systems
-    num_ext = num_atoms + 2 * num_systems
-    if cell_force_scale is None:
-        cell_force_scale = 1.0 / per_system
-
-    fields = {
-        "ref_cell": jnp.zeros((num_systems, 3, 3), dtype),
-        "ref_cell_inv": jnp.zeros((num_systems, 3, 3), dtype),
-        "kappa": jnp.zeros((num_systems,), dtype),
-        "ext_batch_idx": jnp.repeat(
-            jnp.arange(num_systems, dtype=jnp.int32), per_system + 2
-        ),
-        "ext_atom_ptr": jnp.asarray(
-            [s * per_system + 2 * s for s in range(num_systems + 1)], jnp.int32
-        ),
-        "phi": jnp.zeros((num_systems, 3, 3), dtype),
-        "phi_inv": jnp.zeros((num_systems, 3, 3), dtype),
-        "d_phi": jnp.zeros((num_systems, 3, 3), dtype),
-        "cell_dof_a": jnp.zeros((num_systems, 3), dtype),
-        "cell_dof_b": jnp.zeros((num_systems, 3), dtype),
-        "cell_force_a": jnp.zeros((num_systems, 3), dtype),
-        "cell_force_b": jnp.zeros((num_systems, 3), dtype),
-        "ext_positions": jnp.zeros((num_ext, 3), dtype),
-        "ext_forces": jnp.zeros((num_ext, 3), dtype),
-    }
-    cell_state = LBFGSCellState(**fields)
-    # kappa depends only on topology, so fill it once here via the Warp helper.
-    kappa = wp.zeros(
-        num_systems,
-        dtype=wp.float32 if dtype is jnp.float32 else wp.float64,
-        device="cuda:0",
-    )
-    n_atoms_per_system = wp.array(
-        np.full(num_systems, per_system, np.int32), dtype=wp.int32, device="cuda:0"
-    )
-    _warp_cell_kappa(n_atoms_per_system, kappa, cell_force_scale=cell_force_scale)
-    return cell_state._replace(kappa=jnp.asarray(kappa.numpy(), dtype))
-
-
-def lbfgs_set_reference_cell(
-    cell: jax.Array, cell_state: LBFGSCellState
-) -> LBFGSCellState:
-    """Capture the reference cell that defines the variable-cell chart.
-
-    Returns an updated state rather than mutating, as everything here does.
-    Coordinates are measured relative to a cell held fixed for the whole
-    relaxation, which is what makes history pairs from different iterations
-    comparable, so call this once before the first step. Calling it again
-    re-references the chart and invalidates every stored curvature pair.
-
-    The reference is stored as an independent copy. Sharing a buffer with the
-    caller's live ``cell`` would make it impossible to donate both to the same
-    jitted step, because XLA rejects the same buffer being donated twice.
-    """
-    return cell_state._replace(
-        ref_cell=jnp.array(cell, copy=True), ref_cell_inv=jnp.linalg.inv(cell)
-    )
+    return jnp.asarray(n_particles, dtype) * dtype(cell_force_scale)
 
 
 def lbfgs_step_coord_cell(
     positions: jax.Array,
     cell: jax.Array,
-    state: LBFGSState,
-    cell_state: LBFGSCellState,
     forces: jax.Array,
     stress: jax.Array,
     energy: jax.Array,
     batch_idx: jax.Array,
     n_particles: jax.Array,
+    x_base: jax.Array,
+    force_base: jax.Array,
+    direction: jax.Array,
+    s_history: jax.Array,
+    y_history: jax.Array,
+    ys: jax.Array,
+    yy: jax.Array,
+    alpha_hist: jax.Array,
+    beta_hist: jax.Array,
+    ss: jax.Array,
+    f_base: jax.Array,
+    gg: jax.Array,
+    gd: jax.Array,
+    fmax: jax.Array,
+    frms_sq: jax.Array,
+    smax: jax.Array,
+    d0: jax.Array,
+    dmax: jax.Array,
+    dquad: jax.Array,
+    alpha_step: jax.Array,
+    status: jax.Array,
+    iteration: jax.Array,
+    end: jax.Array,
+    n_loop: jax.Array,
+    ls_trials: jax.Array,
+    history_count: jax.Array,
+    ref_cell: jax.Array,
+    ref_cell_inv: jax.Array,
+    kappa: jax.Array,
+    ext_batch_idx: jax.Array,
+    ext_atom_ptr: jax.Array,
+    phi: jax.Array,
+    phi_inv: jax.Array,
+    d_phi: jax.Array,
+    cell_dof_a: jax.Array,
+    cell_dof_b: jax.Array,
+    cell_force_a: jax.Array,
+    cell_force_b: jax.Array,
+    ext_positions: jax.Array,
+    ext_forces: jax.Array,
     *,
     force_tol: float = 0.05,
     rms_tol: float = 0.0,
     stress_tol: float = 0.0,
-    ftol: float = 1e-4,
+    ftol: float = 0.0001,
     wolfe: float = 0.9,
     step_scale_down: float = 0.5,
     step_scale_up: float = 2.1,
@@ -1003,14 +1032,20 @@ def lbfgs_step_coord_cell(
     maxstep: float = 0.2,
     curvature_eps: float = 1e-10,
     graph_mode: str = "warp",
-) -> tuple[jax.Array, jax.Array, LBFGSState, LBFGSCellState]:
+) -> tuple[jax.Array, ...]:
     """Advance one variable-cell step, relaxing coordinates and cell together.
 
-    Returns new arrays; nothing is mutated. Donate all four of the returned
-    objects so XLA can reuse their buffers.
+    Returns new arrays; nothing is mutated. Donate everything that comes back
+    so XLA can reuse the memory.
 
-    ``state`` must be sized for ``num_atoms + 2 * num_systems`` degrees of
-    freedom, since the cell contributes two entries per system.
+    The optimizer buffers must be sized for ``num_atoms + 2 * num_systems``
+    degrees of freedom, since the cell contributes two entries per system.
+
+    Call :func:`lbfgs_set_reference_cell` and :func:`lbfgs_cell_kappa` once
+    before the first step, and build ``ext_batch_idx`` / ``ext_atom_ptr``
+    yourself -- with :func:`nvalchemiops.dynamics.utils.cell_filter.extend_atom_ptr`
+    and :func:`nvalchemiops.dynamics.utils.batch_utils.atom_ptr_to_batch_idx` --
+    so ragged batches are expressible.
 
     Parameters
     ----------
@@ -1020,60 +1055,137 @@ def lbfgs_step_coord_cell(
     stress : jax.Array, shape (num_systems, 3, 3)
         Cauchy stress. Drives the cell degrees of freedom, and is what
         ``stress_tol`` is compared against.
+    x_base, ..., history_count : jax.Array
+        The 26 caller-owned optimizer buffers, in the same order as
+        :func:`lbfgs_step_coord`.
+    ref_cell, ..., ext_forces : jax.Array
+        The 14 caller-owned cell buffers. The first five are read-only, so do
+        not donate them and do not expect them back.
     force_tol, rms_tol, stress_tol : float, optional
         Convergence thresholds, always evaluated on the Cartesian forces and
         the stress rather than on packed norms.
 
     Returns
     -------
-    positions, cell, state, cell_state
+    tuple of jax.Array
+        37 arrays: ``positions``, ``cell``, the 26 optimizer buffers, then
+        ``phi``, ``phi_inv``, ``d_phi``, ``cell_dof_a``, ``cell_dof_b``,
+        ``cell_force_a``, ``cell_force_b``, ``ext_positions``, ``ext_forces``.
 
     See Also
     --------
     lbfgs_set_reference_cell : must be called first.
+    lbfgs_cell_kappa : must be called first.
     lbfgs_step_coord : the coordinate-only equivalent.
     """
-    num_systems = state.status.shape[0]
+    _validate_cell(
+        positions, forces, cell, stress, energy, batch_idx, s_history, status
+    )
+    call = _get_cell_callable(positions.dtype, graph_mode)
+    return tuple(
+        call(
+            forces,
+            stress,
+            energy,
+            batch_idx,
+            n_particles,
+            positions,
+            cell,
+            x_base,
+            force_base,
+            direction,
+            s_history,
+            y_history,
+            ys,
+            yy,
+            alpha_hist,
+            beta_hist,
+            ss,
+            f_base,
+            gg,
+            gd,
+            fmax,
+            frms_sq,
+            smax,
+            d0,
+            dmax,
+            dquad,
+            alpha_step,
+            status,
+            iteration,
+            end,
+            n_loop,
+            ls_trials,
+            history_count,
+            ref_cell,
+            ref_cell_inv,
+            kappa,
+            ext_batch_idx,
+            ext_atom_ptr,
+            phi,
+            phi_inv,
+            d_phi,
+            cell_dof_a,
+            cell_dof_b,
+            cell_force_a,
+            cell_force_b,
+            ext_positions,
+            ext_forces,
+            float(force_tol),
+            float(rms_tol),
+            float(stress_tol),
+            float(ftol),
+            float(wolfe),
+            float(step_scale_down),
+            float(step_scale_up),
+            float(min_step),
+            float(max_step),
+            int(max_ls_iter),
+            float(maxstep),
+            float(curvature_eps),
+        )
+    )
+
+
+def _validate_cell(
+    positions, forces, cell, stress, energy, batch_idx, s_history, status
+) -> None:
+    """Check the variable-cell shapes that would otherwise fail inside the FFI.
+
+    The degree-of-freedom check differs from the coordinate path, so this does
+    not reuse :func:`_validate`: the buffers are sized for the packed array,
+    not for the atoms.
+    """
+    num_atoms = positions.shape[0]
+    num_systems = status.shape[0]
+    if jnp.dtype(positions.dtype).type not in _CELL_BODIES:
+        raise ValueError(f"positions must be float32 or float64; got {positions.dtype}")
+    if forces.shape != positions.shape:
+        raise ValueError(
+            f"forces shape {forces.shape} != positions shape {positions.shape}"
+        )
+    if forces.dtype != positions.dtype:
+        raise ValueError(
+            f"forces dtype {forces.dtype} != positions dtype {positions.dtype}"
+        )
+    if jnp.dtype(energy.dtype) != jnp.dtype(jnp.float64):
+        raise ValueError(f"energy must be float64; got {energy.dtype}")
+    if batch_idx.shape[0] != num_atoms:
+        raise ValueError(
+            f"batch_idx length {batch_idx.shape[0]} != positions length {num_atoms}"
+        )
     if cell.shape != (num_systems, 3, 3):
         raise ValueError(
             f"cell must have shape ({num_systems}, 3, 3); got {cell.shape}"
         )
     if stress.shape != cell.shape:
         raise ValueError(f"stress shape {stress.shape} != cell shape {cell.shape}")
+    if cell.dtype != positions.dtype or stress.dtype != positions.dtype:
+        raise ValueError("cell and stress must share the dtype of positions")
     expected = positions.shape[0] + 2 * num_systems
-    if state.s_history.shape[1] != expected:
+    if s_history.shape[1] != expected:
         raise ValueError(
-            f"state is sized for {state.s_history.shape[1]} degrees of freedom, but "
-            f"the variable-cell path needs {expected} (num_atoms + 2 * num_systems)"
+            f"optimizer buffers are sized for {s_history.shape[1]} degrees of "
+            f"freedom, but the variable-cell path needs {expected} "
+            f"(num_atoms + 2 * num_systems)"
         )
-    call = _get_cell_callable(positions.dtype, graph_mode)
-    outputs = call(
-        forces,
-        stress,
-        energy,
-        batch_idx,
-        n_particles,
-        positions,
-        cell,
-        *state,
-        *cell_state,
-        float(force_tol),
-        float(rms_tol),
-        float(stress_tol),
-        float(ftol),
-        float(wolfe),
-        float(step_scale_down),
-        float(step_scale_up),
-        float(min_step),
-        float(max_step),
-        int(max_ls_iter),
-        float(maxstep),
-        float(curvature_eps),
-    )
-    n = len(LBFGSState._fields)
-    return (
-        outputs[0],
-        outputs[1],
-        LBFGSState(*outputs[2 : 2 + n]),
-        LBFGSCellState(*outputs[2 + n :]),
-    )

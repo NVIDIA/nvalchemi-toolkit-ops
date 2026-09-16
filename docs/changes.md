@@ -10,19 +10,27 @@
   bindings. L-BFGS is a quasi-Newton method: it builds an approximation to the
   inverse Hessian from recent position and gradient differences and picks a
   step length with a strong Wolfe line search. On Lennard-Jones clusters it
-  reaches a given force tolerance in roughly a fifth of the energy/force
-  evaluations FIRE2 needs, which is the cost that dominates relaxation with a
-  machine-learned potential.
+  reaches a given force tolerance in roughly a seventh of the energy/force
+  evaluations FIRE2 needs, measured against a per-case tuned FIRE2 baseline,
+  which is the cost that dominates relaxation with a machine-learned potential.
 - The optimizer is caller-driven: each step consumes exactly one energy/force
   evaluation and reports progress through a per-system `status` array, so a
   whole batch relaxes in one stream of kernel launches with no per-system host
   control flow.
+- Every optimizer buffer is caller-owned: the package allocates nothing,
+  initializes nothing and keeps no hidden state between calls, so the buffers
+  can come from whatever pool you already have and a step allocates no memory.
+  Zero them, then set `alpha_step` to `1.0`, `iteration` to `-1` and `status`
+  to `LBFGS_NEED_EVAL`; that is the whole of initialization, and repeating it
+  is how you restart a relaxation.
 - Both coordinate-only and variable-cell relaxation are supported. The
   variable-cell path maps positions and cell into a single packed coordinate
   vector following ASE's `UnitCellFilter` convention, so the two-loop recursion
   couples them without special handling, and convergence is always evaluated on
   the Cartesian forces and the stress so tolerances keep their physical meaning
-  as the cell deforms.
+  as the cell deforms. Because the extended topology is built with the generic
+  batch utilities rather than by a dedicated allocator, ragged batches whose
+  systems have different atom counts work the same way uniform ones do.
 
 ## v0.4.1 - 2026-08-03
 

@@ -66,6 +66,10 @@ lbfgs_reduce_energy
     Sum per-atom energies into the per-system totals ``lbfgs_step`` expects,
     accumulating in float64.
 
+    All L-BFGS buffers are caller-owned: the package allocates and initializes
+    nothing. See :mod:`nvalchemiops.dynamics.optimizers.lbfgs` for the required
+    shapes and initial contents.
+
 lbfgs_set_reference_cell, lbfgs_cell_kappa, lbfgs_pack_cell,
 lbfgs_unpack_cell, lbfgs_cell_trust_region
     Variable-cell relaxation. Positions and cell are mapped into a single
@@ -108,7 +112,6 @@ from nvalchemiops.dynamics.optimizers.lbfgs import (
     lbfgs_prepare_step,
     lbfgs_reduce,
     lbfgs_reduce_energy,
-    lbfgs_reset,
     lbfgs_set_reference_cell,
     lbfgs_step,
     lbfgs_unpack_cell,
@@ -131,7 +134,6 @@ __all__ = [
     "lbfgs_apply_step",
     "lbfgs_reduce",
     "lbfgs_reduce_energy",
-    "lbfgs_reset",
     # L-BFGS variable cell
     "lbfgs_set_reference_cell",
     "lbfgs_cell_kappa",

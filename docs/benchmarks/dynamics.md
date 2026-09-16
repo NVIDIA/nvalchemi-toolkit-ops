@@ -231,6 +231,20 @@ sizes across float32 and float64:
 python benchmark_fire2.py --config benchmark_config.yaml --output-dir ./benchmark_results
 ```
 
+### L-BFGS vs FIRE2
+
+Energy/force evaluations to convergence, which is the cost that dominates
+relaxation driven by a machine-learned potential, plus per-step cost gates:
+
+```bash
+python benchmark_lbfgs.py --config benchmark_config.yaml --output-dir ./benchmark_results
+python benchmark_lbfgs.py --gates
+```
+
+FIRE2 is swept over the grid in the config's `lbfgs.fire2_sweep` block and its
+best converged result is what L-BFGS is compared against, so the baseline is not
+handicapped by an untuned timestep.
+
 ### Configuration File
 
 Edit `benchmarks/dynamics/benchmark_config.yaml` to select current size grids,

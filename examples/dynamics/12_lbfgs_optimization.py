@@ -55,7 +55,6 @@ from nvalchemiops.dynamics.optimizers import (
     LBFGS_NEED_EVAL,
     fire2_step,
     lbfgs_reduce_energy,
-    lbfgs_reset,
     lbfgs_step,
 )
 
@@ -106,12 +105,15 @@ wp_dtype = system.wp_dtype
 wp_vec_dtype = system.wp_vec_dtype
 
 # %%
-# Allocate the L-BFGS State
-# -------------------------
+# Allocate the L-BFGS Buffers
+# ---------------------------
 #
-# Every array the optimizer touches is caller-allocated, so nothing is
-# allocated inside the loop. ``history_size`` is the memory knob: the two
-# history buffers dominate, and 3 to 7 is the usual range.
+# Every array the optimizer touches is yours: the package allocates nothing,
+# initializes nothing, and keeps no hidden state between calls. That means no
+# allocation happens inside the loop, and it also means the three buffers whose
+# starting values are *not* zero are your responsibility -- see below.
+# ``history_size`` is the memory knob: the two history buffers dominate, and
+# 3 to 7 is the usual range.
 #
 # Note the precision split. Coordinates may be single or double precision, but
 # **every per-system scalar is float64 regardless**. The line search compares a
@@ -189,10 +191,12 @@ lbfgs_state = dict(
     history_count=history_count,
 )
 
-# ``lbfgs_reset`` sets the three fields whose initial values are not zero:
-# ``iteration`` to -1 (the "never evaluated" marker), ``alpha_step`` to 1, and
-# ``status`` to LBFGS_NEED_EVAL.
-lbfgs_reset(**lbfgs_state)
+# Everything above starts at zero, which is already correct for all but three
+# buffers. Set those three explicitly. To restart a relaxation later, zero the
+# buffers again and repeat exactly these three lines.
+alpha_step.fill_(1.0)  # the line-search step length for a fresh direction
+iteration.fill_(-1)  # the "never evaluated yet" marker
+status.fill_(LBFGS_NEED_EVAL)  # numerically zero, but say it out loud
 
 # Batching metadata: all zeros for a single system.
 batch_idx = wp.zeros(num_atoms, dtype=wp.int32, device=device)

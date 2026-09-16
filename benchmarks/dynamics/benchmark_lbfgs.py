@@ -29,13 +29,18 @@ Passing ``--gates`` instead measures the per-step cost commitments: optimizer
 time against FIRE2 at scale, what CUDA-graph replay recovers, and the model
 cost above which L-BFGS wins end to end.
 
+Defaults come from the ``lbfgs`` section of ``benchmark_config.yaml``, next to
+this file, so the knobs live alongside the FIRE and FIRE2 ones. Any command-line
+flag overrides the file.
+
 Usage
 -----
-    python -m benchmarks.dynamics.benchmark_lbfgs [--sizes 13 32 55]
+    python -m benchmarks.dynamics.benchmark_lbfgs [--config PATH]
+                                                  [--sizes 13 32 55]
                                                   [--seeds 5]
                                                   [--force-tol 1e-4]
                                                   [--output-dir DIR]
-    python -m benchmarks.dynamics.benchmark_lbfgs --gates [--eval-ratio 0.21]
+    python -m benchmarks.dynamics.benchmark_lbfgs --gates [--eval-ratio 0.142]
 """
 
 from __future__ import annotations
@@ -48,16 +53,21 @@ import numpy as np
 import torch
 import warp as wp
 
+from benchmarks.dynamics.shared_utils import load_config
 from nvalchemiops.dynamics.optimizers import (
     LBFGS_CONVERGED,
     LBFGS_NEED_EVAL,
     fire2_step,
-    lbfgs_reset,
     lbfgs_step,
 )
 
 DEVICE = "cuda:0"
+
+#: Fallbacks used when a knob is absent from the config file, so the benchmark
+#: still runs standalone.
 EVAL_CAP = 20000
+CONFIG_PATH = pathlib.Path(__file__).with_name("benchmark_config.yaml")
+FIRE2_SWEEP = {"dt_start": [0.005, 0.01, 0.02, 0.05], "maxstep": [0.05, 0.1, 0.2]}
 
 
 def lennard_jones(positions):
@@ -74,6 +84,8 @@ def lennard_jones(positions):
 
 
 def _allocate_lbfgs_state(num_dofs, num_systems, history_size):
+    """Allocate the caller-owned buffers, already in their required start state."""
+
     def f64(n):
         return wp.zeros(n, dtype=wp.float64, device=DEVICE)
 
@@ -86,7 +98,7 @@ def _allocate_lbfgs_state(num_dofs, num_systems, history_size):
     def i32(n):
         return wp.zeros(n, dtype=wp.int32, device=DEVICE)
 
-    return {
+    buffers = {
         "x_base": vec(num_dofs),
         "force_base": vec(num_dofs),
         "direction": vec(num_dofs),
@@ -114,9 +126,37 @@ def _allocate_lbfgs_state(num_dofs, num_systems, history_size):
         "ls_trials": i32(num_systems),
         "history_count": i32(num_systems),
     }
+    # Three buffers do not start at zero; the optimizer initializes nothing.
+    buffers["alpha_step"].fill_(1.0)
+    buffers["iteration"].fill_(-1)
+    buffers["status"].fill_(LBFGS_NEED_EVAL)
+    return buffers
 
 
-def run_lbfgs(start, force_tol, history_size=6, maxstep=0.2):
+def _allocate_lbfgs_buffers_torch(num_dofs, num_systems, history_size):
+    """The same buffers as torch tensors, in the order the step takes them."""
+    import torch
+
+    f64, i32 = torch.float64, torch.int32
+
+    def z(*shape, dt=f64):
+        return torch.zeros(shape, dtype=dt, device=DEVICE)
+
+    alpha_step = torch.ones(num_systems, dtype=f64, device=DEVICE)
+    iteration = torch.full((num_systems,), -1, dtype=i32, device=DEVICE)
+    return (
+        z(num_dofs, 3), z(num_dofs, 3), z(num_dofs, 3),
+        z(history_size, num_dofs, 3), z(history_size, num_dofs, 3),
+        z(history_size, num_systems), z(history_size, num_systems),
+        z(history_size, num_systems), z(history_size, num_systems),
+        *[z(num_systems) for _ in range(10)],
+        alpha_step,
+        z(num_systems, dt=i32), iteration,
+        *[z(num_systems, dt=i32) for _ in range(4)],
+    )  # fmt: skip
+
+
+def run_lbfgs(start, force_tol, history_size=6, maxstep=0.2, eval_cap=EVAL_CAP):
     """Relax with L-BFGS; return (evaluations, converged, final max force)."""
     num_atoms = start.shape[0]
     positions = wp.array(start.copy(), dtype=wp.vec3d, device=DEVICE)
@@ -127,9 +167,8 @@ def run_lbfgs(start, force_tol, history_size=6, maxstep=0.2):
         np.array([num_atoms], np.int32), dtype=wp.int32, device=DEVICE
     )
     state = _allocate_lbfgs_state(num_atoms, 1, history_size)
-    lbfgs_reset(**state)
 
-    for n_evals in range(1, EVAL_CAP + 1):
+    for n_evals in range(1, eval_cap + 1):
         per_atom_energy, f = lennard_jones(positions.numpy())
         forces.assign(f)
         energy.assign(np.array([per_atom_energy.sum()]))
@@ -148,10 +187,12 @@ def run_lbfgs(start, force_tol, history_size=6, maxstep=0.2):
             final = np.linalg.norm(lennard_jones(positions.numpy())[1], axis=1).max()
             return n_evals, state["status"].numpy()[0] == LBFGS_CONVERGED, final
     final = np.linalg.norm(lennard_jones(positions.numpy())[1], axis=1).max()
-    return EVAL_CAP, False, final
+    return eval_cap, False, final
 
 
-def run_fire2(start, force_tol, dt_start=0.02, maxstep=0.05, tmax=0.1):
+def run_fire2(
+    start, force_tol, dt_start=0.02, maxstep=0.05, tmax=0.1, eval_cap=EVAL_CAP
+):
     """Relax with FIRE2; return (evaluations, converged, final max force)."""
     num_atoms = start.shape[0]
     positions = wp.array(start.copy(), dtype=wp.vec3d, device=DEVICE)
@@ -163,7 +204,7 @@ def run_fire2(start, force_tol, dt_start=0.02, maxstep=0.05, tmax=0.1):
     nsteps_inc = wp.zeros(1, dtype=wp.int32, device=DEVICE)
     scratch = [wp.zeros(1, dtype=wp.float64, device=DEVICE) for _ in range(4)]
 
-    for n_evals in range(1, EVAL_CAP + 1):
+    for n_evals in range(1, eval_cap + 1):
         f = lennard_jones(positions.numpy())[1]
         current = np.linalg.norm(f, axis=1).max()
         if current <= force_tol:
@@ -188,25 +229,31 @@ def run_fire2(start, force_tol, dt_start=0.02, maxstep=0.05, tmax=0.1):
             alphashrink=0.99,
         )
         wp.synchronize()
-    return EVAL_CAP, False, current
+    return eval_cap, False, current
 
 
-def best_fire2(start, force_tol):
+def best_fire2(start, force_tol, sweep=None, eval_cap=EVAL_CAP):
     """FIRE2 at its best over a small hyperparameter sweep.
 
     Comparing against an untuned baseline would overstate the result; FIRE2 is
-    sensitive to its timestep on this system.
+    sensitive to its timestep on this system. The grid comes from the
+    ``lbfgs.fire2_sweep`` block of the config file.
     """
-    best = (EVAL_CAP + 1, False, np.inf, None)
-    for dt_start in (0.005, 0.01, 0.02, 0.05):
-        for maxstep in (0.05, 0.1, 0.2):
+    sweep = FIRE2_SWEEP if sweep is None else sweep
+    best = (eval_cap + 1, False, np.inf, None)
+    for dt_start in sweep["dt_start"]:
+        for maxstep in sweep["maxstep"]:
             evals, converged, final = run_fire2(
-                start, force_tol, dt_start=dt_start, maxstep=maxstep
+                start,
+                force_tol,
+                dt_start=dt_start,
+                maxstep=maxstep,
+                eval_cap=eval_cap,
             )
             if converged and evals < best[0]:
                 best = (evals, converged, final, (dt_start, maxstep))
     if best[3] is None:
-        evals, converged, final = run_fire2(start, force_tol)
+        evals, converged, final = run_fire2(start, force_tol, eval_cap=eval_cap)
         return evals, converged, final, "none converged"
     return best
 
@@ -226,7 +273,7 @@ def _time_ms(fn, warmup=10, runs=50):
     return start.elapsed_time(stop) / runs
 
 
-def run_gates(sizes, eval_ratio):
+def run_gates(sizes, eval_ratio, warmup=10, runs=50):
     """Measure per-step cost, graph replay, and the break-even model cost.
 
     Reported per system size:
@@ -245,7 +292,7 @@ def run_gates(sizes, eval_ratio):
         pays for a costlier step.
     """
     from nvalchemiops.dynamics.optimizers import fire2_step
-    from nvalchemiops.torch.lbfgs import lbfgs_allocate_state, lbfgs_step_coord
+    from nvalchemiops.torch.lbfgs import lbfgs_step_coord
 
     print(
         f"{'atoms':>9} {'eager ms':>9} {'graph ms':>9} {'fire2 ms':>9} "
@@ -261,23 +308,23 @@ def run_gates(sizes, eval_ratio):
         energy = torch.zeros(1, dtype=torch.float64, device=DEVICE)
         batch_idx = torch.zeros(num_atoms, dtype=torch.int32, device=DEVICE)
         n_particles = torch.full((1,), num_atoms, dtype=torch.int32, device=DEVICE)
-        state = lbfgs_allocate_state(num_atoms, 1, dtype=torch.float64, device=DEVICE)
+        buffers = _allocate_lbfgs_buffers_torch(num_atoms, 1, 6)
         forces.copy_(-positions)
         energy.copy_((0.5 * (positions**2).sum()).reshape(1))
 
         def step():
             lbfgs_step_coord(
                 positions,
-                state,
                 forces,
                 energy,
                 batch_idx,
                 n_particles,
+                *buffers,
                 force_tol=1e-12,
                 maxstep=0.5,
             )
 
-        eager = _time_ms(step)
+        eager = _time_ms(step, warmup, runs)
 
         side = torch.cuda.Stream()
         side.wait_stream(torch.cuda.current_stream())
@@ -292,7 +339,7 @@ def run_gates(sizes, eval_ratio):
             with torch.cuda.graph(graph):
                 step()
         torch.cuda.synchronize()
-        graphed = _time_ms(graph.replay)
+        graphed = _time_ms(graph.replay, warmup, runs)
 
         wp_positions = wp.array(
             rng.normal(size=(num_atoms, 3)), dtype=wp.vec3d, device=DEVICE
@@ -315,7 +362,9 @@ def run_gates(sizes, eval_ratio):
                 nsteps_inc,
                 *scratch,
                 maxstep=0.05,
-            )
+            ),
+            warmup,
+            runs,
         )
 
         # n_L (C + O_L) < n_F (C + O_F), with n_L / n_F = eval_ratio.
@@ -340,30 +389,84 @@ def run_gates(sizes, eval_ratio):
     return rows
 
 
+def _load_lbfgs_config(path):
+    """Read the ``lbfgs`` block of the benchmark config, if there is one.
+
+    The benchmark is useful standalone, so a missing file or section is not an
+    error -- the module-level fallbacks apply instead.
+    """
+    path = pathlib.Path(path)
+    if not path.is_file():
+        return {}
+    return load_config(path).get("lbfgs", {}) or {}
+
+
 def main():
+    """Run the evaluation-count comparison, or the per-step cost gates."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sizes", type=int, nargs="+", default=[13, 32, 55])
-    parser.add_argument("--seeds", type=int, default=5)
-    parser.add_argument("--force-tol", type=float, default=1e-4)
+    parser.add_argument(
+        "--config",
+        type=pathlib.Path,
+        default=CONFIG_PATH,
+        help="benchmark_config.yaml supplying the defaults below",
+    )
+    # Every default is None so an explicit flag can be told apart from an
+    # unset one, and therefore override the config file rather than shadow it.
+    parser.add_argument("--sizes", type=int, nargs="+", default=None)
+    parser.add_argument("--seeds", type=int, default=None)
+    parser.add_argument("--force-tol", type=float, default=None)
+    parser.add_argument("--eval-cap", type=int, default=None)
     parser.add_argument("--output-dir", type=pathlib.Path, default=None)
     parser.add_argument(
         "--gates",
         action="store_true",
         help="measure per-step cost, graph replay and break-even model cost",
     )
-    parser.add_argument(
-        "--gate-sizes", type=int, nargs="+", default=[10_000, 100_000, 1_000_000]
-    )
+    parser.add_argument("--gate-sizes", type=int, nargs="+", default=None)
     parser.add_argument(
         "--eval-ratio",
         type=float,
-        default=0.21,
+        default=None,
         help="measured L-BFGS/FIRE2 evaluation ratio, used for the break-even cost",
     )
     args = parser.parse_args()
 
+    config = _load_lbfgs_config(args.config)
+    gates_config = config.get("gates", {}) or {}
+
+    # `enabled` works the way it does for the other dynamics benchmarks: it is
+    # how a config file turns a suite off without editing the runner.
+    if not config.get("enabled", True):
+        print("lbfgs benchmark disabled in the config file; nothing to do")
+        return
+    if args.gates and not gates_config.get("enabled", True):
+        print("lbfgs gates disabled in the config file; nothing to do")
+        return
+
+    def pick(flag, key, fallback, section=config):
+        """Command line first, then the config file, then the fallback."""
+        return flag if flag is not None else section.get(key, fallback)
+
+    sizes = pick(args.sizes, "system_sizes", [13, 32, 55])
+    seeds = pick(args.seeds, "seeds", 5)
+    force_tol = pick(args.force_tol, "force_tolerance", 1e-4)
+    eval_cap = pick(args.eval_cap, "eval_cap", EVAL_CAP)
+    history_size = config.get("history_size", 6)
+    maxstep = config.get("maxstep", 0.2)
+    sweep = config.get("fire2_sweep", FIRE2_SWEEP)
+
     if args.gates:
-        run_gates(args.gate_sizes, args.eval_ratio)
+        run_gates(
+            pick(
+                args.gate_sizes,
+                "system_sizes",
+                [10_000, 100_000, 1_000_000],
+                section=gates_config,
+            ),
+            pick(args.eval_ratio, "eval_ratio", 0.142, section=gates_config),
+            gates_config.get("warmup", 10),
+            gates_config.get("runs", 50),
+        )
         return
 
     rows = []
@@ -371,13 +474,17 @@ def main():
         f"{'atoms':>6} {'seed':>5} {'lbfgs':>7} {'fire2':>7} "
         f"{'ratio':>7}  {'fire2 config':>14}"
     )
-    for num_atoms in args.sizes:
-        for seed in range(args.seeds):
+    for num_atoms in sizes:
+        for seed in range(seeds):
             rng = np.random.default_rng(seed)
             start = rng.normal(size=(num_atoms, 3)) * (num_atoms ** (1 / 3)) * 0.55
 
-            lb_evals, lb_ok, lb_force = run_lbfgs(start, args.force_tol)
-            f2_evals, f2_ok, f2_force, f2_cfg = best_fire2(start, args.force_tol)
+            lb_evals, lb_ok, lb_force = run_lbfgs(
+                start, force_tol, history_size, maxstep, eval_cap
+            )
+            f2_evals, f2_ok, f2_force, f2_cfg = best_fire2(
+                start, force_tol, sweep, eval_cap
+            )
             ratio = lb_evals / f2_evals
             rows.append(
                 {
@@ -408,7 +515,7 @@ def main():
     capped = [r for r in rows if not r["fire2_converged"]]
     if capped:
         print(
-            f"note: FIRE2 hit the {EVAL_CAP}-evaluation cap in {len(capped)} case(s), "
+            f"note: FIRE2 hit the {eval_cap}-evaluation cap in {len(capped)} case(s), "
             "so those ratios are upper bounds on L-BFGS's advantage."
         )
 

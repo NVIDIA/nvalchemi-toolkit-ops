@@ -282,6 +282,62 @@ fire_compare:
     maxstep: 0.25
     cell_force_scale: 1.0
 
+# L-BFGS vs FIRE2 Evaluation-Count Benchmark
+# ------------------------------------------
+# Counts energy/force evaluations to convergence, which is the metric that
+# decides a relaxation driven by a machine-learned potential: the model call
+# dominates the optimizer's own kernel time by orders of magnitude.
+#
+# FIRE2 is swept over the grid below and its *best* converged result is what
+# L-BFGS is compared against, so the baseline is not handicapped by a poor
+# timestep. The system is a Lennard-Jones cluster in reduced units, cheap to
+# evaluate on the host and anharmonic enough to be a fair test.
+lbfgs:
+  enabled: true
+
+  # Cluster sizes (atoms). These are the Mackay icosahedral magic numbers, so
+  # each has a well-defined global minimum to fall into.
+  system_sizes: [13, 32, 55]
+
+  # Independent starting geometries per size
+  seeds: 5
+
+  # Convergence criterion, on the largest per-atom force
+  force_tolerance: 1.0e-4
+
+  # Give up after this many evaluations. A capped FIRE2 run makes its ratio an
+  # upper bound on L-BFGS's advantage rather than a measurement, and the
+  # benchmark says so in its summary.
+  eval_cap: 20000
+
+  # Stored curvature pairs. The two history buffers dominate memory.
+  history_size: 6
+
+  # Largest distance an atom may move in one step
+  maxstep: 0.2
+
+  # FIRE2 hyperparameter grid. Every combination is run; the fewest-evaluation
+  # converged result wins.
+  fire2_sweep:
+    dt_start: [0.005, 0.01, 0.02, 0.05]
+    maxstep: [0.05, 0.1, 0.2]
+
+  # Per-step cost gates (`--gates`): optimizer-only time against FIRE2 at
+  # scale, what CUDA-graph replay recovers, and the model cost above which
+  # L-BFGS wins end to end.
+  gates:
+    enabled: true
+    system_sizes: [10000, 100000, 1000000]
+
+    # CUDA-event timing
+    warmup: 10
+    runs: 50
+
+    # Measured L-BFGS/FIRE2 evaluation ratio from a default run of the sweep
+    # above, used only for the break-even model cost. Re-measure and update it
+    # if the sizes or the tolerance change.
+    eval_ratio: 0.142
+
 # System Configuration (shared across all benchmarks)
 # ---------------------------------------------------
 system:
