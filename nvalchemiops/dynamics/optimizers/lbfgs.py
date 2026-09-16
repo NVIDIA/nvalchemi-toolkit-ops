@@ -531,12 +531,12 @@ def _lbfgs_stress_norm_kernel(
     smax
         OUTPUT. Largest singular value of the stress tensor.
     """
-    s = wp.tid()
+    tid = wp.tid()
     u = wp.mat33d()
     sv = wp.vec3d()
     v = wp.mat33d()
-    wp.svd3(stress[s], u, sv, v)
-    smax[s] = wp.max(wp.max(wp.abs(sv[0]), wp.abs(sv[1])), wp.abs(sv[2]))
+    wp.svd3(stress[tid], u, sv, v)
+    smax[tid] = wp.max(wp.max(wp.abs(sv[0]), wp.abs(sv[1])), wp.abs(sv[2]))
 
 
 @wp.kernel(enable_backward=False)
@@ -647,44 +647,44 @@ def _lbfgs_line_search_kernel(
     ys, yy, ss
         The candidate history slot is zeroed here, ready for kernel 3.
     """
-    s = wp.tid()
+    tid = wp.tid()
 
     # Systems that already finished stay frozen: no work is owed downstream.
-    if status[s] != LBFGS_NEED_EVAL:
-        n_loop[s] = _NLOOP_RETRY
+    if status[tid] != LBFGS_NEED_EVAL:
+        n_loop[tid] = _NLOOP_RETRY
         return
 
-    e_now = energy[s]
+    e_now = energy[tid]
     conv = _converged(
-        fmax[s],
-        frms_sq[s],
-        smax[s],
-        n_particles[s],
+        fmax[tid],
+        frms_sq[tid],
+        smax[tid],
+        n_particles[tid],
         force_tol,
         rms_tol,
         stress_tol,
     )
 
     # ---- first evaluation -------------------------------------------------
-    if iteration[s] < 0:
-        f_base[s] = e_now
-        iteration[s] = 0
+    if iteration[tid] < 0:
+        f_base[tid] = e_now
+        iteration[tid] = 0
         if conv:
             # Already relaxed on arrival. Do not move, but the base buffers
             # still have to describe this geometry.
-            status[s] = LBFGS_CONVERGED
-            n_loop[s] = _NLOOP_SEED
+            status[tid] = LBFGS_CONVERGED
+            n_loop[tid] = _NLOOP_SEED
         else:
-            n_loop[s] = _NLOOP_RESTART
+            n_loop[tid] = _NLOOP_RESTART
         return
 
     # ---- interpret the trial ----------------------------------------------
-    d0_s = d0[s]
-    dt_s = gd[s]
-    alpha = alpha_step[s]
-    trials = ls_trials[s] + 1
+    d0_s = d0[tid]
+    dt_s = gd[tid]
+    alpha = alpha_step[tid]
+    trials = ls_trials[tid] + 1
 
-    armijo_ok = (e_now - f_base[s]) <= alpha * ftol * d0_s
+    armijo_ok = (e_now - f_base[tid]) <= alpha * ftol * d0_s
     curvature_ok = dt_s >= wolfe * d0_s
     strong_ok = dt_s <= -wolfe * d0_s
 
@@ -696,7 +696,7 @@ def _lbfgs_line_search_kernel(
     elif not curvature_ok:
         # The step is too short. Growing is pointless once the trust region
         # binds, so take the point instead of spinning on the same trial.
-        cap = _alpha_cap(dmax[s], dquad[s], maxstep)
+        cap = _alpha_cap(dmax[tid], dquad[tid], maxstep)
         if alpha >= cap:
             accept = True
         else:
@@ -710,38 +710,38 @@ def _lbfgs_line_search_kernel(
         # Step bounds are tested against the freshly scaled alpha, so a trial
         # that would fall outside the range is never proposed.
         if trials >= max_ls_iter or new_alpha < min_step or new_alpha > max_step:
-            if history_count[s] > 0:
+            if history_count[tid] > 0:
                 # A stalled line search usually means the curvature model has
                 # gone stale, not that there is no descent left. Roll back to
                 # the last good point, throw the history away and start again
                 # from steepest descent, which cannot inherit a bad model.
                 # Only a search that fails with no history left is terminal,
                 # so this can happen at most once per failure and cannot loop.
-                iteration[s] = -1
-                history_count[s] = 0
-                ls_trials[s] = 0
-                alpha_step[s] = wp.float64(1.0)
-                n_loop[s] = _NLOOP_ROLLBACK
+                iteration[tid] = -1
+                history_count[tid] = 0
+                ls_trials[tid] = 0
+                alpha_step[tid] = wp.float64(1.0)
+                n_loop[tid] = _NLOOP_ROLLBACK
             else:
-                status[s] = LBFGS_LS_FAILED
-                n_loop[s] = _NLOOP_ROLLBACK
+                status[tid] = LBFGS_LS_FAILED
+                n_loop[tid] = _NLOOP_ROLLBACK
         else:
-            alpha_step[s] = new_alpha
-            ls_trials[s] = trials
-            n_loop[s] = _NLOOP_RETRY
+            alpha_step[tid] = new_alpha
+            ls_trials[tid] = trials
+            n_loop[tid] = _NLOOP_RETRY
         return
 
     # ---- accepted ---------------------------------------------------------
     # Whether or not this point is converged, it becomes the new base point,
     # so the history kernel must run. The commit kernel decides which.
-    f_base[s] = e_now
-    iteration[s] = iteration[s] + 1
-    n_loop[s] = _NLOOP_PENDING
+    f_base[tid] = e_now
+    iteration[tid] = iteration[tid] + 1
+    n_loop[tid] = _NLOOP_PENDING
 
-    slot = end[s]
-    ys[slot, s] = wp.float64(0.0)
-    yy[slot, s] = wp.float64(0.0)
-    ss[s] = wp.float64(0.0)
+    slot = end[tid]
+    ys[slot, tid] = wp.float64(0.0)
+    yy[slot, tid] = wp.float64(0.0)
+    ss[tid] = wp.float64(0.0)
 
 
 # =============================================================================
@@ -883,38 +883,38 @@ def _lbfgs_history_commit_kernel(
     status, end, n_loop, history_count
         Per-system control state.
     """
-    s = wp.tid()
-    if n_loop[s] != _NLOOP_PENDING:
+    tid = wp.tid()
+    if n_loop[tid] != _NLOOP_PENDING:
         return
 
-    slot = end[s]
+    slot = end[tid]
 
     if _converged(
-        fmax[s],
-        frms_sq[s],
-        smax[s],
-        n_particles[s],
+        fmax[tid],
+        frms_sq[tid],
+        smax[tid],
+        n_particles[tid],
         force_tol,
         rms_tol,
         stress_tol,
     ):
-        status[s] = LBFGS_CONVERGED
-        history_count[s] = wp.min(history_count[s], m - 1)
-        n_loop[s] = _NLOOP_RETRY
+        status[tid] = LBFGS_CONVERGED
+        history_count[tid] = wp.min(history_count[tid], m - 1)
+        n_loop[tid] = _NLOOP_RETRY
         return
 
-    sy = ys[slot, s]
-    threshold = curvature_eps * wp.sqrt(ss[s] * yy[slot, s])
+    sy = ys[slot, tid]
+    threshold = curvature_eps * wp.sqrt(ss[tid] * yy[slot, tid])
     if sy > threshold:
-        history_count[s] = wp.min(history_count[s] + 1, m)
-        end[s] = (slot + 1) % m
+        history_count[tid] = wp.min(history_count[tid] + 1, m)
+        end[tid] = (slot + 1) % m
     else:
-        history_count[s] = wp.min(history_count[s], m - 1)
+        history_count[tid] = wp.min(history_count[tid], m - 1)
 
-    if history_count[s] > 0:
-        n_loop[s] = history_count[s] + 1
+    if history_count[tid] > 0:
+        n_loop[tid] = history_count[tid] + 1
     else:
-        n_loop[s] = _NLOOP_RESTART
+        n_loop[tid] = _NLOOP_RESTART
 
 
 # =============================================================================
@@ -1178,18 +1178,18 @@ def _lbfgs_seed_direction_kernel(
     x_base, force_base
         Seeded to the current point.
     """
-    i = wp.tid()
-    s = batch_idx[i]
+    tid = wp.tid()
+    s = batch_idx[tid]
     if status[s] != LBFGS_NEED_EVAL or n_loop[s] != _NLOOP_RESTART:
         return
     gn = wp.sqrt(gg[s])
     if gn > wp.float64(0.0):
-        scale = type(forces[i][0])(wp.float64(1.0) / gn)
-        direction[i] = scale * forces[i]
+        scale = type(forces[tid][0])(wp.float64(1.0) / gn)
+        direction[tid] = scale * forces[tid]
     else:
-        direction[i] = type(forces[i])()
-    x_base[i] = positions[i]
-    force_base[i] = forces[i]
+        direction[tid] = type(forces[tid])()
+    x_base[tid] = positions[tid]
+    force_base[tid] = forces[tid]
 
 
 @wp.kernel(enable_backward=False)
@@ -1295,27 +1295,27 @@ def _lbfgs_prepare_step_kernel(
     alpha_step, ls_trials, d0, dmax, dquad, end, history_count, n_loop
         Per-system control state.
     """
-    s = wp.tid()
-    if status[s] != LBFGS_NEED_EVAL:
+    tid = wp.tid()
+    if status[tid] != LBFGS_NEED_EVAL:
         return
 
     # A new direction always starts a fresh line search.
-    if n_loop[s] != _NLOOP_RETRY:
-        alpha_step[s] = wp.float64(1.0)
-        ls_trials[s] = 0
+    if n_loop[tid] != _NLOOP_RETRY:
+        alpha_step[tid] = wp.float64(1.0)
+        ls_trials[tid] = 0
 
     # An ascent direction means the history has gone bad; drop it and restart.
-    if n_loop[s] > 0 and d0[s] >= wp.float64(0.0):
-        n_loop[s] = _NLOOP_RESTART
+    if n_loop[tid] > 0 and d0[tid] >= wp.float64(0.0):
+        n_loop[tid] = _NLOOP_RESTART
 
-    if n_loop[s] == _NLOOP_RESTART:
+    if n_loop[tid] == _NLOOP_RESTART:
         # For a normalized steepest-descent direction the slope is exact.
-        d0[s] = -wp.sqrt(gg[s])
-        history_count[s] = 0
-        end[s] = 0
+        d0[tid] = -wp.sqrt(gg[tid])
+        history_count[tid] = 0
+        end[tid] = 0
 
-    cap = _alpha_cap(dmax[s], dquad[s], maxstep)
-    alpha_step[s] = wp.min(alpha_step[s], cap)
+    cap = _alpha_cap(dmax[tid], dquad[tid], maxstep)
+    alpha_step[tid] = wp.min(alpha_step[tid], cap)
 
 
 @wp.kernel(enable_backward=False)
@@ -1353,24 +1353,24 @@ def _lbfgs_apply_step_kernel(
     direction, x_base, force_base
         Seeded when a steepest-descent direction is taken.
     """
-    i = wp.tid()
-    s = batch_idx[i]
+    tid = wp.tid()
+    s = batch_idx[tid]
     nl = n_loop[s]
 
     if nl == _NLOOP_ROLLBACK:
-        positions[i] = x_base[i]
+        positions[tid] = x_base[tid]
         return
 
     if nl == _NLOOP_SEED:
-        x_base[i] = positions[i]
-        force_base[i] = forces[i]
+        x_base[tid] = positions[tid]
+        force_base[tid] = forces[tid]
         return
 
     if status[s] != LBFGS_NEED_EVAL:
         return
 
-    a = type(direction[i][0])(alpha_step[s])
-    positions[i] = x_base[i] + a * direction[i]
+    a = type(direction[tid][0])(alpha_step[s])
+    positions[tid] = x_base[tid] + a * direction[tid]
 
 
 # =============================================================================
@@ -2063,9 +2063,9 @@ def _lbfgs_zero_d0_kernel(
     d0
         Zeroed for systems with a freshly built direction.
     """
-    s = wp.tid()
-    if n_loop[s] > 0:
-        d0[s] = wp.float64(0.0)
+    tid = wp.tid()
+    if n_loop[tid] > 0:
+        d0[tid] = wp.float64(0.0)
 
 
 def _zero_pending_d0(d0, n_loop, num_systems, device) -> None:
@@ -2379,9 +2379,9 @@ def _lbfgs_cell_kappa_kernel(
     kappa
         OUTPUT. ``cell_force_scale * num_atoms``.
     """
-    s = wp.tid()
-    slot = kappa[s]
-    kappa[s] = type(slot)(cell_force_scale) * type(slot)(n_atoms_per_system[s])
+    tid = wp.tid()
+    slot = kappa[tid]
+    kappa[tid] = type(slot)(cell_force_scale) * type(slot)(n_atoms_per_system[tid])
 
 
 @wp.kernel(enable_backward=False)
@@ -2413,39 +2413,39 @@ def _lbfgs_cell_chart_kernel(
         The six cell coordinates and their six conjugate force components,
         split into two three-vectors each to match the packed layout.
     """
-    s = wp.tid()
-    h = cell[s]
-    k = kappa[s]
-    p = h * ref_cell_inv[s]
-    phi[s] = p
+    tid = wp.tid()
+    h = cell[tid]
+    k = kappa[tid]
+    p = h * ref_cell_inv[tid]
+    phi[tid] = p
     p_inv = wp.inverse(p)
-    phi_inv[s] = p_inv
+    phi_inv[tid] = p_inv
 
-    dof_a = cell_dof_a[s]
-    dof_b = cell_dof_b[s]
+    dof_a = cell_dof_a[tid]
+    dof_b = cell_dof_b[tid]
     dof_a[0] = k * p[0, 0]
     dof_a[1] = k * p[1, 0]
     dof_a[2] = k * p[2, 0]
     dof_b[0] = k * p[1, 1]
     dof_b[1] = k * p[2, 1]
     dof_b[2] = k * p[2, 2]
-    cell_dof_a[s] = dof_a
-    cell_dof_b[s] = dof_b
+    cell_dof_a[tid] = dof_a
+    cell_dof_b[tid] = dof_b
 
-    f_a = cell_force_a[s] - cell_force_a[s]
-    f_b = cell_force_b[s] - cell_force_b[s]
+    f_a = cell_force_a[tid] - cell_force_a[tid]
+    f_b = cell_force_b[tid] - cell_force_b[tid]
     if have_stress:
         # f_c = -(V sigma) Phi^-T / kappa
         volume = wp.abs(wp.determinant(h))
-        force = (-volume / k) * (stress[s] * wp.transpose(p_inv))
+        force = (-volume / k) * (stress[tid] * wp.transpose(p_inv))
         f_a[0] = force[0, 0]
         f_a[1] = force[1, 0]
         f_a[2] = force[2, 0]
         f_b[0] = force[1, 1]
         f_b[1] = force[2, 1]
         f_b[2] = force[2, 2]
-    cell_force_a[s] = f_a
-    cell_force_b[s] = f_b
+    cell_force_a[tid] = f_a
+    cell_force_b[tid] = f_b
 
 
 @wp.kernel(enable_backward=False)
@@ -2478,20 +2478,20 @@ def _lbfgs_pack_kernel(
     ext_positions, ext_forces
         OUTPUT. The packed coordinates and their conjugate forces.
     """
-    e = wp.tid()
-    s = ext_batch_idx[e]
+    tid = wp.tid()
+    s = ext_batch_idx[tid]
     cell_start = ext_atom_ptr[s + 1] - wp.int32(2)
-    if e >= cell_start:
-        if e == cell_start:
-            ext_positions[e] = cell_dof_a[s]
-            ext_forces[e] = cell_force_a[s]
+    if tid >= cell_start:
+        if tid == cell_start:
+            ext_positions[tid] = cell_dof_a[s]
+            ext_forces[tid] = cell_force_a[s]
         else:
-            ext_positions[e] = cell_dof_b[s]
-            ext_forces[e] = cell_force_b[s]
+            ext_positions[tid] = cell_dof_b[s]
+            ext_forces[tid] = cell_force_b[s]
         return
-    a = e - wp.int32(2) * s
-    ext_positions[e] = phi_inv[s] * positions[a]
-    ext_forces[e] = wp.transpose(phi[s]) * forces[a]
+    atom_i = tid - wp.int32(2) * s
+    ext_positions[tid] = phi_inv[s] * positions[atom_i]
+    ext_forces[tid] = wp.transpose(phi[s]) * forces[atom_i]
 
 
 @wp.kernel(enable_backward=False)
@@ -2519,10 +2519,10 @@ def _lbfgs_unpack_cell_kernel(
     cell
         OUTPUT. ``H = Phi H0``.
     """
-    s = wp.tid()
-    h0 = ref_cell[s]
-    k = kappa[s]
-    cell_start = ext_atom_ptr[s + 1] - wp.int32(2)
+    tid = wp.tid()
+    h0 = ref_cell[tid]
+    k = kappa[tid]
+    cell_start = ext_atom_ptr[tid + 1] - wp.int32(2)
     va = ext_positions[cell_start] / k
     vb = ext_positions[cell_start + 1] / k
     p = h0 - h0  # a zero matrix at the right precision
@@ -2532,8 +2532,8 @@ def _lbfgs_unpack_cell_kernel(
     p[1, 1] = vb[0]
     p[2, 1] = vb[1]
     p[2, 2] = vb[2]
-    phi[s] = p
-    cell[s] = p * h0
+    phi[tid] = p
+    cell[tid] = p * h0
 
 
 @wp.kernel(enable_backward=False)
@@ -2554,9 +2554,9 @@ def _lbfgs_unpack_atoms_kernel(
     positions
         OUTPUT. Cartesian positions.
     """
-    a = wp.tid()
-    s = batch_idx[a]
-    positions[a] = phi[s] * ext_positions[a + 2 * s]
+    atom_i = wp.tid()
+    s = batch_idx[atom_i]
+    positions[atom_i] = phi[s] * ext_positions[atom_i + 2 * s]
 
 
 @wp.kernel(enable_backward=False)
@@ -2578,19 +2578,19 @@ def _lbfgs_cell_direction_kernel(
         The direction's cell block, undone by ``kappa`` so it is a change in
         the deformation gradient rather than in the scaled coordinate.
     """
-    s = wp.tid()
-    k = kappa[s]
-    cell_start = ext_atom_ptr[s + 1] - wp.int32(2)
+    tid = wp.tid()
+    k = kappa[tid]
+    cell_start = ext_atom_ptr[tid + 1] - wp.int32(2)
     va = direction[cell_start] / k
     vb = direction[cell_start + 1] / k
-    d = d_phi[s] - d_phi[s]  # a zero matrix at the right precision
+    d = d_phi[tid] - d_phi[tid]  # a zero matrix at the right precision
     d[0, 0] = va[0]
     d[1, 0] = va[1]
     d[2, 0] = va[2]
     d[1, 1] = vb[0]
     d[2, 1] = vb[1]
     d[2, 2] = vb[2]
-    d_phi[s] = d
+    d_phi[tid] = d
 
 
 @wp.kernel(enable_backward=False)
@@ -2625,11 +2625,11 @@ def _lbfgs_cell_trust_region_kernel(
     dmax, dquad
         OUTPUT. Zeroed by the launcher, then accumulated with atomic maxima.
     """
-    a = wp.tid()
-    s = batch_idx[a]
+    atom_i = wp.tid()
+    s = batch_idx[atom_i]
     if status[s] != LBFGS_NEED_EVAL or n_loop[s] == _NLOOP_RETRY:
         return
-    e = a + 2 * s
+    e = atom_i + 2 * s
     d_u = direction[e]
     u = ext_positions[e]
     linear = phi[s] * d_u + d_phi[s] * u
