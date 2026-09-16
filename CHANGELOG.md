@@ -25,6 +25,11 @@
 
 ### Fixed
 
+- Corrected the multipole Ewald/PME uniform-background coefficient for
+  non-neutral cells. Split Ewald, PME, and cached Ewald now use the same
+  zero-mode convention as the direct reciprocal calculation, including charge
+  and cell derivatives.
+
 - Fixed JAX autodiff through `ewald_reciprocal_space(...)` when `k_vectors`
   are derived from the differentiated cell. The custom JVP previously
   discarded the `k_vectors` tangent and omitted the reciprocal-cell
