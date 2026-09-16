@@ -4271,7 +4271,32 @@ register_warp_op_chain(
 
 
 def _multipole_background_coefficient(alpha: float) -> float:
-    """Return the positive Ewald-background coefficient excluding volume."""
+    r"""Return the positive Ewald-background coefficient excluding volume.
+
+    Parameters
+    ----------
+    alpha : float
+        Positive Ewald splitting parameter.
+
+    Returns
+    -------
+    float
+        :math:`F / (8 \alpha^2)`, where :math:`F` is ``FIELD_CONSTANT``. This
+        coefficient multiplies the charge product divided by cell volume.
+
+    Notes
+    -----
+    The uniform-background energy for a system with total charge :math:`Q` and
+    volume :math:`V` is :math:`F Q^2 / (8 \alpha^2 V)`. Callers subtract its
+    positive magnitude from a reciprocal-space sum whose zero mode is omitted.
+
+    See Also
+    --------
+    _multipole_background_energy_per_atom
+        Distributes the background correction over atoms.
+    multipole_pme_energy_corrections
+        Computes the collective PME self and background corrections.
+    """
     return FIELD_CONSTANT / (8.0 * alpha**2)
 
 
