@@ -48,7 +48,7 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 import warp as wp
-from jax.interpreters import ad as jax_ad
+from jax.custom_derivatives import SymbolicZero
 from warp import JaxCallableGraphMode, jax_callable
 
 from nvalchemiops.interactions.electrostatics.pme_factory import get_pme_kernel
@@ -1484,11 +1484,7 @@ def _tangent_or_zeros(tangent, primal: jax.Array, dtype=None) -> jax.Array:
 
 def _is_symbolic_zero(tangent) -> bool:
     """Return whether a custom-JVP tangent is JAX's symbolic zero sentinel."""
-    return (
-        tangent is None
-        or isinstance(tangent, jax_ad.Zero)
-        or tangent.__class__.__name__ == "SymbolicZero"
-    )
+    return tangent is None or isinstance(tangent, SymbolicZero)
 
 
 def _bspline_weight_reference(u: jax.Array, order: int) -> jax.Array:
