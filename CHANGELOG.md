@@ -2,12 +2,6 @@
 
 ## Unreleased
 
-### Fixed
-
-- Corrected the copyright header year span in `nvalchemiops/torch/_warnings.py`
-  so the repo-wide license header check passes again, and added the `license`
-  pre-commit hook to `make lint` so CI enforces header checks.
-
 ### Changed
 
 - Raised the minimum supported Warp version to 1.15 and migrated JAX bindings
