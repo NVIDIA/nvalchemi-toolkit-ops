@@ -489,6 +489,7 @@ def _rho_position_grad_backward(
         device=str(wp_device),
         scratch=moments_scratch,
     )
+    del moments_scratch
     ggrad_mom = ggrad_mom * s
     ggrad_charges = ggrad_mom[:, 0].contiguous()
     # e3nn -> Cartesian permutation for dipole: (mu_x, mu_y, mu_z) = lm(3, 1, 2).
@@ -2229,6 +2230,7 @@ def _feature_v_grad_backward(
         device=str(wp_device),
         scratch=scratch,
     )
+    del scratch
     ggrad_raw = ggrad_raw_flat.reshape(n_atoms, n_sigma, 4)
 
     # ggrad_kfp: grad_v[k] is linear in kfp[k], so ∂/∂kfp = grad_v[k] / kfp[k];
@@ -2373,6 +2375,7 @@ def _feature_position_grad_backward(
         device=str(wp_device),
         scratch=grad_raw_scratch,
     )
+    del grad_raw_scratch
 
     ggrad_v = torch.empty_like(potential)
     feat_position_grad_backward_v(
