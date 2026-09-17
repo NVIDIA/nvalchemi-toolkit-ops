@@ -531,6 +531,38 @@ def small_system():
     }
 
 
+@pytest.fixture(scope="module")
+def triclinic_system():
+    """The same thing in a genuinely skewed cell.
+
+    A cubic cell cannot exercise the fractional-to-Cartesian transforms properly: the inverse
+    cell is diagonal, so it equals its own transpose and a confusion between the two is
+    invisible. Every other cell in this file is cubic.
+    """
+    rng = np.random.default_rng(0)
+    c6ab, cn_ref, species = _reference_tables()
+    decomposition = decompose_c6_reference(c6ab, cn_ref, species)
+    cell = np.array([[9.0, 0.0, 0.0], [2.6, 8.4, 0.0], [1.8, -2.1, 9.3]])
+    positions = rng.uniform(0.0, 1.0, (8, 3)) @ cell
+    numbers = rng.choice(species, 8)
+    rcov = np.zeros(c6ab.shape[0])
+    rcov[[1, 6, 8]] = [0.6, 1.2, 1.1]
+    targets, pointer, shifts, edges = _neighbour_list(positions, cell, R_CUT)
+    return {
+        "decomposition": decomposition,
+        "positions": positions,
+        "numbers": numbers,
+        "rcov": rcov,
+        "cell": cell,
+        "targets": targets,
+        "pointer": pointer,
+        "shifts": shifts,
+        "edges": edges,
+        "channels": decomposition.species_map[numbers],
+        "sqrt_q": np.full(decomposition.n_species, 1.2),
+    }
+
+
 @pytest.mark.gpu
 class TestMeshEnergy:
     """Passes 3 to 8 end to end, against the direct lattice sum."""
@@ -645,6 +677,22 @@ class TestForces:
         mesh = (32, 32, 32)
         analytic = _mesh_evaluate(small_system, mesh, "cuda:0")["forces"]
         numerical = self._finite_difference_forces(small_system, mesh)
+        scale = np.abs(numerical).max()
+        assert scale > 0.0
+        np.testing.assert_allclose(analytic, numerical, atol=1e-6 * scale)
+
+    def test_forces_match_finite_differences_in_a_skewed_cell(self, triclinic_system):
+        """The adjoint of the fractional map must transpose it back.
+
+        A position becomes fractional through the transpose of the inverse cell, so the
+        gradient coming back has to be turned by the inverse cell itself. The two agree only
+        for a diagonal cell, so a cubic test passes either way; in a skewed cell the wrong
+        one leaves the forces off by parts in ten thousand while the energy and the virial
+        stay right.
+        """
+        mesh = (32, 32, 32)
+        analytic = _mesh_evaluate(triclinic_system, mesh, "cuda:0")["forces"]
+        numerical = self._finite_difference_forces(triclinic_system, mesh)
         scale = np.abs(numerical).max()
         assert scale > 0.0
         np.testing.assert_allclose(analytic, numerical, atol=1e-6 * scale)

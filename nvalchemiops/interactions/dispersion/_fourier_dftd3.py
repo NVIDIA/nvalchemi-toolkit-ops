@@ -1385,8 +1385,11 @@ def _fd3_gather_and_force_kernel(
         gy = wrap_grid_index(base_grid[1] + offset[1], mesh_dims[1])
         gz = wrap_grid_index(base_grid[2] + offset[2], mesh_dims[2])
 
-        # Fractional-space gradients become Cartesian through the inverse cell.
-        cartesian = cell_inv_t[group] * gradient
+        # Fractional-space gradients become Cartesian through the inverse cell. The forward
+        # map takes a position to fractional coordinates with the transpose, so its adjoint
+        # takes the transpose back off again. The two coincide only when the cell is
+        # diagonal, which is why a cubic cell cannot detect the difference.
+        cartesian = wp.transpose(cell_inv_t[group]) * gradient
 
         for slot in range(rank):
             value = potential[group * rank + slot, gx, gy, gz]
