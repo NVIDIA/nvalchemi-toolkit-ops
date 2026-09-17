@@ -534,9 +534,7 @@ class TestBatchClusterTileBuildCapacity:
     def test_full_build_overflow_and_adequate_retry(self):
         """Compact overflow reports the global required count and retry works."""
         positions = jnp.zeros((64, 3), dtype=jnp.float32)
-        cell_batch = jnp.tile(
-            jnp.eye(3, dtype=jnp.float32)[None] * 12.0, (2, 1, 1)
-        )
+        cell_batch = jnp.tile(jnp.eye(3, dtype=jnp.float32)[None] * 12.0, (2, 1, 1))
         batch_ptr = jnp.array([0, 32, 64], dtype=jnp.int32)
 
         undersized = allocate_batch_cluster_tile_list(
@@ -600,9 +598,7 @@ class TestBatchClusterTileBuildCapacity:
     def test_selective_build_reports_overflowing_system(self):
         """Segmented selective overflow identifies the system with the short segment."""
         positions = jnp.zeros((96, 3), dtype=jnp.float32)
-        cell_batch = jnp.tile(
-            jnp.eye(3, dtype=jnp.float32)[None] * 12.0, (2, 1, 1)
-        )
+        cell_batch = jnp.tile(jnp.eye(3, dtype=jnp.float32)[None] * 12.0, (2, 1, 1))
         batch_ptr = jnp.array([0, 32, 96], dtype=jnp.int32)
         with pytest.raises(TileBufferOverflow) as caught:
             batch_build_cluster_tile_list(

@@ -470,9 +470,7 @@ class TestClusterTileBuildCapacity:
         assert caught.value.max_tiles == undersized[12].shape[0]
         required = caught.value.num_tiles
 
-        adequate = allocate_cluster_tile_list(
-            positions.shape[0], max_tiles_per_group=2
-        )
+        adequate = allocate_cluster_tile_list(positions.shape[0], max_tiles_per_group=2)
         state = build_cluster_tile_list(
             positions,
             cutoff,
@@ -1479,9 +1477,7 @@ class TestJaxClusterTileTileSizing:
 
         @jax.jit
         def build(positions):
-            return build_cluster_tile_list(
-                positions, 5.0, cell, max_tiles_per_group=1
-            )
+            return build_cluster_tile_list(positions, 5.0, cell, max_tiles_per_group=1)
 
         state = build(positions)
         state[11].block_until_ready()
