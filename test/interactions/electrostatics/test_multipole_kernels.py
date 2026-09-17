@@ -567,28 +567,62 @@ class TestProjectFeaturesDipole:
         if "cuda" not in str(device):
             pytest.skip("requires CUDA")
         n_k, n_sigma, n_atoms = 5, 1, 3
-        potential = wp.from_numpy(np.ones((n_k, 2)), dtype=wp.float64, device=device)
-        phi_wp = wp.ones((n_k, n_sigma, 4, 2), dtype=wp.float64, device=device)
-        cosines_wp = wp.ones((n_k, n_atoms), dtype=wp.float64, device=device)
-        sines_wp = wp.zeros((n_k, n_atoms), dtype=wp.float64, device=device)
-        k_factor = wp.from_numpy(np.ones(n_k), dtype=wp.float64, device=device)
-        source = wp.zeros((n_atoms, 4), dtype=wp.float64, device=device)
-        overlap = wp.zeros((n_sigma, 2), dtype=wp.float64, device=device)
-        lut = wp.from_numpy(
-            _identity_out_col_lut(n_sigma), dtype=wp.int32, device=device
+        torch_device = torch.device(str(device))
+        producer = torch.cuda.Stream(device=torch_device)
+        caller = torch.cuda.Stream(device=torch_device)
+
+        old_potential = 1.0
+        new_potential = 3.0
+        output_sentinel = -17.0
+        potential_t = torch.full(
+            (n_k, 2), old_potential, dtype=torch.float64, device=torch_device
         )
-        features = wp.empty((n_atoms, n_sigma * 4), dtype=wp.float64, device=device)
-        copied = wp.empty_like(features)
-        scratch = ProjectFeaturesDipoleTiledScratch(
-            *(
-                wp.empty(shape, dtype=wp.float64, device=device)
-                for shape in ProjectFeaturesDipoleTiledScratch.expected_shapes(
-                    n_k, n_atoms, n_sigma
-                )
+        receiver_phi_hat_t = torch.zeros(
+            (n_k, n_sigma, 4, 2), dtype=torch.float64, device=torch_device
+        )
+        receiver_phi_hat_t[..., 0].fill_(1.0)
+        cosines_t = torch.ones((n_k, n_atoms), dtype=torch.float64, device=torch_device)
+        sines_t = torch.zeros((n_k, n_atoms), dtype=torch.float64, device=torch_device)
+        k_factor_t = torch.ones(n_k, dtype=torch.float64, device=torch_device)
+        source_t = torch.zeros((n_atoms, 4), dtype=torch.float64, device=torch_device)
+        overlap_t = torch.zeros((n_sigma, 2), dtype=torch.float64, device=torch_device)
+        lut_t = torch.as_tensor(
+            _identity_out_col_lut(n_sigma), dtype=torch.int32, device=torch_device
+        )
+        features_t = torch.full(
+            (n_atoms, n_sigma * 4),
+            output_sentinel,
+            dtype=torch.float64,
+            device=torch_device,
+        )
+        copied_t = torch.full_like(features_t, output_sentinel)
+
+        potential = wp.from_torch(potential_t, dtype=wp.float64)
+        phi_wp = wp.from_torch(receiver_phi_hat_t, dtype=wp.float64)
+        cosines_wp = wp.from_torch(cosines_t, dtype=wp.float64)
+        sines_wp = wp.from_torch(sines_t, dtype=wp.float64)
+        k_factor = wp.from_torch(k_factor_t, dtype=wp.float64)
+        source = wp.from_torch(source_t, dtype=wp.float64)
+        overlap = wp.from_torch(overlap_t, dtype=wp.float64)
+        lut = wp.from_torch(lut_t, dtype=wp.int32)
+        features = wp.from_torch(features_t, dtype=wp.float64)
+        copied = wp.from_torch(copied_t, dtype=wp.float64)
+        scratch_tensors = [
+            torch.full(
+                shape,
+                0.0,
+                dtype=torch.float64,
+                device=torch_device,
             )
+            for shape in ProjectFeaturesDipoleTiledScratch.expected_shapes(
+                n_k, n_atoms, n_sigma
+            )
+        ]
+        scratch = ProjectFeaturesDipoleTiledScratch(
+            *(wp.from_torch(tensor, dtype=wp.float64) for tensor in scratch_tensors)
         )
 
-        def project():
+        def project_and_copy():
             project_features_dipole(
                 potential,
                 phi_wp,
@@ -603,33 +637,62 @@ class TestProjectFeaturesDipole:
                 device=device,
                 scratch=scratch,
             )
+            wp.launch(
+                _copy_project_features_kernel,
+                dim=(n_atoms, n_sigma * 4),
+                inputs=[features, copied],
+                device=device,
+            )
 
-        project()
-        wp.launch(
-            _copy_project_features_kernel,
-            dim=(n_atoms, n_sigma * 4),
-            inputs=[features, copied],
-        )
-        features.zero_()
-        copied.zero_()
-        wp.synchronize_device(device)
-        producer = torch.cuda.Stream(str(device))
-        wrong_stream = torch.cuda.Stream(str(device))
+        # Compile every project/copy kernel on the caller stream before the
+        # event-gated producer/caller sequence is measured.
+        init_event = torch.cuda.Event()
+        init_event.record()
+        caller.wait_event(init_event)
+        with torch.cuda.stream(caller):
+            with wp.ScopedStream(wp.stream_from_torch(caller), sync_enter=False):
+                project_and_copy()
+        warmup_done = torch.cuda.Event()
+        warmup_done.record(caller)
+        warmup_done.synchronize()
+
+        # Re-establish the known initial state after warm-up, then make both
+        # non-default streams wait for that initialization to complete.
+        potential_t.fill_(old_potential)
+        features_t.fill_(output_sentinel)
+        copied_t.fill_(output_sentinel)
+        for tensor in scratch_tensors:
+            tensor.zero_()
+        init_event = torch.cuda.Event()
+        init_event.record()
+
+        ready = torch.cuda.Event()
+        producer.wait_event(init_event)
         with torch.cuda.stream(producer):
             torch.cuda._sleep(1_000_000_000)
-        wrong_stream.wait_event(producer.record_event())
-        caller_stream = wp.Stream(device, priority=-1)
-        with torch.cuda.stream(wrong_stream):
-            with wp.ScopedStream(caller_stream, sync_enter=False):
-                project()
-                wp.launch(
-                    _copy_project_features_kernel,
-                    dim=(n_atoms, n_sigma * 4),
-                    inputs=[features, copied],
-                )
-        wp.synchronize_stream(caller_stream)
-        wrong_stream.synchronize()
-        np.testing.assert_allclose(copied.numpy(), n_k * 4.0 / (2.0 * math.pi) ** 3)
+            potential_t.fill_(new_potential)
+            ready.record()
+
+        caller.wait_event(ready)
+        with torch.cuda.stream(caller):
+            with wp.ScopedStream(wp.stream_from_torch(caller), sync_enter=False):
+                project_and_copy()
+        done = torch.cuda.Event()
+        done.record(caller)
+
+        # Waiting on ``done`` drains only the caller stream.  The producer is
+        # deliberately drained after the output snapshot so this test cannot
+        # accidentally hide a missing caller-stream dependency.
+        done.synchronize()
+        snapshot = copied_t.detach().cpu().numpy().copy()
+        producer.synchronize()
+
+        expected_value = 2.0 * n_k * new_potential / (2.0 * math.pi) ** 3
+        np.testing.assert_allclose(
+            snapshot,
+            np.full((n_atoms, n_sigma * 4), expected_value),
+        )
+
 
     def _launch(
         self,
