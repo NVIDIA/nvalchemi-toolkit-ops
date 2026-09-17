@@ -230,6 +230,8 @@ def benchmark_real_space_d3(
     """Time one real-space ``dftd3`` evaluation at a given interaction cutoff."""
     import torch
 
+    from benchmarks.constants import DEFAULT_NL_SAFETY_FACTOR
+    from nvalchemiops.neighbors import estimate_max_neighbors
     from nvalchemiops.torch.interactions.dispersion import D3Parameters, dftd3
     from nvalchemiops.torch.neighbors import neighbor_list
 
@@ -245,6 +247,14 @@ def benchmark_real_space_d3(
     )
     pbc = torch.tensor([True, True, True], device=device)
 
+    # Sized from the cutoff and the density rather than pinned. The dense kernel scans every
+    # slot in a row, so a fixed width is paid for directly: at 6 A there are about ninety
+    # neighbours, and a width of 8192 made the real-space method look an order of magnitude
+    # slower than it is.
+    max_neighbors = estimate_max_neighbors(
+        cutoff, atomic_density=density * DEFAULT_NL_SAFETY_FACTOR
+    )
+
     def build_list():
         return neighbor_list(
             positions,
@@ -252,7 +262,7 @@ def benchmark_real_space_d3(
             cell=cell,
             pbc=pbc,
             method="cell_list",
-            max_neighbors=8192,
+            max_neighbors=max_neighbors,
         )
 
     matrix, _counts, matrix_shifts = build_list()
