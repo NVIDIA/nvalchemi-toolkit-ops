@@ -12,6 +12,9 @@
 - Warp initialization now retains warning-level diagnostics instead of
   suppressing all Warp log output.
 
+- PyTorch segmented operations now accept int64 segment indices whose values
+  fit in int32; these inputs are converted to int32 internally.
+
 ### Added
 
 - Torch and JAX Ewald now expose caller-retained reciprocal Miller topology via
@@ -30,6 +33,8 @@
   zero-mode convention as the direct reciprocal calculation, including charge
   and cell derivatives.
 
+- Segmented sums no longer retain CUDA graph-pool allocations through cached Warp
+  launches when used from compiled PyTorch custom operators.
 - Fixed JAX autodiff through `ewald_reciprocal_space(...)` when `k_vectors`
   are derived from the differentiated cell. The custom JVP previously
   discarded the `k_vectors` tangent and omitted the reciprocal-cell
