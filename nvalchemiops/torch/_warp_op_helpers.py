@@ -64,20 +64,29 @@ __all__ = [
 ]
 
 
-def scoped_warp_stream(device: torch.device | str):
-    """Bind Warp launches to PyTorch's current CUDA stream.
+def scoped_warp_stream(
+    device: torch.device | str,
+    *,
+    torch_stream: torch.cuda.Stream | None = None,
+):
+    """Bind Warp launches to a PyTorch CUDA stream.
 
     The matching Warp stream is reused so CUDA graph capture remains valid.
-    Callers must scope allocations, conversions, and launches together.
+    When ``torch_stream`` is omitted, the current PyTorch stream for ``device``
+    is used. Callers must scope allocations, conversions, and launches together.
     """
     torch_device = torch.device(device)
     if torch_device.type != "cuda":
         return nullcontext()
-    torch_stream = torch.cuda.current_stream(torch_device)
+    if torch_stream is None:
+        torch_stream = torch.cuda.current_stream(torch_device)
     warp_stream = wp.get_stream(str(torch_device))
     if warp_stream.cuda_stream == torch_stream.cuda_stream:
         return nullcontext()
-    return wp.ScopedStream(wp.stream_from_torch(torch_stream))
+    return wp.ScopedStream(
+        wp.stream_from_torch(torch_stream),
+        sync_enter=False,
+    )
 
 
 def scoped_torch_warp_stream(function: Callable[..., Any]) -> Callable[..., Any]:

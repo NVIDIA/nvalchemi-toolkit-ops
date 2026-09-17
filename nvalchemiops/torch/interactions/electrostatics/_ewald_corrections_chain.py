@@ -20,7 +20,12 @@ from __future__ import annotations
 import torch
 import warp as wp
 
-from nvalchemiops.torch._warp_op_helpers import register_warp_op_chain
+from nvalchemiops.torch._warp_op_helpers import (
+    register_warp_op_chain,
+)
+from nvalchemiops.torch._warp_op_helpers import (
+    scoped_warp_stream as _scoped_stream,
+)
 from nvalchemiops.torch.types import get_wp_dtype
 
 __all__ = [
@@ -37,15 +42,6 @@ _EWALD_CORRECTIONS_OPS_REGISTERED = False
 def _wp_from_torch(tensor: torch.Tensor, dtype):
     """Convert a tensor to Warp without allocating unused Warp gradients."""
     return wp.from_torch(tensor.detach().contiguous(), dtype=dtype, requires_grad=False)
-
-
-def _scoped_stream(device: torch.device):
-    """Bind Warp launches to PyTorch's current CUDA stream."""
-    if device.type != "cuda":
-        from contextlib import nullcontext
-
-        return nullcontext()
-    return wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream(device)))
 
 
 def _energy_corrections_forward_launch(

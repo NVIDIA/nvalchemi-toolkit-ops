@@ -1466,6 +1466,57 @@ class TestStandaloneSlabAPI:
         for result, reference in zip(snapshots, expected, strict=True):
             torch.testing.assert_close(result, reference)
 
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+    def test_grad_enabled_capture_on_nondefault_stream(self):
+        """Grad-enabled slab energy supports capture on a non-default stream."""
+        device = torch.device("cuda:0")
+        source = _make_triclinic_slab_system(torch.float64, device)
+        reference_positions = source[0].detach().clone().requires_grad_()
+        charges, cell, pbc = (value.detach().clone() for value in source[1:])
+        batch_idx = torch.zeros(
+            reference_positions.shape[0], dtype=torch.int32, device=device
+        )
+
+        expected = compute_slab_correction(
+            reference_positions,
+            charges,
+            cell,
+            pbc,
+            batch_idx=batch_idx,
+        )
+        torch.cuda.synchronize(device)
+
+        capture_positions = source[0].detach().clone().requires_grad_()
+        warmup_stream = torch.cuda.Stream(device=device)
+        with torch.cuda.stream(warmup_stream):
+            compute_slab_correction(
+                capture_positions,
+                charges,
+                cell,
+                pbc,
+                batch_idx=batch_idx,
+            )
+        warmup_stream.synchronize()
+
+        capture_stream = torch.cuda.Stream(device=device)
+        warp_stream = wp.get_stream(str(device))
+        assert capture_stream.cuda_stream != warp_stream.cuda_stream
+
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.stream(capture_stream):
+            with torch.cuda.graph(graph, stream=capture_stream):
+                captured = compute_slab_correction(
+                    capture_positions,
+                    charges,
+                    cell,
+                    pbc,
+                    batch_idx=batch_idx,
+                )
+
+        graph.replay()
+        capture_stream.synchronize()
+        torch.testing.assert_close(captured, expected)
+
     def test_standalone_outputs_subset(self, device):
         """Standalone API should return the right tuple based on flags."""
         dtype = torch.float64
