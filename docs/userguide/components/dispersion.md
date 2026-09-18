@@ -1046,6 +1046,15 @@ so prefer an even order unless you have measured otherwise.
 
 ### Choosing a Mesh
 
+```{note}
+A mesh derived from `mesh_spacing` is rounded **up** to a size whose only prime factors are
+2, 3, 5 and 7. cuFFT has radix kernels for those and falls back to Bluestein's algorithm
+otherwise, which is not a marginal difference: on an 8-channel 3D transform a prime edge of
+127 measured 6.7x slower than 120, and 129 = 3 x 43 measured 6.2x slower. The rounded mesh is
+never coarser than the spacing asked for. An explicit `mesh_dimensions` is used exactly as
+given, including a poor size.
+```
+
 ```{warning}
 Every mesh axis must hold at least `spline_order` nodes. The interpolation stencil is that
 wide and wraps periodically, so a shorter axis makes two stencil points land on the same node

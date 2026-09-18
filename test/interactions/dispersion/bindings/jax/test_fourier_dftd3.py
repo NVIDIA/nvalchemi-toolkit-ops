@@ -32,6 +32,9 @@ from nvalchemiops.jax.interactions.dispersion import (  # noqa: E402
     FourierD3Parameters,
     fourier_dftd3,
 )
+from nvalchemiops.jax.interactions.dispersion._fourier_dftd3 import (  # noqa: E402
+    _resolve_mesh,
+)
 from test.interactions.dispersion.test_fourier_dftd3 import (  # noqa: E402
     _neighbour_list,
     _reference_tables,
@@ -348,6 +351,21 @@ class TestNeighbourFormats:
                 neighbor_ptr=jnp.asarray(np.cumsum(pointer), dtype=jnp.int32),
                 unit_shifts=jnp.asarray(shifts[keep][order], dtype=jnp.int32),
             )
+
+    def test_a_spacing_derived_mesh_transforms_well(self, device, system):
+        """An automatic mesh is rounded up to factors of 2, 3, 5 and 7, as in Torch."""
+        for spacing in (0.07, 0.0709, 0.0711, 0.073, 0.11, 0.37):
+            mesh = _resolve_mesh(None, spacing, np.asarray(system["cell"])[None], 4)
+            for size in mesh:
+                remainder = size
+                for prime in (2, 3, 5, 7):
+                    while remainder % prime == 0:
+                        remainder //= prime
+                assert remainder == 1, f"spacing {spacing} gave {mesh}"
+
+    def test_explicit_dimensions_are_used_exactly(self, device, system):
+        """A number the caller chose is passed through untouched."""
+        assert _resolve_mesh((127, 127, 127), None, None, 4) == (127, 127, 127)
 
     def test_a_mesh_shorter_than_the_stencil_is_refused(self, device, system):
         """The order-4 stencil would wrap onto a shorter axis and revisit a node."""

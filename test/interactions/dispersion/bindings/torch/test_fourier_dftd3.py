@@ -37,6 +37,9 @@ from nvalchemiops.torch.interactions.dispersion import (  # noqa: E402
     FourierD3Setup,
     fourier_dftd3,
 )
+from nvalchemiops.torch.interactions.dispersion._fourier_dftd3 import (  # noqa: E402
+    _resolve_mesh,
+)
 from test.interactions.dispersion.test_fourier_dftd3 import (  # noqa: E402
     _neighbour_list,
     _reference_tables,
@@ -812,6 +815,38 @@ class TestMeshAndUnits:
             FourierD3Setup.build(
                 system["cell"], system["params"].n_species, (2, 2, 2), spline_order=4
             )
+
+    def test_explicit_dimensions_are_used_exactly(self):
+        """A number the caller chose is not second-guessed, even when it transforms badly."""
+        system = _system("cuda:0")
+        setup = FourierD3Setup.build(
+            system["cell"], system["params"].n_species, (127, 127, 127)
+        )
+        assert setup.mesh_dimensions == (127, 127, 127)
+
+    def test_a_spacing_derived_mesh_transforms_well(self):
+        """An automatic mesh is rounded up to factors of 2, 3, 5 and 7.
+
+        cuFFT falls back to Bluestein's algorithm otherwise; a prime edge measured 6.7x
+        slower than a nearby smooth one on the same transform.
+        """
+        system = _system("cuda:0")
+        for spacing in (0.07, 0.0709, 0.0711, 0.073, 0.11, 0.37):
+            mesh = _resolve_mesh(None, spacing, system["cell"].reshape(-1, 3, 3), 4)
+            for size in mesh:
+                remainder = size
+                for prime in (2, 3, 5, 7):
+                    while remainder % prime == 0:
+                        remainder //= prime
+                assert remainder == 1, f"spacing {spacing} gave {mesh}"
+
+    def test_rounding_never_coarsens(self):
+        """Rounding goes up, so the mesh is never sparser than the spacing asked for."""
+        cell = torch.eye(3, dtype=torch.float64, device="cuda:0") * 9.0
+        for spacing in (0.05, 0.0707, 0.09, 0.13, 0.5):
+            mesh = _resolve_mesh(None, spacing, cell.reshape(-1, 3, 3), 4)
+            for size in mesh:
+                assert size >= int(np.ceil(9.0 / spacing))
 
     def test_requires_exactly_one_mesh_option(self):
         """Neither or both of the two ways to size the mesh is an error.

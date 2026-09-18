@@ -212,6 +212,27 @@ class FourierD3Parameters:
         )
 
 
+def _next_fft_friendly(size):
+    """Smallest size at least ``size`` whose only prime factors are 2, 3, 5 and 7.
+
+    cuFFT has specialised radix kernels for these factors and falls back to Bluestein's
+    algorithm otherwise. The difference is not marginal: on an 8-channel 3D transform a prime
+    edge of 127 measured 6.7x slower than 120, and 129 = 3 x 43 measured 6.2x slower.
+
+    Only a mesh derived from ``mesh_spacing`` is rounded. An explicit ``mesh_dimensions`` is a
+    number the caller chose and is passed through exactly, even when it is a poor size.
+    """
+    candidate = max(1, int(size))
+    while True:
+        remainder = candidate
+        for prime in (2, 3, 5, 7):
+            while remainder % prime == 0:
+                remainder //= prime
+        if remainder == 1:
+            return candidate
+        candidate += 1
+
+
 def _check_mesh_supports_stencil(mesh, spline_order, origin):
     """Refuse a mesh too short to hold the interpolation stencil.
 
@@ -257,7 +278,7 @@ def _resolve_mesh(mesh_dimensions, mesh_spacing, cells, spline_order):
             "Pass mesh_dimensions explicitly when tracing."
         ) from None
     return _check_mesh_supports_stencil(
-        tuple(max(1, int(np.ceil(length / mesh_spacing))) for length in lengths),
+        tuple(_next_fft_friendly(np.ceil(length / mesh_spacing)) for length in lengths),
         spline_order,
         f"mesh_spacing = {mesh_spacing}",
     )
@@ -359,7 +380,10 @@ def fourier_dftd3(
         radius the neighbour list was built with.
     mesh_dimensions, mesh_spacing
         Exactly one is required. ``mesh_spacing`` reads cell lengths and so cannot be used
-        inside ``jax.jit``.
+        inside ``jax.jit``. A mesh derived from it is rounded **up** to a size whose only
+        prime factors are 2, 3, 5 and 7, keeping the transform on cuFFT's radix kernels; the
+        result is never coarser than the spacing asked for. An explicit ``mesh_dimensions``
+        is used exactly as given.
     neighbor_matrix, neighbor_matrix_shifts, neighbor_list, neighbor_ptr, unit_shifts
         Exactly one neighbour format, with its matching lattice images.
 

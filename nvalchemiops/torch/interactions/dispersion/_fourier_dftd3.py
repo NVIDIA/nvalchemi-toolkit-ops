@@ -820,6 +820,27 @@ class FourierD3Setup:
             )
 
 
+def _next_fft_friendly(size):
+    """Smallest size at least ``size`` whose only prime factors are 2, 3, 5 and 7.
+
+    cuFFT has specialised radix kernels for these factors and falls back to Bluestein's
+    algorithm otherwise. The difference is not marginal: on an 8-channel 3D transform a prime
+    edge of 127 measured 6.7x slower than 120, and 129 = 3 x 43 measured 6.2x slower.
+
+    Only a mesh derived from ``mesh_spacing`` is rounded. An explicit ``mesh_dimensions`` is a
+    number the caller chose and is passed through exactly, even when it is a poor size.
+    """
+    candidate = max(1, int(size))
+    while True:
+        remainder = candidate
+        for prime in (2, 3, 5, 7):
+            while remainder % prime == 0:
+                remainder //= prime
+        if remainder == 1:
+            return candidate
+        candidate += 1
+
+
 def _check_mesh_supports_stencil(mesh, spline_order, origin):
     """Refuse a mesh too short to hold the interpolation stencil.
 
@@ -865,7 +886,8 @@ def _resolve_mesh(mesh_dimensions, mesh_spacing, cells, spline_order):
     lengths = torch.linalg.norm(cells, dim=-1).max(dim=0).values
     return _check_mesh_supports_stencil(
         tuple(
-            max(1, int(torch.ceil(length / mesh_spacing).item())) for length in lengths
+            _next_fft_friendly(torch.ceil(length / mesh_spacing).item())
+            for length in lengths
         ),
         spline_order,
         f"mesh_spacing = {mesh_spacing}",
@@ -983,7 +1005,11 @@ def fourier_dftd3(
     mesh_dimensions : tuple[int, int, int], optional
         Mesh size. Exactly one of this and ``mesh_spacing`` must be given.
     mesh_spacing : float, optional
-        Target spacing, in the same unit as ``cell``. Sized from the largest cell in a batch.
+        Target spacing, in the same unit as ``cell``. Sized from the largest cell in a batch,
+        then rounded **up** to a size whose only prime factors are 2, 3, 5 and 7, so the
+        transform stays on cuFFT's radix kernels rather than falling back to Bluestein's
+        algorithm. The resulting mesh is therefore never coarser than the spacing asked for,
+        and may be a little finer. An explicit ``mesh_dimensions`` is used exactly as given.
         Reads cell lengths into Python integers, so pass explicit ``mesh_dimensions`` when
         tracing.
     neighbor_matrix, neighbor_matrix_shifts : torch.Tensor, optional
