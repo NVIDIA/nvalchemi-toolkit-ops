@@ -197,17 +197,22 @@ potential, measured with `--gates`:
 
 | Atoms | Eager (ms) | CUDA graph (ms) | FIRE2 (ms) | vs FIRE2 |
 | --- | --- | --- | --- | --- |
-| 10,000 | 0.449 | 0.076 | 0.051 | 8.9x |
-| 100,000 | 0.443 | 0.277 | 0.116 | 3.8x |
-| 1,000,000 | 0.793 | 0.790 | 0.329 | 2.4x |
+| 10,000 | 0.479 | 0.169 | 0.059 | 8.2x |
+| 100,000 | 1.091 | 1.087 | 0.113 | 9.6x |
+| 1,000,000 | 3.219 | 3.215 | 0.319 | 10.1x |
 
-A step issues far more kernels than FIRE2, so at small sizes it is entirely
-Python-launch-bound and CUDA-graph replay recovers most of the difference. At
-one million atoms the step is bandwidth-bound instead, and replay no longer
-helps. The per-step cost is higher than FIRE2 at every size; it is repaid by
-needing roughly eight times fewer steps, which is why the break-even model cost
-below one million atoms is negative — L-BFGS wins outright there for any
-potential costing more than a few microseconds per evaluation.
+**A single L-BFGS step is roughly ten times more expensive than a FIRE2 step.**
+It runs `2m + O(1)` passes over the degrees of freedom against FIRE2's handful.
+At ten thousand atoms the step is Python-launch-bound and CUDA-graph replay
+recovers about 2.8x; from one hundred thousand upwards it is bandwidth-bound
+and replay recovers nothing.
+
+That cost is not the reason to choose L-BFGS, and it is not usually the cost
+that matters. The model must cost more than roughly 4, 31 and 111 microseconds
+per evaluation at these three sizes for L-BFGS to win end to end — a
+machine-learned potential exceeds that by two to three orders of magnitude, and
+L-BFGS needs several times fewer evaluations. Prefer FIRE2 when the force
+evaluation is genuinely cheap.
 
 **Memory.** With `P` degrees of freedom, `M` systems and history size `m`:
 

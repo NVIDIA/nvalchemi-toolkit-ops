@@ -60,8 +60,17 @@ from nvalchemiops.dynamics.optimizers import (
     fire2_step,
     lbfgs_step,
 )
+from nvalchemiops.dynamics.optimizers.lbfgs import _OPTIMIZER_BUFFERS
 
 DEVICE = "cuda:0"
+
+#: Gate-benchmark model: an anisotropic harmonic whose minimum sits far enough
+#: away that a ``maxstep``-capped walk never reaches it, keeping the optimizer
+#: in its steady state for the whole measurement.
+GATE_CENTRE = 1.0e6
+GATE_HISTORY = 6
+_STATUS = _OPTIMIZER_BUFFERS.index("status")
+_HISTORY_COUNT = _OPTIMIZER_BUFFERS.index("history_count")
 
 #: Fallbacks used when a knob is absent from the config file, so the benchmark
 #: still runs standalone.
@@ -295,28 +304,78 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50):
     rows = []
     for num_atoms in sizes:
         rng = np.random.default_rng(0)
-        positions = torch.tensor(
+        start = torch.tensor(
             rng.normal(size=(num_atoms, 3)), dtype=torch.float64, device=DEVICE
         )
-        forces = torch.zeros_like(positions)
         batch_idx = torch.zeros(num_atoms, dtype=torch.int32, device=DEVICE)
         n_particles = torch.full((1,), num_atoms, dtype=torch.int32, device=DEVICE)
-        buffers = _allocate_lbfgs_buffers_torch(num_atoms, 1, 6)
-        forces.copy_(-positions)
+        stiffness = torch.tensor([1.0, 4.0, 9.0], dtype=torch.float64, device=DEVICE)
+
+        positions = start.clone()
+        forces = torch.empty_like(positions)
+        buffers = _allocate_lbfgs_buffers_torch(num_atoms, 1, GATE_HISTORY)
+
+        def evaluate(pos, out):
+            """The model, on device so it stays CUDA-graph capturable.
+
+            Evaluated at the *current* geometry on every call. Timing against a
+            force array that is filled once would measure the wrong thing:
+            ``y = force_base - F`` is then identically zero, so the curvature
+            guard rejects every pair, the history never fills, and the two-loop
+            is masked out of every step.
+
+            The minimum sits at ``GATE_CENTRE``, far outside the reach of a
+            ``maxstep``-capped walk, so the optimizer stays in its steady state
+            -- history full, trust region binding -- for the whole measurement
+            instead of converging partway through and timing the early-return
+            path.
+            """
+            out.copy_(-(stiffness * (pos - GATE_CENTRE)))
+
+        def reset():
+            """Return to the same starting state before each timed phase."""
+            positions.copy_(start)
+            for buf, fresh in zip(
+                buffers, _allocate_lbfgs_buffers_torch(num_atoms, 1, GATE_HISTORY)
+            ):
+                buf.copy_(fresh)
+
+        def model_only():
+            evaluate(positions, forces)
 
         def step():
+            evaluate(positions, forces)
             lbfgs_step_coord(
                 positions,
                 forces,
                 batch_idx,
                 n_particles,
                 *buffers,
-                force_tol=1e-12,
+                force_tol=1e-8,
                 maxstep=0.5,
             )
 
-        eager = _time_ms(step, warmup, runs)
+        def check(phase):
+            """Fail loudly if the timed steps were not representative."""
+            status = int(buffers[_STATUS].item())
+            history = int(buffers[_HISTORY_COUNT].item())
+            if status != LBFGS_NEED_EVAL or history != GATE_HISTORY:
+                raise RuntimeError(
+                    f"{phase} timing at {num_atoms} atoms left status={status}, "
+                    f"history_count={history}; the steps measured were not "
+                    "active full-history iterations"
+                )
 
+        # The model runs inside every timed call to keep the state valid, so
+        # measure it once and subtract to recover optimizer-only time.
+        reset()
+        model_ms = _time_ms(model_only, warmup, runs)
+
+        reset()
+        eager = _time_ms(step, warmup, runs) - model_ms
+        check("eager")
+
+        reset()
         side = torch.cuda.Stream()
         side.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(side):
@@ -330,20 +389,26 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50):
             with torch.cuda.graph(graph):
                 step()
         torch.cuda.synchronize()
-        graphed = _time_ms(graph.replay, warmup, runs)
+        graphed = _time_ms(graph.replay, warmup, runs) - model_ms
+        check("graph")
 
-        wp_positions = wp.array(
-            rng.normal(size=(num_atoms, 3)), dtype=wp.vec3d, device=DEVICE
-        )
+        # FIRE2 gets the same model and the same treatment, so the ratio
+        # compares optimizer against optimizer rather than one degenerate path
+        # against another.
+        f2_positions = start.clone()
+        f2_forces = torch.empty_like(f2_positions)
+        wp_positions = wp.from_torch(f2_positions, dtype=wp.vec3d)
+        wp_forces = wp.from_torch(f2_forces, dtype=wp.vec3d)
         wp_velocities = wp.zeros(num_atoms, dtype=wp.vec3d, device=DEVICE)
-        wp_forces = wp.zeros(num_atoms, dtype=wp.vec3d, device=DEVICE)
         wp_batch = wp.zeros(num_atoms, dtype=wp.int32, device=DEVICE)
         alpha = wp.array(np.array([0.09]), dtype=wp.float64, device=DEVICE)
         dt = wp.array(np.array([0.02]), dtype=wp.float64, device=DEVICE)
         nsteps_inc = wp.zeros(1, dtype=wp.int32, device=DEVICE)
         scratch = [wp.zeros(1, dtype=wp.float64, device=DEVICE) for _ in range(4)]
-        fire2 = _time_ms(
-            lambda: fire2_step(
+
+        def fire2_once():
+            evaluate(f2_positions, f2_forces)
+            fire2_step(
                 wp_positions,
                 wp_velocities,
                 wp_forces,
@@ -353,10 +418,9 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50):
                 nsteps_inc,
                 *scratch,
                 maxstep=0.05,
-            ),
-            warmup,
-            runs,
-        )
+            )
+
+        fire2 = _time_ms(fire2_once, warmup, runs) - model_ms
 
         # n_L (C + O_L) < n_F (C + O_F), with n_L / n_F = eval_ratio.
         n_fire2 = 1000.0
@@ -374,8 +438,11 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50):
         f"\nper-step ratio at {largest[0]} atoms: {largest[1] / largest[3]:.2f}x FIRE2"
     )
     print(
-        "break-even model cost is negative wherever L-BFGS wins outright; any "
-        "realistic machine-learned potential costs far more than these figures."
+        "break-even is the model cost per evaluation above which L-BFGS wins end "
+        "to end. Where it is negative L-BFGS wins outright; where positive, "
+        "compare it against your model -- a machine-learned potential typically "
+        "costs milliseconds per evaluation, orders of magnitude more than these "
+        "figures."
     )
     return rows
 
