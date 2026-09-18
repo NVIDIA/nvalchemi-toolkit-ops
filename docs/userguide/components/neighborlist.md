@@ -247,6 +247,12 @@ Neighbor List (COO format)
 - Systems have dense, uniform neighbor distributions
 - Cache-friendly access patterns are important
 
+For JAX, compile a method-specific neighbor function with this fixed matrix
+layout. The unified `neighbor_list(...)` dispatcher is eager. Compact COO output
+has a data-dependent pair count and is produced eagerly. Direct naive and
+cell-list APIs accept `coo_capacity` for padded fixed-capacity COO with raw-count
+recovery metadata. Cluster-tile APIs expose fixed segmented COO state.
+
 **Neighbor List (COO)** is preferred when:
 
 - Integrating with graph neural network libraries (PyG, DGL)
@@ -388,8 +394,9 @@ The strategy names are the fine-grained, directly-runnable paths
 `cell_list_atom_centric`, `cluster_tile`, plus `batch_` variants).  `suggest`
 and `estimate` **synchronize on the host** -- they launch a tiny selector kernel
 on the device and read its result back, so call them outside `torch.compile` /
-`jax.jit`.  The returned name is accepted directly as `method=`, so the compiled
-neighbor build runs without a graph break:
+`jax.jit`. On JAX, use the result to select the corresponding direct method and
+close the resulting strategy over a compiled wrapper.
+`neighbor_list(..., method=method)` is an eager convenience call:
 
 ```python
 neighbor_list(positions, cutoff, cell=cell, pbc=pbc, method=method)
@@ -513,10 +520,11 @@ chosen with `strategy="auto"` or pinned explicitly; both produce identical pair 
 path, `pair_centric` schedules one CUDA block per `(source_cell, neighbor offset)`;
 when that uncoarsened launch would exceed the Warp one-dimensional limit, the
 launcher transparently coarsens multiple logical blocks per CUDA block under the
-same strategy name (no new public method or `strategy` value). On JAX,
+same `pair_centric` strategy. On JAX,
 `pair_centric` is bound through `jax_callable`, sizes its launch from the host, and
-requires `graph_mode="none"` (it raises under `jax.jit` with a traced radius; use
-`atom_centric` there).
+requires `graph_mode="none"`. Compiled single-system calls provide
+`pair_centric_n_outer`; compiled batched calls provide `pair_centric_total_cells`,
+`pair_centric_n_outer`, and `pair_centric_r_max`.
 
 (cluster-pair-tile-algorithm)=
 
@@ -549,12 +557,13 @@ cross system boundaries, so a compact batch containing systems of sizes $N_i$
 has $g=\sum_i\lceil N_i/32\rceil$ groups in total.
 
 The build stores discovered tile pairs in one buffer shared by all row groups.
-If `max_tiles_per_group` is $m$, a compact build with $g$ groups reserves
-$C=g\,\min(g,m)$ records. Increasing $m$ by one adds $g$ records until $m$
-reaches $g$; larger values do not increase the allocation. Each record contains
-two `int32` group indices, so the tile-index arrays use $8C$ bytes for one
-system. A compact batch also records the system index and uses $12C$ bytes.
-Other scratch buffers and the neighbor output do not depend on $m$.
+If `max_tiles_per_group` is $m$, a single-system build with $g$ groups reserves
+$C=g\,\min(g,m)$ records. A compact batch with $G=\sum_i g_i$ groups reserves
+$C=G\,\min(G,m)$ records. Segmented batches instead reserve
+$C_i=g_i\,\min(g_i,m)$ records for system $i$. Each record contains two
+`int32` group indices, so the tile-index arrays use $8C$ bytes for one system.
+A compact batch also records the system index and uses $12C$ bytes. Other
+scratch buffers and the neighbor output do not depend on $m$.
 
 #### Choosing a capacity
 
@@ -572,14 +581,18 @@ There are three ways to choose a capacity:
   geometry.
 - After an eager overflow, use the reported tile count to calculate the exact
   requirement for that geometry.
-- For a geometry-independent single-system bound, use the upper-triangular
-  maximum of $g(g+1)/2$ tile pairs. This requires
-  `max_tiles_per_group=ceil((g + 1) / 2)`.
+- For a geometry-independent single-system bound, require capacity of at least
+  $g(g+1)/2$ and use `max_tiles_per_group=ceil((g + 1) / 2)`.
+- For a compact batch, require total capacity of at least
+  $\sum_i g_i(g_i+1)/2$. With $G=\sum_i g_i$, the minimum shared factor is
+  $\left\lceil\sum_i g_i(g_i+1)/(2G)\right\rceil$ for a nonempty batch.
+- For a segmented batch, require each segment to hold at least
+  $g_i(g_i+1)/2$ records. A geometry-independent shared factor is
+  $\max_i\lceil(g_i+1)/2\rceil$.
 
-Dual-cutoff sizing uses `max(cutoff, cutoff2)`. By convention, `cutoff2` is the
-outer cutoff and is at least `cutoff`, but the cluster-tile convenience
-functions accept either order. Use the same larger cutoff when calling the
-estimator directly.
+Dual-cutoff sizing uses the larger of `cutoff` and `cutoff2`. Use that outer
+cutoff when calling the estimator directly. JAX cluster-tile APIs require
+`cutoff2 >= cutoff`, while Torch cluster-tile APIs accept either ordering.
 
 #### Recovering from eager overflow
 
@@ -595,36 +608,50 @@ where $g$ is the total group count for the compact build.
 
 A segmented batch gives each system its own interval in the tile buffer. System
 $i$ has capacity `tile_offsets[i + 1] - tile_offsets[i]` and reports its required
-count in `tile_counts[i]`. The exact shared retry value for the current batch is
+count in `tile_counts[i]`. An eager `TileBufferOverflow` identifies only the
+first overflowing system and its required count. Resize that segment or increase
+the shared factor and retry; another system can fail next. Once all counts are
+available, for example from a compiled lower-level build, the exact shared value
+for that geometry is
 
 $$
 m_{\mathrm{retry}} =
 \max_{i:\,g_i>0}\left\lceil\frac{\mathtt{tile\_counts}[i]}{g_i}\right\rceil.
 $$
 
-For a trajectory, retain the largest observed requirement and add headroom for
-later geometries. `TileBufferOverflow` reports exhaustion of the intermediate
-tile-pair buffer. `NeighborOverflowError` reports that the final matrix or COO
-neighbor output is too small.
+If resizing changes `tile_offsets`, initialize replacement state and mark every
+system for rebuild. State laid out with the old offsets cannot be retained under
+the new layout. For a trajectory, retain the largest observed requirement and
+add headroom for later geometries. `TileBufferOverflow` reports exhaustion of
+the intermediate tile-pair buffer. `NeighborOverflowError` reports that the
+final matrix or COO neighbor output is too small.
 
 #### Compiled JAX
 
-JAX fixes array shapes while tracing a transformed or compiled function, and
-`max_tiles_per_group` determines the tile-buffer shape. The value must therefore
+JAX fixes array shapes while tracing a transformed or compiled function. When a
+call allocates either single-system tile-index array, or any of the batched row,
+column, and system arrays, `max_tiles_per_group` determines their shapes and must
 be a positive static Python integer. Close over it or mark the argument static
-with `static_argnames`.
+with `static_argnames`. Complete caller-supplied tile-index storage already
+fixes capacity and does not require the factor. Omitting only the fixed-size
+`num_tiles` buffer does not change that rule. An explicitly supplied factor is
+always validated, but it never resizes caller-owned arrays.
 
 The runtime tile count cannot be converted to a Python value inside the compiled
-region, so an undersized bound does not raise `TileBufferOverflow` there. A
-compiled workflow can use the lower-level build and query functions and return
-the tile counters alongside the neighbor output. After the compiled call:
+region, so an undersized bound does not raise `TileBufferOverflow` there.
+Ordinary compiled convenience calls should therefore use a known-sufficient
+bound; the geometry-independent bounds above are the safest default. An
+adaptive workflow should compile the lower-level build, return its tile
+counters, and check capacity on the host before invoking the query:
 
 - For a compact buffer, require
   `int(num_tiles[0]) <= tile_row_group.shape[0]`.
 - For segmented buffers, require
   `tile_counts <= tile_offsets[1:] - tile_offsets[:-1]` element by element.
 
-The neighbor output is incomplete when either check fails.
+Do not consume neighbor output when either check fails. `num_neighbors` reports
+the final-output requirement and cannot detect tile pairs omitted by an
+undersized intermediate buffer.
 
 (nl_performance)=
 
@@ -645,8 +672,9 @@ The neighbor output is incomplete when either check fails.
   32-atom groups, a value $m$ reserves $g\,\min(g,m)$ records. The tile-index
   arrays use 8 bytes per record for one system and 12 bytes per record for a
   compact batch. The combined build/query functions estimate the value during
-  eager execution when it is `None`. A transformed or compiled JAX call
-  requires a positive static Python integer.
+  eager execution when they allocate storage and it is `None`. A transformed
+  or compiled JAX call that allocates tile-index storage requires a positive
+  static Python integer; complete caller-supplied tile-index arrays do not.
 
 `atomic_density`
 : Atomic density in atoms per unit volume, used by `estimate_max_neighbors()`.
@@ -669,11 +697,11 @@ The neighbor output is incomplete when either check fails.
   Only applies to naive methods; cell list methods handle wrapping internally.
 
 `shift_range_per_dimension`, `num_shifts_per_system`, `max_shifts_per_system`
-: Optional cached naive-PBC metadata for advanced workflows. Use
-  `compute_naive_num_shifts()` to compute these values outside repeated calls,
-  especially for JAX where `max_shifts_per_system` must be concrete outside
-  `jax.jit`. Older `shift_offset` and `total_shifts` inputs are no longer part
-  of the public Torch/JAX API.
+: Naive-PBC launch metadata computed by `compute_naive_num_shifts()`. All three
+  values are required for every JAX PBC call under `jax.jit`; eager calls may
+  compute them internally. They must correspond to the call's `cell`, `pbc`,
+  and static cutoff. Recompute the values and specialize the compiled function
+  when any of those inputs changes.
 
 ### Estimation Utilities
 
@@ -720,7 +748,7 @@ max_neighbors = estimate_max_neighbors(
     safety_factor=1.0
 )
 
-max_total_cells, neighbor_search_radius, _ = estimate_cell_list_sizes(
+max_total_cells, _cells_per_dimension, neighbor_search_radius = estimate_cell_list_sizes(
     positions, cell, cutoff, pbc=pbc, buffer_factor=1.5
 )
 ```
@@ -739,9 +767,18 @@ concrete array sizes from traced data.
 
 **Setting `atomic_density`**: This should reflect the expected atomic density of
 your system in atoms per unit volume (using the same length units as `cutoff`).
-If set too low, the neighbor matrix may be too narrow and a
-`NeighborOverflowError` will be raised at runtime. If set too high, memory is
-wasted on unused columns.
+If set too low, the neighbor matrix may be too narrow. Matrix output keeps its
+fixed width but reports the required per-atom counts, which callers must compare
+with that width before consuming the result. Eager compact COO conversion raises
+`NeighborOverflowError` when those counts exceed the matrix width. Fixed-capacity
+COO instead returns the raw required count for each row plus a scalar
+`metadata_valid` flag; its pointer describes only the stored prefix. When
+metadata is valid, compare each pointer difference with its raw count to find
+incomplete rows. When metadata is invalid, every returned count is `-1` and the
+launch metadata must be refreshed before retrying. These rules apply to the
+naive and cell-list matrix/COO outputs. Cluster-tile methods use their documented
+tile and segmented-COO capacity contracts. If `atomic_density` is set too high,
+memory is wasted on unused columns.
 
 **Setting `safety_factor`**: This multiplier provides headroom for local density
 fluctuations (e.g., atoms clustering in one region). The default of 1.0 is
@@ -832,61 +869,207 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 :::{tab-item} JAX
 :sync: jax
 
-JAX returns new arrays rather than mutating inputs in place. For fixed
-`jax.jit` layouts, pass size controls such as `max_neighbors` and
-`max_total_cells` as static ints; on APIs that accept caller-owned arrays, pass
-pre-shaped arrays to define the returned buffer layout and allow XLA donation or
-reuse. With `target_indices`, those arrays must have compact `num_targets` rows.
+JAX returns new arrays rather than mutating inputs in place. The unified
+`neighbor_list(...)` API is eager: it may choose a method, allocate, or inspect
+host values. For `jax.jit`, call an existing method-specific function with
+static allocation controls and fixed-shape buffers. With `target_indices`, those
+arrays must have compact `num_targets` rows.
 
 ```python
-from nvalchemiops.jax.neighbors import neighbor_list
+import jax
+import jax.numpy as jnp
+
+from nvalchemiops.jax.neighbors import (
+    compute_naive_num_shifts,
+    naive_neighbor_list,
+)
 from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
 
 num_atoms = positions.shape[0]
 max_neighbors = estimate_max_neighbors(cutoff, atomic_density=0.15)
+shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, cutoff, pbc)
 
-# Pass max_neighbors (a static int) to fix the output width for jax.jit.
-neighbor_matrix, num_neighbors, shifts = neighbor_list(
-    positions,
-    cutoff,
-    cell=cell,
-    pbc=pbc,
-    max_neighbors=max_neighbors,
-    fill_value=num_atoms,
+neighbor_matrix = jnp.full((num_atoms, max_neighbors), num_atoms, dtype=jnp.int32)
+num_neighbors = jnp.zeros((num_atoms,), dtype=jnp.int32)
+neighbor_matrix_shifts = jnp.zeros(
+    (num_atoms, max_neighbors, 3), dtype=jnp.int32
 )
+
+
+@jax.jit
+def compiled_naive(positions, neighbor_matrix, num_neighbors, shifts):
+    return naive_neighbor_list(
+        positions,
+        cutoff,
+        cell=cell,
+        pbc=pbc,
+        max_neighbors=max_neighbors,
+        neighbor_matrix=neighbor_matrix,
+        num_neighbors=num_neighbors,
+        neighbor_matrix_shifts=shifts,
+        shift_range_per_dimension=shift_range,
+        num_shifts_per_system=num_shifts,
+        max_shifts_per_system=max_shifts,
+    )
+
+neighbor_matrix, num_neighbors, shifts = compiled_naive(
+    positions,
+    neighbor_matrix,
+    num_neighbors,
+    neighbor_matrix_shifts,
+)
+
+# A count larger than the matrix width means the caller must grow capacity and
+# recompile from eager code.
+assert int(jnp.max(num_neighbors)) <= max_neighbors
 ```
 
-For cell-list methods, also pass `max_total_cells` so the cell grid is statically
-sized (derive it with `estimate_cell_list_sizes`):
+This wrapper closes over `cell`, `pbc`, `cutoff`, and the shift metadata derived
+from them. If the cell or boundary conditions change, call
+`compute_naive_num_shifts()` again outside `jax.jit` and create a specialization
+with the matching values.
+
+For cell-list methods, estimate capacity outside JIT and call `cell_list`
+directly. Atom-centric queries need the fixed allocation values. Pair-centric
+queries additionally need a static launch size derived from the same concrete
+search radius:
 
 ```python
-from nvalchemiops.jax.neighbors import estimate_cell_list_sizes, neighbor_list
+from nvalchemiops.jax.neighbors import (
+    cell_list,
+    compute_batch_pair_centric_n_outer,
+    estimate_cell_list_sizes,
+)
 from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
 
-max_total_cells, _radius, _ = estimate_cell_list_sizes(
+max_total_cells, _cells_per_dimension, neighbor_search_radius = estimate_cell_list_sizes(
     positions, cell, cutoff, pbc=pbc
 )
 max_neighbors = estimate_max_neighbors(cutoff)
+launch_radius = tuple(int(value) for value in neighbor_search_radius)
+pair_centric_n_outer = compute_batch_pair_centric_n_outer(launch_radius, False)
 
-neighbor_matrix, num_neighbors, shifts = neighbor_list(
-    positions,
-    cutoff,
-    cell=cell,
-    pbc=pbc,
-    method="cell_list",
-    max_neighbors=max_neighbors,
-    max_total_cells=max_total_cells,
-)
+
+@jax.jit
+def compiled_cell_list(positions):
+    return cell_list(
+        positions,
+        cutoff,
+        cell,
+        pbc,
+        max_neighbors=max_neighbors,
+        max_total_cells=max_total_cells,
+        neighbor_search_radius=neighbor_search_radius,
+        strategy="pair_centric",
+        pair_centric_n_outer=pair_centric_n_outer,
+    )
+
+
+neighbor_matrix, num_neighbors, shifts = compiled_cell_list(positions)
 ```
+
+The cell-list wrapper likewise closes over the geometry used for capacity and
+radius estimation. A search radius can instead be a runtime JAX array, but it
+must describe the current cell grid; pair-centric fixed-COO calls report whether
+their static launch metadata still matches through `metadata_valid`.
+
+For `batch_cell_list`, compute the corresponding metadata from the arrays
+returned by `estimate_batch_cell_list_sizes`: `pair_centric_total_cells` is the
+sum of `prod(cells_per_dimension, axis=1)`, `pair_centric_r_max` is the
+per-axis maximum search radius, and `pair_centric_n_outer` is computed from that
+maximum. Close these exact values over the compiled call.
+
+The static batch values must describe one safe launch:
+`pair_centric_n_outer` must match `pair_centric_r_max`, and
+`pair_centric_total_cells` cannot exceed the allocated cell-list capacity. These
+relationships are checked before the pair-centric CUDA query is launched. The actual
+cell count and search radius are runtime JAX arrays, so a compiled call can receive
+geometry that no longer matches its static launch metadata. For fixed COO that
+invalidates the whole launch's count metadata: `metadata_valid` is false and
+every returned count is `-1`. Leave the compiled region, recompute sizing
+metadata for the new geometry, and compile or retry with those values.
+
+Fixed-capacity COO uses the same direct methods. The returned arrays keep a
+static leading capacity; `neighbor_ptr[-1]` is clipped to that capacity, and
+the raw row counts tell the eager caller whether to grow `max_neighbors`,
+`coo_capacity`, or both. `metadata_valid` describes launch-metadata completeness
+for this call only; it does not certify initialization or coordinate freshness
+of caller-retained buffers, and it is not a persistent or sticky prepared-state
+validity flag:
+
+```python
+coo_capacity = num_atoms * max_neighbors
+
+
+@jax.jit
+def compiled_coo(positions):
+    return naive_neighbor_list(
+        positions,
+        cutoff,
+        cell=cell,
+        pbc=pbc,
+        max_neighbors=max_neighbors,
+        return_neighbor_list=True,
+        coo_capacity=coo_capacity,
+        shift_range_per_dimension=shift_range,
+        num_shifts_per_system=num_shifts,
+        max_shifts_per_system=max_shifts,
+    )
+
+
+(
+    neighbor_list_coo,
+    neighbor_ptr,
+    shifts_coo,
+    num_neighbors,
+    metadata_valid,
+) = compiled_coo(
+    positions,
+)
+if not bool(metadata_valid):
+    raise RuntimeError("refresh pair-centric launch metadata outside jax.jit")
+stored_counts = neighbor_ptr[1:] - neighbor_ptr[:-1]
+if bool(jnp.any(stored_counts != num_neighbors)):
+    required_max_neighbors = int(jnp.max(num_neighbors, initial=0))
+    required_coo_capacity = int(jnp.sum(num_neighbors))
+    raise RuntimeError(
+        f"grow neighbor capacity outside jax.jit; max_neighbors must be at "
+        f"least {required_max_neighbors} and coo_capacity must be at least "
+        f"{required_coo_capacity}"
+    )
+num_pairs = int(neighbor_ptr[-1])
+neighbor_list_coo = neighbor_list_coo[:, :num_pairs]
+shifts_coo = shifts_coo[:num_pairs]
+```
+
+For batched full-row output, row `r` belongs to `batch_idx[r]`. With
+`target_indices`, row `r` instead belongs to `batch_idx[target_indices[r]]`.
+Group raw row counts by that ownership: the per-system matrix-width requirement
+is the maximum owned-row count, and the per-system pair requirement is their
+sum. A globally packed retry still needs `sum(num_neighbors)` COO columns.
+Pointer differences retain mid-row truncation, including the case where one
+system stores a complete row and the next stores only part of a row.
+
+The naive dual-cutoff APIs return two complete fixed-COO groups, each with
+independent counts and validity. They require the second cutoff to be greater
+than or equal to the first. Cluster-tile dual-matrix calls instead retain their
+matrix contract and require `cutoff2 >= cutoff`.
+
+Treat `cutoff` as a static specialization input: pass a Python scalar closed
+over the compiled function, and specialize another function when the cutoff
+changes. Search-radius arrays can be JAX arrays because kernels consume them as
+device data, while their allocation and pair-centric launch metadata are fixed
+outside `jax.jit`.
 
 :::
 
 ::::
 
 ```{warning}
-If `max_neighbors` is too small, neighbors beyond that limit are silently
-dropped. Monitor `num_neighbors.max()` (PyTorch) or `jnp.max(num_neighbors)`
-(JAX) against your `max_neighbors` setting to detect truncation.
+If `max_neighbors` is too small, entries beyond the matrix width cannot be returned,
+but `num_neighbors` retains the required count. Monitor `num_neighbors.max()`
+(PyTorch) or `jnp.max(num_neighbors)` (JAX) against `max_neighbors` and retry from
+eager code when the capacity is insufficient.
 ```
 
 ## Usage Patterns
@@ -1149,7 +1332,7 @@ from nvalchemiops.jax.neighbors.neighbor_utils import allocate_cell_list
 from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
 
 # Setup (once, outside jit)
-max_total_cells, neighbor_search_radius, _ = estimate_cell_list_sizes(
+max_total_cells, _cells_per_dimension, neighbor_search_radius = estimate_cell_list_sizes(
     positions, cell, cutoff, pbc=pbc
 )
 cell_list_cache = allocate_cell_list(num_atoms, max_total_cells, neighbor_search_radius)
@@ -1257,7 +1440,7 @@ skin_distance = 1.0
 effective_cutoff = cutoff + skin_distance
 
 # Build with effective cutoff (includes skin)
-max_total_cells, neighbor_search_radius, _ = estimate_cell_list_sizes(
+max_total_cells, _cells_per_dimension, neighbor_search_radius = estimate_cell_list_sizes(
     positions, cell, effective_cutoff, pbc=pbc
 )
 cell_list_cache = allocate_cell_list(num_atoms, max_total_cells, neighbor_search_radius)
@@ -1642,8 +1825,10 @@ callable at call time that closes over the `wp.Function` (cached by `pair_fn`
 identity): a `jax_kernel` over the specialized naive / cell-list kernel, and a
 `jax_callable` over the Warp `query_cluster_tile` launcher for the tile paths.
 cluster-tile pair outputs are fp32-only and support both matrix and COO output
-(COO packs the matrix result and is eager-only — its pair count is data-dependent,
-so a traced call raises; use `format="matrix"` under `jax.jit`).  `pair_energies` /
+(compact COO packs the matrix result eagerly because its pair count is
+data-dependent; use `format="matrix"` under `jax.jit`). Naive and cell-list
+methods can instead use `coo_capacity` to return padded fixed-capacity COO,
+with geometry and pair outputs aligned to the same valid prefix. `pair_energies` /
 `pair_forces` are **forward-only**
 outputs (the Warp kernels are registered with `enable_backward=False`); use
 `return_distances` / `return_vectors` for differentiable geometry. Differentiating a
