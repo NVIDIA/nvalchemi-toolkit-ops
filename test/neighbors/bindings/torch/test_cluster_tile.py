@@ -18,7 +18,10 @@
 import pytest
 import torch
 
-from nvalchemiops.neighbors.neighbor_utils import NeighborOverflowError
+from nvalchemiops.neighbors.neighbor_utils import (
+    NeighborOverflowError,
+    TileBufferOverflow,
+)
 from nvalchemiops.torch.neighbors.cell_list import cell_list
 from nvalchemiops.torch.neighbors.cluster_tile import (
     TILE_GROUP_SIZE,
@@ -1707,69 +1710,36 @@ class TestClusterTileCellListParity:
             assert_neighbor_lists_equal((i_got, j_got, u_got), (i_ref, j_ref, u_ref))
 
     def test_tile_buffer_overflow_raises(self, device, dtype):
-        """A too-small tile buffer must raise, not silently truncate tiles.
+        """All public output formats report the same tile-buffer requirement.
 
         Forced cheaply with ``max_tiles_per_group=1`` rather than a large
         dense system; exercises the build->query tile-overflow guard.
         """
         torch.manual_seed(3)
         n, box, cutoff = 128, 12.0, 5.0
-        pos = torch.rand(n, 3, dtype=dtype, device=device) * box
+        pos = torch.zeros((n, 3), dtype=dtype, device=device)
         cell = _orthorhombic_cell(box, device, dtype)
-        (
-            sai,
-            mc,
-            spx,
-            spy,
-            spz,
-            gcx,
-            gcy,
-            gcz,
-            gex,
-            gey,
-            gez,
-            num_tiles,
-            trg,
-            tcg,
-        ) = allocate_cluster_tile_list(
-            n, torch.device(device), dtype=dtype, max_tiles_per_group=1
-        )
-        build_cluster_tile_list(
+        required_counts = {}
+        for format in ("matrix", "coo", "tile"):
+            with pytest.raises(TileBufferOverflow) as caught:
+                cluster_tile_neighbor_list(
+                    pos,
+                    cutoff,
+                    cell,
+                    max_neighbors=256,
+                    max_tiles_per_group=1,
+                    format=format,
+                )
+            required_counts[format] = caught.value.num_tiles
+            assert caught.value.num_tiles > caught.value.max_tiles
+            assert caught.value.system_index is None
+        assert len(set(required_counts.values())) == 1
+        result = cluster_tile_neighbor_list(
             pos,
             cutoff,
             cell,
-            sai,
-            mc,
-            spx,
-            spy,
-            spz,
-            gcx,
-            gcy,
-            gcz,
-            gex,
-            gey,
-            gez,
-            num_tiles,
-            trg,
-            tcg,
+            format="tile",
+            max_tiles_per_group=4,
         )
-        assert int(num_tiles.item()) > int(trg.shape[0])  # overflow really occurred
-        nm = torch.empty((n, 256), dtype=torch.int32, device=device)
-        nn = torch.zeros(n, dtype=torch.int32, device=device)
-        nms = torch.empty((n, 256, 3), dtype=torch.int32, device=device)
-        with pytest.raises(NeighborOverflowError):
-            query_cluster_tile(
-                sai,
-                spx,
-                spy,
-                spz,
-                num_tiles,
-                trg,
-                tcg,
-                cell,
-                cutoff,
-                n,
-                nm,
-                nn,
-                nms,
-            )
+        assert int(result[0].item()) == next(iter(required_counts.values()))
+        assert int(result[0].item()) <= result[1].shape[0]
