@@ -930,8 +930,11 @@ def fourier_dftd3(
     energy : torch.Tensor, shape (num_systems,)
     forces : torch.Tensor, shape (N, 3)
     virial : torch.Tensor, shape (num_systems, 3, 3)
-        Returned only when ``compute_virial`` is set. This is ``dE/d(strain)``; divide by the
-        cell volume and negate for the stress, matching the convention of
+        Returned only when ``compute_virial`` is set. Follows the repository convention in
+        ``docs/userguide/about/conventions.md``: the **negative** derivative of the energy
+        with respect to the affine displacement, :math:`W = -\partial E/\partial u`, with
+        deformation applied as :math:`R' = R(I + u)` and :math:`C' = C(I + u)`. The
+        tensile-positive Cauchy stress is :math:`\sigma = -W/V`. Matches
         :func:`~nvalchemiops.torch.interactions.dispersion.dftd3`.
 
     Notes

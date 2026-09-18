@@ -361,7 +361,10 @@ def fourier_dftd3(
     energy : jax.Array, shape (num_systems,)
     forces : jax.Array, shape (N, 3)
     virial : jax.Array, shape (num_systems, 3, 3)
-        Returned only when ``compute_virial`` is set. This is ``dE/d(strain)``.
+        Returned only when ``compute_virial`` is set. Follows the repository convention in
+        ``docs/userguide/about/conventions.md``: the **negative** derivative of the energy
+        with respect to the affine displacement, :math:`W = -\partial E/\partial u`. The
+        tensile-positive Cauchy stress is :math:`\sigma = -W/V`.
     """
     matrix_given = neighbor_matrix is not None
     list_given = neighbor_list is not None

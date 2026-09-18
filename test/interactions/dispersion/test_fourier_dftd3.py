@@ -769,7 +769,9 @@ class TestVirial:
                             **kwargs,
                         )["energy"][0]
                     )
-                result[row, column] = (energies[0] - energies[1]) / (2.0 * step)
+                # Negated: conventions.md defines the virial as -dE/du, so the
+                # finite difference has to carry the same sign to compare against.
+                result[row, column] = -(energies[0] - energies[1]) / (2.0 * step)
         system["positions"] = base_positions
         system["cell"] = base_cell
         return result

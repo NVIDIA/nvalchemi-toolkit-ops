@@ -1118,8 +1118,9 @@ separately and the evaluation takes around 92 ms regardless of system size; jitt
 
 ### What FourierD3 Returns
 
-`energy` and `forces` always, and `virial` when `compute_virial=True`. The virial is
-`dE/d(strain)`, the same convention as `dftd3`.
+`energy` and `forces` always, and `virial` when `compute_virial=True`. The virial follows
+the project-wide convention, $W_{ab} = -\partial E / \partial u_{ab}$, the same as `dftd3`;
+see [Virial Convention](#virial-convention) above.
 
 Forces are an explicit output rather than something recovered by differentiating the energy,
 again matching `dftd3`.

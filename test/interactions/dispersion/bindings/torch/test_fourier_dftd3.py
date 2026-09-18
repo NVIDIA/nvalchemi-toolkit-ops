@@ -286,7 +286,7 @@ class TestAgreementWithWarpLayer:
         )
 
     def test_virial_matches_finite_strain(self):
-        """The returned virial is the strain derivative of the returned energy."""
+        """The returned virial is minus the strain derivative of the returned energy."""
         device = "cuda:0"
         system = _system(device, n_atoms=6, seed=3)
         analytic = _evaluate(system, compute_virial=True)[2][0].cpu().numpy()
@@ -307,7 +307,9 @@ class TestAgreementWithWarpLayer:
                     system["positions"] = base_positions @ deformation.T
                     system["cell"] = base_cell @ deformation.T
                     energies.append(float(_evaluate(system)[0]))
-                numerical[row, column] = (energies[0] - energies[1]) / (2.0 * step)
+                # Negated: conventions.md defines the virial as -dE/du, so the
+                # finite difference has to carry the same sign to compare against.
+                numerical[row, column] = -(energies[0] - energies[1]) / (2.0 * step)
         system["positions"], system["cell"] = base_positions, base_cell
         np.testing.assert_allclose(
             analytic, numerical, atol=1e-6 * np.abs(numerical).max()

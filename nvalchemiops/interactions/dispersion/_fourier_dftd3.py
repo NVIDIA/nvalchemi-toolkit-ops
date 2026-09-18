@@ -792,10 +792,14 @@ def _fd3_kspace_kernel(
         sum_xz = wp.tile_sum(wp.tile(-radial * k_vector[0] * k_vector[2]))[0]
         sum_yz = wp.tile_sum(wp.tile(-radial * k_vector[1] * k_vector[2]))[0]
         if thread_in_block == 0:
+            # The sums above are dE/du. The convention in
+            # docs/userguide/about/conventions.md returns its negative, which is
+            # also what dftd3 returns.
             wp.atomic_add(
                 virial,
                 system,
-                wp.matrix_from_rows(
+                type(s6)(-1.0)
+                * wp.matrix_from_rows(
                     wp.vector(sum_xx, sum_xy, sum_xz),
                     wp.vector(sum_xy, sum_yy, sum_yz),
                     wp.vector(sum_xz, sum_yz, sum_zz),
@@ -984,10 +988,14 @@ def _fd3_cn_forces_kernel(
         sum_xz = wp.tile_sum(wp.tile(virial_xz))[0]
         sum_yz = wp.tile_sum(wp.tile(virial_yz))[0]
         if thread_in_block == 0:
+            # The sums above are dE/du. The convention in
+            # docs/userguide/about/conventions.md returns its negative, which is
+            # also what dftd3 returns.
             wp.atomic_add(
                 virial,
                 batch_idx[atom_i],
-                wp.matrix_from_rows(
+                type(r_cut)(-1.0)
+                * wp.matrix_from_rows(
                     wp.vector(sum_xx, sum_xy, sum_xz),
                     wp.vector(sum_xy, sum_yy, sum_yz),
                     wp.vector(sum_xz, sum_yz, sum_zz),
@@ -1621,10 +1629,14 @@ def _fd3_cn_forces_matrix_kernel(
         if thread_in_block == 0:
             # One atomic per atom rather than one per neighbour; every atom in a system
             # targets the same accumulator.
+            # The sums above are dE/du. The convention in
+            # docs/userguide/about/conventions.md returns its negative, which is
+            # also what dftd3 returns.
             wp.atomic_add(
                 virial,
                 batch_idx[atom_i],
-                wp.matrix_from_rows(
+                type(r_cut)(-1.0)
+                * wp.matrix_from_rows(
                     wp.vector(sum_xx, sum_xy, sum_xz),
                     wp.vector(sum_xy, sum_yy, sum_yz),
                     wp.vector(sum_xz, sum_yz, sum_zz),
