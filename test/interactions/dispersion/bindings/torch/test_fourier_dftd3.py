@@ -1229,6 +1229,31 @@ class TestPrecomputedSetup:
         with pytest.raises(ValueError, match="built for mesh"):
             _evaluate(system, setup=setup, mesh_dimensions=(32, 32, 32))
 
+    def test_a_spacing_alongside_a_setup_is_refused(self):
+        """The setup already fixes the mesh, so a spacing cannot be honoured.
+
+        Resolving it would have to read the cell lengths off the device, which is the cost
+        the setup exists to avoid, so it is refused rather than quietly ignored.
+        """
+        system = _system("cuda:0")
+        setup = FourierD3Setup.build(
+            system["cell"], system["params"].n_species, (16, 16, 16)
+        )
+        with pytest.raises(ValueError, match="already fixes the mesh"):
+            _evaluate(system, setup=setup, mesh_dimensions=None, mesh_spacing=0.5)
+
+    def test_a_setup_alone_needs_no_mesh_selector(self):
+        """The "exactly one of them" rule does not apply once a setup carries the mesh."""
+        system = _system("cuda:0")
+        setup = FourierD3Setup.build(
+            system["cell"], system["params"].n_species, (16, 16, 16)
+        )
+        with_setup = _evaluate(system, setup=setup, mesh_dimensions=None)
+        explicit = _evaluate(system, mesh_dimensions=(16, 16, 16))
+        np.testing.assert_allclose(
+            with_setup[0].cpu().numpy(), explicit[0].cpu().numpy(), rtol=1e-12
+        )
+
     def test_a_setup_from_another_cell_is_refused(self):
         """The mesh transforms would come from one cell and the image shifts from another.
 

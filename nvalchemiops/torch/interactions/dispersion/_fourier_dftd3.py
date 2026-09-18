@@ -769,7 +769,7 @@ class FourierD3Setup:
             exact_moduli=exact_moduli,
         )
 
-    def validate_for(self, cells, n_species, mesh_dimensions):
+    def validate_for(self, cells, n_species, mesh_dimensions, mesh_spacing=None):
         """Refuse to be used with inputs it was not built for.
 
         The derived quantities here stand in for the cell everywhere except the Cartesian
@@ -807,6 +807,13 @@ class FourierD3Setup:
             raise ValueError(
                 f"setup was built for mesh {self.mesh_dimensions} but the call asks for "
                 f"{tuple(mesh_dimensions)}. Pass one or the other, not both."
+            )
+        if mesh_spacing is not None:
+            raise ValueError(
+                f"setup already fixes the mesh at {self.mesh_dimensions}, so mesh_spacing "
+                f"={mesh_spacing} cannot apply. Rounding it against the cell here would "
+                "read device memory, which is what a precomputed setup exists to avoid. "
+                "Drop mesh_spacing, or build the setup with it instead."
             )
         if (
             not torch.compiler.is_compiling()
@@ -1003,7 +1010,9 @@ def fourier_dftd3(
         was built with: the counting function is constructed to reach zero exactly there, and
         a mismatch reintroduces the truncation discontinuity it exists to remove.
     mesh_dimensions : tuple[int, int, int], optional
-        Mesh size. Exactly one of this and ``mesh_spacing`` must be given.
+        Mesh size. Exactly one of this and ``mesh_spacing`` must be given, unless a ``setup``
+        is passed -- it already carries the mesh it was built for, and then both are
+        optional.
     mesh_spacing : float, optional
         Target spacing, in the same unit as ``cell``. Sized from the largest cell in a batch,
         then rounded **up** to a size whose only prime factors are 2, 3, 5 and 7, so the
@@ -1039,10 +1048,13 @@ def fourier_dftd3(
         steps. Saves a matrix inversion and a set of spline moduli per call, and is required
         for ``torch.compile(mode="reduce-overhead")`` because ``torch.linalg.inv`` cannot be
         recorded into a CUDA graph. It must have been built for this cell, batch size,
-        species count, precision and device; a mismatch raises. When given,
-        ``mesh_dimensions`` and ``mesh_spacing`` may be omitted, and passing a
-        ``mesh_dimensions`` that disagrees with the setup is an error rather than silently
-        ignored.
+        species count, precision and device; a mismatch raises. It also supplies the mesh
+        and the spline order, so ``mesh_dimensions`` and ``mesh_spacing`` may be omitted and
+        the usual "exactly one of them" rule does not apply. A ``mesh_dimensions`` that
+        disagrees with the setup raises, and so does any ``mesh_spacing``, rather than either
+        being silently ignored. ``spline_order`` is the one exception: it has a default, so a
+        value passed alongside a setup cannot be told apart from the default and the setup's
+        own order is used.
     compute_virial : bool, default=False
         Whether to return the virial.
     num_systems : int, optional
@@ -1147,7 +1159,7 @@ def fourier_dftd3(
             )
 
     if setup is not None:
-        setup.validate_for(cells, params.n_species, mesh_dimensions)
+        setup.validate_for(cells, params.n_species, mesh_dimensions, mesh_spacing)
         mesh_nx, mesh_ny, mesh_nz = setup.mesh_dimensions
         spline_order = setup.spline_order
     else:

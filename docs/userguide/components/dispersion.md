@@ -1064,8 +1064,14 @@ to `mesh_dimensions`, to a mesh derived from `mesh_spacing`, and to `FourierD3Se
 ```
 
 Exactly one of `mesh_dimensions` or `mesh_spacing` is required; there is no accuracy-based
-default to fall back on, so neither and both are errors. As a starting point, from the
-FourierD3 paper:
+default to fall back on, so neither and both are errors. This applies to calls that resolve a
+mesh themselves, which is every JAX call and any Torch call without a `setup`.
+
+A Torch `setup=` argument carries the mesh and spline order it was built with, so the mesh is
+already fixed and both selectors become optional. A `mesh_dimensions` that disagrees with the
+setup raises, and so does any `mesh_spacing` --- rounding it against the cell would read
+device memory, which is the cost a precomputed setup exists to avoid. Choose the mesh once,
+when building the setup. As a starting point, from the FourierD3 paper:
 
 | System size | Mesh |
 |---|---|
