@@ -47,6 +47,14 @@
   a CUDA graph. Warp launches are now bound to PyTorch's current stream without an entry
   synchronisation, which graph capture also forbids.
 
+### Changed
+
+- The minimum `warp-lang` requirement is now `>= 1.16.0`, raised from `>= 1.13.0`. The JAX
+  FourierD3 binding passes `block_dim` to `warp.jax_experimental.jax_kernel` to launch its
+  block-per-atom coordination-number and reciprocal-space kernels, and that argument was
+  added to `jax_kernel` in Warp 1.16.0. FourierD3 is the only component that uses it; on an
+  older Warp the JAX binding fails at import with a `TypeError`.
+
 ### Notes
 
 - FourierD3 uses a modified coordination-number function that decays to zero at the neighbour
