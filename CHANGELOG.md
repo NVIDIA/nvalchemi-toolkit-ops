@@ -19,9 +19,11 @@
 - PyTorch cluster-tile neighbor lists now support
   `torch.compile(fullgraph=True)` for tile, matrix, dual-cutoff matrix, and
   exact COO output, including differentiable pair geometry. Exact COO is
-  written directly in source-grouped CSR order. `prepare_cluster_tile` provides
-  reusable fixed-capacity storage, with optional selective matrix rebuilds for
-  single systems and batches.
+  written directly in source-grouped CSR order. Prepare reusable fixed-layout
+  storage with `prepare_cluster_tile(...)`, then execute it with
+  `cluster_tile_neighbor_list(..., state=state)` or
+  `batch_cluster_tile_neighbor_list(..., state=state)`, with optional selective
+  matrix rebuilds for single systems and batches.
 
 ### Changed
 

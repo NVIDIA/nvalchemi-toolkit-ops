@@ -26,20 +26,17 @@ from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
 from nvalchemiops.torch.neighbors.batch_cluster_tile import (
     TILE_GROUP_SIZE,
     allocate_batch_cluster_tile_list,
-    batch_cluster_tile_neighbor_list,
     estimate_batch_cluster_tile_segments,
     estimate_batch_max_tiles_per_group,
 )
 from nvalchemiops.torch.neighbors.cluster_tile import (
     _cell_volume,
     allocate_cluster_tile_list,
-    cluster_tile_neighbor_list,
 )
 
 __all__ = [
     "ClusterTileState",
     "prepare_cluster_tile",
-    "cluster_tile_neighbor_list_prepared",
 ]
 
 
@@ -372,7 +369,7 @@ def prepare_cluster_tile(
     )
 
 
-def cluster_tile_neighbor_list_prepared(
+def _execute_prepared_cluster_tile(
     positions: torch.Tensor,
     cell: torch.Tensor,
     state: ClusterTileState,
@@ -496,6 +493,10 @@ def cluster_tile_neighbor_list_prepared(
             tile_col_group,
             tile_system,
         ) = state._scratch
+        from nvalchemiops.torch.neighbors.batch_cluster_tile import (
+            batch_cluster_tile_neighbor_list,
+        )
+
         output = batch_cluster_tile_neighbor_list(
             positions,
             state.cutoff,
@@ -556,6 +557,8 @@ def cluster_tile_neighbor_list_prepared(
         tile_row_group,
         tile_col_group,
     ) = state._scratch
+    from nvalchemiops.torch.neighbors.cluster_tile import cluster_tile_neighbor_list
+
     output = cluster_tile_neighbor_list(
         positions,
         state.cutoff,

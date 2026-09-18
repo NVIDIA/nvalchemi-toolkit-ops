@@ -91,7 +91,6 @@ from nvalchemiops.torch.neighbors.neighbor_utils import (
 )
 from nvalchemiops.torch.neighbors.prepared_cluster_tile import (
     ClusterTileState,
-    cluster_tile_neighbor_list_prepared,
     prepare_cluster_tile,
 )
 
@@ -627,7 +626,6 @@ __all__ = [
     "cluster_tile_neighbor_list",
     "ClusterTileState",
     "prepare_cluster_tile",
-    "cluster_tile_neighbor_list_prepared",
     "estimate_cell_list_sizes",
     # Batched algorithms
     "batch_cell_list",

@@ -663,14 +663,15 @@ device runtime errors.
 
 Use `prepare_cluster_tile` when repeated calls have the same atom count,
 single or batched partition, dtype, device, output format, and capacities.
-Preparation owns the fixed-capacity scratch and output buffers. Execution takes
-only the current positions, current cell, and prepared state:
+Preparation owns the fixed-capacity scratch and output buffers. Execution uses
+the current positions and cell through the matching direct API with the
+prepared state:
 
 ```python
 import torch
 
 from nvalchemiops.torch.neighbors import (
-    cluster_tile_neighbor_list_prepared,
+    cluster_tile_neighbor_list,
     prepare_cluster_tile,
 )
 
@@ -679,7 +680,6 @@ state = prepare_cluster_tile(
     cutoff,
     cell,
     format="matrix",
-    batch_ptr=batch_ptr,  # omit for one system
     max_neighbors=max_neighbors,
     max_tiles_per_group=max_tiles_per_group,
     return_distances=True,
@@ -688,12 +688,15 @@ state = prepare_cluster_tile(
 @torch.compile(fullgraph=True)
 def compiled_neighbors(current_positions, current_cell):
     # Capture state as a closure constant; do not pass it as a graph input.
-    return cluster_tile_neighbor_list_prepared(
+    return cluster_tile_neighbor_list(
         current_positions,
-        current_cell,
-        state,
+        cell=current_cell,
+        state=state,
     )
 ```
+
+For a batched state, pass `batch_ptr` to `prepare_cluster_tile` and execute it
+with `batch_cluster_tile_neighbor_list(..., cell_batch=current_cells, state=state)`.
 
 Prepared execution supports single and batched tile, matrix, dual-cutoff
 matrix, and nonselective exact COO output. It preserves the corresponding
@@ -712,6 +715,18 @@ survive, before reusing the same state. A second state owns distinct storage.
 Preparation fixes the atom count, batch partition, shape, dtype, and device.
 Execution rejects mismatches before launching kernels. Prepared pair callbacks,
 energies, forces, and caller-provided buffers are not supported.
+
+`ClusterTileState` is prepared configuration and reusable borrowed storage, not
+the neighbor-list result. Each call returns the same tuple as the corresponding
+unprepared method-specific function. With `state=`, the call ignores `cutoff`,
+`cutoff2`, `format`, `max_neighbors`, `max_pairs`, `fill_value`,
+`max_tiles_per_group`, `return_vectors`, `return_distances`, and `pair_fn`, even
+when they differ from the prepared configuration. The batched API also ignores
+`batch_ptr`. Change these settings by preparing another state. `positions` and
+`cell` or `cell_batch` remain required on every call. `rebuild_flags` remains
+active for selective states. Prepared pair callbacks and `pair_params` are not
+supported. Supplying explicit scratch, output, segment, or inverse-cell buffers
+raises `ValueError`, as does `return_state=True`.
 
 Set `selective=True` during preparation to rebuild matrix topology only for
 selected systems. Selective prepared execution supports single and batched

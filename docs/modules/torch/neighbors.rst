@@ -113,7 +113,6 @@ Prepared Cluster Tile Execution
    :members: neighbor_vectors, neighbor_distances
 
 .. autofunction:: nvalchemiops.torch.neighbors.prepare_cluster_tile
-.. autofunction:: nvalchemiops.torch.neighbors.cluster_tile_neighbor_list_prepared
 
 Rebuild Detection
 -----------------

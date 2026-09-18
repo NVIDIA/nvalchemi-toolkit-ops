@@ -26,8 +26,13 @@ Scope: float32, orthorhombic or triclinic PBC, one cell per system,
 arbitrary natom per system (padded internally).
 """
 
+from typing import TYPE_CHECKING
+
 import torch
 import warp as wp
+
+if TYPE_CHECKING:
+    from nvalchemiops.torch.neighbors.prepared_cluster_tile import ClusterTileState
 
 from nvalchemiops.neighbors.cluster_tile import (
     TILE_GROUP_SIZE,
@@ -2510,9 +2515,9 @@ def _validate_batch_matrix_state(
 
 def batch_cluster_tile_neighbor_list(
     positions: torch.Tensor,
-    cutoff: float,
-    cell_batch: torch.Tensor,
-    batch_ptr: torch.Tensor,
+    cutoff: float | None = None,
+    cell_batch: torch.Tensor | None = None,
+    batch_ptr: torch.Tensor | None = None,
     max_neighbors: int | None = None,
     fill_value: int | None = None,
     format: str = "matrix",
@@ -2566,6 +2571,8 @@ def batch_cluster_tile_neighbor_list(
     pair_energies: torch.Tensor | None = None,
     pair_forces: torch.Tensor | None = None,
     max_tiles_per_group: int | None = None,
+    *,
+    state: "ClusterTileState | None" = None,
 ) -> tuple[torch.Tensor, ...]:
     """Build and query a batched cluster-pair tile neighbor list in one call.
 
@@ -2578,12 +2585,14 @@ def batch_cluster_tile_neighbor_list(
     ----------
     positions : torch.Tensor, shape (total_atoms, 3), dtype=float32
         Concatenated atomic coordinates across systems.
-    cutoff : float
-        Cutoff distance in Cartesian units. Must be positive.
+    cutoff : float, optional
+        Cutoff distance in Cartesian units. Must be positive. Required without
+        ``state`` and ignored when ``state`` is provided.
     cell_batch : torch.Tensor, shape (num_systems, 3, 3), dtype=float32
         Per-system unit cell matrices. Cluster-tile assumes fully
-        periodic boundaries.
-    batch_ptr : torch.Tensor, shape (num_systems + 1,), dtype=int32 or int64
+        periodic boundaries. Required on every call, including prepared
+        execution.
+    batch_ptr : torch.Tensor, shape (num_systems + 1,), dtype=int32 or int64, optional
         CSR pointer separating systems.  Assumes positions are laid out
         in system-contiguous order (system 0 atoms first, then system 1,
         and so on); interleaved layouts are **not supported** and will
@@ -2591,6 +2600,8 @@ def batch_cluster_tile_neighbor_list(
         :func:`nvalchemiops.torch.neighbors.neighbor_list` with a
         ``batch_idx`` argument, the dispatcher derives ``batch_ptr`` by
         assuming ``batch_idx`` is sorted by system — the same contract.
+        Required without ``state``. A prepared state owns its partition, so a
+        supplied ``batch_ptr`` is ignored when ``state`` is provided.
     max_neighbors : int, optional
         Falls back to ``estimate_max_neighbors`` using the larger active cutoff.
         Matrix format only.
@@ -2692,6 +2703,8 @@ def batch_cluster_tile_neighbor_list(
         ``(r_ij, distance, pair_params, i, j) -> (energy, force)``.
     pair_params : torch.Tensor, optional
         Per-atom pair-function parameters; required with ``pair_fn``.
+        ``pair_params`` is rejected with prepared state because prepared pair
+        callbacks are unsupported.
     neighbor_vectors, neighbor_distances, pair_energies, pair_forces : torch.Tensor, optional
         OUTPUT buffers, written only when the corresponding enable flag
         / ``pair_fn`` is active.
@@ -2703,6 +2716,14 @@ def batch_cluster_tile_neighbor_list(
         Eager calls estimate the value when it is ``None``. Caller-owned tile
         arrays determine the actual capacity. See
         :ref:`cluster-tile-buffer-capacity` for sizing details.
+    state : ClusterTileState, optional
+        Prepared configuration and reusable storage returned by
+        :func:`prepare_cluster_tile`. The cell remains a required per-call
+        input. The state controls cutoffs, format, capacities, optional outputs,
+        and scratch storage; redundant static arguments are ignored. Explicit
+        scratch or output buffers and ``return_state=True`` are rejected. The
+        state must be batched; its prepared partition is used even when
+        ``batch_ptr`` is supplied.
 
     Returns
     -------
@@ -2764,6 +2785,94 @@ def batch_cluster_tile_neighbor_list(
         Lower-level query step.
     """
 
+    if state is not None:
+        from nvalchemiops.torch.neighbors.prepared_cluster_tile import (
+            ClusterTileState,
+            _execute_prepared_cluster_tile,
+        )
+
+        if not isinstance(state, ClusterTileState):
+            raise TypeError("state must be a ClusterTileState")
+        if not state.is_batched:
+            raise ValueError(
+                "batch_cluster_tile_neighbor_list requires a batched state"
+            )
+        if cell_batch is None:
+            raise ValueError("cell_batch is required when state is provided")
+        conflicts = [
+            name
+            for name, value in {
+                "neighbor_matrix": neighbor_matrix,
+                "neighbor_matrix_shifts": neighbor_matrix_shifts,
+                "num_neighbors": num_neighbors,
+                "neighbor_matrix2": neighbor_matrix2,
+                "neighbor_matrix_shifts2": neighbor_matrix_shifts2,
+                "num_neighbors2": num_neighbors2,
+                "neighbor_list": neighbor_list,
+                "neighbor_list_shifts": neighbor_list_shifts,
+                "pair_counter": pair_counter,
+                "pair_offsets": pair_offsets,
+                "pair_counts": pair_counts,
+                "inv_cell_batch": inv_cell_batch,
+                "sorted_atom_index": sorted_atom_index,
+                "sort_inv": sort_inv,
+                "sorted_pos_x": sorted_pos_x,
+                "sorted_pos_y": sorted_pos_y,
+                "sorted_pos_z": sorted_pos_z,
+                "batch_idx_sorted": batch_idx_sorted,
+                "batch_ptr_padded": batch_ptr_padded,
+                "group_system": group_system,
+                "group_ptr": group_ptr,
+                "group_ctr_x": group_ctr_x,
+                "group_ctr_y": group_ctr_y,
+                "group_ctr_z": group_ctr_z,
+                "group_ext_x": group_ext_x,
+                "group_ext_y": group_ext_y,
+                "group_ext_z": group_ext_z,
+                "num_tiles": num_tiles,
+                "tile_row_group": tile_row_group,
+                "tile_col_group": tile_col_group,
+                "tile_system": tile_system,
+                "tile_offsets": tile_offsets,
+                "tile_counts": tile_counts,
+                "neighbor_vectors": neighbor_vectors,
+                "neighbor_distances": neighbor_distances,
+                "pair_energies": pair_energies,
+                "pair_forces": pair_forces,
+            }.items()
+            if value is not None
+        ]
+        if return_state:
+            conflicts.insert(0, "return_state")
+        if conflicts:
+            raise ValueError(
+                "state controls configuration and storage; conflicting arguments: "
+                + ", ".join(conflicts)
+            )
+        if pair_params is not None:
+            raise ValueError(
+                "pair_params is not supported with state because prepared pair "
+                "callbacks are unsupported"
+            )
+        return _execute_prepared_cluster_tile(
+            positions,
+            cell_batch,
+            state,
+            rebuild_flags=rebuild_flags,
+        )
+    if cutoff is None or cell_batch is None or batch_ptr is None:
+        missing = [
+            name
+            for name, value in (
+                ("cutoff", cutoff),
+                ("cell_batch", cell_batch),
+                ("batch_ptr", batch_ptr),
+            )
+            if value is None
+        ]
+        raise ValueError(
+            "missing required arguments without state: " + ", ".join(missing)
+        )
     if positions.dtype != torch.float32:
         raise TypeError("positions must be float32")
     if format not in ("matrix", "coo", "tile"):
