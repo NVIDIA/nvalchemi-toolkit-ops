@@ -329,6 +329,7 @@ def fourier_dftd3(
     fill_value: int | None = None,
     s6: float = 1.0,
     spline_order: int = 4,
+    exact_moduli: bool = True,
     batch_idx=None,
     compute_virial: bool = False,
     num_systems: int | None = None,
@@ -337,7 +338,9 @@ def fourier_dftd3(
 
     The JAX counterpart of
     :func:`nvalchemiops.torch.interactions.dispersion.fourier_dftd3`; the arguments and their
-    meanings are the same, minus ``device``.
+    meanings are the same, minus ``device`` and the precomputed ``setup``, which exists in the
+    Torch binding to keep ``torch.linalg.inv`` out of a CUDA graph and has no counterpart
+    here because ``jax.jit`` already hoists it.
 
     Parameters
     ----------
@@ -375,6 +378,13 @@ def fourier_dftd3(
         orders of magnitude apart each way, so raising the order buys more than refining the
         mesh does. Order 3 is noticeably noisier than its neighbours; prefer an even order
         unless you have measured otherwise.
+    exact_moduli : bool, default=True
+        Which B-spline attenuation to divide out. ``True`` uses the discrete modulus, the
+        magnitude of the DFT of the spline coefficients, which is what interpolation on a
+        finite mesh actually applies and what the gather differentiates. ``False`` uses the
+        continuous ``sinc(m / N) ** spline_order``, the convention the in-repo PME uses,
+        retained so results can be reproduced against it. Host-static, so it selects a branch
+        at trace time and is safe under ``jax.jit``.
     batch_idx : jax.Array, shape (N,), optional
         System index per atom.
     compute_virial : bool, default=False
@@ -538,7 +548,7 @@ def fourier_dftd3(
     miller_y = jnp.fft.fftfreq(mesh_ny, d=1.0 / mesh_ny).astype(dtype)
     miller_z = jnp.fft.rfftfreq(mesh_nz, d=1.0 / mesh_nz).astype(dtype)
     moduli = [
-        _bspline_moduli(m, n, spline_order, dtype)
+        _bspline_moduli(m, n, spline_order, exact_moduli, dtype)
         for m, n in ((miller_x, mesh_nx), (miller_y, mesh_ny), (miller_z, mesh_nz))
     ]
     volumes = jnp.abs(jnp.linalg.det(cells)).astype(dtype)
@@ -672,13 +682,22 @@ def _cardinal_bspline(u, order):
     return (u * lower + (float(order) - u) * shifted) / float(order - 1)
 
 
-def _bspline_moduli(miller, mesh_size, spline_order, dtype):
-    """Discrete B-spline attenuation for one mesh axis.
+def _bspline_moduli(miller, mesh_size, spline_order, exact, dtype):
+    """B-spline attenuation for one mesh axis.
 
-    The magnitude of the DFT of the spline coefficients, which is what interpolation on a
-    finite mesh actually applies. The Nyquist bin of an even mesh can vanish, which would
-    divide by zero during deconvolution, so it is replaced by the mean of its neighbours.
+    With ``exact`` set, the magnitude of the DFT of the spline coefficients, which is what
+    interpolation on a finite mesh actually applies. The Nyquist bin of an even mesh can
+    vanish, which would divide by zero during deconvolution, so it is replaced by the mean of
+    its neighbours.
+
+    Otherwise ``sinc(m / N) ** spline_order``, the continuous transform of the spline and the
+    convention the in-repo PME uses. It is the cheaper approximation and is retained so that
+    results can be reproduced against PME; the discrete form is the default because it is
+    what the gather actually differentiates.
     """
+    if not exact:
+        return (jnp.sinc(miller / mesh_size) ** spline_order).astype(dtype)
+
     nodes = jnp.arange(spline_order, dtype=dtype) + 1.0
     coefficients = (
         jnp.zeros(mesh_size, dtype=dtype)

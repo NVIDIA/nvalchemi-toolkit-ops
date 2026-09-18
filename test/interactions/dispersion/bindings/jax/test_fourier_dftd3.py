@@ -514,6 +514,72 @@ class TestSkewedCell:
 
 
 @pytest.mark.gpu
+class TestModulusConvention:
+    """Both B-spline attenuation conventions, matching the Torch binding's surface."""
+
+    def test_the_two_conventions_differ(self, device, system):
+        """The switch has to do something, or agreeing with Torch proves nothing."""
+        exact = _evaluate(system, exact_moduli=True)
+        continuous = _evaluate(system, exact_moduli=False)
+        assert abs(float(exact[0][0]) - float(continuous[0][0])) > 1e-10 * abs(
+            float(exact[0][0])
+        )
+
+    @pytest.mark.parametrize("exact_moduli", [True, False])
+    def test_matches_the_torch_binding(self, device, system, exact_moduli):
+        """The two bindings agree on both conventions, not only on the default."""
+        torch = pytest.importorskip("torch", reason="PyTorch not installed.")
+        from nvalchemiops.torch.interactions.dispersion import (
+            FourierD3Parameters as TorchParameters,
+        )
+        from nvalchemiops.torch.interactions.dispersion import (
+            fourier_dftd3 as torch_fourier_dftd3,
+        )
+
+        numpy = system["numpy"]
+        ours = _evaluate(system, exact_moduli=exact_moduli)
+
+        def tensor(array, dtype=torch.float64):
+            return torch.as_tensor(
+                np.ascontiguousarray(array), dtype=dtype, device="cuda:0"
+            )
+
+        parameters = TorchParameters.from_tables(
+            tensor(numpy["rcov"]),
+            tensor(numpy["r4r2"]),
+            tensor(numpy["c6ab"]),
+            tensor(numpy["cn_ref"]),
+            numpy["species"],
+            device="cuda:0",
+            dtype=torch.float64,
+        )
+        sources = np.repeat(np.arange(numpy["n_atoms"]), np.diff(numpy["pointer"]))
+        theirs = torch_fourier_dftd3(
+            tensor(numpy["positions"]),
+            tensor(numpy["numbers"], torch.int32),
+            **DAMPING,
+            fd3_params=parameters,
+            cell=tensor(numpy["cell"]),
+            r_cut=R_CUT,
+            mesh_dimensions=MESH,
+            exact_moduli=exact_moduli,
+            neighbor_list=torch.stack(
+                [tensor(sources, torch.int32), tensor(numpy["targets"], torch.int32)]
+            ),
+            neighbor_ptr=tensor(numpy["pointer"], torch.int32),
+            unit_shifts=tensor(numpy["shifts"], torch.int32),
+        )
+        np.testing.assert_allclose(
+            float(ours[0][0]), float(theirs[0][0].cpu()), rtol=1e-11
+        )
+        np.testing.assert_allclose(
+            np.asarray(ours[1]),
+            theirs[1].cpu().numpy(),
+            atol=1e-11 * float(theirs[1].abs().max()),
+        )
+
+
+@pytest.mark.gpu
 class TestJit:
     """Tracing behaviour."""
 
