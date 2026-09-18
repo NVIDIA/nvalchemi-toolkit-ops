@@ -29,4 +29,6 @@ from nvalchemiops.jax.interactions.dispersion._fourier_dftd3 import (
 __all__ = [
     "dftd3",
     "D3Parameters",
+    "fourier_dftd3",
+    "FourierD3Parameters",
 ]
