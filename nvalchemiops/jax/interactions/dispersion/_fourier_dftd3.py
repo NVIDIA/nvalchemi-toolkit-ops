@@ -442,9 +442,13 @@ def fourier_dftd3(
         large retained rank can exceed device memory on a fine mesh. Setting this to ``k``
         caps the resident slots at ``k`` and reduces that allocation by roughly ``rank / k``,
         at the cost of one extra spread, forward and inverse transform, and gather per chunk.
-        The result is unchanged to round-off: every stage after the coordination number is a
-        sum over slots with no coupling between them. Host-static, so the chunk loop is
-        unrolled at trace time and is safe under ``jax.jit``.
+        Only those reciprocal stages are chunked; the self-energy and the coordination chain
+        rule need every slot at once and run once afterwards. The per-atom ``(N, rank)``
+        coefficient arrays stay at full width throughout. The result is unchanged to
+        round-off: every reciprocal stage is a sum over slots with no coupling between them.
+        Host-static, so it is safe under ``jax.jit`` -- but the loop is **unrolled at trace
+        time**, so the traced graph and the compile time grow linearly in
+        ``rank / rank_chunk_size``. Prefer the largest chunk that fits.
     batch_idx : jax.Array, shape (N,), optional
         System index per atom.
     compute_virial : bool, default=False
@@ -629,10 +633,10 @@ def fourier_dftd3(
     energy_total = jnp.zeros(num_systems, dtype=dtype)
     forces_total = jnp.zeros((n_atoms, 3), dtype=dtype)
     virial_total = jnp.zeros((num_systems, 3, 3), dtype=dtype)
+    d_energy_d_c6_chunks = []
 
     for slot_start, slot_count in _rank_chunks(rank, rank_chunk_size):
         c6_chunk = c6[:, slot_start : slot_start + slot_count]
-        dc6_chunk = dc6_dcn[:, slot_start : slot_start + slot_count]
         eigs_chunk = eigs[slot_start : slot_start + slot_count]
 
         # Pass 3: spread onto the (system, species, rank) mesh.
@@ -698,8 +702,8 @@ def fourier_dftd3(
             norm="forward",
         ).astype(dtype)
 
-        # Pass 7: gather the coefficient derivative and the direct mesh force.
-        d_energy_d_c6, forces = _gather_kernels[dtype](
+        # Pass 7: gather. The only stage that reads the mesh, so the only one in the loop.
+        d_energy_d_c6_chunk, forces = _gather_kernels[dtype](
             potential,
             positions,
             c6_chunk,
@@ -708,71 +712,83 @@ def fourier_dftd3(
             int(spline_order),
             int(slot_count),
             jnp.zeros((n_atoms, slot_count), dtype=dtype),
-            jnp.zeros((n_atoms, 3), dtype=dtype),
+            forces_total,
             launch_dims=(n_atoms,),
         )
-
-        # Pass 8: self-energy, before the chain rule.
-        energy, d_energy_d_c6 = _self_energy_kernels[dtype](
-            c6_chunk,
-            species_index,
-            batch_idx,
-            sqrt_q,
-            eigs_chunk,
-            float(s6),
-            float(s8),
-            float(a1),
-            float(a2),
-            energy,
-            d_energy_d_c6,
-            launch_dims=(n_atoms,),
-        )
-
-        # Pass 9: contract to dE/dCN, then chain through the real-space edges.
-        (sensitivity,) = _sensitivity_kernels[dtype](
-            d_energy_d_c6,
-            dc6_chunk,
-            launch_dims=(n_atoms,),
-            output_dims={"d_energy_d_cn": (n_atoms,)},
-        )
-        if matrix_given:
-            forces, virial = _cn_forces_matrix_kernels[dtype](
-                sensitivity,
-                positions,
-                numbers,
-                neighbours,
-                cartesian_shifts,
-                rcov,
-                float(r_cut),
-                int(fill_value),
-                batch_idx,
-                int(FD3_CN_BLOCK_SIZE),
-                bool(compute_virial),
-                forces,
-                virial,
-                launch_dims=(n_atoms, FD3_CN_BLOCK_SIZE),
-            )
-        else:
-            forces, virial = _cn_forces_kernels[dtype](
-                sensitivity,
-                positions,
-                numbers,
-                neighbours,
-                jnp.asarray(neighbor_ptr, dtype=jnp.int32),
-                cartesian_shifts,
-                rcov,
-                float(r_cut),
-                batch_idx,
-                int(FD3_CN_BLOCK_SIZE),
-                bool(compute_virial),
-                forces,
-                virial,
-                launch_dims=(n_atoms, FD3_CN_BLOCK_SIZE),
-            )
 
         energy_total = energy_total + energy
-        forces_total = forces_total + forces
+        forces_total = forces
         virial_total = virial_total + virial
+        d_energy_d_c6_chunks.append(d_energy_d_c6_chunk)
+
+    # The coefficient derivative is reassembled at full width: the chain rule below contracts
+    # it against every slot at once. It is per-atom, not per-mesh-point, so keeping all of it
+    # is a negligible part of the footprint the chunking exists to bound.
+    d_energy_d_c6 = (
+        d_energy_d_c6_chunks[0]
+        if len(d_energy_d_c6_chunks) == 1
+        else jnp.concatenate(d_energy_d_c6_chunks, axis=1)
+    )
+
+    # Pass 8: self-energy, before the chain rule. Needs every slot, and never touches the
+    # mesh, so it runs once after the chunks rather than inside them.
+    energy_total, d_energy_d_c6 = _self_energy_kernels[dtype](
+        c6,
+        species_index,
+        batch_idx,
+        sqrt_q,
+        eigs,
+        float(s6),
+        float(s8),
+        float(a1),
+        float(a2),
+        energy_total,
+        d_energy_d_c6,
+        launch_dims=(n_atoms,),
+    )
+
+    # Pass 9: contract to dE/dCN, then chain through the real-space edges. This walks the
+    # whole neighbour list, which is what makes running it per chunk the expensive mistake.
+    (sensitivity,) = _sensitivity_kernels[dtype](
+        d_energy_d_c6,
+        dc6_dcn,
+        launch_dims=(n_atoms,),
+        output_dims={"d_energy_d_cn": (n_atoms,)},
+    )
+    if matrix_given:
+        forces_total, virial_total = _cn_forces_matrix_kernels[dtype](
+            sensitivity,
+            positions,
+            numbers,
+            neighbours,
+            cartesian_shifts,
+            rcov,
+            float(r_cut),
+            int(fill_value),
+            batch_idx,
+            int(FD3_CN_BLOCK_SIZE),
+            bool(compute_virial),
+            forces_total,
+            virial_total,
+            launch_dims=(n_atoms, FD3_CN_BLOCK_SIZE),
+        )
+    else:
+        forces_total, virial_total = _cn_forces_kernels[dtype](
+            sensitivity,
+            positions,
+            numbers,
+            neighbours,
+            jnp.asarray(neighbor_ptr, dtype=jnp.int32),
+            cartesian_shifts,
+            rcov,
+            float(r_cut),
+            batch_idx,
+            int(FD3_CN_BLOCK_SIZE),
+            bool(compute_virial),
+            forces_total,
+            virial_total,
+            launch_dims=(n_atoms, FD3_CN_BLOCK_SIZE),
+        )
 
     if compute_virial:
         return energy_total, forces_total, virial_total

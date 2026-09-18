@@ -37,6 +37,9 @@ from nvalchemiops.torch.interactions.dispersion import (  # noqa: E402
     FourierD3Setup,
     fourier_dftd3,
 )
+from nvalchemiops.torch.interactions.dispersion import (  # noqa: E402
+    _fourier_dftd3 as _fd3,
+)
 from nvalchemiops.torch.interactions.dispersion._fourier_dftd3 import (  # noqa: E402
     _resolve_mesh,
 )
@@ -1376,6 +1379,32 @@ class TestRankChunking:
             return torch.cuda.max_memory_allocated()
 
         assert peak(1) < peak(None)
+
+    def test_only_the_reciprocal_stages_repeat(self):
+        """The chain rule walks the whole neighbour list, so it must run once, not per chunk.
+
+        Counting op invocations is what distinguishes "correct" from "correct but doing the
+        real-space work ``rank`` times over", which no numerical comparison can catch.
+        """
+        system = _system("cuda:0")
+        counts = {}
+        originals = {}
+        for name in ("_fd3_gather_op", "_fd3_finalise_op"):
+            originals[name] = getattr(_fd3, name)
+
+            def counted(*args, _name=name, **kwargs):
+                counts[_name] = counts.get(_name, 0) + 1
+                return originals[_name](*args, **kwargs)
+
+            setattr(_fd3, name, counted)
+        try:
+            _evaluate(system, rank_chunk_size=1)
+        finally:
+            for name, original in originals.items():
+                setattr(_fd3, name, original)
+
+        assert counts["_fd3_gather_op"] == system["params"].rank
+        assert counts["_fd3_finalise_op"] == 1
 
     def test_a_non_integer_chunk_is_refused(self):
         """The size decides how many kernels launch, so it cannot be a tensor."""

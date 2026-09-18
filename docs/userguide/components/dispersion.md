@@ -1109,9 +1109,27 @@ transform, and gather per chunk, so leave it at `None` when the mesh fits. Measu
 1066 MiB at `None` to 209 MiB at `rank_chunk_size=4` and 79 MiB at `1`, with energy, forces
 and virial agreeing to 1e-14 relative throughout.
 
+Only the reciprocal stages are chunked: spread, forward transform, contraction, inverse
+transform and gather. The self-energy and the coordination-number chain rule need every slot
+at once and never touch the mesh, so they run once after the loop. That matters because the
+chain rule walks the whole neighbour list; running it per chunk cost 16% at 8,000 atoms with
+2.4M edges.
+
+The per-atom coefficient arrays stay at full `(N, rank)` width throughout — they are what the
+chain rule contracts at the end. They are per-atom rather than per-mesh-point, so they are a
+negligible part of the footprint this option exists to bound: at 8,000 atoms and rank 21 they
+are under 2 MiB, against a mesh measured in hundreds.
+
 It is host-static in both bindings: it decides how many kernel launches happen, so it must be
-a Python integer and cannot be a tensor or a traced value. Under `jax.jit` the chunk loop is
-unrolled at trace time.
+a Python integer and cannot be a tensor or a traced value.
+
+```{warning}
+Under `jax.jit` the chunk loop is **unrolled at trace time**, so the traced graph grows with
+the number of chunks. On the case above the jaxpr went from 395 equations at `None` to 538 at
+`rank_chunk_size=4` and 1042 at `1`, with compile time rising from 0.20 s to 0.33 s. That is
+cheap here, but it is paid per distinct shape signature and grows linearly in `rank /
+rank_chunk_size`, so prefer the largest chunk that fits rather than the smallest that works.
+```
 
 ### B-spline Deconvolution
 

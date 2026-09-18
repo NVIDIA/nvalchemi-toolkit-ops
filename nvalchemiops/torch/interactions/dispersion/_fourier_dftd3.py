@@ -481,52 +481,28 @@ def _fd3_kspace_op(
 
 
 @torch_custom_op(
-    "nvalchemiops::fourier_dftd3_epilogue",
-    mutates_args=("d_energy_d_c6", "d_energy_d_cn", "energy", "forces", "virial"),
+    "nvalchemiops::fourier_dftd3_gather",
+    mutates_args=("d_energy_d_c6", "forces"),
 )
 @_on_torch_stream
-def _fd3_epilogue_op(
+def _fd3_gather_op(
     potential: torch.Tensor,
     positions: torch.Tensor,
-    numbers: torch.Tensor,
-    species_index: torch.Tensor,
     group_idx: torch.Tensor,
-    batch_idx: torch.Tensor,
     cell_inv_t: torch.Tensor,
     c6: torch.Tensor,
-    dc6_dcn: torch.Tensor,
-    cartesian_shifts: torch.Tensor,
-    rcov: torch.Tensor,
-    sqrt_q: torch.Tensor,
-    eigs: torch.Tensor,
     spline_order: int,
     rank: int,
-    s6: float,
-    s8: float,
-    a1: float,
-    a2: float,
-    r_cut: float,
     d_energy_d_c6: torch.Tensor,
-    d_energy_d_cn: torch.Tensor,
-    energy: torch.Tensor,
     forces: torch.Tensor,
-    virial: torch.Tensor,
-    neighbor_list: torch.Tensor | None = None,
-    neighbor_ptr: torch.Tensor | None = None,
-    neighbor_matrix: torch.Tensor | None = None,
-    fill_value: int | None = None,
-    compute_virial: bool = False,
     device: str | None = None,
 ) -> None:
-    """Internal op for gather, self-energy and the coordination chain rule.
+    """Internal op for the mesh gather: the coefficient derivative and the direct force.
 
-    The self-energy is folded into ``d_energy_d_c6`` before the chain rule contracts it,
-    because it is quadratic in the coefficients and so reaches the forces through the
-    coordination numbers. Applying it afterwards as a scalar would drop that contribution.
+    This is the only stage that touches the mesh, so it is the only one that runs per rank
+    chunk. Both outputs are accumulated into rather than overwritten, because a chunk
+    contributes a slice of ``d_energy_d_c6`` and a share of the force.
     """
-    d_energy_d_c6.zero_()
-    d_energy_d_cn.zero_()
-    forces.zero_()
     if positions.size(0) == 0:
         return
     if device is None:
@@ -546,6 +522,57 @@ def _fd3_epilogue_op(
         wp_dtype,
         device,
     )
+
+
+@torch_custom_op(
+    "nvalchemiops::fourier_dftd3_finalise",
+    mutates_args=("d_energy_d_c6", "d_energy_d_cn", "energy", "forces", "virial"),
+)
+@_on_torch_stream
+def _fd3_finalise_op(
+    positions: torch.Tensor,
+    numbers: torch.Tensor,
+    species_index: torch.Tensor,
+    batch_idx: torch.Tensor,
+    c6: torch.Tensor,
+    dc6_dcn: torch.Tensor,
+    cartesian_shifts: torch.Tensor,
+    rcov: torch.Tensor,
+    sqrt_q: torch.Tensor,
+    eigs: torch.Tensor,
+    s6: float,
+    s8: float,
+    a1: float,
+    a2: float,
+    r_cut: float,
+    d_energy_d_c6: torch.Tensor,
+    d_energy_d_cn: torch.Tensor,
+    energy: torch.Tensor,
+    forces: torch.Tensor,
+    virial: torch.Tensor,
+    neighbor_list: torch.Tensor | None = None,
+    neighbor_ptr: torch.Tensor | None = None,
+    neighbor_matrix: torch.Tensor | None = None,
+    fill_value: int | None = None,
+    compute_virial: bool = False,
+    device: str | None = None,
+) -> None:
+    """Internal op for the self-energy and the coordination chain rule.
+
+    Neither stage touches the mesh and both need every rank slot at once, so this runs once
+    after the rank chunks rather than inside them. The chain rule walks the whole neighbour
+    list, which is why running it per chunk would be the expensive mistake.
+
+    The self-energy is folded into ``d_energy_d_c6`` before the chain rule contracts it,
+    because it is quadratic in the coefficients and so reaches the forces through the
+    coordination numbers. Applying it afterwards as a scalar would drop that contribution.
+    """
+    d_energy_d_cn.zero_()
+    if positions.size(0) == 0:
+        return
+    if device is None:
+        device = str(positions.device)
+    wp_dtype, vec_dtype, mat_dtype = _dtypes(positions)
 
     fd3_self_energy(
         _wp(c6, wp_dtype),
@@ -1101,9 +1128,12 @@ def fourier_dftd3(
         so a system with many species or a large retained rank can exceed device memory on a
         fine mesh. Setting this to ``k`` caps the resident slots at ``k`` and reduces that
         allocation by roughly ``rank / k``, at the cost of one extra spread, forward and
-        inverse transform, and gather per chunk. The result is unchanged to round-off: every
-        stage after the coordination number is a sum over slots with no coupling between them.
-        Must be a host-side Python integer, since it determines the number of kernel launches.
+        inverse transform, and gather per chunk. Only those reciprocal stages are chunked;
+        the self-energy and the coordination chain rule need every slot at once and run once
+        afterwards. The per-atom ``(N, rank)`` coefficient arrays stay at full width
+        throughout. The result is unchanged to round-off: every reciprocal stage is a sum over
+        slots with no coupling between them. Must be a host-side Python integer, since it
+        determines the number of kernel launches.
     device : str, optional
         Warp device string. Inferred from ``positions`` when omitted.
 
@@ -1309,20 +1339,25 @@ def fourier_dftd3(
     # and gather on its own and its contribution added in. The mesh and its transforms are the
     # dominant allocation, and they scale with the number of slots resident at once, so this
     # trades passes over the atoms for peak memory.
+    # The coefficient derivative is kept at full width across the chunks: the chain rule
+    # below contracts it against every slot at once, so each chunk fills its own columns and
+    # nothing is reduced until the loop is done. It is per-atom, not per-mesh-point, so it is
+    # a negligible part of the footprint the chunking exists to bound.
+    d_energy_d_c6 = torch.zeros(n_atoms, rank, **empty)
+    d_energy_d_cn = torch.zeros(n_atoms, **empty)
+
     chunks = _rank_chunks(rank, rank_chunk_size)
     for slot_start, slot_count in chunks:
-        # The two ops overwrite rather than accumulate -- the k-space op clears energy and
-        # virial, the epilogue clears forces -- so each chunk reduces into its own scratch
-        # and is added in below. Reusing the totals directly would leave only the last chunk.
+        # The k-space op clears energy and virial rather than accumulating, so with more than
+        # one chunk each reduces into its own scratch and is added in below. The gather does
+        # accumulate, so the running forces are passed to it directly.
         if len(chunks) == 1:
-            chunk_energy, chunk_forces, chunk_virial = energy, forces, virial
+            chunk_energy, chunk_virial = energy, virial
         else:
             chunk_energy = torch.zeros(num_systems, **empty)
-            chunk_forces = torch.zeros(n_atoms, 3, **empty)
             chunk_virial = torch.zeros(num_systems, 3, 3, **empty)
 
         c6_chunk = c6[:, slot_start : slot_start + slot_count].contiguous()
-        dc6_chunk = dc6_dcn[:, slot_start : slot_start + slot_count].contiguous()
         eigs_chunk = params.eigs[slot_start : slot_start + slot_count].contiguous()
 
         mesh = torch.zeros(
@@ -1380,47 +1415,60 @@ def fourier_dftd3(
         ).contiguous()
         del cotangent
 
-        d_energy_d_c6 = torch.zeros(n_atoms, slot_count, **empty)
-        d_energy_d_cn = torch.zeros(n_atoms, **empty)
-        _fd3_epilogue_op(
+        # The gather is the only stage that reads the mesh, so it is the only one inside the
+        # loop. Its coefficient derivative lands in this chunk's columns; the force it
+        # accumulates goes straight into the running total.
+        d_energy_d_c6_chunk = torch.zeros(n_atoms, slot_count, **empty)
+        _fd3_gather_op(
             potential,
             positions,
-            numbers.to(torch.int32),
-            species_index,
             group_idx,
-            batch_idx,
             cell_inv_grouped,
             c6_chunk,
-            dc6_chunk,
-            cartesian_shifts,
-            params.rcov,
-            params.sqrt_q,
-            eigs_chunk,
             spline_order,
             slot_count,
-            s6,
-            s8,
-            a1,
-            a2,
-            r_cut,
-            d_energy_d_c6,
-            d_energy_d_cn,
-            chunk_energy,
-            chunk_forces,
-            chunk_virial,
-            idx_j,
-            neighbor_ptr.to(torch.int32) if neighbor_ptr is not None else None,
-            neighbor_matrix.to(torch.int32) if neighbor_matrix is not None else None,
-            fill_value,
-            compute_virial,
+            d_energy_d_c6_chunk,
+            forces,
             device,
         )
         del potential
+        d_energy_d_c6[:, slot_start : slot_start + slot_count] = d_energy_d_c6_chunk
 
         if len(chunks) > 1:
             energy += chunk_energy
-            forces += chunk_forces
             virial += chunk_virial
+
+    # The self-energy and the coordination chain rule need every slot at once and never touch
+    # the mesh, so they run once here. The chain rule walks the whole neighbour list, which is
+    # what makes running it per chunk the expensive mistake.
+    _fd3_finalise_op(
+        positions,
+        numbers.to(torch.int32),
+        species_index,
+        batch_idx,
+        c6,
+        dc6_dcn,
+        cartesian_shifts,
+        params.rcov,
+        params.sqrt_q,
+        params.eigs,
+        s6,
+        s8,
+        a1,
+        a2,
+        r_cut,
+        d_energy_d_c6,
+        d_energy_d_cn,
+        energy,
+        forces,
+        virial,
+        idx_j,
+        neighbor_ptr.to(torch.int32) if neighbor_ptr is not None else None,
+        neighbor_matrix.to(torch.int32) if neighbor_matrix is not None else None,
+        fill_value,
+        compute_virial,
+        device,
+    )
 
     if compute_virial:
         return energy, forces, virial

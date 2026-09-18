@@ -56,6 +56,10 @@
   chunking leaves the result unchanged to round-off; the cost is one extra spread,
   transform pair and gather per chunk. Defaults to `None`, the single-pass
   behaviour. Host-static, so it is safe under `jax.jit` and `torch.compile`.
+  Only the reciprocal stages -- spread, transforms, contraction and gather -- run per
+  chunk; the self-energy and the coordination chain rule need every slot at once and run
+  once afterwards. Under `jax.jit` the loop is unrolled at trace time, so the traced
+  graph grows linearly in `rank / rank_chunk_size`.
 
 ### Changed
 
