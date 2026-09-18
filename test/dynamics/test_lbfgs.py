@@ -449,6 +449,69 @@ class TestLBFGSTrustRegion:
         assert np.isfinite(d.positions.numpy()).all()
 
     @pytest.mark.parametrize("device", DEVICES)
+    def test_purely_quadratic_displacement_is_still_capped(self, device):
+        """A zero linear term must not leave the step uncapped.
+
+        On the variable-cell path the displacement is
+        ``alpha * a_lin + alpha**2 * b_quad``. If the first-order term happens
+        to cancel (``a_lin == 0``) while the cell still contributes at second
+        order, the bound is ``sqrt(maxstep / b_quad)`` -- not "no bound". Only
+        a step that moves nothing, both terms zero, may go uncapped.
+        """
+        maxstep, b_quad = 0.2, 5.0
+        st = make_lbfgs_state(4, 1, HISTORY_SIZE, wp.vec3d, device)
+        st["d0"].assign(np.array([-1.0]))  # a valid descent direction
+        st["n_loop"].assign(np.array([2], np.int32))
+        st["history_count"].assign(np.array([2], np.int32))
+        st["dmax"].assign(np.array([0.0]))  # no linear displacement
+        st["dquad"].assign(np.array([b_quad]))
+
+        lbfgs_prepare_step(
+            gg=st["gg"],
+            d0=st["d0"],
+            dmax=st["dmax"],
+            dquad=st["dquad"],
+            alpha_step=st["alpha_step"],
+            status=st["status"],
+            end=st["end"],
+            n_loop=st["n_loop"],
+            history_count=st["history_count"],
+            maxstep=maxstep,
+        )
+        wp.synchronize()
+
+        alpha = float(st["alpha_step"].numpy()[0])
+        np.testing.assert_allclose(alpha, np.sqrt(maxstep / b_quad), rtol=1e-12)
+        # The whole point: the displacement it produces respects the bound.
+        np.testing.assert_allclose(b_quad * alpha**2, maxstep, rtol=1e-12)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_motionless_step_is_left_uncapped(self, device):
+        """Both terms zero is the one case that legitimately has no bound."""
+        st = make_lbfgs_state(4, 1, HISTORY_SIZE, wp.vec3d, device)
+        st["d0"].assign(np.array([-1.0]))
+        st["n_loop"].assign(np.array([2], np.int32))
+        st["history_count"].assign(np.array([2], np.int32))
+        st["dmax"].assign(np.array([0.0]))
+        st["dquad"].assign(np.array([0.0]))
+
+        lbfgs_prepare_step(
+            gg=st["gg"],
+            d0=st["d0"],
+            dmax=st["dmax"],
+            dquad=st["dquad"],
+            alpha_step=st["alpha_step"],
+            status=st["status"],
+            end=st["end"],
+            n_loop=st["n_loop"],
+            history_count=st["history_count"],
+            maxstep=0.2,
+        )
+        wp.synchronize()
+        # alpha stays at the full quasi-Newton step rather than being shrunk.
+        np.testing.assert_allclose(st["alpha_step"].numpy()[0], 1.0)
+
+    @pytest.mark.parametrize("device", DEVICES)
     def test_ascent_direction_falls_back_to_steepest_descent(self, device):
         """A direction that points uphill is replaced, not followed.
 

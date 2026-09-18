@@ -419,10 +419,17 @@ def _alpha_cap(
     The form used here has no subtraction, so it stays accurate all the way
     down to ``b_quad = 0``.
 
+    A purely quadratic displacement is capped too. With ``a_lin == 0`` the
+    expression above reduces to ``sqrt(maxstep / b_quad)``, which is the right
+    bound, so the only case that may go uncapped is a step that does not move
+    anything: **both** contributions zero. Returning early on ``a_lin == 0``
+    alone would let a cell whose first-order displacement happens to cancel
+    take an unbounded step.
+
     A non-positive ``maxstep`` disables the trust region.
     """
     zero = wp.float64(0.0)
-    if maxstep <= zero or a_lin <= zero:
+    if maxstep <= zero or (a_lin <= zero and b_quad <= zero):
         return wp.float64(_BIG)
     disc = a_lin * a_lin + wp.float64(4.0) * b_quad * maxstep
     return (wp.float64(2.0) * maxstep) / (a_lin + wp.sqrt(disc))
