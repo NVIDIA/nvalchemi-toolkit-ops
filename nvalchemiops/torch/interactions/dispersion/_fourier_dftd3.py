@@ -974,12 +974,11 @@ def fourier_dftd3(
     # Whether the parameters cover the system is a property of the setup, not of the step.
     # Reading the answer back forces a device synchronisation, which breaks a compile graph
     # and is illegal outright during CUDA graph capture, so the check is skipped in both.
-    if (
-        not torch.compiler.is_compiling()
-        and not _capturing()
-        and bool((species_index < 0).any())
-    ):
-        missing = torch.unique(numbers[species_index < 0]).tolist()
+    # Atomic number zero marks a padding atom, which the kernels are built to skip; only a
+    # real element that the decomposition does not cover is an error.
+    uncovered = (species_index < 0) & (numbers != 0)
+    if not torch.compiler.is_compiling() and not _capturing() and bool(uncovered.any()):
+        missing = torch.unique(numbers[uncovered]).tolist()
         raise ValueError(
             f"Atomic numbers {missing} are not covered by fd3_params. Rebuild the "
             f"decomposition with every species present in the system."
@@ -1022,7 +1021,14 @@ def fourier_dftd3(
 
     # One mesh slab per (system, species, rank); the composite index routes each atom to its
     # own slab so the spread cost scales with the rank rather than the slab count.
-    group_idx = (batch_idx.long() * n_species + species_index.long()).to(torch.int32)
+    # Padding atoms keep a negative group so that every kernel's guard fires. Folding the
+    # system index in first would make a padding atom in system 1 or later land on a valid
+    # slab belonging to an earlier system, where the guard cannot see it.
+    group_idx = torch.where(
+        species_index < 0,
+        torch.full_like(species_index, -1, dtype=torch.long),
+        batch_idx.long() * n_species + species_index.long(),
+    ).to(torch.int32)
     if setup is None:
         setup = FourierD3Setup.build(
             cells, n_species, (mesh_nx, mesh_ny, mesh_nz), spline_order, exact_moduli

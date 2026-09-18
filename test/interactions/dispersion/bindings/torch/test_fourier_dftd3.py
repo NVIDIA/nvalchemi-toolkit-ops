@@ -418,6 +418,73 @@ class TestNeighbourFormats:
 
 
 @pytest.mark.gpu
+class TestPaddingAtoms:
+    """Atomic number zero, which the public docstring calls a padding atom.
+
+    The kernels are built for it -- the coordination passes skip such an atom and the mesh
+    passes guard on a negative channel -- so the wrapper has to let it through rather than
+    rejecting it as an uncovered element.
+    """
+
+    @staticmethod
+    def _pad(system, count):
+        """Append ``count`` padding atoms, with no neighbours of their own."""
+        device = system["positions"].device
+        n_atoms = system["n_atoms"]
+        padded = dict(system)
+        padded["positions"] = torch.cat(
+            [
+                system["positions"],
+                torch.zeros(count, 3, dtype=system["positions"].dtype, device=device),
+            ]
+        )
+        padded["numbers"] = torch.cat(
+            [system["numbers"], torch.zeros(count, dtype=torch.int32, device=device)]
+        )
+        # The CSR pointer simply stops advancing: padding atoms own no edges.
+        padded["neighbor_ptr"] = torch.cat(
+            [system["neighbor_ptr"], system["neighbor_ptr"][-1].repeat(count)]
+        )
+        padded["n_atoms"] = n_atoms + count
+        return padded
+
+    def test_padding_atoms_change_nothing(self):
+        """Appending padding must leave the energy, forces and virial untouched."""
+        system = _system("cuda:0")
+        plain = _evaluate(system, compute_virial=True)
+        padded = _evaluate(self._pad(system, 5), compute_virial=True)
+        n_atoms = system["n_atoms"]
+        np.testing.assert_allclose(
+            padded[0].cpu().numpy(), plain[0].cpu().numpy(), rtol=1e-12
+        )
+        np.testing.assert_allclose(
+            padded[1][:n_atoms].cpu().numpy(), plain[1].cpu().numpy(), atol=1e-12
+        )
+        np.testing.assert_allclose(
+            padded[2].cpu().numpy(), plain[2].cpu().numpy(), atol=1e-12
+        )
+
+    def test_padding_atoms_feel_no_force(self):
+        """A padding atom is not a particle, so nothing may push it."""
+        system = _system("cuda:0")
+        n_atoms = system["n_atoms"]
+        forces = _evaluate(self._pad(system, 5))[1]
+        assert float(forces[n_atoms:].abs().max()) == 0.0
+
+    def test_an_uncovered_real_element_is_still_rejected(self):
+        """Relaxing the check for padding must not relax it for a missing species."""
+        system = _system("cuda:0")
+        numbers = system["numbers"].clone()
+        # Nitrogen: inside the table's extent, but not one of the decomposed species. A
+        # number beyond the table would fail on the lookup itself rather than on the check.
+        numbers[0] = 7
+        rejected = dict(system)
+        rejected["numbers"] = numbers
+        with pytest.raises(ValueError, match="not covered by fd3_params"):
+            _evaluate(rejected)
+
+
+@pytest.mark.gpu
 class TestBatching:
     """Several systems in one call.
 

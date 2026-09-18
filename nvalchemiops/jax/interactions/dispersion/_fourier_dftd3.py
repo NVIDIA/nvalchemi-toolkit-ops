@@ -421,7 +421,12 @@ def fourier_dftd3(
     n_species, rank = params.n_species, params.rank
     n_groups = num_systems * n_species
 
-    group_idx = (batch_idx * n_species + species_index).astype(jnp.int32)
+    # Padding atoms, and any species the decomposition does not cover, keep a negative group
+    # so that every kernel's guard fires. Folding the system index in first would make a
+    # padding atom in system 1 or later land on a valid slab belonging to an earlier system.
+    group_idx = jnp.where(
+        species_index < 0, -1, batch_idx * n_species + species_index
+    ).astype(jnp.int32)
     cell_inv_t = jnp.swapaxes(jnp.linalg.inv(cells), -1, -2)
     cell_inv_grouped = jnp.repeat(cell_inv_t, n_species, axis=0)
 
