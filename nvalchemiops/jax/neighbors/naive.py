@@ -1942,7 +1942,7 @@ def naive_neighbor_list(
         if return_neighbor_list:
             active = nm_out != int(fill_value)
             if coo_capacity is not None and pbc is not None:
-                base = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                base, plan = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
                     nm_out,
                     nn_out,
                     capacity=coo_capacity,
@@ -1951,7 +1951,7 @@ def naive_neighbor_list(
                     metadata_valid=jnp.ones((), dtype=jnp.bool_),
                 )
             elif coo_capacity is not None:
-                base = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                base, plan = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
                     nm_out,
                     nn_out,
                     capacity=coo_capacity,
@@ -1959,6 +1959,7 @@ def naive_neighbor_list(
                     metadata_valid=jnp.ones((), dtype=jnp.bool_),
                 )
             elif pbc is not None:
+                plan = None
                 nl, nptr, nl_shifts = get_neighbor_list_from_neighbor_matrix(
                     nm_out,
                     num_neighbors=nn_out,
@@ -1967,6 +1968,7 @@ def naive_neighbor_list(
                 )
                 base = (nl, nptr, nl_shifts)
             else:
+                plan = None
                 nl, nptr = get_neighbor_list_from_neighbor_matrix(
                     nm_out,
                     num_neighbors=nn_out,
@@ -1976,11 +1978,11 @@ def naive_neighbor_list(
             # Repack per-pair geometry (and pair_fn outputs) into COO order aligned
             # with ``nl``.  Eager-only, like the index conversion.
             distances_out, vectors_out = coo_pack_pair_geometry(
-                active, distances_out, vectors_out, capacity=coo_capacity
+                active, distances_out, vectors_out, capacity=coo_capacity, plan=plan
             )
             if pair_fn is not None:
                 pe_out, pf_out = coo_pack_pair_geometry(
-                    active, pe_out, pf_out, capacity=coo_capacity
+                    active, pe_out, pf_out, capacity=coo_capacity, plan=plan
                 )
         elif pbc is not None:
             base = (nm_out, nn_out, shifts_out)

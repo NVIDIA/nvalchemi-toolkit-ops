@@ -515,7 +515,7 @@ def get_fixed_capacity_neighbor_list_from_neighbor_matrix(
     --------
     get_neighbor_list_from_neighbor_matrix : Compact eager conversion.
     """
-    return _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
+    packed, _plan = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
         neighbor_matrix,
         num_neighbors,
         capacity,
@@ -523,6 +523,7 @@ def get_fixed_capacity_neighbor_list_from_neighbor_matrix(
         fill_value=fill_value,
         metadata_valid=jnp.ones((), dtype=jnp.bool_),
     )
+    return packed
 
 
 def _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
@@ -533,7 +534,7 @@ def _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
     fill_value: int = -1,
     *,
     metadata_valid: jax.Array,
-) -> tuple[jax.Array, ...]:
+) -> tuple[tuple[jax.Array, ...], tuple[jax.Array, jax.Array, jax.Array]]:
     """Pack fixed COO topology with raw-count recovery metadata."""
     capacity = int(capacity)
     if capacity < 0:
@@ -547,10 +548,11 @@ def _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
     )
     metadata_valid = jnp.asarray(metadata_valid, dtype=jnp.bool_)
     active_mask = jnp.where(metadata_valid, fill_mask & count_mask, fill_mask)
-    flat_indices, valid_slots, _active_count = _fixed_capacity_flat_indices(
+    plan = _fixed_capacity_flat_indices(
         active_mask,
         capacity,
     )
+    flat_indices, valid_slots, _active_count = plan
     if neighbor_matrix.size == 0:
         neighbor_list = jnp.full(
             (2, capacity),
@@ -569,13 +571,16 @@ def _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
                 dtype=neighbor_shift_matrix.dtype,
             )
             return (
-                neighbor_list,
-                neighbor_ptr,
-                neighbor_list_shifts,
-                recovery_counts,
-                metadata_valid,
+                (
+                    neighbor_list,
+                    neighbor_ptr,
+                    neighbor_list_shifts,
+                    recovery_counts,
+                    metadata_valid,
+                ),
+                plan,
             )
-        return neighbor_list, neighbor_ptr, recovery_counts, metadata_valid
+        return (neighbor_list, neighbor_ptr, recovery_counts, metadata_valid), plan
     source_indices = flat_indices // matrix_width if matrix_width else flat_indices
     flat_neighbor_matrix = neighbor_matrix.reshape(-1)
     target_indices = jnp.take(flat_neighbor_matrix, flat_indices, mode="clip")
@@ -619,13 +624,16 @@ def _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
             jnp.zeros_like(flat_shifts),
         )
         return (
-            neighbor_list,
-            neighbor_ptr,
-            neighbor_list_shifts,
-            recovery_counts,
-            metadata_valid,
+            (
+                neighbor_list,
+                neighbor_ptr,
+                neighbor_list_shifts,
+                recovery_counts,
+                metadata_valid,
+            ),
+            plan,
         )
-    return neighbor_list, neighbor_ptr, recovery_counts, metadata_valid
+    return (neighbor_list, neighbor_ptr, recovery_counts, metadata_valid), plan
 
 
 def coo_pack_pair_geometry(
@@ -633,6 +641,7 @@ def coo_pack_pair_geometry(
     distances: jax.Array | None = None,
     vectors: jax.Array | None = None,
     capacity: int | None = None,
+    plan: tuple[jax.Array, jax.Array, jax.Array] | None = None,
 ) -> tuple[jax.Array | None, jax.Array | None]:
     """Repack matrix-layout per-pair geometry into COO order.
 
@@ -654,16 +663,23 @@ def coo_pack_pair_geometry(
         Per-pair displacement vectors in matrix layout, or ``None``.
     capacity : int, optional
         Static number of output pairs. Unused tail entries are zero.
+    plan : tuple of jax.Array, optional
+        Precomputed ``(flat_indices, valid_slots, active_count)`` from
+        :func:`_fixed_capacity_flat_indices`. It is used only with a static
+        ``capacity`` and keeps companion pair outputs in the exact same order.
+
     Returns
     -------
     tuple of (jax.Array | None, jax.Array | None)
         ``(distances, vectors)`` in COO layout, each unchanged if ``None``.
     """
     if capacity is None:
+        if plan is not None:
+            raise ValueError("plan requires a static capacity")
         flat_active = jnp.nonzero(active_mask.reshape(-1))[0]
         valid_slots = None
     else:
-        flat_active, valid_slots, _ = _fixed_capacity_flat_indices(
+        flat_active, valid_slots, _ = plan or _fixed_capacity_flat_indices(
             active_mask,
             capacity,
         )

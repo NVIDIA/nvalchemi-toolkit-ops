@@ -1673,8 +1673,8 @@ def _batch_query_cell_list_with_diagnostics(
         cells_per_system_i32 = cells_per_system.astype(jnp.int32)
         sorted_positions = jnp.zeros((total_atoms, 3), dtype=positions.dtype)
         sorted_atom_periodic_shifts = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
-        # ``cell_to_system`` is scratch the launcher's
-        # ``_build_cell_to_system_map`` fills (>= total_cells entries).
+        # The map writes the live cell range before stale metadata is reported,
+        # so sizing it from storage capacity is memory-safe.
         cell_to_system = jnp.zeros(
             max(atoms_per_cell_count.shape[0], 1), dtype=jnp.int32
         )
@@ -1952,6 +1952,8 @@ def _batch_cell_list_pair_outputs_forward(
         cells_per_system_i32 = jnp.prod(cells_per_dimension, axis=1).astype(jnp.int32)
         sorted_positions = jnp.zeros((total_atoms, 3), dtype=positions.dtype)
         sorted_atom_periodic_shifts = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
+        # The map writes the live cell range before stale metadata is reported,
+        # so storage-capacity sizing remains memory-safe.
         cell_to_system = jnp.zeros(
             max(atoms_per_cell_count.shape[0], 1), dtype=jnp.int32
         )
@@ -2630,6 +2632,7 @@ def batch_cell_list(
             # COO inherits the same compact-row contract).
             active = nm_out != total_atoms
             if coo_capacity is None:
+                plan = None
                 nl, nptr, nl_shifts = get_neighbor_list_from_neighbor_matrix(
                     nm_out,
                     num_neighbors=nn_out,
@@ -2638,7 +2641,7 @@ def batch_cell_list(
                 )
                 base = (nl, nptr, nl_shifts)
             else:
-                base = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                base, plan = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
                     nm_out,
                     raw_counts,
                     capacity=coo_capacity,
@@ -2649,11 +2652,11 @@ def batch_cell_list(
             # Repack per-pair geometry (and pair_fn outputs) into the same COO order
             # as ``nl``.  Eager-only, like the index conversion.
             distances_out, vectors_out = coo_pack_pair_geometry(
-                active, distances_out, vectors_out, capacity=coo_capacity
+                active, distances_out, vectors_out, capacity=coo_capacity, plan=plan
             )
             if pair_fn is not None:
                 pe_out, pf_out = coo_pack_pair_geometry(
-                    active, pe_out, pf_out, capacity=coo_capacity
+                    active, pe_out, pf_out, capacity=coo_capacity, plan=plan
                 )
         else:
             if fill_value is not None and int(fill_value) != total_atoms:
@@ -2703,7 +2706,7 @@ def batch_cell_list(
 
     if return_neighbor_list:
         if coo_capacity is not None:
-            return _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
+            packed, _plan = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
                 neighbor_matrix,
                 raw_counts,
                 capacity=coo_capacity,
@@ -2711,6 +2714,7 @@ def batch_cell_list(
                 fill_value=positions.shape[0],
                 metadata_valid=metadata_valid,
             )
+            return packed
         neighbor_list, neighbor_ptr, neighbor_list_shifts = (
             get_neighbor_list_from_neighbor_matrix(
                 neighbor_matrix,

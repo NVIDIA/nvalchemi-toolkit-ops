@@ -3476,6 +3476,7 @@ def cell_list(
                 # contract).  Callers map back via ``target_indices``.
                 active = nm_out != positions.shape[0]
                 if coo_capacity is None:
+                    plan = None
                     nl, nptr, nl_shifts = get_neighbor_list_from_neighbor_matrix(
                         nm_out,
                         num_neighbors=nn_out,
@@ -3484,23 +3485,25 @@ def cell_list(
                     )
                     base = (nl, nptr, nl_shifts)
                 else:
-                    base = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
-                        nm_out,
-                        raw_counts,
-                        capacity=coo_capacity,
-                        neighbor_shift_matrix=shifts_out,
-                        fill_value=positions.shape[0],
-                        metadata_valid=metadata_valid,
+                    base, plan = (
+                        _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                            nm_out,
+                            raw_counts,
+                            capacity=coo_capacity,
+                            neighbor_shift_matrix=shifts_out,
+                            fill_value=positions.shape[0],
+                            metadata_valid=metadata_valid,
+                        )
                     )
                 # Repack per-pair geometry (and pair_fn outputs) into the same COO
                 # order as ``nl`` so they index-align with the neighbor list.
                 # Eager-only, like the index conversion.
                 distances_out, vectors_out = coo_pack_pair_geometry(
-                    active, distances_out, vectors_out, capacity=coo_capacity
+                    active, distances_out, vectors_out, capacity=coo_capacity, plan=plan
                 )
                 if pair_fn is not None:
                     pe_out, pf_out = coo_pack_pair_geometry(
-                        active, pe_out, pf_out, capacity=coo_capacity
+                        active, pe_out, pf_out, capacity=coo_capacity, plan=plan
                     )
             else:
                 if fill_value is not None and int(fill_value) != positions.shape[0]:
@@ -3554,7 +3557,7 @@ def cell_list(
 
     if return_neighbor_list:
         if coo_capacity is not None:
-            return _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
+            packed, _plan = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
                 neighbor_matrix,
                 raw_counts,
                 capacity=coo_capacity,
@@ -3562,6 +3565,7 @@ def cell_list(
                 fill_value=positions.shape[0],
                 metadata_valid=metadata_valid,
             )
+            return packed
         neighbor_list, neighbor_ptr, neighbor_list_shifts = (
             get_neighbor_list_from_neighbor_matrix(
                 neighbor_matrix,
