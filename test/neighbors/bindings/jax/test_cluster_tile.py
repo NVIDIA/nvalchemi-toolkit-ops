@@ -28,11 +28,14 @@ from nvalchemiops.jax.neighbors import _cluster_tile_preload
 from nvalchemiops.jax.neighbors.cluster_tile import (
     _CLUSTER_TILE_QUERIES,
     TILE_GROUP_SIZE,
+    allocate_cluster_tile_list,
     build_cluster_tile_list,
     cluster_tile_neighbor_list,
     estimate_cluster_tile_list_sizes,
+    query_cluster_tile,
     query_cluster_tile_coo,
 )
+from nvalchemiops.neighbors.neighbor_utils import TileBufferOverflow
 
 from .conftest import requires_gpu
 
@@ -139,6 +142,7 @@ class TestTileNeighborListCorrectness:
                 2.0,
                 cell,
                 max_neighbors=32,
+                max_tiles_per_group=2,
             )
             return (
                 neighbor_matrix.astype(pos.dtype).sum()
@@ -223,6 +227,7 @@ class TestClusterTileGraphPreload:
                 1.0,
                 cell,
                 max_neighbors=32,
+                max_tiles_per_group=1,
             )
 
         neighbor_matrix, num_neighbors, _shifts = query(positions)
@@ -250,6 +255,7 @@ class TestClusterTileGraphPreload:
                 1.0,
                 cell,
                 max_neighbors=32,
+                max_tiles_per_group=1,
             )
 
         first = query(positions)
@@ -420,6 +426,99 @@ class TestTileNeighborListErrors:
         with pytest.raises(ValueError, match="format"):
             cluster_tile_neighbor_list(positions, 1.0, cell, format="bogus")
 
+    def test_tile_buffer_overflow_raises(self):
+        """Eager neighbor and pair-output paths report tile-buffer overflow."""
+        positions = jnp.zeros((128, 3), dtype=jnp.float32)
+        cell = _orthorhombic_cell(12.0)
+
+        for return_distances in (False, True):
+            with pytest.raises(TileBufferOverflow) as caught:
+                cluster_tile_neighbor_list(
+                    positions,
+                    5.0,
+                    cell,
+                    max_neighbors=256,
+                    max_tiles_per_group=1,
+                    return_distances=return_distances,
+                )
+            assert caught.value.num_tiles > caught.value.max_tiles
+            assert caught.value.system_index is None
+
+
+class TestClusterTileBuildCapacity:
+    """Direct builders report required tile capacity before query conversion."""
+
+    def test_full_build_overflow_and_adequate_retry(self):
+        """An undersized caller buffer raises, then an adequate one preserves topology."""
+        positions = jnp.zeros((64, 3), dtype=jnp.float32)
+        cell = _orthorhombic_cell(12.0)
+        cutoff = 5.0
+
+        undersized = allocate_cluster_tile_list(
+            positions.shape[0], max_tiles_per_group=1
+        )
+        with pytest.raises(TileBufferOverflow) as caught:
+            build_cluster_tile_list(
+                positions,
+                cutoff,
+                cell,
+                max_tiles_per_group=256,
+                num_tiles=undersized[11],
+                tile_row_group=undersized[12],
+                tile_col_group=undersized[13],
+            )
+        assert caught.value.max_tiles == undersized[12].shape[0]
+        required = caught.value.num_tiles
+
+        adequate = allocate_cluster_tile_list(positions.shape[0], max_tiles_per_group=2)
+        state = build_cluster_tile_list(
+            positions,
+            cutoff,
+            cell,
+            max_tiles_per_group=256,
+            num_tiles=adequate[11],
+            tile_row_group=adequate[12],
+            tile_col_group=adequate[13],
+        )
+        assert int(state[11][0]) == required
+        neighbor_matrix, num_neighbors, shifts = query_cluster_tile(
+            state[0],
+            state[2],
+            state[3],
+            state[4],
+            state[11],
+            state[12],
+            state[13],
+            cell,
+            cutoff,
+            positions.shape[0],
+            64,
+        )
+        assert _matrix_to_pair_set_full(
+            neighbor_matrix, num_neighbors, shifts, positions.shape[0]
+        ) == _brute_force_pairs_full(
+            np.asarray(positions), np.asarray(cell), cutoff, pbc=True
+        )
+
+    def test_selective_build_checks_caller_tile_buffer(self):
+        """Selective rebuilds raise for caller buffers despite an ample sizing factor."""
+        positions = jnp.zeros((64, 3), dtype=jnp.float32)
+        cell = _orthorhombic_cell(12.0)
+        state = allocate_cluster_tile_list(positions.shape[0], max_tiles_per_group=1)
+        with pytest.raises(TileBufferOverflow) as caught:
+            build_cluster_tile_list(
+                positions,
+                5.0,
+                cell,
+                max_tiles_per_group=256,
+                rebuild_flags=jnp.array([True], dtype=jnp.bool_),
+                num_tiles=state[11],
+                tile_row_group=state[12],
+                tile_col_group=state[13],
+            )
+        assert caught.value.max_tiles == state[12].shape[0]
+        assert caught.value.num_tiles > caught.value.max_tiles
+
 
 class TestEstimateSizes:
     """Pure-Python sizing helper tests."""
@@ -496,6 +595,7 @@ class TestJaxClusterTileAutograd:
                 p,
                 1.5,
                 cell,
+                max_tiles_per_group=2,
                 return_distances=True,
                 return_vectors=True,
             )
@@ -524,6 +624,7 @@ class TestJaxClusterTileAutograd:
                 p,
                 5.0,
                 cell,
+                max_tiles_per_group=1,
                 return_distances=True,
                 return_vectors=True,
             )
@@ -582,6 +683,7 @@ class TestJaxClusterTileAutograd:
                 p,
                 1.5,
                 cell,
+                max_tiles_per_group=2,
                 return_distances=True,
                 return_vectors=True,
             )
@@ -608,6 +710,7 @@ class TestJaxClusterTileAutograd:
                 cutoff,
                 cell,
                 max_neighbors=64,
+                max_tiles_per_group=2,
                 return_distances=True,
                 return_vectors=True,
             )
@@ -947,6 +1050,7 @@ class TestJaxClusterTileCutoff2Selective:
                 2.0,
                 cell,
                 max_neighbors=64,
+                max_tiles_per_group=1,
                 format="coo",
                 rebuild_flags=jnp.array([False], dtype=jnp.bool_),
                 previous_num_tiles=num_tiles,
@@ -1000,6 +1104,7 @@ class TestJaxClusterTileCutoff2Selective:
                 positions,
                 2.0,
                 cell,
+                max_tiles_per_group=1,
                 max_neighbors=64,
                 format="coo",
                 rebuild_flags=runtime_rebuild_flags,
@@ -1323,12 +1428,7 @@ class TestJaxClusterTileNeighborListDispatcher:
 
 
 class TestJaxClusterTileTileSizing:
-    """The JAX tile buffer must geometry-size (concrete) / fall back (traced).
-
-    Guards the fix that stopped the JAX default/auto-select path from silently
-    undercounting dense high-cutoff systems where a fixed
-    ``max_tiles_per_group=256`` cannot cover all neighboring row groups.
-    """
+    """JAX estimates eager buffers and requires explicit bounds while tracing."""
 
     def test_geometry_sizing_scales_with_cutoff_when_concrete(self):
         from nvalchemiops.jax.neighbors.cluster_tile import (
@@ -1347,7 +1447,43 @@ class TestJaxClusterTileTileSizing:
         # 25 A on this cell needs ~ngroup neighbour groups per row (dense).
         assert high >= 1024
 
-    def test_traced_inputs_fall_back_to_ngroup(self):
+    def test_one_group_eager_sizing_returns_one(self):
+        """Concrete one-group systems retain the minimum tile capacity."""
+        n = TILE_GROUP_SIZE
+        state = build_cluster_tile_list(
+            jnp.zeros((n, 3), dtype=jnp.float32),
+            5.0,
+            _orthorhombic_cell(12.0),
+        )
+        assert state[12].shape == (1,)
+        assert int(state[11][0]) == 1
+
+    def test_one_group_jit_without_bound_raises(self):
+        """The public build requires an explicit bound under JAX JIT."""
+        positions = jnp.zeros((TILE_GROUP_SIZE, 3), dtype=jnp.float32)
+        cell = _orthorhombic_cell(12.0)
+
+        @jax.jit
+        def build(positions):
+            return build_cluster_tile_list(positions, 5.0, cell)
+
+        with pytest.raises(ValueError, match="static Python integer"):
+            build(positions)
+
+    def test_one_group_jit_with_explicit_bound_succeeds(self):
+        """The same public build succeeds with a static explicit bound."""
+        positions = jnp.zeros((TILE_GROUP_SIZE, 3), dtype=jnp.float32)
+        cell = _orthorhombic_cell(12.0)
+
+        @jax.jit
+        def build(positions):
+            return build_cluster_tile_list(positions, 5.0, cell, max_tiles_per_group=1)
+
+        state = build(positions)
+        state[11].block_until_ready()
+        assert int(state[11][0]) == 1
+
+    def test_traced_inputs_require_explicit_bound(self):
         from nvalchemiops.jax.neighbors.cluster_tile import (
             _tile_buffer_max_tiles_per_group,
         )
@@ -1355,15 +1491,9 @@ class TestJaxClusterTileTileSizing:
         n = 2048  # ngroup = 64
         cell = _orthorhombic_cell(20.0)
 
-        # Tracing positions (e.g. grad/jit) -> trace-safe ngroup fallback.
+        # Geometry-dependent sizing cannot run while JAX is tracing the call.
         def f(p):
             return _tile_buffer_max_tiles_per_group(p, n, 5.0, cell)
 
-        captured = {}
-
-        def grab(p):
-            captured["mtpg"] = f(p)
-            return p.sum()
-
-        jax.grad(grab)(jnp.zeros((n, 3), dtype=jnp.float32))
-        assert captured["mtpg"] == 64  # ngroup, capacity ngroup**2 (no overflow)
+        with pytest.raises(ValueError, match="static Python integer"):
+            jax.make_jaxpr(f)(jnp.zeros((n, 3), dtype=jnp.float32))
