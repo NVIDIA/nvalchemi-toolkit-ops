@@ -349,6 +349,16 @@ class TestNeighbourFormats:
                 unit_shifts=jnp.asarray(shifts[keep][order], dtype=jnp.int32),
             )
 
+    def test_a_mesh_shorter_than_the_stencil_is_refused(self, device, system):
+        """The order-4 stencil would wrap onto a shorter axis and revisit a node."""
+        with pytest.raises(ValueError, match="at least"):
+            _evaluate(system, mesh_dimensions=(2, 2, 2), spline_order=4)
+
+    def test_a_spacing_too_coarse_for_the_stencil_is_refused(self, device, system):
+        """The spacing route is held to the same minimum as explicit dimensions."""
+        with pytest.raises(ValueError, match="mesh_spacing"):
+            _evaluate(system, mesh_dimensions=None, mesh_spacing=100.0, spline_order=4)
+
     def test_rejects_both_formats(self, device, system):
         """Supplying both neighbour formats is an error."""
         with pytest.raises(ValueError, match="Cannot provide both"):

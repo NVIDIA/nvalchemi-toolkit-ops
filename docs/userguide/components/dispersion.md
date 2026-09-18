@@ -1046,6 +1046,14 @@ so prefer an even order unless you have measured otherwise.
 
 ### Choosing a Mesh
 
+```{warning}
+Every mesh axis must hold at least `spline_order` nodes. The interpolation stencil is that
+wide and wraps periodically, so a shorter axis makes two stencil points land on the same node
+and the interpolation is no longer the B-spline the gather differentiates. Equality is
+allowed --- the stencil then covers each node exactly once --- and the same minimum is applied
+to `mesh_dimensions`, to a mesh derived from `mesh_spacing`, and to `FourierD3Setup.build`.
+```
+
 Exactly one of `mesh_dimensions` or `mesh_spacing` is required; there is no accuracy-based
 default to fall back on, so neither and both are errors. As a starting point, from the
 FourierD3 paper:

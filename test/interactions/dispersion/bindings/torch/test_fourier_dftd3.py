@@ -617,6 +617,38 @@ class TestMeshAndUnits:
             )
             assert fine < coarse, f"order {order} not converging: {coarse} -> {fine}"
 
+    @pytest.mark.parametrize("mesh_size", [1, 2, 3])
+    def test_a_mesh_shorter_than_the_stencil_is_refused(self, mesh_size):
+        """The order-4 stencil wraps onto a shorter axis and visits a node twice.
+
+        Positive is not sufficient: the interpolation stops being the B-spline that the
+        gather differentiates. Without the check this surfaced as a tensor-size error from
+        the spline moduli, which says nothing about the cause.
+        """
+        system = _system("cuda:0")
+        with pytest.raises(ValueError, match="at least"):
+            _evaluate(system, mesh_dimensions=(mesh_size,) * 3, spline_order=4)
+
+    def test_a_mesh_equal_to_the_stencil_is_allowed(self):
+        """At equality every stencil point still lands on its own node."""
+        system = _system("cuda:0")
+        energy = _evaluate(system, mesh_dimensions=(4, 4, 4), spline_order=4)[0]
+        assert torch.isfinite(energy).all()
+
+    def test_a_spacing_too_coarse_for_the_stencil_is_refused(self):
+        """The same minimum applies however the mesh was arrived at."""
+        system = _system("cuda:0")
+        with pytest.raises(ValueError, match="mesh_spacing"):
+            _evaluate(system, mesh_dimensions=None, mesh_spacing=100.0, spline_order=4)
+
+    def test_the_setup_applies_the_same_minimum(self):
+        """A setup is the third way to arrive at a mesh, and is held to the same rule."""
+        system = _system("cuda:0")
+        with pytest.raises(ValueError, match="at least"):
+            FourierD3Setup.build(
+                system["cell"], system["params"].n_species, (2, 2, 2), spline_order=4
+            )
+
     def test_requires_exactly_one_mesh_option(self):
         """Neither or both of the two ways to size the mesh is an error.
 

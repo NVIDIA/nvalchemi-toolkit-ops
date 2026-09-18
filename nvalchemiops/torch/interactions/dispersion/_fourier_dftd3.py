@@ -733,7 +733,11 @@ class FourierD3Setup:
         """
         cells = cell.reshape(-1, 3, 3)
         dtype, device = cells.dtype, cells.device
-        mesh_nx, mesh_ny, mesh_nz = (int(n) for n in mesh_dimensions)
+        mesh_nx, mesh_ny, mesh_nz = _check_mesh_supports_stencil(
+            tuple(int(n) for n in mesh_dimensions),
+            spline_order,
+            "FourierD3Setup.build",
+        )
         cell_inv_t = torch.linalg.inv(cells).transpose(-1, -2).contiguous()
         millers = (
             torch.fft.fftfreq(mesh_nx, d=1.0 / mesh_nx, dtype=dtype, device=device),
@@ -812,13 +816,32 @@ class FourierD3Setup:
             )
 
 
-def _resolve_mesh(mesh_dimensions, mesh_spacing, cells):
+def _check_mesh_supports_stencil(mesh, spline_order, origin):
+    """Refuse a mesh too short to hold the interpolation stencil.
+
+    Every axis must hold at least ``spline_order`` nodes. The stencil is that wide and wraps
+    periodically, so on a shorter axis two stencil points land on the same node and the
+    interpolation stops being the B-spline the gather differentiates. Equality is fine: the
+    stencil then covers each node exactly once.
+    """
+    if min(mesh) < spline_order:
+        raise ValueError(
+            f"{origin} gives mesh {mesh}, but every axis must hold at least "
+            f"spline_order = {spline_order} nodes. The interpolation stencil is that wide "
+            f"and wraps periodically, so a shorter axis would visit a node twice."
+        )
+    return mesh
+
+
+def _resolve_mesh(mesh_dimensions, mesh_spacing, cells, spline_order):
     """Settle the mesh size, requiring exactly one of the two ways of asking for it.
 
     Unlike PME there is no accuracy-based estimator to fall back on, so leaving both unset is
     an error rather than a guess. When a spacing is given the largest cell in the batch sets
     the size, since one mesh serves every system and sizing from the first would under-resolve
     the rest.
+
+    Either route is held to the same minimum, ``spline_order`` nodes per axis.
     """
     if (mesh_dimensions is None) == (mesh_spacing is None):
         raise ValueError(
@@ -830,12 +853,18 @@ def _resolve_mesh(mesh_dimensions, mesh_spacing, cells):
             raise ValueError(
                 f"mesh_dimensions must be three positive integers, got {mesh_dimensions}."
             )
-        return tuple(int(n) for n in mesh_dimensions)
+        return _check_mesh_supports_stencil(
+            tuple(int(n) for n in mesh_dimensions), spline_order, "mesh_dimensions"
+        )
     if mesh_spacing <= 0.0:
         raise ValueError(f"mesh_spacing must be positive, got {mesh_spacing}.")
     lengths = torch.linalg.norm(cells, dim=-1).max(dim=0).values
-    return tuple(
-        max(1, int(torch.ceil(length / mesh_spacing).item())) for length in lengths
+    return _check_mesh_supports_stencil(
+        tuple(
+            max(1, int(torch.ceil(length / mesh_spacing).item())) for length in lengths
+        ),
+        spline_order,
+        f"mesh_spacing = {mesh_spacing}",
     )
 
 
@@ -1092,7 +1121,9 @@ def fourier_dftd3(
         mesh_nx, mesh_ny, mesh_nz = setup.mesh_dimensions
         spline_order = setup.spline_order
     else:
-        mesh_nx, mesh_ny, mesh_nz = _resolve_mesh(mesh_dimensions, mesh_spacing, cells)
+        mesh_nx, mesh_ny, mesh_nz = _resolve_mesh(
+            mesh_dimensions, mesh_spacing, cells, spline_order
+        )
     n_species, rank = params.n_species, params.rank
     n_channels = n_species * rank
 
