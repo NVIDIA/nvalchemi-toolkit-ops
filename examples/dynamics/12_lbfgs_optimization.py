@@ -357,7 +357,8 @@ else:
 
 # %%
 # Plot convergence
-# ----------------#
+# ----------------
+#
 # The energy is plotted for interest, not as a convergence signal. Without a
 # line search there is no Armijo test forcing it down, so it may rise on an
 # individual step; the *force* is what the optimizer drives to zero and what
