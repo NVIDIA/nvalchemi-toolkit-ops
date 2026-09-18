@@ -411,6 +411,108 @@ class TestPrecision:
         )
 
 
+# A genuinely skewed lattice. A cubic cell's inverse is diagonal and equal to its own
+# transpose, so a cubic test cannot detect a confusion between the two.
+TRICLINIC = np.array([[9.0, 0.0, 0.0], [2.6, 8.4, 0.0], [1.8, -2.1, 9.3]])
+
+
+@pytest.mark.gpu
+class TestSkewedCell:
+    """The JAX binding's own coordinate transforms, in a cell that can detect them."""
+
+    @staticmethod
+    def _case():
+        """One skewed system with its neighbour list, as plain NumPy plus JAX arrays."""
+        rng = np.random.default_rng(0)
+        c6ab, cn_ref, species = _reference_tables()
+        max_z = c6ab.shape[0]
+        rcov = np.zeros(max_z)
+        rcov[[1, 6, 8]] = [0.6, 1.2, 1.1]
+        r4r2 = np.zeros(max_z)
+        r4r2[[1, 6, 8]] = [1.0, 1.4, 1.2]
+        n_atoms = 8
+        positions = rng.uniform(0.0, 1.0, (n_atoms, 3)) @ TRICLINIC
+        numbers = rng.choice(species, n_atoms)
+        targets, pointer, shifts, _ = _neighbour_list(positions, TRICLINIC, R_CUT)
+        sources = np.repeat(np.arange(n_atoms), np.diff(pointer))
+        return dict(
+            positions=positions,
+            numbers=jnp.asarray(numbers, dtype=jnp.int32),
+            params=FourierD3Parameters.from_tables(rcov, r4r2, c6ab, cn_ref, species),
+            neighbor_list=jnp.asarray(np.stack([sources, targets]), dtype=jnp.int32),
+            neighbor_ptr=jnp.asarray(pointer, dtype=jnp.int32),
+            unit_shifts=jnp.asarray(shifts, dtype=jnp.int32),
+            n_atoms=n_atoms,
+        )
+
+    @staticmethod
+    def _call(case, positions, cell, compute_virial=False):
+        return fourier_dftd3(
+            jnp.asarray(positions),
+            case["numbers"],
+            **DAMPING,
+            fd3_params=case["params"],
+            cell=jnp.asarray(cell),
+            r_cut=R_CUT,
+            mesh_dimensions=MESH,
+            compute_virial=compute_virial,
+            neighbor_list=case["neighbor_list"],
+            neighbor_ptr=case["neighbor_ptr"],
+            unit_shifts=case["unit_shifts"],
+        )
+
+    def test_forces_match_finite_differences(self, device):
+        """Cartesian forces are the gradient of the energy in a skewed cell."""
+        case = self._case()
+        analytic = np.asarray(self._call(case, case["positions"], TRICLINIC)[1])
+        step = 1e-6
+        numerical = np.zeros_like(analytic)
+        for atom in range(case["n_atoms"]):
+            for axis in range(3):
+                shifted = []
+                for sign in (1.0, -1.0):
+                    moved = case["positions"].copy()
+                    moved[atom, axis] += sign * step
+                    shifted.append(float(self._call(case, moved, TRICLINIC)[0][0]))
+                numerical[atom, axis] = -(shifted[0] - shifted[1]) / (2.0 * step)
+        scale = np.abs(numerical).max()
+        assert scale > 0.0
+        np.testing.assert_allclose(analytic, numerical, atol=1e-6 * scale)
+
+    def test_virial_matches_finite_strain(self, device):
+        r"""All six independent strain derivatives, in the repository convention.
+
+        :math:`W = -\partial E/\partial u` with :math:`R' = R(I+u)`, :math:`C' = C(I+u)`.
+        """
+        case = self._case()
+        analytic = np.asarray(
+            self._call(case, case["positions"], TRICLINIC, compute_virial=True)[2][0]
+        )
+        step = 1e-6
+        for row, column in ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2)):
+            shifted = []
+            for sign in (1.0, -1.0):
+                displacement = np.zeros((3, 3))
+                displacement[row, column] += sign * step / 2.0
+                displacement[column, row] += sign * step / 2.0
+                if row == column:
+                    displacement[row, column] = sign * step
+                deformation = np.eye(3) + displacement
+                shifted.append(
+                    float(
+                        self._call(
+                            case,
+                            case["positions"] @ deformation,
+                            TRICLINIC @ deformation,
+                        )[0][0]
+                    )
+                )
+            numerical = -(shifted[0] - shifted[1]) / (2.0 * step)
+            assert abs(analytic[row, column] - numerical) < 1e-6 * max(
+                abs(numerical), np.abs(analytic).max()
+            ), f"component ({row}, {column}): {analytic[row, column]} vs {numerical}"
+
+
 @pytest.mark.gpu
 class TestJit:
     """Tracing behaviour."""

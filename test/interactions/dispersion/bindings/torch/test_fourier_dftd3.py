@@ -48,7 +48,7 @@ R_CUT = 4.0
 MESH = (32, 32, 32)
 
 
-def _system(device, dtype=None, n_atoms=8, box=9.0, seed=0):
+def _system(device, dtype=None, n_atoms=8, box=9.0, seed=0, cell=None):
     """A small periodic cell with its neighbour list in both formats.
 
     ``dtype`` defaults to ``torch.float64``, resolved on the call rather than written into
@@ -65,9 +65,15 @@ def _system(device, dtype=None, n_atoms=8, box=9.0, seed=0):
     r4r2 = np.zeros(max_z)
     r4r2[[1, 6, 8]] = [1.0, 1.4, 1.2]
 
-    positions = rng.uniform(0.0, box, (n_atoms, 3))
+    # A cell may be supplied to exercise a skewed lattice; positions are then drawn in
+    # fractional coordinates so the atoms sit inside it.
+    if cell is None:
+        cell = np.eye(3) * box
+        positions = rng.uniform(0.0, box, (n_atoms, 3))
+    else:
+        cell = np.asarray(cell, dtype=np.float64)
+        positions = rng.uniform(0.0, 1.0, (n_atoms, 3)) @ cell
     numbers = rng.choice(species, n_atoms)
-    cell = np.eye(3) * box
     targets, pointer, shifts, _ = _neighbour_list(positions, cell, R_CUT)
     sources = np.repeat(np.arange(n_atoms), np.diff(pointer))
 
@@ -205,6 +211,21 @@ def _batched(systems):
     }
 
 
+def _evaluate_at(system, positions=None, cell=None, **kwargs):
+    """Evaluate with the positions or cell replaced, leaving the neighbour list alone.
+
+    The list is built for the undeformed configuration and reused: a finite difference has to
+    hold the neighbour topology fixed, or it measures the list changing rather than the
+    energy.
+    """
+    if cell is not None:
+        kwargs["cell"] = cell
+    replaced = dict(system)
+    if positions is not None:
+        replaced["positions"] = positions
+    return _evaluate(replaced, **kwargs)
+
+
 def _evaluate(system, **kwargs):
     """Call the public API with the CSR neighbour list unless told otherwise."""
     arguments = dict(
@@ -329,6 +350,89 @@ def _decomposition_view(parameters):
         rank = parameters.rank
 
     return _View()
+
+
+# A genuinely skewed lattice. The inverse of a cubic cell is diagonal and so equal to its own
+# transpose, which makes a cubic test blind to a confusion between the two.
+TRICLINIC = np.array([[9.0, 0.0, 0.0], [2.6, 8.4, 0.0], [1.8, -2.1, 9.3]])
+
+
+@pytest.mark.gpu
+class TestSkewedCell:
+    """The binding's own coordinate transforms, in a cell that can detect them.
+
+    The Warp layer is covered separately. This exercises what the binding adds: the inverse
+    cell it builds for the mesh, and the Cartesian image shifts it derives from the cell.
+    """
+
+    @staticmethod
+    def _energy(system, positions=None, cell=None):
+        arguments = {}
+        if positions is not None:
+            arguments["positions"] = positions
+        if cell is not None:
+            arguments["cell"] = cell
+        return float(_evaluate_at(system, **arguments)[0])
+
+    def test_forces_match_finite_differences(self):
+        """Cartesian forces are the gradient of the energy in a skewed cell."""
+        system = _system("cuda:0", cell=TRICLINIC)
+        analytic = _evaluate(system)[1].cpu().numpy()
+        base = system["positions"].clone()
+        step = 1e-6
+        numerical = np.zeros_like(analytic)
+        for atom in range(len(base)):
+            for axis in range(3):
+                shifted = []
+                for sign in (1.0, -1.0):
+                    moved = base.clone()
+                    moved[atom, axis] += sign * step
+                    shifted.append(self._energy(system, positions=moved))
+                numerical[atom, axis] = -(shifted[0] - shifted[1]) / (2.0 * step)
+        scale = np.abs(numerical).max()
+        assert scale > 0.0
+        np.testing.assert_allclose(analytic, numerical, atol=1e-6 * scale)
+
+    def test_virial_matches_finite_strain(self):
+        r"""All six independent strain derivatives, in the repository convention.
+
+        ``conventions.md`` defines :math:`W = -\partial E/\partial u` with
+        :math:`R' = R(I+u)` and :math:`C' = C(I+u)`, which is the recipe applied here.
+        """
+        system = _system("cuda:0", cell=TRICLINIC)
+        analytic = _evaluate(system, compute_virial=True)[2][0].cpu().numpy()
+        base_positions = system["positions"].clone()
+        base_cell = system["cell"].clone()
+        identity = torch.eye(3, dtype=base_cell.dtype, device=base_cell.device)
+        step = 1e-6
+        for row, column in ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2)):
+            shifted = []
+            for sign in (1.0, -1.0):
+                displacement = torch.zeros_like(identity)
+                # Symmetric off-diagonal perturbation: the energy depends on the symmetric
+                # part of u to first order, so this is the derivative that is defined.
+                displacement[row, column] += sign * step / 2.0
+                displacement[column, row] += sign * step / 2.0
+                if row == column:
+                    displacement[row, column] = sign * step
+                deformation = identity + displacement
+                shifted.append(
+                    self._energy(
+                        system,
+                        positions=base_positions @ deformation,
+                        cell=base_cell @ deformation,
+                    )
+                )
+            numerical = -(shifted[0] - shifted[1]) / (2.0 * step)
+            assert abs(analytic[row, column] - numerical) < 1e-6 * max(
+                abs(numerical), np.abs(analytic).max()
+            ), f"component ({row}, {column}): {analytic[row, column]} vs {numerical}"
+
+    def test_the_virial_is_symmetric(self):
+        """Both contributions are symmetric by construction, so the total must be."""
+        system = _system("cuda:0", cell=TRICLINIC)
+        virial = _evaluate(system, compute_virial=True)[2][0].cpu().numpy()
+        np.testing.assert_allclose(virial, virial.T, atol=1e-12 * np.abs(virial).max())
 
 
 @pytest.mark.gpu
