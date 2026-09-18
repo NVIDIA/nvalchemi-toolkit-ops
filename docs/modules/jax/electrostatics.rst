@@ -20,23 +20,40 @@ estimated from traced inputs. ``miller_bounds`` is also a static shape control:
 under ``jax.jit``, pass it as a concrete tuple or build ``k_vectors`` outside
 the compiled function.
 Energy derivatives are defined for positions, charges, and cell. Setup values
-such as ``alpha`` and mesh controls are constants; precomputed reciprocal
-metadata such as ``k_vectors``, ``k_squared``, ``volume``, and ``cell_inv_t`` is
-accepted for cell-differentiated calls as static metadata that is assumed to
-correspond to the current ``cell``; cache-generation derivatives are not
-recovered. Energy-returning Ewald, PME, and slab paths support atom-weighted
+such as ``alpha`` and mesh controls are constants. The lower-level
+``ewald_reciprocal_space`` component follows the tangent carried by its
+``k_vectors`` argument. Vectors constructed from ``cell`` in the traced
+computation therefore contribute their reciprocal-cell derivative. A
+precomputed array, or one passed through ``jax.lax.stop_gradient``, has zero
+tangent and is fixed for that differentiation. Full
+``ewald_summation(k_vectors=...)`` and PME precomputed metadata treat explicit
+vectors as static metadata. Use ``ewald_reciprocal_space_from_miller_indices``
+or ``ewald_summation(miller_indices=...)`` for retained topology materialized
+from the live cell. Energy-returning Ewald, PME, and slab paths support atom-weighted
 losses such as ``(weights * energies).sum()`` for positions, charges, and
 supported cell derivatives. Monopole entry points provide the keyword-only
 ``energy_reduction`` option. The default, ``"atom"``, returns one energy per
 atom with shape ``(N,)``. Set it to ``"system"`` to sum energies within each
 system and return shape ``(B,)``. Other requested outputs keep their existing
 shapes.
+For changing-cell full Ewald, retain signed Miller indices with
+``generate_ewald_miller_indices`` and pass them through ``ewald_summation``;
+the full-Ewald custom-JVP then includes the reciprocal-cell tangent. A retained
+topology must cover all intended cells. Enlarging it changes ``K`` and can
+trigger JIT recompilation. The legacy ``generate_miller_indices`` remains the
+batched bounds helper for static-shape JIT generation.
 JAX PME supports first-order cell/strain gradients,
 but PME cell/strain HVPs, including full PME with ``slab_correction=True``, are
 explicitly unsupported until a native transposable PME cell-HVP path is
 implemented and tested.
 Point-charge Ewald/PME inputs support ``float32`` and ``float64``. Keep all
 floating inputs and precomputed metadata in a call on a consistent dtype.
+Import :mod:`nvalchemiops.jax.interactions.electrostatics` before creating JAX
+arrays intended to be ``float64`` or compiling JAX functions that operate on
+``float64`` arrays. On import, the module sets JAX 64-bit support process-wide,
+including when it was previously disabled. This cannot restore precision in
+arrays already created as ``float32`` or update functions that JAX has already
+compiled. ``float32`` calculations remain supported.
 
 .. autofunction:: ewald_summation
 .. autofunction:: particle_mesh_ewald
@@ -57,6 +74,7 @@ Individual components of the Ewald summation method.
 
 .. autofunction:: ewald_real_space
 .. autofunction:: ewald_reciprocal_space
+.. autofunction:: ewald_reciprocal_space_from_miller_indices
 
 PME Components
 --------------
@@ -82,6 +100,8 @@ K-Vector Generation
 
 .. autofunction:: generate_miller_indices
 .. autofunction:: generate_k_vectors_ewald_summation
+.. autofunction:: generate_ewald_miller_indices
+.. autofunction:: k_vectors_from_miller_indices
 .. autofunction:: generate_k_vectors_pme
 
 Parameter Estimation

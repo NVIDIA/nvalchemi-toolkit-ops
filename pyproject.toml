@@ -12,7 +12,7 @@ readme = "README.md"
 requires-python = ">=3.11,<3.15"
 license = "Apache-2.0"
 dependencies = [
-    "warp-lang >= 1.13.0",
+    "warp-lang >= 1.15.0",
     "numpy",
 ]
 keywords = [

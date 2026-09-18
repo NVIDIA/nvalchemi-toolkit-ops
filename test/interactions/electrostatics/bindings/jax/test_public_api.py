@@ -16,12 +16,40 @@
 """Public API tests for JAX electrostatics exports."""
 
 import inspect
+import os
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 from typing import Literal, get_type_hints
 
 import pytest
 
 import nvalchemiops.jax.interactions.electrostatics as electrostatics
+
+
+def test_import_enables_jax_x64_when_initially_disabled() -> None:
+    """Importing electrostatics enables x64 before its kernels are registered."""
+    script = textwrap.dedent(
+        """
+        import jax
+
+        assert not jax.config.jax_enable_x64
+        import nvalchemiops.jax.interactions.electrostatics  # noqa: F401
+
+        assert jax.config.jax_enable_x64
+        """
+    )
+    environment = os.environ | {"JAX_ENABLE_X64": "False"}
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[5],
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_pme_metadata_preserves_legacy_positional_flag_order() -> None:
@@ -65,6 +93,34 @@ def test_ewald_miller_bounds_is_keyword_only_after_legacy_slots() -> None:
         "pbc",
     ]
     assert params[names.index("miller_bounds")].kind is inspect.Parameter.KEYWORD_ONLY
+
+
+def test_reciprocal_miller_component_matches_jax_public_argument_order() -> None:
+    """Retained-index reciprocal API keeps the established JAX optional order."""
+    params = list(
+        inspect.signature(
+            electrostatics.ewald_reciprocal_space_from_miller_indices
+        ).parameters.values()
+    )
+    names = [param.name for param in params]
+    assert names[:6] == [
+        "positions",
+        "charges",
+        "cell",
+        "miller_indices",
+        "alpha",
+        "batch_idx",
+    ]
+    assert names[6:10] == [
+        "max_atoms_per_system",
+        "compute_forces",
+        "compute_charge_gradients",
+        "compute_virial",
+    ]
+    assert "hybrid_forces" not in names
+    energy_reduction = params[names.index("energy_reduction")]
+    assert energy_reduction.kind is inspect.Parameter.KEYWORD_ONLY
+    assert energy_reduction.default == "atom"
 
 
 @pytest.mark.parametrize(

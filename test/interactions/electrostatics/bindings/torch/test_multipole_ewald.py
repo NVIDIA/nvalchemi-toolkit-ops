@@ -2117,14 +2117,15 @@ def _neigh(positions: np.ndarray, L: float, cutoff: float):
     )
 
 
-def _build(n: int, device: str, seed: int, l_max: int):
-    """BCC system with alternating charges (and optional random dipoles)."""
+def _build(n: int, device: str, seed: int, l_max: int, total_charge: float = 0.0):
+    """BCC system with the requested total charge and optional multipoles."""
     rng = np.random.default_rng(seed)
     pos_np, cell_np = _bcc(n)
     N = pos_np.shape[0]
     chg_np = np.array([1.0 if i % 2 == 0 else -1.0 for i in range(N)])
     if abs(chg_np.sum()) > 1e-12:
         chg_np[-1] -= chg_np.sum()
+    chg_np += total_charge / N
     dip_np = 0.3 * rng.standard_normal((N, 3)) if l_max >= 1 else None
     quad_np = None
     if l_max >= 2:
@@ -2145,9 +2146,17 @@ def _build(n: int, device: str, seed: int, l_max: int):
 
 
 def _path_a_vs_b(
-    device: str, n: int, sigma: float, alpha: float, l_max: int, seed: int
+    device: str,
+    n: int,
+    sigma: float,
+    alpha: float,
+    l_max: int,
+    seed: int,
+    total_charge: float = 0.0,
 ) -> float:
-    pos, source_feats, cell, cell_np, pos_np = _build(n, device, seed, l_max)
+    pos, source_feats, cell, cell_np, pos_np = _build(
+        n, device, seed, l_max, total_charge
+    )
     L = cell_np[0, 0]
     td = _torch_device(device)
 
@@ -2184,30 +2193,34 @@ def _path_a_vs_b(
 
 
 class TestPathAEquivPathB:
-    """Path A (real + reciprocal − self) must equal Path B (direct k-space)."""
+    """Split Ewald (including background) must equal direct k-space."""
 
     @pytest.mark.parametrize("alpha", [0.3, 0.4, 0.6, 0.9])
     @pytest.mark.parametrize("sigma", [0.8, 1.0, 1.2])
     def test_monopole_bcc(self, device, sigma: float, alpha: float):
         """l_max=0 BCC supercell: |Δ| bounded by accumulated wp_erfc error."""
-        delta = _path_a_vs_b(device, n=2, sigma=sigma, alpha=alpha, l_max=0, seed=41)
+        delta = _path_a_vs_b(
+            device, n=2, sigma=sigma, alpha=alpha, l_max=0, seed=41, total_charge=1.0
+        )
         assert abs(delta) < 5e-4, f"σ={sigma}  α={alpha}  Δ={delta:.3e}"
 
     @pytest.mark.parametrize("alpha", [0.3, 0.4, 0.6, 0.9])
     @pytest.mark.parametrize("sigma", [0.8, 1.0, 1.2])
     def test_dipole_bcc(self, device, sigma: float, alpha: float):
         """l_max=1 BCC supercell: dipole + charge cross terms."""
-        delta = _path_a_vs_b(device, n=2, sigma=sigma, alpha=alpha, l_max=1, seed=47)
+        delta = _path_a_vs_b(
+            device, n=2, sigma=sigma, alpha=alpha, l_max=1, seed=47, total_charge=-1.0
+        )
         assert abs(delta) < 5e-4, f"σ={sigma}  α={alpha}  Δ={delta:.3e}"
 
     @pytest.mark.parametrize("alpha", [0.5, 1.0])
     def test_two_atom_sigma1(self, device, alpha: float):
-        """2-atom (+1, −1) at separation 3 in large box — tighter tolerance."""
+        """Charged two-atom system at separation 3 in a large box."""
         td = _torch_device(device)
         L = 30.0
         pos_np = np.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]])
         cell_np = np.eye(3) * L
-        chg = torch.tensor([1.0, -1.0], dtype=torch.float64, device=td)
+        chg = torch.tensor([1.25, -0.75], dtype=torch.float64, device=td)
         sf = pack_charges_dipoles(chg, None)
         pos = torch.from_numpy(pos_np).to(td, torch.float64)
         cell = torch.from_numpy(cell_np).to(td, torch.float64)
@@ -2243,7 +2256,9 @@ class TestPathAEquivPathB:
 
     def test_alpha_limit_recovers_pathb(self, device):
         """Large α: all energy in real-space, should still match Path B."""
-        delta = _path_a_vs_b(device, n=2, sigma=1.0, alpha=2.0, l_max=1, seed=53)
+        delta = _path_a_vs_b(
+            device, n=2, sigma=1.0, alpha=2.0, l_max=1, seed=53, total_charge=0.75
+        )
         assert abs(delta) < 1e-4, f"α=2.0 Δ={delta:.3e}"
 
 
@@ -2254,7 +2269,7 @@ class TestBatchedEwaldSummation:
     still owns a unique ``atom_i`` in the batched kernels.
     """
 
-    @pytest.mark.parametrize("l_max", [0, 1])
+    @pytest.mark.parametrize("l_max", [0, 1, 2])
     def test_batch_matches_per_system_loop(self, device, l_max: int):
         """Stack B identical systems and verify E_A_batch[b] ≈ E_A_single per b."""
         td = _torch_device(device)
@@ -2267,7 +2282,7 @@ class TestBatchedEwaldSummation:
         systems = []
         for seed in (41, 47, 53):
             pos, sf, cell, cell_np, pos_np = _build(
-                n=2, device=device, seed=seed, l_max=l_max
+                n=2, device=device, seed=seed, l_max=l_max, total_charge=0.5
             )
             L = cell_np[0, 0]
             idx_j_np, nptr_np, sh_np = _neigh(pos_np, L, cutoff)
@@ -2363,7 +2378,7 @@ class TestBatchedEwaldSummation:
                 f"single={e_ref:.6e}"
             )
 
-    @pytest.mark.parametrize("l_max", [0, 1])
+    @pytest.mark.parametrize("l_max", [0, 1, 2])
     def test_batch_matches_path_b(self, device, l_max: int):
         """Batched Path A ≡ Path B (direct k-space, per-system loop)."""
         td = _torch_device(device)
@@ -2377,7 +2392,7 @@ class TestBatchedEwaldSummation:
         per_b = []
         for seed in (71, 73):
             pos, sf, cell, cell_np, pos_np = _build(
-                n=2, device=device, seed=seed, l_max=l_max
+                n=2, device=device, seed=seed, l_max=l_max, total_charge=-0.5
             )
             per_b.append(
                 float(
@@ -2457,7 +2472,7 @@ class TestEwaldSCFStepEnergy:
         kcut = 6.0 / sigma_c
 
         pos, sf, cell, cell_np, pos_np = _build(
-            n=2, device=device, seed=11, l_max=l_max
+            n=2, device=device, seed=11, l_max=l_max, total_charge=0.5
         )
         L = cell_np[0, 0]
         idx_j_np, nptr_np, sh_np = _neigh(pos_np, L, cutoff)
@@ -2507,7 +2522,7 @@ class TestEwaldSCFStepEnergy:
         systems = []
         for seed in (31, 37, 41):
             pos, sf, cell, cell_np, pos_np = _build(
-                n=2, device=device, seed=seed, l_max=l_max
+                n=2, device=device, seed=seed, l_max=l_max, total_charge=0.5
             )
             L = cell_np[0, 0]
             idx_j_np, nptr_np, sh_np = _neigh(pos_np, L, cutoff)
@@ -2800,6 +2815,7 @@ def test_quadrupole_total_is_alpha_independent():
     pos_np = rng.uniform(0.0, L, size=(n, 3))
     q = rng.normal(size=(n,))
     q -= q.mean()
+    q += 0.25 / n
     mu = rng.normal(size=(n, 3))
     Qr = rng.normal(size=(n, 3, 3))
     Q = 0.5 * (Qr + Qr.transpose(0, 2, 1))

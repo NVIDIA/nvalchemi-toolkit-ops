@@ -96,7 +96,7 @@ performance rather than correctness:
 - **Keep the topology out of the donated set.** ``batch_idx`` and
   ``n_particles`` never change, so close over them rather than donating them.
 
-Under ``GraphMode.WARP`` the step is captured and replayed as a CUDA graph. The
+Under ``JaxCallableGraphMode.WARP`` the step is captured and replayed as a CUDA graph. The
 capture is keyed on the input buffer addresses, so a fresh ``forces`` array each
 step produces a small working set of graphs rather than one; measurements on a
 six-atom system settle at four or five captures and stay there, well inside the
@@ -126,7 +126,7 @@ import inspect
 import jax
 import jax.numpy as jnp
 import warp as wp
-from warp.jax_experimental import GraphMode, jax_callable
+from warp import JaxCallableGraphMode, jax_callable
 
 from nvalchemiops.dynamics.optimizers.lbfgs import (
     _CELL_BUFFERS,
@@ -155,9 +155,9 @@ __all__ = [
 _LBFGS_IN_OUT_ARGS: tuple[str, ...] = ("positions",) + _OPTIMIZER_BUFFERS
 
 _GRAPH_MODES = {
-    "none": GraphMode.NONE,
-    "warp": GraphMode.WARP,
-    "warp_staged": GraphMode.WARP_STAGED,
+    "none": JaxCallableGraphMode.NONE,
+    "warp": JaxCallableGraphMode.WARP,
+    "warp_staged": JaxCallableGraphMode.WARP_STAGED,
 }
 
 

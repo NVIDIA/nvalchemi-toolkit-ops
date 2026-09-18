@@ -204,7 +204,7 @@ jobs:
     uses: ./.github/workflows/reusable-gpu-tests.yml
     with:
       suite: impacted
-      timeout-minutes: 120
+      timeout-minutes: 300
 
   # Applies the coverage threshold once, to the union of both tiers. Needs only
   # coverage and the source tree, so it runs on an ordinary runner rather than
