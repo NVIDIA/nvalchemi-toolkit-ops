@@ -463,19 +463,6 @@ def fourier_dftd3(
     if fill_value is None:
         fill_value = n_atoms
 
-    if n_atoms == 0:
-        # Nothing to spread, so the mesh, its transforms and the reciprocal sum would all be
-        # zero. Returning here skips allocating a mesh of
-        # num_systems * n_species * rank * nx * ny * nz, which is the single largest
-        # allocation in the call, and avoids handing Warp zero-length arrays, which it
-        # cannot wrap. ``n_atoms`` is a shape, so this is decided at trace time and is safe
-        # under ``jax.jit``.
-        energy = jnp.zeros(num_systems, dtype=dtype)
-        forces = jnp.zeros((0, 3), dtype=dtype)
-        if compute_virial:
-            return energy, forces, jnp.zeros((num_systems, 3, 3), dtype=dtype)
-        return energy, forces
-
     params = fd3_params
     rcov = jnp.asarray(params.rcov, dtype=dtype)
     cnref = jnp.asarray(params.cnref, dtype=dtype)
@@ -497,6 +484,20 @@ def fourier_dftd3(
         mesh_dimensions, mesh_spacing, cells, spline_order
     )
     n_species, rank = params.n_species, params.rank
+
+    if n_atoms == 0:
+        # Nothing to spread, so the mesh, its transforms and the reciprocal sum would all be
+        # zero. This sits after every argument check rather than before: an empty batch has
+        # to reject a bad mesh or a missing parameter exactly as a populated one does, or the
+        # mistake stays hidden until a later batch happens to contain an atom. What it does
+        # skip is the work -- a mesh of num_systems * n_species * rank * nx * ny * nz, the
+        # transforms over it, and handing Warp zero-length arrays, which it cannot wrap.
+        # ``n_atoms`` is a shape, so the branch is taken at trace time and is safe under jit.
+        energy = jnp.zeros(num_systems, dtype=dtype)
+        forces = jnp.zeros((0, 3), dtype=dtype)
+        if compute_virial:
+            return energy, forces, jnp.zeros((num_systems, 3, 3), dtype=dtype)
+        return energy, forces
     n_groups = num_systems * n_species
 
     # Padding atoms, and any species the decomposition does not cover, keep a negative group

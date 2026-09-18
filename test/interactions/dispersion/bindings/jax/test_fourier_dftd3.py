@@ -562,6 +562,30 @@ class TestEmptySystem:
         assert float(jnp.abs(energy).max()) == 0.0
         assert float(jnp.abs(virial).max()) == 0.0
 
+    @pytest.mark.parametrize(
+        "bad_mesh",
+        [
+            pytest.param({}, id="neither"),
+            pytest.param({"mesh_dimensions": MESH, "mesh_spacing": 0.3}, id="both"),
+            pytest.param({"mesh_dimensions": (2, 2, 2)}, id="below_stencil"),
+        ],
+    )
+    def test_invalid_arguments_are_still_rejected(self, device, system, bad_mesh):
+        """An empty batch is validated exactly as a populated one."""
+        with pytest.raises(ValueError):
+            fourier_dftd3(
+                jnp.zeros((0, 3)),
+                jnp.zeros(0, dtype=jnp.int32),
+                **DAMPING,
+                fd3_params=system["params"],
+                cell=system["cell"],
+                r_cut=R_CUT,
+                neighbor_list=jnp.zeros((2, 0), dtype=jnp.int32),
+                neighbor_ptr=jnp.zeros(1, dtype=jnp.int32),
+                unit_shifts=jnp.zeros((0, 3), dtype=jnp.int32),
+                **bad_mesh,
+            )
+
     def test_survives_tracing(self, device, system):
         """``n_atoms`` is a shape, so the early return is decided when the graph is built."""
         traced = jax.jit(lambda: self._call(system, 1))

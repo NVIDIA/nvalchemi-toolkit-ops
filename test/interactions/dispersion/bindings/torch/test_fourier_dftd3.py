@@ -473,6 +473,36 @@ class TestEmptySystem:
         assert float(energy.abs().max()) == 0.0
         assert float(virial.abs().max()) == 0.0
 
+    @pytest.mark.parametrize(
+        "bad_mesh",
+        [
+            pytest.param({}, id="neither"),
+            pytest.param({"mesh_dimensions": MESH, "mesh_spacing": 0.3}, id="both"),
+            pytest.param({"mesh_dimensions": (2, 2, 2)}, id="below_stencil"),
+        ],
+    )
+    def test_invalid_arguments_are_still_rejected(self, bad_mesh):
+        """An empty batch is validated exactly as a populated one.
+
+        Returning before the checks would let a mistake through whenever a batch happened to
+        be empty, and surface it only once a later batch contained an atom.
+        """
+        system = _system("cuda:0")
+        device = system["positions"].device
+        with pytest.raises(ValueError):
+            fourier_dftd3(
+                torch.zeros(0, 3, dtype=system["positions"].dtype, device=device),
+                torch.zeros(0, dtype=torch.int32, device=device),
+                **DAMPING,
+                fd3_params=system["params"],
+                cell=system["cell"],
+                r_cut=R_CUT,
+                neighbor_list=torch.zeros(2, 0, dtype=torch.int32, device=device),
+                neighbor_ptr=torch.zeros(1, dtype=torch.int32, device=device),
+                unit_shifts=torch.zeros(0, 3, dtype=torch.int32, device=device),
+                **bad_mesh,
+            )
+
     def test_does_not_allocate_the_mesh(self):
         """The mesh is the largest allocation in the call and nothing would be spread onto it.
 

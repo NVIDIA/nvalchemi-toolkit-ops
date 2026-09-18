@@ -1104,19 +1104,6 @@ def fourier_dftd3(
         batch_idx = torch.zeros(n_atoms, dtype=torch.int32, device=positions.device)
     batch_idx = batch_idx.to(dtype=torch.int32)
 
-    if n_atoms == 0:
-        # Nothing to spread, so the mesh, its transforms and the reciprocal sum would all
-        # be zero. Returning here skips allocating a mesh of
-        # num_systems * n_species * rank * nx * ny * nz, which is the single largest
-        # allocation in the call, and avoids handing Warp zero-length arrays, which it
-        # cannot wrap.
-        empty = dict(dtype=positions.dtype, device=positions.device)
-        energy = torch.zeros(num_systems, **empty)
-        forces = torch.zeros(0, 3, **empty)
-        if compute_virial:
-            return energy, forces, torch.zeros(num_systems, 3, 3, **empty)
-        return energy, forces
-
     params = fd3_params.to(device=positions.device, dtype=positions.dtype)
     species_index = params.species_map[numbers.long()].to(torch.int32)
     # Whether the parameters cover the system is a property of the setup, not of the step.
@@ -1169,6 +1156,20 @@ def fourier_dftd3(
         )
     n_species, rank = params.n_species, params.rank
     n_channels = n_species * rank
+
+    if n_atoms == 0:
+        # Nothing to spread, so the mesh, its transforms and the reciprocal sum would all be
+        # zero. This sits after every argument check rather than before: an empty batch has
+        # to reject a bad mesh or a missing parameter exactly as a populated one does, or the
+        # mistake stays hidden until a later batch happens to contain an atom. What it does
+        # skip is the work -- a mesh of num_systems * n_species * rank * nx * ny * nz, the
+        # transforms over it, and handing Warp zero-length arrays, which it cannot wrap.
+        empty = dict(dtype=positions.dtype, device=positions.device)
+        energy = torch.zeros(num_systems, **empty)
+        forces = torch.zeros(0, 3, **empty)
+        if compute_virial:
+            return energy, forces, torch.zeros(num_systems, 3, 3, **empty)
+        return energy, forces
 
     # One mesh slab per (system, species, rank); the composite index routes each atom to its
     # own slab so the spread cost scales with the rank rather than the slab count.
