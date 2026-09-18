@@ -20,11 +20,14 @@ This module contains PyTorch-specific helper functions for neighbor list operati
 
 from __future__ import annotations
 
+from typing import Literal
+
 import torch
 import warp as wp
 
 from nvalchemiops.neighbors.neighbor_utils import (
     NeighborOverflowError,
+    TileBufferOverflow,
     estimate_max_neighbors,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
@@ -41,6 +44,7 @@ __all__ = [
     "synthesize_cell_for_batch",
     "synthesize_cell_for_ss",
     "NeighborOverflowError",
+    "TileBufferOverflow",
 ]
 
 
@@ -51,6 +55,95 @@ def _raise_if_compiling_host_only(name: str, replacement: str) -> None:
             f"{name} is a host-only neighbor-list helper and cannot run inside "
             f"torch.compile. {replacement}"
         )
+
+
+def _check_tile_buffer_capacity(
+    counts: torch.Tensor,
+    capacities: int | torch.Tensor,
+    *,
+    segmented: bool = False,
+) -> int:
+    """Validate cluster-tile buffer capacity without breaking compilation.
+
+    Returns the observed compact count in eager execution, the static compact
+    capacity during compilation, and zero for segmented state.
+    """
+    if torch.compiler.is_compiling():
+        torch._assert_async(
+            torch.all(counts <= capacities),
+            "cluster-tile buffer capacity exceeded",
+        )
+        return 0 if segmented or not isinstance(capacities, int) else capacities
+
+    if segmented:
+        overflow = counts > capacities
+        if bool(overflow.any().item()):
+            system_index = int(overflow.nonzero(as_tuple=False)[0, 0].item())
+            max_tiles = int(capacities[system_index].item())
+            num_tiles = int(counts[system_index].item())
+            raise TileBufferOverflow(
+                max_tiles,
+                num_tiles,
+                system_index=system_index,
+            )
+        return 0
+
+    num_tiles = int(counts.max().item()) if counts.numel() > 0 else 0
+    max_tiles = (
+        int(capacities.item()) if isinstance(capacities, torch.Tensor) else capacities
+    )
+    if num_tiles > max_tiles:
+        raise TileBufferOverflow(max_tiles, num_tiles)
+    return num_tiles
+
+
+def _check_neighbor_capacity(
+    counts: torch.Tensor,
+    capacities: int | torch.Tensor,
+    *,
+    segmented: bool = False,
+    kind: Literal["matrix", "coo"] = "matrix",
+) -> int:
+    """Validate matrix or COO capacity without breaking compilation.
+
+    Returns the maximum observed count for a nonsegmented eager call. The
+    return value is zero for segmented state and is not meaningful while
+    compiling.
+    """
+    if kind == "matrix":
+        compiled_message = "cluster-tile neighbor matrix capacity exceeded"
+    elif kind == "coo":
+        compiled_message = "cluster-tile COO pair capacity exceeded"
+    else:
+        raise ValueError("kind must be 'matrix' or 'coo'")
+
+    if torch.compiler.is_compiling():
+        torch._assert_async(
+            torch.all(counts <= capacities),
+            compiled_message,
+        )
+        return 0
+
+    if segmented:
+        overflow = counts > capacities
+        if bool(overflow.any().item()):
+            system_index = int(overflow.nonzero(as_tuple=False)[0, 0].item())
+            max_neighbors = int(capacities[system_index].item())
+            num_neighbors = int(counts[system_index].item())
+            raise NeighborOverflowError(
+                max_neighbors,
+                num_neighbors,
+                system_index=system_index,
+            )
+        return 0
+
+    num_neighbors = int(counts.max().item()) if counts.numel() > 0 else 0
+    max_neighbors = (
+        int(capacities.item()) if isinstance(capacities, torch.Tensor) else capacities
+    )
+    if num_neighbors > max_neighbors:
+        raise NeighborOverflowError(max_neighbors, num_neighbors)
+    return num_neighbors
 
 
 def _validate_pair_params_present(
@@ -252,20 +345,32 @@ def _normalize_compiled_single_segment_coo_count(
     *,
     pair_offsets: torch.Tensor,
     pair_counts: torch.Tensor,
+    rebuild_flags: torch.Tensor,
     physical_capacity: int,
 ) -> None:
     """Fail closed for malformed compiled single-segment COO metadata.
 
-    This compiled-path helper uses only device-side int32 operations. A false
-    rebuild flag returns before the Warp query validates metadata, while an
-    overflowed attempted count is not final until every query block completes.
-    It therefore validates the exact fixed interval and clamps the final count
-    here. This is deliberately not a generic batched normalizer.
+    This compiled-path helper uses only device-side int32 operations. A true
+    rebuild asserts when the resulting count exceeds the fixed segment. A
+    skipped rebuild preserves a valid saved count, while malformed offsets or
+    an invalid saved count are normalized to zero. This is deliberately not a
+    generic batched normalizer.
     """
     offsets_valid = (pair_offsets[0] == 0) & (pair_offsets[1] == physical_capacity)
+    rebuilt_count = torch.where(
+        offsets_valid & rebuild_flags.flatten()[0],
+        pair_counts,
+        torch.zeros_like(pair_counts),
+    )
+    _check_neighbor_capacity(
+        rebuilt_count,
+        physical_capacity,
+        kind="coo",
+    )
     clamped_count = torch.clamp(pair_counts, min=0, max=physical_capacity)
+    saved_count_valid = (pair_counts >= 0) & (pair_counts <= physical_capacity)
     normalized_counts = torch.where(
-        offsets_valid,
+        offsets_valid & (rebuild_flags.flatten()[0] | saved_count_valid),
         clamped_count,
         torch.zeros_like(pair_counts),
     )
@@ -391,14 +496,22 @@ def get_neighbor_list_from_neighbor_matrix(
 
     Raises
     ------
-    ValueError
-        If the max number of neighbors is larger than the neighbor matrix width.
+    NeighborOverflowError
+        If eager execution finds more neighbors than the neighbor matrix can
+        hold.  The exception retains the allocated capacity and the observed
+        maximum neighbor count in ``max_neighbors`` and ``num_neighbors``.
+    RuntimeError
+        If compiled execution finds an insufficient neighbor-matrix capacity.
+        The compiled assertion is device-side and may be reported
+        asynchronously by the active device runtime.
 
     Notes
     -----
     This is a pure PyTorch utility function with no warp dependencies. It converts
     from the fixed-width matrix format to the variable-width list format by masking
-    out fill values and flattening the result.
+    out fill values and flattening the result. Compiled callers use a device-side
+    capacity assertion to avoid converting a tensor to a Python scalar. Exact output
+    allocation through ``nonzero`` is data-dependent and requires host synchronization.
 
     See Also
     --------
@@ -422,20 +535,32 @@ def get_neighbor_list_from_neighbor_matrix(
         else:
             return neighbor_list, neighbor_ptr
 
-    # Validate that the neighbor matrix is large enough
+    # Validate that the neighbor matrix is large enough.  Eager callers retain
+    # the structured overflow exception; compiled callers need a device-side
+    # assertion because converting ``max_found`` to a Python scalar would break
+    # graph capture and would synchronize the device.
     max_found = num_neighbors.max()
-    if max_found > neighbor_matrix.shape[1]:
-        raise NeighborOverflowError(
-            neighbor_matrix.shape[1],
-            max_found.item() if hasattr(max_found, "item") else int(max_found),
+    if torch.compiler.is_compiling():
+        torch._assert_async(
+            max_found <= neighbor_matrix.shape[1],
+            "neighbor matrix capacity is insufficient for the requested COO output",
         )
+    else:
+        max_found_value = int(max_found.item())
+        if max_found_value > neighbor_matrix.shape[1]:
+            raise NeighborOverflowError(
+                neighbor_matrix.shape[1],
+                max_found_value,
+            )
 
-    # Create mask and extract neighbor pairs
+    # Create mask and extract neighbor pairs.  ``nonzero`` returns the row and
+    # slot coordinates together, avoiding separate dynamic mask compactions and
+    # retaining row-major ordering.
     mask = neighbor_matrix != fill_value
     dtype = neighbor_matrix.dtype
-    i_idx = torch.where(mask)[0].to(dtype)
-    j_idx = neighbor_matrix[mask].to(dtype)
-    neighbor_list = torch.stack([i_idx, j_idx], dim=0)
+    i_idx, slot_idx = mask.nonzero(as_tuple=True)
+    j_idx = neighbor_matrix[i_idx, slot_idx].to(dtype)
+    neighbor_list = torch.stack([i_idx.to(dtype), j_idx], dim=0)
 
     # Create CSR-style pointer array
     neighbor_ptr = torch.zeros(
@@ -444,7 +569,7 @@ def get_neighbor_list_from_neighbor_matrix(
     torch.cumsum(num_neighbors, dim=0, out=neighbor_ptr[1:])
 
     if neighbor_shift_matrix is not None:
-        neighbor_list_shifts = neighbor_shift_matrix[mask]
+        neighbor_list_shifts = neighbor_shift_matrix[i_idx, slot_idx]
         return neighbor_list, neighbor_ptr, neighbor_list_shifts
     else:
         return neighbor_list, neighbor_ptr

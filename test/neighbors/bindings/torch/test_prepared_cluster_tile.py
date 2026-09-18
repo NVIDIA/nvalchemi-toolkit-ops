@@ -1,0 +1,1284 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Public-contract tests for prepared Torch cluster-tile execution."""
+
+import inspect
+import subprocess
+import sys
+import textwrap
+from dataclasses import FrozenInstanceError, is_dataclass
+
+import pytest
+import torch
+
+from nvalchemiops.torch.neighbors import (
+    ClusterTileState,
+    NeighborOverflowError,
+    batch_cluster_tile_neighbor_list,
+    cluster_tile_neighbor_list,
+    prepare_cluster_tile,
+)
+
+
+def _inputs(
+    batched: bool,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    """Return deterministic single or batched CUDA inputs."""
+    torch.manual_seed(11)
+    if batched:
+        positions = torch.rand((48, 3), dtype=torch.float32, device="cuda") * 8.0
+        cell = torch.eye(3, dtype=torch.float32, device="cuda").repeat(2, 1, 1)
+        cell *= 8.0
+        batch_ptr = torch.tensor([0, 17, 48], dtype=torch.int32, device="cuda")
+        return positions, cell, batch_ptr
+    positions = torch.rand((32, 3), dtype=torch.float32, device="cuda") * 8.0
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 8.0
+    return positions, cell, None
+
+
+def _prepared_neighbor_list(
+    positions: torch.Tensor,
+    cell: torch.Tensor,
+    state: ClusterTileState,
+    *,
+    rebuild_flags: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, ...]:
+    """Route prepared storage through its matching public API."""
+    if state.is_batched:
+        return batch_cluster_tile_neighbor_list(
+            positions,
+            None,
+            cell,
+            None,
+            rebuild_flags=rebuild_flags,
+            state=state,
+        )
+    return cluster_tile_neighbor_list(
+        positions,
+        None,
+        cell,
+        rebuild_flags=rebuild_flags,
+        state=state,
+    )
+
+
+def _run_uninitialized_selective_fullgraph() -> subprocess.CompletedProcess[str]:
+    """Run one asynchronous initialization failure in a fresh process."""
+    script = textwrap.dedent(
+        """
+        import torch
+        from nvalchemiops.torch.neighbors import (
+            cluster_tile_neighbor_list,
+            prepare_cluster_tile,
+        )
+
+        positions = torch.rand((32, 3), dtype=torch.float32, device="cuda")
+        cell = torch.eye(3, dtype=torch.float32, device="cuda") * 8.0
+        state = prepare_cluster_tile(
+            positions,
+            1.0,
+            cell,
+            format="matrix",
+            selective=True,
+            max_neighbors=32,
+            max_tiles_per_group=2,
+        )
+
+        @torch.compile(fullgraph=True)
+        def run(values, flags):
+            return cluster_tile_neighbor_list(
+                values, None, cell, rebuild_flags=flags, state=state
+            )
+
+        flags = torch.zeros(1, dtype=torch.bool, device="cuda")
+        print("SELECTIVE_CALL_STARTED", flush=True)
+        run(positions, flags)
+        torch.cuda.synchronize()
+        print("SELECTIVE_CALL_RETURNED", flush=True)
+        """
+    )
+    return subprocess.run(  # noqa: S603
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+
+
+def _direct(
+    positions: torch.Tensor,
+    cell: torch.Tensor,
+    batch_ptr: torch.Tensor | None,
+    *,
+    format: str,
+    cutoff2: float | None = None,
+) -> tuple[torch.Tensor, ...]:
+    """Run the matching direct route with the test capacities."""
+    kwargs = {
+        "format": format,
+        "max_neighbors": 32,
+        "max_pairs": 2048,
+        "max_tiles_per_group": 4,
+        "cutoff2": cutoff2,
+    }
+    if batch_ptr is None:
+        return cluster_tile_neighbor_list(positions, 1.2, cell, **kwargs)
+    return batch_cluster_tile_neighbor_list(
+        positions,
+        1.2,
+        cell,
+        batch_ptr,
+        **kwargs,
+    )
+
+
+def _matrix_records(
+    output: tuple[torch.Tensor, ...],
+    start: int = 0,
+) -> list[list[tuple[int, int, int, int]]]:
+    """Return order-independent active matrix records by row."""
+    matrix, counts, shifts = output[start : start + 3]
+    records = []
+    for source, count in enumerate(counts.cpu().tolist()):
+        targets = matrix[source, :count].cpu().tolist()
+        row_shifts = shifts[source, :count].cpu().tolist()
+        records.append(
+            sorted((target, *shift) for target, shift in zip(targets, row_shifts))
+        )
+    return records
+
+
+def _reference_matrix_records(
+    positions: torch.Tensor,
+    cutoff: float,
+    batch_ptr: torch.Tensor | None = None,
+) -> list[list[tuple[int, int, int, int]]]:
+    """Return matrix records from an independent non-periodic reference."""
+    values = positions.cpu().tolist()
+    cutoff_squared = cutoff * cutoff
+    segments = (
+        zip(batch_ptr.cpu().tolist(), batch_ptr.cpu().tolist()[1:])
+        if batch_ptr is not None
+        else [(0, len(values))]
+    )
+    records = [[] for _ in values]
+    for start, stop in segments:
+        for source in range(start, stop):
+            records[source] = sorted(
+                (target, 0, 0, 0)
+                for target in range(start, stop)
+                if target != source
+                and sum(
+                    (coordinate - source_coordinate) ** 2
+                    for coordinate, source_coordinate in zip(
+                        values[target], values[source]
+                    )
+                )
+                <= cutoff_squared
+            )
+    return records
+
+
+def _coo_records(output: tuple[torch.Tensor, ...]) -> list[tuple[int, ...]]:
+    """Validate CSR ownership and return order-independent COO records."""
+    pairs, pointer, shifts = output
+    assert pointer.tolist()[0] == 0
+    assert int(pointer[-1].item()) == pairs.shape[1]
+    assert torch.all(pointer[1:] >= pointer[:-1])
+    for source, (start, stop) in enumerate(
+        zip(pointer[:-1].cpu().tolist(), pointer[1:].cpu().tolist())
+    ):
+        assert torch.all(pairs[0, start:stop] == source)
+    return sorted(
+        (source, target, *shift)
+        for (source, target), shift in zip(
+            pairs.transpose(0, 1).cpu().tolist(), shifts.cpu().tolist()
+        )
+    )
+
+
+def _tile_records(
+    output: tuple[torch.Tensor, ...],
+    *,
+    batched: bool,
+) -> tuple[list[tuple[int, ...]], tuple[torch.Tensor, ...]]:
+    """Return active tile records and deterministic sorting outputs."""
+    count = int(output[0].item())
+    tile_fields = 3 if batched else 2
+    records = sorted(
+        zip(*(value[:count].cpu().tolist() for value in output[1 : 1 + tile_fields]))
+    )
+    return records, output[1 + tile_fields :]
+
+
+def _assert_same(
+    actual: tuple[torch.Tensor, ...],
+    expected: tuple[torch.Tensor, ...],
+    *,
+    format: str,
+    batched: bool,
+    dual: bool = False,
+) -> None:
+    """Compare the defined contents of a cluster-tile result."""
+    assert len(actual) == len(expected)
+    if format == "matrix":
+        starts = (0, 3) if dual else (0,)
+        for start in starts:
+            assert torch.equal(actual[start + 1], expected[start + 1])
+            assert _matrix_records(actual, start) == _matrix_records(expected, start)
+    elif format == "coo":
+        assert torch.equal(actual[1], expected[1])
+        assert _coo_records(actual) == _coo_records(expected)
+    else:
+        actual_tiles, actual_sort = _tile_records(actual, batched=batched)
+        expected_tiles, expected_sort = _tile_records(expected, batched=batched)
+        assert actual_tiles == expected_tiles
+        assert all(
+            torch.equal(left, right) for left, right in zip(actual_sort, expected_sort)
+        )
+
+
+def test_public_routes_require_legacy_inputs_without_state() -> None:
+    """Both public routes reject omitted legacy inputs before execution."""
+    positions = torch.empty((0, 3), dtype=torch.float32)
+    with pytest.raises(ValueError, match="cutoff, cell"):
+        cluster_tile_neighbor_list(positions)
+    with pytest.raises(ValueError, match="cutoff, cell_batch, batch_ptr"):
+        batch_cluster_tile_neighbor_list(positions)
+
+
+def test_public_routes_reject_non_state_objects_before_execution() -> None:
+    """The state keyword has one explicit public runtime type."""
+    positions = torch.empty((0, 3), dtype=torch.float32)
+    cell = torch.empty((3, 3), dtype=torch.float32)
+    with pytest.raises(TypeError, match="ClusterTileState"):
+        cluster_tile_neighbor_list(positions, None, cell, state=object())
+    with pytest.raises(TypeError, match="ClusterTileState"):
+        batch_cluster_tile_neighbor_list(
+            positions, None, cell.unsqueeze(0), None, state=object()
+        )
+
+
+@pytest.mark.gpu
+def test_public_routes_reject_wrong_state_partition_and_return_state() -> None:
+    """State route selection and result ownership are explicit."""
+    positions, cell, _ = _inputs(False)
+    single_state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    batch_positions, batch_cell, batch_ptr = _inputs(True)
+    batch_state = prepare_cluster_tile(
+        batch_positions,
+        1.2,
+        batch_cell,
+        format="matrix",
+        batch_ptr=batch_ptr,
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    with pytest.raises(ValueError, match="unbatched"):
+        cluster_tile_neighbor_list(positions, None, cell, state=batch_state)
+    with pytest.raises(ValueError, match="batched"):
+        batch_cluster_tile_neighbor_list(
+            batch_positions, None, batch_cell, None, state=single_state
+        )
+    with pytest.raises(ValueError, match="return_state"):
+        cluster_tile_neighbor_list(
+            positions, None, cell, return_state=True, state=single_state
+        )
+
+
+@pytest.mark.gpu
+def test_state_overrides_static_configuration_and_batch_ptr() -> None:
+    """Prepared configuration overrides redundant static caller options."""
+    positions, cell, _ = _inputs(False)
+    state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    output = cluster_tile_neighbor_list(
+        positions,
+        -1.0,
+        cell,
+        format="tile",
+        max_neighbors=1,
+        max_pairs=1,
+        fill_value=-1,
+        cutoff2=0.1,
+        return_vectors=True,
+        return_distances=True,
+        pair_fn=object(),
+        max_tiles_per_group=1,
+        state=state,
+    )
+    assert len(output) == 3
+
+    batch_positions, batch_cell, batch_ptr = _inputs(True)
+    batch_state = prepare_cluster_tile(
+        batch_positions,
+        1.2,
+        batch_cell,
+        format="matrix",
+        batch_ptr=batch_ptr,
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    batch_output = batch_cluster_tile_neighbor_list(
+        batch_positions,
+        -1.0,
+        batch_cell,
+        torch.tensor([0], dtype=torch.int32, device="cuda"),
+        format="tile",
+        max_neighbors=1,
+        max_pairs=1,
+        fill_value=-1,
+        cutoff2=0.1,
+        return_vectors=True,
+        return_distances=True,
+        pair_fn=object(),
+        max_tiles_per_group=1,
+        state=batch_state,
+    )
+    assert len(batch_output) == 3
+
+
+@pytest.mark.gpu
+def test_state_aggregates_return_state_and_storage_conflicts() -> None:
+    """Each public route reports every state-owned conflict in one error."""
+    positions, cell, _ = _inputs(False)
+    state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    with pytest.raises(ValueError) as single_error:
+        cluster_tile_neighbor_list(
+            positions,
+            None,
+            cell,
+            return_state=True,
+            neighbor_matrix=torch.empty(0, device="cuda"),
+            pair_forces=torch.empty(0, device="cuda"),
+            state=state,
+        )
+    for name in ("return_state", "neighbor_matrix", "pair_forces"):
+        assert name in str(single_error.value)
+
+    batch_positions, batch_cell, batch_ptr = _inputs(True)
+    batch_state = prepare_cluster_tile(
+        batch_positions,
+        1.2,
+        batch_cell,
+        format="matrix",
+        batch_ptr=batch_ptr,
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    with pytest.raises(ValueError) as batch_error:
+        batch_cluster_tile_neighbor_list(
+            batch_positions,
+            None,
+            batch_cell,
+            None,
+            return_state=True,
+            inv_cell_batch=torch.empty(0, device="cuda"),
+            tile_counts=torch.empty(0, device="cuda"),
+            state=batch_state,
+        )
+    for name in ("return_state", "inv_cell_batch", "tile_counts"):
+        assert name in str(batch_error.value)
+
+
+@pytest.mark.gpu
+def test_state_rejects_pair_params_without_prepared_callback() -> None:
+    """Prepared routes reject dynamic pair parameters without callback storage."""
+    positions, cell, _ = _inputs(False)
+    state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    with pytest.raises(ValueError, match="pair_params.*prepared pair callbacks"):
+        cluster_tile_neighbor_list(
+            positions,
+            None,
+            cell,
+            pair_params=torch.empty(0, device="cuda"),
+            state=state,
+        )
+
+    batch_positions, batch_cell, batch_ptr = _inputs(True)
+    batch_state = prepare_cluster_tile(
+        batch_positions,
+        1.2,
+        batch_cell,
+        format="matrix",
+        batch_ptr=batch_ptr,
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    with pytest.raises(ValueError, match="pair_params.*prepared pair callbacks"):
+        batch_cluster_tile_neighbor_list(
+            batch_positions,
+            None,
+            batch_cell,
+            None,
+            pair_params=torch.empty(0, device="cuda"),
+            state=batch_state,
+        )
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize(
+    "argument_name",
+    [
+        "neighbor_matrix",
+        "neighbor_matrix_shifts",
+        "num_neighbors",
+        "neighbor_matrix2",
+        "neighbor_matrix_shifts2",
+        "num_neighbors2",
+        "neighbor_list",
+        "neighbor_list_shifts",
+        "pair_offsets",
+        "pair_counts",
+        "pair_counter",
+        "sorted_atom_index",
+        "morton_codes",
+        "sorted_pos_x",
+        "sorted_pos_y",
+        "sorted_pos_z",
+        "group_ctr_x",
+        "group_ctr_y",
+        "group_ctr_z",
+        "group_ext_x",
+        "group_ext_y",
+        "group_ext_z",
+        "num_tiles",
+        "tile_row_group",
+        "tile_col_group",
+        "neighbor_vectors",
+        "neighbor_distances",
+        "pair_energies",
+        "pair_forces",
+    ],
+)
+def test_single_state_rejects_all_caller_owned_storage(argument_name: str) -> None:
+    """Every single-route caller-owned buffer conflicts with state storage."""
+    positions, cell, _ = _inputs(False)
+    state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    with pytest.raises(ValueError, match=argument_name):
+        cluster_tile_neighbor_list(
+            positions,
+            None,
+            cell,
+            state=state,
+            **{argument_name: torch.empty(0, device="cuda")},
+        )
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize(
+    "argument_name",
+    [
+        "neighbor_matrix",
+        "neighbor_matrix_shifts",
+        "num_neighbors",
+        "neighbor_matrix2",
+        "neighbor_matrix_shifts2",
+        "num_neighbors2",
+        "neighbor_list",
+        "neighbor_list_shifts",
+        "pair_counter",
+        "pair_offsets",
+        "pair_counts",
+        "inv_cell_batch",
+        "sorted_atom_index",
+        "sort_inv",
+        "sorted_pos_x",
+        "sorted_pos_y",
+        "sorted_pos_z",
+        "batch_idx_sorted",
+        "batch_ptr_padded",
+        "group_system",
+        "group_ptr",
+        "group_ctr_x",
+        "group_ctr_y",
+        "group_ctr_z",
+        "group_ext_x",
+        "group_ext_y",
+        "group_ext_z",
+        "num_tiles",
+        "tile_row_group",
+        "tile_col_group",
+        "tile_system",
+        "tile_offsets",
+        "tile_counts",
+        "neighbor_vectors",
+        "neighbor_distances",
+        "pair_energies",
+        "pair_forces",
+    ],
+)
+def test_batch_state_rejects_all_caller_owned_storage(argument_name: str) -> None:
+    """Every batch-route caller-owned buffer conflicts with state storage."""
+    positions, cell, batch_ptr = _inputs(True)
+    state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        batch_ptr=batch_ptr,
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    with pytest.raises(ValueError, match=argument_name):
+        batch_cluster_tile_neighbor_list(
+            positions,
+            None,
+            cell,
+            None,
+            state=state,
+            **{argument_name: torch.empty(0, device="cuda")},
+        )
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("format", ["tile", "matrix", "coo"])
+@pytest.mark.parametrize("batched", [False, True])
+def test_prepared_eager_matches_direct(format: str, batched: bool) -> None:
+    """Prepared eager execution preserves every direct return tuple."""
+    positions, cell, batch_ptr = _inputs(batched)
+    state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format=format,
+        batch_ptr=batch_ptr,
+        max_neighbors=32,
+        max_pairs=2048,
+        max_tiles_per_group=4,
+    )
+    actual = _prepared_neighbor_list(positions, cell, state)
+    expected = _direct(positions, cell, batch_ptr, format=format)
+    _assert_same(actual, expected, format=format, batched=batched)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("batched", [False, True])
+def test_prepared_dual_matrix_matches_direct(batched: bool) -> None:
+    """Prepared dual-cutoff matrices retain both direct output triples."""
+    positions, cell, batch_ptr = _inputs(batched)
+    state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        batch_ptr=batch_ptr,
+        max_neighbors=32,
+        cutoff2=1.6,
+        max_tiles_per_group=4,
+    )
+    actual = _prepared_neighbor_list(positions, cell, state)
+    expected = _direct(
+        positions,
+        cell,
+        batch_ptr,
+        format="matrix",
+        cutoff2=1.6,
+    )
+    _assert_same(actual, expected, format="matrix", batched=batched, dual=True)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize(("cutoff", "cutoff2"), [(4.0, 0.91), (4.0, 4.0)])
+@pytest.mark.parametrize("batched", [False, True])
+def test_prepared_dual_matrix_default_capacity_matches_reference(
+    cutoff: float,
+    cutoff2: float,
+    batched: bool,
+) -> None:
+    """Default dual-cutoff capacity covers both independently referenced cutoffs."""
+    indices = torch.arange(80 if batched else 40, dtype=torch.float32, device="cuda")
+    local = indices.remainder(40)
+    positions = torch.stack(
+        (
+            local * 0.05,
+            torch.zeros_like(local),
+            torch.zeros_like(local),
+        ),
+        dim=1,
+    )
+    if batched:
+        cell = torch.eye(3, dtype=torch.float32, device="cuda").repeat(2, 1, 1) * 20.0
+        batch_ptr = torch.tensor([0, 40, 80], dtype=torch.int32, device="cuda")
+    else:
+        cell = torch.eye(3, dtype=torch.float32, device="cuda") * 20.0
+        batch_ptr = None
+    state = prepare_cluster_tile(
+        positions,
+        cutoff,
+        cell,
+        format="matrix",
+        batch_ptr=batch_ptr,
+        cutoff2=cutoff2,
+        max_tiles_per_group=4,
+    )
+    actual = _prepared_neighbor_list(positions, cell, state)
+    assert state.max_neighbors == 64
+    assert _matrix_records(actual, 0) == _reference_matrix_records(
+        positions, cutoff, batch_ptr
+    )
+    assert _matrix_records(actual, 3) == _reference_matrix_records(
+        positions, cutoff2, batch_ptr
+    )
+
+
+@pytest.mark.gpu
+@pytest.mark.slow
+@pytest.mark.parametrize("batched", [False, True])
+def test_prepared_dual_matrix_fullgraph(batched: bool) -> None:
+    """Closure-captured dual-cutoff state preserves both matrix triples."""
+    positions, cell, batch_ptr = _inputs(batched)
+    state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        batch_ptr=batch_ptr,
+        max_neighbors=32,
+        cutoff2=1.6,
+        max_tiles_per_group=4,
+    )
+
+    @torch.compile(fullgraph=True)
+    def run(values: torch.Tensor, box: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        return _prepared_neighbor_list(values, box, state)
+
+    actual = run(positions, cell)
+    expected = _direct(
+        positions,
+        cell,
+        batch_ptr,
+        format="matrix",
+        cutoff2=1.6,
+    )
+    _assert_same(actual, expected, format="matrix", batched=batched, dual=True)
+
+
+@pytest.mark.gpu
+@pytest.mark.slow
+@pytest.mark.parametrize("format", ["tile", "matrix", "coo"])
+@pytest.mark.parametrize("batched", [False, True])
+def test_prepared_fullgraph_closure_matches_direct(
+    format: str,
+    batched: bool,
+) -> None:
+    """A closure-captured state supports each nonselective format."""
+    positions, cell, batch_ptr = _inputs(batched)
+    state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format=format,
+        batch_ptr=batch_ptr,
+        max_neighbors=32,
+        max_pairs=2048,
+        max_tiles_per_group=4,
+    )
+    torch.compiler.reset()
+
+    @torch.compile(fullgraph=True)
+    def run(values: torch.Tensor, box: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        return _prepared_neighbor_list(values, box, state)
+
+    actual = run(positions, cell)
+    expected = _direct(positions, cell, batch_ptr, format=format)
+    _assert_same(actual, expected, format=format, batched=batched)
+
+
+@pytest.mark.gpu
+@pytest.mark.slow
+@pytest.mark.parametrize("batched", [False, True])
+def test_prepared_fullgraph_exact_coo_changes_size(batched: bool) -> None:
+    """One compiled prepared call returns different exact COO sizes."""
+    close = torch.tensor(
+        [[0.0, 0.0, 0.0], [0.4, 0.0, 0.0], [0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    far = torch.tensor(
+        [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0], [6.0, 0.0, 0.0], [9.0, 0.0, 0.0]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    if batched:
+        cell = torch.eye(3, dtype=torch.float32, device="cuda").repeat(2, 1, 1)
+        cell *= 20.0
+        batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device="cuda")
+    else:
+        cell = torch.eye(3, dtype=torch.float32, device="cuda") * 20.0
+        batch_ptr = None
+    state = prepare_cluster_tile(
+        close,
+        1.0,
+        cell,
+        format="coo",
+        batch_ptr=batch_ptr,
+        max_neighbors=8,
+        max_pairs=16,
+        max_tiles_per_group=1,
+    )
+
+    @torch.compile(fullgraph=True)
+    def run(values: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        return _prepared_neighbor_list(values, cell, state)
+
+    close_output = run(close)
+    far_output = run(far)
+    assert close_output[0].shape[1] == (4 if batched else 12)
+    assert far_output[0].shape[1] == 0
+    _coo_records(close_output)
+    _coo_records(far_output)
+
+
+@pytest.mark.gpu
+@pytest.mark.slow
+@pytest.mark.parametrize("batched", [False, True])
+def test_prepared_geometry_and_gradients(batched: bool) -> None:
+    """Prepared matrix geometry keeps position and cell gradients."""
+    positions, cell, batch_ptr = _inputs(batched)
+    state = prepare_cluster_tile(
+        positions,
+        1.5,
+        cell,
+        format="matrix",
+        batch_ptr=batch_ptr,
+        max_neighbors=32,
+        return_vectors=True,
+        return_distances=True,
+        max_tiles_per_group=4,
+    )
+
+    @torch.compile(fullgraph=True)
+    def run(values: torch.Tensor, box: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        return _prepared_neighbor_list(values, box, state)
+
+    grad_positions = positions.clone().requires_grad_(True)
+    grad_cell = cell.clone().requires_grad_(True)
+    output = run(grad_positions, grad_cell)
+    assert output[3] is state.neighbor_distances
+    assert output[4] is state.neighbor_vectors
+    gradients = torch.autograd.grad(output[3].sum(), (grad_positions, grad_cell))
+    assert all(torch.isfinite(value).all() for value in gradients)
+
+
+@pytest.mark.gpu
+@pytest.mark.slow
+def test_prepared_exact_coo_geometry_is_aligned() -> None:
+    """State-owned COO geometry follows each exact returned pair."""
+    positions = torch.tensor(
+        [[0.0, 0.0, 0.0], [0.4, 0.0, 0.0], [3.0, 0.0, 0.0]],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 20.0
+    state = prepare_cluster_tile(
+        positions,
+        1.0,
+        cell,
+        format="coo",
+        max_neighbors=8,
+        max_pairs=16,
+        return_vectors=True,
+        return_distances=True,
+        max_tiles_per_group=1,
+    )
+
+    @torch.compile(fullgraph=True)
+    def run(values: torch.Tensor, box: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        topology = _prepared_neighbor_list(values, box, state)
+        return (*topology, state.neighbor_distances, state.neighbor_vectors)
+
+    grad_positions = positions.clone().requires_grad_(True)
+    grad_cell = cell.clone().requires_grad_(True)
+    pairs, _, shifts, distances, vectors = run(grad_positions, grad_cell)
+    count = pairs.shape[1]
+    expected = (
+        grad_positions[pairs[1].long()]
+        - grad_positions[pairs[0].long()]
+        + shifts.to(grad_positions.dtype) @ grad_cell
+    )
+    torch.testing.assert_close(vectors[:count], expected)
+    torch.testing.assert_close(distances[:count], expected.norm(dim=-1))
+    gradients = torch.autograd.grad(
+        distances[:count].sum(),
+        (grad_positions, grad_cell),
+    )
+    assert all(torch.isfinite(value).all() for value in gradients)
+
+
+@pytest.mark.gpu
+def test_prepared_storage_is_owned_and_reused() -> None:
+    """States own distinct buffers and reuse each borrowed matrix result."""
+    positions, cell, _ = _inputs(False)
+    first = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    second = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    first_output = _prepared_neighbor_list(positions, cell, first)
+    second_output = _prepared_neighbor_list(positions, cell, second)
+    reused_output = _prepared_neighbor_list(positions * 0.9, cell, first)
+    assert first_output[0] is reused_output[0]
+    assert first_output[1] is reused_output[1]
+    assert first_output[0].data_ptr() != second_output[0].data_ptr()
+
+    coo_state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="coo",
+        max_neighbors=32,
+        max_pairs=1024,
+        max_tiles_per_group=4,
+    )
+    first_coo = _prepared_neighbor_list(positions, cell, coo_state)
+    second_coo = _prepared_neighbor_list(positions, cell, coo_state)
+    assert first_coo[0].data_ptr() != second_coo[0].data_ptr()
+
+
+@pytest.mark.gpu
+def test_preparation_owns_default_capacities() -> None:
+    """Preparation estimates omitted capacities and owns the resulting buffers."""
+    positions, cell, _ = _inputs(False)
+    state = prepare_cluster_tile(positions, 1.2, cell, format="coo")
+    output = _prepared_neighbor_list(positions, cell, state)
+    assert state.max_neighbors >= 32
+    assert state.max_pairs == positions.shape[0] * state.max_neighbors
+    assert state.max_tiles_per_group > 0
+    _coo_records(output)
+
+
+@pytest.mark.gpu
+def test_selective_single_matrix_initializes_and_preserves() -> None:
+    """A single matrix must rebuild once before false can preserve it."""
+    positions, cell, _ = _inputs(False)
+    state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        selective=True,
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    false = torch.zeros(1, dtype=torch.bool, device="cuda")
+    with pytest.raises(ValueError, match="cannot preserve uninitialized"):
+        _prepared_neighbor_list(
+            positions,
+            cell,
+            state,
+            rebuild_flags=false,
+        )
+
+    true = torch.ones(1, dtype=torch.bool, device="cuda")
+    initial = _prepared_neighbor_list(
+        positions,
+        cell,
+        state,
+        rebuild_flags=true,
+    )
+    snapshot = tuple(value.clone() for value in initial)
+    preserved = _prepared_neighbor_list(
+        positions * 0.5,
+        cell,
+        state,
+        rebuild_flags=false,
+    )
+    assert all(torch.equal(value, saved) for value, saved in zip(preserved, snapshot))
+
+
+@pytest.mark.gpu
+def test_selective_partial_batch_rebuild_preserves_false_rows() -> None:
+    """Eager selective batching changes only the flagged system rows."""
+    positions, cell, batch_ptr = _inputs(True)
+    state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        batch_ptr=batch_ptr,
+        selective=True,
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    all_true = torch.ones(2, dtype=torch.bool, device="cuda")
+    initial = _prepared_neighbor_list(
+        positions,
+        cell,
+        state,
+        rebuild_flags=all_true,
+    )
+    snapshot = tuple(value.clone() for value in initial)
+    changed = positions.clone()
+    changed[17:] *= 0.5
+    mixed = torch.tensor([False, True], dtype=torch.bool, device="cuda")
+    output = _prepared_neighbor_list(
+        changed,
+        cell,
+        state,
+        rebuild_flags=mixed,
+    )
+    for value, saved in zip(output, snapshot):
+        assert torch.equal(value[:17], saved[:17])
+    expected = _direct(changed, cell, batch_ptr, format="matrix")
+    assert _matrix_records(output)[17:] == _matrix_records(expected)[17:]
+
+
+@pytest.mark.gpu
+@pytest.mark.slow
+def test_selective_dual_matrix_fullgraph_preserves_false_rows() -> None:
+    """Compiled selective dual cutoff preserves both unflagged triples."""
+    positions, cell, batch_ptr = _inputs(True)
+    state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        batch_ptr=batch_ptr,
+        selective=True,
+        cutoff2=1.6,
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    all_true = torch.ones(2, dtype=torch.bool, device="cuda")
+    initial = _prepared_neighbor_list(
+        positions,
+        cell,
+        state,
+        rebuild_flags=all_true,
+    )
+    snapshot = tuple(value.clone() for value in initial)
+    changed = positions.clone()
+    changed[17:] *= 0.5
+    mixed = torch.tensor([False, True], dtype=torch.bool, device="cuda")
+
+    @torch.compile(fullgraph=True)
+    def run(values: torch.Tensor, flags: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        return _prepared_neighbor_list(
+            values,
+            cell,
+            state,
+            rebuild_flags=flags,
+        )
+
+    output = run(changed, mixed)
+    torch.cuda.synchronize()
+    for value, saved in zip(output, snapshot):
+        assert torch.equal(value[:17], saved[:17])
+    expected = _direct(
+        changed,
+        cell,
+        batch_ptr,
+        format="matrix",
+        cutoff2=1.6,
+    )
+    for start in (0, 3):
+        assert (
+            _matrix_records(output, start)[17:] == _matrix_records(expected, start)[17:]
+        )
+
+
+@pytest.mark.gpu
+def test_failed_selective_rebuild_invalidates_preservation() -> None:
+    """A failed eager rebuild cannot expose partially overwritten topology."""
+    positions = torch.arange(32, dtype=torch.float32, device="cuda")[
+        :, None
+    ] * torch.tensor([3.0, 0.0, 0.0], device="cuda")
+    cell = torch.eye(3, dtype=torch.float32, device="cuda") * 100.0
+    state = prepare_cluster_tile(
+        positions,
+        1.0,
+        cell,
+        format="matrix",
+        selective=True,
+        max_neighbors=1,
+        max_tiles_per_group=1,
+    )
+    true = torch.ones(1, dtype=torch.bool, device="cuda")
+    false = torch.zeros(1, dtype=torch.bool, device="cuda")
+    _prepared_neighbor_list(
+        positions,
+        cell,
+        state,
+        rebuild_flags=true,
+    )
+    dense = torch.zeros_like(positions)
+    with pytest.raises(NeighborOverflowError):
+        _prepared_neighbor_list(
+            dense,
+            cell,
+            state,
+            rebuild_flags=true,
+        )
+    with pytest.raises(ValueError, match="cannot preserve uninitialized"):
+        _prepared_neighbor_list(
+            dense,
+            cell,
+            state,
+            rebuild_flags=false,
+        )
+
+
+@pytest.mark.gpu
+def test_selective_configuration_and_flags_are_restricted() -> None:
+    """Selective preparation accepts only matrix topology and valid flags."""
+    positions, cell, _ = _inputs(False)
+    with pytest.raises(ValueError, match="matrix output only"):
+        prepare_cluster_tile(
+            positions,
+            1.2,
+            cell,
+            format="coo",
+            selective=True,
+        )
+    with pytest.raises(ValueError, match="matrix output only"):
+        prepare_cluster_tile(
+            positions,
+            1.2,
+            cell,
+            format="tile",
+            selective=True,
+        )
+    with pytest.raises(ValueError, match="does not support geometry"):
+        prepare_cluster_tile(
+            positions,
+            1.2,
+            cell,
+            format="matrix",
+            selective=True,
+            return_vectors=True,
+        )
+
+    state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        selective=True,
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    with pytest.raises(ValueError, match="requires rebuild_flags"):
+        _prepared_neighbor_list(positions, cell, state)
+    with pytest.raises(ValueError, match=r"shape \(num_systems,\)"):
+        _prepared_neighbor_list(
+            positions,
+            cell,
+            state,
+            rebuild_flags=torch.ones(2, dtype=torch.bool, device="cuda"),
+        )
+    with pytest.raises(ValueError, match="bool tensor"):
+        _prepared_neighbor_list(
+            positions,
+            cell,
+            state,
+            rebuild_flags=torch.ones(1, dtype=torch.int32, device="cuda"),
+        )
+    with pytest.raises(ValueError, match="prepared device"):
+        _prepared_neighbor_list(
+            positions,
+            cell,
+            state,
+            rebuild_flags=torch.ones(1, dtype=torch.bool),
+        )
+
+    plain = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    with pytest.raises(ValueError, match="requires a selective"):
+        _prepared_neighbor_list(
+            positions,
+            cell,
+            plain,
+            rebuild_flags=torch.ones(1, dtype=torch.bool, device="cuda"),
+        )
+
+
+@pytest.mark.gpu
+@pytest.mark.slow
+def test_selective_fullgraph_false_before_init_is_isolated() -> None:
+    """Compiled preservation before initialization fails without returning."""
+    result = _run_uninitialized_selective_fullgraph()
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "SELECTIVE_CALL_STARTED" in output
+    assert "SELECTIVE_CALL_RETURNED" not in output
+    assert (
+        "cannot preserve uninitialized" in output
+        or "device-side assert" in output.lower()
+    )
+
+
+@pytest.mark.gpu
+def test_prepared_configuration_is_frozen() -> None:
+    """The public state is one frozen slotted dataclass."""
+    positions, cell, _ = _inputs(False)
+    state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        max_neighbors=32,
+        return_distances=True,
+        max_tiles_per_group=4,
+    )
+    assert is_dataclass(state)
+    assert hasattr(ClusterTileState, "__slots__")
+    with pytest.raises(FrozenInstanceError):
+        state.cutoff = 2.0
+    with pytest.raises((AttributeError, TypeError)):
+        state.neighbor_distances = torch.empty_like(state.neighbor_distances)
+
+
+@pytest.mark.gpu
+def test_prepared_rejects_static_input_mismatches() -> None:
+    """Preparation and execution reject mismatches before launch."""
+    positions, cell, _ = _inputs(False)
+    state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    with pytest.raises(ValueError, match="positions shape"):
+        _prepared_neighbor_list(positions[:-1], cell, state)
+    with pytest.raises(TypeError, match="positions dtype"):
+        _prepared_neighbor_list(positions.double(), cell, state)
+    with pytest.raises(ValueError, match="positions device"):
+        _prepared_neighbor_list(positions.cpu(), cell, state)
+    with pytest.raises(ValueError, match="cell shape"):
+        _prepared_neighbor_list(positions, cell.unsqueeze(0), state)
+    with pytest.raises(TypeError, match="cell dtype"):
+        _prepared_neighbor_list(positions, cell.double(), state)
+    with pytest.raises(ValueError, match="cell device"):
+        _prepared_neighbor_list(positions, cell.cpu(), state)
+    bad_ptr = torch.tensor([0, 16, 31], dtype=torch.int32, device="cuda")
+    with pytest.raises(ValueError, match="end at N"):
+        prepare_cluster_tile(
+            positions,
+            1.2,
+            cell.repeat(2, 1, 1),
+            format="matrix",
+            batch_ptr=bad_ptr,
+        )
+
+
+def test_prepared_api_has_no_caller_owned_storage_or_pair_callback() -> None:
+    """Prepared routing preserves the public positional and state signatures."""
+    parameters = set(inspect.signature(prepare_cluster_tile).parameters)
+    assert parameters == {
+        "positions",
+        "cutoff",
+        "cell",
+        "format",
+        "batch_ptr",
+        "selective",
+        "max_neighbors",
+        "fill_value",
+        "max_pairs",
+        "cutoff2",
+        "return_vectors",
+        "return_distances",
+        "max_tiles_per_group",
+    }
+    single = inspect.signature(cluster_tile_neighbor_list).parameters
+    batch = inspect.signature(batch_cluster_tile_neighbor_list).parameters
+    assert single["cutoff"].default is None
+    assert single["cell"].default is None
+    assert single["state"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert batch["cutoff"].default is None
+    assert batch["cell_batch"].default is None
+    assert batch["batch_ptr"].default is None
+    assert batch["max_tiles_per_group"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+    assert batch["state"].kind is inspect.Parameter.KEYWORD_ONLY
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("format", ["tile", "matrix", "coo"])
+def test_prepared_empty_single_system(format: str) -> None:
+    """Prepared execution preserves empty-system behavior."""
+    positions = torch.empty((0, 3), dtype=torch.float32, device="cuda")
+    cell = torch.eye(3, dtype=torch.float32, device="cuda")
+    state = prepare_cluster_tile(
+        positions,
+        1.0,
+        cell,
+        format=format,
+        max_neighbors=8,
+        max_tiles_per_group=1,
+    )
+    output = _prepared_neighbor_list(positions, cell, state)
+    if format == "tile":
+        assert int(output[0].item()) == 0
+    elif format == "matrix":
+        assert output[0].shape == (0, 8)
+        assert output[1].numel() == 0
+    else:
+        assert output[0].shape == (2, 0)
+        assert output[1].tolist() == [0]

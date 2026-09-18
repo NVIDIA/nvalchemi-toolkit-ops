@@ -302,6 +302,14 @@ Setting `return_neighbor_list=True` incurs a conversion overhead. If you need
 both formats, compute the matrix format first and convert as needed.
 ```
 
+```{note}
+With PyTorch >=2.10, exact COO conversion supports
+`torch.compile(fullgraph=True)` when the edge count changes. Exact sizing via
+`nonzero` may synchronize the host. Capacity overflow raises
+`NeighborOverflowError` in eager execution and an asynchronous runtime error
+in compiled execution.
+```
+
 ## Method Dispatch
 
 ### Method and Strategy
@@ -539,6 +547,222 @@ steps; batched workflows accept `rebuild_flags` to re-enumerate only systems who
 atoms moved beyond the skin distance. Dual cutoff is supported in matrix format but
 cannot be combined with pair-potential outputs.
 
+(cluster-tile-buffer-capacity)=
+
+### Tile-buffer capacity
+
+Cluster-tile construction divides each system into groups of at most 32 atoms.
+A system with $N$ atoms has $\lceil N/32\rceil$ groups. Groups do not
+cross system boundaries, so a compact batch containing systems of sizes $N_i$
+has $g=\sum_i\lceil N_i/32\rceil$ groups in total.
+
+The build stores discovered tile pairs in one buffer shared by all row groups.
+If `max_tiles_per_group` is $m$, a compact build with $g$ groups reserves
+$C=g\,\min(g,m)$ records. Increasing $m$ by one adds $g$ records until $m$
+reaches $g$; larger values do not increase the allocation. Each record contains
+two `int32` group indices, so the tile-index arrays use $8C$ bytes for one
+system. A compact batch also records the system index and uses $12C$ bytes.
+Other scratch buffers and the neighbor output do not depend on $m$.
+
+#### Choosing a capacity
+
+`cluster_tile_neighbor_list` and `batch_cluster_tile_neighbor_list` construct
+the tile list and query the neighbor output in the same call. During eager
+execution, they call
+{func}`~nvalchemiops.neighbors.cluster_tile.estimate_max_tiles_per_group` when
+`max_tiles_per_group` is `None`. The estimator uses each system's atom count,
+cell volume, and cutoff; its `safety` parameter adds headroom for uneven density
+or changing geometries.
+
+There are three ways to choose a capacity:
+
+- Before execution, use the estimator for a heuristic based on the current
+  geometry.
+- After an eager overflow, use the reported tile count to calculate the exact
+  requirement for that geometry.
+- For a geometry-independent single-system bound, use the upper-triangular
+  maximum of $g(g+1)/2$ tile pairs. This requires
+  `max_tiles_per_group=ceil((g + 1) / 2)`.
+
+Dual-cutoff sizing uses `max(cutoff, cutoff2)`. By convention, `cutoff2` is the
+outer cutoff and is at least `cutoff`, but the cluster-tile convenience
+functions accept either order. Use the same larger cutoff when calling the
+estimator directly.
+
+#### Recovering from eager overflow
+
+`TileBufferOverflow` reports the required tile-pair count as
+`error.num_tiles` and the allocated capacity as `error.max_tiles`. For a compact
+single-system or batch build, the exact retry value for that geometry is
+
+$$
+m_{\mathrm{retry}} = \left\lceil\frac{\mathtt{error.num\_tiles}}{g}\right\rceil,
+$$
+
+where $g$ is the total group count for the compact build.
+
+A segmented batch gives each system its own interval in the tile buffer. System
+$i$ has capacity `tile_offsets[i + 1] - tile_offsets[i]` and reports its required
+count in `tile_counts[i]`. The exact shared retry value for the current batch is
+
+$$
+m_{\mathrm{retry}} =
+\max_{i:\,g_i>0}\left\lceil\frac{\mathtt{tile\_counts}[i]}{g_i}\right\rceil.
+$$
+
+For a trajectory, retain the largest observed requirement and add headroom for
+later geometries. `TileBufferOverflow` reports exhaustion of the intermediate
+tile-pair buffer. `NeighborOverflowError` reports that the final matrix or COO
+neighbor output is too small.
+
+#### Compiled PyTorch direct APIs
+
+The direct PyTorch cluster-tile functions support
+`torch.compile(fullgraph=True)` for tile, matrix, and nonselective exact COO
+output. Matrix support includes dual cutoffs. Matrix and exact COO vectors and
+distances remain differentiable. Exact COO requires PyTorch 2.10 or newer and
+may return a different pair count on each call. Pair callbacks remain
+eager-only.
+
+Exact COO is counted and written directly into source-owned CSR rows without a
+matrix intermediate. For source atom `i`, entries
+`neighbor_ptr[i]:neighbor_ptr[i + 1]` in `neighbor_list` all belong to `i`.
+Atomic writes leave pair order within each row unspecified. Shifts and any
+requested vectors, distances, energies, or forces use the same pair order.
+
+A compiled single-system call may allocate its scratch internally when
+`max_tiles_per_group` is a positive static integer:
+
+```python
+import torch
+
+from nvalchemiops.torch.neighbors import cluster_tile_neighbor_list
+
+@torch.compile(fullgraph=True)
+def compiled_matrix(positions, cell):
+    return cluster_tile_neighbor_list(
+        positions,
+        cutoff,
+        cell,
+        format="matrix",
+        max_neighbors=max_neighbors,
+        max_tiles_per_group=max_tiles_per_group,
+        return_distances=True,
+    )
+```
+
+For a batched compiled call, allocate once with
+`allocate_batch_cluster_tile_list` and pass every tensor in that 19-tensor
+scratch tuple through its corresponding keyword argument. Selective matrix
+calls additionally require fixed output buffers and tile segment metadata.
+Eager calls retain structured `TileBufferOverflow` and
+`NeighborOverflowError` exceptions. Compiled capacity failures are asynchronous
+device runtime errors.
+
+#### Prepared PyTorch execution
+
+Use `prepare_cluster_tile` when repeated calls have the same atom count,
+single or batched partition, dtype, device, output format, and capacities.
+Preparation owns the fixed-capacity scratch and output buffers. Execution uses
+the current positions and cell through the matching direct API with the
+prepared state:
+
+```python
+import torch
+
+from nvalchemiops.torch.neighbors import (
+    cluster_tile_neighbor_list,
+    prepare_cluster_tile,
+)
+
+state = prepare_cluster_tile(
+    positions,
+    cutoff,
+    cell,
+    format="matrix",
+    max_neighbors=max_neighbors,
+    max_tiles_per_group=max_tiles_per_group,
+    return_distances=True,
+)
+
+@torch.compile(fullgraph=True)
+def compiled_neighbors(current_positions, current_cell):
+    # Capture state as a closure constant; do not pass it as a graph input.
+    return cluster_tile_neighbor_list(
+        current_positions,
+        cell=current_cell,
+        state=state,
+    )
+```
+
+For a batched state, pass `batch_ptr` to `prepare_cluster_tile` and execute it
+with `batch_cluster_tile_neighbor_list(..., cell_batch=current_cells, state=state)`.
+
+Prepared execution supports single and batched tile, matrix, dual-cutoff
+matrix, and nonselective exact COO output. It preserves the corresponding
+direct function's return tuple. Matrix and tile results borrow state-owned
+storage and a later call overwrites them. Exact COO topology is newly sized on
+each call; requested COO vectors and distances remain fixed-capacity borrowed
+buffers available as `state.neighbor_vectors` and
+`state.neighbor_distances`. Only the active prefix matching the returned pair
+count is defined.
+
+Preparation avoids reallocating the fixed scratch and output buffers, but
+execution may still allocate temporary tensors and exact-sized COO results. It
+is not an allocation-free API. Finish backward, or copy every result that must
+survive, before reusing the same state. A second state owns distinct storage.
+
+Preparation fixes the atom count, batch partition, shape, dtype, and device.
+Execution rejects mismatches before launching kernels. Prepared pair callbacks,
+energies, forces, and caller-provided buffers are not supported.
+
+`ClusterTileState` is prepared configuration and reusable borrowed storage, not
+the neighbor-list result. Each call returns the same tuple as the corresponding
+unprepared method-specific function. With `state=`, the call ignores `cutoff`,
+`cutoff2`, `format`, `max_neighbors`, `max_pairs`, `fill_value`,
+`max_tiles_per_group`, `return_vectors`, `return_distances`, and `pair_fn`, even
+when they differ from the prepared configuration. The batched API also ignores
+`batch_ptr`. Change these settings by preparing another state. `positions` and
+`cell` or `cell_batch` remain required on every call. `rebuild_flags` remains
+active for selective states. Prepared pair callbacks and `pair_params` are not
+supported. Supplying explicit scratch, output, segment, or inverse-cell buffers
+raises `ValueError`, as does `return_state=True`.
+
+Set `selective=True` during preparation to rebuild matrix topology only for
+selected systems. Selective prepared execution supports single and batched
+matrix output, including dual cutoffs. It does not support tile or COO output,
+vectors, distances, or pair callbacks. Each execution requires a Boolean
+`rebuild_flags` tensor on the prepared device with one value per system. A true
+flag rebuilds that system. A false flag preserves its initialized neighbor
+matrix, counts, and shifts byte-for-byte; preserving a system before its first
+successful rebuild raises an error.
+
+An eager call marks every selected system uninitialized before rebuilding it
+and marks it initialized only after the complete call succeeds. If an eager
+rebuild fails, for example because the matrix capacity is too small, a later
+call cannot preserve any system selected by the failed call. Retry those
+systems with true flags after changing the geometry, or prepare a new state
+with sufficient capacity.
+
+#### Compiled JAX
+
+JAX fixes array shapes while tracing a transformed or compiled function, and
+`max_tiles_per_group` determines the tile-buffer shape. The value must therefore
+be a positive static Python integer. Close over it or mark the argument static
+with `static_argnames`.
+
+The runtime tile count cannot be converted to a Python value inside the compiled
+region, so an undersized bound does not raise `TileBufferOverflow` there. A
+compiled workflow can use the lower-level build and query functions and return
+the tile counters alongside the neighbor output. After the compiled call:
+
+- For a compact buffer, require
+  `int(num_tiles[0]) <= tile_row_group.shape[0]`.
+- For segmented buffers, require
+  `tile_counts <= tile_offsets[1:] - tile_offsets[:-1]` element by element.
+
+The neighbor output is incomplete when either check fails.
+
 (nl_performance)=
 
 ## Performance Tuning
@@ -552,6 +776,14 @@ cannot be combined with pair-potential outputs.
   as improve kernel performance. The `estimate_max_neighbors()` method will
   otherwise provide a **very** conservative estimate based on atomic
   density.
+
+`max_tiles_per_group`
+: Sets the capacity of the tile-pair buffer shared by all row groups. For $g$
+  32-atom groups, a value $m$ reserves $g\,\min(g,m)$ records. The tile-index
+  arrays use 8 bytes per record for one system and 12 bytes per record for a
+  compact batch. The combined build/query functions estimate the value during
+  eager execution when it is `None`. A transformed or compiled JAX call
+  requires a positive static Python integer.
 
 `atomic_density`
 : Atomic density in atoms per unit volume, used by `estimate_max_neighbors()`.

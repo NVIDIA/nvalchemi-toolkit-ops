@@ -37,6 +37,7 @@ from nvalchemiops.jax.neighbors.batch_cluster_tile import (
     estimate_batch_max_tiles_per_group,
 )
 from nvalchemiops.neighbors.cluster_tile import estimate_max_tiles_per_group
+from nvalchemiops.neighbors.neighbor_utils import TileBufferOverflow
 
 from .conftest import requires_gpu
 
@@ -153,6 +154,7 @@ class TestBatchTileNeighborListCorrectness:
                 cell_batch,
                 batch_ptr,
                 max_neighbors=32,
+                max_tiles_per_group=1,
             )
             return (
                 neighbor_matrix.astype(pos.dtype).sum()
@@ -280,6 +282,7 @@ class TestBatchClusterTileGraphPreload:
                 cell_batch,
                 batch_ptr,
                 max_neighbors=32,
+                max_tiles_per_group=1,
             )
 
         neighbor_matrix, num_neighbors, _shifts = query(positions)
@@ -474,6 +477,55 @@ class TestBatchTileNeighborListErrors:
         with pytest.raises(ValueError, match="cell_batch"):
             batch_cluster_tile_neighbor_list(positions, 1.0, cell_batch, batch_ptr)
 
+    def test_tile_buffer_overflow_raises(self):
+        """Compact and segmented eager paths report tile-buffer overflow."""
+        positions = jnp.zeros((128, 3), dtype=jnp.float32)
+        cell_batch = jnp.eye(3, dtype=jnp.float32)[None] * 12.0
+        batch_ptr = jnp.array([0, 128], dtype=jnp.int32)
+        for return_distances in (False, True):
+            with pytest.raises(TileBufferOverflow) as caught:
+                batch_cluster_tile_neighbor_list(
+                    positions,
+                    5.0,
+                    cell_batch,
+                    batch_ptr,
+                    max_neighbors=256,
+                    max_tiles_per_group=1,
+                    return_distances=return_distances,
+                )
+            assert caught.value.num_tiles > caught.value.max_tiles
+            assert caught.value.system_index is None
+
+        segmented_positions = jnp.zeros((160, 3), dtype=jnp.float32)
+        segmented_cells = jnp.tile(
+            jnp.eye(3, dtype=jnp.float32)[None] * 12.0, (2, 1, 1)
+        )
+        segmented_ptr = jnp.array([0, 32, 160], dtype=jnp.int32)
+        with pytest.raises(TileBufferOverflow) as segmented:
+            batch_cluster_tile_neighbor_list(
+                segmented_positions,
+                5.0,
+                segmented_cells,
+                segmented_ptr,
+                max_neighbors=256,
+                rebuild_flags=jnp.ones(2, dtype=jnp.bool_),
+                tile_offsets=jnp.array([0, 1, 2], dtype=jnp.int32),
+                previous_tile_counts=jnp.zeros(2, dtype=jnp.int32),
+                previous_num_tiles=jnp.zeros(1, dtype=jnp.int32),
+                previous_tile_row_group=jnp.zeros(2, dtype=jnp.int32),
+                previous_tile_col_group=jnp.zeros(2, dtype=jnp.int32),
+                previous_tile_system=jnp.zeros(2, dtype=jnp.int32),
+                previous_neighbor_matrix=jnp.empty((160, 256), dtype=jnp.int32),
+                previous_num_neighbors=jnp.zeros(160, dtype=jnp.int32),
+                previous_neighbor_matrix_shifts=jnp.empty(
+                    (160, 256, 3), dtype=jnp.int32
+                ),
+                max_tiles_per_group=1,
+            )
+        assert segmented.value.system_index == 1
+        assert segmented.value.max_tiles == 1
+        assert segmented.value.num_tiles > segmented.value.max_tiles
+
 
 class TestEstimateBatchSizes:
     """Pure-Python sizing helper tests."""
@@ -615,6 +667,7 @@ class TestJaxBatchClusterTileAutograd:
                 1.5,
                 cell_batch,
                 batch_ptr,
+                max_tiles_per_group=2,
                 return_distances=True,
                 return_vectors=True,
             )
@@ -633,6 +686,7 @@ class TestJaxBatchClusterTileAutograd:
                 1.5,
                 c,
                 batch_ptr,
+                max_tiles_per_group=2,
                 return_distances=True,
                 return_vectors=True,
             )
@@ -663,6 +717,7 @@ class TestJaxBatchClusterTileAutograd:
                 5.0,
                 cell_batch,
                 batch_ptr,
+                max_tiles_per_group=2,
                 return_distances=True,
                 return_vectors=True,
             )
@@ -706,6 +761,7 @@ class TestJaxBatchClusterTileAutograd:
                 1.5,
                 cell_batch,
                 batch_ptr,
+                max_tiles_per_group=2,
                 return_distances=True,
                 return_vectors=True,
             )
@@ -746,6 +802,7 @@ class TestJaxBatchClusterTileAutograd:
 # slicing is enough to extend to the batched case.
 from test.neighbors.bindings.jax.test_cluster_tile import (  # noqa: E402
     _brute_force_pairs_full,
+    _matrix_to_pair_set_full,
 )
 
 
@@ -825,6 +882,34 @@ class TestJaxBatchClusterTileCutoff2Selective:
         assert len(out) == 6
         _nm1, nn1, _sh1, _nm2, nn2, _sh2 = out
         assert int(nn2.sum()) >= int(nn1.sum())
+
+    @pytest.mark.parametrize("cutoff2", [0.91, 4.0])
+    def test_default_capacity_uses_larger_dual_cutoff(self, cutoff2):
+        """Reversed and equal dual cutoffs preserve each input-order matrix."""
+        positions = jnp.stack(
+            (
+                jnp.arange(40, dtype=jnp.float32) * jnp.float32(0.05),
+                jnp.zeros(40, dtype=jnp.float32),
+                jnp.zeros(40, dtype=jnp.float32),
+            ),
+            axis=1,
+        )
+        cell_batch = jnp.eye(3, dtype=jnp.float32)[None] * 10.0
+        batch_ptr = jnp.array([0, 40], dtype=jnp.int32)
+        out = batch_cluster_tile_neighbor_list(
+            positions, 4.0, cell_batch, batch_ptr, cutoff2=cutoff2
+        )
+        for offset, reference_cutoff in ((0, 4.0), (3, cutoff2)):
+            got = _matrix_to_pair_set_full(
+                *out[offset : offset + 3], positions.shape[0]
+            )
+            reference = _brute_force_pairs_full(
+                np.asarray(positions),
+                np.asarray(cell_batch[0]),
+                reference_cutoff,
+                pbc=True,
+            )
+            assert got == reference
 
     def test_rebuild_flags_false_preserves_previous_batch_outputs(self):
         positions, cell_batch, batch_ptr = _make_batch([32, 64], [6.0, 6.0], seed=32)

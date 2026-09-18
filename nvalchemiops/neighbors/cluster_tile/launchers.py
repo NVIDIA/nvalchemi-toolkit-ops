@@ -72,36 +72,32 @@ def estimate_max_tiles_per_group(
     safety: float = 2.0,
     floor: int = 256,
 ) -> int:
-    """Estimate neighbor cluster-groups per row group from density and cutoff.
+    """Estimate ``max_tiles_per_group`` for a compact cluster-tile buffer.
 
-    The tile-list capacity is ``ngroup * min(ngroup, max_tiles_per_group)``.
-    The fixed default (256) silently truncates dense / high-cutoff periodic
-    systems where many cluster bounding boxes fall within the cutoff, so
-    estimate it from the expected number of 32-atom clusters whose bounding box
-    can fall within ``cutoff`` of a row group.  ``min(ngroup, ...)`` in the
-    capacity formula
-    clamps the per-row count, so over-estimates cost nothing; the ``floor``
-    keeps parity with the old default for sparse / low-cutoff systems.
+    The estimate uses atom density and ``cutoff`` to approximate how many group
+    pairs pass the bounding-box filter; ``safety`` adds headroom. For ``g`` row
+    groups, the returned value ``m`` gives the buffer
+    ``g * min(g, m)`` tile-pair entries.
 
     Parameters
     ----------
     total_atoms : int
         Atom count for the system (single system, not batched total).
     cutoff : float
-        Cartesian cutoff (use ``max(cutoff, cutoff2)`` for dual-cutoff).
+        Cartesian cutoff. For dual cutoff, this is the larger of ``cutoff`` and
+        ``cutoff2``.
     cell_volume : float or None
         ``abs(det(cell))``.  ``None`` / non-positive falls back to ``floor``.
     safety : float, default 2.0
         Multiplier on the volumetric estimate.
     floor : int, default 256
-        Minimum returned value (the historical default).
+        Baseline for the estimate. The allocation formula still limits useful
+        values to ``ngroup``.
 
     Returns
     -------
     int
-        Estimated ``max_tiles_per_group`` for compact tile-list capacity
-        planning.  Clamped by ``min(ngroup, ...)`` in downstream capacity
-        formulas.
+        Estimated ``max_tiles_per_group`` value.
     """
     ngroup = (int(total_atoms) + TILE_GROUP_SIZE - 1) // TILE_GROUP_SIZE
     if ngroup <= 1:
@@ -131,30 +127,30 @@ def estimate_batch_max_tiles_per_group(
     safety: float = 2.0,
     floor: int = 256,
 ) -> int:
-    """Estimate batched ``max_tiles_per_group`` from per-system density.
+    """Estimate ``max_tiles_per_group`` for a compact batched tile buffer.
 
-    The compact batched tile buffer is ``ngroup_total * min(ngroup_total,
-    max_tiles_per_group)``, so the shared ``max_tiles_per_group`` must cover
-    the densest system.  Returns the maximum per-system estimate from
-    :func:`estimate_max_tiles_per_group`, floored at ``floor``.
+    The function estimates each system from its atom density and returns the
+    largest result. For ``g`` row groups in the batch, the returned value ``m``
+    gives the shared buffer ``g * min(g, m)`` tile-pair entries.
 
     Parameters
     ----------
     batch_ptr : sequence of int
         CSR atom pointer with length ``num_systems + 1``.
     cutoff : float
-        Cartesian cutoff (use ``max(cutoff, cutoff2)`` for dual-cutoff).
+        Cartesian cutoff. For dual cutoff, this is the larger of ``cutoff`` and
+        ``cutoff2``.
     cell_volumes : sequence of float
         Per-system ``abs(det(cell))`` with one entry per batch segment.
     safety : float, default 2.0
         Multiplier on the volumetric estimate passed to each system estimate.
     floor : int, default 256
-        Minimum returned value for batched compact buffers.
+        Baseline for the returned estimate.
 
     Returns
     -------
     int
-        Shared ``max_tiles_per_group`` for the batched compact tile buffer.
+        Estimated ``max_tiles_per_group`` value shared by the batch.
     """
     ptr_values = [int(v) for v in _host_int_float_list(batch_ptr)]
     volume_values = [float(v) for v in _host_int_float_list(cell_volumes)]
@@ -195,7 +191,9 @@ def estimate_batch_cluster_tile_segments(
     max_neighbors : int
         Per-atom COO capacity multiplier.
     max_tiles_per_group : int, default 256
-        Upper bound on neighbor groups per row group.
+        Sets each system's tile-pair segment capacity. A system with ``g_i``
+        groups receives ``g_i * min(g_i, max_tiles_per_group)`` entries. Each
+        system's group count is ``ceil(num_atoms_i / 32)``.
 
     Returns
     -------
