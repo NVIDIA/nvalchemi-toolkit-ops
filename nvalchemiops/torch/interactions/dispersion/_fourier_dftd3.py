@@ -668,6 +668,14 @@ class FourierD3Setup:
     dynamics that is the whole trajectory; under variable-cell dynamics it is one step, so
     rebuild or omit it there.
 
+    :meth:`validate_for` enforces that on every ordinary call. Under
+    ``torch.compile`` or CUDA graph capture the cell comparison is skipped, because reading
+    a tensor back would synchronise and graph capture forbids it outright. **There the
+    contract is the caller's:** the setup and the cell must both hold the same values for
+    every replay of the captured graph. Changing either after capture produces an answer
+    that mixes the two, with nothing raised. The shape, dtype and device checks still run,
+    since those read metadata rather than device memory.
+
     Attributes
     ----------
     cell_inv_grouped : torch.Tensor, shape (B * n_species, 3, 3)
@@ -692,6 +700,8 @@ class FourierD3Setup:
     moduli_z: torch.Tensor
     mesh_dimensions: tuple[int, int, int]
     spline_order: int
+    cell: torch.Tensor
+    exact_moduli: bool
 
     @classmethod
     def build(
@@ -745,7 +755,61 @@ class FourierD3Setup:
             moduli_z=moduli[2],
             mesh_dimensions=(mesh_nx, mesh_ny, mesh_nz),
             spline_order=spline_order,
+            # Kept so that a later call can prove the setup belongs to the cell it is being
+            # used with, rather than only asserting it in the docstring.
+            cell=cells.contiguous(),
+            exact_moduli=exact_moduli,
         )
+
+    def validate_for(self, cells, n_species, mesh_dimensions):
+        """Refuse to be used with inputs it was not built for.
+
+        The derived quantities here stand in for the cell everywhere except the Cartesian
+        image shifts, which are still taken from the cell passed to the call. A setup that
+        does not match therefore does not produce a stale answer so much as an incoherent
+        one, mixing two cells in a single evaluation.
+
+        Shapes and types are checked always: they are metadata, so reading them neither
+        synchronises nor breaks a compiled graph. Comparing the cell itself has to read
+        device memory, so it is skipped while compiling and during graph capture -- there
+        the contract is the caller's to keep, and it is stated in the class docstring.
+        """
+        if self.volumes.shape[0] != cells.shape[0]:
+            raise ValueError(
+                f"setup was built for {self.volumes.shape[0]} system(s) but the call "
+                f"passes {cells.shape[0]}. Rebuild it for this batch."
+            )
+        expected = cells.shape[0] * n_species
+        if self.cell_inv_grouped.shape[0] != expected:
+            raise ValueError(
+                f"setup carries {self.cell_inv_grouped.shape[0]} mesh channels but this "
+                f"call needs {expected} ({cells.shape[0]} system(s) x {n_species} "
+                f"species). Rebuild it for these parameters."
+            )
+        if self.cell.dtype != cells.dtype or self.cell.device != cells.device:
+            raise ValueError(
+                f"setup is {self.cell.dtype} on {self.cell.device} but the call is "
+                f"{cells.dtype} on {cells.device}. Rebuild it for this precision "
+                f"and device."
+            )
+        if (
+            mesh_dimensions is not None
+            and tuple(mesh_dimensions) != self.mesh_dimensions
+        ):
+            raise ValueError(
+                f"setup was built for mesh {self.mesh_dimensions} but the call asks for "
+                f"{tuple(mesh_dimensions)}. Pass one or the other, not both."
+            )
+        if (
+            not torch.compiler.is_compiling()
+            and not _capturing()
+            and not torch.equal(self.cell, cells)
+        ):
+            raise ValueError(
+                "setup was built for a different cell. Its inverse cell, volumes, wave "
+                "vectors and spline moduli would be combined with image shifts taken from "
+                "the cell given here. Rebuild it whenever the cell changes."
+            )
 
 
 def _resolve_mesh(mesh_dimensions, mesh_spacing, cells):
@@ -911,6 +975,15 @@ def fourier_dftd3(
         unless you have measured otherwise.
     batch_idx : torch.Tensor, shape (N,), optional
         System index per atom. Atoms must be grouped by system.
+    setup : FourierD3Setup, optional
+        Cell- and mesh-derived quantities from :meth:`FourierD3Setup.build`, reused across
+        steps. Saves a matrix inversion and a set of spline moduli per call, and is required
+        for ``torch.compile(mode="reduce-overhead")`` because ``torch.linalg.inv`` cannot be
+        recorded into a CUDA graph. It must have been built for this cell, batch size,
+        species count, precision and device; a mismatch raises. When given,
+        ``mesh_dimensions`` and ``mesh_spacing`` may be omitted, and passing a
+        ``mesh_dimensions`` that disagrees with the setup is an error rather than silently
+        ignored.
     compute_virial : bool, default=False
         Whether to return the virial.
     num_systems : int, optional
@@ -1015,6 +1088,7 @@ def fourier_dftd3(
             )
 
     if setup is not None:
+        setup.validate_for(cells, params.n_species, mesh_dimensions)
         mesh_nx, mesh_ny, mesh_nz = setup.mesh_dimensions
         spline_order = setup.spline_order
     else:

@@ -943,16 +943,58 @@ class TestPrecomputedSetup:
         )
 
     def test_records_what_it_was_built_for(self):
-        """The setup carries its mesh and spline order, so the call cannot disagree."""
+        """The setup carries its mesh and spline order, and is used when the call omits them."""
         system = _system("cuda:0")
         setup = FourierD3Setup.build(
             system["cell"], system["params"].n_species, (16, 16, 16), spline_order=5
         )
         assert setup.mesh_dimensions == (16, 16, 16)
         assert setup.spline_order == 5
-        # The call follows the setup rather than its own arguments.
-        result = _evaluate(system, setup=setup, mesh_dimensions=MESH)
+        result = _evaluate(system, setup=setup, mesh_dimensions=None)
         coarse = _evaluate(system, mesh_dimensions=(16, 16, 16), spline_order=5)
         np.testing.assert_allclose(
             result[0].cpu().numpy(), coarse[0].cpu().numpy(), rtol=1e-12
         )
+
+    def test_a_conflicting_mesh_is_an_error(self):
+        """Asking for one mesh while handing over a setup built for another is ambiguous.
+
+        Silently following the setup would discard an argument the caller wrote down.
+        """
+        system = _system("cuda:0")
+        setup = FourierD3Setup.build(
+            system["cell"], system["params"].n_species, (16, 16, 16)
+        )
+        with pytest.raises(ValueError, match="built for mesh"):
+            _evaluate(system, setup=setup, mesh_dimensions=(32, 32, 32))
+
+    def test_a_setup_from_another_cell_is_refused(self):
+        """The mesh transforms would come from one cell and the image shifts from another.
+
+        That is not a stale answer but an incoherent one, so it cannot be allowed to pass
+        quietly.
+        """
+        system = _system("cuda:0")
+        other = FourierD3Setup.build(
+            system["cell"] * 1.05, system["params"].n_species, MESH
+        )
+        with pytest.raises(ValueError, match="different cell"):
+            _evaluate(system, setup=other, mesh_dimensions=None)
+
+    def test_a_setup_for_a_different_batch_is_refused(self):
+        """Shape mismatches are caught without reading any device memory."""
+        system = _system("cuda:0")
+        batched = FourierD3Setup.build(
+            system["cell"].expand(3, 3, 3), system["params"].n_species, MESH
+        )
+        with pytest.raises(ValueError, match="built for 3 system"):
+            _evaluate(system, setup=batched, mesh_dimensions=None)
+
+    def test_a_setup_of_the_wrong_precision_is_refused(self):
+        """Reusing a float32 setup for a float64 call would silently mix precisions."""
+        system = _system("cuda:0")
+        single = FourierD3Setup.build(
+            system["cell"].float(), system["params"].n_species, MESH
+        )
+        with pytest.raises(ValueError, match="Rebuild it for this precision"):
+            _evaluate(system, setup=single, mesh_dimensions=None)
