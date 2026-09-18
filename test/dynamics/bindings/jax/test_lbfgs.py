@@ -231,6 +231,44 @@ class TestLBFGSJaxRegistration:
             assert not hasattr(module, name), f"{name} still exists"
             assert name not in module.__all__
 
+    def test_no_line_search_parameters_survive(self):
+        """The step length is a trust region, and nothing may reintroduce a search.
+
+        The line search was removed for a measured reason: it compares *total
+        energies* while the direction comes from *forces*, which are different
+        surfaces for a model with a direct force head, so it converged poorly
+        on OMat24. A parameter creeping back in would reintroduce that failure
+        silently.
+
+        Covers the JAX layer only. Torch and JAX are independent extras, so
+        each suite checks its own binding rather than importing the other's.
+        """
+        import nvalchemiops.jax.lbfgs as module
+
+        banned = {
+            "energy", "f_base", "gd", "ls_trials",
+            "ftol", "wolfe", "step_scale_down", "step_scale_up",
+            "min_step", "max_step", "max_ls_iter",
+        }  # fmt: skip
+        for fn in (module.lbfgs_step_coord, module.lbfgs_step_coord_cell):
+            params = set(inspect.signature(fn).parameters)
+            leaked = params & banned
+            assert not leaked, f"{fn.__name__} takes {sorted(leaked)}"
+            assert "maxstep" in params, f"{fn.__name__} lost its trust region"
+
+        # The callable bodies are hand-written, so they can drift separately.
+        for name in ("_lbfgs_body_f32", "_lbfgs_body_f64",
+                     "_lbfgs_cell_body_f32", "_lbfgs_cell_body_f64"):  # fmt: skip
+            params = set(inspect.signature(getattr(module, name)).parameters)
+            assert not (params & banned), f"{name} takes {sorted(params & banned)}"
+            assert "maxstep" in params, f"{name} lost its trust region"
+
+        # And no status can report a line-search failure.
+        assert {c for c in dir(module) if c.startswith("LBFGS_")} == {
+            "LBFGS_NEED_EVAL",
+            "LBFGS_CONVERGED",
+        }
+
     def test_public_entry_points_take_the_buffers_in_order(self):
         """The wrappers forward positionally, so they must agree exactly."""
         from nvalchemiops.jax.lbfgs import lbfgs_step_coord_cell

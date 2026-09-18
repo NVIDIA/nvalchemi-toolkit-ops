@@ -227,9 +227,13 @@ class TestLBFGSTorchState:
         the caller's behalf must not quietly survive as an alias. An import
         that still resolves would let old code keep working against an API
         that no longer has the semantics it assumes.
+
+        Covers the Warp core and the PyTorch binding only. Torch and JAX are
+        independent extras, so importing the JAX module here would fail the
+        whole Torch suite on a Torch-only install; the JAX suite asserts the
+        same thing for its own layer.
         """
         import nvalchemiops.dynamics.optimizers as warp_optimizers
-        import nvalchemiops.jax.lbfgs as jax_lbfgs
         import nvalchemiops.torch as torch_pkg
         import nvalchemiops.torch.lbfgs as torch_lbfgs
         from nvalchemiops.dynamics.optimizers import lbfgs as warp_lbfgs
@@ -248,7 +252,6 @@ class TestLBFGSTorchState:
             warp_optimizers,
             torch_lbfgs,
             torch_pkg,
-            jax_lbfgs,
         )
         for module in modules:
             for name in removed:
@@ -263,13 +266,16 @@ class TestLBFGSTorchState:
     def test_no_line_search_parameters_survive_anywhere(self):
         """The step length is a trust region, and nothing may reintroduce a search.
 
-        Pinned across all three layers because the line search was removed for
+        Pinned because the line search was removed for
         a measured reason -- it compares *total energies* while the direction
         comes from *forces*, which are different surfaces for a model with a
         direct force head, so it converged poorly on OMat24. A parameter
         creeping back in would reintroduce that failure silently.
+
+        Covers the Warp core and the PyTorch binding; the JAX suite runs the
+        equivalent check for its own entry points and callable bodies, so that
+        neither suite depends on the other's optional extra.
         """
-        import nvalchemiops.jax.lbfgs as jax_lbfgs
         import nvalchemiops.torch.lbfgs as torch_lbfgs
         from nvalchemiops.dynamics.optimizers import lbfgs as warp_lbfgs
 
@@ -286,8 +292,6 @@ class TestLBFGSTorchState:
             torch_lbfgs.lbfgs_step_coord,
             torch_lbfgs.lbfgs_step_extended,
             torch_lbfgs.lbfgs_step_coord_cell,
-            jax_lbfgs.lbfgs_step_coord,
-            jax_lbfgs.lbfgs_step_coord_cell,
         ]
         for fn in entry_points:
             params = set(inspect.signature(fn).parameters)
@@ -299,12 +303,6 @@ class TestLBFGSTorchState:
             assert "maxstep" in params or "kwargs" in params, (
                 f"{fn.__name__} has neither a trust region nor a forwarding kwargs"
             )
-
-        # The JAX callable bodies are hand-written, so check them too.
-        for name in ("_lbfgs_body_f32", "_lbfgs_body_f64",
-                     "_lbfgs_cell_body_f32", "_lbfgs_cell_body_f64"):  # fmt: skip
-            params = set(inspect.signature(getattr(jax_lbfgs, name)).parameters)
-            assert not (params & banned), f"{name} takes {sorted(params & banned)}"
 
         # And no status can report a line-search failure.
         assert {c for c in dir(warp_lbfgs) if c.startswith("LBFGS_")} == {
