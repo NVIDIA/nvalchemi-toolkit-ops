@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compare L-BFGS and FIRE2 by energy/force evaluations to convergence.
+"""Compare L-BFGS and FIRE2 by force evaluations to convergence.
 
 Evaluation count is the metric that matters for relaxation driven by a
 machine-learned potential: the model call dominates the optimizer's own kernel
@@ -40,7 +40,7 @@ Usage
                                                   [--seeds 5]
                                                   [--force-tol 1e-4]
                                                   [--output-dir DIR]
-    python -m benchmarks.dynamics.benchmark_lbfgs --gates [--eval-ratio 0.142]
+    python -m benchmarks.dynamics.benchmark_lbfgs --gates [--eval-ratio 0.129]
 """
 
 from __future__ import annotations
@@ -109,9 +109,7 @@ def _allocate_lbfgs_state(num_dofs, num_systems, history_size):
         "alpha_hist": f64_2d(history_size, num_systems),
         "beta_hist": f64_2d(history_size, num_systems),
         "ss": f64(num_systems),
-        "f_base": f64(num_systems),
         "gg": f64(num_systems),
-        "gd": f64(num_systems),
         "fmax": f64(num_systems),
         "frms_sq": f64(num_systems),
         "smax": f64(num_systems),
@@ -123,7 +121,6 @@ def _allocate_lbfgs_state(num_dofs, num_systems, history_size):
         "iteration": i32(num_systems),
         "end": i32(num_systems),
         "n_loop": i32(num_systems),
-        "ls_trials": i32(num_systems),
         "history_count": i32(num_systems),
     }
     # Three buffers do not start at zero; the optimizer initializes nothing.
@@ -149,10 +146,10 @@ def _allocate_lbfgs_buffers_torch(num_dofs, num_systems, history_size):
         z(history_size, num_dofs, 3), z(history_size, num_dofs, 3),
         z(history_size, num_systems), z(history_size, num_systems),
         z(history_size, num_systems), z(history_size, num_systems),
-        *[z(num_systems) for _ in range(10)],
+        *[z(num_systems) for _ in range(8)],   # ss..dquad
         alpha_step,
         z(num_systems, dt=i32), iteration,
-        *[z(num_systems, dt=i32) for _ in range(4)],
+        *[z(num_systems, dt=i32) for _ in range(3)],
     )  # fmt: skip
 
 
@@ -161,7 +158,6 @@ def run_lbfgs(start, force_tol, history_size=6, maxstep=0.2, eval_cap=EVAL_CAP):
     num_atoms = start.shape[0]
     positions = wp.array(start.copy(), dtype=wp.vec3d, device=DEVICE)
     forces = wp.zeros(num_atoms, dtype=wp.vec3d, device=DEVICE)
-    energy = wp.zeros(1, dtype=wp.float64, device=DEVICE)
     batch_idx = wp.zeros(num_atoms, dtype=wp.int32, device=DEVICE)
     n_particles = wp.array(
         np.array([num_atoms], np.int32), dtype=wp.int32, device=DEVICE
@@ -169,13 +165,11 @@ def run_lbfgs(start, force_tol, history_size=6, maxstep=0.2, eval_cap=EVAL_CAP):
     state = _allocate_lbfgs_state(num_atoms, 1, history_size)
 
     for n_evals in range(1, eval_cap + 1):
-        per_atom_energy, f = lennard_jones(positions.numpy())
+        _, f = lennard_jones(positions.numpy())
         forces.assign(f)
-        energy.assign(np.array([per_atom_energy.sum()]))
         lbfgs_step(
             positions=positions,
             forces=forces,
-            energy=energy,
             batch_idx=batch_idx,
             n_particles=n_particles,
             force_tol=force_tol,
@@ -305,18 +299,15 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50):
             rng.normal(size=(num_atoms, 3)), dtype=torch.float64, device=DEVICE
         )
         forces = torch.zeros_like(positions)
-        energy = torch.zeros(1, dtype=torch.float64, device=DEVICE)
         batch_idx = torch.zeros(num_atoms, dtype=torch.int32, device=DEVICE)
         n_particles = torch.full((1,), num_atoms, dtype=torch.int32, device=DEVICE)
         buffers = _allocate_lbfgs_buffers_torch(num_atoms, 1, 6)
         forces.copy_(-positions)
-        energy.copy_((0.5 * (positions**2).sum()).reshape(1))
 
         def step():
             lbfgs_step_coord(
                 positions,
                 forces,
-                energy,
                 batch_idx,
                 n_particles,
                 *buffers,
@@ -463,7 +454,7 @@ def main():
                 [10_000, 100_000, 1_000_000],
                 section=gates_config,
             ),
-            pick(args.eval_ratio, "eval_ratio", 0.142, section=gates_config),
+            pick(args.eval_ratio, "eval_ratio", 0.129, section=gates_config),
             gates_config.get("warmup", 10),
             gates_config.get("runs", 50),
         )

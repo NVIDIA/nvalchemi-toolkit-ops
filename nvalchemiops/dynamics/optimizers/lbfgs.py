@@ -21,72 +21,113 @@ GPU-accelerated Warp kernels for batched L-BFGS geometry optimization.
 
 L-BFGS is a quasi-Newton method. It builds an implicit approximation to the
 inverse Hessian from the last ``m`` position/gradient differences and uses it
-to choose a search direction, then picks a step length along that direction
-with a line search. Compared with the FIRE optimizers it typically reaches a
-given force tolerance in far fewer energy/force evaluations, which is the cost
-that dominates relaxation with a machine-learned potential.
+to choose a search direction, then takes a step along that direction bounded by
+a trust region. Compared with the FIRE optimizers it typically reaches a given
+force tolerance in far fewer force evaluations, which is the cost that
+dominates relaxation with a machine-learned potential.
+
+Forces only: there is no line search
+------------------------------------
+**Nothing here reads an energy.** The step length is bounded by ``maxstep``
+rather than chosen by comparing energies, which is a deliberate choice for
+machine-learned potentials rather than a simplification.
+
+A line search accepts or rejects a trial point with an Armijo test on *total
+energies*, while the search direction comes from *forces*. Those are the same
+surface only if the model is conservative -- if its forces really are
+``-grad E`` of the energy it reports. Many models are not: a direct force head
+predicts forces independently, and even a conservative model can have an energy
+surface rough at the scale the Armijo test resolves. When the two disagree the
+test rejects good steps, and tuning ``ftol`` or the Wolfe constant does not
+help, because the predicate is measuring the wrong thing.
+
+Dropping the line search also makes the cadence uniform: there are no trials to
+reject, so **every call is an accepted step** that forms exactly one curvature
+pair and takes exactly one bounded step.
 
 Calling convention
 ------------------
 You own the loop. Each call to :func:`lbfgs_step` consumes **exactly one**
-energy/force evaluation::
+force evaluation::
 
     while True:
-        energy, forces = my_model(positions)
-        lbfgs_step(positions, forces, energy, ..., batch_idx=batch_idx)
+        forces = my_model(positions)
+        lbfgs_step(positions, forces, ..., batch_idx=batch_idx)
         if not (status.numpy() == LBFGS_NEED_EVAL).any():
             break
 
-Internally each system runs a small state machine that decides whether the
-evaluation it was just handed is a line-search trial to accept or reject, or an
-accepted point that starts a fresh L-BFGS iteration. Systems in a batch
-therefore stay in lock step in *evaluations* while diverging in *iterations*,
-which is what lets a whole batch relax in one stream of kernel launches with no
-per-system host control flow.
+Internally each system runs a small state machine that tests convergence,
+forms the curvature pair and picks the direction. Systems in a batch stay in
+lock step in *evaluations* while diverging in *iterations*, which is what lets
+a whole batch relax in one stream of kernel launches with no per-system host
+control flow.
+
+Relation to FIRE2
+-----------------
+The decomposition deliberately mirrors FIRE2's, so the two optimizers are
+driven the same way and a caller can interpose their own logic at the same
+points:
+
+========================  ==========================  ========================
+Phase                     FIRE2                       L-BFGS
+========================  ==========================  ========================
+per-system reductions     ``fire2_reduce``            :func:`lbfgs_reduce`
+state update, no motion   ``fire2_update``            :func:`lbfgs_update`
+step-length finalization  --                          :func:`lbfgs_prepare_step`
+move the atoms            ``fire2_apply_step``        :func:`lbfgs_apply_step`
+all of the above          ``fire2_step``              :func:`lbfgs_step`
+========================  ==========================  ========================
+
+State is prepared **once**, and more strictly than for FIRE2: every buffer is
+caller-owned, is initialized once (zero everything, then ``alpha_step = 1``,
+``iteration = -1``, ``status = LBFGS_NEED_EVAL``), and nothing is re-prepared
+per call. A step allocates nothing.
+
+The cadence matches too: FIRE2 performs one state update and one step per
+call, and so does this. Without a line search there are no trials to reject,
+so every call forms exactly one curvature pair (subject to the curvature guard)
+and takes exactly one bounded step.
+
+One phase has no FIRE2 counterpart. :func:`lbfgs_prepare_step` settles the step
+length between the update and the move; FIRE2 folds that into its apply phase
+because its displacement follows from the velocity, whereas here the length has
+to be known *before* the atoms move, and on the variable-cell path it cannot be
+inferred from the force norm at all.
+
+``maxstep`` also bounds the step slightly differently. No atom moves further
+than ``maxstep`` and the bound is re-applied every call, but it is imposed by
+shrinking ``alpha`` rather than by clamping each displacement the way FIRE2
+does. Clamping per degree of freedom would break ``x = x_base + alpha * d``,
+and the stored secant pair ``s = alpha * d`` is defined through that relation.
 
 Reading ``status``
 ------------------
 ``status`` is the only value you need to inspect:
 
 ``LBFGS_NEED_EVAL``
-    Keep going: ``positions`` hold a new trial point that needs energy/forces.
+    Keep going: ``positions`` hold a new point that needs forces.
 ``LBFGS_CONVERGED``
     Done: ``positions`` hold the converged geometry.
-``LBFGS_LS_FAILED``
-    The line search could not make further progress *even from a steepest-descent
-    direction with no history*. ``positions`` have been restored to the last
-    accepted point. This is *not* a convergence claim; if you consider a stalled
-    search with acceptably small forces to be a success, apply that policy
-    yourself from ``status`` and ``force_base`` -- **not** from your own
-    ``forces`` array, which is stale in exactly this case (see below).
 
-Matching forces after a rollback
---------------------------------
-``forces`` is an input: you evaluate it, the optimizer reads it. It is never
-written back, so after a step it still holds whatever your model returned, at
-the geometry it was evaluated at.
+There is no failure status. A line search could exhaust its budget and give up;
+a trust-region step cannot, because a sufficiently short step along a descent
+direction always makes progress, and an ascent direction is replaced by
+steepest descent with the history discarded. A caller that wants to stop early
+bounds the loop itself.
 
-That matters for one status. ``LBFGS_LS_FAILED`` moves ``positions`` *backwards*
-to the last accepted point, so your ``forces`` array -- evaluated at the
-rejected trial -- no longer describes ``positions``. Deciding anything from it
-at that moment gives an answer for a geometry the optimizer has discarded.
+Positions and forces stay consistent
+------------------------------------
+``forces`` is an input: you evaluate it, the optimizer reads it, and it is
+never written back. Positions only ever move *forward* from the point the
+forces were evaluated at -- nothing is rolled back -- so after
+``LBFGS_CONVERGED`` your ``forces`` array still describes the geometry you are
+handed. ``force_base`` holds the same forces, alongside the matching
+``x_base``, if you would rather read them from the optimizer.
 
-``force_base`` is the matching pair: it is written alongside ``x_base`` at every
-accepted point, and after the rollback ``positions == x_base``. So
-``(positions, force_base)`` is consistent on every terminal status, and
-``force_base`` is what a force-based policy should read. If you would rather
-have fresh forces, evaluate your model once more at the restored
-``positions``.
-
-``LBFGS_CONVERGED`` has no such hazard: convergence is only ever decided at an
-accepted point or at the very first evaluation, never at a rejected trial, so
-``positions`` are not moved and your ``forces`` still describe them.
-
-A line search that stalls while history is present is not reported as a
-failure. The optimizer rolls back to the last accepted point, discards the
-history and continues from steepest descent, which is usually enough to get
-moving again. ``iteration`` therefore counts iterations since the most recent
-such restart rather than since the beginning of the run.
+If the curvature model goes bad -- the two-loop recursion returning a direction
+that points uphill -- the history is discarded and that step falls back to
+steepest descent, which always descends. ``iteration`` therefore counts steps
+since the most recent such restart rather than since the beginning of the run.
 
 Forces, not gradients
 ---------------------
@@ -102,9 +143,10 @@ expression. Two consequences are worth knowing when reading the state:
 Precision
 ---------
 Coordinates may be single or double precision, but **all per-system scalars are
-float64 regardless**. The Armijo test compares a difference of total energies;
-at ``E ~ -1e4 eV`` a float32 ULP is ``~1e-3 eV``, so a single-precision
-accumulator would make the line search a coin flip near convergence. The
+float64 regardless**. The ratio ``ys / yy`` sets the initial inverse-Hessian
+scaling for the two-loop recursion, and near convergence ``y = force_base - F``
+is a difference of two nearly equal vectors -- exactly the regime where float32
+cancellation destroys the ratio and with it the quasi-Newton model. The
 per-system arrays are ``O(num_systems)`` and the cost is negligible.
 
 Caller-owned buffers
@@ -116,18 +158,18 @@ makes the step capturable in a CUDA graph and free of per-call allocation.
 
 For ``P`` degrees of freedom, ``M`` systems and history depth ``m``:
 
-============================================  ==========================  =========
-Buffer                                        Shape                       dtype
-============================================  ==========================  =========
-``x_base``, ``force_base``, ``direction``     ``(P,)``                    vec3f/vec3d
-``s_history``, ``y_history``                  ``(m, P)``                  vec3f/vec3d
-``ys``, ``yy``, ``alpha_hist``, ``beta_hist`` ``(m, M)``                  float64
-``ss``, ``f_base``, ``gg``, ``gd``            ``(M,)``                    float64
-``fmax``, ``frms_sq``, ``smax``               ``(M,)``                    float64
-``d0``, ``dmax``, ``dquad``, ``alpha_step``   ``(M,)``                    float64
-``status``, ``iteration``, ``end``            ``(M,)``                    int32
-``n_loop``, ``ls_trials``, ``history_count``  ``(M,)``                    int32
-============================================  ==========================  =========
+=============================================  ==========  ===========
+Buffer                                         Shape       dtype
+=============================================  ==========  ===========
+``x_base``, ``force_base``, ``direction``      ``(P,)``    vec3f/vec3d
+``s_history``, ``y_history``                   ``(m, P)``  vec3f/vec3d
+``ys``, ``yy``, ``alpha_hist``, ``beta_hist``  ``(m, M)``  float64
+``ss``, ``gg``                                 ``(M,)``    float64
+``fmax``, ``frms_sq``, ``smax``                ``(M,)``    float64
+``d0``, ``dmax``, ``dquad``, ``alpha_step``    ``(M,)``    float64
+``status``, ``iteration``, ``end``             ``(M,)``    int32
+``n_loop``, ``history_count``                  ``(M,)``    int32
+=============================================  ==========  ===========
 
 Per-system scalars are float64 whatever the coordinate precision; see
 `Precision`_ below.
@@ -207,7 +249,6 @@ from nvalchemiops.segment_ops import compute_ept
 
 __all__ = [
     "LBFGS_CONVERGED",
-    "LBFGS_LS_FAILED",
     "LBFGS_NEED_EVAL",
     "lbfgs_apply_step",
     "lbfgs_cell_kappa",
@@ -215,7 +256,6 @@ __all__ = [
     "lbfgs_pack_cell",
     "lbfgs_prepare_step",
     "lbfgs_reduce",
-    "lbfgs_reduce_energy",
     "lbfgs_set_reference_cell",
     "lbfgs_step",
     "lbfgs_step_coord_cell",
@@ -249,9 +289,7 @@ _OPTIMIZER_BUFFERS: tuple[str, ...] = (
     "alpha_hist",
     "beta_hist",
     "ss",
-    "f_base",
     "gg",
-    "gd",
     "fmax",
     "frms_sq",
     "smax",
@@ -263,7 +301,6 @@ _OPTIMIZER_BUFFERS: tuple[str, ...] = (
     "iteration",
     "end",
     "n_loop",
-    "ls_trials",
     "history_count",
 )
 
@@ -299,24 +336,19 @@ _CELL_SCRATCH: tuple[str, ...] = _CELL_BUFFERS[5:]
 LBFGS_NEED_EVAL = 0
 #: The system has converged; ``positions`` hold the relaxed geometry.
 LBFGS_CONVERGED = 1
-#: The line search stalled; ``positions`` were restored to the last good point.
-#: The caller's ``forces`` array is then stale, because it was evaluated at the
-#: rejected trial; read ``force_base`` for the forces at the restored geometry.
-LBFGS_LS_FAILED = 2
 
 # -----------------------------------------------------------------------------
 # Internal ``n_loop`` sentinels.
 #
 # ``n_loop`` is the single per-system value every downstream kernel reads to
 # decide what work it owes this call. Non-negative values carry a count:
-# ``n_loop == 0`` is a line-search retry (keep the direction, only alpha
-# changed) and ``n_loop == history_count + 1`` drives the two-loop recursion.
+# ``n_loop == 0`` means the system is finished and owes nothing, and
+# ``n_loop == history_count + 1`` drives the two-loop recursion.
 # -----------------------------------------------------------------------------
 _NLOOP_PENDING = -4  # accepted; the (s, y) pair is written but not yet committed
-_NLOOP_ROLLBACK = -3  # line search exhausted; restore positions from x_base
 _NLOOP_SEED = -2  # converged on arrival; seed the base buffers, do not move
-_NLOOP_RESTART = -1  # seed or restart: take a steepest-descent direction
-_NLOOP_RETRY = 0  # line-search retry: same direction, new alpha
+_NLOOP_RESTART = -1  # first step or restart: take a steepest-descent direction
+_NLOOP_IDLE = 0  # finished; downstream kernels skip this system
 
 _BIG = 1.0e300  # stands in for "no trust-region limit"
 
@@ -414,15 +446,13 @@ def _slot(end: wp.int32, back: wp.int32, m: wp.int32) -> wp.int32:
 @wp.kernel(enable_backward=False)
 def _lbfgs_reduce_kernel(
     forces: wp.array(dtype=Any),
-    direction: wp.array(dtype=Any),
     batch_idx: wp.array(dtype=wp.int32),
     status: wp.array(dtype=wp.int32),
     gg: wp.array(dtype=wp.float64),
-    gd: wp.array(dtype=wp.float64),
     n_dofs: wp.int32,
     elems_per_thread: wp.int32,
 ):
-    """Reduce the packed force/direction inner products for one L-BFGS call.
+    """Reduce the packed force norm for one L-BFGS call.
 
     Computes, per system:
 
@@ -430,9 +460,6 @@ def _lbfgs_reduce_kernel(
         ``f . f`` over the packed degrees of freedom, used to normalize a
         steepest-descent direction. This lives in the space the direction lives
         in, which on a variable-cell path is *not* Cartesian space.
-    ``gd``
-        ``-(f . d)``, the directional derivative in gradient space. Negative
-        for a valid descent direction.
 
     Convergence quantities are deliberately not computed here; see
     :func:`_lbfgs_convergence_kernel`.
@@ -445,8 +472,8 @@ def _lbfgs_reduce_kernel(
 
     Modifies
     --------
-    gg, gd
-        OUTPUT. Accumulated atomically; the launcher zeroes them first.
+    gg
+        OUTPUT. Accumulated atomically; the launcher zeroes it first.
         Systems whose ``status`` is not ``LBFGS_NEED_EVAL`` are left untouched.
     """
     tid = wp.tid()
@@ -458,24 +485,19 @@ def _lbfgs_reduce_kernel(
     zero = wp.float64(0.0)
     s_cur = batch_idx[start]
     acc_gg = zero
-    acc_gd = zero
 
     for i in range(start, stop):
         s = batch_idx[i]
         if s != s_cur:
             if status[s_cur] == LBFGS_NEED_EVAL:
                 wp.atomic_add(gg, s_cur, acc_gg)
-                wp.atomic_add(gd, s_cur, acc_gd)
             s_cur = s
             acc_gg = zero
-            acc_gd = zero
         fi = forces[i]
         acc_gg += wp.float64(wp.dot(fi, fi))
-        acc_gd -= wp.float64(wp.dot(fi, direction[i]))
 
     if status[s_cur] == LBFGS_NEED_EVAL:
         wp.atomic_add(gg, s_cur, acc_gg)
-        wp.atomic_add(gd, s_cur, acc_gd)
 
 
 @wp.kernel(enable_backward=False)
@@ -564,68 +586,17 @@ def _lbfgs_stress_norm_kernel(
     smax[tid] = wp.max(wp.max(wp.abs(sv[0]), wp.abs(sv[1])), wp.abs(sv[2]))
 
 
-@wp.kernel(enable_backward=False)
-def _lbfgs_energy_sum_kernel(
-    per_atom_energy: wp.array(dtype=Any),
-    batch_idx: wp.array(dtype=wp.int32),
-    energy_sum: wp.array(dtype=wp.float64),
-    n_atoms: wp.int32,
-    elems_per_thread: wp.int32,
-):
-    """Sum per-atom energies into per-system totals, accumulating in float64.
-
-    Passing per-atom energies is the recommended way to supply energy. Summing
-    single-precision per-atom values in float64 keeps the total accurate to
-    roughly ``sqrt(N) * 1e-7 eV``, whereas summing them in single precision
-    loses about ``1e-3 eV`` at ``E ~ -1e4 eV`` -- enough to make the Armijo
-    test meaningless near convergence.
-
-    Thread launch
-    -------------
-    One thread per ``elems_per_thread`` consecutive atoms. Requires
-    ``batch_idx`` sorted in non-decreasing order.
-
-    Modifies
-    --------
-    energy_sum
-        OUTPUT. Zeroed by the launcher, then accumulated atomically.
-    """
-    tid = wp.tid()
-    start = tid * elems_per_thread
-    if start >= n_atoms:
-        return
-    stop = wp.min(start + elems_per_thread, n_atoms)
-
-    s_cur = batch_idx[start]
-    acc = wp.float64(0.0)
-    for i in range(start, stop):
-        s = batch_idx[i]
-        if s != s_cur:
-            wp.atomic_add(energy_sum, s_cur, acc)
-            s_cur = s
-            acc = wp.float64(0.0)
-        acc += wp.float64(per_atom_energy[i])
-    wp.atomic_add(energy_sum, s_cur, acc)
-
-
 # =============================================================================
 # Kernel 2: per-system line-search state machine
 # =============================================================================
 
 
 @wp.kernel(enable_backward=False)
-def _lbfgs_line_search_kernel(
-    energy: wp.array(dtype=wp.float64),
+def _lbfgs_step_decision_kernel(
     fmax: wp.array(dtype=wp.float64),
     frms_sq: wp.array(dtype=wp.float64),
     smax: wp.array(dtype=wp.float64),
     n_particles: wp.array(dtype=wp.int32),
-    gd: wp.array(dtype=wp.float64),
-    d0: wp.array(dtype=wp.float64),
-    dmax: wp.array(dtype=wp.float64),
-    dquad: wp.array(dtype=wp.float64),
-    f_base: wp.array(dtype=wp.float64),
-    alpha_step: wp.array(dtype=wp.float64),
     ys: wp.array(dtype=wp.float64, ndim=2),
     yy: wp.array(dtype=wp.float64, ndim=2),
     ss: wp.array(dtype=wp.float64),
@@ -633,31 +604,27 @@ def _lbfgs_line_search_kernel(
     iteration: wp.array(dtype=wp.int32),
     end: wp.array(dtype=wp.int32),
     n_loop: wp.array(dtype=wp.int32),
-    ls_trials: wp.array(dtype=wp.int32),
-    history_count: wp.array(dtype=wp.int32),
-    m: wp.int32,
     force_tol: wp.float64,
     rms_tol: wp.float64,
     stress_tol: wp.float64,
-    ftol: wp.float64,
-    wolfe: wp.float64,
-    step_down: wp.float64,
-    step_up: wp.float64,
-    min_step: wp.float64,
-    max_step: wp.float64,
-    max_ls_iter: wp.int32,
-    maxstep: wp.float64,
 ):
-    """Advance one system's line search by exactly one evaluation.
+    """Decide what the evaluation just supplied means.
 
-    Interprets the energy and forces just supplied and decides what happens
-    next: accept the point, shrink or grow the step and retry, declare
-    convergence, or give up. This is the only kernel with per-system control
-    flow, which is why it runs one thread per system rather than per atom.
+    There is no line search, so there is nothing to reject: every evaluation is
+    an accepted point. Each call therefore does exactly one thing -- test
+    convergence, form one secant pair, and hand a direction downstream for one
+    trust-region step. The step length is bounded by ``maxstep`` rather than
+    chosen by comparing energies, so nothing here reads an energy at all.
 
-    The Wolfe tests use ``d0`` (slope at the base point) and ``dt`` (slope at
-    the trial point), both in gradient space and both negative for a valid
-    descent direction.
+    That matters for machine-learned potentials. A model with a direct force
+    head does not return forces that are the gradient of its energy, and even a
+    conservative model can have a rough energy surface. An Armijo test compares
+    total energies while the search direction comes from forces; when the two
+    disagree the test rejects good steps, and no tuning repairs it because the
+    predicate is measuring the wrong surface.
+
+    This is the only kernel with per-system control flow, which is why it runs
+    one thread per system rather than per atom.
 
     Thread launch
     -------------
@@ -665,22 +632,20 @@ def _lbfgs_line_search_kernel(
 
     Modifies
     --------
-    status, iteration, end, n_loop, ls_trials
+    status, iteration, n_loop
         Per-system control state.
-    f_base, alpha_step
-        Base-point energy and the step length for the next trial.
     ys, yy, ss
-        The candidate history slot is zeroed here, ready for kernel 3.
+        The candidate history slot is zeroed here, ready for the history
+        kernels.
     """
     tid = wp.tid()
 
     # Systems that already finished stay frozen: no work is owed downstream.
     if status[tid] != LBFGS_NEED_EVAL:
-        n_loop[tid] = _NLOOP_RETRY
+        n_loop[tid] = _NLOOP_IDLE
         return
 
-    e_now = energy[tid]
-    conv = _converged(
+    if _converged(
         fmax[tid],
         frms_sq[tid],
         smax[tid],
@@ -688,78 +653,21 @@ def _lbfgs_line_search_kernel(
         force_tol,
         rms_tol,
         stress_tol,
-    )
+    ):
+        # Do not move, but the base buffers still have to describe this
+        # geometry, which is what the SEED sentinel arranges downstream.
+        status[tid] = LBFGS_CONVERGED
+        n_loop[tid] = _NLOOP_SEED
+        return
 
     # ---- first evaluation -------------------------------------------------
     if iteration[tid] < 0:
-        f_base[tid] = e_now
+        # No previous accepted point, so there is no secant pair to form yet.
         iteration[tid] = 0
-        if conv:
-            # Already relaxed on arrival. Do not move, but the base buffers
-            # still have to describe this geometry.
-            status[tid] = LBFGS_CONVERGED
-            n_loop[tid] = _NLOOP_SEED
-        else:
-            n_loop[tid] = _NLOOP_RESTART
+        n_loop[tid] = _NLOOP_RESTART
         return
 
-    # ---- interpret the trial ----------------------------------------------
-    d0_s = d0[tid]
-    dt_s = gd[tid]
-    alpha = alpha_step[tid]
-    trials = ls_trials[tid] + 1
-
-    armijo_ok = (e_now - f_base[tid]) <= alpha * ftol * d0_s
-    curvature_ok = dt_s >= wolfe * d0_s
-    strong_ok = dt_s <= -wolfe * d0_s
-
-    accept = False
-    new_alpha = alpha
-
-    if not armijo_ok:
-        new_alpha = alpha * step_down
-    elif not curvature_ok:
-        # The step is too short. Growing is pointless once the trust region
-        # binds, so take the point instead of spinning on the same trial.
-        cap = _alpha_cap(dmax[tid], dquad[tid], maxstep)
-        if alpha >= cap:
-            accept = True
-        else:
-            new_alpha = alpha * step_up
-    elif not strong_ok:
-        new_alpha = alpha * step_down
-    else:
-        accept = True
-
-    if not accept:
-        # Step bounds are tested against the freshly scaled alpha, so a trial
-        # that would fall outside the range is never proposed.
-        if trials >= max_ls_iter or new_alpha < min_step or new_alpha > max_step:
-            if history_count[tid] > 0:
-                # A stalled line search usually means the curvature model has
-                # gone stale, not that there is no descent left. Roll back to
-                # the last good point, throw the history away and start again
-                # from steepest descent, which cannot inherit a bad model.
-                # Only a search that fails with no history left is terminal,
-                # so this can happen at most once per failure and cannot loop.
-                iteration[tid] = -1
-                history_count[tid] = 0
-                ls_trials[tid] = 0
-                alpha_step[tid] = wp.float64(1.0)
-                n_loop[tid] = _NLOOP_ROLLBACK
-            else:
-                status[tid] = LBFGS_LS_FAILED
-                n_loop[tid] = _NLOOP_ROLLBACK
-        else:
-            alpha_step[tid] = new_alpha
-            ls_trials[tid] = trials
-            n_loop[tid] = _NLOOP_RETRY
-        return
-
-    # ---- accepted ---------------------------------------------------------
-    # Whether or not this point is converged, it becomes the new base point,
-    # so the history kernel must run. The commit kernel decides which.
-    f_base[tid] = e_now
+    # ---- every later evaluation is an accepted step -----------------------
     iteration[tid] = iteration[tid] + 1
     n_loop[tid] = _NLOOP_PENDING
 
@@ -767,11 +675,6 @@ def _lbfgs_line_search_kernel(
     ys[slot, tid] = wp.float64(0.0)
     yy[slot, tid] = wp.float64(0.0)
     ss[tid] = wp.float64(0.0)
-
-
-# =============================================================================
-# Kernel 3: history update, and kernel 3b: commit
-# =============================================================================
 
 
 @wp.kernel(enable_backward=False)
@@ -885,7 +788,7 @@ def _lbfgs_history_commit_kernel(
     """Keep or discard the candidate pair, and finalize the loop bound.
 
     A pair is kept only if its curvature ``s . y`` is comfortably positive.
-    Exact arithmetic guarantees this under the strong Wolfe conditions, but in
+    A line search would enforce this through the Wolfe conditions, but in
     single precision ``y = g - g_prev`` cancels badly near convergence and the
     scaling ``gamma = ys / yy`` can blow up.
 
@@ -925,7 +828,7 @@ def _lbfgs_history_commit_kernel(
     ):
         status[tid] = LBFGS_CONVERGED
         history_count[tid] = wp.min(history_count[tid], m - 1)
-        n_loop[tid] = _NLOOP_RETRY
+        n_loop[tid] = _NLOOP_IDLE
         return
 
     sy = ys[slot, tid]
@@ -1252,7 +1155,7 @@ def _lbfgs_trust_region_kernel(
 
     zero = wp.float64(0.0)
     s_cur = batch_idx[start]
-    active = status[s_cur] == LBFGS_NEED_EVAL and n_loop[s_cur] != _NLOOP_RETRY
+    active = status[s_cur] == LBFGS_NEED_EVAL and n_loop[s_cur] != _NLOOP_IDLE
     loc_max = zero
 
     for i in range(start, stop):
@@ -1261,7 +1164,7 @@ def _lbfgs_trust_region_kernel(
             if active:
                 wp.atomic_max(dmax, s_cur, loc_max)
             s_cur = s
-            active = status[s_cur] == LBFGS_NEED_EVAL and n_loop[s_cur] != _NLOOP_RETRY
+            active = status[s_cur] == LBFGS_NEED_EVAL and n_loop[s_cur] != _NLOOP_IDLE
             loc_max = zero
         if active:
             loc_max = wp.max(loc_max, wp.float64(wp.length(direction[i])))
@@ -1285,31 +1188,26 @@ def _lbfgs_prepare_step_kernel(
     status: wp.array(dtype=wp.int32),
     end: wp.array(dtype=wp.int32),
     n_loop: wp.array(dtype=wp.int32),
-    ls_trials: wp.array(dtype=wp.int32),
     history_count: wp.array(dtype=wp.int32),
     maxstep: wp.float64,
 ):
-    """Reset the line search, repair a bad direction, and apply the trust region.
+    """Repair a bad direction and apply the trust region.
 
     Three things happen here, in order.
 
-    First, any system starting a *new* direction restarts its line search at
-    ``alpha = 1`` with a zero trial count. This matters more than it looks: the
-    two-loop already scales the direction, so a unit step is the Newton step
-    and should usually be accepted outright. Inheriting a shrunken step from
-    the previous line search would quietly degrade the method to a scaled
-    gradient descent. Resetting the trial count also stops it accumulating
-    across iterations and tripping ``max_ls_iter`` on a healthy run.
+    First, the step length is reset to ``alpha = 1``. Nothing is carried
+    between calls: the two-loop already scales the direction, so a unit step is
+    the Newton step, and the trust region below is the only thing that shortens
+    it. Starting from anything else would quietly degrade the method to a
+    scaled gradient descent.
 
     Second, a direction that fails the descent test is replaced by steepest
-    descent rather than reported as a failure. Catching it here, where the
-    direction was produced, guarantees the state machine never sees a
-    non-descent slope.
+    descent. Catching it here, where the direction was produced, guarantees the
+    state machine never sees a non-descent slope.
 
-    Third, the step length is capped so the resulting Cartesian displacement
-    stays within ``maxstep``. The cap is applied on *every* call, not only when
-    a direction is new, because a line search that keeps growing the step would
-    otherwise walk straight past the limit.
+    Third, the step is shortened so the resulting Cartesian displacement stays
+    within ``maxstep``. This is the trust region, and it is the sole determinant
+    of how far the atoms move.
 
     Thread launch
     -------------
@@ -1317,17 +1215,16 @@ def _lbfgs_prepare_step_kernel(
 
     Modifies
     --------
-    alpha_step, ls_trials, d0, dmax, dquad, end, history_count, n_loop
+    alpha_step, d0, dmax, dquad, end, history_count, n_loop
         Per-system control state.
     """
     tid = wp.tid()
     if status[tid] != LBFGS_NEED_EVAL:
         return
 
-    # A new direction always starts a fresh line search.
-    if n_loop[tid] != _NLOOP_RETRY:
-        alpha_step[tid] = wp.float64(1.0)
-        ls_trials[tid] = 0
+    # The step length is never carried between calls: the trust region below
+    # determines it outright, starting from the full quasi-Newton step.
+    alpha_step[tid] = wp.float64(1.0)
 
     # An ascent direction means the history has gone bad; drop it and restart.
     if n_loop[tid] > 0 and d0[tid] >= wp.float64(0.0):
@@ -1356,16 +1253,13 @@ def _lbfgs_apply_step_kernel(
     gg: wp.array(dtype=wp.float64),
     alpha_step: wp.array(dtype=wp.float64),
 ):
-    """Move the positions to the next trial point, or finish the system off.
+    """Move the positions to the next point, or finish the system off.
 
-    Handles the two terminal cases as well as the ordinary step, so that
-    whatever the caller reads back is always a geometry the optimizer stands
-    behind, paired with matching forces in ``force_base``:
-
-    - a line search that ran out of budget has its positions restored to the
-      last accepted point;
-    - a geometry that arrived already converged is left where it is, but its
-      base buffers are seeded so they describe it.
+    Handles the terminal case as well as the ordinary step, so that whatever
+    the caller reads back is always a geometry the optimizer stands behind,
+    paired with matching forces in ``force_base``: a geometry that arrived
+    already converged is left where it is, but its base buffers are seeded so
+    they describe it.
 
     Thread launch
     -------------
@@ -1374,17 +1268,13 @@ def _lbfgs_apply_step_kernel(
     Modifies
     --------
     positions
-        Advanced to ``x_base + alpha * d``, or restored on failure.
+        Advanced to ``x_base + alpha * d``.
     direction, x_base, force_base
         Seeded when a steepest-descent direction is taken.
     """
     tid = wp.tid()
     s = batch_idx[tid]
     nl = n_loop[s]
-
-    if nl == _NLOOP_ROLLBACK:
-        positions[tid] = x_base[tid]
-        return
 
     if nl == _NLOOP_SEED:
         x_base[tid] = positions[tid]
@@ -1411,7 +1301,6 @@ _reduce_overloads = {}
 _convergence_overloads = {}
 _seed_direction_overloads = {}
 _trust_region_overloads = {}
-_energy_sum_overloads = {}
 _history_update_overloads = {}
 _loop1_overloads = {}
 _loop2_overloads = {}
@@ -1425,11 +1314,9 @@ for _v in _VEC_TYPES:
         _lbfgs_reduce_kernel,
         [
             wp.array(dtype=_v),  # forces
-            wp.array(dtype=_v),  # direction
             wp.array(dtype=_I32),  # batch_idx
             wp.array(dtype=_I32),  # status
             wp.array(dtype=_F64),  # gg
-            wp.array(dtype=_F64),  # gd
             _I32,  # n_dofs
             _I32,  # elems_per_thread
         ],
@@ -1555,64 +1442,10 @@ for _v in _VEC_TYPES:
         ],
     )
 
-for _t in (wp.float32, wp.float64):
-    _energy_sum_overloads[_t] = wp.overload(
-        _lbfgs_energy_sum_kernel,
-        [
-            wp.array(dtype=_t),  # per_atom_energy
-            wp.array(dtype=_I32),  # batch_idx
-            wp.array(dtype=_F64),  # energy_sum
-            _I32,  # n_atoms
-            _I32,  # elems_per_thread
-        ],
-    )
-
 
 # =============================================================================
 # Public API
 # =============================================================================
-
-
-def lbfgs_reduce_energy(
-    per_atom_energy: wp.array,
-    batch_idx: wp.array,
-    energy_sum: wp.array,
-) -> None:
-    """Sum per-atom energies into per-system totals, accumulating in float64.
-
-    Use this when your model returns per-atom energies, which is the common
-    case and the recommended one: the float64 accumulation keeps the Armijo
-    test meaningful even when the per-atom values are single precision.
-
-    Parameters
-    ----------
-    per_atom_energy : wp.array, shape (num_atoms,)
-        Per-atom energies, float32 or float64.
-    batch_idx : wp.array(dtype=int32), shape (num_atoms,)
-        Sorted system index for each atom.
-    energy_sum : wp.array(dtype=float64), shape (num_systems,)
-        OUTPUT. Per-system totals. Zeroed internally.
-
-    See Also
-    --------
-    lbfgs_step : consumes the resulting per-system energies.
-    """
-    n_atoms = per_atom_energy.shape[0]
-    energy_sum.zero_()
-    if n_atoms == 0:
-        return
-    if batch_idx.shape[0] != n_atoms:
-        raise ValueError(
-            f"batch_idx length {batch_idx.shape[0]} != per_atom_energy length {n_atoms}"
-        )
-    device = per_atom_energy.device
-    ept = compute_ept(n_atoms, max(device.sm_count, 1), False)
-    wp.launch(
-        _energy_sum_overloads[per_atom_energy.dtype],
-        dim=(n_atoms + ept - 1) // ept,
-        inputs=[per_atom_energy, batch_idx, energy_sum, n_atoms, ept],
-        device=device,
-    )
 
 
 def lbfgs_reduce(
@@ -1621,7 +1454,6 @@ def lbfgs_reduce(
     batch_idx: wp.array,
     status: wp.array,
     gg: wp.array,
-    gd: wp.array,
     fmax: wp.array,
     frms_sq: wp.array,
     *,
@@ -1634,8 +1466,8 @@ def lbfgs_reduce(
 
     Two disjoint sets of quantities, deliberately not merged:
 
-    - ``gg`` and ``gd`` come from the **packed** arrays and drive the
-      algorithm, because that is the space the search direction lives in;
+    - ``gg`` comes from the **packed** arrays and drives the algorithm,
+      because that is the space the search direction lives in;
     - ``fmax``, ``frms_sq`` and ``smax`` come from **Cartesian** forces and
       stress and drive convergence, so that the tolerances keep their physical
       meaning as the cell deforms.
@@ -1657,7 +1489,7 @@ def lbfgs_reduce(
         Sorted system index for each degree of freedom.
     status : wp.array(dtype=int32), shape (num_systems,)
         Per-system status; finished systems are skipped.
-    gg, gd, fmax, frms_sq : wp.array(dtype=float64), shape (num_systems,)
+    gg, fmax, frms_sq : wp.array(dtype=float64), shape (num_systems,)
         OUTPUT. Zeroed internally before accumulation.
     cart_forces : wp.array, shape (num_atoms,), optional
         Cartesian forces for the convergence reductions. Defaults to
@@ -1673,7 +1505,6 @@ def lbfgs_reduce(
     """
     n_dofs = forces.shape[0]
     gg.zero_()
-    gd.zero_()
     fmax.zero_()
     frms_sq.zero_()
     if n_dofs == 0:
@@ -1684,7 +1515,7 @@ def lbfgs_reduce(
     wp.launch(
         _reduce_overloads[forces.dtype],
         dim=(n_dofs + ept - 1) // ept,
-        inputs=[forces, direction, batch_idx, status, gg, gd, n_dofs, ept],
+        inputs=[forces, batch_idx, status, gg, n_dofs, ept],
         device=device,
     )
 
@@ -1729,10 +1560,7 @@ def lbfgs_update(
     alpha_hist: wp.array,
     beta_hist: wp.array,
     ss: wp.array,
-    energy: wp.array,
-    f_base: wp.array,
     gg: wp.array,
-    gd: wp.array,
     fmax: wp.array,
     frms_sq: wp.array,
     smax: wp.array,
@@ -1744,7 +1572,6 @@ def lbfgs_update(
     iteration: wp.array,
     end: wp.array,
     n_loop: wp.array,
-    ls_trials: wp.array,
     history_count: wp.array,
     n_particles: wp.array,
     *,
@@ -1754,13 +1581,6 @@ def lbfgs_update(
     force_tol: float = 0.05,
     rms_tol: float = 0.0,
     stress_tol: float = 0.0,
-    ftol: float = 1e-4,
-    wolfe: float = 0.9,
-    step_scale_down: float = 0.5,
-    step_scale_up: float = 2.1,
-    min_step: float = 1e-20,
-    max_step: float = 1e20,
-    max_ls_iter: int = 40,
     maxstep: float = 0.2,
     curvature_eps: float = 1e-10,
     compute_reductions: bool = True,
@@ -1785,9 +1605,6 @@ def lbfgs_update(
         Sorted system index for each degree of freedom. Required.
     s_history, y_history : wp.array, shape (history_size, num_dofs,)
         Ring buffers of position and gradient differences.
-    energy : wp.array(dtype=float64), shape (num_systems,)
-        Per-system total energy at ``positions``. Use
-        :func:`lbfgs_reduce_energy` if your model returns per-atom energies.
     n_particles : wp.array(dtype=int32), shape (num_systems,)
         Atom count per system, for the RMS convergence test. This is the atom
         count, which on a variable-cell path is not the same as the
@@ -1798,14 +1615,7 @@ def lbfgs_update(
     rms_tol, stress_tol : float, optional
         Additional convergence thresholds, disabled by default. All enabled
         criteria must hold.
-    ftol, wolfe : float, optional
-        Armijo and curvature parameters of the strong Wolfe conditions.
-    step_scale_down, step_scale_up : float, optional
-        Multipliers applied when the line search shrinks or grows the step.
-    min_step, max_step : float, optional
-        Step length bounds; falling outside them ends the line search.
-    max_ls_iter : int, optional
-        Trials allowed per line search before giving up.
+
     maxstep : float, optional
         Largest Cartesian displacement any atom may take in one step. Set to
         zero to disable the trust region.
@@ -1813,7 +1623,7 @@ def lbfgs_update(
         Relative threshold below which a history pair is judged to carry no
         usable curvature and is discarded.
     compute_reductions : bool, optional
-        When ``False``, ``gg``/``gd``/``fmax``/``frms_sq`` are taken as given
+        When ``False``, ``gg``/``fmax``/``frms_sq`` are taken as given
         rather than recomputed.
     measure_trust_region : bool, optional
         When ``False``, ``dmax`` and ``dquad`` are taken as given. Set this if
@@ -1864,7 +1674,6 @@ def lbfgs_update(
 
     if n_dofs == 0:
         gg.zero_()
-        gd.zero_()
         fmax.zero_()
         frms_sq.zero_()
         return
@@ -1886,7 +1695,6 @@ def lbfgs_update(
             batch_idx,
             status,
             gg,
-            gd,
             fmax,
             frms_sq,
             cart_forces=cart_forces,
@@ -1896,20 +1704,13 @@ def lbfgs_update(
         )
 
     wp.launch(
-        _lbfgs_line_search_kernel,
+        _lbfgs_step_decision_kernel,
         dim=num_systems,
         inputs=[
-            energy,
             fmax,
             frms_sq,
             smax,
             n_particles,
-            gd,
-            d0,
-            dmax,
-            dquad,
-            f_base,
-            alpha_step,
             ys,
             yy,
             ss,
@@ -1917,20 +1718,9 @@ def lbfgs_update(
             iteration,
             end,
             n_loop,
-            ls_trials,
-            history_count,
-            m,
             float(force_tol),
             float(rms_tol),
             float(stress_tol),
-            float(ftol),
-            float(wolfe),
-            float(step_scale_down),
-            float(step_scale_up),
-            float(min_step),
-            float(max_step),
-            int(max_ls_iter),
-            float(maxstep),
         ],
         device=device,
     )
@@ -2112,14 +1902,13 @@ def lbfgs_prepare_step(
     status: wp.array,
     end: wp.array,
     n_loop: wp.array,
-    ls_trials: wp.array,
     history_count: wp.array,
     *,
     maxstep: float = 0.2,
 ) -> None:
     """Finalize the step length before the atoms move.
 
-    Restarts the line search for any system that has a new direction, replaces
+    Resets the step length, replaces
     a non-descent direction with steepest descent, and caps the step so no atom
     moves further than ``maxstep``.
 
@@ -2146,7 +1935,6 @@ def lbfgs_prepare_step(
             status,
             end,
             n_loop,
-            ls_trials,
             history_count,
             float(maxstep),
         ],
@@ -2169,9 +1957,8 @@ def lbfgs_apply_step(
     """Move the positions to the next trial point.
 
     Also handles the two terminal cases, so that after any call the positions
-    and ``force_base`` describe the same geometry: a failed line search is
-    rolled back to the last accepted point, and a geometry that arrived already
-    converged is left alone with its base buffers seeded.
+    and ``force_base`` describe the same geometry: a geometry that arrived
+    already converged is left alone with its base buffers seeded.
 
     See Also
     --------
@@ -2213,10 +2000,7 @@ def lbfgs_step(
     alpha_hist: wp.array,
     beta_hist: wp.array,
     ss: wp.array,
-    energy: wp.array,
-    f_base: wp.array,
     gg: wp.array,
-    gd: wp.array,
     fmax: wp.array,
     frms_sq: wp.array,
     smax: wp.array,
@@ -2228,7 +2012,6 @@ def lbfgs_step(
     iteration: wp.array,
     end: wp.array,
     n_loop: wp.array,
-    ls_trials: wp.array,
     history_count: wp.array,
     n_particles: wp.array,
     *,
@@ -2238,13 +2021,6 @@ def lbfgs_step(
     force_tol: float = 0.05,
     rms_tol: float = 0.0,
     stress_tol: float = 0.0,
-    ftol: float = 1e-4,
-    wolfe: float = 0.9,
-    step_scale_down: float = 0.5,
-    step_scale_up: float = 2.1,
-    min_step: float = 1e-20,
-    max_step: float = 1e20,
-    max_ls_iter: int = 40,
     maxstep: float = 0.2,
     curvature_eps: float = 1e-10,
     compute_reductions: bool = True,
@@ -2265,15 +2041,11 @@ def lbfgs_step(
     Examples
     --------
     >>> while True:
-    ...     energy_per_atom, forces = model(positions)
-    ...     lbfgs_reduce_energy(energy_per_atom, batch_idx, energy)
+    ...     forces = model(positions)
     ...     lbfgs_step(positions, forces, ..., batch_idx=batch_idx)
     ...     if not (status.numpy() == LBFGS_NEED_EVAL).any():
     ...         break
 
-    See Also
-    --------
-    lbfgs_reduce_energy : build the per-system energies this consumes.
     """
     lbfgs_update(
         positions=positions,
@@ -2289,10 +2061,7 @@ def lbfgs_step(
         alpha_hist=alpha_hist,
         beta_hist=beta_hist,
         ss=ss,
-        energy=energy,
-        f_base=f_base,
         gg=gg,
-        gd=gd,
         fmax=fmax,
         frms_sq=frms_sq,
         smax=smax,
@@ -2304,7 +2073,6 @@ def lbfgs_step(
         iteration=iteration,
         end=end,
         n_loop=n_loop,
-        ls_trials=ls_trials,
         history_count=history_count,
         n_particles=n_particles,
         cart_forces=cart_forces,
@@ -2313,13 +2081,6 @@ def lbfgs_step(
         force_tol=force_tol,
         rms_tol=rms_tol,
         stress_tol=stress_tol,
-        ftol=ftol,
-        wolfe=wolfe,
-        step_scale_down=step_scale_down,
-        step_scale_up=step_scale_up,
-        min_step=min_step,
-        max_step=max_step,
-        max_ls_iter=max_ls_iter,
         maxstep=maxstep,
         curvature_eps=curvature_eps,
         compute_reductions=compute_reductions,
@@ -2335,7 +2096,6 @@ def lbfgs_step(
         status=status,
         end=end,
         n_loop=n_loop,
-        ls_trials=ls_trials,
         history_count=history_count,
         maxstep=maxstep,
     )
@@ -2652,7 +2412,7 @@ def _lbfgs_cell_trust_region_kernel(
     """
     atom_i = wp.tid()
     s = batch_idx[atom_i]
-    if status[s] != LBFGS_NEED_EVAL or n_loop[s] == _NLOOP_RETRY:
+    if status[s] != LBFGS_NEED_EVAL or n_loop[s] == _NLOOP_IDLE:
         return
     e = atom_i + 2 * s
     d_u = direction[e]
@@ -3026,7 +2786,6 @@ def lbfgs_step_coord_cell(
     forces: wp.array,
     cell: wp.array,
     stress: wp.array,
-    energy: wp.array,
     batch_idx: wp.array,
     n_particles: wp.array,
     x_base: wp.array,
@@ -3039,9 +2798,7 @@ def lbfgs_step_coord_cell(
     alpha_hist: wp.array,
     beta_hist: wp.array,
     ss: wp.array,
-    f_base: wp.array,
     gg: wp.array,
-    gd: wp.array,
     fmax: wp.array,
     frms_sq: wp.array,
     smax: wp.array,
@@ -3053,7 +2810,6 @@ def lbfgs_step_coord_cell(
     iteration: wp.array,
     end: wp.array,
     n_loop: wp.array,
-    ls_trials: wp.array,
     history_count: wp.array,
     ref_cell: wp.array,
     ref_cell_inv: wp.array,
@@ -3073,13 +2829,6 @@ def lbfgs_step_coord_cell(
     force_tol: float = 0.05,
     rms_tol: float = 0.0,
     stress_tol: float = 0.0,
-    ftol: float = 1e-4,
-    wolfe: float = 0.9,
-    step_scale_down: float = 0.5,
-    step_scale_up: float = 2.1,
-    min_step: float = 1e-20,
-    max_step: float = 1e20,
-    max_ls_iter: int = 40,
     maxstep: float = 0.2,
     curvature_eps: float = 1e-10,
 ) -> None:
@@ -3174,7 +2923,6 @@ def lbfgs_step_coord_cell(
         positions=ext_positions,
         forces=ext_forces,
         batch_idx=ext_batch_idx,
-        energy=energy,
         n_particles=n_particles,
         cart_forces=forces,
         atom_batch_idx=batch_idx,
@@ -3190,9 +2938,7 @@ def lbfgs_step_coord_cell(
         alpha_hist=alpha_hist,
         beta_hist=beta_hist,
         ss=ss,
-        f_base=f_base,
         gg=gg,
-        gd=gd,
         fmax=fmax,
         frms_sq=frms_sq,
         smax=smax,
@@ -3204,18 +2950,10 @@ def lbfgs_step_coord_cell(
         iteration=iteration,
         end=end,
         n_loop=n_loop,
-        ls_trials=ls_trials,
         history_count=history_count,
         force_tol=force_tol,
         rms_tol=rms_tol,
         stress_tol=stress_tol,
-        ftol=ftol,
-        wolfe=wolfe,
-        step_scale_down=step_scale_down,
-        step_scale_up=step_scale_up,
-        min_step=min_step,
-        max_step=max_step,
-        max_ls_iter=max_ls_iter,
         maxstep=maxstep,
         curvature_eps=curvature_eps,
     )
@@ -3243,7 +2981,6 @@ def lbfgs_step_coord_cell(
         status=status,
         end=end,
         n_loop=n_loop,
-        ls_trials=ls_trials,
         history_count=history_count,
         maxstep=maxstep,
     )

@@ -69,23 +69,28 @@ def make_jax_buffers(num_dofs, num_systems, dtype=None, history_size=6):
     if dtype not in (jnp.float32, jnp.float64):
         raise ValueError(f"dtype must be float32 or float64; got {dtype}")
     f64 = jnp.float64
-    buffers = {
-        "x_base": jnp.zeros((num_dofs, 3), dtype),
-        "force_base": jnp.zeros((num_dofs, 3), dtype),
-        "direction": jnp.zeros((num_dofs, 3), dtype),
-        "s_history": jnp.zeros((history_size, num_dofs, 3), dtype),
-        "y_history": jnp.zeros((history_size, num_dofs, 3), dtype),
-        "ys": jnp.zeros((history_size, num_systems), f64),
-        "yy": jnp.zeros((history_size, num_systems), f64),
-        "alpha_hist": jnp.zeros((history_size, num_systems), f64),
-        "beta_hist": jnp.zeros((history_size, num_systems), f64),
-        **{n: jnp.zeros((num_systems,), f64) for n in _OPTIMIZER_BUFFERS[9:19]},
-        # Three buffers do not start at zero.
-        "alpha_step": jnp.ones((num_systems,), f64),
-        "status": jnp.full((num_systems,), LBFGS_NEED_EVAL, jnp.int32),
-        "iteration": jnp.full((num_systems,), -1, jnp.int32),
-        **{n: jnp.zeros((num_systems,), jnp.int32) for n in _OPTIMIZER_BUFFERS[22:]},
-    }
+    # Keyed by name rather than by slice, so adding or removing a buffer cannot
+    # silently shift the wrong ones into the wrong dtype.
+    PER_DOF = {"x_base", "force_base", "direction"}
+    HISTORY = {"s_history", "y_history"}
+    PER_SLOT = {"ys", "yy", "alpha_hist", "beta_hist"}
+    INTS = {"status", "iteration", "end", "n_loop", "history_count"}
+    buffers = {}
+    for name in _OPTIMIZER_BUFFERS:
+        if name in HISTORY:
+            buffers[name] = jnp.zeros((history_size, num_dofs, 3), dtype)
+        elif name in PER_DOF:
+            buffers[name] = jnp.zeros((num_dofs, 3), dtype)
+        elif name in PER_SLOT:
+            buffers[name] = jnp.zeros((history_size, num_systems), f64)
+        elif name in INTS:
+            buffers[name] = jnp.zeros((num_systems,), jnp.int32)
+        else:
+            buffers[name] = jnp.zeros((num_systems,), f64)
+    # Three buffers do not start at zero.
+    buffers["alpha_step"] = jnp.ones((num_systems,), f64)
+    buffers["status"] = jnp.full((num_systems,), LBFGS_NEED_EVAL, jnp.int32)
+    buffers["iteration"] = jnp.full((num_systems,), -1, jnp.int32)
     assert tuple(buffers) == _OPTIMIZER_BUFFERS, "factory drifted from buffer order"
     return list(buffers.values())
 
@@ -164,18 +169,16 @@ class JaxDriver:
         self.n_evals = 0
 
     def model(self, positions):
+        """Forces only: the optimizer never asks for an energy."""
         x = positions.astype(jnp.float64)
-        per_atom = 0.5 * (self.stiffness * x**2).sum(axis=1)
-        energy = jax.ops.segment_sum(per_atom, self.batch_idx, self.num_systems)
-        return energy, (-(self.stiffness * x)).astype(self.dtype)
+        return (-(self.stiffness * x)).astype(self.dtype)
 
     def step(self, **kwargs):
-        energy, forces = self.model(self.positions)
+        forces = self.model(self.positions)
         self.n_evals += 1
         out = lbfgs_step_coord(
             self.positions,
             forces,
-            energy,
             self.batch_idx,
             self.n_particles,
             *self.buffers,
@@ -222,6 +225,8 @@ class TestLBFGSJaxRegistration:
             "lbfgs_allocate_state",
             "lbfgs_allocate_cell_state",
             "lbfgs_reset",
+            "lbfgs_reduce_energy",
+            "LBFGS_LS_FAILED",
         ):
             assert not hasattr(module, name), f"{name} still exists"
             assert name not in module.__all__
@@ -232,10 +237,10 @@ class TestLBFGSJaxRegistration:
 
         n_opt = len(_OPTIMIZER_BUFFERS)
         coord = tuple(inspect.signature(lbfgs_step_coord).parameters)
-        assert coord[5 : 5 + n_opt] == _OPTIMIZER_BUFFERS
+        assert coord[4 : 4 + n_opt] == _OPTIMIZER_BUFFERS
         cell = tuple(inspect.signature(lbfgs_step_coord_cell).parameters)
-        assert cell[7 : 7 + n_opt] == _OPTIMIZER_BUFFERS
-        assert cell[7 + n_opt : 7 + n_opt + len(_CELL_BUFFERS)] == _CELL_BUFFERS
+        assert cell[6 : 6 + n_opt] == _OPTIMIZER_BUFFERS
+        assert cell[6 + n_opt : 6 + n_opt + len(_CELL_BUFFERS)] == _CELL_BUFFERS
 
     @pytest.mark.parametrize("suffix", ["f32", "f64"])
     def test_body_parameter_order_matches_the_buffers(self, suffix):
@@ -244,7 +249,7 @@ class TestLBFGSJaxRegistration:
 
         body = getattr(module, f"_lbfgs_body_{suffix}")
         params = tuple(inspect.signature(body).parameters)
-        offset = 5  # forces, energy, batch_idx, n_particles, positions
+        offset = 4  # forces, batch_idx, n_particles, positions
         assert params[offset : offset + len(_OPTIMIZER_BUFFERS)] == _OPTIMIZER_BUFFERS
 
     @pytest.mark.parametrize("graph_mode", ["none", "warp", "warp_staged"])
@@ -322,7 +327,6 @@ class TestLBFGSJax:
         device = "cuda:0"
         wp_pos = wp.array(start.copy(), dtype=wp.vec3d, device=device)
         wp_forces = wp.zeros(n, dtype=wp.vec3d, device=device)
-        wp_energy = wp.zeros(1, dtype=wp.float64, device=device)
         wp_batch = wp.zeros(n, dtype=wp.int32, device=device)
         wp_nparts = wp.array(np.array([n], np.int32), dtype=wp.int32, device=device)
         wp_state = make_lbfgs_state(n, 1, 6, wp.vec3d, device)
@@ -331,11 +335,9 @@ class TestLBFGSJax:
             d.step(force_tol=1e-8, maxstep=0.5)
             x = wp_pos.numpy()
             wp_forces.assign(-(STIFFNESS * x))
-            wp_energy.assign(np.array([(0.5 * STIFFNESS * x**2).sum()]))
             warp_step(
                 positions=wp_pos,
                 forces=wp_forces,
-                energy=wp_energy,
                 batch_idx=wp_batch,
                 n_particles=wp_nparts,
                 force_tol=1e-8,
@@ -391,11 +393,10 @@ class TestLBFGSJax:
         )
         def relax_step(positions, *buffers_and_inputs):
             buffers = buffers_and_inputs[: len(_OPTIMIZER_BUFFERS)]
-            forces, energy = buffers_and_inputs[len(_OPTIMIZER_BUFFERS) :]
+            (forces,) = buffers_and_inputs[len(_OPTIMIZER_BUFFERS) :]
             return lbfgs_step_coord(
                 positions,
                 forces,
-                energy,
                 batch_idx,
                 n_particles,
                 *buffers,
@@ -412,8 +413,8 @@ class TestLBFGSJax:
             # A refused donation is only a warning; make it fail the test.
             warnings.simplefilter("error", UserWarning)
             for i in range(40):
-                energy, forces = d.model(d.positions)
-                out = relax_step(d.positions, *d.buffers, forces, energy)
+                forces = d.model(d.positions)
+                out = relax_step(d.positions, *d.buffers, forces)
                 d.positions, d.buffers = out[0], list(out[1:])
                 if i in (9, 19, 39):
                     jax.block_until_ready(d.positions)
@@ -434,13 +435,12 @@ class TestLBFGSJax:
     def test_step_is_not_differentiable(self, _gpu):
         """Differentiating must fail loudly rather than return zeros."""
         d = JaxDriver(_cluster(4))
-        energy, forces = d.model(d.positions)
+        forces = d.model(d.positions)
 
         def loss(positions):
             out = lbfgs_step_coord(
                 positions,
                 forces,
-                energy,
                 d.batch_idx,
                 d.n_particles,
                 *d.buffers,
@@ -458,25 +458,10 @@ class TestLBFGSJaxErrors:
 
     def test_force_shape_mismatch(self, _gpu):
         d = JaxDriver(_cluster(3))
-        energy, _ = d.model(d.positions)
         with pytest.raises(ValueError, match="forces shape"):
             lbfgs_step_coord(
                 d.positions,
                 jnp.zeros((2, 3)),
-                energy,
-                d.batch_idx,
-                d.n_particles,
-                *d.buffers,
-            )
-
-    def test_energy_must_be_float64(self, _gpu):
-        d = JaxDriver(_cluster(3))
-        energy, forces = d.model(d.positions)
-        with pytest.raises(ValueError, match="energy must be float64"):
-            lbfgs_step_coord(
-                d.positions,
-                forces,
-                energy.astype(jnp.float32),
                 d.batch_idx,
                 d.n_particles,
                 *d.buffers,
@@ -484,13 +469,12 @@ class TestLBFGSJaxErrors:
 
     def test_history_size_mismatch(self, _gpu):
         d = JaxDriver(_cluster(3))
-        energy, forces = d.model(d.positions)
+        forces = d.model(d.positions)
         other = make_jax_buffers(9, 1)
         with pytest.raises(ValueError, match="history buffers"):
             lbfgs_step_coord(
                 d.positions,
                 forces,
-                energy,
                 d.batch_idx,
                 d.n_particles,
                 *other,
@@ -545,7 +529,7 @@ class TestLBFGSJaxCoordCell:
         n_particles = jnp.full((1,), n, jnp.int32)
 
         for _ in range(400):
-            e, f, s = potential.energy_forces_stress(
+            _, f, s = potential.energy_forces_stress(
                 np.asarray(positions), np.asarray(cell)[0]
             )
             out = lbfgs_step_coord_cell(
@@ -553,7 +537,6 @@ class TestLBFGSJaxCoordCell:
                 cell,
                 jnp.asarray(f),
                 jnp.asarray(s[None]),
-                jnp.asarray([e]),
                 batch_idx,
                 n_particles,
                 *buffers,
@@ -596,7 +579,6 @@ class TestLBFGSJaxCoordCell:
         wp_cell = wp.array(start_cell[None], dtype=wp.mat33d, device=device)
         wp_forces = wp.zeros(n, dtype=wp.vec3d, device=device)
         wp_stress = wp.zeros(1, dtype=wp.mat33d, device=device)
-        wp_energy = wp.zeros(1, dtype=wp.float64, device=device)
         wp_batch = wp.zeros(n, dtype=wp.int32, device=device)
         wp_nparts = wp.array(np.array([n], np.int32), dtype=wp.int32, device=device)
         wp_cell_state = make_lbfgs_cell_state(n, 1, wp.vec3d, device)
@@ -604,7 +586,7 @@ class TestLBFGSJaxCoordCell:
         wp_state = make_lbfgs_state(n + 2, 1, 6, wp.vec3d, device)
 
         for _ in range(25):
-            e, f, s = potential.energy_forces_stress(
+            _, f, s = potential.energy_forces_stress(
                 np.asarray(positions), np.asarray(cell)[0]
             )
             out = lbfgs_step_coord_cell(
@@ -612,7 +594,6 @@ class TestLBFGSJaxCoordCell:
                 cell,
                 jnp.asarray(f),
                 jnp.asarray(s[None]),
-                jnp.asarray([e]),
                 batch_idx,
                 n_particles,
                 *buffers,
@@ -624,18 +605,16 @@ class TestLBFGSJaxCoordCell:
             positions, cell, buffers, scratch = self._unpack(out)
             cell_buffers = cell_buffers[:5] + scratch
 
-            e2, f2, s2 = potential.energy_forces_stress(
+            _, f2, s2 = potential.energy_forces_stress(
                 wp_pos.numpy(), wp_cell.numpy()[0]
             )
             wp_forces.assign(f2)
             wp_stress.assign(s2[None])
-            wp_energy.assign(np.array([e2]))
             warp_step_cell(
                 wp_pos,
                 wp_forces,
                 wp_cell,
                 wp_stress,
-                wp_energy,
                 wp_batch,
                 wp_nparts,
                 *wp_state.values(),
@@ -673,7 +652,9 @@ class TestLBFGSJaxCoordCell:
         assert _CELL_IN_OUT_ARGS == (
             ("positions", "cell") + _OPTIMIZER_BUFFERS + _CELL_SCRATCH
         )
-        assert len(_CELL_IN_OUT_ARGS) == 37
+        assert len(_CELL_IN_OUT_ARGS) == 2 + len(_OPTIMIZER_BUFFERS) + len(
+            _CELL_SCRATCH
+        )
         assert set(_CELL_IN_OUT_ARGS).isdisjoint(_CELL_BUFFERS[:5])
 
     def test_buffers_sized_for_the_wrong_dof_count_are_rejected(self, _gpu):
@@ -682,7 +663,7 @@ class TestLBFGSJaxCoordCell:
         n = 6
         positions, cell, _, cell_buffers, potential = self._setup(n)
         wrong = make_jax_buffers(n, 1)
-        e, f, s = potential.energy_forces_stress(
+        _, f, s = potential.energy_forces_stress(
             np.asarray(positions), np.asarray(cell)[0]
         )
         with pytest.raises(ValueError, match="num_atoms \\+ 2 \\* num_systems"):
@@ -691,7 +672,6 @@ class TestLBFGSJaxCoordCell:
                 cell,
                 jnp.asarray(f),
                 jnp.asarray(s[None]),
-                jnp.asarray([e]),
                 jnp.zeros(n, jnp.int32),
                 jnp.full((1,), n, jnp.int32),
                 *wrong,
@@ -714,26 +694,25 @@ class TestLBFGSJaxCoordCell:
 
         def one_run(jit):
             positions, cell, buffers, cell_buffers, potential = self._setup(n)
-            e, f, s = potential.energy_forces_stress(
+            _, f, s = potential.energy_forces_stress(
                 np.asarray(positions), np.asarray(cell)[0]
             )
 
-            def body(p, c, f_, s_, e_, *all_buffers):
+            def body(p, c, f_, s_, *all_buffers):
                 return lbfgs_step_coord_cell(
-                    p, c, f_, s_, e_, batch_idx, n_particles, *all_buffers, **opts
+                    p, c, f_, s_, batch_idx, n_particles, *all_buffers, **opts
                 )
 
             # Donate positions, cell and every buffer the step writes. The five
             # read-only chart inputs are deliberately left undonated, since
             # they are not returned.
-            donated = (0, 1, *range(5, 5 + len(_OPTIMIZER_BUFFERS)))
+            donated = (0, 1, *range(4, 4 + len(_OPTIMIZER_BUFFERS)))
             fn = jax.jit(body, donate_argnums=donated) if jit else body
             out = fn(
                 positions,
                 cell,
                 jnp.asarray(f),
                 jnp.asarray(s[None]),
-                jnp.asarray([e]),
                 *buffers,
                 *cell_buffers,
             )

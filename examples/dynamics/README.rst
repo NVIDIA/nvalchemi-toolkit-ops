@@ -89,8 +89,9 @@ Geometry Optimization Examples
 12_lbfgs_optimization.py
     L-BFGS geometry optimization for a single LJ cluster.
 
-    - Quasi-Newton search direction with a strong Wolfe line search
-    - Caller-driven loop: one force evaluation per ``lbfgs_step`` call
+    - Quasi-Newton search direction with a ``maxstep`` trust-region step
+    - Caller-driven loop: one force evaluation per ``lbfgs_step`` call, and no
+      energy input at all
     - Progress reported through a per-system ``status`` array
     - Shows the full caller-owned buffer allocation, including the three
       buffers whose initial values are not zero

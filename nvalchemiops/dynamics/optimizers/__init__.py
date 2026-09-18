@@ -53,18 +53,16 @@ fire2_update
     coupled variable-cell optimization.
 
 lbfgs_step
-    Complete L-BFGS step. Consumes exactly one energy/force evaluation per
-    call and reports progress through a per-system ``status`` array.
+    Complete L-BFGS step. Consumes exactly one force evaluation per call and
+    reports progress through a per-system ``status`` array. Every call is an
+    accepted step: the direction comes from the two-loop recursion and the step
+    length from a ``maxstep`` trust region, so no energy is read at all.
     Uses batch_idx batching only.
 
 lbfgs_update
     L-BFGS reductions, line-search decision, history update and two-loop
     recursion WITHOUT the position update. Use with ``lbfgs_prepare_step``
     and ``lbfgs_apply_step`` for custom apply phases.
-
-lbfgs_reduce_energy
-    Sum per-atom energies into the per-system totals ``lbfgs_step`` expects,
-    accumulating in float64.
 
     All L-BFGS buffers are caller-owned: the package allocates and initializes
     nothing. See :mod:`nvalchemiops.dynamics.optimizers.lbfgs` for the required
@@ -103,7 +101,6 @@ from nvalchemiops.dynamics.optimizers.fire2 import (
 )
 from nvalchemiops.dynamics.optimizers.lbfgs import (
     LBFGS_CONVERGED,
-    LBFGS_LS_FAILED,
     LBFGS_NEED_EVAL,
     lbfgs_apply_step,
     lbfgs_cell_kappa,
@@ -111,7 +108,6 @@ from nvalchemiops.dynamics.optimizers.lbfgs import (
     lbfgs_pack_cell,
     lbfgs_prepare_step,
     lbfgs_reduce,
-    lbfgs_reduce_energy,
     lbfgs_set_reference_cell,
     lbfgs_step,
     lbfgs_unpack_cell,
@@ -133,7 +129,6 @@ __all__ = [
     "lbfgs_prepare_step",
     "lbfgs_apply_step",
     "lbfgs_reduce",
-    "lbfgs_reduce_energy",
     # L-BFGS variable cell
     "lbfgs_set_reference_cell",
     "lbfgs_cell_kappa",
@@ -142,7 +137,6 @@ __all__ = [
     "lbfgs_cell_trust_region",
     "LBFGS_NEED_EVAL",
     "LBFGS_CONVERGED",
-    "LBFGS_LS_FAILED",
     # Low-level kernels
     "_fire_step_no_downhill_ptr_kernel",
     "_fire_step_downhill_ptr_kernel",

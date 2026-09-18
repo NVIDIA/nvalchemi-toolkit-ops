@@ -75,9 +75,7 @@ def make_lbfgs_state(num_dofs, num_systems, history_size, vec_dtype, device):
         "alpha_hist": f64_2d(history_size, num_systems),
         "beta_hist": f64_2d(history_size, num_systems),
         "ss": f64(num_systems),
-        "f_base": f64(num_systems),
         "gg": f64(num_systems),
-        "gd": f64(num_systems),
         "fmax": f64(num_systems),
         "frms_sq": f64(num_systems),
         "smax": f64(num_systems),
@@ -89,7 +87,6 @@ def make_lbfgs_state(num_dofs, num_systems, history_size, vec_dtype, device):
         "iteration": i32(num_systems),
         "end": i32(num_systems),
         "n_loop": i32(num_systems),
-        "ls_trials": i32(num_systems),
         "history_count": i32(num_systems),
     }
     _check_order(buffers, _OPTIMIZER_BUFFERS, "make_lbfgs_state")

@@ -9,14 +9,18 @@
 - New L-BFGS geometry optimizer, with a Warp core plus PyTorch and JAX
   bindings. L-BFGS is a quasi-Newton method: it builds an approximation to the
   inverse Hessian from recent position and gradient differences and picks a
-  step length with a strong Wolfe line search. On Lennard-Jones clusters it
-  reaches a given force tolerance in roughly a seventh of the energy/force
-  evaluations FIRE2 needs, measured against a per-case tuned FIRE2 baseline,
-  which is the cost that dominates relaxation with a machine-learned potential.
-- The optimizer is caller-driven: each step consumes exactly one energy/force
+  step length bounded by a trust region. On Lennard-Jones clusters it
+  reaches a given force tolerance in roughly an eighth of the force evaluations
+  FIRE2 needs, measured against a per-case tuned FIRE2 baseline, which is the
+  cost that dominates relaxation with a machine-learned potential.
+- The optimizer is caller-driven: each step consumes exactly one force
   evaluation and reports progress through a per-system `status` array, so a
   whole batch relaxes in one stream of kernel launches with no per-system host
   control flow.
+- **No energy is required.** The step length comes from a `maxstep` trust
+  region rather than from a line search, so models whose forces are not the
+  gradient of their reported energy -- direct force heads, and anything with a
+  rough energy surface -- relax as well as conservative ones.
 - Every optimizer buffer is caller-owned: the package allocates nothing,
   initializes nothing and keeps no hidden state between calls, so the buffers
   can come from whatever pool you already have and a step allocates no memory.

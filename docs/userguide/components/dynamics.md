@@ -449,18 +449,18 @@ fire2_step_coord_cell(
 ### L-BFGS (Limited-memory Quasi-Newton)
 
 L-BFGS builds an implicit approximation to the inverse Hessian from the last
-few position and gradient differences and uses it to pick a search direction,
-then chooses a step length with a strong Wolfe line search. It usually reaches
-a given force tolerance in far fewer energy/force evaluations than FIRE or
-FIRE2 — the cost that dominates relaxation with a machine-learned potential.
+few position and force differences and uses it to pick a search direction, then
+takes a step along it bounded by a `maxstep` trust region. It usually reaches a
+given force tolerance in far fewer force evaluations than FIRE or FIRE2 — the
+cost that dominates relaxation with a machine-learned potential.
 
 **Choosing between FIRE2 and L-BFGS.** FIRE2 costs one force evaluation per
 step and carries almost no state, which makes it a good fit for very large
 systems or for starting geometries far from any minimum. L-BFGS spends more
-memory (`2 * m` history vectors) and may take several evaluations in a single
-iteration while the line search settles, but converges in fewer evaluations
-overall on smooth potentials. If your force evaluation is expensive relative to
-a handful of microseconds of kernel time, prefer L-BFGS.
+memory (`2 * m` history vectors) but converges in far fewer evaluations, and
+costs exactly one evaluation per step just as FIRE2 does. If your force
+evaluation is expensive relative to a handful of microseconds of kernel time,
+prefer L-BFGS.
 
 **You own the buffers.** The optimizer allocates nothing, initializes nothing
 and keeps no hidden state between calls. You allocate the 26 buffers once and
@@ -484,7 +484,7 @@ and history size `m`: `x_base`, `force_base` and `direction` are `(P,)` vectors,
 through `history_count` are `(M,)` int32. The per-system scalars stay float64
 whatever precision the coordinates use.
 
-**You own the loop.** Each `lbfgs_step` call consumes exactly one energy/force
+**You own the loop.** Each `lbfgs_step` call consumes exactly one force
 evaluation. Inspect `status` to decide when to stop:
 
 ```python
@@ -492,7 +492,6 @@ import numpy as np
 import warp as wp
 from nvalchemiops.dynamics.optimizers import (
     LBFGS_NEED_EVAL,
-    lbfgs_reduce_energy,
     lbfgs_step,
 )
 
@@ -503,12 +502,10 @@ buffers["status"].fill_(LBFGS_NEED_EVAL)
 status = buffers["status"]
 
 while True:
-    per_atom_energy, forces = model(positions)
-    lbfgs_reduce_energy(per_atom_energy, batch_idx, energy)
+    forces = model(positions)
     lbfgs_step(
         positions=positions,
         forces=forces,
-        energy=energy,
         batch_idx=batch_idx,
         n_particles=n_particles,
         force_tol=0.05,   # eV/A, on the largest per-atom force
@@ -529,32 +526,26 @@ in the same order, since JAX arrays are immutable.
 | --- | --- |
 | `LBFGS_NEED_EVAL` | Keep going; `positions` hold a new trial point. |
 | `LBFGS_CONVERGED` | Done; `positions` hold the relaxed geometry. |
-| `LBFGS_LS_FAILED` | The line search stalled. `positions` were restored to the last accepted point. |
 
-`LBFGS_LS_FAILED` is not a convergence claim. If you consider a stalled search
-with acceptably small forces to be a success, apply that policy yourself from
-`status` and `force_base`.
-
-**Use `force_base`, not your own `forces`, after a failure.** `forces` is an
-input and is never written back, so it still holds what your model returned at
-the *rejected* trial, while `LBFGS_LS_FAILED` has moved `positions` back to the
-last accepted point — the two no longer describe the same geometry. `force_base`
-is written alongside `x_base` at every accepted point, so `(positions,
-force_base)` is the consistent pair on any terminal status. Alternatively,
-evaluate your model once more at the restored `positions`. `LBFGS_CONVERGED`
-has no such hazard: positions are not moved when it is decided.
+There is no failure status. A line search can exhaust its budget and give up; a
+trust-region step cannot, because a short enough step along a descent direction
+always makes progress, and an uphill direction is replaced by steepest descent
+with the history discarded.
 
 **Batching.** Systems are identified by a sorted `batch_idx` and relax
-independently: each runs its own line search and keeps its own history, and
-systems that finish early are skipped by the remaining kernels. Note that
+independently: each keeps its own history and trust-region step, and systems
+that finish early are skipped by the remaining kernels. Note that
 `n_particles` is the atom count per system, used by the optional RMS
 convergence criterion.
 
-**Supplying energy.** Pass per-atom energies through `lbfgs_reduce_energy`
-rather than summing them yourself in single precision. The Armijo test compares
-a difference of *total* energies, and at `E ~ -1e4 eV` a float32 total is
-rounded to about `1e-3 eV` — enough to make the line search unreliable near
-convergence. Summing per-atom values in float64 avoids this.
+**No energy is needed.** The step length comes from the `maxstep` trust region
+rather than from a line search comparing energies, so the optimizer never reads
+one. That is deliberate: an Armijo test compares *total energies* while the
+search direction comes from *forces*, and for a model whose forces are not the
+gradient of its reported energy — a direct force head, say — the two describe
+different surfaces and the test rejects good steps no matter how it is tuned.
+A consequence worth knowing: without Armijo the energy is not guaranteed to
+decrease monotonically, though the force does converge.
 
 **Variable cell.** The packed layout interleaves each system's atoms with its
 two cell entries, so the buffers must be sized for `num_atoms + 2 * num_systems`

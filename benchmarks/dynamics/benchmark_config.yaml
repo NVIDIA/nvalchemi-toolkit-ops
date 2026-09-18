@@ -336,7 +336,7 @@ lbfgs:
     # Measured L-BFGS/FIRE2 evaluation ratio from a default run of the sweep
     # above, used only for the break-even model cost. Re-measure and update it
     # if the sizes or the tolerance change.
-    eval_ratio: 0.142
+    eval_ratio: 0.129
 
 # System Configuration (shared across all benchmarks)
 # ---------------------------------------------------

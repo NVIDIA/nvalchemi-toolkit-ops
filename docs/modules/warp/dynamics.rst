@@ -123,17 +123,19 @@ Fast Inertial Relaxation Engine for geometry optimization.
 L-BFGS
 ~~~~~~
 
-Limited-memory quasi-Newton optimizer with a strong Wolfe line search. Each
+Limited-memory quasi-Newton optimizer with a ``maxstep`` trust region. Each
 :func:`~nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_step` call consumes exactly
-one energy/force evaluation and reports progress through a per-system ``status``
-array, so a whole batch relaxes in one stream of kernel launches.
+one force evaluation and reports progress through a per-system ``status``
+array, so a whole batch relaxes in one stream of kernel launches. There is no
+line search and no energy input: the step length is bounded by ``maxstep``
+rather than chosen by comparing energies, so a model whose forces are not the
+gradient of its energy relaxes just as well.
 
 .. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_step
 .. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_update
 .. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_prepare_step
 .. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_apply_step
 .. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_reduce
-.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_reduce_energy
 
 .. note::
    Every optimizer buffer is caller-owned: nothing here allocates or

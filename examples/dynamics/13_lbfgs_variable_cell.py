@@ -78,10 +78,8 @@ from nvalchemiops.dynamics.utils import align_cell, wrap_positions_to_cell
 from nvalchemiops.dynamics.utils.cell_filter import extend_atom_ptr
 from nvalchemiops.torch.lbfgs import (
     LBFGS_CONVERGED,
-    LBFGS_LS_FAILED,
     LBFGS_NEED_EVAL,
     lbfgs_cell_kappa,
-    lbfgs_reduce_energy,
     lbfgs_set_reference_cell,
     lbfgs_step_coord_cell,
 )
@@ -202,9 +200,7 @@ yy = zeros(history_size, num_systems, dt=f64)
 alpha_hist = zeros(history_size, num_systems, dt=f64)
 beta_hist = zeros(history_size, num_systems, dt=f64)
 ss = zeros(num_systems, dt=f64)
-f_base = zeros(num_systems, dt=f64)
 gg = zeros(num_systems, dt=f64)
-gd = zeros(num_systems, dt=f64)
 fmax = zeros(num_systems, dt=f64)
 frms_sq = zeros(num_systems, dt=f64)
 smax = zeros(num_systems, dt=f64)
@@ -218,7 +214,6 @@ status = zeros(num_systems, dt=i32)
 iteration = zeros(num_systems, dt=i32)
 end = zeros(num_systems, dt=i32)
 n_loop = zeros(num_systems, dt=i32)
-ls_trials = zeros(num_systems, dt=i32)
 history_count = zeros(num_systems, dt=i32)
 
 # Three buffers do not start at zero. Setting them is the whole of
@@ -230,9 +225,9 @@ status.fill_(LBFGS_NEED_EVAL)  # numerically zero, but say it out loud
 # The buffers are passed positionally, in this exact order, to every step.
 optimizer_buffers = (
     x_base, force_base, direction, s_history, y_history,
-    ys, yy, alpha_hist, beta_hist, ss, f_base, gg, gd,
+    ys, yy, alpha_hist, beta_hist, ss, gg,
     fmax, frms_sq, smax, d0, dmax, dquad, alpha_step,
-    status, iteration, end, n_loop, ls_trials, history_count,
+    status, iteration, end, n_loop, history_count,
 )  # fmt: skip
 
 # %%
@@ -286,14 +281,13 @@ cell_buffers = (
     cell_force_a, cell_force_b, ext_positions, ext_forces,
 )  # fmt: skip
 
-energy_t = torch.zeros(num_systems, dtype=f64, device=torch_device)
 
 print(f"\nOptimizer degrees of freedom: {num_atoms} atoms + {2 * num_systems} cell")
 # %%
 # Optimization Loop
 # -----------------
 #
-# One energy/force/stress evaluation per call, and ``status`` says when
+# One force/stress evaluation per call, and ``status`` says when
 # to stop. Both tolerances are physical: ``force_tol`` is eV/Å on the largest
 # per-atom force, ``stress_tol`` is a stress.
 
@@ -318,15 +312,11 @@ for step in range(max_evals):
     stress = virial_to_stress(virial, md_system.wp_cell, target_pressure, device)
     n_evals += 1
 
-    # Sum per-atom energies into the per-system total, in float64.
-    lbfgs_reduce_energy(wp.to_torch(energies), batch_idx, energy_t)
-
     lbfgs_step_coord_cell(
         positions_t,
         cell_t,
         wp.to_torch(forces),
         wp.to_torch(stress).reshape(num_systems, 3, 3),
-        energy_t,
         batch_idx,
         n_particles,
         *optimizer_buffers,
@@ -369,7 +359,6 @@ final_status = int(status.item())
 status_name = {
     LBFGS_NEED_EVAL: "NEED_EVAL (ran out of evaluations)",
     LBFGS_CONVERGED: "CONVERGED",
-    LBFGS_LS_FAILED: "LS_FAILED (line search stalled)",
 }[final_status]
 
 final_volume = float(np.linalg.det(cell_t.detach().cpu().numpy()[0]))

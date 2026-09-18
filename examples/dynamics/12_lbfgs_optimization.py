@@ -51,10 +51,8 @@ from _dynamics_utils import MDSystem, create_random_cluster
 
 from nvalchemiops.dynamics.optimizers import (
     LBFGS_CONVERGED,
-    LBFGS_LS_FAILED,
     LBFGS_NEED_EVAL,
     fire2_step,
-    lbfgs_reduce_energy,
     lbfgs_step,
 )
 
@@ -116,9 +114,10 @@ wp_vec_dtype = system.wp_vec_dtype
 # 3 to 7 is the usual range.
 #
 # Note the precision split. Coordinates may be single or double precision, but
-# **every per-system scalar is float64 regardless**. The line search compares a
-# difference of *total* energies, and at ``E ~ -1e4 eV`` a single-precision
-# accumulator would be coarser than the energy differences being tested.
+# **every per-system scalar is float64 regardless**. The ratio ``ys / yy`` sets
+# the initial inverse-Hessian scaling, and near convergence it is a ratio of
+# differences of nearly equal vectors -- the regime where single precision
+# cancels away the information.
 
 history_size = 6
 
@@ -143,9 +142,7 @@ yy = f64(history_size, 1)
 alpha_hist = f64(history_size, 1)
 beta_hist = f64(history_size, 1)
 ss = f64(1)
-f_base = f64(1)
 gg = f64(1)
-gd = f64(1)
 fmax = f64(1)
 frms_sq = f64(1)
 smax = f64(1)
@@ -159,7 +156,6 @@ status = wp.zeros(1, dtype=wp.int32, device=device)
 iteration = wp.zeros(1, dtype=wp.int32, device=device)
 end = wp.zeros(1, dtype=wp.int32, device=device)
 n_loop = wp.zeros(1, dtype=wp.int32, device=device)
-ls_trials = wp.zeros(1, dtype=wp.int32, device=device)
 history_count = wp.zeros(1, dtype=wp.int32, device=device)
 
 lbfgs_state = dict(
@@ -173,9 +169,7 @@ lbfgs_state = dict(
     alpha_hist=alpha_hist,
     beta_hist=beta_hist,
     ss=ss,
-    f_base=f_base,
     gg=gg,
-    gd=gd,
     fmax=fmax,
     frms_sq=frms_sq,
     smax=smax,
@@ -187,7 +181,6 @@ lbfgs_state = dict(
     iteration=iteration,
     end=end,
     n_loop=n_loop,
-    ls_trials=ls_trials,
     history_count=history_count,
 )
 
@@ -202,20 +195,18 @@ status.fill_(LBFGS_NEED_EVAL)  # numerically zero, but say it out loud
 batch_idx = wp.zeros(num_atoms, dtype=wp.int32, device=device)
 n_particles = wp.array([num_atoms], dtype=wp.int32, device=device)
 
-# Per-system total energy, which the line search consumes.
-energy = wp.zeros(1, dtype=wp.float64, device=device)
 
 # %%
 # L-BFGS Optimization Loop
 # ------------------------
 #
 # You own the loop, exactly as with FIRE2, but the contract is different:
-# **each call consumes exactly one energy/force evaluation**, and you stop when
+# **each call consumes exactly one force evaluation**, and you stop when
 # ``status`` says so rather than by testing the forces yourself.
 #
-# ``lbfgs_reduce_energy`` sums the per-atom energies the model returns into the
-# per-system totals the optimizer needs, accumulating in float64. Use it rather
-# than summing yourself in single precision.
+# No energy is passed in at all. The step length comes from the ``maxstep``
+# trust region rather than from a line search comparing energies, so a model
+# whose forces are not the gradient of its energy relaxes just as well.
 
 max_evals = 500
 force_tolerance = 1e-3  # eV/Å, on the largest per-atom force
@@ -236,16 +227,14 @@ log_interval = 10
 lbfgs_evals = 0
 
 for step in range(max_evals):
-    # One energy/force evaluation per step. This is the expensive part with a
+    # One force evaluation per step. This is the expensive part with a
     # real potential, and the reason L-BFGS is worth its extra bookkeeping.
     energies = system.compute_forces()
-    lbfgs_reduce_energy(energies, batch_idx, energy)
     lbfgs_evals += 1
 
     lbfgs_step(
         positions=system.wp_positions,
         forces=system.wp_forces,
-        energy=energy,
         batch_idx=batch_idx,
         n_particles=n_particles,
         force_tol=force_tolerance,
@@ -277,22 +266,14 @@ for step in range(max_evals):
 # Reading ``status``
 # ------------------
 #
-# ``status`` is the only value you need to inspect. ``LBFGS_LS_FAILED`` is not
-# a convergence claim: it means the line search could not make progress even
-# from a steepest-descent direction, and the positions have been restored to
-# the last accepted point.
-#
-# Note which force array to trust afterwards. ``forces`` is an input the
-# optimizer only reads, so after a rollback it still holds the forces at the
-# *rejected* trial and no longer matches ``positions``. ``force_base`` is
-# written alongside ``x_base`` at every accepted point, so it is the one that
-# describes the geometry actually handed back.
+# ``status`` is the only value you need to inspect, and it has just two values:
+# keep going, or converged. There is no failure state -- a trust-region step
+# cannot exhaust a budget the way a line search can.
 
 final_status = int(status.numpy()[0])
 status_name = {
     LBFGS_NEED_EVAL: "NEED_EVAL (ran out of evaluations)",
     LBFGS_CONVERGED: "CONVERGED",
-    LBFGS_LS_FAILED: "LS_FAILED (line search stalled)",
 }[final_status]
 print(f"\nFinished after {lbfgs_evals} force evaluations: {status_name}")
 print(f"  final max|F| = {maxf_hist[-1]:.3e} eV/Å")

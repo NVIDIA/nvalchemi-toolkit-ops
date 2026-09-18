@@ -43,8 +43,9 @@ For advanced use cases where you manage packed extended arrays directly.
 L-BFGS Optimizer
 ----------------
 
-Quasi-Newton relaxation with a strong Wolfe line search. Each step consumes one
-energy/force evaluation and reports progress through the ``status`` buffer.
+Quasi-Newton relaxation with a ``maxstep`` trust region. Each step consumes one
+force evaluation and reports progress through the ``status`` buffer. The step
+length comes from a ``maxstep`` trust region, so no energy is read.
 
 .. note::
    Every optimizer buffer is caller-owned: nothing here allocates or
@@ -52,7 +53,6 @@ energy/force evaluation and reports progress through the ``status`` buffer.
    to ``1.0``, ``iteration`` to ``-1`` and ``status`` to ``LBFGS_NEED_EVAL``.
    The module documentation lists the required shapes and dtypes.
 
-.. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_reduce_energy
 .. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_step_coord
 .. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_step_extended
 

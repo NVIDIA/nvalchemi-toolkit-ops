@@ -51,10 +51,8 @@ from nvalchemiops.torch.fire2 import (
 )
 from nvalchemiops.torch.lbfgs import (
     LBFGS_CONVERGED,
-    LBFGS_LS_FAILED,
     LBFGS_NEED_EVAL,
     lbfgs_cell_kappa,
-    lbfgs_reduce_energy,
     lbfgs_set_reference_cell,
     lbfgs_step_coord,
     lbfgs_step_coord_cell,
@@ -94,8 +92,6 @@ __all__ = [
     "segmented_sum",
     "LBFGS_NEED_EVAL",
     "LBFGS_CONVERGED",
-    "LBFGS_LS_FAILED",
-    "lbfgs_reduce_energy",
     "lbfgs_cell_kappa",
     "lbfgs_set_reference_cell",
     "lbfgs_step_coord",

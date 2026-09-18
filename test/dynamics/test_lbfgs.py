@@ -41,13 +41,11 @@ import warp as wp
 
 from nvalchemiops.dynamics.optimizers.lbfgs import (
     LBFGS_CONVERGED,
-    LBFGS_LS_FAILED,
     LBFGS_NEED_EVAL,
     lbfgs_apply_step,
     lbfgs_cell_trust_region,
     lbfgs_pack_cell,
     lbfgs_prepare_step,
-    lbfgs_reduce_energy,
     lbfgs_set_reference_cell,
     lbfgs_step,
     lbfgs_step_coord_cell,
@@ -100,8 +98,6 @@ class Driver:
             positions.astype(np_dtype), dtype=vec_dtype, device=device
         )
         self.forces = wp.zeros(self.num_dofs, dtype=vec_dtype, device=device)
-        self.per_atom_energy = wp.zeros(self.num_dofs, dtype=wp.float64, device=device)
-        self.energy = wp.zeros(num_systems, dtype=wp.float64, device=device)
         self.state = make_lbfgs_state(
             self.num_dofs, num_systems, history_size, vec_dtype, device
         )
@@ -109,17 +105,14 @@ class Driver:
 
     def evaluate(self):
         xs = self.positions.numpy().astype(np.float64)
-        e_atom, f = self.potential.energy_forces(xs)
+        _, f = self.potential.energy_forces(xs)
         self.forces.assign(f.astype(self.np_dtype))
-        self.per_atom_energy.assign(e_atom)
-        lbfgs_reduce_energy(self.per_atom_energy, self.batch_idx, self.energy)
         self.n_evals += 1
 
     def step(self, **kwargs):
         lbfgs_step(
             positions=self.positions,
             forces=self.forces,
-            energy=self.energy,
             batch_idx=self.batch_idx,
             n_particles=self.n_particles,
             **kwargs,
@@ -334,7 +327,7 @@ class TestLBFGSTwoLoop:
             "end advanced despite the pair being discarded"
         )
         assert np.isfinite(d.state["direction"].numpy()).all()
-        assert d.status[0] != LBFGS_LS_FAILED
+        assert d.status[0] == LBFGS_NEED_EVAL
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_direction_uses_only_committed_slots_after_a_discard(self, device):
@@ -389,184 +382,108 @@ def _one_atom(x0, device, k=(1.0, 1.0, 1.0)):
     )
 
 
-class TestLBFGSLineSearch:
-    """The per-system state machine, against closed-form outcomes.
+class TestLBFGSTrustRegion:
+    """Step-length selection, which is now a trust region rather than a search.
 
-    Each expectation below is derived on paper for ``E = 0.5 x^2`` with
-    ``d = -sign(x)``, so these tests do not depend on any reference
-    implementation sharing the design.
+    The defining property is that no evaluation is ever rejected, so the
+    cadence is uniform and nothing depends on an energy.
     """
 
     @pytest.mark.parametrize("device", DEVICES)
-    def test_accepts_a_good_first_step(self, device):
-        """``x0 = 10, alpha = 1``: Armijo, curvature and strong Wolfe all hold."""
-        d = _one_atom(10.0, device)
-        d.evaluate()
-        d.step(force_tol=1e-10, maxstep=100.0)  # seeds direction and base point
-        np.testing.assert_allclose(d.positions.numpy()[0, 0], 9.0)
+    def test_every_call_is_an_accepted_step(self, device):
+        """One evaluation in, one history update and one step out.
 
+        ``iteration`` advances on every call after the first, which is what
+        distinguishes this from a line search: there are no trials to reject,
+        so a call can never consume an evaluation without making progress.
+        """
+        d = _one_atom(5.0, device)
         d.evaluate()
-        d.step(force_tol=1e-10, maxstep=100.0)
-        assert d.state["iteration"].numpy()[0] == 1, "step was not accepted"
-        assert d.state["history_count"].numpy()[0] == 1
-        assert d.state["ls_trials"].numpy()[0] == 0, "trial count not reset"
+        d.step(force_tol=1e-12, maxstep=0.5)
+        assert int(d.state["iteration"].numpy()[0]) == 0  # seeded
+        for expected in range(1, 8):
+            d.evaluate()
+            d.step(force_tol=1e-12, maxstep=0.5)
+            assert int(d.state["iteration"].numpy()[0]) == expected
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_no_atom_moves_further_than_maxstep(self, device):
+        """The trust region is the only thing bounding the displacement."""
+        maxstep = 0.05
+        d = Driver(_cluster(1, 6, seed=4), 1, wp.vec3d, np.float64, device)
+        for _ in range(40):
+            before = d.positions.numpy().copy()
+            d.evaluate()
+            d.step(force_tol=1e-12, maxstep=maxstep)
+            moved = np.abs(d.positions.numpy() - before).max()
+            assert moved <= maxstep + 1e-12, moved
+            if not (d.status == LBFGS_NEED_EVAL).any():
+                break
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_step_length_is_not_carried_between_calls(self, device):
+        """A shortened step must not persist and starve later iterations.
+
+        Nothing resets ``alpha_step`` on the caller's behalf, so if the step
+        were inherited rather than recomputed the method would decay into a
+        scaled gradient descent.
+        """
+        d = _one_atom(100.0, device)
+        d.evaluate()
+        d.step(force_tol=1e-12, maxstep=0.1)  # heavily capped
+        assert float(d.state["alpha_step"].numpy()[0]) < 1.0
+        # With the cap lifted the full quasi-Newton step must be available.
+        d.evaluate()
+        d.step(force_tol=1e-12, maxstep=0.0)  # trust region disabled
         np.testing.assert_allclose(d.state["alpha_step"].numpy()[0], 1.0)
 
     @pytest.mark.parametrize("device", DEVICES)
-    def test_grows_a_step_that_is_too_short(self, device):
-        """``x0 = 100``: ``dt = -99 < 0.9 * d0 = -90``, so the step grows by 2.1."""
-        d = _one_atom(100.0, device)
-        d.evaluate()
-        d.step(force_tol=1e-10, maxstep=1000.0)
-        d.evaluate()
-        d.step(force_tol=1e-10, maxstep=1000.0)
-
-        np.testing.assert_allclose(d.state["alpha_step"].numpy()[0], 2.1, rtol=1e-12)
-        assert d.state["ls_trials"].numpy()[0] == 1
-        assert d.state["iteration"].numpy()[0] == 0, "should not have accepted"
-        np.testing.assert_allclose(d.positions.numpy()[0, 0], 100.0 - 2.1, rtol=1e-12)
-
-    @pytest.mark.parametrize("device", DEVICES)
-    def test_shrinks_when_armijo_is_violated(self, device):
-        """``x0 = 1, alpha = 3``: energy rises by 1.5, so the step halves."""
+    def test_disabled_trust_region_takes_the_full_step(self, device):
+        """``maxstep = 0`` means no bound, not a zero-length step."""
         d = _one_atom(1.0, device)
         d.evaluate()
-        d.step(force_tol=1e-10, maxstep=100.0)
-
-        # Place the trial at alpha = 3 along the seeded direction.
-        d.state["alpha_step"].assign(np.array([3.0]))
-        d.positions.assign(np.array([[-2.0, 0.0, 0.0]]))
+        d.step(force_tol=1e-12, maxstep=0.0)
         d.evaluate()
-        d.step(force_tol=1e-10, maxstep=100.0)
-
-        np.testing.assert_allclose(d.state["alpha_step"].numpy()[0], 1.5, rtol=1e-12)
-        assert d.state["iteration"].numpy()[0] == 0
+        d.step(force_tol=1e-12, maxstep=0.0)
+        np.testing.assert_allclose(d.state["alpha_step"].numpy()[0], 1.0)
+        assert np.isfinite(d.positions.numpy()).all()
 
     @pytest.mark.parametrize("device", DEVICES)
-    def test_shrinks_when_the_step_overshoots(self, device):
-        """``x0 = 1, alpha = 1.95``: Armijo holds but ``|dt| > 0.9 |d0|``."""
-        d = _one_atom(1.0, device)
-        d.evaluate()
-        d.step(force_tol=1e-10, maxstep=100.0)
+    def test_ascent_direction_falls_back_to_steepest_descent(self, device):
+        """A direction that points uphill is replaced, not followed.
 
-        d.state["alpha_step"].assign(np.array([1.95]))
-        d.positions.assign(np.array([[-0.95, 0.0, 0.0]]))
-        d.evaluate()
-        d.step(force_tol=1e-10, maxstep=100.0)
-
-        np.testing.assert_allclose(d.state["alpha_step"].numpy()[0], 0.975, rtol=1e-12)
-        assert d.state["iteration"].numpy()[0] == 0
-
-    @pytest.mark.parametrize("device", DEVICES)
-    def test_reports_failure_and_restores_the_base_point(self, device):
-        """A line search out of budget gives up and rolls the positions back.
-
-        Uses the "too short" case with a single trial allowed, so the first
-        retry exhausts the budget.
+        With no line search to reject the resulting step, this guard is the
+        only thing between a corrupted curvature model and a step that raises
+        the force. Driven through ``lbfgs_prepare_step`` directly, because the
+        condition is by construction hard to reach from a healthy run.
         """
-        d = _one_atom(100.0, device)
-        d.evaluate()
-        d.step(force_tol=1e-10, maxstep=1000.0, max_ls_iter=1)
-        d.evaluate()
-        d.step(force_tol=1e-10, maxstep=1000.0, max_ls_iter=1)
+        st = make_lbfgs_state(4, 1, HISTORY_SIZE, wp.vec3d, device)
+        st["gg"].assign(np.array([4.0]))
+        st["d0"].assign(np.array([+1.5]))  # uphill
+        st["n_loop"].assign(np.array([3], np.int32))  # a two-loop direction
+        st["history_count"].assign(np.array([3], np.int32))
+        st["end"].assign(np.array([2], np.int32))
+        st["dmax"].assign(np.array([1.0]))
 
-        assert d.status[0] == LBFGS_LS_FAILED
-        np.testing.assert_allclose(d.positions.numpy()[0, 0], 100.0)
-        np.testing.assert_allclose(
-            d.positions.numpy(), d.state["x_base"].numpy(), atol=0
+        lbfgs_prepare_step(
+            gg=st["gg"],
+            d0=st["d0"],
+            dmax=st["dmax"],
+            dquad=st["dquad"],
+            alpha_step=st["alpha_step"],
+            status=st["status"],
+            end=st["end"],
+            n_loop=st["n_loop"],
+            history_count=st["history_count"],
+            maxstep=0.0,
         )
+        wp.synchronize()
 
-    @pytest.mark.parametrize("device", DEVICES)
-    def test_failure_leaves_force_base_matching_the_restored_geometry(self, device):
-        """After a rollback, ``force_base`` is the forces array that is valid.
-
-        ``forces`` is an input the optimizer only reads, so once the rollback
-        moves ``positions`` back it describes the *rejected* trial, not what
-        the caller is handed. A caller applying a force-based policy after
-        ``LBFGS_LS_FAILED`` must read ``force_base``, so pin both halves: that
-        it matches the restored geometry, and that the caller's own array does
-        not.
-        """
-        d = _one_atom(100.0, device)
-        for _ in range(2):
-            d.evaluate()
-            d.step(force_tol=1e-10, maxstep=1000.0, max_ls_iter=1)
-        assert d.status[0] == LBFGS_LS_FAILED
-
-        # What the forces actually are at the geometry handed back.
-        truth = d.potential.energy_forces(d.positions.numpy())[1]
-        np.testing.assert_allclose(
-            d.state["force_base"].numpy(), truth, rtol=1e-14, atol=0
-        )
-
-        # And the guarantee is worth something only because the input array is
-        # genuinely stale here; if this ever stopped holding, the test above
-        # would pass for the wrong reason.
-        assert not np.allclose(d.forces.numpy(), truth), (
-            "the caller's forces happen to match, so this case no longer "
-            "exercises the rollback hazard"
-        )
-
-    @pytest.mark.parametrize("device", DEVICES)
-    def test_stall_with_history_restarts_instead_of_failing(self, device):
-        """A stalled line search discards the history and keeps going.
-
-        A stall usually means the curvature model has gone stale, not that
-        there is no descent direction left. Reporting failure immediately loses
-        runs that a steepest-descent restart would have finished. Terminal
-        failure is reserved for a search that stalls with no history at all.
-        """
-        d = Driver(_cluster(1, 6, seed=2), 1, wp.vec3d, np.float64, device)
-
-        # Build up some history first.
-        for _ in range(40):
-            d.evaluate()
-            d.step(force_tol=1e-10, maxstep=0.5)
-            if d.state["history_count"].numpy()[0] >= 3:
-                break
-        assert d.state["history_count"].numpy()[0] >= 3
-        x_base_before = d.state["x_base"].numpy().copy()
-
-        # Force a genuine stall: place the trial far past the minimum so the
-        # energy rises and Armijo fails, with only one trial allowed.
-        d.state["alpha_step"].assign(np.full(1, 50.0))
-        d.positions.assign(x_base_before + 50.0 * d.state["direction"].numpy())
-        d.evaluate()
-        d.step(force_tol=1e-10, maxstep=1e6, max_ls_iter=1)
-
-        assert d.status[0] == LBFGS_NEED_EVAL, (
-            "a stall with history present should restart, not terminate"
-        )
-        assert d.state["history_count"].numpy()[0] == 0, "history was not discarded"
-        np.testing.assert_allclose(d.positions.numpy(), x_base_before, atol=0)
-
-    @pytest.mark.parametrize("device", DEVICES)
-    def test_stall_without_history_is_terminal(self, device):
-        """With no history to discard there is nothing left to try."""
-        d = _one_atom(100.0, device)
-        d.evaluate()
-        d.step(force_tol=1e-10, maxstep=1000.0, max_ls_iter=1)
-        assert d.state["history_count"].numpy()[0] == 0
-        d.evaluate()
-        d.step(force_tol=1e-10, maxstep=1000.0, max_ls_iter=1)
-        assert d.status[0] == LBFGS_LS_FAILED
-
-    @pytest.mark.parametrize("device", DEVICES)
-    def test_trial_count_does_not_accumulate_across_iterations(self, device):
-        """``ls_trials`` resets per direction, so it cannot trip the budget.
-
-        A cumulative counter would produce a spurious failure part-way through
-        an otherwise healthy relaxation.
-        """
-        d = Driver(_cluster(1, 6, seed=5), 1, wp.vec3d, np.float64, device)
-        d.run(max_evals=200, force_tol=1e-8, maxstep=0.2, max_ls_iter=6)
-        assert d.status[0] == LBFGS_CONVERGED, (
-            f"status {d.status[0]} after {d.n_evals} evaluations; "
-            "a cumulative trial counter would look like this"
-        )
-        assert d.state["iteration"].numpy()[0] > 6, (
-            "too few iterations to be a real test"
-        )
+        assert int(st["n_loop"].numpy()[0]) == -1, "did not restart"
+        assert int(st["history_count"].numpy()[0]) == 0, "history was not discarded"
+        assert int(st["end"].numpy()[0]) == 0
+        # The slope of a normalized steepest-descent direction is exact.
+        np.testing.assert_allclose(st["d0"].numpy()[0], -2.0, rtol=1e-14)
 
 
 class TestLBFGSConvergence:
@@ -670,25 +587,12 @@ class TestLBFGSSignConvention:
         assert d.positions.numpy()[0, 0] < 3.0
 
     @pytest.mark.parametrize("device", DEVICES)
-    def test_energy_decreases_monotonically(self, device):
-        """Accepted steps never raise the energy; Armijo guarantees it."""
-        d = Driver(_cluster(1, 5, seed=13), 1, wp.vec3d, np.float64, device)
-        accepted = []
-        for _ in range(80):
-            d.evaluate()
-            before = int(d.state["iteration"].numpy()[0])
-            energy = float(d.energy.numpy()[0])
-            d.step(force_tol=1e-8, maxstep=0.5)
-            if int(d.state["iteration"].numpy()[0]) > before:
-                accepted.append(energy)
-            if not (d.status == LBFGS_NEED_EVAL).any():
-                break
-        assert len(accepted) > 3
-        assert all(b >= a for b, a in zip(accepted, accepted[1:])), accepted
-
-    @pytest.mark.parametrize("device", DEVICES)
     def test_stored_curvature_is_positive(self, device):
-        """Every committed pair has ``s . y > 0``; a flipped y makes it negative."""
+        """Every committed pair has ``s . y > 0``; a flipped y makes it negative.
+
+        With no Wolfe condition to enforce it, the curvature guard is the only
+        thing keeping the inverse-Hessian model positive definite.
+        """
         d = Driver(_cluster(1, 5, seed=4), 1, wp.vec3d, np.float64, device).run(
             force_tol=1e-8, maxstep=0.5
         )
@@ -738,7 +642,6 @@ class TestLBFGSEdgeCases:
         lbfgs_step(
             positions=wp.zeros(0, dtype=wp.vec3d, device=device),
             forces=wp.zeros(0, dtype=wp.vec3d, device=device),
-            energy=wp.zeros(1, dtype=wp.float64, device=device),
             batch_idx=wp.zeros(0, dtype=wp.int32, device=device),
             n_particles=wp.zeros(1, dtype=wp.int32, device=device),
             **state,
@@ -778,7 +681,6 @@ class TestLBFGSStepErrors:
             lbfgs_step(
                 positions=d.positions,
                 forces=wp.zeros(2, dtype=wp.vec3d, device=device),
-                energy=d.energy,
                 batch_idx=d.batch_idx,
                 n_particles=d.n_particles,
                 **d.state,
@@ -792,7 +694,6 @@ class TestLBFGSStepErrors:
             lbfgs_step(
                 positions=d.positions,
                 forces=d.forces,
-                energy=d.energy,
                 batch_idx=wp.zeros(2, dtype=wp.int32, device=device),
                 n_particles=d.n_particles,
                 **d.state,
@@ -809,19 +710,9 @@ class TestLBFGSStepErrors:
             lbfgs_step(
                 positions=d.positions,
                 forces=d.forces,
-                energy=d.energy,
                 batch_idx=d.batch_idx,
                 n_particles=d.n_particles,
                 **d.state,
-            )
-
-    @pytest.mark.parametrize("device", DEVICES)
-    def test_energy_reduction_length_mismatch(self, device):
-        with pytest.raises(ValueError, match="batch_idx length"):
-            lbfgs_reduce_energy(
-                wp.zeros(4, dtype=wp.float64, device=device),
-                wp.zeros(3, dtype=wp.int32, device=device),
-                wp.zeros(1, dtype=wp.float64, device=device),
             )
 
 
@@ -834,12 +725,11 @@ class CellDriver:
         self.num_atoms = positions.shape[0]
         self.num_ext = self.num_atoms + 2
 
-        v, m, f = wp.vec3d, wp.mat33d, wp.float64
+        v, m = wp.vec3d, wp.mat33d
         self.positions = wp.array(positions.copy(), dtype=v, device=device)
         self.cell = wp.array(cell[None].copy(), dtype=m, device=device)
         self.forces = wp.zeros(self.num_atoms, dtype=v, device=device)
         self.stress = wp.zeros(1, dtype=m, device=device)
-        self.energy = wp.zeros(1, dtype=f, device=device)
         self.batch_idx = wp.zeros(self.num_atoms, dtype=wp.int32, device=device)
         self.n_atoms_per_system = wp.array(
             np.array([self.num_atoms], np.int32), dtype=wp.int32, device=device
@@ -856,12 +746,11 @@ class CellDriver:
         self.n_evals = 0
 
     def evaluate(self):
-        e, f, s = self.potential.energy_forces_stress(
+        _, f, s = self.potential.energy_forces_stress(
             self.positions.numpy(), self.cell.numpy()[0]
         )
         self.forces.assign(f)
         self.stress.assign(s[None])
-        self.energy.assign(np.array([e]))
         self.n_evals += 1
 
     def pack(self):
@@ -905,7 +794,6 @@ class CellDriver:
             self.forces,
             self.cell,
             self.stress,
-            self.energy,
             self.batch_idx,
             self.n_atoms_per_system,
             *self.state_dict.values(),
@@ -925,7 +813,6 @@ class CellDriver:
         lbfgs_update(
             positions=cs["ext_positions"],
             forces=cs["ext_forces"],
-            energy=self.energy,
             batch_idx=cs["ext_batch_idx"],
             n_particles=self.n_atoms_per_system,
             cart_forces=self.forces,
@@ -957,7 +844,6 @@ class CellDriver:
             status=st["status"],
             end=st["end"],
             n_loop=st["n_loop"],
-            ls_trials=st["ls_trials"],
             history_count=st["history_count"],
             maxstep=kwargs.get("maxstep", 0.2),
         )
@@ -1198,12 +1084,11 @@ class TestLBFGSRaggedVariableCell:
             blocks.append((cells_np[s] @ frac.T).T)
         positions_np = np.ascontiguousarray(np.vstack(blocks))
 
-        v, m, f = wp.vec3d, wp.mat33d, wp.float64
+        v, m = wp.vec3d, wp.mat33d
         positions = wp.array(positions_np, dtype=v, device=device)
         cell = wp.array(cells_np, dtype=m, device=device)
         forces = wp.zeros(num_atoms, dtype=v, device=device)
         stress = wp.zeros(num_systems, dtype=m, device=device)
-        energy = wp.zeros(num_systems, dtype=f, device=device)
         batch_idx = wp.array(
             np.repeat(np.arange(num_systems), counts).astype(np.int32),
             dtype=wp.int32,
@@ -1231,24 +1116,21 @@ class TestLBFGSRaggedVariableCell:
         for _ in range(400):
             xs = positions.numpy()
             cells = cell.numpy()
-            e = np.zeros(num_systems)
             all_f = np.zeros_like(xs)
             all_s = np.zeros((num_systems, 3, 3))
             for s in range(num_systems):
                 lo, hi = offsets[s], offsets[s + 1]
-                e[s], all_f[lo:hi], all_s[s] = potentials[s].energy_forces_stress(
+                _, all_f[lo:hi], all_s[s] = potentials[s].energy_forces_stress(
                     xs[lo:hi], cells[s]
                 )
             forces.assign(np.ascontiguousarray(all_f))
             stress.assign(np.ascontiguousarray(all_s))
-            energy.assign(e)
 
             lbfgs_step_coord_cell(
                 positions,
                 forces,
                 cell,
                 stress,
-                energy,
                 batch_idx,
                 n_particles,
                 *state.values(),

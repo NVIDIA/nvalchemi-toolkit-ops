@@ -281,7 +281,7 @@ To add new benchmarks:
 
 ## `benchmark_lbfgs.py`
 
-Compares L-BFGS with FIRE2 by **energy/force evaluations to convergence**,
+Compares L-BFGS with FIRE2 by **force evaluations to convergence**,
 which is the cost that dominates relaxation driven by a machine-learned
 potential. The system is a Lennard-Jones cluster in reduced units; FIRE2's
 timestep and step cap are swept per case and its best configuration reported,
