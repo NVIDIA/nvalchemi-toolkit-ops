@@ -85,4 +85,5 @@ FourierD3 Operators
 .. autofunction:: nvalchemiops.torch.interactions.dispersion._fourier_dftd3._fd3_prologue_op
 .. autofunction:: nvalchemiops.torch.interactions.dispersion._fourier_dftd3._fd3_spread_op
 .. autofunction:: nvalchemiops.torch.interactions.dispersion._fourier_dftd3._fd3_kspace_op
-.. autofunction:: nvalchemiops.torch.interactions.dispersion._fourier_dftd3._fd3_epilogue_op
+.. autofunction:: nvalchemiops.torch.interactions.dispersion._fourier_dftd3._fd3_gather_op
+.. autofunction:: nvalchemiops.torch.interactions.dispersion._fourier_dftd3._fd3_finalise_op
