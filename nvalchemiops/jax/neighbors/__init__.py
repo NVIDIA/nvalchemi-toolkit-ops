@@ -92,6 +92,7 @@ from nvalchemiops.jax.neighbors.naive_dual_cutoff import (
 # Utility functions
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     NeighborOverflowError,
+    TileBufferOverflow,
     _validate_dual_cutoff_order,
     allocate_cell_list,
     compute_naive_num_shifts,
@@ -209,6 +210,14 @@ def neighbor_list(
         max_neighbors2 : int, optional
             Maximum number of neighbors per atom within cutoff2.
             Can be provided to aid in allocation for naive dual cutoff method.
+        max_tiles_per_group : int, optional
+            Capacity factor for the intermediate tile-pair buffer used by
+            cluster-tile methods. For ``g`` row groups, the buffer holds
+            ``g * min(g, max_tiles_per_group)`` tile pairs. Increasing the value
+            up to ``g`` uses more memory and accommodates more candidate tile
+            pairs. Eager calls estimate the value when it is ``None``.
+            Transformed or compiled calls require a positive static Python
+            integer. See :ref:`cluster-tile-buffer-capacity` for sizing details.
         neighbor_matrix : jax.Array, optional
             Pre-shaped array of shape (num_rows, max_neighbors) for neighbor indices,
             where ``num_rows`` is ``total_atoms`` normally and
@@ -684,4 +693,5 @@ __all__ = [
     "estimate_max_neighbors",
     "compute_batch_pair_centric_n_outer",
     "NeighborOverflowError",
+    "TileBufferOverflow",
 ]

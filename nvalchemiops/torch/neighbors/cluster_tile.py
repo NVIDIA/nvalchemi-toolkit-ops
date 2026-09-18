@@ -47,6 +47,7 @@ from nvalchemiops.neighbors.cluster_tile import (
 )
 from nvalchemiops.neighbors.neighbor_utils import (
     NeighborOverflowError,
+    TileBufferOverflow,
     estimate_max_neighbors,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
@@ -123,25 +124,27 @@ def estimate_cluster_tile_list_sizes(
 ) -> tuple[int, int, int, int]:
     """Estimate allocation sizes for the tile neighbor list state.
 
-    Any ``total_atoms >= 0`` is accepted; internally the state is sized
-    at ``n_padded = ceil(total_atoms / TILE_GROUP_SIZE) * TILE_GROUP_SIZE`` so
-    the kernels see a 32-aligned layout.  Padding slots receive a
-    sentinel max Morton code (see ``_compute_morton_kernel``) so they
-    sort to the end and are dropped by the convert/coo kernels'
-    ``i_sorted < natom`` filter.
+    Any ``total_atoms >= 0`` is accepted. Nonempty inputs use
+    ``n_padded = ceil(total_atoms / TILE_GROUP_SIZE) * TILE_GROUP_SIZE`` so the
+    kernels see a 32-aligned layout; empty input reserves one tile group.
+    Padding slots receive a sentinel maximum Morton code (see
+    ``_compute_morton_kernel``), sort to the end, and are dropped by the
+    convert/COO kernels' ``i_sorted < natom`` filter.
 
     Parameters
     ----------
     total_atoms : int
         Real atom count.
     max_tiles_per_group : int, default 256
-        Upper bound on neighbor groups per row_group (dense-cutoff cap).
+        Sets the capacity of the tile-pair buffer shared by all row groups. The
+        allocated group count is ``ngroup = max(1, ceil(total_atoms / 32))``.
+        The capacity is ``ngroup * min(ngroup, max_tiles_per_group)`` entries.
 
     Returns
     -------
     n_padded : int
-        Padded atom count = ``ceil(total_atoms / TILE_GROUP_SIZE) * TILE_GROUP_SIZE``.
-        Used to size positions / sorted SoA / sorted_atom_index scratch arrays.
+        Padded atom count. This is at least ``TILE_GROUP_SIZE``; nonempty inputs
+        are rounded up to a multiple of ``TILE_GROUP_SIZE``.
     ngroup : int
         Number of 32-atom groups: ``n_padded // TILE_GROUP_SIZE``.
     ngroup_padded : int
@@ -149,7 +152,7 @@ def estimate_cluster_tile_list_sizes(
         TILE-aligned offset.  Multiple of ``TILE_GROUP_SIZE``; at least one
         TILE slack over ``ngroup``.
     max_tiles : int
-        Upper bound on the tile-pair list size.
+        Allocated tile-pair list capacity.
     """
     if total_atoms < 0:
         raise ValueError(f"total_atoms must be >= 0; got {total_atoms}")
@@ -205,8 +208,11 @@ def allocate_cluster_tile_list(
         Floating-point dtype for position and bounding-box arrays.
         Default is ``torch.float32``.
     max_tiles_per_group : int, optional
-        Upper bound on neighbor groups per row_group used to size the tile
-        pair buffer. Default is 256.
+        Capacity factor for the intermediate tile-pair buffer. For ``g`` row
+        groups, the buffer holds ``g * min(g, max_tiles_per_group)`` tile pairs.
+        Increasing the value up to ``g`` uses more memory and accommodates more
+        candidate tile pairs. Defaults to 256. See
+        :ref:`cluster-tile-buffer-capacity` for sizing details.
 
     Returns
     -------
@@ -863,7 +869,7 @@ def query_cluster_tile(
     else:
         n_tiles = int(num_tiles.item())
         if n_tiles > tile_capacity:
-            raise NeighborOverflowError(tile_capacity, n_tiles)
+            raise TileBufferOverflow(tile_capacity, n_tiles)
 
     feature_path = (
         cutoff2 is not None
@@ -1705,7 +1711,7 @@ def query_cluster_tile_coo(
     else:
         n_tiles = int(num_tiles.item())
         if n_tiles > tile_capacity:
-            raise NeighborOverflowError(tile_capacity, n_tiles)
+            raise TileBufferOverflow(tile_capacity, n_tiles)
     pair_counter.zero_()
 
     if segmented:
@@ -1839,6 +1845,7 @@ def _cluster_tile_pair_outputs_forward(
     cutoff: float,
     max_neighbors: int,
     fill_value: int,
+    max_tiles_per_group: int | None,
 ) -> "_NeighborForwardOutput":
     """Forward closure for the torch cluster_tile autograd path."""
     from nvalchemiops.torch.neighbors._autograd import (
@@ -1865,7 +1872,16 @@ def _cluster_tile_pair_outputs_forward(
         num_tiles,
         tile_row_group,
         tile_col_group,
-    ) = allocate_cluster_tile_list(N, device, dtype=positions_det.dtype)
+    ) = allocate_cluster_tile_list(
+        N,
+        device,
+        dtype=positions_det.dtype,
+        max_tiles_per_group=(
+            int(max_tiles_per_group)
+            if max_tiles_per_group is not None
+            else estimate_max_tiles_per_group(N, cutoff, float(_cell_volume(cell_det)))
+        ),
+    )
     build_cluster_tile_list(
         positions_det,
         cutoff,
@@ -1984,8 +2000,10 @@ def cluster_tile_neighbor_list(
     neighbor_distances: torch.Tensor | None = None,
     pair_energies: torch.Tensor | None = None,
     pair_forces: torch.Tensor | None = None,
+    *,
+    max_tiles_per_group: int | None = None,
 ) -> tuple[torch.Tensor, ...]:
-    """Build a cluster-pair tile neighbor list (one-shot convenience).
+    """Build and query a cluster-pair tile neighbor list in one call.
 
     Single-system PyTorch binding for the cluster-pair tile algorithm.
     Runs Morton sort, Warp bounding-box reduction, and tile enumeration,
@@ -2004,10 +2022,10 @@ def cluster_tile_neighbor_list(
     cutoff : float
         Cutoff distance in Cartesian units. Must be positive.
     cutoff2 : float, optional
-        Matrix-format second cutoff. When provided, the function returns a
-        second ``(neighbor_matrix2, num_neighbors2, neighbor_matrix_shifts2)``
-        group for neighbors within ``cutoff2``. Cannot be combined with pair
-        outputs or COO/tile formats.
+        Cutoff for the second matrix. It is normally the outer cutoff and may
+        equal ``cutoff``. Either order is accepted because the tile buffer is
+        sized for the larger value. Cannot be combined with pair outputs or
+        COO/tile formats.
     cell : torch.Tensor, shape (1, 3, 3) or (3, 3), dtype=float32
         Any non-degenerate cell (orthorhombic or triclinic).
     max_neighbors : int, optional
@@ -2039,6 +2057,14 @@ def cluster_tile_neighbor_list(
           The consumer chooses atom-level fill.
     max_pairs : int, optional
         Upper bound for COO output; defaults to ``N * max_neighbors``.
+    max_tiles_per_group : int, optional
+        Capacity factor for an internally allocated intermediate tile-pair
+        buffer. For ``g`` row groups, the buffer holds
+        ``g * min(g, max_tiles_per_group)`` tile pairs. Increasing the value up
+        to ``g`` uses more memory and accommodates more candidate tile pairs.
+        Eager calls estimate the value when it is ``None``. Caller-owned tile
+        arrays determine the actual capacity. See
+        :ref:`cluster-tile-buffer-capacity` for sizing details.
     rebuild_flags : torch.Tensor, shape (1,), dtype=bool, optional
         Selective rebuild flag. An eager all-true call may bootstrap omitted
         state. When false, caller-owned fixed topology and tile state are
@@ -2137,6 +2163,12 @@ def cluster_tile_neighbor_list(
         raise ValueError(
             f"format must be 'matrix' | 'coo' | 'tile'; got {format!r}",
         )
+    if max_tiles_per_group is not None and (
+        not isinstance(max_tiles_per_group, int)
+        or isinstance(max_tiles_per_group, bool)
+        or max_tiles_per_group <= 0
+    ):
+        raise ValueError("max_tiles_per_group must be a positive integer")
     has_pair_outputs = (
         bool(return_vectors)
         or bool(return_distances)
@@ -2361,6 +2393,7 @@ def cluster_tile_neighbor_list(
             "cutoff": cutoff,
             "max_neighbors": int(max_neighbors),
             "fill_value": int(fill_value),
+            "max_tiles_per_group": max_tiles_per_group,
         }
         distances_out, vectors_out, nm_out, nn_out, shifts_out = _route_pair_outputs(
             positions,
@@ -2375,16 +2408,17 @@ def cluster_tile_neighbor_list(
             return (*base, distances_out)
         return (*base, vectors_out)
 
-    # Tile candidates must cover the *larger* radius so the cutoff2 matrix
-    # cannot miss pairs in the (cutoff, cutoff2] shell; the query then filters
-    # each matrix by its own cutoff.
+    # Candidate tiles must cover both radii. The query then filters each matrix
+    # with its own cutoff.
     build_cutoff = cutoff if cutoff2 is None else max(float(cutoff), float(cutoff2))
 
     # Allocate scratch if caller didn't supply.  ``sorted_atom_index`` is the
     # all-or-nothing sentinel.
     if sorted_atom_index is None:
         previous_tile_state = (num_tiles, tile_row_group, tile_col_group)
-        if selective and torch.compiler.is_compiling():
+        if max_tiles_per_group is not None:
+            max_tiles_per_group = int(max_tiles_per_group)
+        elif selective and torch.compiler.is_compiling():
             if tile_row_group is None:
                 raise ValueError("selective compiled COO requires tile_row_group")
             groups = max(1, (N + TILE_GROUP_SIZE - 1) // TILE_GROUP_SIZE)
@@ -2451,7 +2485,7 @@ def cluster_tile_neighbor_list(
         n_tiles = int(num_tiles.item())
         tile_capacity = int(tile_row_group.shape[0])
         if n_tiles > tile_capacity:
-            raise NeighborOverflowError(tile_capacity, n_tiles)
+            raise TileBufferOverflow(tile_capacity, n_tiles)
         return (
             num_tiles,
             tile_row_group,

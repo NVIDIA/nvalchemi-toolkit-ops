@@ -25,6 +25,7 @@ import warp as wp
 
 from nvalchemiops.neighbors.neighbor_utils import (
     NeighborOverflowError,
+    TileBufferOverflow,
     estimate_max_neighbors,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
@@ -41,6 +42,7 @@ __all__ = [
     "synthesize_cell_for_batch",
     "synthesize_cell_for_ss",
     "NeighborOverflowError",
+    "TileBufferOverflow",
 ]
 
 
