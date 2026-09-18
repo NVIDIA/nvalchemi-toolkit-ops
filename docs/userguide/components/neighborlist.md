@@ -557,12 +557,13 @@ cross system boundaries, so a compact batch containing systems of sizes $N_i$
 has $g=\sum_i\lceil N_i/32\rceil$ groups in total.
 
 The build stores discovered tile pairs in one buffer shared by all row groups.
-If `max_tiles_per_group` is $m$, a compact build with $g$ groups reserves
-$C=g\,\min(g,m)$ records. Increasing $m$ by one adds $g$ records until $m$
-reaches $g$; larger values do not increase the allocation. Each record contains
-two `int32` group indices, so the tile-index arrays use $8C$ bytes for one
-system. A compact batch also records the system index and uses $12C$ bytes.
-Other scratch buffers and the neighbor output do not depend on $m$.
+If `max_tiles_per_group` is $m$, a single-system build with $g$ groups reserves
+$C=g\,\min(g,m)$ records. A compact batch with $G=\sum_i g_i$ groups reserves
+$C=G\,\min(G,m)$ records. Segmented batches instead reserve
+$C_i=g_i\,\min(g_i,m)$ records for system $i$. Each record contains two
+`int32` group indices, so the tile-index arrays use $8C$ bytes for one system.
+A compact batch also records the system index and uses $12C$ bytes. Other
+scratch buffers and the neighbor output do not depend on $m$.
 
 #### Choosing a capacity
 
@@ -580,9 +581,14 @@ There are three ways to choose a capacity:
   geometry.
 - After an eager overflow, use the reported tile count to calculate the exact
   requirement for that geometry.
-- For a geometry-independent single-system bound, use the upper-triangular
-  maximum of $g(g+1)/2$ tile pairs. This requires
-  `max_tiles_per_group=ceil((g + 1) / 2)`.
+- For a geometry-independent single-system bound, require capacity of at least
+  $g(g+1)/2$ and use `max_tiles_per_group=ceil((g + 1) / 2)`.
+- For a compact batch, require total capacity of at least
+  $\sum_i g_i(g_i+1)/2$. With $G=\sum_i g_i$, the minimum shared factor is
+  $\left\lceil\sum_i g_i(g_i+1)/(2G)\right\rceil$ for a nonempty batch.
+- For a segmented batch, require each segment to hold at least
+  $g_i(g_i+1)/2$ records. A geometry-independent shared factor is
+  $\max_i\lceil(g_i+1)/2\rceil$.
 
 Dual-cutoff sizing uses the larger of `cutoff` and `cutoff2`. Use that outer
 cutoff when calling the estimator directly. JAX cluster-tile APIs require
@@ -602,36 +608,50 @@ where $g$ is the total group count for the compact build.
 
 A segmented batch gives each system its own interval in the tile buffer. System
 $i$ has capacity `tile_offsets[i + 1] - tile_offsets[i]` and reports its required
-count in `tile_counts[i]`. The exact shared retry value for the current batch is
+count in `tile_counts[i]`. An eager `TileBufferOverflow` identifies only the
+first overflowing system and its required count. Resize that segment or increase
+the shared factor and retry; another system can fail next. Once all counts are
+available, for example from a compiled lower-level build, the exact shared value
+for that geometry is
 
 $$
 m_{\mathrm{retry}} =
 \max_{i:\,g_i>0}\left\lceil\frac{\mathtt{tile\_counts}[i]}{g_i}\right\rceil.
 $$
 
-For a trajectory, retain the largest observed requirement and add headroom for
-later geometries. `TileBufferOverflow` reports exhaustion of the intermediate
-tile-pair buffer. `NeighborOverflowError` reports that the final matrix or COO
-neighbor output is too small.
+If resizing changes `tile_offsets`, initialize replacement state and mark every
+system for rebuild. State laid out with the old offsets cannot be retained under
+the new layout. For a trajectory, retain the largest observed requirement and
+add headroom for later geometries. `TileBufferOverflow` reports exhaustion of
+the intermediate tile-pair buffer. `NeighborOverflowError` reports that the
+final matrix or COO neighbor output is too small.
 
 #### Compiled JAX
 
-JAX fixes array shapes while tracing a transformed or compiled function, and
-`max_tiles_per_group` determines the tile-buffer shape. The value must therefore
+JAX fixes array shapes while tracing a transformed or compiled function. When a
+call allocates either single-system tile-index array, or any of the batched row,
+column, and system arrays, `max_tiles_per_group` determines their shapes and must
 be a positive static Python integer. Close over it or mark the argument static
-with `static_argnames`.
+with `static_argnames`. Complete caller-supplied tile-index storage already
+fixes capacity and does not require the factor. Omitting only the fixed-size
+`num_tiles` buffer does not change that rule. An explicitly supplied factor is
+always validated, but it never resizes caller-owned arrays.
 
 The runtime tile count cannot be converted to a Python value inside the compiled
-region, so an undersized bound does not raise `TileBufferOverflow` there. A
-compiled workflow can use the lower-level build and query functions and return
-the tile counters alongside the neighbor output. After the compiled call:
+region, so an undersized bound does not raise `TileBufferOverflow` there.
+Ordinary compiled convenience calls should therefore use a known-sufficient
+bound; the geometry-independent bounds above are the safest default. An
+adaptive workflow should compile the lower-level build, return its tile
+counters, and check capacity on the host before invoking the query:
 
 - For a compact buffer, require
   `int(num_tiles[0]) <= tile_row_group.shape[0]`.
 - For segmented buffers, require
   `tile_counts <= tile_offsets[1:] - tile_offsets[:-1]` element by element.
 
-The neighbor output is incomplete when either check fails.
+Do not consume neighbor output when either check fails. `num_neighbors` reports
+the final-output requirement and cannot detect tile pairs omitted by an
+undersized intermediate buffer.
 
 (nl_performance)=
 
@@ -652,8 +672,9 @@ The neighbor output is incomplete when either check fails.
   32-atom groups, a value $m$ reserves $g\,\min(g,m)$ records. The tile-index
   arrays use 8 bytes per record for one system and 12 bytes per record for a
   compact batch. The combined build/query functions estimate the value during
-  eager execution when it is `None`. A transformed or compiled JAX call
-  requires a positive static Python integer.
+  eager execution when they allocate storage and it is `None`. A transformed
+  or compiled JAX call that allocates tile-index storage requires a positive
+  static Python integer; complete caller-supplied tile-index arrays do not.
 
 `atomic_density`
 : Atomic density in atoms per unit volume, used by `estimate_max_neighbors()`.

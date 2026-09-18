@@ -101,19 +101,25 @@ required tile-pair count exceeds the allocated capacity. The exception provides
 the required count as `num_tiles`, the capacity as `max_tiles`, and the affected
 `system_index` for a segmented batch.
 
-The convenience functions continue to estimate the buffer size when
-`max_tiles_per_group` is `None`. An explicit value that is too small now raises
-instead of returning incomplete neighbor output. The
+The convenience functions continue to estimate an internally allocated buffer
+when `max_tiles_per_group` is `None`. An explicit value that is too small now
+raises instead of returning incomplete neighbor output. The
 {ref}`cluster-tile-buffer-capacity` section explains how the parameter changes
 the allocation and how to calculate a retry value from the exception.
 
 JAX transformations require `max_tiles_per_group` to be a positive static
-Python integer because it determines output shapes. Compiled output shapes
-remain fixed, and a compiled function cannot turn a data-dependent tile count
-into a Python exception. To detect an undersized bound, a compiled workflow can
-use the lower-level build and query functions to return the tile counts, then
-compare those counts with the buffer capacities after leaving the compiled
-region.
+Python integer when the call allocates any tile-index array because it then
+determines an output shape. Complete caller-supplied tile-index arrays instead
+determine the capacity; an explicit factor is still validated but never resizes
+those arrays. Compiled output shapes remain fixed, and a compiled function
+cannot turn a data-dependent tile count into a Python exception. Adaptive
+compiled workflows should use the lower-level build function, compare its
+returned tile counts with the supplied capacities after leaving the compiled
+region, and run the query only after that check passes.
+
+A segmented eager build reports the first overflowing system. Resizing can
+therefore require successive retries, and changing segment offsets requires a
+replacement state initialized with every system marked for rebuild.
 
 ### Retained Ewald Miller Topology
 

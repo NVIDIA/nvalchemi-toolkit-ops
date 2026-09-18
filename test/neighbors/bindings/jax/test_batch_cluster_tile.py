@@ -683,6 +683,137 @@ class TestBatchClusterTileBuildCapacity:
         assert caught.value.max_tiles == 1
         assert caught.value.num_tiles > caught.value.max_tiles
 
+    def test_jit_complete_supplied_storage_omits_capacity_factor(self):
+        """Complete batched tile arrays remove only the allocation-time factor."""
+        positions = jnp.zeros((64, 3), dtype=jnp.float32)
+        cell_batch = jnp.tile(jnp.eye(3, dtype=jnp.float32)[None] * 12.0, (2, 1, 1))
+        batch_ptr = jnp.array([0, 32, 64], dtype=jnp.int32)
+
+        @jax.jit
+        def build(positions, tile_row_group, tile_col_group, tile_system):
+            return batch_build_cluster_tile_list(
+                positions,
+                5.0,
+                cell_batch,
+                batch_ptr,
+                tile_row_group=tile_row_group,
+                tile_col_group=tile_col_group,
+                tile_system=tile_system,
+            )
+
+        state = build(
+            positions,
+            jnp.zeros(2, dtype=jnp.int32),
+            jnp.zeros(2, dtype=jnp.int32),
+            jnp.zeros(2, dtype=jnp.int32),
+        )
+        assert int(state[15][0]) == 2
+        assert state[16].shape == state[17].shape == state[18].shape == (2,)
+
+    def test_jit_partial_supplied_storage_still_requires_capacity_factor(self):
+        """A missing batched tile-index array still requires static allocation."""
+        positions = jnp.zeros((64, 3), dtype=jnp.float32)
+        cell_batch = jnp.tile(jnp.eye(3, dtype=jnp.float32)[None] * 12.0, (2, 1, 1))
+        batch_ptr = jnp.array([0, 32, 64], dtype=jnp.int32)
+
+        @jax.jit
+        def build(positions, tile_row_group, tile_col_group):
+            return batch_build_cluster_tile_list(
+                positions,
+                5.0,
+                cell_batch,
+                batch_ptr,
+                tile_row_group=tile_row_group,
+                tile_col_group=tile_col_group,
+            )
+
+        with pytest.raises(ValueError, match="static Python integer"):
+            build(
+                positions,
+                jnp.zeros(2, dtype=jnp.int32),
+                jnp.zeros(2, dtype=jnp.int32),
+            )
+
+    def test_jit_complete_storage_still_requires_static_batch_ptr(self):
+        """Caller-owned tile storage does not make batch segmentation dynamic."""
+        positions = jnp.zeros((64, 3), dtype=jnp.float32)
+        cell_batch = jnp.tile(jnp.eye(3, dtype=jnp.float32)[None] * 12.0, (2, 1, 1))
+
+        @jax.jit
+        def build(positions, batch_ptr, tile_row_group, tile_col_group, tile_system):
+            return batch_build_cluster_tile_list(
+                positions,
+                5.0,
+                cell_batch,
+                batch_ptr,
+                tile_row_group=tile_row_group,
+                tile_col_group=tile_col_group,
+                tile_system=tile_system,
+            )
+
+        with pytest.raises(ValueError, match="batch_ptr.*concrete"):
+            build(
+                positions,
+                jnp.array([0, 32, 64], dtype=jnp.int32),
+                jnp.zeros(2, dtype=jnp.int32),
+                jnp.zeros(2, dtype=jnp.int32),
+                jnp.zeros(2, dtype=jnp.int32),
+            )
+
+    @pytest.mark.parametrize("invalid_factor", [0, -1, True, 1.5])
+    def test_complete_supplied_storage_rejects_invalid_factor(self, invalid_factor):
+        """Complete batched buffers do not excuse an invalid explicit factor."""
+        positions = jnp.zeros((32, 3), dtype=jnp.float32)
+        cell_batch = jnp.eye(3, dtype=jnp.float32)[None] * 4.0
+        batch_ptr = jnp.array([0, 32], dtype=jnp.int32)
+        with pytest.raises(ValueError, match="positive integer"):
+            batch_build_cluster_tile_list(
+                positions,
+                1.0,
+                cell_batch,
+                batch_ptr,
+                max_tiles_per_group=invalid_factor,
+                tile_row_group=jnp.zeros(1, dtype=jnp.int32),
+                tile_col_group=jnp.zeros(1, dtype=jnp.int32),
+                tile_system=jnp.zeros(1, dtype=jnp.int32),
+            )
+
+    def test_segmented_overflow_retries_reinitialize_resized_state(self):
+        """Successive first-system failures lead to a full-state adequate retry."""
+        positions = jnp.zeros((160, 3), dtype=jnp.float32)
+        cell_batch = jnp.tile(jnp.eye(3, dtype=jnp.float32)[None] * 12.0, (2, 1, 1))
+        batch_ptr = jnp.array([0, 64, 160], dtype=jnp.int32)
+
+        def build_with_offsets(tile_offsets):
+            capacity = int(tile_offsets[-1])
+            return batch_build_cluster_tile_list(
+                positions,
+                5.0,
+                cell_batch,
+                batch_ptr,
+                rebuild_flags=jnp.ones(2, dtype=jnp.bool_),
+                tile_offsets=tile_offsets,
+                tile_counts=jnp.zeros(2, dtype=jnp.int32),
+                num_tiles=jnp.zeros(1, dtype=jnp.int32),
+                tile_row_group=jnp.zeros(capacity, dtype=jnp.int32),
+                tile_col_group=jnp.zeros(capacity, dtype=jnp.int32),
+                tile_system=jnp.zeros(capacity, dtype=jnp.int32),
+            )
+
+        with pytest.raises(TileBufferOverflow) as first:
+            build_with_offsets(jnp.array([0, 1, 2], dtype=jnp.int32))
+        assert first.value.system_index == 0
+        assert first.value.num_tiles == 3
+
+        with pytest.raises(TileBufferOverflow) as second:
+            build_with_offsets(jnp.array([0, 3, 4], dtype=jnp.int32))
+        assert second.value.system_index == 1
+        assert second.value.num_tiles == 6
+
+        state = build_with_offsets(jnp.array([0, 3, 9], dtype=jnp.int32))
+        np.testing.assert_array_equal(np.asarray(state[-1]), np.array([3, 6]))
+        assert state[16].shape == state[17].shape == state[18].shape == (9,)
+
 
 class TestEstimateBatchSizes:
     """Pure-Python sizing helper tests."""
@@ -1189,7 +1320,10 @@ class TestJaxBatchClusterTileCutoff2Selective:
             initial_tile_system,
         ) = initial
 
-        moved = positions.at[:32, 0].add(0.25)
+        # Change both systems to a dense geometry. Only the first is rebuilt;
+        # the second must retain its previous topology even though rebuilding it
+        # would produce a detectably different result.
+        moved = jnp.zeros_like(positions)
         mixed = batch_cluster_tile_neighbor_list(
             moved,
             cutoff,
@@ -1209,14 +1343,43 @@ class TestJaxBatchClusterTileCutoff2Selective:
         )
         mixed_matrix, mixed_counts, mixed_shifts, _, mixed_tile_counts, *_ = mixed
 
+        fresh_matrix, fresh_counts, fresh_shifts = batch_cluster_tile_neighbor_list(
+            moved,
+            cutoff,
+            cell_batch,
+            batch_ptr,
+            max_neighbors=max_neighbors,
+        )
+
         np.testing.assert_array_equal(
             np.asarray(mixed_counts[32:]), np.asarray(initial_counts[32:])
         )
+        assert np.any(np.asarray(fresh_counts[32:]) != np.asarray(initial_counts[32:]))
         assert int(mixed_tile_counts[1]) == int(initial_tile_counts[1])
         initial_matrix_np = np.asarray(initial_matrix)
         initial_shifts_np = np.asarray(initial_shifts)
         mixed_matrix_np = np.asarray(mixed_matrix)
         mixed_shifts_np = np.asarray(mixed_shifts)
+        fresh_matrix_np = np.asarray(fresh_matrix)
+        fresh_shifts_np = np.asarray(fresh_shifts)
+
+        for atom in range(32):
+            mixed_pairs = {
+                (
+                    int(mixed_matrix_np[atom, index]),
+                    *map(int, mixed_shifts_np[atom, index]),
+                )
+                for index in range(int(mixed_counts[atom]))
+            }
+            fresh_pairs = {
+                (
+                    int(fresh_matrix_np[atom, index]),
+                    *map(int, fresh_shifts_np[atom, index]),
+                )
+                for index in range(int(fresh_counts[atom]))
+            }
+            assert mixed_pairs == fresh_pairs
+
         for atom in range(32, 96):
             count = int(initial_counts[atom])
             initial_pairs = {

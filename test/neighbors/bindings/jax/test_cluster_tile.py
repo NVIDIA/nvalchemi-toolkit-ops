@@ -574,6 +574,91 @@ class TestClusterTileBuildCapacity:
         assert caught.value.max_tiles == state[12].shape[0]
         assert caught.value.num_tiles > caught.value.max_tiles
 
+    def test_jit_complete_supplied_storage_supports_adaptive_retry(self):
+        """Compiled callers can inspect counts and retry with larger tile arrays."""
+        positions = jnp.zeros((64, 3), dtype=jnp.float32)
+        cell = _orthorhombic_cell(12.0)
+        cutoff = 5.0
+
+        @jax.jit
+        def build(positions, tile_row_group, tile_col_group):
+            return build_cluster_tile_list(
+                positions,
+                cutoff,
+                cell,
+                tile_row_group=tile_row_group,
+                tile_col_group=tile_col_group,
+            )
+
+        undersized = build(
+            positions,
+            jnp.zeros(2, dtype=jnp.int32),
+            jnp.zeros(2, dtype=jnp.int32),
+        )
+        required = int(undersized[11][0])
+        assert required > undersized[12].shape[0]
+
+        adequate = build(
+            positions,
+            jnp.zeros(required, dtype=jnp.int32),
+            jnp.zeros(required, dtype=jnp.int32),
+        )
+        assert int(adequate[11][0]) == required
+        neighbor_matrix, num_neighbors, shifts = query_cluster_tile(
+            adequate[0],
+            adequate[2],
+            adequate[3],
+            adequate[4],
+            adequate[11],
+            adequate[12],
+            adequate[13],
+            cell,
+            cutoff,
+            positions.shape[0],
+            64,
+        )
+        assert _matrix_to_pair_set_full(
+            neighbor_matrix,
+            num_neighbors,
+            shifts,
+            positions.shape[0],
+        ) == _brute_force_pairs_full(
+            np.asarray(positions),
+            np.asarray(cell),
+            cutoff,
+            pbc=True,
+        )
+
+    def test_jit_partial_supplied_storage_still_requires_capacity_factor(self):
+        """A missing tile-index array keeps the static allocation requirement."""
+        positions = jnp.zeros((64, 3), dtype=jnp.float32)
+        cell = _orthorhombic_cell(12.0)
+
+        @jax.jit
+        def build(positions, tile_row_group):
+            return build_cluster_tile_list(
+                positions,
+                5.0,
+                cell,
+                tile_row_group=tile_row_group,
+            )
+
+        with pytest.raises(ValueError, match="static Python integer"):
+            build(positions, jnp.zeros(3, dtype=jnp.int32))
+
+    @pytest.mark.parametrize("invalid_factor", [0, -1, True, 1.5])
+    def test_complete_supplied_storage_rejects_invalid_factor(self, invalid_factor):
+        """Supplying buffers does not make an explicit invalid factor acceptable."""
+        with pytest.raises(ValueError, match="positive integer"):
+            build_cluster_tile_list(
+                jnp.zeros((32, 3), dtype=jnp.float32),
+                1.0,
+                _orthorhombic_cell(4.0),
+                max_tiles_per_group=invalid_factor,
+                tile_row_group=jnp.zeros(1, dtype=jnp.int32),
+                tile_col_group=jnp.zeros(1, dtype=jnp.int32),
+            )
+
 
 class TestEstimateSizes:
     """Pure-Python sizing helper tests."""

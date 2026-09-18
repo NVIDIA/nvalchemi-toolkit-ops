@@ -100,17 +100,6 @@ def _host_array_or_none(value) -> np.ndarray | None:
         return None
 
 
-def _require_concrete_cutoff(cutoff) -> float:
-    """Return a host cutoff or explain the fixed compiled-boundary contract."""
-    try:
-        return float(cutoff)
-    except _CONCRETE_VALUE_ERRORS as exc:
-        raise ValueError(
-            "cutoff must be a concrete Python value when cluster_tile is used "
-            "under jax.jit; close over cutoff before tracing"
-        ) from exc
-
-
 def _concrete_cell_volume(cell) -> float | None:
     """Return ``abs(det(cell))`` if ``cell`` is concrete, else ``None``.
 
@@ -169,6 +158,24 @@ def _check_eager_tile_buffer_capacity(
         raise TileBufferOverflow(capacity, discovered)
 
 
+def _cluster_tile_scratch_sizes(total_atoms: int) -> tuple[int, int, int]:
+    """Return allocation sizes that do not depend on tile-buffer capacity."""
+    if total_atoms < 0:
+        raise ValueError(f"total_atoms must be >= 0; got {total_atoms}")
+    n_padded = (
+        (total_atoms + TILE_GROUP_SIZE - 1) // TILE_GROUP_SIZE
+    ) * TILE_GROUP_SIZE
+    if n_padded == 0:
+        n_padded = TILE_GROUP_SIZE
+    ngroup = n_padded // TILE_GROUP_SIZE
+    ngroup_padded = (
+        (ngroup + TILE_GROUP_SIZE - 1) // TILE_GROUP_SIZE
+    ) * TILE_GROUP_SIZE
+    if ngroup_padded == ngroup:
+        ngroup_padded = ngroup + TILE_GROUP_SIZE
+    return n_padded, ngroup, ngroup_padded
+
+
 def estimate_cluster_tile_list_sizes(
     total_atoms: int,
     max_tiles_per_group: int = 256,
@@ -198,19 +205,7 @@ def estimate_cluster_tile_list_sizes(
     max_tiles : int
         Allocated tile-pair list capacity.
     """
-    if total_atoms < 0:
-        raise ValueError(f"total_atoms must be >= 0; got {total_atoms}")
-    n_padded = (
-        (total_atoms + TILE_GROUP_SIZE - 1) // TILE_GROUP_SIZE
-    ) * TILE_GROUP_SIZE
-    if n_padded == 0:
-        n_padded = TILE_GROUP_SIZE
-    ngroup = n_padded // TILE_GROUP_SIZE
-    ngroup_padded = (
-        (ngroup + TILE_GROUP_SIZE - 1) // TILE_GROUP_SIZE
-    ) * TILE_GROUP_SIZE
-    if ngroup_padded == ngroup:
-        ngroup_padded = ngroup + TILE_GROUP_SIZE
+    n_padded, ngroup, ngroup_padded = _cluster_tile_scratch_sizes(total_atoms)
     max_tiles = ngroup * min(ngroup, max_tiles_per_group)
     return n_padded, ngroup, ngroup_padded, max_tiles
 
@@ -917,9 +912,11 @@ def build_cluster_tile_list(
         buffer. For ``g`` row groups, the buffer holds
         ``g * min(g, max_tiles_per_group)`` tile pairs. Increasing the value up
         to ``g`` uses more memory and accommodates more candidate tile pairs.
-        Eager calls estimate the value when it is ``None``. Transformed or
-        compiled calls require a positive static Python integer. Caller-owned
-        tile arrays determine the actual capacity. See
+        Eager calls estimate the value when allocation is needed and the value
+        is ``None``. Transformed or compiled calls that allocate either tile
+        index array require a positive static Python integer. Complete
+        caller-owned tile arrays determine the actual capacity and do not
+        require this value. See
         :ref:`cluster-tile-buffer-capacity` for sizing details.
     rebuild_flags : jax.Array, shape (1,), dtype=bool, optional
         Selective-rebuild flag. When set, only tiles for flagged systems/atoms
@@ -974,17 +971,23 @@ def build_cluster_tile_list(
             "under jax.jit; close over cutoff before tracing"
         )
     N = positions.shape[0]
-    # Concrete eager calls use the geometry estimator. A transformed call must
-    # supply max_tiles_per_group because it determines an array shape.
-    if max_tiles_per_group is None:
-        max_tiles_per_group = _tile_buffer_max_tiles_per_group(
-            positions, N, cutoff, cell
+    allocates_tile_storage = tile_row_group is None or tile_col_group is None
+    if allocates_tile_storage:
+        # Concrete eager calls use the geometry estimator. A transformed call
+        # must supply the factor when it determines an array shape.
+        if max_tiles_per_group is None:
+            max_tiles_per_group = _tile_buffer_max_tiles_per_group(
+                positions, N, cutoff, cell
+            )
+        else:
+            max_tiles_per_group = int(max_tiles_per_group)
+        n_padded, ngroup, ngroup_padded, max_tiles = estimate_cluster_tile_list_sizes(
+            N,
+            max_tiles_per_group=max_tiles_per_group,
         )
     else:
-        max_tiles_per_group = int(max_tiles_per_group)
-    n_padded, ngroup, ngroup_padded, max_tiles = estimate_cluster_tile_list_sizes(
-        N, max_tiles_per_group=max_tiles_per_group
-    )
+        n_padded, ngroup, ngroup_padded = _cluster_tile_scratch_sizes(N)
+        max_tiles = 0
 
     cell_n = _normalize_cell(cell, jnp.float32)
     inv_cell_n = jnp.linalg.inv(cell_n[0])[jnp.newaxis, :, :]
@@ -1797,8 +1800,6 @@ def _cluster_tile_pair_outputs_forward(
         cell,
         max_tiles_per_group=max_tiles_per_group,
     )
-    _check_eager_tile_buffer_capacity(num_tiles, tile_row_group)
-
     out = query_cluster_tile(
         sorted_atom_index,
         sorted_pos_x,
@@ -1913,8 +1914,10 @@ def cluster_tile_neighbor_list(
         buffer. For ``g`` row groups, the buffer holds
         ``g * min(g, max_tiles_per_group)`` tile pairs. Increasing the value up
         to ``g`` uses more memory and accommodates more candidate tile pairs.
-        Eager calls estimate the value when it is ``None``. Transformed or
-        compiled calls require a positive static Python integer. See
+        Eager calls estimate the value when they allocate tile storage and it
+        is ``None``. Transformed or compiled calls that allocate tile storage
+        require a positive static Python integer. Complete caller-owned tile
+        arrays determine capacity without this value. See
         :ref:`cluster-tile-buffer-capacity` for sizing details.
     pair_offsets, previous_pair_counts, previous_neighbor_list, previous_neighbor_list_shifts : jax.Array, optional
         Single fixed segmented-COO state used with ``rebuild_flags`` and
@@ -1985,14 +1988,15 @@ def cluster_tile_neighbor_list(
     - Cluster-tile is CUDA float32 only.
     - Cluster-tile does not support partial neighbor lists; there is no
       ``target_indices`` kwarg.
-    - For ``jax.jit``, close over ``cutoff`` and ``cutoff2``, and provide a
-      positive static ``max_tiles_per_group``. Fixed matrix or segmented-COO
-      capacities are supplied by the caller. Compact COO has data-dependent
-      length and is eager-only.
+    - For ``jax.jit``, close over ``cutoff`` and ``cutoff2``. Provide a positive
+      static ``max_tiles_per_group`` when the call allocates tile-index storage;
+      complete caller-owned tile arrays determine capacity without it. Fixed
+      matrix or segmented-COO capacities are supplied by the caller. Compact
+      COO has data-dependent length and is eager-only.
     - A transformed or compiled call cannot raise :class:`TileBufferOverflow`
-      from its runtime tile count. To detect an undersized explicit bound, use
-      the lower-level build and query functions and check the returned tile
-      count after leaving the transformed region.
+      from its runtime tile count. To detect undersized tile storage, use the
+      lower-level build function, check its returned count after leaving the
+      transformed region, and query only when the count fits.
     - The unified
       :func:`nvalchemiops.jax.neighbors.neighbor_list` entry point selects
       this binding automatically for fully-periodic float32 CUDA inputs
@@ -2311,10 +2315,6 @@ def cluster_tile_neighbor_list(
         tile_row_group=previous_tile_row_group,
         tile_col_group=previous_tile_col_group,
     )
-
-    # A traced/compiled callback cannot synchronize its data-dependent count.
-    # Concrete eager calls fail before any query can consume truncated tiles.
-    _check_eager_tile_buffer_capacity(num_tiles, tile_row_group)
 
     if format == "tile":
         return (

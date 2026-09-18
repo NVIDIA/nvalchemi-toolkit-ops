@@ -40,9 +40,10 @@
   `TileBufferOverflow` when tile-pair construction exceeds the allocated
   capacity. For cluster-tile calls, `NeighborOverflowError` identifies an
   undersized final matrix or COO buffer.
-- Compiled JAX cluster-tile calls now require `max_tiles_per_group` to be a
-  positive static Python integer. Compiled calls do not raise
-  `TileBufferOverflow`.
+- Compiled JAX cluster-tile calls that allocate tile-index storage now require
+  `max_tiles_per_group` to be a positive static Python integer. Complete
+  caller-supplied tile-index storage determines capacity without that factor.
+  Compiled calls do not raise `TileBufferOverflow`.
 - Torch and JAX Ewald now expose caller-retained reciprocal Miller topology via
   `generate_ewald_miller_indices(...)` and
   `k_vectors_from_miller_indices(...)`. Full `ewald_summation(...)` accepts
