@@ -121,7 +121,9 @@ def batch_naive_neighbor_list_dual_cutoff(
     inv_cell_buffer: jax.Array | None = None,
     coo_capacity: int | tuple[int, int] | None = None,
 ) -> (
-    tuple[
+    tuple[jax.Array, jax.Array, jax.Array, jax.Array]
+    | tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]
+    | tuple[
         jax.Array,
         jax.Array,
         jax.Array,
@@ -131,8 +133,18 @@ def batch_naive_neighbor_list_dual_cutoff(
         jax.Array,
         jax.Array,
     ]
-    | tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]
-    | tuple[jax.Array, jax.Array, jax.Array, jax.Array]
+    | tuple[
+        jax.Array,
+        jax.Array,
+        jax.Array,
+        jax.Array,
+        jax.Array,
+        jax.Array,
+        jax.Array,
+        jax.Array,
+        jax.Array,
+        jax.Array,
+    ]
 ):
     """Compute batched neighbor lists for two cutoff distances using naive O(N^2) algorithm.
 
@@ -168,8 +180,9 @@ def batch_naive_neighbor_list_dual_cutoff(
         If True, convert neighbor matrices to neighbor list (idx_i, idx_j) format.
     coo_capacity : int or tuple[int, int], optional
         Static capacity for each cutoff's COO output. One integer applies to
-        both; a tuple sets them independently. Fixed outputs append a scalar
-        overflow flag after each cutoff's topology tuple.
+        both; a tuple sets them independently. Fixed outputs append raw row
+        counts and a scalar metadata-validity flag after each cutoff's topology
+        tuple.
     neighbor_matrix1 : jax.Array, shape (total_atoms, max_neighbors1), dtype=int32, optional
         Pre-allocated first neighbor matrix.
     neighbor_matrix2 : jax.Array, shape (total_atoms, max_neighbors2), dtype=int32, optional
@@ -226,10 +239,10 @@ def batch_naive_neighbor_list_dual_cutoff(
 
         - No PBC, matrix format: ``(neighbor_matrix1, num_neighbors1, neighbor_matrix2, num_neighbors2)``
         - No PBC, compact list format: ``(neighbor_list1, neighbor_ptr1, neighbor_list2, neighbor_ptr2)``
-        - No PBC, fixed list format: ``(neighbor_list1, neighbor_ptr1, overflow1, neighbor_list2, neighbor_ptr2, overflow2)``
+        - No PBC, fixed list format: ``(neighbor_list1, neighbor_ptr1, num_neighbors1, metadata_valid1, neighbor_list2, neighbor_ptr2, num_neighbors2, metadata_valid2)``
         - With PBC, matrix format: ``(neighbor_matrix1, num_neighbors1, neighbor_matrix_shifts1, neighbor_matrix2, num_neighbors2, neighbor_matrix_shifts2)``
         - With PBC, compact list format: ``(neighbor_list1, neighbor_ptr1, unit_shifts1, neighbor_list2, neighbor_ptr2, unit_shifts2)``
-        - With PBC, fixed list format: ``(neighbor_list1, neighbor_ptr1, unit_shifts1, overflow1, neighbor_list2, neighbor_ptr2, unit_shifts2, overflow2)``
+        - With PBC, fixed list format: ``(neighbor_list1, neighbor_ptr1, unit_shifts1, num_neighbors1, metadata_valid1, neighbor_list2, neighbor_ptr2, unit_shifts2, num_neighbors2, metadata_valid2)``
 
     See Also
     --------
@@ -355,7 +368,8 @@ def batch_naive_neighbor_list_dual_cutoff(
     if cutoff1 <= 0 and cutoff2 <= 0:
         if return_neighbor_list:
             capacity1, capacity2 = coo_capacities or (0, 0)
-            overflow = jnp.zeros((), dtype=jnp.bool_)
+            recovery_counts = jnp.zeros(positions.shape[0], dtype=jnp.int32)
+            metadata_valid = jnp.ones((), dtype=jnp.bool_)
             if pbc is not None:
                 base = (
                     jnp.full((2, capacity1), fill_value, dtype=jnp.int32),
@@ -375,8 +389,22 @@ def batch_naive_neighbor_list_dual_cutoff(
             if coo_capacities is None:
                 return base
             if pbc is not None:
-                return (*base[:3], overflow, *base[3:], overflow)
-            return (*base[:2], overflow, *base[2:], overflow)
+                return (
+                    *base[:3],
+                    recovery_counts,
+                    metadata_valid,
+                    *base[3:],
+                    recovery_counts,
+                    metadata_valid,
+                )
+            return (
+                *base[:2],
+                recovery_counts,
+                metadata_valid,
+                *base[2:],
+                recovery_counts,
+                metadata_valid,
+            )
         else:
             if pbc is not None:
                 return (

@@ -33,6 +33,7 @@ from nvalchemiops.jax.neighbors._autograd import (
 from nvalchemiops.jax.neighbors._dispatch import _is_jax_cpu_array
 from nvalchemiops.jax.neighbors._registration import _lazy_naive_kernel
 from nvalchemiops.jax.neighbors.neighbor_utils import (
+    _pack_fixed_capacity_neighbor_list_from_neighbor_matrix,
     _validate_coo_capacity,
     _validate_graph_mode,
     build_naive_kernel_tables,
@@ -1569,8 +1570,9 @@ def naive_neighbor_list(
         creating a mask over the fill_value, which can incur a performance penalty.
     coo_capacity : int, optional
         Static COO capacity. With ``return_neighbor_list=True``, returns padded
-        fixed-size COO arrays plus a scalar overflow flag and is compatible
-        with ``jax.jit``. If omitted, returns compact data-dependent COO arrays.
+        fixed-size COO arrays plus raw required row counts and a scalar
+        metadata-validity flag, and is compatible with ``jax.jit``. If omitted,
+        returns compact data-dependent COO arrays.
     neighbor_distances : jax.Array, shape (num_rows, max_neighbors), optional
         Pre-shaped distance output for ``return_distances=True`` or ``pair_fn``.
     neighbor_vectors : jax.Array, shape (num_rows, max_neighbors, 3), optional
@@ -1616,9 +1618,13 @@ def naive_neighbor_list(
         - With PBC, matrix format: ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``
         - With PBC, list format: ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)``
 
-        When ``coo_capacity`` is supplied, a scalar ``overflow`` flag follows
-        the topology tuple. Requested pair outputs then follow in this
-        order: ``neighbor_distances`` when ``return_distances=True``, then
+        When ``coo_capacity`` is supplied, ``num_neighbors`` and scalar
+        ``metadata_valid`` follow the topology tuple. ``neighbor_ptr`` describes
+        stored entries. When metadata is valid, a row is complete exactly when
+        ``neighbor_ptr[r + 1] - neighbor_ptr[r] == num_neighbors[r]``. When
+        ``metadata_valid`` is false, every returned count is ``-1``. Requested
+        pair outputs then follow in this order: ``neighbor_distances`` when
+        ``return_distances=True``, then
         ``neighbor_vectors`` when ``return_vectors=True``, then
         ``(pair_energies, pair_forces)`` when ``pair_fn`` is set.
 
@@ -1934,27 +1940,24 @@ def naive_neighbor_list(
             distances_out, vectors_out, nm_out, nn_out, shifts_out = route_out
             pe_out = pf_out = None
         if return_neighbor_list:
+            active = nm_out != int(fill_value)
             if coo_capacity is not None and pbc is not None:
-                nl, nptr, nl_shifts, overflow = (
-                    get_fixed_capacity_neighbor_list_from_neighbor_matrix(
-                        nm_out,
-                        num_neighbors=nn_out,
-                        capacity=coo_capacity,
-                        neighbor_shift_matrix=shifts_out,
-                        fill_value=int(fill_value),
-                    )
+                base = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                    nm_out,
+                    nn_out,
+                    capacity=coo_capacity,
+                    neighbor_shift_matrix=shifts_out,
+                    fill_value=int(fill_value),
+                    metadata_valid=jnp.ones((), dtype=jnp.bool_),
                 )
-                base = (nl, nptr, nl_shifts, overflow)
             elif coo_capacity is not None:
-                nl, nptr, overflow = (
-                    get_fixed_capacity_neighbor_list_from_neighbor_matrix(
-                        nm_out,
-                        num_neighbors=nn_out,
-                        capacity=coo_capacity,
-                        fill_value=int(fill_value),
-                    )
+                base = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                    nm_out,
+                    nn_out,
+                    capacity=coo_capacity,
+                    fill_value=int(fill_value),
+                    metadata_valid=jnp.ones((), dtype=jnp.bool_),
                 )
-                base = (nl, nptr, overflow)
             elif pbc is not None:
                 nl, nptr, nl_shifts = get_neighbor_list_from_neighbor_matrix(
                     nm_out,
@@ -1972,7 +1975,6 @@ def naive_neighbor_list(
                 base = (nl, nptr)
             # Repack per-pair geometry (and pair_fn outputs) into COO order aligned
             # with ``nl``.  Eager-only, like the index conversion.
-            active = nm_out != int(fill_value)
             distances_out, vectors_out = coo_pack_pair_geometry(
                 active, distances_out, vectors_out, capacity=coo_capacity
             )
@@ -2113,7 +2115,8 @@ def naive_neighbor_list(
                 neighbor_matrix_shifts = neighbor_matrix_shifts.at[:].set(jnp.int32(0))
         if return_neighbor_list:
             output_pairs = 0 if coo_capacity is None else int(coo_capacity)
-            overflow = jnp.zeros((), dtype=jnp.bool_)
+            recovery_counts = jnp.zeros(positions.shape[0], dtype=jnp.int32)
+            metadata_valid = jnp.ones((), dtype=jnp.bool_)
             if pbc is not None:
                 base = (
                     jnp.full((2, output_pairs), fill_value, dtype=jnp.int32),
@@ -2131,7 +2134,11 @@ def naive_neighbor_list(
                         dtype=jnp.int32,
                     ),
                 )
-            return (*base, overflow) if coo_capacity is not None else base
+            return (
+                (*base, recovery_counts, metadata_valid)
+                if coo_capacity is not None
+                else base
+            )
         else:
             if pbc is not None:
                 return neighbor_matrix, num_neighbors, neighbor_matrix_shifts

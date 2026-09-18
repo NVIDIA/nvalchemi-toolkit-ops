@@ -32,6 +32,7 @@ from nvalchemiops.jax.neighbors._autograd import (
 from nvalchemiops.jax.neighbors._dispatch import _is_jax_cpu_array
 from nvalchemiops.jax.neighbors._registration import _lazy_naive_kernel
 from nvalchemiops.jax.neighbors.neighbor_utils import (
+    _pack_fixed_capacity_neighbor_list_from_neighbor_matrix,
     _validate_coo_capacity,
     compute_naive_num_shifts,
     coo_pack_pair_geometry,
@@ -695,8 +696,9 @@ def batch_naive_neighbor_list(
         Incurs a masking step; prefer the matrix format when possible.
     coo_capacity : int, optional
         Static COO capacity. With ``return_neighbor_list=True``, returns padded
-        fixed-size COO arrays plus a scalar overflow flag and is compatible
-        with ``jax.jit``. If omitted, returns compact data-dependent COO arrays.
+        fixed-size COO arrays plus raw required row counts and a scalar
+        metadata-validity flag, and is compatible with ``jax.jit``. If omitted,
+        returns compact data-dependent COO arrays.
     rebuild_flags : jax.Array, shape (num_systems,), dtype=bool, optional
         Per-system selective-rebuild flags. Atoms in system ``s`` are
         refilled only when ``rebuild_flags[s]`` is True; their rows in
@@ -1051,27 +1053,24 @@ def batch_naive_neighbor_list(
             distances_out, vectors_out, nm_out, nn_out, shifts_out = route_out
             pe_out = pf_out = None
         if return_neighbor_list:
+            active = nm_out != int(fill_value)
             if coo_capacity is not None and pbc is not None:
-                nl, nptr, nl_shifts, overflow = (
-                    get_fixed_capacity_neighbor_list_from_neighbor_matrix(
-                        nm_out,
-                        num_neighbors=nn_out,
-                        capacity=coo_capacity,
-                        neighbor_shift_matrix=shifts_out,
-                        fill_value=int(fill_value),
-                    )
+                base = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                    nm_out,
+                    nn_out,
+                    capacity=coo_capacity,
+                    neighbor_shift_matrix=shifts_out,
+                    fill_value=int(fill_value),
+                    metadata_valid=jnp.ones((), dtype=jnp.bool_),
                 )
-                base = (nl, nptr, nl_shifts, overflow)
             elif coo_capacity is not None:
-                nl, nptr, overflow = (
-                    get_fixed_capacity_neighbor_list_from_neighbor_matrix(
-                        nm_out,
-                        num_neighbors=nn_out,
-                        capacity=coo_capacity,
-                        fill_value=int(fill_value),
-                    )
+                base = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                    nm_out,
+                    nn_out,
+                    capacity=coo_capacity,
+                    fill_value=int(fill_value),
+                    metadata_valid=jnp.ones((), dtype=jnp.bool_),
                 )
-                base = (nl, nptr, overflow)
             elif pbc is not None:
                 nl, nptr, nl_shifts = get_neighbor_list_from_neighbor_matrix(
                     nm_out,
@@ -1089,7 +1088,6 @@ def batch_naive_neighbor_list(
                 base = (nl, nptr)
             # Repack per-pair geometry (and pair_fn outputs) into the same COO order
             # as ``nl``.  Eager-only, like the index conversion.
-            active = nm_out != int(fill_value)
             distances_out, vectors_out = coo_pack_pair_geometry(
                 active, distances_out, vectors_out, capacity=coo_capacity
             )
@@ -1160,7 +1158,8 @@ def batch_naive_neighbor_list(
     if cutoff <= 0:
         if return_neighbor_list:
             output_pairs = 0 if coo_capacity is None else int(coo_capacity)
-            overflow = jnp.zeros((), dtype=jnp.bool_)
+            recovery_counts = jnp.zeros(positions.shape[0], dtype=jnp.int32)
+            metadata_valid = jnp.ones((), dtype=jnp.bool_)
             if pbc is not None:
                 base = (
                     jnp.full((2, output_pairs), fill_value, dtype=jnp.int32),
@@ -1172,7 +1171,11 @@ def batch_naive_neighbor_list(
                     jnp.full((2, output_pairs), fill_value, dtype=jnp.int32),
                     jnp.zeros((positions.shape[0] + 1,), dtype=jnp.int32),
                 )
-            return (*base, overflow) if coo_capacity is not None else base
+            return (
+                (*base, recovery_counts, metadata_valid)
+                if coo_capacity is not None
+                else base
+            )
         else:
             if pbc is not None:
                 return neighbor_matrix, num_neighbors, neighbor_matrix_shifts

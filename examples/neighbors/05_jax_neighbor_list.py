@@ -314,7 +314,7 @@ coo_capacity = num_atoms * max_neighbors
 
 @jax.jit
 def compiled_naive_coo(positions):
-    """Build padded COO arrays and return a device overflow flag."""
+    """Build padded COO arrays with device-side recovery metadata."""
     return naive_neighbor_list(
         positions,
         cutoff,
@@ -329,9 +329,19 @@ def compiled_naive_coo(positions):
     )
 
 
-fixed_coo, fixed_ptr, fixed_shifts, coo_overflow = compiled_naive_coo(positions)
-if bool(coo_overflow):
-    raise RuntimeError("COO capacity overflow; grow it outside jax.jit")
+fixed_coo, fixed_ptr, fixed_shifts, required_counts, metadata_valid = (
+    compiled_naive_coo(positions)
+)
+if not bool(metadata_valid):
+    raise RuntimeError("refresh launch metadata outside jax.jit")
+stored_counts = fixed_ptr[1:] - fixed_ptr[:-1]
+if bool(jnp.any(stored_counts != required_counts)):
+    required_width = int(jnp.max(required_counts, initial=0))
+    required_capacity = int(jnp.sum(required_counts))
+    raise RuntimeError(
+        f"COO output is incomplete; retry with max_neighbors >= {required_width} "
+        f"and coo_capacity >= {required_capacity}"
+    )
 num_pairs = int(fixed_ptr[-1])
 print(f"Returned fixed COO shape: {fixed_coo.shape}")
 print(f"Valid COO prefix: {num_pairs} pairs")
@@ -485,7 +495,7 @@ print("  Auto-allocated, returned, and forward-only.")
 # - **Cost-model dispatch**: ``estimate``/``suggest`` helpers pick a method
 # - **Partial lists**: Compact ``target_indices`` rows for selected atoms
 # - **Inline pair_fn**: Per-pair energy/force during enumeration
-# - **Compiled COO**: Padded fixed-capacity arrays plus a device overflow flag
+# - **Compiled COO**: Padded arrays plus raw counts and metadata validity
 
 print("\n" + "=" * 70)
 print("SUMMARY")

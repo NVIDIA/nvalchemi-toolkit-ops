@@ -272,8 +272,9 @@ def neighbor_list(
 
     Notes
     -----
-    Cost estimation, automatic dispatch, overflow detection, and capacity
-    growth belong outside ``jax.jit``. The direct compiled boundaries are
+    Cost estimation, automatic dispatch, host-side inspection of capacity
+    diagnostics, and capacity growth belong outside ``jax.jit``. The direct
+    compiled boundaries are
     :func:`naive_neighbor_list`, :func:`batch_naive_neighbor_list`,
     their dual-cutoff variants,
     :func:`cell_list`, :func:`batch_cell_list`,
@@ -306,11 +307,22 @@ def neighbor_list(
           - With PBC, matrix format: ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``
           - With PBC, list format: ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)``
 
+          For naive and cell-list methods, supplying ``coo_capacity`` makes the
+          list format fixed-capacity and appends
+          ``(num_neighbors, metadata_valid)`` after the topology arrays.
+          ``neighbor_ptr`` describes the stored prefix; ``num_neighbors``
+          contains the required count for every row when ``metadata_valid`` is
+          true, and contains ``-1`` otherwise.
+
         **Dual cutoff:**
           - No PBC, matrix format: ``(neighbor_matrix1, num_neighbors1, neighbor_matrix2, num_neighbors2)``
           - No PBC, list format: ``(neighbor_list1, neighbor_ptr1, neighbor_list2, neighbor_ptr2)``
           - With PBC, matrix format: ``(neighbor_matrix1, num_neighbors1, neighbor_matrix_shifts1, neighbor_matrix2, num_neighbors2, neighbor_matrix_shifts2)``
           - With PBC, list format: ``(neighbor_list1, neighbor_ptr1, neighbor_list_shifts1, neighbor_list2, neighbor_ptr2, neighbor_list_shifts2)``
+
+          For naive dual-cutoff methods with ``coo_capacity``, each cutoff group
+          appends its own ``(num_neighbors, metadata_valid)`` pair. ``cutoff2``
+          must be greater than or equal to ``cutoff``.
 
         **Components returned:**
 

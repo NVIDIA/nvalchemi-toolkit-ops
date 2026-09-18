@@ -361,7 +361,7 @@ class TestCellListJIT:
         assert shifts.shape[2] == 3
 
     def test_jit_fixed_capacity_coo(self):
-        """The one-shot cell-list API returns fixed COO with overflow state."""
+        """The one-shot cell-list API returns fixed COO recovery metadata."""
         positions = jnp.array(
             [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
             dtype=jnp.float32,
@@ -385,7 +385,7 @@ class TestCellListJIT:
                 strategy="atom_centric",
             )
 
-        neighbor_list, neighbor_ptr, shifts, overflow = jitted_cell_list(
+        neighbor_list, neighbor_ptr, shifts, counts, metadata_valid = jitted_cell_list(
             positions,
             cell,
             pbc,
@@ -395,7 +395,8 @@ class TestCellListJIT:
         assert neighbor_ptr.shape == (3,)
         assert shifts.shape == (4, 3)
         assert int(neighbor_ptr[-1]) == 2
-        assert not bool(overflow)
+        np.testing.assert_array_equal(counts, jnp.ones(2, dtype=jnp.int32))
+        assert bool(metadata_valid)
         assert {
             tuple(int(value) for value in pair)
             for pair in np.asarray(neighbor_list[:, :2]).T
@@ -1163,6 +1164,33 @@ class TestCellListAtomCentricDirect:
 
 class TestCellListGraphMode:
     """Graph-mode coverage for JAX cell-list bindings."""
+
+    def test_top_level_warp_fixed_coo_returns_recovery_metadata(self):
+        """The fused Warp path reports raw fixed-COO counts as valid metadata."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        cell = jnp.eye(3, dtype=jnp.float32)[jnp.newaxis, :, :] * 10.0
+        pbc = jnp.array([[True, True, True]])
+        neighbor_list, neighbor_ptr, shifts, counts, metadata_valid = cell_list(
+            positions,
+            cutoff=1.0,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=4,
+            max_total_cells=8,
+            neighbor_search_radius=jnp.ones(3, dtype=jnp.int32),
+            return_neighbor_list=True,
+            coo_capacity=4,
+            graph_mode="warp",
+        )
+
+        assert neighbor_list.shape == (2, 4)
+        assert neighbor_ptr.shape == (3,)
+        assert shifts.shape == (4, 3)
+        np.testing.assert_array_equal(counts, jnp.ones(2, dtype=jnp.int32))
+        assert bool(metadata_valid)
 
     def test_top_level_static_max_requires_explicit_radius(self):
         """Fused warp graph mode needs explicit radius with static capacity."""

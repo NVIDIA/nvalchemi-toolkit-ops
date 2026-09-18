@@ -256,11 +256,11 @@ class TestGetNeighborListFromNeighborMatrix:
             )
 
     @pytest.mark.parametrize(
-        "capacity, expected_overflow",
-        [(8, False), (3, True), (0, True)],
+        "capacity, expected_valid",
+        [(8, True), (3, True), (0, True)],
     )
-    def test_fixed_capacity_jit_contract(self, capacity, expected_overflow):
-        """Fixed COO conversion is JIT-safe and reports global overflow."""
+    def test_fixed_capacity_jit_contract(self, capacity, expected_valid):
+        """Fixed COO conversion is JIT-safe and reports recoverable counts."""
         neighbor_matrix = jnp.array(
             [[1, 2, -1], [0, -1, -1], [1, 0, -1]],
             dtype=jnp.int32,
@@ -279,7 +279,7 @@ class TestGetNeighborListFromNeighborMatrix:
                 )
             )
         )
-        neighbor_list, neighbor_ptr, neighbor_shifts, overflow = convert(
+        neighbor_list, neighbor_ptr, neighbor_shifts, counts, metadata_valid = convert(
             neighbor_matrix,
             num_neighbors,
             shifts,
@@ -287,7 +287,8 @@ class TestGetNeighborListFromNeighborMatrix:
 
         assert neighbor_list.shape == (2, capacity)
         assert neighbor_shifts.shape == (capacity, 3)
-        assert bool(overflow) is expected_overflow
+        assert bool(metadata_valid) is expected_valid
+        np.testing.assert_array_equal(counts, num_neighbors)
         expected_pairs = jnp.array(
             [[0, 0, 1, 2, 2], [1, 2, 0, 1, 0]],
             dtype=jnp.int32,
@@ -314,12 +315,12 @@ class TestGetNeighborListFromNeighborMatrix:
             assert jnp.all(neighbor_list[:, expected_stored:] == -1)
             assert jnp.all(neighbor_shifts[expected_stored:] == 0)
 
-    def test_fixed_capacity_reports_matrix_overflow(self):
-        """The device flag includes per-row matrix overflow."""
+    def test_fixed_capacity_reports_matrix_shortage(self):
+        """A trustworthy raw count survives matrix-row shortage."""
         neighbor_matrix = jnp.array([[1, 2]], dtype=jnp.int32)
         num_neighbors = jnp.array([3], dtype=jnp.int32)
 
-        neighbor_list, neighbor_ptr, overflow = jax.jit(
+        neighbor_list, neighbor_ptr, counts, metadata_valid = jax.jit(
             lambda matrix, counts: (
                 get_fixed_capacity_neighbor_list_from_neighbor_matrix(
                     matrix,
@@ -332,7 +333,74 @@ class TestGetNeighborListFromNeighborMatrix:
 
         assert neighbor_list.shape == (2, 4)
         assert int(neighbor_ptr[-1]) == 2
-        assert bool(overflow)
+        np.testing.assert_array_equal(counts, jnp.array([3], dtype=jnp.int32))
+        assert bool(metadata_valid)
+
+    def test_fixed_capacity_reports_mid_row_truncation(self):
+        """A clipped global capacity exposes the partially stored second row."""
+        matrix = jnp.array([[1, 2, 3], [0, 2, 3]], dtype=jnp.int32)
+        raw_counts = jnp.array([3, 3], dtype=jnp.int32)
+
+        _neighbor_list, ptr, counts, metadata_valid = jax.jit(
+            lambda neighbor_matrix, required_counts: (
+                get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                    neighbor_matrix,
+                    required_counts,
+                    capacity=4,
+                    fill_value=-1,
+                )
+            )
+        )(matrix, raw_counts)
+
+        np.testing.assert_array_equal(ptr, jnp.array([0, 3, 4], dtype=jnp.int32))
+        np.testing.assert_array_equal(
+            ptr[1:] - ptr[:-1],
+            jnp.array([3, 1], dtype=jnp.int32),
+        )
+        np.testing.assert_array_equal(counts, raw_counts)
+        assert bool(metadata_valid)
+
+    @pytest.mark.parametrize(
+        ("matrix", "raw_counts", "capacity"),
+        [
+            (
+                jnp.array([[1, 2]], dtype=jnp.int32),
+                jnp.array([3], dtype=jnp.int32),
+                4,
+            ),
+            (
+                jnp.array([[1, 2], [0, 2]], dtype=jnp.int32),
+                jnp.array([2, 2], dtype=jnp.int32),
+                3,
+            ),
+            (
+                jnp.array([[1, 2], [0, 2]], dtype=jnp.int32),
+                jnp.array([3, 3], dtype=jnp.int32),
+                1,
+            ),
+        ],
+        ids=["row-only", "coo-only", "row-and-coo"],
+    )
+    def test_fixed_capacity_shortage_preserves_trustworthy_counts(
+        self,
+        matrix,
+        raw_counts,
+        capacity,
+    ):
+        """Storage shortages do not invalidate trustworthy query metadata."""
+        _list, _ptr, counts, metadata_valid = jax.jit(
+            lambda neighbor_matrix, required_counts: (
+                get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                    neighbor_matrix,
+                    required_counts,
+                    capacity=capacity,
+                    fill_value=-1,
+                )
+            )
+        )(matrix, raw_counts)
+
+        np.testing.assert_array_equal(counts, raw_counts)
+        assert bool(metadata_valid)
 
 
 # ==============================================================================

@@ -250,8 +250,8 @@ Neighbor List (COO format)
 For JAX, compile a method-specific neighbor function with this fixed matrix
 layout. The unified `neighbor_list(...)` dispatcher is eager. Compact COO output
 has a data-dependent pair count and is produced eagerly. Direct naive and
-cell-list APIs accept `coo_capacity` for padded fixed-capacity COO with a device
-overflow flag. Cluster-tile APIs expose fixed segmented COO state.
+cell-list APIs accept `coo_capacity` for padded fixed-capacity COO with raw-count
+recovery metadata. Cluster-tile APIs expose fixed segmented COO state.
 
 **Neighbor List (COO)** is preferred when:
 
@@ -656,8 +656,11 @@ If set too low, the neighbor matrix may be too narrow. Matrix output keeps its
 fixed width but reports the required per-atom counts, which callers must compare
 with that width before consuming the result. Eager compact COO conversion raises
 `NeighborOverflowError` when those counts exceed the matrix width. Fixed-capacity
-COO instead returns an `overflow` flag covering both matrix-row and COO-capacity
-overflow; its pointer describes only the stored prefix. These rules apply to the
+COO instead returns the raw required count for each row plus a scalar
+`metadata_valid` flag; its pointer describes only the stored prefix. When
+metadata is valid, compare each pointer difference with its raw count to find
+incomplete rows. When metadata is invalid, every returned count is `-1` and the
+launch metadata must be refreshed before retrying. These rules apply to the
 naive and cell-list matrix/COO outputs. Cluster-tile methods use their documented
 tile and segmented-COO capacity contracts. If `atomic_density` is set too high,
 memory is wasted on unused columns.
@@ -852,8 +855,8 @@ neighbor_matrix, num_neighbors, shifts = compiled_cell_list(positions)
 
 The cell-list wrapper likewise closes over the geometry used for capacity and
 radius estimation. A search radius can instead be a runtime JAX array, but it
-must describe the current cell grid; pair-centric calls report a mismatch with
-their static launch size through the overflow contract below.
+must describe the current cell grid; pair-centric fixed-COO calls report whether
+their static launch metadata still matches through `metadata_valid`.
 
 For `batch_cell_list`, compute the corresponding metadata from the arrays
 returned by `estimate_batch_cell_list_sizes`: `pair_centric_total_cells` is the
@@ -866,15 +869,18 @@ The static batch values must describe one safe launch:
 `pair_centric_total_cells` cannot exceed the allocated cell-list capacity. These
 relationships are checked before the pair-centric CUDA query is launched. The actual
 cell count and search radius are runtime JAX arrays, so a compiled call can receive
-geometry that no longer matches its static launch metadata. That call returns every
-neighbor count above `max_neighbors`. Treat that exactly like capacity overflow: leave
-the compiled region, recompute sizing metadata for the new geometry, and compile or
-retry with those values.
+geometry that no longer matches its static launch metadata. For fixed COO that
+invalidates the whole launch's count metadata: `metadata_valid` is false and
+every returned count is `-1`. Leave the compiled region, recompute sizing
+metadata for the new geometry, and compile or retry with those values.
 
 Fixed-capacity COO uses the same direct methods. The returned arrays keep a
 static leading capacity; `neighbor_ptr[-1]` is clipped to that capacity, and
-`overflow` tells the eager caller to grow either `max_neighbors` or
-`coo_capacity` before retrying:
+the raw row counts tell the eager caller whether to grow `max_neighbors`,
+`coo_capacity`, or both. `metadata_valid` describes launch-metadata completeness
+for this call only; it does not certify initialization or coordinate freshness
+of caller-retained buffers, and it is not a persistent or sticky prepared-state
+validity flag:
 
 ```python
 coo_capacity = num_atoms * max_neighbors
@@ -896,18 +902,43 @@ def compiled_coo(positions):
     )
 
 
-neighbor_list_coo, neighbor_ptr, shifts_coo, overflow = compiled_coo(
-    positions
+(
+    neighbor_list_coo,
+    neighbor_ptr,
+    shifts_coo,
+    num_neighbors,
+    metadata_valid,
+) = compiled_coo(
+    positions,
 )
-if bool(overflow):
-    raise RuntimeError("grow neighbor capacity outside jax.jit")
+if not bool(metadata_valid):
+    raise RuntimeError("refresh pair-centric launch metadata outside jax.jit")
+stored_counts = neighbor_ptr[1:] - neighbor_ptr[:-1]
+if bool(jnp.any(stored_counts != num_neighbors)):
+    required_max_neighbors = int(jnp.max(num_neighbors, initial=0))
+    required_coo_capacity = int(jnp.sum(num_neighbors))
+    raise RuntimeError(
+        f"grow neighbor capacity outside jax.jit; max_neighbors must be at "
+        f"least {required_max_neighbors} and coo_capacity must be at least "
+        f"{required_coo_capacity}"
+    )
 num_pairs = int(neighbor_ptr[-1])
 neighbor_list_coo = neighbor_list_coo[:, :num_pairs]
 shifts_coo = shifts_coo[:num_pairs]
 ```
 
-The naive dual-cutoff APIs require the second cutoff to be greater than or equal
-to the first. Cluster-tile dual-matrix calls require `cutoff2 >= cutoff`.
+For batched full-row output, row `r` belongs to `batch_idx[r]`. With
+`target_indices`, row `r` instead belongs to `batch_idx[target_indices[r]]`.
+Group raw row counts by that ownership: the per-system matrix-width requirement
+is the maximum owned-row count, and the per-system pair requirement is their
+sum. A globally packed retry still needs `sum(num_neighbors)` COO columns.
+Pointer differences retain mid-row truncation, including the case where one
+system stores a complete row and the next stores only part of a row.
+
+The naive dual-cutoff APIs return two complete fixed-COO groups, each with
+independent counts and validity. They require the second cutoff to be greater
+than or equal to the first. Cluster-tile dual-matrix calls instead retain their
+matrix contract and require `cutoff2 >= cutoff`.
 
 Treat `cutoff` as a static specialization input: pass a Python scalar closed
 over the compiled function, and specialize another function when the cutoff

@@ -211,11 +211,11 @@ def test_naive_pair_fn_coo_outputs_aligned(dtype):
 
 
 @pytest.mark.parametrize(
-    ("max_neighbors", "coo_capacity", "expected_pairs", "expected_overflow"),
+    ("max_neighbors", "coo_capacity", "expected_pairs", "expected_valid"),
     [
-        pytest.param(4, 8, 6, False, id="no-overflow"),
-        pytest.param(4, 4, 4, True, id="coo-capacity-overflow"),
-        pytest.param(1, 8, 3, True, id="matrix-row-overflow"),
+        pytest.param(4, 8, 6, True, id="complete"),
+        pytest.param(4, 4, 4, True, id="coo-capacity-truncation"),
+        pytest.param(1, 8, 3, True, id="matrix-row-truncation"),
     ],
 )
 @pytest.mark.parametrize("use_pbc", [False, True], ids=["no-pbc", "pbc"])
@@ -223,10 +223,10 @@ def test_naive_pair_fn_fixed_capacity_coo_jit(
     max_neighbors,
     coo_capacity,
     expected_pairs,
-    expected_overflow,
+    expected_valid,
     use_pbc,
 ):
-    """Fixed COO keeps all pair outputs aligned, including on overflow."""
+    """Fixed COO keeps all pair outputs aligned through truncation."""
     if use_pbc:
         positions = jnp.array(
             [[0.0, 0.0, 0.0], [9.5, 0.0, 0.0], [0.0, 0.5, 0.0]],
@@ -272,14 +272,25 @@ def test_naive_pair_fn_fixed_capacity_coo_jit(
 
     result = build(positions)
     if use_pbc:
-        nl, ptr, shifts, overflow, distances, vectors, energies, forces = result
+        (
+            nl,
+            ptr,
+            shifts,
+            counts,
+            metadata_valid,
+            distances,
+            vectors,
+            energies,
+            forces,
+        ) = result
     else:
-        nl, ptr, overflow, distances, vectors, energies, forces = result
+        nl, ptr, counts, metadata_valid, distances, vectors, energies, forces = result
         shifts = jnp.zeros((coo_capacity, 3), dtype=jnp.int32)
     num_pairs = int(ptr[-1])
 
     assert nl.shape == (2, coo_capacity)
-    assert bool(overflow) is expected_overflow
+    assert bool(metadata_valid) is expected_valid
+    np.testing.assert_array_equal(counts, jnp.full(3, 2, dtype=jnp.int32))
     assert num_pairs == expected_pairs
     source = np.asarray(nl[0, :num_pairs])
     target = np.asarray(nl[1, :num_pairs])
@@ -796,6 +807,142 @@ def test_batch_naive_pair_fn_coo(dtype):
         np.asarray(pe_coo), pp_np[i, 0] + pp_np[j, 0] + np.asarray(d_coo), atol=1e-5
     )
     assert np.allclose(np.asarray(pf_coo), -np.asarray(v_coo), atol=1e-5)
+
+
+@pytest.mark.parametrize(
+    ("coo_capacity", "stored_pairs"),
+    [(4, 4), (16, 12)],
+    ids=["truncated", "padded"],
+)
+def test_batch_naive_pair_fn_fixed_capacity_coo(coo_capacity, stored_pairs):
+    from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
+
+    positions = jnp.array(
+        [
+            [0.0, 0.0, 0.0],
+            [0.25, 0.0, 0.0],
+            [0.5, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [0.25, 0.0, 0.0],
+            [0.5, 0.0, 0.0],
+        ],
+        dtype=jnp.float32,
+    )
+    batch_idx = jnp.repeat(jnp.arange(2, dtype=jnp.int32), 3)
+    batch_ptr = jnp.array([0, 3, 6], dtype=jnp.int32)
+    cell = jnp.tile(jnp.eye(3, dtype=jnp.float32)[None] * 10.0, (2, 1, 1))
+    pbc = jnp.zeros((2, 3), dtype=jnp.bool_)
+    pair_params = _pair_params(positions.shape[0], jnp.float32)
+    shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, 1.0, pbc)
+
+    @jax.jit
+    def build(pos):
+        return batch_naive_neighbor_list(
+            pos,
+            1.0,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cell=cell,
+            pbc=pbc,
+            shift_range_per_dimension=shift_range,
+            num_shifts_per_system=num_shifts,
+            max_shifts_per_system=max_shifts,
+            max_neighbors=4,
+            max_atoms_per_system=3,
+            return_neighbor_list=True,
+            coo_capacity=coo_capacity,
+            return_distances=True,
+            return_vectors=True,
+            pair_fn=_sum_pair_fn_f32,
+            pair_params=pair_params,
+        )
+
+    nl, ptr, shifts, counts, metadata_valid, distances, vectors, energies, forces = (
+        build(positions)
+    )
+    np.testing.assert_array_equal(counts, jnp.full(6, 2, dtype=jnp.int32))
+    np.testing.assert_array_equal(
+        ptr,
+        jnp.minimum(jnp.arange(7, dtype=jnp.int32) * 2, coo_capacity),
+    )
+    assert bool(metadata_valid)
+    assert int(ptr[-1]) == stored_pairs
+
+    source = np.asarray(nl[0, :stored_pairs])
+    target = np.asarray(nl[1, :stored_pairs])
+    assert np.all(source != target)
+    np.testing.assert_array_equal(batch_idx[source], batch_idx[target])
+    np.testing.assert_array_equal(shifts[:stored_pairs], 0)
+    expected_vectors = positions[target] - positions[source]
+    np.testing.assert_allclose(vectors[:stored_pairs], expected_vectors, atol=1e-6)
+    np.testing.assert_allclose(
+        distances[:stored_pairs],
+        jnp.linalg.norm(vectors[:stored_pairs], axis=1),
+        atol=1e-6,
+    )
+    expected_energies = (
+        pair_params[source, 0] + pair_params[target, 0] + distances[:stored_pairs]
+    )
+    np.testing.assert_allclose(energies[:stored_pairs], expected_energies, atol=1e-6)
+    np.testing.assert_allclose(
+        forces[:stored_pairs], -vectors[:stored_pairs], atol=1e-6
+    )
+    assert jnp.all(nl[:, stored_pairs:] == positions.shape[0])
+    assert jnp.all(shifts[stored_pairs:] == 0)
+    assert jnp.all(distances[stored_pairs:] == 0)
+    assert jnp.all(vectors[stored_pairs:] == 0)
+    assert jnp.all(energies[stored_pairs:] == 0)
+    assert jnp.all(forces[stored_pairs:] == 0)
+
+
+def test_batch_naive_pair_fn_fixed_capacity_coo_empty():
+    from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
+
+    positions = jnp.array(
+        [[0.0, 0.0, 0.0], [4.0, 0.0, 0.0], [0.0, 0.0, 0.0], [4.0, 0.0, 0.0]],
+        dtype=jnp.float32,
+    )
+    batch_idx = jnp.repeat(jnp.arange(2, dtype=jnp.int32), 2)
+    batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+    cell = jnp.tile(jnp.eye(3, dtype=jnp.float32)[None] * 10.0, (2, 1, 1))
+    pbc = jnp.zeros((2, 3), dtype=jnp.bool_)
+    pair_params = _pair_params(positions.shape[0], jnp.float32)
+    shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, 0.5, pbc)
+
+    @jax.jit
+    def build(pos):
+        return batch_naive_neighbor_list(
+            pos,
+            0.5,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cell=cell,
+            pbc=pbc,
+            shift_range_per_dimension=shift_range,
+            num_shifts_per_system=num_shifts,
+            max_shifts_per_system=max_shifts,
+            max_neighbors=2,
+            max_atoms_per_system=2,
+            return_neighbor_list=True,
+            coo_capacity=3,
+            return_distances=True,
+            return_vectors=True,
+            pair_fn=_sum_pair_fn_f32,
+            pair_params=pair_params,
+        )
+
+    nl, ptr, shifts, counts, metadata_valid, distances, vectors, energies, forces = (
+        build(positions)
+    )
+    np.testing.assert_array_equal(ptr, jnp.zeros(5, dtype=jnp.int32))
+    np.testing.assert_array_equal(counts, jnp.zeros(4, dtype=jnp.int32))
+    assert bool(metadata_valid)
+    assert jnp.all(nl == positions.shape[0])
+    assert jnp.all(shifts == 0)
+    assert jnp.all(distances == 0)
+    assert jnp.all(vectors == 0)
+    assert jnp.all(energies == 0)
+    assert jnp.all(forces == 0)
 
 
 @pytest.mark.slow
@@ -1357,7 +1504,9 @@ def test_cell_list_pair_centric_fixed_coo_pair_fn_jit(stale_metadata):
             pair_params=pp,
         )
 
-    nl, ptr, shifts, overflow, distances, vectors, energies, forces = build(pos)
+    nl, ptr, shifts, counts, metadata_valid, distances, vectors, energies, forces = (
+        build(pos)
+    )
     assert nl.shape == (2, coo_capacity)
     assert ptr.shape == (pos.shape[0] + 1,)
     assert shifts.shape == (coo_capacity, 3)
@@ -1366,7 +1515,8 @@ def test_cell_list_pair_centric_fixed_coo_pair_fn_jit(stale_metadata):
     assert energies.shape == (coo_capacity,)
     assert forces.shape == (coo_capacity, 3)
     if stale_metadata:
-        assert bool(overflow)
+        assert not bool(metadata_valid)
+        np.testing.assert_array_equal(counts, -np.ones_like(counts))
         assert ptr[0] == 0
         assert np.all(np.diff(np.asarray(ptr)) >= 0)
         assert np.all((np.asarray(ptr) >= 0) & (np.asarray(ptr) <= coo_capacity))
@@ -1402,7 +1552,7 @@ def test_cell_list_pair_centric_fixed_coo_pair_fn_jit(stale_metadata):
         pos.shape[0],
     )
     assert num_pairs > 0
-    assert not bool(overflow)
+    assert bool(metadata_valid)
     _assert_pair_geometry_from_coo(
         pos,
         cell,
@@ -1888,7 +2038,9 @@ def test_batch_cell_list_pair_centric_fixed_coo_pair_fn_jit(stale_metadata):
             pair_params=pp,
         )
 
-    nl, ptr, shifts, overflow, distances, vectors, energies, forces = build(pos)
+    nl, ptr, shifts, counts, metadata_valid, distances, vectors, energies, forces = (
+        build(pos)
+    )
     assert nl.shape == (2, coo_capacity)
     assert ptr.shape == (pos.shape[0] + 1,)
     assert shifts.shape == (coo_capacity, 3)
@@ -1897,7 +2049,8 @@ def test_batch_cell_list_pair_centric_fixed_coo_pair_fn_jit(stale_metadata):
     assert energies.shape == (coo_capacity,)
     assert forces.shape == (coo_capacity, 3)
     if stale_metadata:
-        assert bool(overflow)
+        assert not bool(metadata_valid)
+        np.testing.assert_array_equal(counts, -np.ones_like(counts))
         assert ptr[0] == 0
         assert np.all(np.diff(np.asarray(ptr)) >= 0)
         assert np.all((np.asarray(ptr) >= 0) & (np.asarray(ptr) <= coo_capacity))
@@ -1935,7 +2088,7 @@ def test_batch_cell_list_pair_centric_fixed_coo_pair_fn_jit(stale_metadata):
         pos.shape[0],
     )
     assert num_pairs > 0
-    assert not bool(overflow)
+    assert bool(metadata_valid)
     source = np.asarray(nl[0, :num_pairs])
     target = np.asarray(nl[1, :num_pairs])
     np.testing.assert_array_equal(np.asarray(bidx)[source], np.asarray(bidx)[target])

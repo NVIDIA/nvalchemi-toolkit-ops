@@ -35,6 +35,43 @@ pytestmark = requires_gpu
 naive_module = import_module("nvalchemiops.jax.neighbors.naive")
 
 
+def test_zero_cutoff_fixed_coo_returns_fresh_recovery_metadata():
+    """Zero cutoff never retains a caller-provided count buffer."""
+    positions = jnp.zeros((2, 3), dtype=jnp.float32)
+    _list, _ptr, counts, metadata_valid = naive_neighbor_list(
+        positions,
+        0.0,
+        max_neighbors=1,
+        num_neighbors=jnp.full(2, 7, dtype=jnp.int32),
+        return_neighbor_list=True,
+        coo_capacity=2,
+    )
+
+    np.testing.assert_array_equal(counts, jnp.zeros(2, dtype=jnp.int32))
+    assert bool(metadata_valid)
+
+
+def test_fixed_coo_retained_selective_rows_keep_aligned_raw_counts():
+    """A skipped selective query reports the counts that match retained rows."""
+    positions = jnp.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=jnp.float32)
+    retained_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
+    retained_counts = jnp.array([1, 1], dtype=jnp.int32)
+
+    _list, _ptr, counts, metadata_valid = naive_neighbor_list(
+        positions,
+        1.0,
+        max_neighbors=1,
+        neighbor_matrix=retained_matrix,
+        num_neighbors=retained_counts,
+        rebuild_flags=jnp.zeros((1,), dtype=jnp.bool_),
+        return_neighbor_list=True,
+        coo_capacity=2,
+    )
+
+    np.testing.assert_array_equal(counts, retained_counts)
+    assert bool(metadata_valid)
+
+
 class TestNaiveNeighborList:
     """Test naive_neighbor_list function."""
 
@@ -699,7 +736,7 @@ class TestNaiveNeighborListJIT:
         assert out_counts.shape == (0,)
 
     def test_jit_overflow_reports_full_counts(self):
-        """Compiled fixed-width output exposes overflow through its counts."""
+        """Compiled fixed-width output exposes its raw capacity requirements."""
         positions = jnp.zeros((4, 3), dtype=jnp.float32)
 
         @jax.jit
@@ -733,15 +770,16 @@ class TestNaiveNeighborListJIT:
                 return_vectors=True,
             )
 
-        neighbor_list, neighbor_ptr, overflow, distances, vectors = jitted_naive(
-            positions
+        neighbor_list, neighbor_ptr, counts, metadata_valid, distances, vectors = (
+            jitted_naive(positions)
         )
 
         assert neighbor_list.shape == (2, 8)
         assert neighbor_ptr.shape == (4,)
         assert distances.shape == (8,)
         assert vectors.shape == (8, 3)
-        assert not bool(overflow)
+        np.testing.assert_array_equal(counts, jnp.full(3, 2, dtype=jnp.int32))
+        assert bool(metadata_valid)
         num_pairs = int(neighbor_ptr[-1])
         assert num_pairs == 6
         source = neighbor_list[0, :num_pairs]
@@ -777,11 +815,12 @@ class TestNaiveNeighborListJIT:
                 build_empty(empty_positions),
                 jax.jit(build_empty)(empty_positions),
             ):
-                assert len(result) == 5
+                assert len(result) == 6
                 (
                     empty_list,
                     empty_ptr,
-                    empty_overflow,
+                    empty_counts,
+                    empty_metadata_valid,
                     empty_distances,
                     empty_vectors,
                 ) = result
@@ -791,14 +830,16 @@ class TestNaiveNeighborListJIT:
                 assert empty_vectors.shape == (capacity, 3)
                 assert empty_list.dtype == jnp.int32
                 assert empty_ptr.dtype == jnp.int32
-                assert empty_overflow.dtype == jnp.bool_
+                assert empty_counts.dtype == jnp.int32
+                assert empty_metadata_valid.dtype == jnp.bool_
                 assert empty_distances.dtype == empty_positions.dtype
                 assert empty_vectors.dtype == empty_positions.dtype
                 np.testing.assert_array_equal(
                     empty_ptr,
                     np.array([0], dtype=np.int32),
                 )
-                assert not bool(empty_overflow)
+                assert bool(empty_metadata_valid)
+                assert empty_counts.shape == (0,)
                 assert jnp.all(empty_list == fill_value)
                 assert jnp.all(empty_distances == 0)
                 assert jnp.all(empty_vectors == 0)

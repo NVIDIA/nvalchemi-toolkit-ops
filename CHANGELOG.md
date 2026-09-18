@@ -6,10 +6,11 @@
 
 - Added fixed-capacity ``jax.jit`` support to the method-specific JAX neighbor
   APIs. Naive and cell-list methods, including batched variants, accept
-  ``coo_capacity`` for padded COO output with a device overflow flag. Batched
-  pair-centric cell-list calls additionally need static launch metadata under
-  ``jax.jit``. Invalid static launch relationships raise before the CUDA query,
-  while runtime sizing changes use the existing overflow signal.
+  ``coo_capacity`` for padded COO output with clipped pointers, raw required row
+  counts, and a scalar launch-metadata validity flag. Batched pair-centric
+  cell-list calls additionally need static launch metadata under ``jax.jit``.
+  Invalid static launch relationships raise before the CUDA query, while runtime
+  metadata mismatches invalidate the returned counts.
   ``neighbor_list`` performs eager orchestration, and compact COO output uses
   eager shape compaction.
 - JAX dual-cutoff neighbor APIs now reject reversed cutoffs. Naive methods

@@ -32,6 +32,9 @@ from nvalchemiops.jax.neighbors.batch_cell_list import (
     estimate_batch_cell_list_sizes,
 )
 from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
+from nvalchemiops.jax.neighbors.neighbor_utils import (
+    get_fixed_capacity_neighbor_list_from_neighbor_matrix,
+)
 from nvalchemiops.neighbors.cell_list import compute_batch_pair_centric_n_outer
 
 from .conftest import requires_gpu
@@ -1011,7 +1014,7 @@ class TestBatchCellListJIT:
         assert shifts.shape[2] == 3
 
     def test_jit_fixed_capacity_coo(self):
-        """The batched one-shot API returns fixed COO with overflow state."""
+        """The batched one-shot API returns fixed COO recovery metadata."""
         positions = jnp.array(
             [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.0, 0.0]],
             dtype=jnp.float32,
@@ -1037,17 +1040,63 @@ class TestBatchCellListJIT:
                 strategy="atom_centric",
             )
 
-        neighbor_list, neighbor_ptr, shifts, overflow = jitted_batch_cell_list(
-            positions,
-            cells,
-            pbcs,
+        neighbor_list, neighbor_ptr, shifts, counts, metadata_valid = (
+            jitted_batch_cell_list(
+                positions,
+                cells,
+                pbcs,
+            )
         )
 
         assert neighbor_list.shape == (2, 4)
         assert neighbor_ptr.shape == (4,)
         assert shifts.shape == (4, 3)
         assert int(neighbor_ptr[-1]) == 2
-        assert not bool(overflow)
+        np.testing.assert_array_equal(counts, jnp.array([1, 1, 0], dtype=jnp.int32))
+        assert bool(metadata_valid)
+
+    def test_fixed_coo_partial_rows_preserve_batch_ownership(self):
+        """Fixed COO retains raw and stored counts for the owning batch rows."""
+        system_positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.25, 0.0, 0.0], [0.5, 0.0, 0.0], [0.75, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        positions = jnp.concatenate((system_positions, system_positions), axis=0)
+        cells = jnp.stack((jnp.eye(3), jnp.eye(3))).astype(jnp.float32) * 10.0
+        pbcs = jnp.zeros((2, 3), dtype=jnp.bool_)
+        batch_idx = jnp.repeat(jnp.arange(2, dtype=jnp.int32), 4)
+        batch_ptr = jnp.array([0, 4, 8], dtype=jnp.int32)
+        target_indices = jnp.array([0, 4], dtype=jnp.int32)
+
+        _neighbor_list, neighbor_ptr, _shifts, counts, metadata_valid = batch_cell_list(
+            positions,
+            cutoff=1.0,
+            cell=cells,
+            pbc=pbcs,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=4,
+            max_total_cells=16,
+            target_indices=target_indices,
+            return_neighbor_list=True,
+            coo_capacity=4,
+            strategy="atom_centric",
+        )
+
+        owners = batch_idx[target_indices]
+        stored = neighbor_ptr[1:] - neighbor_ptr[:-1]
+        np.testing.assert_array_equal(counts, jnp.array([3, 3], dtype=jnp.int32))
+        np.testing.assert_array_equal(stored, jnp.array([3, 1], dtype=jnp.int32))
+        np.testing.assert_array_equal(
+            jnp.bincount(owners, weights=counts, length=2),
+            jnp.array([3, 3], dtype=jnp.float32),
+        )
+        np.testing.assert_array_equal(
+            jnp.bincount(owners, weights=stored, length=2),
+            jnp.array([3, 1], dtype=jnp.float32),
+        )
+        assert int(owners[1]) == 1
+        assert bool(metadata_valid)
 
     def test_jit_auto_falls_back_when_pair_centric_sizing_is_traced(self):
         """``strategy='auto'`` must not expose pair-centric host reads to JIT."""
@@ -1606,6 +1655,90 @@ class TestBatchCellListSelectiveRebuildFlags:
         assert jnp.all(nn2 == saved_nn), (
             "num_neighbors must be unchanged when all rebuild_flags are False"
         )
+
+    def test_mixed_rebuild_fixed_coo_keeps_retained_rows_aligned(self, dtype):
+        """Mixed rebuild flags update one system and retain the other in fixed COO."""
+        system_positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.25, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            dtype=dtype,
+        )
+        positions = jnp.concatenate((system_positions, system_positions), axis=0)
+        updated_positions = positions.at[2].set(jnp.array([3.0, 0.0, 0.0], dtype=dtype))
+        cells = jnp.stack((jnp.eye(3), jnp.eye(3))).astype(dtype) * 10.0
+        pbcs = jnp.zeros((2, 3), dtype=jnp.bool_)
+        batch_idx = jnp.repeat(jnp.arange(2, dtype=jnp.int32), 3)
+        batch_ptr = jnp.array([0, 3, 6], dtype=jnp.int32)
+        common = {
+            "cutoff": 1.0,
+            "cell": cells,
+            "pbc": pbcs,
+            "batch_idx": batch_idx,
+            "batch_ptr": batch_ptr,
+            "max_neighbors": 4,
+            "strategy": "atom_centric",
+        }
+        (
+            cells_per_dimension,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            neighbor_search_radius,
+            _cell_origin,
+        ) = batch_build_cell_list(
+            positions,
+            cutoff=common["cutoff"],
+            cell=common["cell"],
+            pbc=common["pbc"],
+            batch_idx=common["batch_idx"],
+            batch_ptr=common["batch_ptr"],
+        )
+        query_common = {
+            **common,
+            "cells_per_dimension": cells_per_dimension,
+            "atom_periodic_shifts": atom_periodic_shifts,
+            "atom_to_cell_mapping": atom_to_cell_mapping,
+            "atoms_per_cell_count": atoms_per_cell_count,
+            "cell_atom_start_indices": cell_atom_start_indices,
+            "cell_atom_list": cell_atom_list,
+            "neighbor_search_radius": neighbor_search_radius,
+        }
+        neighbor_matrix, num_neighbors, neighbor_shifts = batch_query_cell_list(
+            positions,
+            **query_common,
+        )
+        rebuild_flags = jnp.array([True, False], dtype=jnp.bool_)
+        updated_matrix, updated_counts, updated_shifts = batch_query_cell_list(
+            updated_positions,
+            neighbor_matrix=neighbor_matrix,
+            num_neighbors=num_neighbors,
+            neighbor_matrix_shifts=neighbor_shifts,
+            rebuild_flags=rebuild_flags,
+            **query_common,
+        )
+        _neighbor_list, neighbor_ptr, _shifts, counts, metadata_valid = (
+            get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                updated_matrix,
+                updated_counts,
+                capacity=18,
+                neighbor_shift_matrix=updated_shifts,
+                fill_value=positions.shape[0],
+            )
+        )
+
+        np.testing.assert_array_equal(updated_matrix[3:], neighbor_matrix[3:])
+        np.testing.assert_array_equal(updated_counts[3:], num_neighbors[3:])
+        np.testing.assert_array_equal(updated_shifts[3:], neighbor_shifts[3:])
+        assert not np.array_equal(
+            np.asarray(updated_counts[:3]), np.asarray(num_neighbors[:3])
+        )
+        np.testing.assert_array_equal(counts, updated_counts)
+        np.testing.assert_array_equal(
+            neighbor_ptr[1:] - neighbor_ptr[:-1],
+            updated_counts,
+        )
+        assert bool(metadata_valid)
 
     def test_rebuild_updates_data(self, dtype):
         """True flags: rebuilt system data should match a fresh full rebuild."""

@@ -38,6 +38,30 @@ from .conftest import (
 
 pytestmark = requires_gpu
 
+
+def test_zero_cutoff_fixed_batch_dual_coo_returns_fresh_recovery_metadata():
+    """Batched dual zero cutoff returns fresh recovery metadata."""
+    positions = jnp.zeros((2, 3), dtype=jnp.float32)
+    _l1, _p1, counts1, valid1, _l2, _p2, counts2, valid2 = (
+        batch_naive_neighbor_list_dual_cutoff(
+            positions,
+            0.0,
+            0.0,
+            batch_ptr=jnp.array([0, 2], dtype=jnp.int32),
+            max_neighbors1=1,
+            max_neighbors2=1,
+            num_neighbors1=jnp.full(2, 7, dtype=jnp.int32),
+            num_neighbors2=jnp.full(2, 7, dtype=jnp.int32),
+            return_neighbor_list=True,
+            coo_capacity=2,
+        )
+    )
+
+    np.testing.assert_array_equal(counts1, jnp.zeros(2, dtype=jnp.int32))
+    np.testing.assert_array_equal(counts2, jnp.zeros(2, dtype=jnp.int32))
+    assert bool(valid1) and bool(valid2)
+
+
 dual_module = import_module("nvalchemiops.jax.neighbors.batch_naive_dual_cutoff")
 
 
@@ -340,17 +364,21 @@ class TestBatchNaiveDualCutoffJIT:
             batch_ptr,
         )
         if use_pbc:
-            nl1, ptr1, shifts1, overflow1, nl2, ptr2, shifts2, overflow2 = result
+            nl1, ptr1, shifts1, counts1, valid1, nl2, ptr2, shifts2, counts2, valid2 = (
+                result
+            )
             assert shifts1.shape == (128, 3)
             assert shifts2.shape == (256, 3)
         else:
-            nl1, ptr1, overflow1, nl2, ptr2, overflow2 = result
+            nl1, ptr1, counts1, valid1, nl2, ptr2, counts2, valid2 = result
 
         assert nl1.shape == (2, 128)
         assert nl2.shape == (2, 256)
         assert ptr1.shape == ptr2.shape == (17,)
-        assert not bool(overflow1)
-        assert not bool(overflow2)
+        assert bool(valid1)
+        assert bool(valid2)
+        assert jnp.all(counts1 >= 0)
+        assert jnp.all(counts2 >= 0)
 
         reference1 = batch_naive_neighbor_list(
             positions,

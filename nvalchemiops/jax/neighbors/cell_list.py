@@ -35,10 +35,10 @@ from nvalchemiops.jax.neighbors._registration import (
     _lazy_cell_list_query_kernel,
 )
 from nvalchemiops.jax.neighbors.neighbor_utils import (
+    _pack_fixed_capacity_neighbor_list_from_neighbor_matrix,
     _validate_coo_capacity,
     _validate_graph_mode,
     coo_pack_pair_geometry,
-    get_fixed_capacity_neighbor_list_from_neighbor_matrix,
     get_neighbor_list_from_neighbor_matrix,
 )
 from nvalchemiops.neighbors.cell_list import (
@@ -1820,10 +1820,13 @@ def _cell_list_pair_outputs_forward(
             metadata_matches,
             max_neighbors,
         )
+    metadata_valid = (
+        metadata_matches if is_pair_centric else jnp.ones((), dtype=jnp.bool_)
+    )
     extra_outputs = (
-        (nm_out, reported_counts, nms_out, pe, pf)
+        (nm_out, reported_counts, nms_out, nn_out, metadata_valid, pe, pf)
         if has_pair_fn
-        else (nm_out, reported_counts, nms_out)
+        else (nm_out, reported_counts, nms_out, nn_out, metadata_valid)
     )
     return _NeighborForwardOutput(
         distances=nd_out,
@@ -2120,7 +2123,7 @@ def build_cell_list(
     )
 
 
-def query_cell_list(
+def _query_cell_list_with_diagnostics(
     positions: jax.Array,
     cutoff: float,
     cell: jax.Array,
@@ -2153,7 +2156,7 @@ def query_cell_list(
     pair_energies: jax.Array | None = None,
     pair_forces: jax.Array | None = None,
     pair_centric_n_outer: int | None = None,
-) -> tuple[jax.Array, ...]:
+) -> tuple[tuple[jax.Array, ...], jax.Array, jax.Array]:
     """Query cell list to find neighbors within cutoff.
 
     Let ``num_rows = len(target_indices)`` when ``target_indices`` is supplied,
@@ -2253,8 +2256,9 @@ def query_cell_list(
         radius. This controls only launch sizing; ``neighbor_search_radius``
         is a JAX array consumed by the kernel. If a compiled call receives
         a radius that does not match this launch size, every returned count is
-        set above the matrix width so the normal overflow check requests an
-        eager metadata refresh.
+        set above the matrix width so the matrix-capacity check requests an
+        eager metadata refresh. Fixed COO reports this separately through
+        ``metadata_valid`` and returns ``-1`` counts.
     atom_centric_path : {"auto", "direct", "sorted"}, default "auto"
         ``"direct"`` reads positions in original order and skips the sorted
         gather (the symmetric-full-fill kernel), on the plain full-fill,
@@ -2464,11 +2468,27 @@ def query_cell_list(
             forward_kwargs,
         )
         if pair_fn is not None:
-            distances_out, vectors_out, nm_out, nn_out, shifts_out, pe_out, pf_out = (
-                route_out
-            )
+            (
+                distances_out,
+                vectors_out,
+                nm_out,
+                nn_out,
+                shifts_out,
+                raw_counts,
+                metadata_valid,
+                pe_out,
+                pf_out,
+            ) = route_out
         else:
-            distances_out, vectors_out, nm_out, nn_out, shifts_out = route_out
+            (
+                distances_out,
+                vectors_out,
+                nm_out,
+                nn_out,
+                shifts_out,
+                raw_counts,
+                metadata_valid,
+            ) = route_out
             pe_out = pf_out = None
         base = (nm_out, nn_out, shifts_out)
         tail: list = []
@@ -2478,7 +2498,8 @@ def query_cell_list(
             tail.append(vectors_out)
         if pair_fn is not None:
             tail.extend((pe_out, pf_out))
-        return (*base, *tail)
+        result = (*base, *tail)
+        return result, raw_counts, metadata_valid
 
     # Resolve the cell-list query sub-strategy.  Pair-centric needs CUDA, a
     # concrete radius (host-read ``n_outer``), graph_mode="none", and full-fill.
@@ -2672,17 +2693,20 @@ def query_cell_list(
             fill_value,
             int(n_outer),
         )
+        raw_counts = num_neighbors
+        metadata_valid = jnp.ones((), dtype=jnp.bool_)
         if pair_centric_n_outer is not None:
-            metadata_matches = _pair_centric_metadata_matches(
+            metadata_valid = _pair_centric_metadata_matches(
                 neighbor_search_radius,
                 n_outer,
             )
             num_neighbors = _report_pair_centric_metadata_mismatch(
                 num_neighbors,
-                metadata_matches,
+                metadata_valid,
                 int(neighbor_matrix.shape[1]),
             )
-        return neighbor_matrix, num_neighbors, neighbor_matrix_shifts
+        result = (neighbor_matrix, num_neighbors, neighbor_matrix_shifts)
+        return result, raw_counts, metadata_valid
 
     if graph_mode == "warp":
         fill_value = int(positions.shape[0])
@@ -2778,7 +2802,83 @@ def query_cell_list(
             launch_dims=(total_atoms,),
         )
 
-    return neighbor_matrix, num_neighbors, neighbor_matrix_shifts
+    result = (neighbor_matrix, num_neighbors, neighbor_matrix_shifts)
+    return result, num_neighbors, jnp.ones((), dtype=jnp.bool_)
+
+
+def query_cell_list(
+    positions: jax.Array,
+    cutoff: float,
+    cell: jax.Array,
+    pbc: jax.Array,
+    cells_per_dimension: jax.Array,
+    atom_periodic_shifts: jax.Array,
+    atom_to_cell_mapping: jax.Array,
+    atoms_per_cell_count: jax.Array,
+    cell_atom_start_indices: jax.Array,
+    cell_atom_list: jax.Array,
+    neighbor_search_radius: jax.Array,
+    max_neighbors: int | None = None,
+    neighbor_matrix: jax.Array | None = None,
+    neighbor_matrix_shifts: jax.Array | None = None,
+    num_neighbors: jax.Array | None = None,
+    rebuild_flags: jax.Array | None = None,
+    graph_mode: Literal["none", "warp"] = "none",
+    half_fill: bool = False,
+    strategy: str = "auto",
+    atom_centric_path: str = "auto",
+    sorted_positions: jax.Array | None = None,
+    sorted_atom_periodic_shifts: jax.Array | None = None,
+    target_indices: jax.Array | None = None,
+    return_vectors: bool = False,
+    return_distances: bool = False,
+    pair_fn: wp.Function | None = None,
+    pair_params: jax.Array | None = None,
+    neighbor_vectors: jax.Array | None = None,
+    neighbor_distances: jax.Array | None = None,
+    pair_energies: jax.Array | None = None,
+    pair_forces: jax.Array | None = None,
+    pair_centric_n_outer: int | None = None,
+) -> tuple[jax.Array, ...]:
+    """Query cell list to find neighbors within cutoff."""
+    result, _raw_counts, _metadata_valid = _query_cell_list_with_diagnostics(
+        positions=positions,
+        cutoff=cutoff,
+        cell=cell,
+        pbc=pbc,
+        cells_per_dimension=cells_per_dimension,
+        atom_periodic_shifts=atom_periodic_shifts,
+        atom_to_cell_mapping=atom_to_cell_mapping,
+        atoms_per_cell_count=atoms_per_cell_count,
+        cell_atom_start_indices=cell_atom_start_indices,
+        cell_atom_list=cell_atom_list,
+        neighbor_search_radius=neighbor_search_radius,
+        max_neighbors=max_neighbors,
+        neighbor_matrix=neighbor_matrix,
+        neighbor_matrix_shifts=neighbor_matrix_shifts,
+        num_neighbors=num_neighbors,
+        rebuild_flags=rebuild_flags,
+        graph_mode=graph_mode,
+        half_fill=half_fill,
+        strategy=strategy,
+        atom_centric_path=atom_centric_path,
+        sorted_positions=sorted_positions,
+        sorted_atom_periodic_shifts=sorted_atom_periodic_shifts,
+        target_indices=target_indices,
+        return_vectors=return_vectors,
+        return_distances=return_distances,
+        pair_fn=pair_fn,
+        pair_params=pair_params,
+        neighbor_vectors=neighbor_vectors,
+        neighbor_distances=neighbor_distances,
+        pair_energies=pair_energies,
+        pair_forces=pair_forces,
+        pair_centric_n_outer=pair_centric_n_outer,
+    )
+    return result
+
+
+query_cell_list.__doc__ = _query_cell_list_with_diagnostics.__doc__
 
 
 def cell_list(
@@ -2855,8 +2955,9 @@ def cell_list(
         If True, convert result to COO neighbor list format. Default is False.
     coo_capacity : int, optional
         Static COO capacity. With ``return_neighbor_list=True``, returns padded
-        fixed-size COO arrays plus a scalar overflow flag and is compatible
-        with ``jax.jit``. If omitted, returns compact data-dependent COO arrays.
+        fixed-size COO arrays plus raw required row counts and a scalar
+        metadata-validity flag, and is compatible with ``jax.jit``. If omitted,
+        returns compact data-dependent COO arrays.
     half_fill : bool, default False
         If True, build a half neighbor list (each pair stored once). Forwarded
         to :func:`query_cell_list`.
@@ -2926,8 +3027,7 @@ def cell_list(
         Obtain it from the radius returned by :func:`estimate_cell_list_sizes`
         using :func:`compute_batch_pair_centric_n_outer`. This metadata sizes
         the launch while the runtime search radius is a JAX array. A
-        runtime mismatch is reported through the normal count-over-capacity
-        overflow signal.
+        runtime mismatch makes fixed-COO count metadata invalid.
     atom_centric_path : {"auto", "direct", "sorted"}, default "auto"
         Forwarded to :func:`query_cell_list`.  Explicit ``"direct"`` uses the
         direct-reads (gather-skipping) kernel on the plain full-fill,
@@ -2959,10 +3059,14 @@ def cell_list(
         ``(num_rows, max_neighbors, 3)``, dtype int32.
         If ``return_neighbor_list=True``: ``neighbor_list_shifts`` with shape
         ``(num_pairs, 3)``, dtype int32, or ``(coo_capacity, 3)`` for fixed COO.
-        These three arrays form the base topology tuple. Fixed COO appends a
-        scalar boolean ``overflow`` flag. Requested pair outputs follow
-        in this order: ``neighbor_distances`` when ``return_distances=True``,
-        then ``neighbor_vectors`` when ``return_vectors=True``, then
+        These three arrays form the base topology tuple. Fixed COO appends
+        ``num_neighbors`` and scalar ``metadata_valid``. ``neighbor_ptr``
+        describes stored entries. When metadata is valid, a row is complete
+        exactly when its pointer difference equals its raw required count. When
+        ``metadata_valid`` is false, every returned count is ``-1``. Requested
+        pair outputs follow in this order: ``neighbor_distances`` when
+        ``return_distances=True``, then ``neighbor_vectors`` when
+        ``return_vectors=True``, then
         ``(pair_energies, pair_forces)`` when ``pair_fn`` is set.  Matrix pair
         outputs use ``num_rows`` rows: ``neighbor_distances`` and
         ``pair_energies`` have shape ``(num_rows, max_neighbors)``;
@@ -3218,6 +3322,8 @@ def cell_list(
             float(cutoff),
             int(positions.shape[0]),
         )
+        raw_counts = num_neighbors
+        metadata_valid = jnp.ones((), dtype=jnp.bool_)
     else:
         (
             cells_per_dimension,
@@ -3345,11 +3451,21 @@ def cell_list(
                     nm_out,
                     nn_out,
                     shifts_out,
+                    raw_counts,
+                    metadata_valid,
                     pe_out,
                     pf_out,
                 ) = route_out
             else:
-                distances_out, vectors_out, nm_out, nn_out, shifts_out = route_out
+                (
+                    distances_out,
+                    vectors_out,
+                    nm_out,
+                    nn_out,
+                    shifts_out,
+                    raw_counts,
+                    metadata_valid,
+                ) = route_out
                 pe_out = pf_out = None
             if return_neighbor_list:
                 # COO source index ``nl[0]`` is the matrix ROW index.  For the
@@ -3358,6 +3474,7 @@ def cell_list(
                 # torch binding exactly (the matrix contract is already "row r ->
                 # atom target_indices[r]"; COO inherits the same compact-row
                 # contract).  Callers map back via ``target_indices``.
+                active = nm_out != positions.shape[0]
                 if coo_capacity is None:
                     nl, nptr, nl_shifts = get_neighbor_list_from_neighbor_matrix(
                         nm_out,
@@ -3367,20 +3484,17 @@ def cell_list(
                     )
                     base = (nl, nptr, nl_shifts)
                 else:
-                    nl, nptr, nl_shifts, overflow = (
-                        get_fixed_capacity_neighbor_list_from_neighbor_matrix(
-                            nm_out,
-                            num_neighbors=nn_out,
-                            capacity=coo_capacity,
-                            neighbor_shift_matrix=shifts_out,
-                            fill_value=positions.shape[0],
-                        )
+                    base = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                        nm_out,
+                        raw_counts,
+                        capacity=coo_capacity,
+                        neighbor_shift_matrix=shifts_out,
+                        fill_value=positions.shape[0],
+                        metadata_valid=metadata_valid,
                     )
-                    base = (nl, nptr, nl_shifts, overflow)
                 # Repack per-pair geometry (and pair_fn outputs) into the same COO
                 # order as ``nl`` so they index-align with the neighbor list.
                 # Eager-only, like the index conversion.
-                active = nm_out != positions.shape[0]
                 distances_out, vectors_out = coo_pack_pair_geometry(
                     active, distances_out, vectors_out, capacity=coo_capacity
                 )
@@ -3409,7 +3523,11 @@ def cell_list(
                 tail.extend((pe_out, pf_out))
             return (*base, *tail)
 
-        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = query_cell_list(
+        (
+            (neighbor_matrix, num_neighbors, neighbor_matrix_shifts),
+            raw_counts,
+            metadata_valid,
+        ) = _query_cell_list_with_diagnostics(
             positions=positions,
             cutoff=cutoff,
             cell=cell,
@@ -3436,12 +3554,13 @@ def cell_list(
 
     if return_neighbor_list:
         if coo_capacity is not None:
-            return get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+            return _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
                 neighbor_matrix,
-                num_neighbors=num_neighbors,
+                raw_counts,
                 capacity=coo_capacity,
                 neighbor_shift_matrix=neighbor_matrix_shifts,
                 fill_value=positions.shape[0],
+                metadata_valid=metadata_valid,
             )
         neighbor_list, neighbor_ptr, neighbor_list_shifts = (
             get_neighbor_list_from_neighbor_matrix(
