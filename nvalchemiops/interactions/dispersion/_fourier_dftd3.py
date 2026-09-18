@@ -728,39 +728,55 @@ def _fd3_kspace_kernel(
     accumulated = zero
     accumulated_slope = zero
 
-    for slot in range(rank):
-        for species_a in range(n_species):
-            channel_a = (system * n_species + species_a) * rank + slot
-            amplitude_a = mesh_fft[channel_a, ix, iy, iz] / modulus
+    inverse_modulus = unit / modulus
+    # dE/d(mesh) follows from the inverse transform of this field, so it carries the
+    # prefactor and the remaining spline factor but not the multiplicity.
+    cotangent_scale = type(s6)(2.0) * prefactor * inverse_modulus
+    first_channel = (system * n_species) * rank
 
-            response = wp.vector(zero, zero)
-            response_slope = wp.vector(zero, zero)
-            for species_b in range(n_species):
-                channel_b = (system * n_species + species_b) * rank + slot
-                amplitude_b = mesh_fft[channel_b, ix, iy, iz] / modulus
-                q_product = sqrt_q[species_a] * sqrt_q[species_b]
-                r0 = a1 * wp.sqrt(type(s6)(3.0) * q_product) + a2
-                value, slope = _reciprocal_kernel(k_norm, r0, q_product, s6, s8)
-                response += value * amplitude_b
-                if compute_virial:
-                    response_slope += slope * amplitude_b
+    # Each pair below contributes to two channels, so the field is accumulated rather than
+    # assigned and has to start from zero. Every bin belongs to exactly one thread, so these
+    # are private locations and need no atomics.
+    if active:
+        for channel in range(n_species * rank):
+            cotangent[first_channel + channel, ix, iy, iz] = wp.vector(zero, zero)
 
-            response *= eigs[slot]
-            accumulated += weight * (
-                amplitude_a[0] * response[0] + amplitude_a[1] * response[1]
-            )
-            if compute_virial:
-                response_slope *= eigs[slot]
-                accumulated_slope += weight * (
-                    amplitude_a[0] * response_slope[0]
-                    + amplitude_a[1] * response_slope[1]
+    # The kernel depends on the wave vector and the species pair but not on the slot, and it
+    # is symmetric under exchanging the pair. Both loops are therefore outside the slot loop
+    # and the pair loop is upper-triangular, which cuts the transcendental evaluations from
+    # ``rank * n_species^2`` per bin to ``n_species * (n_species + 1) / 2``.
+    for species_a in range(n_species):
+        offset_a = first_channel + species_a * rank
+        for species_b in range(species_a, n_species):
+            offset_b = first_channel + species_b * rank
+            q_product = sqrt_q[species_a] * sqrt_q[species_b]
+            r0 = a1 * wp.sqrt(type(s6)(3.0) * q_product) + a2
+            value, slope = _reciprocal_kernel(k_norm, r0, q_product, s6, s8)
+            # An off-diagonal pair stands in for both (a, b) and (b, a) in the reductions.
+            multiplicity = wp.where(species_a == species_b, unit, type(s6)(2.0))
+
+            for slot in range(rank):
+                amplitude_a = mesh_fft[offset_a + slot, ix, iy, iz] * inverse_modulus
+                amplitude_b = mesh_fft[offset_b + slot, ix, iy, iz] * inverse_modulus
+                overlap = (
+                    amplitude_a[0] * amplitude_b[0] + amplitude_a[1] * amplitude_b[1]
                 )
-            # dE/d(mesh) follows from the inverse transform of this field, so it carries the
-            # prefactor and the remaining spline factor but not the multiplicity.
-            if active:
-                cotangent[channel_a, ix, iy, iz] = (
-                    type(s6)(2.0) * prefactor / modulus
-                ) * response
+                gain = eigs[slot] * value
+                accumulated += weight * multiplicity * gain * overlap
+                if compute_virial:
+                    accumulated_slope += (
+                        weight * multiplicity * eigs[slot] * slope * overlap
+                    )
+                if active:
+                    cotangent[offset_a + slot, ix, iy, iz] = (
+                        cotangent[offset_a + slot, ix, iy, iz]
+                        + (cotangent_scale * gain) * amplitude_b
+                    )
+                    if species_a != species_b:
+                        cotangent[offset_b + slot, ix, iy, iz] = (
+                            cotangent[offset_b + slot, ix, iy, iz]
+                            + (cotangent_scale * gain) * amplitude_a
+                        )
 
     contribution = wp.where(active, prefactor * accumulated, zero)
     # The launch block size, not the constant: on CPU a block is one thread, and
