@@ -35,9 +35,9 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 import warp as wp
-from jax.interpreters import ad as jax_ad
+from jax.custom_derivatives import SymbolicZero
 from jax.scipy.special import erfc
-from warp.jax_experimental import GraphMode, jax_callable
+from warp import JaxCallableGraphMode, jax_callable
 
 from nvalchemiops.interactions.electrostatics._factory_common import _DerivState
 from nvalchemiops.interactions.electrostatics.ewald_kernels import (
@@ -350,7 +350,7 @@ _JAX_EWALD_RECIP_FILL_TILED = {
             "real_structure_factors",
             "imag_structure_factors",
         ],
-        graph_mode=GraphMode.NONE,
+        graph_mode=JaxCallableGraphMode.NONE,
     ),
     jnp.dtype(jnp.float64): jax_callable(
         _ewald_recip_fill_tiled_f64,
@@ -362,7 +362,7 @@ _JAX_EWALD_RECIP_FILL_TILED = {
             "real_structure_factors",
             "imag_structure_factors",
         ],
-        graph_mode=GraphMode.NONE,
+        graph_mode=JaxCallableGraphMode.NONE,
     ),
 }
 
@@ -378,7 +378,7 @@ _JAX_BATCH_EWALD_RECIP_FILL_TILED = {
             "real_structure_factors",
             "imag_structure_factors",
         ],
-        graph_mode=GraphMode.NONE,
+        graph_mode=JaxCallableGraphMode.NONE,
     ),
     jnp.dtype(jnp.float64): jax_callable(
         _batch_ewald_recip_fill_tiled_f64,
@@ -390,7 +390,7 @@ _JAX_BATCH_EWALD_RECIP_FILL_TILED = {
             "real_structure_factors",
             "imag_structure_factors",
         ],
-        graph_mode=GraphMode.NONE,
+        graph_mode=JaxCallableGraphMode.NONE,
     ),
 }
 
@@ -1650,11 +1650,7 @@ def _stop_optional(value: jax.Array | None) -> jax.Array | None:
 
 def _is_symbolic_zero(tangent) -> bool:
     """Return whether a custom-JVP tangent is JAX's symbolic zero sentinel."""
-    return (
-        tangent is None
-        or isinstance(tangent, jax_ad.Zero)
-        or tangent.__class__.__name__ == "SymbolicZero"
-    )
+    return tangent is None or isinstance(tangent, SymbolicZero)
 
 
 def _cell_tangent_system_values(

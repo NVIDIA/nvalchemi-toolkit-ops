@@ -261,7 +261,7 @@ def _compute_morton_codes(
 
 
 # =============================================================================
-# jax_callable wrappers (Warp launchers behind GraphMode.WARP callbacks)
+# jax_callable wrappers (Warp launchers behind JaxCallableGraphMode.WARP callbacks)
 # =============================================================================
 def _build_cluster_tile_list_callback(
     sorted_pos_x: wp.array(dtype=wp.float32),

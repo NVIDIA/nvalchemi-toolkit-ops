@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-from warp.jax_experimental import jax_kernel
+from warp import jax_kernel
 
 from nvalchemiops.interactions.electrostatics.coulomb import (
     _batch_coulomb_energy_forces_kernel,

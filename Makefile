@@ -49,6 +49,7 @@ lint:  ## Run all linting checks
 	uv run pre-commit run pyupgrade -a --show-diff-on-failure
 	uv run pre-commit run ruff-check -a --show-diff-on-failure
 	uv run pre-commit run ruff-format -a --show-diff-on-failure
+	uv run pre-commit run license -a
 
 .PHONY: lint-fix
 lint-fix:  ## Run linting and auto-fix issues

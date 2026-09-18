@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Changed
+
+- JAX DFT-D3 now accepts `D3Parameters` directly as a runtime argument to
+  `jax.jit`, without unpacking and reconstructing its parameter arrays.
+- Raised the minimum supported Warp version to 1.15 and migrated JAX bindings
+  from Warp's removed experimental JAX module to its public JAX API, restoring
+  compatibility with `warp>=1.15`.
+- Warp initialization now retains warning-level diagnostics instead of
+  suppressing all Warp log output.
+
+- PyTorch segmented operations now accept int64 segment indices whose values
+  fit in int32; these inputs are converted to int32 internally.
+
 ### Added
 
 - FourierD3, a particle-mesh evaluation of the DFT-D3(BJ) dispersion correction. Where
@@ -95,6 +108,13 @@
 
 ### Fixed
 
+- Corrected the multipole Ewald/PME uniform-background coefficient for
+  non-neutral cells. Split Ewald, PME, and cached Ewald now use the same
+  zero-mode convention as the direct reciprocal calculation, including charge
+  and cell derivatives.
+
+- Segmented sums no longer retain CUDA graph-pool allocations through cached Warp
+  launches when used from compiled PyTorch custom operators.
 - Fixed JAX autodiff through `ewald_reciprocal_space(...)` when `k_vectors`
   are derived from the differentiated cell. The custom JVP previously
   discarded the `k_vectors` tangent and omitted the reciprocal-cell
