@@ -425,6 +425,16 @@ def fourier_dftd3(
         ``docs/userguide/about/conventions.md``: the **negative** derivative of the energy
         with respect to the affine displacement, :math:`W = -\partial E/\partial u`. The
         tensile-positive Cauchy stress is :math:`\sigma = -W/V`.
+
+    Notes
+    -----
+    The returned ``energy`` is **not differentiable**. The kernels are launched with
+    ``enable_backward=False`` and no VJP or JVP rule is registered on top of them, so
+    ``jax.grad`` of the energy raises ``ValueError: ... cannot be differentiated`` rather than
+    reproducing ``forces``. Use the returned ``forces`` and ``virial``, which are analytic
+    derivatives of the same energy. This matches the real-space
+    :func:`~nvalchemiops.jax.interactions.dispersion.dftd3`, and it is what keeps the call
+    traceable under :func:`jax.jit`.
     """
     matrix_given = neighbor_matrix is not None
     list_given = neighbor_list is not None

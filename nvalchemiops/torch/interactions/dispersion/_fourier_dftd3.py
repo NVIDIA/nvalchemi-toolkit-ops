@@ -1083,6 +1083,14 @@ def fourier_dftd3(
 
     Notes
     -----
+    The returned ``energy`` is **not differentiable**. The kernels are launched with
+    ``enable_backward=False`` and no ``torch.library.register_autograd`` rule is registered,
+    so it comes back with ``requires_grad=False`` and ``grad_fn=None``, detached from
+    ``positions``. ``torch.autograd.grad`` on it raises rather than reproducing ``forces``.
+    Use the returned ``forces`` and ``virial``, which are analytic derivatives of the same
+    energy. This matches :func:`~nvalchemiops.torch.interactions.dispersion.dftd3`, and it is
+    what keeps the pipeline capturable into a CUDA graph.
+
     Energies are reduced with atomic adds, whose summation order varies between launches, so
     repeated identical calls can differ in the last bit.
 

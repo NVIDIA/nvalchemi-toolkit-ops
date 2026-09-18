@@ -1301,3 +1301,29 @@ class TestPrecomputedSetup:
         )
         with pytest.raises(ValueError, match="Rebuild it for this precision"):
             _evaluate(system, setup=single, mesh_dimensions=None)
+
+
+@pytest.mark.gpu
+class TestEnergyIsNotDifferentiable:
+    """The documented contract: forces are an output, not an autograd result.
+
+    The kernels run with ``enable_backward=False`` and no autograd rule is registered on
+    top of them, which is what keeps the pipeline capturable into a CUDA graph. These tests
+    pin the consequence so the guide cannot drift away from the behaviour.
+    """
+
+    def test_energy_is_detached_from_positions(self):
+        """No grad_fn, so the energy carries no path back to the inputs."""
+        system = _system("cuda:0")
+        system["positions"].requires_grad_(True)
+        energy = _evaluate(system)[0]
+        assert not energy.requires_grad
+        assert energy.grad_fn is None
+
+    def test_autograd_raises_rather_than_returning_a_wrong_gradient(self):
+        """A silent zero or a wrong gradient would be far worse than an error."""
+        system = _system("cuda:0")
+        system["positions"].requires_grad_(True)
+        energy = _evaluate(system)[0]
+        with pytest.raises(RuntimeError, match="does not require grad"):
+            torch.autograd.grad(energy.sum(), system["positions"])

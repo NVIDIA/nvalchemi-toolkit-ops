@@ -716,3 +716,38 @@ class TestJit:
 
         with pytest.raises(ValueError, match="not possible inside jax.jit"):
             jax.jit(evaluate)(system["cell"])
+
+
+@pytest.mark.gpu
+class TestEnergyIsNotDifferentiable:
+    """The documented contract: forces are an output, not an autodiff result.
+
+    The kernels run with ``enable_backward=False`` and no VJP or JVP rule is registered on
+    top of them, which is what keeps the call traceable under ``jax.jit``. This pins the
+    consequence so the guide cannot drift away from the behaviour.
+    """
+
+    def test_grad_raises_rather_than_returning_a_wrong_gradient(self):
+        """A silent zero or a wrong gradient would be far worse than an error."""
+        parts = _single(5.0, 0)
+
+        def total(positions):
+            return fourier_dftd3(
+                positions,
+                jnp.asarray(parts["numbers"], dtype=jnp.int32),
+                **DAMPING,
+                fd3_params=parts["params"],
+                cell=jnp.asarray(parts["cell"]),
+                r_cut=R_CUT,
+                mesh_dimensions=MESH,
+                neighbor_matrix=jnp.asarray(parts["matrix"], dtype=jnp.int32),
+                neighbor_matrix_shifts=jnp.asarray(
+                    parts["matrix_shifts"], dtype=jnp.int32
+                ),
+            )[0].sum()
+
+        positions = jnp.asarray(parts["positions"])
+        # The forward pass works; only the transpose is missing.
+        assert float(total(positions)) != 0.0
+        with pytest.raises(ValueError, match="cannot be differentiated"):
+            jax.grad(total)(positions)

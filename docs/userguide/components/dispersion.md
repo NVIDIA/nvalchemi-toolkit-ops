@@ -1153,6 +1153,34 @@ see [Virial Convention](#virial-convention) above.
 Forces are an explicit output rather than something recovered by differentiating the energy,
 again matching `dftd3`.
 
+```{warning}
+**The returned energy is not differentiable.** Every Warp kernel is launched with
+`enable_backward=False`, and neither binding registers a reverse rule on top of it:
+
+- the Torch binding registers no `torch.library.register_autograd`, so the returned `energy`
+  comes back with `requires_grad=False` and `grad_fn=None`, detached from the input positions;
+- the JAX binding registers no VJP or JVP rule, so the call cannot be transposed.
+
+Do not expect `torch.autograd.grad` or `jax.grad` on the energy to reproduce `forces`. Both
+fail loudly rather than returning a wrong answer --- Torch raises `RuntimeError: element 0 of
+tensors does not require grad and does not have a grad_fn`, and JAX raises `ValueError: The
+FFI call to '_fd3_cn_kernel_1' cannot be differentiated` --- but the failure is generic enough
+to be mistaken for a bug in your own code, so it is worth knowing in advance.
+
+Use the `forces` and `virial` the call already returns. They are analytic derivatives of the
+same energy, hand-derived through the coordination number, the spread, the reciprocal
+contraction and the gather, and they are checked against finite differences in the test
+suite. The reason for the design is that `enable_backward=False` is what keeps the pipeline
+capturable into a CUDA graph and traceable under `jax.jit`.
+```
+
+```{note}
+This means FourierD3 cannot sit inside a larger differentiated graph --- an end-to-end loss
+back-propagated to positions through the dispersion energy, for example. If you need that,
+`forces` gives you $-\partial E/\partial r$ directly and can be spliced in by hand with a
+`torch.autograd.Function`, but nothing in the library does it for you.
+```
+
 ```{note}
 Energies are reduced with atomic adds, whose summation order varies between launches, so two
 identical calls can differ in the last bit. Regression fixtures should compare with a
