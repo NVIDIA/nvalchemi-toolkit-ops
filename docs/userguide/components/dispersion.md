@@ -1087,6 +1087,32 @@ The mesh carries `num_systems * n_species * rank` channels, where `rank` comes f
 decomposition and is typically 4 to 8. Memory grows with all three, so batching chemically
 dissimilar systems together costs more than batching similar ones.
 
+### Capping the Resident Mesh
+
+The mesh and its transforms are the dominant allocation, and they scale as
+`num_systems * n_species * rank * nx * ny * nz`. Many species or a large retained rank can
+therefore run a fine mesh out of device memory: seven species at rank 24 on a 128³ mesh needs
+several gigabytes before anything else is allocated.
+
+`rank_chunk_size` caps how many rank slots are resident at once. Every stage after the
+coordination number is a sum over slots with no coupling between them, so a chunk of slots can
+be carried through spread, transform, contraction and gather on its own and its contribution
+added in:
+
+```python
+energy, forces = fourier_dftd3(..., rank_chunk_size=4)
+```
+
+The result is unchanged to round-off. The cost is one extra spread, forward and inverse
+transform, and gather per chunk, so leave it at `None` when the mesh fits. Measured on a
+300-atom, seven-species cell at rank 24 on a 64³ mesh in float64, peak allocation fell from
+1066 MiB at `None` to 209 MiB at `rank_chunk_size=4` and 79 MiB at `1`, with energy, forces
+and virial agreeing to 1e-14 relative throughout.
+
+It is host-static in both bindings: it decides how many kernel launches happen, so it must be
+a Python integer and cannot be a tensor or a traced value. Under `jax.jit` the chunk loop is
+unrolled at trace time.
+
 ### B-spline Deconvolution
 
 Interpolating onto a mesh attenuates each frequency, and dividing that attenuation out is what

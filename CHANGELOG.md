@@ -47,6 +47,16 @@
   into a CUDA graph. Warp launches are now bound to PyTorch's current stream without an
   entry synchronisation, which graph capture also forbids.
 
+- `rank_chunk_size` on `fourier_dftd3` in both the Torch and JAX bindings, capping
+  how many rank slots are resident on the mesh at once. The mesh and its transforms
+  dominate the workspace and scale as
+  `num_systems * n_species * rank * nx * ny * nz`, so many species or a large
+  retained rank can exhaust device memory on a fine mesh. Every stage after the
+  coordination number is a sum over rank slots with no coupling between them, so
+  chunking leaves the result unchanged to round-off; the cost is one extra spread,
+  transform pair and gather per chunk. Defaults to `None`, the single-pass
+  behaviour. Host-static, so it is safe under `jax.jit` and `torch.compile`.
+
 ### Changed
 
 - The minimum `warp-lang` requirement is now `>= 1.16.0`, raised from `>= 1.13.0`. The JAX

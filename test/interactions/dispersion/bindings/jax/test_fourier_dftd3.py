@@ -751,3 +751,63 @@ class TestEnergyIsNotDifferentiable:
         assert float(total(positions)) != 0.0
         with pytest.raises(ValueError, match="cannot be differentiated"):
             jax.grad(total)(positions)
+
+
+@pytest.mark.gpu
+class TestRankChunking:
+    """Splitting the rank across passes trades memory for extra launches.
+
+    Every stage after the coordination number is a sum over rank slots with no coupling
+    between them, so the split must not change the answer, traced or not.
+    """
+
+    @pytest.mark.parametrize("chunk", [1, 2, 8])
+    @pytest.mark.parametrize("jit", [False, True])
+    def test_chunked_matches_a_single_pass(self, chunk, jit):
+        """The chunk count is host-static, so the loop unrolls at trace time."""
+        parts = _single(5.0, 0)
+
+        def evaluate(positions, rank_chunk_size):
+            return fourier_dftd3(
+                positions,
+                jnp.asarray(parts["numbers"], dtype=jnp.int32),
+                **DAMPING,
+                fd3_params=parts["params"],
+                cell=jnp.asarray(parts["cell"]),
+                r_cut=R_CUT,
+                mesh_dimensions=MESH,
+                neighbor_matrix=jnp.asarray(parts["matrix"], dtype=jnp.int32),
+                neighbor_matrix_shifts=jnp.asarray(
+                    parts["matrix_shifts"], dtype=jnp.int32
+                ),
+                rank_chunk_size=rank_chunk_size,
+                compute_virial=True,
+            )
+
+        run = jax.jit(evaluate, static_argnums=1) if jit else evaluate
+        positions = jnp.asarray(parts["positions"])
+        whole = run(positions, None)
+        split = run(positions, chunk)
+        for reference, chunked in zip(whole, split):
+            np.testing.assert_allclose(
+                np.asarray(chunked), np.asarray(reference), rtol=1e-11, atol=1e-13
+            )
+
+    def test_a_non_positive_chunk_is_refused(self):
+        """Zero would make no progress and loop forever."""
+        parts = _single(5.0, 0)
+        with pytest.raises(ValueError, match="at least 1"):
+            fourier_dftd3(
+                jnp.asarray(parts["positions"]),
+                jnp.asarray(parts["numbers"], dtype=jnp.int32),
+                **DAMPING,
+                fd3_params=parts["params"],
+                cell=jnp.asarray(parts["cell"]),
+                r_cut=R_CUT,
+                mesh_dimensions=MESH,
+                neighbor_matrix=jnp.asarray(parts["matrix"], dtype=jnp.int32),
+                neighbor_matrix_shifts=jnp.asarray(
+                    parts["matrix_shifts"], dtype=jnp.int32
+                ),
+                rank_chunk_size=0,
+            )

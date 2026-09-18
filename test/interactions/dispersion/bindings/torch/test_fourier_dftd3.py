@@ -1331,3 +1331,60 @@ class TestEnergyIsNotDifferentiable:
         energy = _evaluate(system)[0]
         with pytest.raises(RuntimeError, match="does not require grad"):
             torch.autograd.grad(energy.sum(), system["positions"])
+
+
+@pytest.mark.gpu
+class TestRankChunking:
+    """Splitting the rank across passes trades memory for extra launches.
+
+    Every stage after the coordination number is a sum over rank slots with no coupling
+    between them, so the split must not change the answer.
+    """
+
+    @pytest.mark.parametrize("chunk", [1, 2, 3, 8])
+    def test_chunked_matches_a_single_pass(self, chunk):
+        """Energy, forces and virial all have to survive the split."""
+        system = _system("cuda:0")
+        whole = _evaluate(system, compute_virial=True)
+        split = _evaluate(system, compute_virial=True, rank_chunk_size=chunk)
+        for reference, chunked in zip(whole, split):
+            np.testing.assert_allclose(
+                chunked.cpu().numpy(), reference.cpu().numpy(), rtol=1e-11, atol=1e-13
+            )
+
+    def test_a_chunk_larger_than_the_rank_is_one_pass(self):
+        """Clamping keeps an oversized request from producing empty trailing chunks."""
+        system = _system("cuda:0")
+        rank = system["params"].rank
+        whole = _evaluate(system)[0]
+        split = _evaluate(system, rank_chunk_size=rank * 4)[0]
+        np.testing.assert_allclose(split.cpu().numpy(), whole.cpu().numpy(), rtol=1e-12)
+
+    def test_it_lowers_the_peak_mesh_allocation(self):
+        """The point of the option: a smaller resident mesh, not just the same answer."""
+        system = _system("cuda:0")
+        rank = system["params"].rank
+        if rank < 2:
+            pytest.skip("needs a rank of at least 2 to split")
+
+        def peak(chunk):
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats()
+            _evaluate(system, mesh_dimensions=(48, 48, 48), rank_chunk_size=chunk)
+            torch.cuda.synchronize()
+            return torch.cuda.max_memory_allocated()
+
+        assert peak(1) < peak(None)
+
+    def test_a_non_integer_chunk_is_refused(self):
+        """The size decides how many kernels launch, so it cannot be a tensor."""
+        system = _system("cuda:0")
+        with pytest.raises(TypeError, match="must be an int or None"):
+            _evaluate(system, rank_chunk_size=torch.tensor(2))
+
+    def test_a_non_positive_chunk_is_refused(self):
+        """Zero would make no progress and loop forever."""
+        system = _system("cuda:0")
+        with pytest.raises(ValueError, match="at least 1"):
+            _evaluate(system, rank_chunk_size=0)

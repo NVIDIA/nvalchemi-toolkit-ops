@@ -868,6 +868,30 @@ def _check_mesh_supports_stencil(mesh, spline_order, origin):
     return mesh
 
 
+def _rank_chunks(rank, rank_chunk_size):
+    """Split the retained rank into consecutive groups of slots.
+
+    ``None`` keeps every slot in one group, which is the original single-pass behaviour and
+    the fastest option when the mesh fits. A smaller size lowers the peak mesh allocation in
+    proportion, at the cost of one extra spread, transform pair and gather per group.
+
+    The size is a host-side Python integer, never a tensor: it decides how many kernel
+    launches happen, so it has to be known before any of them are issued.
+    """
+    if rank_chunk_size is None:
+        return [(0, rank)]
+    if not isinstance(rank_chunk_size, int) or isinstance(rank_chunk_size, bool):
+        raise TypeError(
+            f"rank_chunk_size must be an int or None, got {type(rank_chunk_size).__name__}. "
+            "It sets the number of kernel launches, so it cannot be a tensor or a traced "
+            "value."
+        )
+    if rank_chunk_size < 1:
+        raise ValueError(f"rank_chunk_size must be at least 1, got {rank_chunk_size}.")
+    size = min(rank_chunk_size, rank)
+    return [(start, min(size, rank - start)) for start in range(0, rank, size)]
+
+
 def _resolve_mesh(mesh_dimensions, mesh_spacing, cells, spline_order):
     """Settle the mesh size, requiring exactly one of the two ways of asking for it.
 
@@ -985,6 +1009,7 @@ def fourier_dftd3(
     compute_virial: bool = False,
     num_systems: int | None = None,
     exact_moduli: bool = True,
+    rank_chunk_size: int | None = None,
     setup: FourierD3Setup | None = None,
     device: str | None = None,
 ) -> tuple[torch.Tensor, ...]:
@@ -1069,6 +1094,16 @@ def fourier_dftd3(
         Measured against an independent implementation of this method, the discrete form
         agrees to machine precision while the continuous one leaves a force discrepancy
         around 1e-5 at a 48-cubed mesh. Set to False only to reproduce the PME convention.
+    rank_chunk_size : int, optional
+        Number of rank slots to hold on the mesh at once. ``None``, the default, processes
+        all ``rank`` slots in a single pass, which is fastest. The mesh and its transforms
+        dominate the workspace and scale as ``num_systems * n_species * rank * nx * ny * nz``,
+        so a system with many species or a large retained rank can exceed device memory on a
+        fine mesh. Setting this to ``k`` caps the resident slots at ``k`` and reduces that
+        allocation by roughly ``rank / k``, at the cost of one extra spread, forward and
+        inverse transform, and gather per chunk. The result is unchanged to round-off: every
+        stage after the coordination number is a sum over slots with no coupling between them.
+        Must be a host-side Python integer, since it determines the number of kernel launches.
     device : str, optional
         Warp device string. Inferred from ``positions`` when omitted.
 
@@ -1178,7 +1213,6 @@ def fourier_dftd3(
             mesh_dimensions, mesh_spacing, cells, spline_order
         )
     n_species, rank = params.n_species, params.rank
-    n_channels = n_species * rank
 
     if n_atoms == 0:
         # Nothing to spread, so the mesh, its transforms and the reciprocal sum would all be
@@ -1262,91 +1296,131 @@ def fourier_dftd3(
         device,
     )
 
-    mesh = torch.zeros(num_systems * n_channels, mesh_nx, mesh_ny, mesh_nz, **empty)
-    _fd3_spread_op(
-        positions, c6, group_idx, cell_inv_grouped, spline_order, rank, mesh, device
-    )
-
-    mesh_fft = torch.fft.rfftn(mesh, dim=(-3, -2, -1), norm="backward")
-    mesh_fft_pairs = torch.view_as_real(mesh_fft.resolve_conj()).contiguous()
+    energy = torch.zeros(num_systems, **empty)
+    virial = torch.zeros(num_systems, 3, 3, **empty)
+    forces = torch.zeros(n_atoms, 3, **empty)
 
     moduli = (setup.moduli_x, setup.moduli_y, setup.moduli_z)
     volumes = setup.volumes
     k_matrix = setup.k_matrix
 
-    energy = torch.zeros(num_systems, **empty)
-    virial = torch.zeros(num_systems, 3, 3, **empty)
-    cotangent = torch.zeros_like(mesh_fft_pairs)
-    _fd3_kspace_op(
-        mesh_fft_pairs,
-        k_matrix,
-        moduli[0],
-        moduli[1],
-        moduli[2],
-        volumes,
-        params.sqrt_q,
-        params.eigs,
-        s6,
-        s8,
-        a1,
-        a2,
-        mesh_nx,
-        mesh_ny,
-        mesh_nz,
-        n_species,
-        rank,
-        energy,
-        cotangent,
-        virial,
-        compute_virial,
-        device,
-    )
+    # Every stage after the coordination number is a sum over rank slots with no coupling
+    # between them, so a chunk of slots can be carried through spread, transform, contraction
+    # and gather on its own and its contribution added in. The mesh and its transforms are the
+    # dominant allocation, and they scale with the number of slots resident at once, so this
+    # trades passes over the atoms for peak memory.
+    chunks = _rank_chunks(rank, rank_chunk_size)
+    for slot_start, slot_count in chunks:
+        # The two ops overwrite rather than accumulate -- the k-space op clears energy and
+        # virial, the epilogue clears forces -- so each chunk reduces into its own scratch
+        # and is added in below. Reusing the totals directly would leave only the last chunk.
+        if len(chunks) == 1:
+            chunk_energy, chunk_forces, chunk_virial = energy, forces, virial
+        else:
+            chunk_energy = torch.zeros(num_systems, **empty)
+            chunk_forces = torch.zeros(n_atoms, 3, **empty)
+            chunk_virial = torch.zeros(num_systems, 3, 3, **empty)
 
-    # The unnormalised inverse transform is the adjoint of the forward one, which is what
-    # makes the gathered result the derivative of the energy rather than its inverse.
-    potential = torch.fft.irfftn(
-        torch.view_as_complex(cotangent),
-        s=(mesh_nx, mesh_ny, mesh_nz),
-        dim=(-3, -2, -1),
-        norm="forward",
-    ).contiguous()
+        c6_chunk = c6[:, slot_start : slot_start + slot_count].contiguous()
+        dc6_chunk = dc6_dcn[:, slot_start : slot_start + slot_count].contiguous()
+        eigs_chunk = params.eigs[slot_start : slot_start + slot_count].contiguous()
 
-    d_energy_d_c6 = torch.zeros(n_atoms, rank, **empty)
-    d_energy_d_cn = torch.zeros(n_atoms, **empty)
-    forces = torch.zeros(n_atoms, 3, **empty)
-    _fd3_epilogue_op(
-        potential,
-        positions,
-        numbers.to(torch.int32),
-        species_index,
-        group_idx,
-        batch_idx,
-        cell_inv_grouped,
-        c6,
-        dc6_dcn,
-        cartesian_shifts,
-        params.rcov,
-        params.sqrt_q,
-        params.eigs,
-        spline_order,
-        rank,
-        s6,
-        s8,
-        a1,
-        a2,
-        r_cut,
-        d_energy_d_c6,
-        d_energy_d_cn,
-        energy,
-        forces,
-        virial,
-        idx_j,
-        neighbor_ptr.to(torch.int32) if neighbor_ptr is not None else None,
-        neighbor_matrix.to(torch.int32) if neighbor_matrix is not None else None,
-        fill_value,
-        compute_virial,
-        device,
-    )
+        mesh = torch.zeros(
+            num_systems * n_species * slot_count, mesh_nx, mesh_ny, mesh_nz, **empty
+        )
+        _fd3_spread_op(
+            positions,
+            c6_chunk,
+            group_idx,
+            cell_inv_grouped,
+            spline_order,
+            slot_count,
+            mesh,
+            device,
+        )
+
+        mesh_fft = torch.fft.rfftn(mesh, dim=(-3, -2, -1), norm="backward")
+        mesh_fft_pairs = torch.view_as_real(mesh_fft.resolve_conj()).contiguous()
+        del mesh, mesh_fft
+
+        cotangent = torch.zeros_like(mesh_fft_pairs)
+        _fd3_kspace_op(
+            mesh_fft_pairs,
+            k_matrix,
+            moduli[0],
+            moduli[1],
+            moduli[2],
+            volumes,
+            params.sqrt_q,
+            eigs_chunk,
+            s6,
+            s8,
+            a1,
+            a2,
+            mesh_nx,
+            mesh_ny,
+            mesh_nz,
+            n_species,
+            slot_count,
+            chunk_energy,
+            cotangent,
+            chunk_virial,
+            compute_virial,
+            device,
+        )
+        del mesh_fft_pairs
+
+        # The unnormalised inverse transform is the adjoint of the forward one, which is what
+        # makes the gathered result the derivative of the energy rather than its inverse.
+        potential = torch.fft.irfftn(
+            torch.view_as_complex(cotangent),
+            s=(mesh_nx, mesh_ny, mesh_nz),
+            dim=(-3, -2, -1),
+            norm="forward",
+        ).contiguous()
+        del cotangent
+
+        d_energy_d_c6 = torch.zeros(n_atoms, slot_count, **empty)
+        d_energy_d_cn = torch.zeros(n_atoms, **empty)
+        _fd3_epilogue_op(
+            potential,
+            positions,
+            numbers.to(torch.int32),
+            species_index,
+            group_idx,
+            batch_idx,
+            cell_inv_grouped,
+            c6_chunk,
+            dc6_chunk,
+            cartesian_shifts,
+            params.rcov,
+            params.sqrt_q,
+            eigs_chunk,
+            spline_order,
+            slot_count,
+            s6,
+            s8,
+            a1,
+            a2,
+            r_cut,
+            d_energy_d_c6,
+            d_energy_d_cn,
+            chunk_energy,
+            chunk_forces,
+            chunk_virial,
+            idx_j,
+            neighbor_ptr.to(torch.int32) if neighbor_ptr is not None else None,
+            neighbor_matrix.to(torch.int32) if neighbor_matrix is not None else None,
+            fill_value,
+            compute_virial,
+            device,
+        )
+        del potential
+
+        if len(chunks) > 1:
+            energy += chunk_energy
+            forces += chunk_forces
+            virial += chunk_virial
 
     if compute_virial:
         return energy, forces, virial

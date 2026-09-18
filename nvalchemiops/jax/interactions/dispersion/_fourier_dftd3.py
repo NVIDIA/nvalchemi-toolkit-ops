@@ -250,6 +250,30 @@ def _check_mesh_supports_stencil(mesh, spline_order, origin):
     return mesh
 
 
+def _rank_chunks(rank, rank_chunk_size):
+    """Split the retained rank into consecutive groups of slots.
+
+    ``None`` keeps every slot in one group, which is the original single-pass behaviour and
+    the fastest option when the mesh fits. A smaller size lowers the peak mesh allocation in
+    proportion, at the cost of one extra spread, transform pair and gather per group.
+
+    The size is a host-side Python integer, never a traced value: it decides how many kernels
+    are staged out, so it has to be known while the function is being traced.
+    """
+    if rank_chunk_size is None:
+        return [(0, rank)]
+    if not isinstance(rank_chunk_size, int) or isinstance(rank_chunk_size, bool):
+        raise TypeError(
+            f"rank_chunk_size must be an int or None, got {type(rank_chunk_size).__name__}. "
+            "It sets the number of kernel launches, so it cannot be an array or a traced "
+            "value."
+        )
+    if rank_chunk_size < 1:
+        raise ValueError(f"rank_chunk_size must be at least 1, got {rank_chunk_size}.")
+    size = min(rank_chunk_size, rank)
+    return [(start, min(size, rank - start)) for start in range(0, rank, size)]
+
+
 def _resolve_mesh(mesh_dimensions, mesh_spacing, cells, spline_order):
     """Settle the mesh size, requiring exactly one of the two ways of asking for it.
 
@@ -351,6 +375,7 @@ def fourier_dftd3(
     s6: float = 1.0,
     spline_order: int = 4,
     exact_moduli: bool = True,
+    rank_chunk_size: int | None = None,
     batch_idx=None,
     compute_virial: bool = False,
     num_systems: int | None = None,
@@ -409,6 +434,17 @@ def fourier_dftd3(
         continuous ``sinc(m / N) ** spline_order``, the convention the in-repo PME uses,
         retained so results can be reproduced against it. Host-static, so it selects a branch
         at trace time and is safe under ``jax.jit``.
+    rank_chunk_size : int, optional
+        Number of rank slots to hold on the mesh at once. ``None``, the default, stages all
+        ``rank`` slots in a single pass, which is fastest. The mesh and its transforms
+        dominate the workspace and scale as
+        ``num_systems * n_species * rank * nx * ny * nz``, so a system with many species or a
+        large retained rank can exceed device memory on a fine mesh. Setting this to ``k``
+        caps the resident slots at ``k`` and reduces that allocation by roughly ``rank / k``,
+        at the cost of one extra spread, forward and inverse transform, and gather per chunk.
+        The result is unchanged to round-off: every stage after the coordination number is a
+        sum over slots with no coupling between them. Host-static, so the chunk loop is
+        unrolled at trace time and is safe under ``jax.jit``.
     batch_idx : jax.Array, shape (N,), optional
         System index per atom.
     compute_virial : bool, default=False
@@ -575,23 +611,6 @@ def fourier_dftd3(
         output_dims={"c6": (n_atoms, rank), "dc6_dcn": (n_atoms, rank)},
     )
 
-    # Pass 3: spread onto the (system, species, rank) mesh.
-    mesh = jnp.zeros((n_groups * rank, mesh_nx, mesh_ny, mesh_nz), dtype=dtype)
-    (mesh,) = _spread_kernels[dtype](
-        positions,
-        c6,
-        group_idx,
-        cell_inv_grouped,
-        int(spline_order),
-        int(rank),
-        mesh,
-        launch_dims=(n_atoms, spline_order**3),
-    )
-
-    # Pass 4: forward transform.
-    mesh_fft = jnp.fft.rfftn(mesh, axes=(-3, -2, -1))
-    mesh_fft_pairs = jnp.stack([mesh_fft.real, mesh_fft.imag], axis=-1).astype(dtype)
-
     miller_x = jnp.fft.fftfreq(mesh_nx, d=1.0 / mesh_nx).astype(dtype)
     miller_y = jnp.fft.fftfreq(mesh_ny, d=1.0 / mesh_ny).astype(dtype)
     miller_z = jnp.fft.rfftfreq(mesh_nz, d=1.0 / mesh_nz).astype(dtype)
@@ -602,123 +621,162 @@ def fourier_dftd3(
     volumes = jnp.abs(jnp.linalg.det(cells)).astype(dtype)
     k_matrix = (2.0 * jnp.pi * jnp.linalg.inv(cells)).astype(dtype)
 
-    # Pass 5: reciprocal-space contraction. The bin count is padded so that a block of the
-    # reduction never spans two systems.
-    num_bins = mesh_nx * mesh_ny * (mesh_nz // 2 + 1)
-    padded_bins = -(-num_bins // FD3_KSPACE_BLOCK_SIZE) * FD3_KSPACE_BLOCK_SIZE
-    energy_init = jnp.zeros(num_systems, dtype=dtype)
-    virial_init = jnp.zeros((num_systems, 3, 3), dtype=dtype)
-    cotangent_init = jnp.zeros_like(mesh_fft_pairs)
-    energy, cotangent, virial = _kspace_kernels[dtype](
-        mesh_fft_pairs,
-        k_matrix,
-        moduli[0],
-        moduli[1],
-        moduli[2],
-        volumes,
-        sqrt_q,
-        eigs,
-        float(s6),
-        float(s8),
-        float(a1),
-        float(a2),
-        int(mesh_nx),
-        int(mesh_ny),
-        int(mesh_nz),
-        int(num_bins),
-        int(FD3_KSPACE_BLOCK_SIZE),
-        int(n_species),
-        int(rank),
-        bool(compute_virial),
-        energy_init,
-        cotangent_init,
-        virial_init,
-        launch_dims=(num_systems, padded_bins),
-    )
+    # Every stage after the coordination number is a sum over rank slots with no coupling
+    # between them, so a chunk of slots can be carried through spread, transform, contraction
+    # and gather on its own and its contribution added in. The mesh and its transforms are the
+    # dominant allocation and scale with the number of slots resident at once, so this trades
+    # passes over the atoms for peak memory.
+    energy_total = jnp.zeros(num_systems, dtype=dtype)
+    forces_total = jnp.zeros((n_atoms, 3), dtype=dtype)
+    virial_total = jnp.zeros((num_systems, 3, 3), dtype=dtype)
 
-    # Pass 6: inverse transform, unnormalised so that it is the adjoint of the forward one.
-    potential = jnp.fft.irfftn(
-        cotangent[..., 0] + 1j * cotangent[..., 1],
-        s=(mesh_nx, mesh_ny, mesh_nz),
-        axes=(-3, -2, -1),
-        norm="forward",
-    ).astype(dtype)
+    for slot_start, slot_count in _rank_chunks(rank, rank_chunk_size):
+        c6_chunk = c6[:, slot_start : slot_start + slot_count]
+        dc6_chunk = dc6_dcn[:, slot_start : slot_start + slot_count]
+        eigs_chunk = eigs[slot_start : slot_start + slot_count]
 
-    # Pass 7: gather the coefficient derivative and the direct mesh force.
-    d_energy_d_c6, forces = _gather_kernels[dtype](
-        potential,
-        positions,
-        c6,
-        group_idx,
-        cell_inv_grouped,
-        int(spline_order),
-        int(rank),
-        jnp.zeros((n_atoms, rank), dtype=dtype),
-        jnp.zeros((n_atoms, 3), dtype=dtype),
-        launch_dims=(n_atoms,),
-    )
-
-    # Pass 8: self-energy, before the chain rule.
-    energy, d_energy_d_c6 = _self_energy_kernels[dtype](
-        c6,
-        species_index,
-        batch_idx,
-        sqrt_q,
-        eigs,
-        float(s6),
-        float(s8),
-        float(a1),
-        float(a2),
-        energy,
-        d_energy_d_c6,
-        launch_dims=(n_atoms,),
-    )
-
-    # Pass 9: contract to dE/dCN, then chain through the real-space edges.
-    (sensitivity,) = _sensitivity_kernels[dtype](
-        d_energy_d_c6,
-        dc6_dcn,
-        launch_dims=(n_atoms,),
-        output_dims={"d_energy_d_cn": (n_atoms,)},
-    )
-    if matrix_given:
-        forces, virial = _cn_forces_matrix_kernels[dtype](
-            sensitivity,
-            positions,
-            numbers,
-            neighbours,
-            cartesian_shifts,
-            rcov,
-            float(r_cut),
-            int(fill_value),
-            batch_idx,
-            int(FD3_CN_BLOCK_SIZE),
-            bool(compute_virial),
-            forces,
-            virial,
-            launch_dims=(n_atoms, FD3_CN_BLOCK_SIZE),
+        # Pass 3: spread onto the (system, species, rank) mesh.
+        mesh = jnp.zeros(
+            (n_groups * slot_count, mesh_nx, mesh_ny, mesh_nz), dtype=dtype
         )
-    else:
-        forces, virial = _cn_forces_kernels[dtype](
-            sensitivity,
+        (mesh,) = _spread_kernels[dtype](
             positions,
-            numbers,
-            neighbours,
-            jnp.asarray(neighbor_ptr, dtype=jnp.int32),
-            cartesian_shifts,
-            rcov,
-            float(r_cut),
-            batch_idx,
-            int(FD3_CN_BLOCK_SIZE),
-            bool(compute_virial),
-            forces,
-            virial,
-            launch_dims=(n_atoms, FD3_CN_BLOCK_SIZE),
+            c6_chunk,
+            group_idx,
+            cell_inv_grouped,
+            int(spline_order),
+            int(slot_count),
+            mesh,
+            launch_dims=(n_atoms, spline_order**3),
         )
+
+        # Pass 4: forward transform.
+        mesh_fft = jnp.fft.rfftn(mesh, axes=(-3, -2, -1))
+        mesh_fft_pairs = jnp.stack([mesh_fft.real, mesh_fft.imag], axis=-1).astype(
+            dtype
+        )
+
+        # Pass 5: reciprocal-space contraction. The bin count is padded so that a block of the
+        # reduction never spans two systems.
+        num_bins = mesh_nx * mesh_ny * (mesh_nz // 2 + 1)
+        padded_bins = -(-num_bins // FD3_KSPACE_BLOCK_SIZE) * FD3_KSPACE_BLOCK_SIZE
+        energy_init = jnp.zeros(num_systems, dtype=dtype)
+        virial_init = jnp.zeros((num_systems, 3, 3), dtype=dtype)
+        cotangent_init = jnp.zeros_like(mesh_fft_pairs)
+        energy, cotangent, virial = _kspace_kernels[dtype](
+            mesh_fft_pairs,
+            k_matrix,
+            moduli[0],
+            moduli[1],
+            moduli[2],
+            volumes,
+            sqrt_q,
+            eigs_chunk,
+            float(s6),
+            float(s8),
+            float(a1),
+            float(a2),
+            int(mesh_nx),
+            int(mesh_ny),
+            int(mesh_nz),
+            int(num_bins),
+            int(FD3_KSPACE_BLOCK_SIZE),
+            int(n_species),
+            int(slot_count),
+            bool(compute_virial),
+            energy_init,
+            cotangent_init,
+            virial_init,
+            launch_dims=(num_systems, padded_bins),
+        )
+
+        # Pass 6: inverse transform, unnormalised so that it is the adjoint of the forward one.
+        potential = jnp.fft.irfftn(
+            cotangent[..., 0] + 1j * cotangent[..., 1],
+            s=(mesh_nx, mesh_ny, mesh_nz),
+            axes=(-3, -2, -1),
+            norm="forward",
+        ).astype(dtype)
+
+        # Pass 7: gather the coefficient derivative and the direct mesh force.
+        d_energy_d_c6, forces = _gather_kernels[dtype](
+            potential,
+            positions,
+            c6_chunk,
+            group_idx,
+            cell_inv_grouped,
+            int(spline_order),
+            int(slot_count),
+            jnp.zeros((n_atoms, slot_count), dtype=dtype),
+            jnp.zeros((n_atoms, 3), dtype=dtype),
+            launch_dims=(n_atoms,),
+        )
+
+        # Pass 8: self-energy, before the chain rule.
+        energy, d_energy_d_c6 = _self_energy_kernels[dtype](
+            c6_chunk,
+            species_index,
+            batch_idx,
+            sqrt_q,
+            eigs_chunk,
+            float(s6),
+            float(s8),
+            float(a1),
+            float(a2),
+            energy,
+            d_energy_d_c6,
+            launch_dims=(n_atoms,),
+        )
+
+        # Pass 9: contract to dE/dCN, then chain through the real-space edges.
+        (sensitivity,) = _sensitivity_kernels[dtype](
+            d_energy_d_c6,
+            dc6_chunk,
+            launch_dims=(n_atoms,),
+            output_dims={"d_energy_d_cn": (n_atoms,)},
+        )
+        if matrix_given:
+            forces, virial = _cn_forces_matrix_kernels[dtype](
+                sensitivity,
+                positions,
+                numbers,
+                neighbours,
+                cartesian_shifts,
+                rcov,
+                float(r_cut),
+                int(fill_value),
+                batch_idx,
+                int(FD3_CN_BLOCK_SIZE),
+                bool(compute_virial),
+                forces,
+                virial,
+                launch_dims=(n_atoms, FD3_CN_BLOCK_SIZE),
+            )
+        else:
+            forces, virial = _cn_forces_kernels[dtype](
+                sensitivity,
+                positions,
+                numbers,
+                neighbours,
+                jnp.asarray(neighbor_ptr, dtype=jnp.int32),
+                cartesian_shifts,
+                rcov,
+                float(r_cut),
+                batch_idx,
+                int(FD3_CN_BLOCK_SIZE),
+                bool(compute_virial),
+                forces,
+                virial,
+                launch_dims=(n_atoms, FD3_CN_BLOCK_SIZE),
+            )
+
+        energy_total = energy_total + energy
+        forces_total = forces_total + forces
+        virial_total = virial_total + virial
 
     if compute_virial:
-        return energy, forces, virial
-    return energy, forces
+        return energy_total, forces_total, virial_total
+    return energy_total, forces_total
 
 
 def _cardinal_bspline(u, order):
