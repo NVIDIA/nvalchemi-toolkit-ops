@@ -42,6 +42,7 @@ orchestration stays outside, on Torch autograd.
 
 import enum
 import math
+import os
 from collections.abc import Iterable, Mapping, Sequence
 from functools import lru_cache
 from typing import Any, Literal, NamedTuple
@@ -126,7 +127,38 @@ _DISTANCE_EPSILON = 1e-8
 _K_SQUARED_EPSILON = 1e-10
 
 
-# === Shared per-pair scalar cores (float64) ===
+def _use_fp32_electrostatics() -> bool:
+    """Return whether float32 electrostatics kernels may compute in float32.
+
+    Reads ``NVALCHEMIOPS_ELECTROSTATICS_FP32``; unset or empty means off, as
+    does any of ``0``/``false``/``off``. Governs both halves of the monopole
+    split: the real-space per-pair cores below and the reciprocal structure
+    factors in ``ewald_kernels``. Real space is shared by Ewald and PME, so
+    this affects both.
+
+    Off by default because it changes float32 results at the ~1e-07 level,
+    which is a semantic change for existing callers rather than a pure
+    optimisation.
+
+    Returns
+    -------
+    bool
+        ``True`` if float32 evaluation is requested, ``False`` otherwise.
+    """
+    value = os.environ.get("NVALCHEMIOPS_ELECTROSTATICS_FP32")
+    if value is None or value == "":
+        return False
+    return value not in {"0", "false", "False", "off", "OFF"}
+
+
+# === Shared per-pair scalar cores (input precision) ===
+#
+# These evaluate in whatever precision the caller passes. They used to be
+# hard-typed float64, which cost the float32 kernels a float64 erfc, exp and
+# several divides on every pair while buying nothing: wp_erfc is an
+# Abramowitz-Stegun polynomial whose own error is ~1.5e-7, so float64 evaluation
+# cannot make it more accurate than float32 evaluation. Accumulators in the
+# calling kernels stay float64 -- that is where the cancellation lives.
 #
 # Component-agnostic erfc calculus shared by the ewald_real forward / backward /
 # double-backward kernels. Charge-unbundled factors (no division by a charge, so
@@ -139,21 +171,19 @@ _K_SQUARED_EPSILON = 1e-10
 
 
 @wp.func
-def _ewald_half_force_scale(distance: wp.float64, alpha: wp.float64) -> wp.float64:
+def _ewald_half_force_scale(distance: Any, alpha: Any) -> Any:
     """``(1/2) S(r)`` -- charge-unbundled force-magnitude scale."""
-    two_over_sqrt_pi = wp.float64(_TWO_OVER_SQRT_PI)
+    two_over_sqrt_pi = type(distance)(_TWO_OVER_SQRT_PI)
     alpha_r = alpha * distance
     erfc_alpha_r = wp_erfc(alpha_r)
     exp_term = wp.exp(-alpha_r * alpha_r)
     r2 = distance * distance
     s = erfc_alpha_r / (r2 * distance) + two_over_sqrt_pi * alpha * exp_term / r2
-    return wp.float64(0.5) * s
+    return type(distance)(0.5) * s
 
 
 @wp.func
-def _ewald_half_force_scale_deriv(
-    distance: wp.float64, alpha: wp.float64
-) -> wp.float64:
+def _ewald_half_force_scale_deriv(distance: Any, alpha: Any) -> Any:
     """``(1/2) S'(r)`` -- radial derivative of the force-magnitude scale.
 
     .. math::
@@ -161,17 +191,18 @@ def _ewald_half_force_scale_deriv(
         S'(r) = -3\\,\\mathrm{erfc}(a r)/r^4
                 - (2a/\\sqrt{\\pi}) e^{-a^2 r^2} (3/r^3 + 2 a^2 / r).
     """
-    two_over_sqrt_pi = wp.float64(_TWO_OVER_SQRT_PI)
+    two_over_sqrt_pi = type(distance)(_TWO_OVER_SQRT_PI)
     alpha_r = alpha * distance
     erfc_alpha_r = wp_erfc(alpha_r)
     exp_term = wp.exp(-alpha_r * alpha_r)
     r2 = distance * distance
     r3 = r2 * distance
     r4 = r3 * distance
-    s_prime = -wp.float64(3.0) * erfc_alpha_r / r4 - two_over_sqrt_pi * alpha * (
-        exp_term * (wp.float64(3.0) / r3 + wp.float64(2.0) * alpha * alpha / distance)
+    three = type(distance)(3.0)
+    s_prime = -three * erfc_alpha_r / r4 - two_over_sqrt_pi * alpha * (
+        exp_term * (three / r3 + type(distance)(2.0) * alpha * alpha / distance)
     )
-    return wp.float64(0.5) * s_prime
+    return type(distance)(0.5) * s_prime
 
 
 @wp.func
@@ -192,9 +223,7 @@ def _pair_virial_outer(sep: Any, force: Any) -> wp.mat33d:
 
 
 @wp.func
-def _ewald_charge_potential_deriv(
-    distance: wp.float64, alpha: wp.float64
-) -> wp.float64:
+def _ewald_charge_potential_deriv(distance: Any, alpha: Any) -> Any:
     """``g'(r) = (1/2) d/dr[erfc(a r)/r]``.
 
     .. math::
@@ -202,12 +231,12 @@ def _ewald_charge_potential_deriv(
         g'(r) = -\\tfrac{1}{2}\\left[(2a/\\sqrt{\\pi}) e^{-a^2 r^2}/r
                 + \\mathrm{erfc}(a r)/r^2\\right].
     """
-    two_over_sqrt_pi = wp.float64(_TWO_OVER_SQRT_PI)
+    two_over_sqrt_pi = type(distance)(_TWO_OVER_SQRT_PI)
     alpha_r = alpha * distance
     erfc_alpha_r = wp_erfc(alpha_r)
     exp_term = wp.exp(-alpha_r * alpha_r)
     r2 = distance * distance
-    return -wp.float64(0.5) * (
+    return -type(distance)(0.5) * (
         two_over_sqrt_pi * alpha * exp_term / distance + erfc_alpha_r / r2
     )
 
