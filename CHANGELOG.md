@@ -4,6 +4,8 @@
 
 ### Changed
 
+- JAX DFT-D3 now accepts `D3Parameters` directly as a runtime argument to
+  `jax.jit`, without unpacking and reconstructing its parameter arrays.
 - Raised the minimum supported Warp version to 1.15 and migrated JAX bindings
   from Warp's removed experimental JAX module to its public JAX API, restoring
   compatibility with `warp>=1.15`.
@@ -13,6 +15,8 @@
   operation-specific scratch bundles. PyTorch bindings allocate and retain this
   scratch internally, so their public APIs are unchanged; CPU direct-Warp paths
   do not require scratch.
+- PyTorch segmented operations now accept int64 segment indices whose values
+  fit in int32; these inputs are converted to int32 internally.
 
 ### Added
 
@@ -33,6 +37,12 @@
   consuming incomplete Warp outputs, and Torch temporary storage from being
   reused while Warp still references it. JAX bindings continue to use
   XLA-provided streams through Warp's JAX adapters.
+- Corrected the multipole Ewald/PME uniform-background coefficient for
+  non-neutral cells. Split Ewald, PME, and cached Ewald now use the same
+  zero-mode convention as the direct reciprocal calculation, including charge
+  and cell derivatives.
+- Segmented sums no longer retain CUDA graph-pool allocations through cached Warp
+  launches when used from compiled PyTorch custom operators.
 - Fixed JAX autodiff through `ewald_reciprocal_space(...)` when `k_vectors`
   are derived from the differentiated cell. The custom JVP previously
   discarded the `k_vectors` tangent and omitted the reciprocal-cell

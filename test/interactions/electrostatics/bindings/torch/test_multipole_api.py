@@ -781,6 +781,9 @@ class TestCapabilityMatrix:
         """Value-loss training: ∂value/∂multipole_moments vs central FD."""
         td = _torch_device(device)
         sys = _build_system(mode, l_max, td, seed=3)
+        if entry in ("ewald", "pme"):
+            sys["mm"] = sys["mm"].clone()
+            sys["mm"][:, 0] += 0.2
         value = _make_value_fn(entry, mode, l_max, sys)
         pos, cell = sys["pos"], sys["cell"]
         m = sys["mm"].clone().requires_grad_(True)
@@ -809,6 +812,9 @@ class TestCapabilityMatrix:
         """Stress / virial: d value/d cell vs central FD (fixed topological nlist)."""
         td = _torch_device(device)
         sys = _build_system(mode, l_max, td, seed=5)
+        if entry in ("ewald", "pme"):
+            sys["mm"] = sys["mm"].clone()
+            sys["mm"][:, 0] += 0.2
         value = _make_value_fn(entry, mode, l_max, sys)
         pos, mm = sys["pos"], sys["mm"]
         c = sys["cell"].clone().requires_grad_(True)
@@ -835,6 +841,7 @@ class TestCrossMethodPhysics:
         pos = torch.tensor(pos_np, device=td)
         cell = torch.tensor(np.eye(3) * _BOX, device=td)
         mm = _rand_moments(n, l_max, rng, td)
+        mm[:, 0] += 0.125
         totals = []
         for alpha in (0.4, 0.6, 0.9):
             sc = math.sqrt(_SIGMA**2 + 1.0 / (4.0 * alpha**2))
@@ -867,6 +874,7 @@ class TestCrossMethodPhysics:
         pos = torch.tensor(pos_np, device=td)
         cell = torch.tensor(np.eye(3) * _BOX, device=td)
         mm = _rand_moments(n, l_max, rng, td)
+        mm[:, 0] += 0.125
         idx, cnt, sh = _neigh(pos_np, _BOX, _RCUT)
         ptr = [0] + list(np.cumsum(cnt))
         ij = torch.tensor(idx, dtype=torch.int32, device=td)

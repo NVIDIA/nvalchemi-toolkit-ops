@@ -61,6 +61,7 @@ Using neighbor list format:
 """
 
 from dataclasses import dataclass
+from functools import partial
 
 import jax
 import jax.numpy as jnp
@@ -977,6 +978,11 @@ __all__ = [
 # ==============================================================================
 
 
+@partial(
+    jax.tree_util.register_dataclass,
+    data_fields=["rcov", "r4r2", "c6ab", "cn_ref"],
+    meta_fields=["interp_mesh"],
+)
 @dataclass
 class D3Parameters:
     r"""
