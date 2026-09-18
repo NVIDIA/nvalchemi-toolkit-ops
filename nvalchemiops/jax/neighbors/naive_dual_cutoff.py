@@ -25,6 +25,7 @@ from warp import jax_kernel
 from nvalchemiops.jax.neighbors._registration import _lazy_naive_kernel
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     _validate_coo_capacities,
+    _validate_dual_cutoff_order,
     compute_naive_num_shifts,
     get_fixed_capacity_neighbor_list_from_neighbor_matrix,
     get_neighbor_list_from_neighbor_matrix,
@@ -139,9 +140,9 @@ def naive_neighbor_list_dual_cutoff(
     positions : jax.Array, shape (total_atoms, 3), dtype=float32 or float64
         Atomic coordinates in Cartesian space.
     cutoff1 : float
-        First cutoff distance (typically smaller).
+        First cutoff distance.
     cutoff2 : float
-        Second cutoff distance (typically larger).
+        Second cutoff distance. Must be greater than or equal to ``cutoff1``.
     pbc : jax.Array, shape (1, 3) or (3,), dtype=bool, optional
         Periodic boundary condition flags for each dimension.
     cell : jax.Array, shape (1, 3, 3) or (3, 3), dtype=float32 or float64, optional
@@ -223,6 +224,7 @@ def naive_neighbor_list_dual_cutoff(
     nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_pbc_dual_cutoff : Core warp launcher (with PBC)
     naive_neighbor_list : Single cutoff version
     """
+    _validate_dual_cutoff_order(cutoff1, cutoff2)
     coo_capacities = _validate_coo_capacities(
         coo_capacity,
         return_neighbor_list,

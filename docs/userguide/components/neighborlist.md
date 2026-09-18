@@ -906,6 +906,9 @@ neighbor_list_coo = neighbor_list_coo[:, :num_pairs]
 shifts_coo = shifts_coo[:num_pairs]
 ```
 
+The naive dual-cutoff APIs require the second cutoff to be greater than or equal
+to the first. Cluster-tile dual-matrix calls require `cutoff2 >= cutoff`.
+
 Treat `cutoff` as a static specialization input: pass a Python scalar closed
 over the compiled function, and specialize another function when the cutoff
 changes. Search-radius arrays can be JAX arrays because kernels consume them as

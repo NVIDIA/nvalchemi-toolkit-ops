@@ -77,6 +77,10 @@ static `coo_capacity` and check the returned `overflow` flag outside `jax.jit`. 
 [Neighbor Lists guide](../components/neighborlist.md) for complete
 single-system, batched, matrix, fixed-COO, and cluster-tile contracts.
 
+Dual-cutoff calls now reject reversed cutoffs: naive dual-cutoff methods require
+`cutoff2 >= cutoff1`, and cluster-tile dual-matrix calls require
+`cutoff2 >= cutoff`. Equal cutoffs remain valid.
+
 ### Retained Ewald Miller Topology
 
 Torch and JAX can now retain integer Miller topology separately from Cartesian

@@ -12,6 +12,9 @@
   while runtime sizing changes use the existing overflow signal.
   ``neighbor_list`` performs eager orchestration, and compact COO output uses
   eager shape compaction.
+- JAX dual-cutoff neighbor APIs now reject reversed cutoffs. Naive methods
+  require ``cutoff2 >= cutoff1`` and cluster-tile methods require
+  ``cutoff2 >= cutoff``; equal cutoffs remain valid.
 - JAX DFT-D3 now accepts `D3Parameters` directly as a runtime argument to
   `jax.jit`, without unpacking and reconstructing its parameter arrays.
 - Raised the minimum supported Warp version to 1.15 and migrated JAX bindings

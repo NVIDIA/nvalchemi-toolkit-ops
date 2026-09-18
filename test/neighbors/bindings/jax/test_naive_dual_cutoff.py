@@ -25,6 +25,7 @@ import numpy as np
 import pytest
 
 from nvalchemiops.jax.neighbors import (
+    batch_naive_neighbor_list_dual_cutoff,
     compute_naive_num_shifts,
     naive_neighbor_list,
     naive_neighbor_list_dual_cutoff,
@@ -35,6 +36,34 @@ from .conftest import create_simple_cubic_system_jax, requires_gpu
 pytestmark = requires_gpu
 
 dual_module = import_module("nvalchemiops.jax.neighbors.naive_dual_cutoff")
+
+
+class TestDualCutoffOrder:
+    """Dual-cutoff boundaries require the second cutoff to be no smaller."""
+
+    def test_direct_naive_rejects_reversed_cutoffs_before_pbc_setup(self):
+        """The direct PBC entry point rejects a reversed cutoff pair."""
+        positions, cell, pbc = create_simple_cubic_system_jax(
+            num_atoms=2,
+            cell_size=2.0,
+            dtype=jnp.float32,
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="^cutoff2 must be greater than or equal to cutoff1$",
+        ):
+            naive_neighbor_list_dual_cutoff(positions, 1.0, 0.5, pbc=pbc, cell=cell)
+
+    def test_direct_batch_naive_rejects_reversed_cutoffs(self):
+        """The batched direct entry point rejects a reversed cutoff pair."""
+        positions = jnp.zeros((0, 3), dtype=jnp.float32)
+
+        with pytest.raises(
+            ValueError,
+            match="^cutoff2 must be greater than or equal to cutoff1$",
+        ):
+            batch_naive_neighbor_list_dual_cutoff(positions, 1.0, 0.5)
 
 
 def _active_neighbor_shift_rows(

@@ -38,6 +38,7 @@ from nvalchemiops.jax.neighbors._registration import (
     _cluster_tile_matrix_registration,
     _GraphRegistration,
 )
+from nvalchemiops.jax.neighbors.neighbor_utils import _validate_dual_cutoff_order
 from nvalchemiops.neighbors.cluster_tile import (
     TILE_GROUP_SIZE,
 )
@@ -1372,8 +1373,8 @@ def batch_query_cluster_tile(
     fill_value : int, optional
         Sentinel written to unused neighbor slots. Defaults to ``natom``.
     cutoff2 : float, optional
-        Second cutoff for dual-cutoff matrix output. Cannot be combined
-        with pair outputs.
+        Second cutoff for dual-cutoff matrix output. Must be greater than or
+        equal to ``cutoff`` and cannot be combined with pair outputs.
     rebuild_flags : jax.Array, shape (S,), dtype=bool, optional
         Per-system selective rebuild flags. Requires ``tile_offsets``,
         ``tile_counts``, and ``batch_idx``. For an empty batch, false-flag
@@ -1438,6 +1439,8 @@ def batch_query_cluster_tile(
     has_pair_outputs = (
         bool(return_vectors) or bool(return_distances) or (pair_fn is not None)
     )
+    if cutoff2 is not None:
+        _validate_dual_cutoff_order(cutoff, cutoff2, cutoff1_name="cutoff")
     dual_cutoff = cutoff2 is not None
     selective = rebuild_flags is not None
     if (dual_cutoff or selective) and has_pair_outputs:
@@ -1955,8 +1958,8 @@ def batch_cluster_tile_neighbor_list(
     cutoff : float
         Cutoff distance in Cartesian units. Must be positive.
     cutoff2 : float, optional
-        Matrix-format second cutoff. Cannot be combined with pair outputs
-        or COO/tile formats.
+        Matrix-format second cutoff. Must be greater than or equal to
+        ``cutoff`` and cannot be combined with pair outputs or COO/tile formats.
     rebuild_flags : jax.Array, shape (num_systems,), dtype=bool, optional
         Selective rebuild flags for matrix or segmented COO output. Requires
         fixed tile segments and previous output buffers.
@@ -2091,6 +2094,8 @@ def batch_cluster_tile_neighbor_list(
     has_pair_outputs = (
         bool(return_vectors) or bool(return_distances) or (pair_fn is not None)
     )
+    if cutoff2 is not None:
+        _validate_dual_cutoff_order(cutoff, cutoff2, cutoff1_name="cutoff")
     dual_cutoff = cutoff2 is not None
     selective = rebuild_flags is not None
     if has_pair_outputs and format == "tile":

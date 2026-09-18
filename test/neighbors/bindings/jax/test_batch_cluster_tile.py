@@ -31,6 +31,7 @@ from nvalchemiops.jax.neighbors.batch_cluster_tile import (
     allocate_batch_cluster_tile_list,
     batch_build_cluster_tile_list,
     batch_cluster_tile_neighbor_list,
+    batch_query_cluster_tile,
     estimate_batch_cluster_tile_list_sizes,
     estimate_batch_cluster_tile_segments,
     estimate_batch_max_tiles_per_group,
@@ -68,6 +69,71 @@ def _traced_preload_device_count() -> int:
         device for device in local_devices if device.platform in {"gpu", "cuda", "rocm"}
     )
     return len(accelerators or local_devices)
+
+
+class TestBatchClusterTileDualCutoffValidation:
+    """Exercise the batched public matrix dual-cutoff boundaries."""
+
+    def test_batch_query_rejects_reversed_dual_cutoffs_and_accepts_equal(self):
+        """The direct batched matrix query validates cutoff ordering."""
+        positions, cell_batch, batch_ptr = _make_batch([32], [4.0])
+        positions = positions.astype(jnp.float32)
+        tile_state = batch_cluster_tile_neighbor_list(
+            positions,
+            1.0,
+            cell_batch,
+            batch_ptr,
+            format="tile",
+        )
+        query_args = (
+            tile_state[4],
+            tile_state[5],
+            tile_state[6],
+            tile_state[7],
+            cell_batch,
+            tile_state[0],
+            tile_state[1],
+            tile_state[2],
+            tile_state[3],
+            1.0,
+            positions.shape[0],
+            32,
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="cutoff2 must be greater than or equal to cutoff",
+        ):
+            batch_query_cluster_tile(*query_args, cutoff2=0.5)
+
+        result = batch_query_cluster_tile(*query_args, cutoff2=1.0)
+        assert len(result) == 6
+
+    def test_batch_wrapper_rejects_reversed_dual_cutoffs_and_accepts_equal(self):
+        """The one-shot batch wrapper applies the same ordering contract."""
+        positions, cell_batch, batch_ptr = _make_batch([32], [4.0])
+        positions = positions.astype(jnp.float32)
+
+        with pytest.raises(
+            ValueError,
+            match="cutoff2 must be greater than or equal to cutoff",
+        ):
+            batch_cluster_tile_neighbor_list(
+                positions,
+                1.0,
+                cell_batch,
+                batch_ptr,
+                cutoff2=0.5,
+            )
+
+        result = batch_cluster_tile_neighbor_list(
+            positions,
+            1.0,
+            cell_batch,
+            batch_ptr,
+            cutoff2=1.0,
+        )
+        assert len(result) == 6
 
 
 class TestJaxBatchClusterTileValidation:

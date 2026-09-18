@@ -72,6 +72,19 @@ def _validate_coo_capacities(
     return capacities
 
 
+def _validate_dual_cutoff_order(
+    cutoff1: float,
+    cutoff2: float,
+    *,
+    cutoff1_name: str = "cutoff1",
+) -> None:
+    """Require the second dual-cutoff radius to include the first."""
+    if cutoff2 < cutoff1:
+        raise ValueError(
+            f"cutoff2 must be greater than or equal to {cutoff1_name}",
+        )
+
+
 def _validate_coo_capacity(
     coo_capacity: int | None,
     return_neighbor_list: bool,

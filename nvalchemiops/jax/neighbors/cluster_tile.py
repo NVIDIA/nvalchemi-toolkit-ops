@@ -47,6 +47,7 @@ from nvalchemiops.jax.neighbors._registration import (
     _GraphRegistration,
 )
 from nvalchemiops.jax.neighbors.neighbor_utils import (
+    _validate_dual_cutoff_order,
     coo_pack_pair_geometry,
     get_neighbor_list_from_neighbor_matrix,
 )
@@ -1106,7 +1107,8 @@ def query_cluster_tile(
         Sentinel value written into unused neighbor slots.  Defaults to
         ``natom``.
     cutoff2 : float, optional
-        Second cutoff for dual-matrix output.  Requires
+        Second cutoff for dual-matrix output. Must be greater than or equal to
+        ``cutoff``. Requires
         ``neighbor_matrix2`` / ``num_neighbors2`` /
         ``neighbor_matrix_shifts2`` output buffers.
     neighbor_matrix : jax.Array, shape (natom, max_neighbors), dtype=int32, optional
@@ -1171,6 +1173,8 @@ def query_cluster_tile(
     has_pair_outputs = (
         bool(return_vectors) or bool(return_distances) or (pair_fn is not None)
     )
+    if cutoff2 is not None:
+        _validate_dual_cutoff_order(cutoff, cutoff2, cutoff1_name="cutoff")
     dual_cutoff = cutoff2 is not None
     selective = rebuild_flags is not None
     if (dual_cutoff or selective) and has_pair_outputs:
@@ -1822,8 +1826,8 @@ def cluster_tile_neighbor_list(
     cutoff : float
         Cutoff distance in Cartesian units. Must be positive.
     cutoff2 : float, optional
-        Matrix-format second cutoff. Cannot be combined with pair outputs
-        or COO/tile formats.
+        Matrix-format second cutoff. Must be greater than or equal to
+        ``cutoff`` and cannot be combined with pair outputs or COO/tile formats.
     rebuild_flags : jax.Array, shape (1,), dtype=bool, optional
         Selective rebuild flag for matrix or segmented COO output. Requires
         previous tile state plus previous output buffers.
@@ -1941,6 +1945,8 @@ def cluster_tile_neighbor_list(
     has_pair_outputs = (
         bool(return_vectors) or bool(return_distances) or (pair_fn is not None)
     )
+    if cutoff2 is not None:
+        _validate_dual_cutoff_order(cutoff, cutoff2, cutoff1_name="cutoff")
     dual_cutoff = cutoff2 is not None
     selective = rebuild_flags is not None
     if has_pair_outputs and format == "tile":

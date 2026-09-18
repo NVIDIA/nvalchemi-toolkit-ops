@@ -92,6 +92,7 @@ from nvalchemiops.jax.neighbors.naive_dual_cutoff import (
 # Utility functions
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     NeighborOverflowError,
+    _validate_dual_cutoff_order,
     allocate_cell_list,
     compute_naive_num_shifts,
     estimate_max_neighbors,
@@ -161,7 +162,8 @@ def neighbor_list(
         Cumulative atom counts defining system boundaries.
     cutoff2 : float, optional
         Second cutoff distance for neighbor detection in Cartesian units.
-        Must be positive. Atoms within this distance are considered neighbors.
+        Must be positive and greater than or equal to ``cutoff``. Atoms within
+        this distance are considered neighbors.
     half_fill : bool, optional
         If True, only store half of the neighbor relationships to avoid double counting.
         Another half could be reconstructed by swapping source and target indices and inverting unit shifts.
@@ -370,6 +372,8 @@ def neighbor_list(
     """
     if batch_ptr is not None and batch_ptr.shape[0] < 2:
         raise ValueError("batch_ptr must have length at least 2")
+    if cutoff2 is not None:
+        _validate_dual_cutoff_order(cutoff, cutoff2, cutoff1_name="cutoff")
 
     use_pair_fn_option = bool(kwargs.pop("use_pair_fn", False))
     selected_atom_centric_path = str(kwargs.pop("atom_centric_path", "auto"))

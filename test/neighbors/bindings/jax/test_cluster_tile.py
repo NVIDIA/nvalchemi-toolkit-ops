@@ -31,6 +31,7 @@ from nvalchemiops.jax.neighbors.cluster_tile import (
     build_cluster_tile_list,
     cluster_tile_neighbor_list,
     estimate_cluster_tile_list_sizes,
+    query_cluster_tile,
     query_cluster_tile_coo,
 )
 from nvalchemiops.neighbors.cluster_tile import estimate_max_tiles_per_group
@@ -115,6 +116,60 @@ def _matrix_to_pair_set_full(
             sx, sy, sz = (int(x) for x in sh_np[i, k])
             pairs.add((i, j, sx, sy, sz))
     return pairs
+
+
+class TestClusterTileDualCutoffValidation:
+    """Exercise the public matrix dual-cutoff boundaries."""
+
+    def test_query_cluster_tile_rejects_reversed_dual_cutoffs_and_accepts_equal(self):
+        """The direct matrix query validates cutoff ordering before launch."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]] * 16,
+            dtype=jnp.float32,
+        )
+        cell = _orthorhombic_cell(4.0)
+        state = build_cluster_tile_list(positions, 1.0, cell)
+        query_args = (
+            state[0],
+            state[2],
+            state[3],
+            state[4],
+            state[11],
+            state[12],
+            state[13],
+            cell,
+            1.0,
+            positions.shape[0],
+            32,
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="cutoff2 must be greater than or equal to cutoff",
+        ):
+            query_cluster_tile(*query_args, cutoff2=0.5)
+
+        result = query_cluster_tile(*query_args, cutoff2=1.0)
+        assert len(result) == 6
+
+    def test_cluster_tile_neighbor_list_rejects_reversed_dual_cutoffs_and_accepts_equal(
+        self,
+    ):
+        """The one-shot matrix wrapper applies the same ordering contract."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]] * 16,
+            dtype=jnp.float32,
+        )
+        cell = _orthorhombic_cell(4.0)
+
+        with pytest.raises(
+            ValueError,
+            match="cutoff2 must be greater than or equal to cutoff",
+        ):
+            cluster_tile_neighbor_list(positions, 1.0, cell, cutoff2=0.5)
+
+        result = cluster_tile_neighbor_list(positions, 1.0, cell, cutoff2=1.0)
+        assert len(result) == 6
 
 
 class TestTileNeighborListCorrectness:
