@@ -58,9 +58,10 @@ systems and history depth ``m``::
         history_count=torch.zeros(M, **i32),
     )
 
-Per-system scalars are float64 whatever the coordinate precision: the
-search compares a difference of *total* energies, and a single-precision
-accumulator would be coarser than the differences being tested.
+Per-system scalars are float64 whatever the coordinate precision. The ratio
+``ys / yy`` sets the initial inverse-Hessian scaling for the two-loop recursion,
+and near convergence ``y = force_base - F`` is a difference of two nearly equal
+vectors -- exactly where single-precision cancellation destroys the ratio.
 
 Restoring those same values is what resets the optimizer; there is no reset
 helper, because there is no state object to reset.

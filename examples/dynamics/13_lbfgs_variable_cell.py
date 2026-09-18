@@ -193,8 +193,9 @@ s_history = zeros(history_size, num_dofs, 3)
 y_history = zeros(history_size, num_dofs, 3)
 
 # Per-history-slot and per-system scalars. These stay float64 whatever
-# precision the coordinates use: the line search compares a difference of
-# *total* energies, which single precision cannot resolve near convergence.
+# precision the coordinates use: the ratio ``ys / yy`` scales the initial
+# inverse Hessian, and near convergence it is a ratio of differences of nearly
+# equal vectors, which single precision cancels away.
 ys = zeros(history_size, num_systems, dt=f64)
 yy = zeros(history_size, num_systems, dt=f64)
 alpha_hist = zeros(history_size, num_systems, dt=f64)
@@ -372,7 +373,11 @@ print("  (textbook FCC argon equilibrium is near 5.26 Å)")
 
 # %%
 # Plot convergence
-# ----------------
+# ----------------#
+# The energy is plotted for interest, not as a convergence signal. Without a
+# line search there is no Armijo test forcing it down, so it may rise on an
+# individual step; the *force* is what the optimizer drives to zero and what
+# ``status`` reports on.
 
 points = np.arange(len(energy_hist))
 fig, ax = plt.subplots(3, 1, figsize=(7.0, 7.5), sharex=True, constrained_layout=True)

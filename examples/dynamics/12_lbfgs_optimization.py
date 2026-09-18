@@ -26,8 +26,9 @@ using:
 - The shared example utilities in :mod:`examples.dynamics._dynamics_utils`
 
 L-BFGS is a quasi-Newton method: it builds an implicit approximation to the
-inverse Hessian from the last few position and gradient differences, and picks
-a step length along that direction with a line search. Compared with FIRE2
+inverse Hessian from the last few position and force differences, then steps
+along that direction as far as a ``maxstep`` trust region allows. There is no
+line search, and no energy is read at all. Compared with FIRE2
 (``09_fire2_optimization.py``) it:
 
 - Reaches a given force tolerance in **far fewer force evaluations**, which is
@@ -356,7 +357,11 @@ else:
 
 # %%
 # Plot convergence
-# ----------------
+# ----------------#
+# The energy is plotted for interest, not as a convergence signal. Without a
+# line search there is no Armijo test forcing it down, so it may rise on an
+# individual step; the *force* is what the optimizer drives to zero and what
+# ``status`` reports on.
 
 fig, ax = plt.subplots(2, 1, figsize=(7.0, 5.5), constrained_layout=True)
 

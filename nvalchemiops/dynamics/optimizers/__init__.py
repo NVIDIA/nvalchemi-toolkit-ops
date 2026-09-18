@@ -28,10 +28,11 @@ FIRE2 (Fast Inertial Relaxation Engine v2)
     Improved FIRE with adaptive damping and velocity mixing.
 
 L-BFGS (Limited-memory Broyden-Fletcher-Goldfarb-Shanno)
-    Quasi-Newton optimization with a strong Wolfe line search. Usually reaches
-    a given force tolerance in far fewer energy/force evaluations than the
-    FIRE optimizers, which is the cost that dominates relaxation with a
-    machine-learned potential.
+    Quasi-Newton optimization with a ``maxstep`` trust region. Usually reaches
+    a given force tolerance in far fewer force evaluations than the FIRE
+    optimizers, which is the cost that dominates relaxation with a
+    machine-learned potential. It reads no energy, so a model whose forces are
+    not the gradient of its reported energy relaxes just as well.
 
 Main API Functions
 ------------------
