@@ -260,6 +260,58 @@ class TestLBFGSTorchState:
                     f"{module.__name__}.__all__ still exports {name}"
                 )
 
+    def test_no_line_search_parameters_survive_anywhere(self):
+        """The step length is a trust region, and nothing may reintroduce a search.
+
+        Pinned across all three layers because the line search was removed for
+        a measured reason -- it compares *total energies* while the direction
+        comes from *forces*, which are different surfaces for a model with a
+        direct force head, so it converged poorly on OMat24. A parameter
+        creeping back in would reintroduce that failure silently.
+        """
+        import nvalchemiops.jax.lbfgs as jax_lbfgs
+        import nvalchemiops.torch.lbfgs as torch_lbfgs
+        from nvalchemiops.dynamics.optimizers import lbfgs as warp_lbfgs
+
+        banned = {
+            "energy", "f_base", "gd", "ls_trials",
+            "ftol", "wolfe", "step_scale_down", "step_scale_up",
+            "min_step", "max_step", "max_ls_iter",
+        }  # fmt: skip
+        entry_points = [
+            warp_lbfgs.lbfgs_step,
+            warp_lbfgs.lbfgs_update,
+            warp_lbfgs.lbfgs_prepare_step,
+            warp_lbfgs.lbfgs_step_coord_cell,
+            torch_lbfgs.lbfgs_step_coord,
+            torch_lbfgs.lbfgs_step_extended,
+            torch_lbfgs.lbfgs_step_coord_cell,
+            jax_lbfgs.lbfgs_step_coord,
+            jax_lbfgs.lbfgs_step_coord_cell,
+        ]
+        for fn in entry_points:
+            params = set(inspect.signature(fn).parameters)
+            leaked = params & banned
+            assert not leaked, f"{fn.__module__}.{fn.__name__} takes {sorted(leaked)}"
+            # maxstep is the one and only step-length control. Entry points
+            # that forward their scalars (``lbfgs_step_extended``) declare a
+            # ``kwargs`` instead, and are covered by the call they forward to.
+            assert "maxstep" in params or "kwargs" in params, (
+                f"{fn.__name__} has neither a trust region nor a forwarding kwargs"
+            )
+
+        # The JAX callable bodies are hand-written, so check them too.
+        for name in ("_lbfgs_body_f32", "_lbfgs_body_f64",
+                     "_lbfgs_cell_body_f32", "_lbfgs_cell_body_f64"):  # fmt: skip
+            params = set(inspect.signature(getattr(jax_lbfgs, name)).parameters)
+            assert not (params & banned), f"{name} takes {sorted(params & banned)}"
+
+        # And no status can report a line-search failure.
+        assert {c for c in dir(warp_lbfgs) if c.startswith("LBFGS_")} == {
+            "LBFGS_NEED_EVAL",
+            "LBFGS_CONVERGED",
+        }
+
     def test_operator_parameters_match_the_buffer_order(self):
         """A reordering here would silently swap two tensors at the boundary.
 
