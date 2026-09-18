@@ -759,9 +759,13 @@ class FourierD3Setup:
             moduli_z=moduli[2],
             mesh_dimensions=(mesh_nx, mesh_ny, mesh_nz),
             spline_order=spline_order,
-            # Kept so that a later call can prove the setup belongs to the cell it is being
-            # used with, rather than only asserting it in the docstring.
-            cell=cells.contiguous(),
+            # An independent snapshot, not a view. ``contiguous()`` returns the input
+            # unchanged when it already is, so the record would alias the caller's tensor:
+            # an in-place cell update would then move the snapshot along with it while the
+            # derived quantities stayed stale, and the comparison in ``validate_for`` would
+            # be against itself. ``detach`` keeps a cached object from holding an autograd
+            # graph alive.
+            cell=cells.detach().clone(),
             exact_moduli=exact_moduli,
         )
 

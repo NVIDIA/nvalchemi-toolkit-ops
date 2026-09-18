@@ -1013,6 +1013,23 @@ class TestPrecomputedSetup:
         with pytest.raises(ValueError, match="different cell"):
             _evaluate(system, setup=other, mesh_dimensions=None)
 
+    def test_an_in_place_cell_change_is_caught(self):
+        """The recorded cell must be a snapshot, not a view of the caller's tensor.
+
+        Variable-cell dynamics updates the cell in place. If the setup merely referenced it,
+        the record would move with the mutation while the inverse cell, volumes, wave vectors
+        and moduli stayed behind, and the comparison would be a tensor against itself. The
+        stale setup then passes and the evaluation is badly wrong, not subtly so.
+        """
+        system = _system("cuda:0")
+        cell = system["cell"]
+        setup = FourierD3Setup.build(cell, system["params"].n_species, MESH)
+        assert setup.cell.data_ptr() != cell.data_ptr()
+
+        cell.mul_(1.10)
+        with pytest.raises(ValueError, match="different cell"):
+            _evaluate(system, setup=setup, mesh_dimensions=None)
+
     def test_a_setup_for_a_different_batch_is_refused(self):
         """Shape mismatches are caught without reading any device memory."""
         system = _system("cuda:0")
