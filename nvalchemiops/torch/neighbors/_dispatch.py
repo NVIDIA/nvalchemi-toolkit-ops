@@ -33,6 +33,7 @@ from nvalchemiops.neighbors.base_dispatch import (
 from nvalchemiops.neighbors.base_dispatch import (
     estimate_neighbor_list_costs as _estimate_neighbor_list_costs_wp,
 )
+from nvalchemiops.torch._warp_op_helpers import scoped_torch_warp_stream
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     _raise_if_compiling_host_only,
     synthesize_cell_for_batch,
@@ -155,6 +156,7 @@ def _normalize_selector_cell_pbc(
     return cell.detach().contiguous(), pbc.detach().to(dtype=torch.bool).contiguous()
 
 
+@scoped_torch_warp_stream
 def estimate_neighbor_list_costs(
     batch_ptr: torch.Tensor,
     cell: torch.Tensor,

@@ -33,6 +33,7 @@ from nvalchemiops.interactions.dispersion._dftd3 import (
     dftd3_pbc as wp_dftd3_pbc,
 )
 from nvalchemiops.torch import torch_custom_op
+from nvalchemiops.torch._warp_op_helpers import scoped_torch_warp_stream
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 __all__ = [
@@ -239,6 +240,7 @@ class D3Parameters:
     "nvalchemiops::dftd3_matrix",
     mutates_args=("energy", "forces", "coord_num", "virial"),
 )
+@scoped_torch_warp_stream
 def _dftd3_matrix_op(
     positions: torch.Tensor,
     numbers: torch.Tensor,
@@ -468,6 +470,7 @@ def _dftd3_matrix_op(
     "nvalchemiops::dftd3_matrix_pbc",
     mutates_args=("energy", "forces", "coord_num", "virial"),
 )
+@scoped_torch_warp_stream
 def _dftd3_matrix_pbc_op(
     positions: torch.Tensor,
     numbers: torch.Tensor,
@@ -724,6 +727,7 @@ def _dftd3_matrix_pbc_op(
     "nvalchemiops::dftd3",
     mutates_args=("energy", "forces", "coord_num", "virial"),
 )
+@scoped_torch_warp_stream
 def _dftd3_op(
     positions: torch.Tensor,
     numbers: torch.Tensor,
@@ -941,6 +945,7 @@ def _dftd3_op(
     "nvalchemiops::dftd3_pbc",
     mutates_args=("energy", "forces", "coord_num", "virial"),
 )
+@scoped_torch_warp_stream
 def _dftd3_pbc_op(
     positions: torch.Tensor,
     numbers: torch.Tensor,

@@ -33,7 +33,6 @@ Design:
 from __future__ import annotations
 
 import math
-from contextlib import nullcontext
 
 import torch
 import warp as wp
@@ -94,6 +93,10 @@ from nvalchemiops.math.spline import (
 from nvalchemiops.torch._warnings import _warn_compile_missing_argument_inference
 from nvalchemiops.torch._warp_op_helpers import (
     register_warp_op_chain,
+    scoped_torch_warp_stream,
+)
+from nvalchemiops.torch._warp_op_helpers import (
+    scoped_warp_stream as _scoped_warp_stream,
 )
 from nvalchemiops.torch.interactions.electrostatics._multipole_moments import (
     infer_l_max,
@@ -101,19 +104,6 @@ from nvalchemiops.torch.interactions.electrostatics._multipole_moments import (
 )
 from nvalchemiops.torch.math import FIELD_CONSTANT
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
-
-
-def _scoped_warp_stream(device: torch.device):
-    """Bind Warp's current stream to PyTorch's current CUDA stream.
-
-    Required for ``torch.cuda.graph`` capture so Warp kernel launches end
-    up on the stream being captured rather than Warp's default stream.
-    Same as the monopole branch's ``_pme_scoped_warp_stream``.
-    """
-    if device.type != "cuda":
-        return nullcontext()
-    torch_stream = torch.cuda.current_stream(device)
-    return wp.ScopedStream(wp.stream_from_torch(torch_stream))
 
 
 def _wp_from_torch(tensor: torch.Tensor, dtype):
@@ -133,6 +123,7 @@ def _wp_from_torch(tensor: torch.Tensor, dtype):
     "nvalchemiops::multipole_pme_bspline_moduli_1d",
     mutates_args=(),
 )
+@scoped_torch_warp_stream
 def _bspline_moduli_1d_op(miller: torch.Tensor, n: int, order: int) -> torch.Tensor:
     r"""``b[i] = sinc(miller[i] / n)^order`` via the Warp ``bspline_moduli_1d`` kernel.
 
@@ -2507,6 +2498,7 @@ def _gather_potential_forward_fake(mesh, positions, *_args):  # pragma: no cover
     )
 
 
+@scoped_torch_warp_stream
 def _gather_grad_field(  # pragma: no cover
     positions: torch.Tensor,
     weight: torch.Tensor,
@@ -2557,6 +2549,7 @@ def _gather_grad_field(  # pragma: no cover
     return -force_buf
 
 
+@scoped_torch_warp_stream
 def _hessian_contract(  # pragma: no cover
     positions: torch.Tensor,
     direction: torch.Tensor,
@@ -2801,6 +2794,7 @@ def _batch_multipole_pme_gather_potential_backward(  # pragma: no cover
     return grad_mesh, -force_as_neg_grad_pos
 
 
+@scoped_torch_warp_stream
 def _batch_gather_grad_field(  # pragma: no cover
     positions: torch.Tensor,
     weight: torch.Tensor,
@@ -2848,6 +2842,7 @@ def _batch_gather_grad_field(  # pragma: no cover
     return -force_buf
 
 
+@scoped_torch_warp_stream
 def _batch_hessian_contract(  # pragma: no cover
     positions: torch.Tensor,
     direction: torch.Tensor,
@@ -3185,6 +3180,7 @@ def _gather_field_forward_fake(mesh, positions, *_args):  # pragma: no cover
     )
 
 
+@scoped_torch_warp_stream
 def _quad_gradpos(  # pragma: no cover
     positions: torch.Tensor,
     quadrupoles: torch.Tensor,
@@ -3238,6 +3234,7 @@ def _quad_gradpos(  # pragma: no cover
     return grad_positions
 
 
+@scoped_torch_warp_stream
 def _quad_spread(  # pragma: no cover
     positions: torch.Tensor,
     quadrupoles: torch.Tensor,
@@ -3463,6 +3460,7 @@ def _batch_multipole_pme_gather_field_backward(  # pragma: no cover
     return grad_mesh, grad_positions
 
 
+@scoped_torch_warp_stream
 def _batch_quad_gradpos(  # pragma: no cover
     positions: torch.Tensor,
     quadrupoles: torch.Tensor,
@@ -3511,6 +3509,7 @@ def _batch_quad_gradpos(  # pragma: no cover
     return grad_positions
 
 
+@scoped_torch_warp_stream
 def _batch_quad_spread(  # pragma: no cover
     positions: torch.Tensor,
     quadrupoles: torch.Tensor,
@@ -4270,6 +4269,115 @@ register_warp_op_chain(
 )
 
 
+def _multipole_background_coefficient(alpha: float) -> float:
+    r"""Return the positive Ewald-background coefficient excluding volume.
+
+    Parameters
+    ----------
+    alpha : float
+        Positive Ewald splitting parameter.
+
+    Returns
+    -------
+    float
+        :math:`F / (8 \alpha^2)`, where :math:`F` is ``FIELD_CONSTANT``. This
+        coefficient multiplies the charge product divided by cell volume.
+
+    Notes
+    -----
+    The uniform-background energy for a system with total charge :math:`Q` and
+    volume :math:`V` is :math:`F Q^2 / (8 \alpha^2 V)`. Callers subtract its
+    positive magnitude from a reciprocal-space sum whose zero mode is omitted.
+
+    See Also
+    --------
+    _multipole_background_energy_per_atom
+        Distributes the background correction over atoms.
+    multipole_pme_energy_corrections
+        Computes the collective PME self and background corrections.
+    """
+    return FIELD_CONSTANT / (8.0 * alpha**2)
+
+
+def _multipole_background_energy_per_atom(
+    charges: torch.Tensor,
+    alpha: float,
+    volume: torch.Tensor,
+    *,
+    batch_idx: torch.Tensor | None = None,
+    n_systems: int | None = None,
+) -> torch.Tensor:
+    """Return the positive uniform-background correction per atom.
+
+    Parameters
+    ----------
+    charges : torch.Tensor
+        Per-atom charges with shape ``(N,)``. The values are converted to
+        ``float64`` before the correction is evaluated.
+    alpha : float
+        Positive Ewald splitting parameter.
+    volume : torch.Tensor
+        Cell volume in the same length units used for ``alpha``. For one
+        system, this is a scalar or one-element tensor. For batched input, it
+        is either shape ``(B,)`` or a scalar shared by all ``B`` systems.
+    batch_idx : torch.Tensor, optional
+        ``int32`` or ``int64`` system index for each atom, with shape ``(N,)``.
+        When omitted, all atoms form one system.
+    n_systems : int, optional
+        Number of packed systems. It is required for compile-safe batched
+        calls; eager calls infer it from ``batch_idx`` when omitted.
+
+    Returns
+    -------
+    torch.Tensor
+        Positive ``float64`` tensor with shape ``(N,)``. Atom ``i`` receives
+        ``FIELD_CONSTANT * q_i * Q_b / (8 * alpha**2 * V_b)``, where ``b`` is
+        its system, ``Q_b`` is that system's total charge, and ``V_b`` is its
+        cell volume.
+
+    Notes
+    -----
+    The reciprocal-space PME sum omits its zero mode. Callers subtract this
+    positive correction to match the direct-k Ewald convention for charged
+    cells. The correction depends only on monopole charges; dipoles and
+    quadrupoles do not contribute.
+
+    See Also
+    --------
+    multipole_pme_energy_corrections
+        Combines this background term with the per-atom self-energy terms.
+    """
+    charges_f64 = charges.to(torch.float64)
+    c_bg_no_v = _multipole_background_coefficient(alpha)
+    if batch_idx is None:
+        total_charge = charges_f64.sum()
+        return (
+            c_bg_no_v
+            * charges_f64
+            * total_charge
+            / volume.to(torch.float64).reshape(())
+        )
+
+    if n_systems is None:
+        _warn_compile_missing_argument_inference(
+            missing="`n_systems`",
+            inference="inferring it from `batch_idx`",
+        )
+        n_systems = int(batch_idx.max().item()) + 1
+    total_charge = torch.zeros(
+        n_systems, dtype=torch.float64, device=charges.device
+    ).scatter_add(0, batch_idx, charges_f64)
+    vol_per_system = volume.to(torch.float64).reshape(-1)
+    if vol_per_system.numel() == 1 and n_systems > 1:
+        vol_per_system = vol_per_system.expand(n_systems)
+    return (
+        c_bg_no_v
+        * charges_f64
+        * total_charge.index_select(0, batch_idx)
+        / vol_per_system.index_select(0, batch_idx)
+    )
+
+
 def multipole_pme_energy_corrections(
     charges: torch.Tensor,
     dipoles: torch.Tensor | None,
@@ -4306,7 +4414,7 @@ def multipole_pme_energy_corrections(
 
     .. math::
 
-        E_\text{background} = \frac{F \pi}{2 \alpha^2 V}\, Q_\text{total}^2
+        E_\text{background} = \frac{F}{8 \alpha^2 V}\, Q_\text{total}^2
 
     For neutral systems (``Q_total = 0``) the background term vanishes;
     for non-neutral systems it is included via the standard
@@ -4355,9 +4463,9 @@ def multipole_pme_energy_corrections(
     Returns
     -------
     correction : torch.Tensor
-        ``E_self - E_background`` per system (or scalar). Caller
-        SUBTRACTS this from the raw reciprocal energy: ``E_recip_corr
-        = E_recip_raw - correction``.
+        ``E_self + E_background`` per system (or scalar), where
+        ``E_background`` is the positive magnitude. The caller subtracts this
+        from the raw reciprocal energy.
     """
     if dipoles is not None and dipoles.shape != (charges.shape[0], 3):
         raise ValueError(
@@ -4376,7 +4484,7 @@ def multipole_pme_energy_corrections(
     c_self_q = _corr_scalar_array(F / (8.0 * pi32 * sigma_c), device)
     c_self_mu = _corr_scalar_array(F / (48.0 * pi32 * sigma_c**3), device)
     c_self_q2 = _corr_scalar_array(F / (320.0 * pi32 * sigma_c**5), device)
-    c_bg_no_v = _corr_scalar_array(F * math.pi / (2.0 * alpha**2), device)
+    c_bg_no_v = _corr_scalar_array(_multipole_background_coefficient(alpha), device)
 
     charges_f64 = charges.to(torch.float64)
     # Optional moments → zeros (bit-for-bit equal to the explicit-zero call)
@@ -4470,11 +4578,11 @@ def multipole_pme_energy_corrections_per_atom(
         \text{self}_i &= \frac{F q_i^2}{8\pi^{3/2}\sigma_c}
           + \frac{F |\mu_i|^2}{48\pi^{3/2}\sigma_c^3}
           + \frac{F |Q_i|_F^2}{320\pi^{3/2}\sigma_c^5}, \\
-        \text{bg}_i &= \frac{F\pi}{2\alpha^2 V}\, q_i\, Q_\text{total}, \\
-        \text{correction}_i &= \text{self}_i - \text{bg}_i.
+        \text{bg}_i &= \frac{F}{8\alpha^2 V}\, q_i\, Q_\text{total}, \\
+        \text{correction}_i &= \text{self}_i + \text{bg}_i.
 
     The background is split per atom as :math:`q_i \cdot Q_\text{total}` so the per-atom sum
-    recovers the collective :math:`(F\pi / 2\alpha^2 V) Q_\text{total}^2`. Pure-torch
+    recovers the collective :math:`(F / 8\alpha^2 V) Q_\text{total}^2`. Pure-torch
     elementwise (twice-differentiable for free) — matches the
     ``multipole_pme_corrections`` Warp op's reduced value/grads to machine eps.
 
@@ -4493,7 +4601,6 @@ def multipole_pme_energy_corrections_per_atom(
     c_self_q = F / (8.0 * pi32 * sigma_c)
     c_self_mu = F / (48.0 * pi32 * sigma_c**3)
     c_self_q2 = F / (320.0 * pi32 * sigma_c**5)
-    c_bg_no_v = F * math.pi / (2.0 * alpha**2)
 
     charges_f64 = charges.to(torch.float64)
     self_e = c_self_q * charges_f64.square()
@@ -4504,28 +4611,13 @@ def multipole_pme_energy_corrections_per_atom(
             (-1, -2)
         )
 
-    # Background: per-atom share q_i · Q_total / V so Σ_i = Q_total² / V (× c_bg).
-    if batch_idx is None:
-        total_charge = charges_f64.sum()
-        inv_v = (c_bg_no_v / volume.to(torch.float64).reshape(())).reshape(())
-        bg = inv_v * charges_f64 * total_charge
-    else:
-        if n_systems is None:
-            _warn_compile_missing_argument_inference(
-                missing="`n_systems`",
-                inference="inferring it from `batch_idx`",
-            )
-            n_systems = int(batch_idx.max().item()) + 1
-        total_charge = torch.zeros(
-            n_systems, dtype=torch.float64, device=charges.device
-        )
-        total_charge = total_charge.scatter_add(0, batch_idx, charges_f64)
-        vol_ps = volume.to(torch.float64).reshape(-1)
-        if vol_ps.numel() == 1 and n_systems > 1:
-            vol_ps = vol_ps.expand(n_systems)
-        per_atom_v = vol_ps.index_select(0, batch_idx)
-        per_atom_qtot = total_charge.index_select(0, batch_idx)
-        bg = c_bg_no_v * charges_f64 * per_atom_qtot / per_atom_v
+    bg = _multipole_background_energy_per_atom(
+        charges_f64,
+        alpha,
+        volume,
+        batch_idx=batch_idx,
+        n_systems=n_systems,
+    )
 
     return self_e + bg
 

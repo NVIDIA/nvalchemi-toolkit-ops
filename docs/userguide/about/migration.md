@@ -19,6 +19,119 @@ on `NeighborOverflowError`: overflow is reported by an asynchronous runtime
 assertion in a compiled graph. Exact output sizing uses `nonzero` and may
 synchronize the host.
 
+### JAX Neighbor-List Compilation Boundary
+
+Use `neighbor_list(...)` for eager method selection, capacity estimation,
+allocation, and dispatch. It returns the selected method's outputs without
+checking capacity or retrying. Compile a method-specific function such as
+`naive_neighbor_list(...)`, `cell_list(...)`, or
+`cluster_tile_neighbor_list(...)` after choosing the method and capacities.
+After a compiled call, inspect its matrix counts or fixed-COO recovery metadata
+before consuming the output. If necessary, enlarge the buffers or recompute
+stale pair-centric launch metadata, then invoke another specialization.
+
+Replace a compiled unified-dispatch call:
+
+```python
+import jax
+
+from nvalchemiops.jax.neighbors import neighbor_list
+
+
+@jax.jit
+def build_neighbors(positions):
+    return neighbor_list(
+        positions,
+        cutoff,
+        cell=cell,
+        pbc=pbc,
+        method="naive",
+        max_neighbors=max_neighbors,
+    )
+```
+
+with a method-specific compiled call whose allocation and PBC launch metadata
+are prepared eagerly:
+
+```python
+from nvalchemiops.jax.neighbors import (
+    compute_naive_num_shifts,
+    naive_neighbor_list,
+)
+
+
+shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+    cell, cutoff, pbc
+)
+
+
+@jax.jit
+def build_neighbors(positions):
+    return naive_neighbor_list(
+        positions,
+        cutoff,
+        cell=cell,
+        pbc=pbc,
+        max_neighbors=max_neighbors,
+        shift_range_per_dimension=shift_range,
+        num_shifts_per_system=num_shifts,
+        max_shifts_per_system=max_shifts,
+    )
+```
+
+Treat `cell`, `pbc`, cutoff, allocation sizes, and derived PBC launch metadata
+as one specialization. Recompute the metadata and create another specialization
+when `cell`, `pbc`, cutoff, or an allocation-driving value changes. Search
+radii can be JAX arrays; pair-centric cell-list calls additionally close over
+launch metadata derived from those radii. For compiled fixed COO from naive and
+cell-list methods, pass a static `coo_capacity`. The result appends raw required
+row counts and scalar `metadata_valid`; compare the counts with pointer
+differences outside `jax.jit`, and refresh launch metadata when validity is
+false. See the
+[Neighbor Lists guide](../components/neighborlist.md) for complete
+single-system, batched, matrix, fixed-COO, and cluster-tile contracts.
+
+The unreleased aggregate fixed-COO `overflow` boolean was removed because it
+could not distinguish row-width shortage, global COO shortage, and stale
+pair-centric launch metadata. Raw counts preserve the retry size and the clipped
+pointer preserves exactly what was stored; `metadata_valid` separately reports
+whether those counts are trustworthy.
+
+Dual-cutoff calls now reject reversed cutoffs: naive dual-cutoff methods require
+`cutoff2 >= cutoff1`, and cluster-tile dual-matrix calls require
+`cutoff2 >= cutoff`. Equal cutoffs remain valid.
+
+### Cluster-Tile Buffer Capacity
+
+Cluster-tile construction writes candidate tile pairs to a fixed-size
+intermediate buffer before producing a neighbor matrix or COO list. Previously,
+some eager return paths did not check whether construction filled that buffer,
+while existing guards reported the condition as `NeighborOverflowError`. All
+eager Torch and JAX cluster-tile paths now raise `TileBufferOverflow` when the
+required tile-pair count exceeds the allocated capacity. The exception provides
+the required count as `num_tiles`, the capacity as `max_tiles`, and the affected
+`system_index` for a segmented batch.
+
+The convenience functions continue to estimate an internally allocated buffer
+when `max_tiles_per_group` is `None`. An explicit value that is too small now
+raises instead of returning incomplete neighbor output. The
+{ref}`cluster-tile-buffer-capacity` section explains how the parameter changes
+the allocation and how to calculate a retry value from the exception.
+
+JAX transformations require `max_tiles_per_group` to be a positive static
+Python integer when the call allocates any tile-index array because it then
+determines an output shape. Complete caller-supplied tile-index arrays instead
+determine the capacity; an explicit factor is still validated but never resizes
+those arrays. Compiled output shapes remain fixed, and a compiled function
+cannot turn a data-dependent tile count into a Python exception. Adaptive
+compiled workflows should use the lower-level build function, compare its
+returned tile counts with the supplied capacities after leaving the compiled
+region, and run the query only after that check passes.
+
+A segmented eager build reports the first overflowing system. Resizing can
+therefore require successive retries, and changing segment offsets requires a
+replacement state initialized with every system marked for rebuild.
+
 ### Retained Ewald Miller Topology
 
 Torch and JAX can now retain integer Miller topology separately from Cartesian

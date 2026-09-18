@@ -77,7 +77,11 @@ from nvalchemiops.dynamics.utils.cell_filter import (
     pack_velocities_with_cell,
     unpack_velocities_with_cell,
 )
-from nvalchemiops.torch._warp_op_helpers import register_noop_fake, torch_custom_op
+from nvalchemiops.torch._warp_op_helpers import (
+    register_noop_fake,
+    scoped_torch_warp_stream,
+    torch_custom_op,
+)
 
 # Torch dtype -> Warp dtype mappings
 _TORCH_TO_WP_VEC = {torch.float32: wp.vec3f, torch.float64: wp.vec3d}
@@ -106,6 +110,7 @@ def _alloc_if_none(
     return buf
 
 
+@scoped_torch_warp_stream
 def _coord_cell_ext_metadata(
     batch_idx: torch.Tensor,
     M: int,
@@ -151,6 +156,7 @@ def _coord_cell_ext_metadata(
     return atom_ptr, wp_atom_ptr, wp_ext_atom_ptr, wp_ext_batch_idx
 
 
+@scoped_torch_warp_stream
 def _coord_cell_mix_impl(
     positions,
     velocities,
@@ -345,6 +351,7 @@ def _coord_cell_mix_impl(
         "max_norm",
     ),
 )
+@scoped_torch_warp_stream
 def _fire2_step_coord_op(
     positions: torch.Tensor,
     velocities: torch.Tensor,
@@ -590,6 +597,7 @@ def fire2_step_coord(
         "max_norm",
     ),
 )
+@scoped_torch_warp_stream
 def _fire2_step_coord_cell_op(
     positions: torch.Tensor,
     velocities: torch.Tensor,
@@ -1097,6 +1105,7 @@ def fire2_step_coord_cell_mix(
     )
 
 
+@scoped_torch_warp_stream
 def fire2_step_coord_cell_couple(
     positions: torch.Tensor,
     velocities: torch.Tensor,
@@ -1184,6 +1193,7 @@ def fire2_step_coord_cell_couple(
     )
 
 
+@scoped_torch_warp_stream
 def fire2_step_coord_cell_apply(
     positions: torch.Tensor,
     velocities: torch.Tensor,
@@ -1279,6 +1289,7 @@ def fire2_step_coord_cell_apply(
     )
 
 
+@scoped_torch_warp_stream
 def fire2_compute_extended_reductions(
     positions: torch.Tensor,
     velocities: torch.Tensor,
@@ -1481,6 +1492,7 @@ def fire2_compute_extended_reductions(
     return atom_partial, cell_term
 
 
+@scoped_torch_warp_stream
 def fire2_step_extended(
     ext_positions: torch.Tensor,
     ext_velocities: torch.Tensor,

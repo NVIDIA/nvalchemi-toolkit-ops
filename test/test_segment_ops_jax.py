@@ -343,13 +343,21 @@ class TestEdgeCases:
         # via its own dtype rules; we don't simulate that here.
 
     def test_jit(self):
-        """Bindings work inside jax.jit."""
+        """Compiled producer, callable chain, consumer, and VJP stay on XLA."""
         idx = _make_idx(seed=74)
         x = _randn((N, 3), seed=75)
-        f = jax.jit(lambda v: so.segmented_sum(v, idx, M).sum())
-        val = f(x)
-        ref = float(np.asarray(so.segmented_sum(x, idx, M)).sum())
+        producer = jax.jit(lambda v: 1.5 * v - 0.25)
+        f = jax.jit(lambda v: jnp.sin(so.segmented_sum(producer(v), idx, M)).sum())
+        val = f(x).block_until_ready()
+        grad = jax.jit(jax.grad(f))(x).block_until_ready()
+        transformed = 1.5 * np.asarray(x) - 0.25
+        sums = np.zeros((M, 3), dtype=np.float64)
+        np.add.at(sums, np.asarray(idx), transformed)
+        ref = np.sin(sums).sum()
         np.testing.assert_allclose(float(val), ref, rtol=1e-10)
+        np.testing.assert_allclose(
+            np.asarray(grad), 1.5 * np.cos(sums)[np.asarray(idx)], rtol=1e-10
+        )
 
 
 # ---------------------------------------------------------------------------

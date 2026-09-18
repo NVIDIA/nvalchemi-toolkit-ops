@@ -46,6 +46,7 @@ from nvalchemiops.interactions.electrostatics.ewald_recip_factory import (
     alloc_ewald_recip_sentinels,
     get_ewald_recip_kernel,
 )
+from nvalchemiops.torch._warp_op_helpers import scoped_warp_stream as _scoped_stream
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 __all__ = [
@@ -58,14 +59,6 @@ _PI = math.pi
 
 def _wp(tensor: torch.Tensor, dtype):
     return wp.from_torch(tensor.detach().contiguous(), dtype=dtype, requires_grad=False)
-
-
-def _scoped_stream(device: torch.device):
-    if device.type != "cuda":
-        from contextlib import nullcontext
-
-        return nullcontext()
-    return wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream(device)))
 
 
 # ===========================================================================

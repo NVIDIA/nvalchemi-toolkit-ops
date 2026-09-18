@@ -317,6 +317,30 @@ def _two_atom_pair(dtype=torch.float64, device="cpu", half_neighbor_list=False):
     )
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_quadrupole_current_stream_consumes_event_gated_forward_and_backward(
+    torch_stream_runner,
+):
+    device = torch.device("cuda:0")
+    source = _two_atom_pair(device=device)
+    keys = tuple(source)
+    source_values = tuple(source.values())
+    params = tuple(
+        torch.empty_like(value, requires_grad=value.requires_grad)
+        for value in source_values
+    )
+
+    def run(values):
+        arguments = dict(zip(keys, values, strict=True))
+        energy = multipole_real_space_quadrupole_energy(**arguments)
+        (gradient,) = torch.autograd.grad(energy.square().sum(), arguments["positions"])
+        return energy, gradient
+
+    _, snapshots, expected = torch_stream_runner(source_values, params, run)
+    for result, reference in zip(snapshots, expected, strict=True):
+        torch.testing.assert_close(result, reference)
+
+
 def test_quadrupole_2nd_backward_create_graph_true_runs():
     """Smoke test: ``create_graph=True`` no longer raises NotImplementedError."""
     p = _two_atom_pair()

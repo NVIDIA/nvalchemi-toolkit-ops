@@ -102,6 +102,10 @@ Exceptions
    :no-index:
    :show-inheritance:
 
+.. autoexception:: nvalchemiops.jax.neighbors.TileBufferOverflow
+   :no-index:
+   :show-inheritance:
+
 Utility Functions
 -----------------
 

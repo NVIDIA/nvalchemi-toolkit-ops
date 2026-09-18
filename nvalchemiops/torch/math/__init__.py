@@ -44,6 +44,10 @@ from nvalchemiops.torch.math.solid_harmonics import (
     eval_irregular_solid_harmonics_pytorch,
     eval_regular_solid_harmonics_pytorch,
 )
+from nvalchemiops.torch.math.spherical_harmonics import (
+    eval_spherical_harmonics_gradient_pytorch,
+    eval_spherical_harmonics_pytorch,
+)
 
 __all__ = [
     # Normalization modes (data + host-side helpers)
@@ -59,4 +63,6 @@ __all__ = [
     "eval_gto_fourier_pytorch",
     "eval_regular_solid_harmonics_pytorch",
     "eval_irregular_solid_harmonics_pytorch",
+    "eval_spherical_harmonics_pytorch",
+    "eval_spherical_harmonics_gradient_pytorch",
 ]

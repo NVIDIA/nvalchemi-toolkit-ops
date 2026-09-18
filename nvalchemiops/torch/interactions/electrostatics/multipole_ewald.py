@@ -83,6 +83,7 @@ from nvalchemiops.interactions.electrostatics.multipole_ewald_kernels import (
 )
 from nvalchemiops.torch._warp_op_helpers import (
     register_warp_op_chain,
+    scoped_torch_warp_stream,
 )
 from nvalchemiops.torch.interactions.electrostatics._multipole_moments import (
     split_multipole_moments,
@@ -115,6 +116,7 @@ class MultipoleRealSpaceMonopoleBackwardFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         grad_energies: torch.Tensor,
@@ -201,6 +203,7 @@ class MultipoleRealSpaceMonopoleBackwardFunction(torch.autograd.Function):
         return grad_positions, grad_charges
 
     @staticmethod
+    @scoped_torch_warp_stream
     def backward(
         ctx, gg_positions: torch.Tensor, gg_charges: torch.Tensor
     ):  # pragma: no cover
@@ -303,6 +306,7 @@ class MultipoleRealSpaceMonopoleFusedScalarFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         positions: torch.Tensor,
@@ -534,6 +538,7 @@ class MultipoleRealSpaceMonopoleFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         positions: torch.Tensor,
@@ -655,6 +660,7 @@ class MultipoleRealSpaceBackwardFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         grad_energies: torch.Tensor,
@@ -752,6 +758,7 @@ class MultipoleRealSpaceBackwardFunction(torch.autograd.Function):
         return grad_positions, grad_charges, grad_dipoles
 
     @staticmethod
+    @scoped_torch_warp_stream
     def backward(  # pragma: no cover
         ctx,
         gg_positions: torch.Tensor,
@@ -870,6 +877,7 @@ class MultipoleRealSpaceDipoleFusedScalarFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         positions: torch.Tensor,
@@ -1114,6 +1122,7 @@ class MultipoleRealSpaceFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         positions: torch.Tensor,
@@ -1240,6 +1249,7 @@ class MultipoleRealSpaceFunction(torch.autograd.Function):
 # ---------------------------------------------------------------------------
 
 
+@scoped_torch_warp_stream
 def _real_space_dipole_forward(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -1291,6 +1301,7 @@ def _real_space_dipole_forward_fake(  # pragma: no cover
     return positions.new_empty((positions.shape[0],), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _real_space_dipole_backward(  # pragma: no cover
     grad_energies: torch.Tensor,
     positions: torch.Tensor,
@@ -1334,6 +1345,7 @@ def _real_space_dipole_backward(  # pragma: no cover
     return grad_positions, grad_charges, grad_dipoles
 
 
+@scoped_torch_warp_stream
 def _real_space_dipole_double_backward(  # pragma: no cover
     gg_positions: torch.Tensor,
     gg_charges: torch.Tensor,
@@ -1407,6 +1419,7 @@ register_warp_op_chain(
 # compile-friendliness rationale; routed from ``multipole_real_space_energy``.
 
 
+@scoped_torch_warp_stream
 def _real_space_monopole_forward(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -1455,6 +1468,7 @@ def _real_space_monopole_forward_fake(  # pragma: no cover
     return positions.new_empty((positions.shape[0],), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _real_space_monopole_backward(  # pragma: no cover
     grad_energies: torch.Tensor,
     positions: torch.Tensor,
@@ -1494,6 +1508,7 @@ def _real_space_monopole_backward(  # pragma: no cover
     return grad_positions, grad_charges
 
 
+@scoped_torch_warp_stream
 def _real_space_monopole_double_backward(  # pragma: no cover
     gg_positions: torch.Tensor,
     gg_charges: torch.Tensor,
@@ -1560,6 +1575,7 @@ register_warp_op_chain(
 @torch.library.custom_op(
     "nvalchemiops::multipole_real_space_dipole_cell_grad", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _rs_dipole_cell_grad_op(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -1628,6 +1644,7 @@ def _rs_dipole_cell_grad_setup(ctx, inputs, output):  # pragma: no cover
     ctx.half_neighbor_list = half_neighbor_list
 
 
+@scoped_torch_warp_stream
 def _rs_dipole_cell_grad_backward(ctx, g_cell):  # pragma: no cover
     r"""Gradient :math:`\partial/\partial\{\text{positions, charges, dipoles, cell}\}` of :math:`\langle g\_\text{cell},\, dE/d\text{cell}\rangle` (l=1)."""
     (
@@ -1700,6 +1717,7 @@ torch.library.register_autograd(
 @torch.library.custom_op(
     "nvalchemiops::multipole_real_space_dipole_fused", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _rs_dipole_fused_op(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -2161,6 +2179,7 @@ def multipole_real_space_energy_with_stress(
 @torch.library.custom_op(
     "nvalchemiops::multipole_real_space_monopole_cell_grad", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _rs_monopole_cell_grad_op(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -2218,6 +2237,7 @@ def _rs_monopole_cell_grad_setup(ctx, inputs, output):  # pragma: no cover
     ctx.half_neighbor_list = half_neighbor_list
 
 
+@scoped_torch_warp_stream
 def _rs_monopole_cell_grad_backward(ctx, g_cell):  # pragma: no cover
     r"""Gradient :math:`\partial/\partial\{\text{positions, charges, cell}\}` of :math:`\langle g\_\text{cell},\, dE/d\text{cell}\rangle` (stress-loss).
 
@@ -2289,6 +2309,7 @@ torch.library.register_autograd(
 @torch.library.custom_op(
     "nvalchemiops::multipole_real_space_monopole_fused", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _rs_monopole_fused_op(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -2599,6 +2620,7 @@ class BatchMultipoleRealSpaceMonopoleBackwardFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         grad_energies: torch.Tensor,
@@ -2690,6 +2712,7 @@ class BatchMultipoleRealSpaceMonopoleBackwardFunction(torch.autograd.Function):
         return grad_positions, grad_charges
 
     @staticmethod
+    @scoped_torch_warp_stream
     def backward(
         ctx, gg_positions: torch.Tensor, gg_charges: torch.Tensor
     ):  # pragma: no cover
@@ -2791,6 +2814,7 @@ class BatchMultipoleRealSpaceMonopoleFusedScalarFunction(torch.autograd.Function
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         positions: torch.Tensor,
@@ -3027,6 +3051,7 @@ class BatchMultipoleRealSpaceMonopoleFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         positions: torch.Tensor,
@@ -3153,6 +3178,7 @@ class BatchMultipoleRealSpaceMonopoleFunction(torch.autograd.Function):
 # ---------------------------------------------------------------------------
 
 
+@scoped_torch_warp_stream
 def _batch_real_space_monopole_forward(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -3194,6 +3220,7 @@ def _batch_real_space_forward_fake(positions, *args):  # pragma: no cover
     return positions.new_empty((positions.shape[0],), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _batch_real_space_monopole_backward(  # pragma: no cover
     grad_energies: torch.Tensor,
     positions: torch.Tensor,
@@ -3235,6 +3262,7 @@ def _batch_real_space_monopole_backward(  # pragma: no cover
     return grad_positions, grad_charges
 
 
+@scoped_torch_warp_stream
 def _batch_real_space_monopole_double_backward(  # pragma: no cover
     gg_positions: torch.Tensor,
     gg_charges: torch.Tensor,
@@ -3296,6 +3324,7 @@ register_warp_op_chain(
 )
 
 
+@scoped_torch_warp_stream
 def _batch_real_space_dipole_forward(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -3334,6 +3363,7 @@ def _batch_real_space_dipole_forward(
     return energies
 
 
+@scoped_torch_warp_stream
 def _batch_real_space_dipole_backward(  # pragma: no cover
     grad_energies: torch.Tensor,
     positions: torch.Tensor,
@@ -3379,6 +3409,7 @@ def _batch_real_space_dipole_backward(  # pragma: no cover
     return grad_positions, grad_charges, grad_dipoles
 
 
+@scoped_torch_warp_stream
 def _batch_real_space_dipole_double_backward(  # pragma: no cover
     gg_positions: torch.Tensor,
     gg_charges: torch.Tensor,
@@ -3456,6 +3487,7 @@ register_warp_op_chain(
 @torch.library.custom_op(
     "nvalchemiops::batch_multipole_real_space_dipole_cell_grad", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _batch_rs_dipole_cell_grad_op(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -3540,6 +3572,7 @@ def _batch_rs_dipole_cell_grad_setup(ctx, inputs, output):  # pragma: no cover
     ctx.half_neighbor_list = half_neighbor_list
 
 
+@scoped_torch_warp_stream
 def _batch_rs_dipole_cell_grad_backward(ctx, g_cell):  # pragma: no cover
     r"""Batched gradient :math:`\partial/\partial\{\text{positions, charges, dipoles, cells}\}` of :math:`\langle g\_\text{cell},\, dE/d\text{cell}\rangle`."""
     (
@@ -3616,6 +3649,7 @@ torch.library.register_autograd(
 @torch.library.custom_op(
     "nvalchemiops::batch_multipole_real_space_dipole_fused", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _batch_rs_dipole_fused_op(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -3804,6 +3838,7 @@ torch.library.register_autograd(
 @torch.library.custom_op(
     "nvalchemiops::batch_multipole_real_space_monopole_cell_grad", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _batch_rs_monopole_cell_grad_op(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -3872,6 +3907,7 @@ def _batch_rs_monopole_cell_grad_setup(ctx, inputs, output):  # pragma: no cover
     ctx.half_neighbor_list = half_neighbor_list
 
 
+@scoped_torch_warp_stream
 def _batch_rs_monopole_cell_grad_backward(ctx, g_cell):  # pragma: no cover
     r"""Batched gradient :math:`\partial/\partial\{\text{positions, charges, cells}\}` of :math:`\langle g\_\text{cell},\, dE/d\text{cell}\rangle`."""
     (
@@ -3942,6 +3978,7 @@ torch.library.register_autograd(
 @torch.library.custom_op(
     "nvalchemiops::batch_multipole_real_space_monopole_fused", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _batch_rs_monopole_fused_op(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -4244,6 +4281,7 @@ class BatchMultipoleRealSpaceBackwardFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         grad_energies: torch.Tensor,
@@ -4346,6 +4384,7 @@ class BatchMultipoleRealSpaceBackwardFunction(torch.autograd.Function):
         return grad_positions, grad_charges, grad_dipoles
 
     @staticmethod
+    @scoped_torch_warp_stream
     def backward(  # pragma: no cover
         ctx,
         gg_positions: torch.Tensor,
@@ -4447,6 +4486,7 @@ class BatchMultipoleRealSpaceDipoleFusedScalarFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         positions: torch.Tensor,
@@ -4710,6 +4750,7 @@ class BatchMultipoleRealSpaceFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         positions: torch.Tensor,
@@ -4897,6 +4938,69 @@ def _multipole_ewald_self_energy_per_atom(
     )
 
 
+def _multipole_ewald_background_energy_per_atom(
+    source_feats: torch.Tensor,
+    alpha: float,
+    volume: torch.Tensor,
+    *,
+    batch_idx: torch.Tensor | None = None,
+    n_systems: int | None = None,
+) -> torch.Tensor:
+    """Return the positive per-atom uniform-background correction.
+
+    Parameters
+    ----------
+    source_feats : torch.Tensor
+        Per-atom monopole or multipole features with shape ``(N, C)``. The
+        monopole charge is read from ``source_feats[..., 0]``.
+    alpha : float
+        Positive Ewald splitting parameter.
+    volume : torch.Tensor
+        Cell volume in the same length units used for ``alpha``. For one
+        system, this is a scalar or one-element tensor. For batched input, it
+        is either shape ``(B,)`` or a scalar shared by all ``B`` systems.
+    batch_idx : torch.Tensor, optional
+        ``int32`` or ``int64`` system index for each atom, with shape ``(N,)``.
+        When omitted, all atoms form one system.
+    n_systems : int, optional
+        Number of packed systems. It is required for compile-safe batched
+        calls; eager calls infer it from ``batch_idx`` when omitted.
+
+    Returns
+    -------
+    torch.Tensor
+        Positive ``float64`` tensor with shape ``(N,)``. Atom ``i`` receives
+        ``FIELD_CONSTANT * q_i * Q_b / (8 * alpha**2 * V_b)``, where ``q_i``
+        is its monopole charge and ``Q_b`` and ``V_b`` are its system charge
+        and volume.
+
+    Notes
+    -----
+    This delegates to ``_multipole_background_energy_per_atom`` after
+    extracting the monopole channel. The split Ewald caller subtracts the
+    correction because the reciprocal sum omits the zero mode. Dipole and
+    quadrupole channels do not contribute.
+
+    See Also
+    --------
+    _multipole_background_energy_per_atom
+        PME implementation that evaluates the monopole correction.
+    multipole_ewald_summation
+        Full Ewald energy that subtracts this per-atom correction.
+    """
+    from nvalchemiops.torch.interactions.electrostatics.pme_multipole import (
+        _multipole_background_energy_per_atom,
+    )
+
+    return _multipole_background_energy_per_atom(
+        source_feats[..., 0],
+        alpha,
+        volume,
+        batch_idx=batch_idx,
+        n_systems=n_systems,
+    )
+
+
 def multipole_ewald_summation(
     positions: torch.Tensor,
     multipole_moments: torch.Tensor,
@@ -4916,7 +5020,7 @@ def multipole_ewald_summation(
 ) -> torch.Tensor:
     r"""Full GTO-Ewald multipole electrostatic total energy.
 
-    Composes the three canonical Ewald pieces:
+    Composes the four canonical Ewald pieces:
 
     * **real-space**: GTO-Ewald-damped pair sum on a CSR neighbor list, via
       :func:`multipole_real_space_energy` or its batched analog, using
@@ -4930,6 +5034,9 @@ def multipole_ewald_summation(
     * **self-energy correction**: the analytical per-atom term from
       :func:`_multipole_ewald_self_energy_per_atom`, subtracted to remove the
       :math:`i=j`, :math:`n=0` image that the reciprocal sum includes.
+    * **background correction**: the positive per-atom uniform-background
+      magnitude :math:`F q_i Q/(8\alpha^2 V)`, subtracted for non-neutral
+      systems so the split sum matches the direct-k zero-mode convention.
 
     The total is mathematically identical to
     :func:`multipole_electrostatic_energy` (direct k-space) for any
@@ -5074,6 +5181,18 @@ def multipole_ewald_summation(
         if l_max >= 1
         else multipole_moments[:, :1].contiguous()
     )
+    volume = (
+        cache.volume
+        if cache is not None
+        else torch.abs(torch.det(cell.to(torch.float64)))
+    )
+    atom_background = _multipole_ewald_background_energy_per_atom(
+        source_feats,
+        alpha,
+        volume,
+        batch_idx=batch_idx,
+        n_systems=cell.shape[0] if is_batch else None,
+    )
 
     # l_max=2 path: full Ewald total = real-space + direct-k reciprocal − self.
     if l_max == 2:
@@ -5132,7 +5251,9 @@ def multipole_ewald_summation(
                 alpha,
                 quadrupoles=quadrupoles,
             )
-            return (e_real_atom + e_recip_atom - atom_self).to(torch.float64)
+            return (e_real_atom + e_recip_atom - atom_self - atom_background).to(
+                torch.float64
+            )
 
         if cell.ndim == 3:
             cell_l2 = cell
@@ -5169,7 +5290,7 @@ def multipole_ewald_summation(
             quadrupoles=quadrupoles,
         )
         # Per-atom (N,); caller owns the reduction.
-        return (e_real + e_recip - e_self).to(torch.float64)
+        return (e_real + e_recip - e_self - atom_background).to(torch.float64)
 
     # Delayed imports avoid a circular module graph.
     from nvalchemiops.torch.interactions.electrostatics.multipole_electrostatics import (
@@ -5219,7 +5340,7 @@ def multipole_ewald_summation(
             cache=cache,
         )
         atom_self = _multipole_ewald_self_energy_per_atom(source_feats, sigma, alpha)
-        return (e_real + e_recip - atom_self).to(torch.float64)
+        return (e_real + e_recip - atom_self - atom_background).to(torch.float64)
 
     sigma_t = torch.tensor([sigma], dtype=input_dtype, device=device)
     alpha_t = torch.tensor([alpha], dtype=input_dtype, device=device)
@@ -5245,4 +5366,4 @@ def multipole_ewald_summation(
         cache=cache,
     )
     e_self = _multipole_ewald_self_energy_per_atom(source_feats, sigma, alpha)
-    return (e_real + e_recip - e_self).to(torch.float64)
+    return (e_real + e_recip - e_self - atom_background).to(torch.float64)

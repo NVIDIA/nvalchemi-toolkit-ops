@@ -67,7 +67,7 @@ Conventions
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, NamedTuple
 
 import warp as wp
 
@@ -93,6 +93,166 @@ _TWO_PI_CUBED = wp.constant(wp.float64((2.0 * math.pi) ** 3))
 
 # 1 / (2π)^3 — the inverse-Fourier scaling for the feature projection.
 _INV_TWO_PI_CUBED = wp.constant(wp.float64(1.0 / (2.0 * math.pi) ** 3))
+
+
+def _tiled_extent(size: int, tile: int) -> int:
+    """Round a runtime extent up to a tiled CUDA launch dimension."""
+    return ((size + tile - 1) // tile) * tile
+
+
+class PositionGradientFromRhokTiledScratch(NamedTuple):
+    """Warp work arrays for the CUDA tile path of ``position_gradient_from_rhok``."""
+
+    big_cos: wp.array
+    big_sin: wp.array
+    contribs: wp.array
+
+    @classmethod
+    def expected_shapes(cls, n_k: int, n_atoms: int) -> tuple[tuple[int, int], ...]:
+        """Return the required ``(rows, columns)`` for this CUDA tile path."""
+        n_cols = int(_RHOK_PG_TILE_J)
+        return ((n_k, n_cols), (n_k, n_cols), (n_atoms, n_cols))
+
+
+class ProjectFeaturesDipoleTiledScratch(NamedTuple):
+    """Warp work arrays for the CUDA tile path of ``project_features_dipole``."""
+
+    a_flat: wp.array
+    b_flat: wp.array
+    contribs: wp.array
+
+    @classmethod
+    def expected_shapes(
+        cls, n_k: int, n_atoms: int, n_sigma: int
+    ) -> tuple[tuple[int, int], ...]:
+        """Return the required ``(rows, columns)`` for this CUDA tile path."""
+        n_sl = n_sigma * 4
+        return ((n_k, n_sl), (n_k, n_sl), (n_atoms, n_sl))
+
+
+class PositionGradientFromFeatureGradTiledScratch(NamedTuple):
+    """Warp work arrays for the CUDA tile path of feature position gradients."""
+
+    beta_cos: wp.array
+    beta_sin: wp.array
+    contribs: wp.array
+
+    @classmethod
+    def expected_shapes(
+        cls, n_k: int, n_atoms: int, n_sigma: int
+    ) -> tuple[tuple[int, int], ...]:
+        """Return the required ``(rows, columns)`` for this CUDA tile path."""
+        n_p = _tiled_extent(3 * n_sigma * 4, int(_FPG_TILE_J))
+        return ((_tiled_extent(n_k, int(_FPG_TILE_K)), n_p),) * 2 + (
+            (_tiled_extent(n_atoms, int(_FPG_TILE_I)), n_p),
+        )
+
+
+class RhokPositionGradBackwardMomentsTiledScratch(NamedTuple):
+    """Warp work arrays for the CUDA tile path of rho-k moment HVPs."""
+
+    big_cos: wp.array
+    big_sin: wp.array
+    contribs: wp.array
+
+    @classmethod
+    def expected_shapes(cls, n_k: int, n_atoms: int) -> tuple[tuple[int, int], ...]:
+        """Return the required ``(rows, columns)`` for this CUDA tile path."""
+        n_cols = int(_RHOK_PG_TILE_J)
+        return ((_tiled_extent(n_k, int(_RHOK_PG_TILE_K)), n_cols),) * 2 + (
+            (_tiled_extent(n_atoms, int(_RHOK_PG_TILE_I)), n_cols),
+        )
+
+
+class RhokPositionGradBackwardPositionsTiledScratch(NamedTuple):
+    """Warp work arrays for the CUDA tile path of rho-k position HVPs."""
+
+    beta_cos: wp.array
+    beta_sin: wp.array
+    contribs: wp.array
+
+    @classmethod
+    def expected_shapes(cls, n_k: int, n_atoms: int) -> tuple[tuple[int, int], ...]:
+        """Return the required ``(rows, columns)`` for this CUDA tile path."""
+        n_cols = _tiled_extent(36, int(_RPGP_TILE_J))
+        return ((_tiled_extent(n_k, int(_RPGP_TILE_K)), n_cols),) * 2 + (
+            (_tiled_extent(n_atoms, int(_RPGP_TILE_I)), n_cols),
+        )
+
+
+class FeatPositionGradBackwardGradRawTiledScratch(NamedTuple):
+    """Warp work arrays for the CUDA tile path of feature-gradient HVPs."""
+
+    m_cos: wp.array
+    m_sin: wp.array
+    contribs: wp.array
+
+    @classmethod
+    def expected_shapes(
+        cls, n_k: int, n_atoms: int, n_sigma: int
+    ) -> tuple[tuple[int, int], ...]:
+        """Return the required ``(rows, columns)`` for this CUDA tile path."""
+        n_p = _tiled_extent(3 * n_sigma * 4, int(_FPGR_TILE_J))
+        return ((_tiled_extent(n_k, int(_FPGR_TILE_K)), n_p),) * 2 + (
+            (_tiled_extent(n_atoms, int(_FPGR_TILE_I)), n_p),
+        )
+
+
+class FeatPositionGradBackwardPositionsTiledScratch(NamedTuple):
+    """Warp work arrays for the CUDA tile path of feature-position HVPs."""
+
+    m_cos: wp.array
+    m_sin: wp.array
+    contribs: wp.array
+
+    @classmethod
+    def expected_shapes(
+        cls, n_k: int, n_atoms: int, n_sigma: int
+    ) -> tuple[tuple[int, int], ...]:
+        """Return the required ``(rows, columns)`` for this CUDA tile path."""
+        n_p = _tiled_extent(n_sigma * 36, int(_FPGP_TILE_J))
+        return ((_tiled_extent(n_k, int(_FPGP_TILE_K)), n_p),) * 2 + (
+            (_tiled_extent(n_atoms, int(_FPGP_TILE_I)), n_p),
+        )
+
+
+class VGradFromFeatGradBackwardPositionsTiledScratch(NamedTuple):
+    """Warp work arrays for the CUDA tile path of V-gradient position HVPs."""
+
+    m_cos: wp.array
+    m_sin: wp.array
+    contribs: wp.array
+
+    @classmethod
+    def expected_shapes(
+        cls, n_k: int, n_atoms: int, n_sigma: int
+    ) -> tuple[tuple[int, int], ...]:
+        """Return the required ``(rows, columns)`` for this CUDA tile path."""
+        n_p = _tiled_extent(3 * n_sigma * 4, int(_VGBP_TILE_J))
+        return ((_tiled_extent(n_k, int(_VGBP_TILE_K)), n_p),) * 2 + (
+            (_tiled_extent(n_atoms, int(_VGBP_TILE_I)), n_p),
+        )
+
+
+def _validate_tiled_scratch(
+    scratch: NamedTuple,
+    expected_shapes: tuple[tuple[int, int], tuple[int, int], tuple[int, int]],
+    device: str,
+) -> None:
+    """Validate the fixed float64 Warp buffers required by a tiled CUDA leaf."""
+    expected_device = wp.get_device(device)
+    for name, expected_shape in zip(scratch._fields, expected_shapes, strict=True):
+        array = getattr(scratch, name)
+        if (
+            tuple(array.shape) != expected_shape
+            or array.dtype != wp.float64
+            or array.device != expected_device
+        ):
+            raise ValueError(
+                f"scratch.{name} must have shape {expected_shape} and dtype wp.float64, "
+                f"on device {expected_device}; got shape {tuple(array.shape)}, "
+                f"dtype {array.dtype}, and device {array.device}"
+            )
 
 
 # =============================================================================
@@ -1213,7 +1373,14 @@ def _cossin_native_matmul_kernel(
     wp.tile_store(contribs, acc, offset=(i_off, j_off))
 
 
-def _launch_cossin_native_matmul(cosines, sines, m_cos, m_sin, contribs, device):
+def _launch_cossin_native_matmul(
+    cosines: wp.array,
+    sines: wp.array,
+    m_cos: wp.array,
+    m_sin: wp.array,
+    contribs: wp.array,
+    device: str,
+) -> None:
     r"""Launch :func:`_cossin_native_matmul_kernel` over a ``ceil`` grid.
 
     ``contribs[i, j] = sum_k cos[k, i]*m_cos[k, j] + sin[k, i]*m_sin[k, j]``,
@@ -1232,114 +1399,11 @@ def _launch_cossin_native_matmul(cosines, sines, m_cos, m_sin, contribs, device)
             sines,
             m_cos,
             m_sin,
-            wp.from_torch(contribs, dtype=wp.float64),
+            contribs,
         ],
         block_dim=int(_TILE_BLOCK_DIM),
         device=device,
     )
-
-
-# =============================================================================
-# Int32 byte-offset overflow workaround for Warp tile loads
-# =============================================================================
-#
-# Warp 1.12.1's ``tile_global_t::index`` (native/tile.h) accumulates the
-# byte offset of a tile element in a signed ``int32``:
-#
-#     int index = 0;
-#     for (i...) index += data.strides[i] * c;   // strides in bytes
-#     out = index / sizeof(T);
-#
-# For a 2D float64 array of shape ``(M, N)`` with row stride ``N * 8``
-# bytes, the kernel's last-row tile-load computes
-# ``index = (M-1) * N * 8 + ...``. When that exceeds ``2^31 - 1``
-# (~2.1 GB) the int32 silently wraps negative, ``data.data[neg_index]``
-# reads OOB, and the launch raises ``cudaErrorIllegalAddress``. The
-# corrupted CUDA context then breaks every subsequent launch (kernel
-# symbol lookup itself fails), so the user-visible error is reported
-# against the *next* kernel — confusing but characteristic.
-#
-# Repro: in the multipole Ewald backward at N≈4400 atoms, BCC layout,
-# k_cutoff=3.0, the tile-matmul over the (cos, sin) structure-factor
-# table ((4400, 74464) float64) crosses the 2 GB threshold; the next
-# launch (``_project_features_postprocess_kernel``) is what surfaces the
-# error.
-#
-# Workaround: split each affected ``wp.launch_tiled`` along the long
-# (atom-count or k-count) axis into row-slice sub-launches. A row-slice
-# of a contiguous ``(M, N)`` tensor preserves the ``N * 8`` row stride
-# but shrinks the visible row count, so the kernel's coordinate range
-# becomes ``[0, chunk_rows)`` and the per-launch byte product stays
-# under int32. Output tiles in ``contribs`` / ``grc`` / ``grs`` are
-# disjoint across chunks (different output rows), so the multi-launch
-# result is bit-identical to a single (theoretical) safe launch.
-
-_INT32_BYTE_OFFSET_LIMIT = (1 << 31) - 1
-
-
-def _safe_chunk_rows(row_stride_bytes: int, axis_tile: int) -> int:
-    r"""Largest multiple of ``axis_tile`` such that ``(rows-1)*row_stride_bytes < 2**31-1``.
-
-    Returns at least one tile (``axis_tile``) so the caller always makes
-    forward progress even when the row stride is pathological.
-    """
-    if row_stride_bytes <= 0:
-        return axis_tile
-    max_rows = _INT32_BYTE_OFFSET_LIMIT // row_stride_bytes
-    chunked = (max_rows // axis_tile) * axis_tile
-    return max(chunked, axis_tile)
-
-
-def _launch_v_grad_tile_matmul_chunked(
-    kernel,
-    *,
-    cosines,  # torch.Tensor, (n_k, n_atoms) contiguous float64 — native layout
-    sines,  # torch.Tensor, (n_k, n_atoms)
-    grad_raw,  # torch.Tensor, (n_atoms, n_sl)
-    grc,  # torch.Tensor, (n_k, n_sl) OUTPUT
-    grs,  # torch.Tensor, (n_k, n_sl) OUTPUT
-    tile_m: int,
-    tile_n: int,
-    block_dim: int,
-    device: str,
-) -> None:
-    r"""Chunked launch for ``_v_grad_tiled_matmul_kernel`` (no padding).
-
-    The cos/sin v-grad layout is ``(n_k, n_atoms)`` — k-major — so the
-    int32-overflow axis is the *k-axis*. This helper chunks along m
-    (k-blocks) and slices the GRC/GRS outputs in lockstep. ``wp.tile_load``
-    / ``wp.tile_store`` bounds-check, so the matmul runs on the unpadded
-    arrays with a ``ceil`` grid (no transpose+pad copy at the wrapper).
-    """
-    n_k, n_atoms = cosines.shape
-    n_sl = grc.shape[1]
-    n_n_blocks = (n_sl + tile_n - 1) // tile_n
-
-    row_stride_bytes = n_atoms * 8
-    chunk_rows = _safe_chunk_rows(row_stride_bytes, tile_m)
-
-    start = 0
-    while start < n_k:
-        end = min(start + chunk_rows, n_k)
-        n_m_blocks = (end - start + tile_m - 1) // tile_m
-        cos_view = cosines[start:end]
-        sin_view = sines[start:end]
-        grc_view = grc[start:end]
-        grs_view = grs[start:end]
-        wp.launch_tiled(
-            kernel,
-            dim=(n_m_blocks, n_n_blocks),
-            inputs=[
-                wp.from_torch(cos_view, dtype=wp.float64),
-                wp.from_torch(sin_view, dtype=wp.float64),
-                wp.from_torch(grad_raw, dtype=wp.float64),
-                wp.from_torch(grc_view, dtype=wp.float64),
-                wp.from_torch(grs_view, dtype=wp.float64),
-            ],
-            block_dim=block_dim,
-            device=device,
-        )
-        start = end
 
 
 # Legacy constant aliases — kept so the individual physics sections
@@ -1517,6 +1581,7 @@ def _position_gradient_from_rhok_tiled_launch(
     grad_positions: wp.array,
     wp_dtype: type,
     device: str,
+    scratch: PositionGradientFromRhokTiledScratch,
 ) -> None:
     r"""Tiled-matmul implementation orchestrator — GPU path only.
 
@@ -1525,8 +1590,6 @@ def _position_gradient_from_rhok_tiled_launch(
     2. :func:`_rhok_pos_grad_tiled_matmul_kernel` -> ``contribs``.
     3. :func:`_rhok_pos_grad_tiled_reduce_kernel` -> ``grad_positions``.
     """
-    import torch  # local import — CPU path has no torch dependency at launcher time
-
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
 
     n_k = cosines.shape[0]
@@ -1537,9 +1600,12 @@ def _position_gradient_from_rhok_tiled_launch(
     # transpose flag directly to the ``(N_k, N_atoms)`` cos/sin tables, so we
     # avoid both the manual ``(N_atoms_pad, N_k_pad)`` transpose+zero-pad copy
     # (the dominant cost at large N_k) and the int32 tile-offset chunking.
-    cos_t = wp.to_torch(cosines)  # (N_k, N_atoms) — for .device only
-    big_cos = torch.empty((n_k, 16), dtype=torch.float64, device=cos_t.device)
-    big_sin = torch.empty((n_k, 16), dtype=torch.float64, device=cos_t.device)
+    _validate_tiled_scratch(
+        scratch,
+        PositionGradientFromRhokTiledScratch.expected_shapes(n_k, n_atoms),
+        device,
+    )
+    big_cos, big_sin, contribs = scratch
 
     # -- Launch 1: precompute (one thread per valid k; no pad rows). ----------
     wp.launch(
@@ -1550,8 +1616,8 @@ def _position_gradient_from_rhok_tiled_launch(
             source_phi_hat,
             k_vectors,
             wp.int32(n_k),
-            wp.from_torch(big_cos, dtype=wp.float64),
-            wp.from_torch(big_sin, dtype=wp.float64),
+            big_cos,
+            big_sin,
         ],
         device=device,
     )
@@ -1559,12 +1625,11 @@ def _position_gradient_from_rhok_tiled_launch(
     # -- Step 2: contribs = cosᵀ @ big_cos + sinᵀ @ big_sin via the native-layout
     #    Warp tile matmul (in-kernel tile_transpose; no transpose+pad copy, no
     #    torch matmul — keeps the path framework-native).
-    contribs = torch.empty((n_atoms, 16), dtype=torch.float64, device=cos_t.device)
     _launch_cossin_native_matmul(
         cosines,
         sines,
-        wp.from_torch(big_cos, dtype=wp.float64),
-        wp.from_torch(big_sin, dtype=wp.float64),
+        big_cos,
+        big_sin,
         contribs,
         device,
     )
@@ -1576,7 +1641,7 @@ def _position_gradient_from_rhok_tiled_launch(
         inputs=[
             charges,
             dipoles,
-            wp.from_torch(contribs, dtype=wp.float64),
+            contribs,
             wp.float64(scale),
             wp.int32(n_atoms),
             grad_positions,
@@ -1597,6 +1662,7 @@ def position_gradient_from_rhok(
     grad_positions: wp.array,
     wp_dtype: type,
     device: str | None = None,
+    scratch: PositionGradientFromRhokTiledScratch | None = None,
 ) -> None:
     r"""Launcher for :func:`_position_gradient_from_rhok_kernel`.
 
@@ -1626,6 +1692,13 @@ def position_gradient_from_rhok(
         ``wp.float32`` or ``wp.float64``; selects the overload.
     device : str, optional
         Defaults to ``cosines.device``.
+    scratch : PositionGradientFromRhokTiledScratch, optional
+        Required for the CUDA tiled path and ignored on CPU. Its float64
+        buffers must be on ``device`` and match
+        :meth:`PositionGradientFromRhokTiledScratch.expected_shapes`.
+        They may be uninitialized because the launch overwrites them. Retain
+        the bundle until queued work completes, or for the lifetime of a
+        captured graph.
     """
     if device is None:
         device = str(cosines.device)
@@ -1635,6 +1708,8 @@ def position_gradient_from_rhok(
     # serial per-atom kernel (where the loop is pre-vectorized by the
     # C++ codegen already).
     if "cuda" in str(device):
+        if scratch is None:
+            raise ValueError("scratch is required for the CUDA tiled path")
         _position_gradient_from_rhok_tiled_launch(
             charges,
             dipoles,
@@ -1647,6 +1722,7 @@ def position_gradient_from_rhok(
             grad_positions,
             wp_dtype,
             device,
+            scratch,
         )
         return
 
@@ -2526,6 +2602,7 @@ def project_features_dipole(
     out_col_lut: wp.array,
     features: wp.array,
     device: str | None = None,
+    scratch: ProjectFeaturesDipoleTiledScratch | None = None,
 ) -> None:
     r"""Launcher for :func:`_project_features_dipole_kernel`.
 
@@ -2552,6 +2629,13 @@ def project_features_dipole(
         Pre-allocated output (flat).
     device : str, optional
         Defaults to ``potential.device``.
+    scratch : ProjectFeaturesDipoleTiledScratch, optional
+        Required for the CUDA tiled path and ignored on CPU. Each float64
+        buffer must be on ``device`` and have the shape returned by
+        :meth:`ProjectFeaturesDipoleTiledScratch.expected_shapes`.
+        Buffers may be uninitialized because the launch overwrites them.
+        The caller must retain the bundle until queued work completes and
+        retain stable storage for the lifetime of a captured graph.
     """
     n_k = potential.shape[0]
     n_sigma = receiver_phi_hat.shape[1]
@@ -2587,6 +2671,8 @@ def project_features_dipole(
     # Dispatch: CUDA gets the three-phase tile-matmul rewrite, CPU
     # stays on the serial per-(i, σ, lm) kernel.
     if "cuda" in str(device):
+        if scratch is None:
+            raise ValueError("scratch is required for the CUDA tiled path")
         _project_features_dipole_tiled_launch(
             potential,
             receiver_phi_hat,
@@ -2599,6 +2685,7 @@ def project_features_dipole(
             out_col_lut,
             features,
             device,
+            scratch,
         )
         return
 
@@ -2993,6 +3080,7 @@ def _project_features_dipole_tiled_launch(
     out_col_lut: wp.array,
     features: wp.array,
     device: str,
+    scratch: ProjectFeaturesDipoleTiledScratch,
 ) -> None:
     r"""CUDA-only three-phase tile-matmul implementation of :func:`project_features_dipole`.
 
@@ -3004,8 +3092,6 @@ def _project_features_dipole_tiled_launch(
     3. :func:`_project_features_postprocess_kernel` -> ``features`` with
        optional self-interaction subtract + output-column remap.
     """
-    import torch
-
     n_k = cosines.shape[0]
     n_atoms = cosines.shape[1]
     n_sigma = receiver_phi_hat.shape[1]
@@ -3014,9 +3100,12 @@ def _project_features_dipole_tiled_launch(
     # ``a_flat`` / ``b_flat``: per-(k, σ) precompute (no pad rows/cols). The
     # contraction is a cuBLAS GEMM over the transposed ``(N_k, N_atoms)`` cos/sin
     # views — no manual transpose+zero-pad copy, no int32 tile-offset chunking.
-    cos_t = wp.to_torch(cosines)  # (N_k, N_atoms) — for .device only
-    a_flat = torch.empty((n_k, n_sl), dtype=torch.float64, device=cos_t.device)
-    b_flat = torch.empty_like(a_flat)
+    _validate_tiled_scratch(
+        scratch,
+        ProjectFeaturesDipoleTiledScratch.expected_shapes(n_k, n_atoms, n_sigma),
+        device,
+    )
+    a_flat, b_flat, contribs = scratch
 
     # -- Launch 1: precompute a_flat / b_flat. -------------------------------
     wp.launch(
@@ -3028,8 +3117,8 @@ def _project_features_dipole_tiled_launch(
             k_factor_proj,
             wp.int32(n_k),
             wp.int32(n_sl),
-            wp.from_torch(a_flat, dtype=wp.float64),
-            wp.from_torch(b_flat, dtype=wp.float64),
+            a_flat,
+            b_flat,
         ],
         device=device,
     )
@@ -3037,12 +3126,11 @@ def _project_features_dipole_tiled_launch(
     # -- Step 2: contribs = cosᵀ @ a_flat + sinᵀ @ b_flat via the native-layout
     #    Warp tile matmul (in-kernel tile_transpose; no transpose+pad copy, no
     #    torch matmul).
-    contribs = torch.empty((n_atoms, n_sl), dtype=torch.float64, device=cos_t.device)
     _launch_cossin_native_matmul(
         cosines,
         sines,
-        wp.from_torch(a_flat, dtype=wp.float64),
-        wp.from_torch(b_flat, dtype=wp.float64),
+        a_flat,
+        b_flat,
         contribs,
         device,
     )
@@ -3052,7 +3140,7 @@ def _project_features_dipole_tiled_launch(
         _project_features_postprocess_kernel,
         dim=(n_atoms, n_sigma, 4),
         inputs=[
-            wp.from_torch(contribs, dtype=wp.float64),
+            contribs,
             source_feats_lm,
             overlap_constants,
             wp.int32(1 if subtract_self else 0),
@@ -3516,71 +3604,6 @@ def _v_grad_per_k_reduce_kernel(
     grad_v[k_idx, 1] = _INV_TWO_PI_CUBED_TIMES_TWO * kfp * acc_i
 
 
-def _v_gradient_from_feature_grad_tiled_launch(
-    grad_raw: wp.array,
-    receiver_phi_hat: wp.array,
-    cosines: wp.array,
-    sines: wp.array,
-    k_factor_proj: wp.array,
-    grad_v: wp.array,
-    device: str,
-) -> None:
-    r"""CUDA tile-matmul implementation of :func:`v_gradient_from_feature_grad`.
-
-    grad_raw is already contiguous in ``(N_atoms, N_sigma, 4)`` memory
-    layout, which is identical to ``(N_atoms, N_sigma*4)`` — we just
-    reinterpret as a 2D tensor via ``torch.reshape`` (a view, no copy).
-    cos/sin/grad_raw are passed to the matmul unpadded; ``wp.tile_load`` /
-    ``wp.tile_store`` bounds-check, so no transpose+pad copy is materialized.
-    """
-    import torch
-
-    n_k = cosines.shape[0]
-    n_atoms = cosines.shape[1]
-    n_sigma = receiver_phi_hat.shape[1]
-    n_sl = n_sigma * 4
-
-    tile_m = int(_VG_TILE_M)
-    tile_n = int(_VG_TILE_N)
-
-    cos_t = wp.to_torch(cosines).contiguous()
-    sin_t = wp.to_torch(sines).contiguous()
-    grad_raw_t = wp.to_torch(grad_raw).reshape(n_atoms, n_sl).contiguous()
-
-    grc = torch.empty((n_k, n_sl), dtype=torch.float64, device=cos_t.device)
-    grs = torch.empty_like(grc)
-
-    # -- Launch 1: native-layout tile matmul (two matmuls share the grad_raw
-    #    tile; cos/sin read unpadded + bounds-checked — no transpose+pad copy).
-    _launch_v_grad_tile_matmul_chunked(
-        _v_grad_tiled_matmul_kernel,
-        cosines=cos_t,
-        sines=sin_t,
-        grad_raw=grad_raw_t,
-        grc=grc,
-        grs=grs,
-        tile_m=tile_m,
-        tile_n=tile_n,
-        block_dim=int(_VG_BLOCK_DIM),
-        device=device,
-    )
-
-    # -- Launch 2: per-k reduction. ------------------------------------------
-    wp.launch(
-        _v_grad_per_k_reduce_kernel,
-        dim=n_k,
-        inputs=[
-            receiver_phi_hat,
-            wp.from_torch(grc, dtype=wp.float64),
-            wp.from_torch(grs, dtype=wp.float64),
-            k_factor_proj,
-            wp.int32(n_k),
-            grad_v,
-        ],
-        device=device,
-    )
-
-
 # =============================================================================
 # Backward of project_features_dipole w.r.t. positions  (Phase 8c)
 # =============================================================================
@@ -3681,6 +3704,7 @@ def position_gradient_from_feature_grad(
     k_vectors: wp.array,
     grad_positions: wp.array,
     device: str | None = None,
+    scratch: PositionGradientFromFeatureGradTiledScratch | None = None,
 ) -> None:
     r"""Launcher for :func:`_position_gradient_from_feature_grad_kernel`.
 
@@ -3708,12 +3732,21 @@ def position_gradient_from_feature_grad(
         OUTPUT: gradient w.r.t. atomic positions.
     device : str
         Warp device string; defaults to the input array's device.
+    scratch : PositionGradientFromFeatureGradTiledScratch, optional
+        Required for the CUDA tiled path and ignored on CPU. Its float64
+        buffers must be on ``device`` and match
+        :meth:`PositionGradientFromFeatureGradTiledScratch.expected_shapes`.
+        They may be uninitialized because the launch overwrites them. Retain
+        the bundle until queued work completes, or for the lifetime of a
+        captured graph.
     """
     n_atoms = cosines.shape[1]
     if device is None:
         device = str(cosines.device)
 
     if "cuda" in str(device):
+        if scratch is None:
+            raise ValueError("scratch is required for the CUDA tiled path")
         _position_gradient_from_feature_grad_tiled_launch(
             grad_raw,
             receiver_phi_hat,
@@ -3724,6 +3757,7 @@ def position_gradient_from_feature_grad(
             k_vectors,
             grad_positions,
             device,
+            scratch,
         )
         return
 
@@ -4093,9 +4127,9 @@ def _position_gradient_from_feature_grad_tiled_launch(
     k_vectors: wp.array,
     grad_positions: wp.array,
     device: str,
+    scratch: PositionGradientFromFeatureGradTiledScratch,
 ) -> None:
     r"""CUDA tile-matmul orchestrator for :func:`position_gradient_from_feature_grad`."""
-    import torch
 
     n_k = cosines.shape[0]
     n_atoms = cosines.shape[1]
@@ -4105,23 +4139,22 @@ def _position_gradient_from_feature_grad_tiled_launch(
 
     tile_i = int(_FPG_TILE_I)
     tile_k = int(_FPG_TILE_K)
-    tile_j = int(_FPG_TILE_J)
 
     n_k_pad = ((n_k + tile_k - 1) // tile_k) * tile_k
     n_atoms_pad = ((n_atoms + tile_i - 1) // tile_i) * tile_i
-    n_p_pad = ((n_p + tile_j - 1) // tile_j) * tile_j
 
     # -- Pad + transpose cos / sin to (N_atoms_pad, N_k_pad). ----------------
     # cos/sin stay in their native (N_k, N_atoms) layout — the native-layout
     # tile matmul transposes per-tile (wp.tile_transpose), so no (N_atoms, N_k)
     # transpose+zero-pad copy is materialized.
-    cos_t = wp.to_torch(cosines)  # for .device only
-
-    beta_cos = torch.empty((n_k_pad, n_p_pad), dtype=torch.float64, device=cos_t.device)
-    beta_sin = torch.empty_like(beta_cos)
-    contribs = torch.empty(
-        (n_atoms_pad, n_p_pad), dtype=torch.float64, device=cos_t.device
+    _validate_tiled_scratch(
+        scratch,
+        PositionGradientFromFeatureGradTiledScratch.expected_shapes(
+            n_k, n_atoms, n_sigma
+        ),
+        device,
     )
+    beta_cos, beta_sin, contribs = scratch
 
     # -- Launch 1: precompute β_cos / β_sin. --------------------------------
     wp.launch(
@@ -4135,8 +4168,8 @@ def _position_gradient_from_feature_grad_tiled_launch(
             k_vectors,
             wp.int32(n_k),
             wp.int32(n_p),
-            wp.from_torch(beta_cos, dtype=wp.float64),
-            wp.from_torch(beta_sin, dtype=wp.float64),
+            beta_cos,
+            beta_sin,
         ],
         device=device,
     )
@@ -4145,8 +4178,8 @@ def _position_gradient_from_feature_grad_tiled_launch(
     _launch_cossin_native_matmul(
         cosines,
         sines,
-        wp.from_torch(beta_cos, dtype=wp.float64),
-        wp.from_torch(beta_sin, dtype=wp.float64),
+        beta_cos,
+        beta_sin,
         contribs,
         device,
     )
@@ -4157,7 +4190,7 @@ def _position_gradient_from_feature_grad_tiled_launch(
         dim=n_atoms_pad,
         inputs=[
             grad_raw,
-            wp.from_torch(contribs, dtype=wp.float64),
+            contribs,
             wp.int32(n_atoms),
             grad_positions,
         ],
@@ -4889,6 +4922,7 @@ def rhok_position_grad_backward_moments(
     scale: float,
     ggrad_moments: wp.array,
     device: str | None = None,
+    scratch: RhokPositionGradBackwardMomentsTiledScratch | None = None,
 ) -> None:
     r"""Launcher for :func:`_rhok_position_grad_backward_moments_kernel`.
 
@@ -4921,11 +4955,20 @@ def rhok_position_grad_backward_moments(
         OUTPUT: double-backward gradient w.r.t. the multipole moments.
     device : str
         Warp device string; defaults to the input array's device.
+    scratch : RhokPositionGradBackwardMomentsTiledScratch, optional
+        Required for the CUDA tiled path and ignored on CPU. Its float64
+        buffers must be on ``device`` and match
+        :meth:`RhokPositionGradBackwardMomentsTiledScratch.expected_shapes`.
+        They may be uninitialized because the launch overwrites them. Retain
+        the bundle until queued work completes, or for the lifetime of a
+        captured graph.
     """
     if device is None:
         device = str(cosines.device)
 
     if "cuda" in str(device):
+        if scratch is None:
+            raise ValueError("scratch is required for the CUDA tiled path")
         _rhok_pg_back_moments_tiled_launch(
             cosines,
             sines,
@@ -4936,6 +4979,7 @@ def rhok_position_grad_backward_moments(
             scale,
             ggrad_moments,
             device,
+            scratch,
         )
         return
 
@@ -5032,34 +5076,29 @@ def _rhok_pg_back_moments_tiled_launch(
     scale: float,
     ggrad_moments: wp.array,
     device: str,
+    scratch: RhokPositionGradBackwardMomentsTiledScratch,
 ) -> None:
     r"""CUDA tile-matmul orchestrator for K4 — reuses pos-grad forward's matmul."""
-    import torch
 
     n_k = cosines.shape[0]
     n_atoms = cosines.shape[1]
 
     tile_i = int(_RHOK_PG_TILE_I)
     tile_k = int(_RHOK_PG_TILE_K)
-    tile_j = int(_RHOK_PG_TILE_J)
 
     n_k_pad = ((n_k + tile_k - 1) // tile_k) * tile_k
     n_atoms_pad = ((n_atoms + tile_i - 1) // tile_i) * tile_i
-    n_cols_pad = tile_j  # 16
 
     # -- Pad + transpose cos / sin. ------------------------------------------
     # cos/sin stay in their native (N_k, N_atoms) layout — the native-layout
     # tile matmul transposes per-tile (wp.tile_transpose), so no (N_atoms, N_k)
     # transpose+zero-pad copy is materialized.
-    cos_t = wp.to_torch(cosines)  # for .device only
-
-    big_cos = torch.empty(
-        (n_k_pad, n_cols_pad), dtype=torch.float64, device=cos_t.device
+    _validate_tiled_scratch(
+        scratch,
+        RhokPositionGradBackwardMomentsTiledScratch.expected_shapes(n_k, n_atoms),
+        device,
     )
-    big_sin = torch.empty_like(big_cos)
-    contribs = torch.empty(
-        (n_atoms_pad, n_cols_pad), dtype=torch.float64, device=cos_t.device
-    )
+    big_cos, big_sin, contribs = scratch
 
     # -- Launch 1: reuse pos-grad forward's precompute kernel. --------------
     wp.launch(
@@ -5070,8 +5109,8 @@ def _rhok_pg_back_moments_tiled_launch(
             source_phi_hat,
             k_vectors,
             wp.int32(n_k),
-            wp.from_torch(big_cos, dtype=wp.float64),
-            wp.from_torch(big_sin, dtype=wp.float64),
+            big_cos,
+            big_sin,
         ],
         device=device,
     )
@@ -5080,8 +5119,8 @@ def _rhok_pg_back_moments_tiled_launch(
     _launch_cossin_native_matmul(
         cosines,
         sines,
-        wp.from_torch(big_cos, dtype=wp.float64),
-        wp.from_torch(big_sin, dtype=wp.float64),
+        big_cos,
+        big_sin,
         contribs,
         device,
     )
@@ -5092,7 +5131,7 @@ def _rhok_pg_back_moments_tiled_launch(
         dim=n_atoms_pad,
         inputs=[
             gg_positions,
-            wp.from_torch(contribs, dtype=wp.float64),
+            contribs,
             wp.float64(scale),
             wp.int32(n_atoms),
             ggrad_moments,
@@ -5242,6 +5281,7 @@ def rhok_position_grad_backward_positions(
     ggrad_positions: wp.array,
     wp_dtype: type,
     device: str | None = None,
+    scratch: RhokPositionGradBackwardPositionsTiledScratch | None = None,
 ) -> None:
     r"""Launcher for :func:`_rhok_position_grad_backward_positions_kernel`.
 
@@ -5275,11 +5315,20 @@ def rhok_position_grad_backward_positions(
         Warp floating dtype (``wp.float32`` or ``wp.float64``).
     device : str
         Warp device string; defaults to the input array's device.
+    scratch : RhokPositionGradBackwardPositionsTiledScratch, optional
+        Required for the CUDA tiled path and ignored on CPU. Its float64
+        buffers must be on ``device`` and match
+        :meth:`RhokPositionGradBackwardPositionsTiledScratch.expected_shapes`.
+        They may be uninitialized because the launch overwrites them. Retain
+        the bundle until queued work completes, or for the lifetime of a
+        captured graph.
     """
     if device is None:
         device = str(cosines.device)
 
     if "cuda" in str(device):
+        if scratch is None:
+            raise ValueError("scratch is required for the CUDA tiled path")
         _rhok_pg_back_positions_tiled_launch(
             charges,
             dipoles,
@@ -5293,6 +5342,7 @@ def rhok_position_grad_backward_positions(
             ggrad_positions,
             wp_dtype,
             device,
+            scratch,
         )
         return
 
@@ -5533,9 +5583,9 @@ def _rhok_pg_back_positions_tiled_launch(
     ggrad_positions: wp.array,
     wp_dtype: type,
     device: str,
+    scratch: RhokPositionGradBackwardPositionsTiledScratch,
 ) -> None:
     r"""CUDA tile-matmul orchestrator for K5."""
-    import torch
 
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
 
@@ -5544,26 +5594,20 @@ def _rhok_pg_back_positions_tiled_launch(
 
     tile_i = int(_RPGP_TILE_I)
     tile_k = int(_RPGP_TILE_K)
-    tile_j = int(_RPGP_TILE_J)
 
     n_k_pad = ((n_k + tile_k - 1) // tile_k) * tile_k
     n_atoms_pad = ((n_atoms + tile_i - 1) // tile_i) * tile_i
-    # 36 real cols pad to multiple of tile_j=16 → 48.
-    n_cols_pad = ((36 + tile_j - 1) // tile_j) * tile_j
 
     # -- Pad + transpose cos / sin. ------------------------------------------
     # cos/sin stay in their native (N_k, N_atoms) layout — the native-layout
     # tile matmul transposes per-tile (wp.tile_transpose), so no (N_atoms, N_k)
     # transpose+zero-pad copy is materialized.
-    cos_t = wp.to_torch(cosines)  # for .device only
-
-    beta_cos = torch.empty(
-        (n_k_pad, n_cols_pad), dtype=torch.float64, device=cos_t.device
+    _validate_tiled_scratch(
+        scratch,
+        RhokPositionGradBackwardPositionsTiledScratch.expected_shapes(n_k, n_atoms),
+        device,
     )
-    beta_sin = torch.empty_like(beta_cos)
-    contribs = torch.empty(
-        (n_atoms_pad, n_cols_pad), dtype=torch.float64, device=cos_t.device
-    )
+    beta_cos, beta_sin, contribs = scratch
 
     # -- Launch 1: precompute β_cos / β_sin. --------------------------------
     wp.launch(
@@ -5574,8 +5618,8 @@ def _rhok_pg_back_positions_tiled_launch(
             source_phi_hat,
             k_vectors,
             wp.int32(n_k),
-            wp.from_torch(beta_cos, dtype=wp.float64),
-            wp.from_torch(beta_sin, dtype=wp.float64),
+            beta_cos,
+            beta_sin,
         ],
         device=device,
     )
@@ -5584,8 +5628,8 @@ def _rhok_pg_back_positions_tiled_launch(
     _launch_cossin_native_matmul(
         cosines,
         sines,
-        wp.from_torch(beta_cos, dtype=wp.float64),
-        wp.from_torch(beta_sin, dtype=wp.float64),
+        beta_cos,
+        beta_sin,
         contribs,
         device,
     )
@@ -5598,7 +5642,7 @@ def _rhok_pg_back_positions_tiled_launch(
             charges,
             dipoles,
             gg_positions,
-            wp.from_torch(contribs, dtype=wp.float64),
+            contribs,
             wp.float64(scale),
             wp.int32(n_atoms),
             ggrad_positions,
@@ -5699,6 +5743,7 @@ def feat_position_grad_backward_grad_raw(
     k_vectors: wp.array,
     ggrad_grad_raw: wp.array,
     device: str | None = None,
+    scratch: FeatPositionGradBackwardGradRawTiledScratch | None = None,
 ) -> None:
     r"""Launcher for :func:`_feat_position_grad_backward_grad_raw_kernel`.
 
@@ -5726,11 +5771,20 @@ def feat_position_grad_backward_grad_raw(
         OUTPUT: double-backward gradient w.r.t. ``grad_raw``.
     device : str
         Warp device string; defaults to the input array's device.
+    scratch : FeatPositionGradBackwardGradRawTiledScratch, optional
+        Required for the CUDA tiled path and ignored on CPU. Its float64
+        buffers must be on ``device`` and match
+        :meth:`FeatPositionGradBackwardGradRawTiledScratch.expected_shapes`.
+        They may be uninitialized because the launch overwrites them. Retain
+        the bundle until queued work completes, or for the lifetime of a
+        captured graph.
     """
     if device is None:
         device = str(cosines.device)
 
     if "cuda" in str(device):
+        if scratch is None:
+            raise ValueError("scratch is required for the CUDA tiled path")
         _feat_pg_back_grad_raw_tiled_launch(
             receiver_phi_hat,
             cosines,
@@ -5741,6 +5795,7 @@ def feat_position_grad_backward_grad_raw(
             k_vectors,
             ggrad_grad_raw,
             device,
+            scratch,
         )
         return
 
@@ -5927,33 +5982,30 @@ def _feat_pg_back_grad_raw_tiled_launch(
     k_vectors: wp.array,
     ggrad_grad_raw: wp.array,
     device: str,
+    scratch: FeatPositionGradBackwardGradRawTiledScratch,
 ) -> None:
     r"""CUDA tile-matmul orchestrator for K6."""
-    import torch
 
     n_k = cosines.shape[0]
     n_atoms = cosines.shape[1]
     n_sigma = receiver_phi_hat.shape[1]
     n_p = 3 * n_sigma * 4  # 12 for N_σ=1
 
-    tile_i = int(_FPGR_TILE_I)
     tile_k = int(_FPGR_TILE_K)
-    tile_j = int(_FPGR_TILE_J)
 
     n_k_pad = ((n_k + tile_k - 1) // tile_k) * tile_k
-    n_atoms_pad = ((n_atoms + tile_i - 1) // tile_i) * tile_i
-    n_p_pad = ((n_p + tile_j - 1) // tile_j) * tile_j
 
     # cos/sin stay in their native (N_k, N_atoms) layout — the native-layout
     # tile matmul transposes per-tile (wp.tile_transpose), so no (N_atoms, N_k)
     # transpose+zero-pad copy is materialized.
-    cos_t = wp.to_torch(cosines)  # for .device only
-
-    m_cos = torch.empty((n_k_pad, n_p_pad), dtype=torch.float64, device=cos_t.device)
-    m_sin = torch.empty_like(m_cos)
-    contribs = torch.empty(
-        (n_atoms_pad, n_p_pad), dtype=torch.float64, device=cos_t.device
+    _validate_tiled_scratch(
+        scratch,
+        FeatPositionGradBackwardGradRawTiledScratch.expected_shapes(
+            n_k, n_atoms, n_sigma
+        ),
+        device,
     )
+    m_cos, m_sin, contribs = scratch
 
     wp.launch(
         _feat_pg_back_grad_raw_precompute_kernel,
@@ -5965,8 +6017,8 @@ def _feat_pg_back_grad_raw_tiled_launch(
             k_vectors,
             wp.int32(n_k),
             wp.int32(n_p),
-            wp.from_torch(m_cos, dtype=wp.float64),
-            wp.from_torch(m_sin, dtype=wp.float64),
+            m_cos,
+            m_sin,
         ],
         device=device,
     )
@@ -5974,8 +6026,8 @@ def _feat_pg_back_grad_raw_tiled_launch(
     _launch_cossin_native_matmul(
         cosines,
         sines,
-        wp.from_torch(m_cos, dtype=wp.float64),
-        wp.from_torch(m_sin, dtype=wp.float64),
+        m_cos,
+        m_sin,
         contribs,
         device,
     )
@@ -5985,7 +6037,7 @@ def _feat_pg_back_grad_raw_tiled_launch(
         dim=(n_atoms, n_sigma, 4),
         inputs=[
             gg_positions,
-            wp.from_torch(contribs, dtype=wp.float64),
+            contribs,
             wp.int32(n_atoms),
             wp.int32(n_sigma),
             ggrad_grad_raw,
@@ -6242,6 +6294,7 @@ def feat_position_grad_backward_positions(
     k_vectors: wp.array,
     ggrad_positions: wp.array,
     device: str | None = None,
+    scratch: FeatPositionGradBackwardPositionsTiledScratch | None = None,
 ) -> None:
     r"""Launcher for :func:`_feat_position_grad_backward_positions_kernel`.
 
@@ -6271,11 +6324,20 @@ def feat_position_grad_backward_positions(
         OUTPUT: double-backward gradient w.r.t. positions.
     device : str
         Warp device string; defaults to the input array's device.
+    scratch : FeatPositionGradBackwardPositionsTiledScratch, optional
+        Required for the CUDA tiled path and ignored on CPU. Its float64
+        buffers must be on ``device`` and match
+        :meth:`FeatPositionGradBackwardPositionsTiledScratch.expected_shapes`.
+        They may be uninitialized because the launch overwrites them. Retain
+        the bundle until queued work completes, or for the lifetime of a
+        captured graph.
     """
     if device is None:
         device = str(cosines.device)
 
     if "cuda" in str(device):
+        if scratch is None:
+            raise ValueError("scratch is required for the CUDA tiled path")
         _feat_pg_back_positions_tiled_launch(
             grad_raw,
             receiver_phi_hat,
@@ -6287,6 +6349,7 @@ def feat_position_grad_backward_positions(
             k_vectors,
             ggrad_positions,
             device,
+            scratch,
         )
         return
 
@@ -6499,9 +6562,9 @@ def _feat_pg_back_positions_tiled_launch(
     k_vectors: wp.array,
     ggrad_positions: wp.array,
     device: str,
+    scratch: FeatPositionGradBackwardPositionsTiledScratch,
 ) -> None:
     r"""CUDA tile-matmul orchestrator for K8."""
-    import torch
 
     n_k = cosines.shape[0]
     n_atoms = cosines.shape[1]
@@ -6510,22 +6573,21 @@ def _feat_pg_back_positions_tiled_launch(
 
     tile_i = int(_FPGP_TILE_I)
     tile_k = int(_FPGP_TILE_K)
-    tile_j = int(_FPGP_TILE_J)
 
     n_k_pad = ((n_k + tile_k - 1) // tile_k) * tile_k
     n_atoms_pad = ((n_atoms + tile_i - 1) // tile_i) * tile_i
-    n_p_pad = ((n_p + tile_j - 1) // tile_j) * tile_j
 
     # cos/sin stay in their native (N_k, N_atoms) layout — the native-layout
     # tile matmul transposes per-tile (wp.tile_transpose), so no (N_atoms, N_k)
     # transpose+zero-pad copy is materialized.
-    cos_t = wp.to_torch(cosines)  # for .device only
-
-    m_cos = torch.empty((n_k_pad, n_p_pad), dtype=torch.float64, device=cos_t.device)
-    m_sin = torch.empty_like(m_cos)
-    contribs = torch.empty(
-        (n_atoms_pad, n_p_pad), dtype=torch.float64, device=cos_t.device
+    _validate_tiled_scratch(
+        scratch,
+        FeatPositionGradBackwardPositionsTiledScratch.expected_shapes(
+            n_k, n_atoms, n_sigma
+        ),
+        device,
     )
+    m_cos, m_sin, contribs = scratch
 
     wp.launch(
         _feat_pg_back_positions_precompute_kernel,
@@ -6537,8 +6599,8 @@ def _feat_pg_back_positions_tiled_launch(
             k_vectors,
             wp.int32(n_k),
             wp.int32(n_p),
-            wp.from_torch(m_cos, dtype=wp.float64),
-            wp.from_torch(m_sin, dtype=wp.float64),
+            m_cos,
+            m_sin,
         ],
         device=device,
     )
@@ -6546,8 +6608,8 @@ def _feat_pg_back_positions_tiled_launch(
     _launch_cossin_native_matmul(
         cosines,
         sines,
-        wp.from_torch(m_cos, dtype=wp.float64),
-        wp.from_torch(m_sin, dtype=wp.float64),
+        m_cos,
+        m_sin,
         contribs,
         device,
     )
@@ -6558,7 +6620,7 @@ def _feat_pg_back_positions_tiled_launch(
         inputs=[
             grad_raw,
             gg_positions,
-            wp.from_torch(contribs, dtype=wp.float64),
+            contribs,
             wp.int32(n_atoms),
             ggrad_positions,
         ],
@@ -6664,6 +6726,7 @@ def v_grad_from_feat_grad_backward_positions(
     k_vectors: wp.array,
     ggrad_positions: wp.array,
     device: str | None = None,
+    scratch: VGradFromFeatGradBackwardPositionsTiledScratch | None = None,
 ) -> None:
     r"""Launcher for :func:`_v_grad_from_feat_grad_backward_positions_kernel`.
 
@@ -6691,11 +6754,20 @@ def v_grad_from_feat_grad_backward_positions(
         OUTPUT: double-backward gradient w.r.t. positions.
     device : str
         Warp device string; defaults to the input array's device.
+    scratch : VGradFromFeatGradBackwardPositionsTiledScratch, optional
+        Required for the CUDA tiled path and ignored on CPU. Its float64
+        buffers must be on ``device`` and match
+        :meth:`VGradFromFeatGradBackwardPositionsTiledScratch.expected_shapes`.
+        They may be uninitialized because the launch overwrites them. Retain
+        the bundle until queued work completes, or for the lifetime of a
+        captured graph.
     """
     if device is None:
         device = str(cosines.device)
 
     if "cuda" in str(device):
+        if scratch is None:
+            raise ValueError("scratch is required for the CUDA tiled path")
         _v_grad_back_positions_tiled_launch(
             grad_raw,
             receiver_phi_hat,
@@ -6706,6 +6778,7 @@ def v_grad_from_feat_grad_backward_positions(
             k_vectors,
             ggrad_positions,
             device,
+            scratch,
         )
         return
 
@@ -6893,9 +6966,9 @@ def _v_grad_back_positions_tiled_launch(
     k_vectors: wp.array,
     ggrad_positions: wp.array,
     device: str,
+    scratch: VGradFromFeatGradBackwardPositionsTiledScratch,
 ) -> None:
     r"""CUDA tile-matmul orchestrator for K9."""
-    import torch
 
     n_k = cosines.shape[0]
     n_atoms = cosines.shape[1]
@@ -6904,22 +6977,21 @@ def _v_grad_back_positions_tiled_launch(
 
     tile_i = int(_VGBP_TILE_I)
     tile_k = int(_VGBP_TILE_K)
-    tile_j = int(_VGBP_TILE_J)
 
     n_k_pad = ((n_k + tile_k - 1) // tile_k) * tile_k
     n_atoms_pad = ((n_atoms + tile_i - 1) // tile_i) * tile_i
-    n_p_pad = ((n_p + tile_j - 1) // tile_j) * tile_j
 
     # cos/sin stay in their native (N_k, N_atoms) layout — the native-layout
     # tile matmul transposes per-tile (wp.tile_transpose), so no (N_atoms, N_k)
     # transpose+zero-pad copy is materialized.
-    cos_t = wp.to_torch(cosines)  # for .device only
-
-    m_cos = torch.empty((n_k_pad, n_p_pad), dtype=torch.float64, device=cos_t.device)
-    m_sin = torch.empty_like(m_cos)
-    contribs = torch.empty(
-        (n_atoms_pad, n_p_pad), dtype=torch.float64, device=cos_t.device
+    _validate_tiled_scratch(
+        scratch,
+        VGradFromFeatGradBackwardPositionsTiledScratch.expected_shapes(
+            n_k, n_atoms, n_sigma
+        ),
+        device,
     )
+    m_cos, m_sin, contribs = scratch
 
     wp.launch(
         _v_grad_back_positions_precompute_kernel,
@@ -6931,8 +7003,8 @@ def _v_grad_back_positions_tiled_launch(
             k_vectors,
             wp.int32(n_k),
             wp.int32(n_p),
-            wp.from_torch(m_cos, dtype=wp.float64),
-            wp.from_torch(m_sin, dtype=wp.float64),
+            m_cos,
+            m_sin,
         ],
         device=device,
     )
@@ -6940,8 +7012,8 @@ def _v_grad_back_positions_tiled_launch(
     _launch_cossin_native_matmul(
         cosines,
         sines,
-        wp.from_torch(m_cos, dtype=wp.float64),
-        wp.from_torch(m_sin, dtype=wp.float64),
+        m_cos,
+        m_sin,
         contribs,
         device,
     )
@@ -6951,7 +7023,7 @@ def _v_grad_back_positions_tiled_launch(
         dim=n_atoms_pad,
         inputs=[
             grad_raw,
-            wp.from_torch(contribs, dtype=wp.float64),
+            contribs,
             wp.int32(n_atoms),
             ggrad_positions,
         ],
