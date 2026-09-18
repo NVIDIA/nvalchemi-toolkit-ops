@@ -1239,8 +1239,12 @@ class TestPrecomputedSetup:
         setup = FourierD3Setup.build(
             system["cell"], system["params"].n_species, (16, 16, 16)
         )
-        with pytest.raises(ValueError, match="already fixes the mesh"):
+        with pytest.raises(ValueError, match="already fixes the mesh") as raised:
             _evaluate(system, setup=setup, mesh_dimensions=None, mesh_spacing=0.5)
+        # The remedy has to be one the caller can actually follow: ``build`` takes
+        # ``mesh_dimensions`` only, so pointing them at a ``mesh_spacing`` argument on it
+        # would just move the failure one call along.
+        assert "mesh_dimensions only" in str(raised.value)
 
     def test_a_setup_alone_needs_no_mesh_selector(self):
         """The "exactly one of them" rule does not apply once a setup carries the mesh."""

@@ -810,10 +810,13 @@ class FourierD3Setup:
             )
         if mesh_spacing is not None:
             raise ValueError(
-                f"setup already fixes the mesh at {self.mesh_dimensions}, so mesh_spacing "
-                f"={mesh_spacing} cannot apply. Rounding it against the cell here would "
-                "read device memory, which is what a precomputed setup exists to avoid. "
-                "Drop mesh_spacing, or build the setup with it instead."
+                f"setup already fixes the mesh at {self.mesh_dimensions}, so "
+                f"mesh_spacing={mesh_spacing} cannot apply. Resolving a spacing means "
+                "reading the cell lengths off the device, which is what a precomputed "
+                "setup exists to avoid. Either drop mesh_spacing, or resolve it to mesh "
+                "dimensions yourself -- ceil(length / spacing) per axis, rounded up to a "
+                "size whose only prime factors are 2, 3, 5 and 7 -- and pass those to "
+                "FourierD3Setup.build, which takes mesh_dimensions only."
             )
         if (
             not torch.compiler.is_compiling()
