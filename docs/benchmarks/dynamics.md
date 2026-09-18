@@ -167,6 +167,58 @@ Total throughput (atom-steps/s) for batched optimization.
 
 - Checks maximum force component: $\max(|\mathbf{F}|) < f_{\max}$ (default 0.01 eV/Å)
 
+### L-BFGS
+
+L-BFGS is a quasi-Newton method: it approximates the inverse Hessian from recent
+position and force differences to choose a search direction, then takes a step
+along it bounded by a `maxstep` trust region. There is no line search and no
+energy input, so the step costs exactly one force evaluation.
+
+**Evaluations to convergence.** The metric that matters when a machine-learned
+potential dominates the optimizer's own kernel time. Lennard-Jones clusters in
+reduced units, `fmax <= 1e-4`, five starting geometries per size, with FIRE2
+swept over 12 hyperparameter settings per case and its *best* converged result
+used as the baseline:
+
+| Metric | L-BFGS / FIRE2 |
+| --- | --- |
+| Geometric mean over the sweep | **0.129** |
+| Worst individual case | **0.557** |
+| Runs converged | 15 / 15 |
+
+FIRE2 hit the 20,000-evaluation cap in 3 of the 15 cases, so those ratios are
+upper bounds on the advantage rather than measurements; the worst individual
+ratio, 0.557, comes from a case where FIRE2 converged and is the honest
+headline. Note that these are LJ clusters, not a machine-learned potential on a
+realistic materials workload.
+
+**Per-step optimizer cost.** Optimizer time only, single system, fp64, harmonic
+potential, measured with `--gates`:
+
+| Atoms | Eager (ms) | CUDA graph (ms) | FIRE2 (ms) | vs FIRE2 |
+| --- | --- | --- | --- | --- |
+| 10,000 | 0.449 | 0.076 | 0.051 | 8.9x |
+| 100,000 | 0.443 | 0.277 | 0.116 | 3.8x |
+| 1,000,000 | 0.793 | 0.790 | 0.329 | 2.4x |
+
+A step issues far more kernels than FIRE2, so at small sizes it is entirely
+Python-launch-bound and CUDA-graph replay recovers most of the difference. At
+one million atoms the step is bandwidth-bound instead, and replay no longer
+helps. The per-step cost is higher than FIRE2 at every size; it is repaid by
+needing roughly eight times fewer steps, which is why the break-even model cost
+below one million atoms is negative — L-BFGS wins outright there for any
+potential costing more than a few microseconds per evaluation.
+
+**Memory.** With `P` degrees of freedom, `M` systems and history size `m`:
+
+```text
+bytes = (2m + 3) * 3 * sizeof(dof) * P + (4m + 9) * 8 * M + 5 * 4 * M
+```
+
+At `m = 6` that is 180 bytes per degree of freedom with float32 coordinates and
+360 with float64. The two history buffers dominate; reduce `m` if memory is
+tight, with 3 to 7 the usual range.
+
 ## Hardware Information
 
 **GPU**: NVIDIA H100 80GB HBM3
