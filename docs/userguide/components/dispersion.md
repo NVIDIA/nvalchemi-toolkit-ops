@@ -1049,9 +1049,9 @@ so prefer an even order unless you have measured otherwise.
 ```{note}
 A mesh derived from `mesh_spacing` is rounded **up** to a size whose only prime factors are
 2, 3, 5 and 7. cuFFT has radix kernels for those and falls back to Bluestein's algorithm
-otherwise, which is not a marginal difference: on an 8-channel 3D transform a prime edge of
-127 measured 6.7x slower than 120, and 129 = 3 x 43 measured 6.2x slower. The rounded mesh is
-never coarser than the spacing asked for. An explicit `mesh_dimensions` is used exactly as
+otherwise, which is not a marginal difference --- a prime or large-factor edge can cost
+several times what the next friendly size does. The rounded mesh is never coarser than the
+spacing asked for. An explicit `mesh_dimensions` is used exactly as
 given, including a poor size.
 ```
 
@@ -1116,27 +1116,32 @@ for step in trajectory:                      # constant-volume dynamics
     energy, forces = fourier_dftd3(..., setup=setup)
 ```
 
-Measured on an RTX PRO 6000, this alone is worth **1.3x to 1.7x**, the larger figure on small
-systems where the per-call setup is a bigger share of the total.
+The saving is largest on small systems, where the per-call setup is a bigger share of the
+total, and shrinks as the mesh and spread work start to dominate.
 
 It is also **required for `torch.compile(mode="reduce-overhead")`**: that mode records a CUDA
 graph, and `torch.linalg.inv` cannot be recorded into one. Without a precomputed setup the
 compilation fails rather than falling back.
 
-**`torch.compile` adds a little more.** Around 1.05x on top of the precomputed setup. The time
-is dominated by Warp kernels and FFTs, which compilation cannot fuse into, so do not expect
-more. It does trace without graph breaks.
+**`torch.compile` adds a little more.** It traces without graph breaks, but the runtime is
+dominated by Warp kernels and FFTs, which compilation cannot fuse into, so the remaining
+headroom is small. Measure before adding it to a workload.
 
-| N | eager | + setup | + `torch.compile` |
-|---|---|---|---|
-| 200 | 3.78 ms | 2.37 ms | 2.22 ms |
-| 2,000 | 4.25 ms | 2.77 ms | 2.68 ms |
-| 20,000 | 6.50 ms | 5.04 ms | 5.04 ms |
+To compare these on your own hardware, the shipped benchmark covers the first two:
+
+```bash
+python benchmarks/interactions/dispersion/benchmark_fourier_dftd3.py
+```
+
+It reports `fourier_dftd3` and `fourier_dftd3_setup` rows across system sizes, timing the
+evaluation only --- the neighbour list is built outside the timed region, per the
+[kernel style guide](../about/kernel-style-guide.md).
 
 ```{important}
 For the JAX binding, `jax.jit` is not optional. Unjitted, every operation dispatches
-separately and the evaluation takes around 92 ms regardless of system size; jitted it is
-2.6 to 4.4 ms, a **21x to 35x** difference. Always wrap the call in `jax.jit`.
+separately and the cost is dominated by that dispatch overhead rather than by the system
+size, which makes it dramatically slower than the jitted path on anything worth computing.
+Always wrap the call in `jax.jit`.
 ```
 
 ### What FourierD3 Returns

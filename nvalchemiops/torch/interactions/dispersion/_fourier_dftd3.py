@@ -831,8 +831,8 @@ def _next_fft_friendly(size):
     """Smallest size at least ``size`` whose only prime factors are 2, 3, 5 and 7.
 
     cuFFT has specialised radix kernels for these factors and falls back to Bluestein's
-    algorithm otherwise. The difference is not marginal: on an 8-channel 3D transform a prime
-    edge of 127 measured 6.7x slower than 120, and 129 = 3 x 43 measured 6.2x slower.
+    algorithm otherwise, and the difference is not marginal -- a prime or large-factor edge can
+    cost several times what the next friendly size does.
 
     Only a mesh derived from ``mesh_spacing`` is rounded. An explicit ``mesh_dimensions`` is a
     number the caller chose and is passed through exactly, even when it is a poor size.
