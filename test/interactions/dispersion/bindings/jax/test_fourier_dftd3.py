@@ -514,6 +514,46 @@ class TestSkewedCell:
 
 
 @pytest.mark.gpu
+class TestEmptySystem:
+    """Zero atoms, which a padded or filtered batch can produce."""
+
+    @staticmethod
+    def _call(system, num_systems, **kwargs):
+        return fourier_dftd3(
+            jnp.zeros((0, 3)),
+            jnp.zeros(0, dtype=jnp.int32),
+            **DAMPING,
+            fd3_params=system["params"],
+            cell=jnp.broadcast_to(system["cell"], (num_systems, 3, 3)),
+            r_cut=R_CUT,
+            mesh_dimensions=MESH,
+            num_systems=num_systems,
+            neighbor_list=jnp.zeros((2, 0), dtype=jnp.int32),
+            neighbor_ptr=jnp.zeros(1, dtype=jnp.int32),
+            unit_shifts=jnp.zeros((0, 3), dtype=jnp.int32),
+            **kwargs,
+        )
+
+    @pytest.mark.parametrize("num_systems", [1, 3])
+    def test_returns_zeros_of_the_right_shape(self, device, system, num_systems):
+        """No atoms means no dispersion, and the outputs still have to be well formed."""
+        energy, forces, virial = self._call(system, num_systems, compute_virial=True)
+        assert energy.shape == (num_systems,)
+        assert forces.shape == (0, 3)
+        assert virial.shape == (num_systems, 3, 3)
+        assert float(jnp.abs(energy).max()) == 0.0
+        assert float(jnp.abs(virial).max()) == 0.0
+
+    def test_survives_tracing(self, device, system):
+        """``n_atoms`` is a shape, so the early return is decided when the graph is built."""
+        traced = jax.jit(lambda: self._call(system, 1))
+        energy, forces = traced()
+        assert energy.shape == (1,)
+        assert forces.shape == (0, 3)
+        assert float(jnp.abs(energy).max()) == 0.0
+
+
+@pytest.mark.gpu
 class TestModulusConvention:
     """Both B-spline attenuation conventions, matching the Torch binding's surface."""
 

@@ -436,6 +436,66 @@ class TestSkewedCell:
 
 
 @pytest.mark.gpu
+class TestEmptySystem:
+    """Zero atoms, which a padded or filtered batch can produce."""
+
+    @staticmethod
+    def _call(system, num_systems, **kwargs):
+        device = system["positions"].device
+        dtype = system["positions"].dtype
+        zeros = torch.zeros(0, 3, dtype=dtype, device=device)
+        return fourier_dftd3(
+            zeros,
+            torch.zeros(0, dtype=torch.int32, device=device),
+            **DAMPING,
+            fd3_params=system["params"],
+            cell=system["cell"].expand(num_systems, 3, 3),
+            r_cut=R_CUT,
+            mesh_dimensions=MESH,
+            num_systems=num_systems,
+            neighbor_list=torch.zeros(2, 0, dtype=torch.int32, device=device),
+            neighbor_ptr=torch.zeros(1, dtype=torch.int32, device=device),
+            unit_shifts=torch.zeros(0, 3, dtype=torch.int32, device=device),
+            **kwargs,
+        )
+
+    @pytest.mark.parametrize("num_systems", [1, 3])
+    def test_returns_zeros_of_the_right_shape(self, num_systems):
+        """No atoms means no dispersion, and the outputs still have to be well formed."""
+        system = _system("cuda:0")
+        energy, forces, virial = self._call(system, num_systems, compute_virial=True)
+        assert energy.shape == (num_systems,)
+        assert forces.shape == (0, 3)
+        assert virial.shape == (num_systems, 3, 3)
+        assert float(energy.abs().max()) == 0.0
+        assert float(virial.abs().max()) == 0.0
+
+    def test_does_not_allocate_the_mesh(self):
+        """The mesh is the largest allocation in the call and nothing would be spread onto it.
+
+        Guards against the early return being removed: without it this allocates
+        ``num_systems * n_species * rank`` slabs of the full mesh volume.
+        """
+        system = _system("cuda:0")
+        self._call(system, 1)  # warm any lazy allocator state first
+        torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
+        before = torch.cuda.memory_allocated()
+        self._call(system, 1)
+        torch.cuda.synchronize()
+        peak = torch.cuda.max_memory_allocated() - before
+        mesh_bytes = (
+            MESH[0]
+            * MESH[1]
+            * MESH[2]
+            * system["params"].n_species
+            * system["params"].rank
+            * system["positions"].element_size()
+        )
+        assert peak < mesh_bytes / 8, f"allocated {peak} bytes; a mesh is {mesh_bytes}"
+
+
+@pytest.mark.gpu
 class TestNeighbourFormats:
     """Both neighbour representations, and the validation around them."""
 

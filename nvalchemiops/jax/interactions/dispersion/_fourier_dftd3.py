@@ -439,6 +439,19 @@ def fourier_dftd3(
     if fill_value is None:
         fill_value = n_atoms
 
+    if n_atoms == 0:
+        # Nothing to spread, so the mesh, its transforms and the reciprocal sum would all be
+        # zero. Returning here skips allocating a mesh of
+        # num_systems * n_species * rank * nx * ny * nz, which is the single largest
+        # allocation in the call, and avoids handing Warp zero-length arrays, which it
+        # cannot wrap. ``n_atoms`` is a shape, so this is decided at trace time and is safe
+        # under ``jax.jit``.
+        energy = jnp.zeros(num_systems, dtype=dtype)
+        forces = jnp.zeros((0, 3), dtype=dtype)
+        if compute_virial:
+            return energy, forces, jnp.zeros((num_systems, 3, 3), dtype=dtype)
+        return energy, forces
+
     params = fd3_params
     rcov = jnp.asarray(params.rcov, dtype=dtype)
     cnref = jnp.asarray(params.cnref, dtype=dtype)
