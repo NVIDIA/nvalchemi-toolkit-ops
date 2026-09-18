@@ -66,6 +66,14 @@ import torch
 import warp as wp
 
 from nvalchemiops.interactions.electrostatics.multipole_direct_kspace_kernels import (
+    FeatPositionGradBackwardGradRawTiledScratch,
+    FeatPositionGradBackwardPositionsTiledScratch,
+    PositionGradientFromFeatureGradTiledScratch,
+    PositionGradientFromRhokTiledScratch,
+    ProjectFeaturesDipoleTiledScratch,
+    RhokPositionGradBackwardMomentsTiledScratch,
+    RhokPositionGradBackwardPositionsTiledScratch,
+    VGradFromFeatGradBackwardPositionsTiledScratch,
     assemble_rho_k_dipole,
     assemble_rho_q,
     build_structure_factor_table,
@@ -105,6 +113,7 @@ from nvalchemiops.interactions.electrostatics.multipole_direct_kspace_kernels im
 )
 from nvalchemiops.torch._warp_op_helpers import (
     register_warp_op_chain,
+    scoped_torch_warp_stream,
 )
 from nvalchemiops.torch.interactions.electrostatics.multipole_scf_cache import (
     MultipoleSCFCache,
@@ -114,6 +123,25 @@ _TWO_PI_CUBED = (2.0 * math.pi) ** 3
 _TWO_PI_SIXTH = (2.0 * math.pi) ** 6
 
 
+def _allocate_tiled_scratch(
+    scratch_type: type, device: torch.device, *shape_args: int
+) -> tuple[wp.array, ...] | None:
+    """Allocate one tiled scratch bundle with Torch-owned CUDA storage."""
+    if device.type != "cuda":
+        return None
+    return scratch_type(
+        *(
+            wp.from_torch(
+                torch.empty(shape, dtype=torch.float64, device=device),
+                dtype=wp.float64,
+                requires_grad=False,
+            )
+            for shape in scratch_type.expected_shapes(*shape_args)
+        )
+    )
+
+
+@scoped_torch_warp_stream
 def _structure_factor_table_launch(
     positions: torch.Tensor,
     k_vectors: torch.Tensor,
@@ -169,6 +197,7 @@ def _compute_structure_factor_table(
     return _structure_factor_table_launch(positions, cache.k_vectors)
 
 
+@scoped_torch_warp_stream
 def _assemble_rho_launch(
     charges: torch.Tensor,
     dipoles: torch.Tensor,
@@ -241,6 +270,7 @@ def _multipole_structure_factor_fake(
 # ---- moments: grad_rho -> (grad_charges, grad_dipoles) via project rewired ----
 
 
+@scoped_torch_warp_stream
 def _rho_moment_grad_forward(
     grad_rho: torch.Tensor,
     cosines: torch.Tensor,
@@ -266,6 +296,9 @@ def _rho_moment_grad_forward(
     oc_zero = torch.zeros((1, 2), dtype=torch.float64, device=device)
     lut = torch.arange(4, dtype=torch.int32, device=device).view(1, 4).contiguous()
     grad_flat = torch.zeros((n_atoms, 4), dtype=torch.float64, device=device)
+    scratch = _allocate_tiled_scratch(
+        ProjectFeaturesDipoleTiledScratch, device, n_k, n_atoms, 1
+    )
     project_features_dipole(
         wp.from_torch(grad_rho.detach().contiguous(), dtype=wp.float64),
         wp.from_torch(source_phi_4d, dtype=wp.float64),
@@ -278,6 +311,7 @@ def _rho_moment_grad_forward(
         wp.from_torch(lut, dtype=wp.int32),
         wp.from_torch(grad_flat, dtype=wp.float64),
         device=str(wp_device),
+        scratch=scratch,
     )
     return grad_flat
 
@@ -293,6 +327,7 @@ def _rho_moment_grad_forward_fake(
     return cosines.new_empty((cosines.shape[1], 4), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _rho_moment_grad_backward(
     gg_moments: torch.Tensor,
     grad_rho: torch.Tensor,
@@ -341,6 +376,7 @@ register_warp_op_chain(
 # ---- positions: grad_rho -> grad_positions via position_gradient_from_rhok ----
 
 
+@scoped_torch_warp_stream
 def _rho_position_grad_forward(
     grad_rho: torch.Tensor,
     charges: torch.Tensor,
@@ -364,6 +400,9 @@ def _rho_position_grad_forward(
     wp_scalar = wp.float64 if charges.dtype == torch.float64 else wp.float32
     vec_dtype = wp.vec3d if wp_scalar == wp.float64 else wp.vec3f
     grad_positions = torch.zeros((n_atoms, 3), dtype=torch.float64, device=device)
+    scratch = _allocate_tiled_scratch(
+        PositionGradientFromRhokTiledScratch, device, cosines.shape[0], n_atoms
+    )
     position_gradient_from_rhok(
         wp.from_torch(charges.detach().contiguous(), dtype=wp_scalar),
         wp.from_torch(dipoles.detach().contiguous(), dtype=vec_dtype),
@@ -376,6 +415,7 @@ def _rho_position_grad_forward(
         wp.from_torch(grad_positions, dtype=wp.float64),
         wp_dtype=wp_scalar,
         device=str(wp_device),
+        scratch=scratch,
     )
     return grad_positions * scale.detach()
 
@@ -395,6 +435,7 @@ def _rho_position_grad_forward_fake(
     return positions.new_empty((positions.shape[0], 3), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _rho_position_grad_backward(
     gg_positions: torch.Tensor,
     grad_rho: torch.Tensor,
@@ -430,6 +471,12 @@ def _rho_position_grad_backward(
     )
 
     ggrad_mom = torch.empty((charges.shape[0], 4), dtype=torch.float64, device=device)
+    moments_scratch = _allocate_tiled_scratch(
+        RhokPositionGradBackwardMomentsTiledScratch,
+        device,
+        cosines.shape[0],
+        charges.shape[0],
+    )
     rhok_position_grad_backward_moments(
         wp.from_torch(cosines.detach().contiguous(), dtype=wp.float64),
         wp.from_torch(sines.detach().contiguous(), dtype=wp.float64),
@@ -440,7 +487,9 @@ def _rho_position_grad_backward(
         1.0,
         wp.from_torch(ggrad_mom, dtype=wp.float64),
         device=str(wp_device),
+        scratch=moments_scratch,
     )
+    del moments_scratch
     ggrad_mom = ggrad_mom * s
     ggrad_charges = ggrad_mom[:, 0].contiguous()
     # e3nn -> Cartesian permutation for dipole: (mu_x, mu_y, mu_z) = lm(3, 1, 2).
@@ -448,6 +497,12 @@ def _rho_position_grad_backward(
 
     ggrad_positions = torch.zeros(
         (charges.shape[0], 3), dtype=torch.float64, device=device
+    )
+    positions_scratch = _allocate_tiled_scratch(
+        RhokPositionGradBackwardPositionsTiledScratch,
+        device,
+        cosines.shape[0],
+        charges.shape[0],
     )
     rhok_position_grad_backward_positions(
         wp.from_torch(charges.detach().contiguous(), dtype=wp_scalar),
@@ -462,6 +517,7 @@ def _rho_position_grad_backward(
         wp.from_torch(ggrad_positions, dtype=wp.float64),
         wp_dtype=wp_scalar,
         device=str(wp_device),
+        scratch=positions_scratch,
     )
     return ggrad_grad_rho * s, ggrad_charges, ggrad_dipoles, ggrad_positions * s
 
@@ -479,6 +535,7 @@ register_warp_op_chain(
 # ---- phi_hat / k-vector phase (forward-only; carry the reciprocal cell-grad) ----
 
 
+@scoped_torch_warp_stream
 def _rho_phihat_grad_forward(
     grad_rho: torch.Tensor,
     charges: torch.Tensor,
@@ -529,6 +586,7 @@ def _rho_phihat_grad_forward_fake(
     return cosines.new_empty((cosines.shape[0], 4, 2), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _rho_phihat_grad_backward(
     g_phi: torch.Tensor,
     grad_rho: torch.Tensor,
@@ -602,6 +660,7 @@ register_warp_op_chain(
 )
 
 
+@scoped_torch_warp_stream
 def _rho_kphase_grad_forward(
     grad_rho: torch.Tensor,
     charges: torch.Tensor,
@@ -655,6 +714,7 @@ def _rho_kphase_grad_forward_fake(
     return cosines.new_empty((cosines.shape[0], 3), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _rho_kphase_grad_backward(
     g_k: torch.Tensor,
     grad_rho: torch.Tensor,
@@ -1268,6 +1328,7 @@ torch.library.register_autograd(
 # the l<=1 rho(k).
 
 
+@scoped_torch_warp_stream
 def _rho_q_assemble_launch(
     quadrupoles: torch.Tensor,
     cosines: torch.Tensor,
@@ -1344,6 +1405,7 @@ def _multipole_rho_q_fake(
 # ---- Q-channel moment grad: grad_rho -> grad_Q (register_warp_op_chain) ----
 
 
+@scoped_torch_warp_stream
 def _rho_q_moment_grad_forward(
     grad_rho: torch.Tensor,
     positions: torch.Tensor,
@@ -1390,6 +1452,7 @@ def _rho_q_moment_grad_forward_fake(
     return cosines.new_empty((cosines.shape[1], 3, 3), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _rho_q_moment_grad_backward(
     gg_q: torch.Tensor,
     grad_rho: torch.Tensor,
@@ -1451,6 +1514,7 @@ register_warp_op_chain(
 # ---- Q-channel position grad: grad_rho -> grad_positions (register_warp_op_chain) ----
 
 
+@scoped_torch_warp_stream
 def _rho_q_position_grad_forward(
     grad_rho: torch.Tensor,
     quadrupoles: torch.Tensor,
@@ -1502,6 +1566,7 @@ def _rho_q_position_grad_forward_fake(
     return positions.new_empty((positions.shape[0], 3), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _rho_q_position_grad_backward(
     gg_pos: torch.Tensor,
     grad_rho: torch.Tensor,
@@ -1583,6 +1648,7 @@ register_warp_op_chain(
 # ---- coeff2 / k-vector phase (forward-only; carry the l=2 reciprocal cell-grad) ----
 
 
+@scoped_torch_warp_stream
 def _rho_q_coeff2_grad_forward(
     grad_rho: torch.Tensor,
     quadrupoles: torch.Tensor,
@@ -1629,6 +1695,7 @@ def _rho_q_coeff2_grad_forward_fake(
     return cosines.new_empty((cosines.shape[0],), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _rho_q_coeff2_grad_backward(
     g_c: torch.Tensor,
     grad_rho: torch.Tensor,
@@ -1695,6 +1762,7 @@ register_warp_op_chain(
 )
 
 
+@scoped_torch_warp_stream
 def _rho_q_kvec_grad_forward(
     grad_rho: torch.Tensor,
     quadrupoles: torch.Tensor,
@@ -1742,6 +1810,7 @@ def _rho_q_kvec_grad_forward_fake(
     return cosines.new_empty((cosines.shape[0], 3), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _rho_q_kvec_grad_backward(
     g_k: torch.Tensor,
     grad_rho: torch.Tensor,
@@ -2007,6 +2076,7 @@ def multipole_reciprocal_space_dipole_fused_scalar(
 # -----------------------------------------------------------------------------
 
 
+@scoped_torch_warp_stream
 def _project_raw_features_launch(
     potential: torch.Tensor,
     receiver_phi_hat: torch.Tensor,
@@ -2037,6 +2107,13 @@ def _project_raw_features_launch(
     features_flat = torch.empty(
         (n_atoms, n_sigma * 4), dtype=torch.float64, device=device
     )
+    scratch = _allocate_tiled_scratch(
+        ProjectFeaturesDipoleTiledScratch,
+        device,
+        cosines.shape[0],
+        n_atoms,
+        n_sigma,
+    )
     project_features_dipole(
         wp.from_torch(potential.detach().contiguous(), dtype=wp.float64),
         wp.from_torch(receiver_phi_hat.detach().contiguous(), dtype=wp.float64),
@@ -2049,6 +2126,7 @@ def _project_raw_features_launch(
         wp.from_torch(lut, dtype=wp.int32),
         wp.from_torch(features_flat, dtype=wp.float64),
         device=str(wp_device),
+        scratch=scratch,
     )
     return features_flat.reshape(n_atoms, n_sigma, 4)
 
@@ -2056,6 +2134,7 @@ def _project_raw_features_launch(
 # ---- V-grad chain: grad_raw -> grad_V (register_warp_op_chain) ----
 
 
+@scoped_torch_warp_stream
 def _feature_v_grad_forward(
     grad_raw: torch.Tensor,
     receiver_phi_hat: torch.Tensor,
@@ -2102,6 +2181,7 @@ def _feature_v_grad_forward_fake(
     )
 
 
+@scoped_torch_warp_stream
 def _feature_v_grad_backward(
     gg_v: torch.Tensor,
     grad_raw: torch.Tensor,
@@ -2129,6 +2209,13 @@ def _feature_v_grad_backward(
     ggrad_raw_flat = torch.zeros(
         (n_atoms, n_sigma * 4), dtype=torch.float64, device=device
     )
+    scratch = _allocate_tiled_scratch(
+        ProjectFeaturesDipoleTiledScratch,
+        device,
+        cosines.shape[0],
+        n_atoms,
+        n_sigma,
+    )
     project_features_dipole(
         wp.from_torch(gg_v.contiguous(), dtype=wp.float64),
         wp.from_torch(receiver_phi_hat.detach().contiguous(), dtype=wp.float64),
@@ -2141,7 +2228,9 @@ def _feature_v_grad_backward(
         wp.from_torch(lut, dtype=wp.int32),
         wp.from_torch(ggrad_raw_flat, dtype=wp.float64),
         device=str(wp_device),
+        scratch=scratch,
     )
+    del scratch
     ggrad_raw = ggrad_raw_flat.reshape(n_atoms, n_sigma, 4)
 
     # ggrad_kfp: grad_v[k] is linear in kfp[k], so ∂/∂kfp = grad_v[k] / kfp[k];
@@ -2156,6 +2245,13 @@ def _feature_v_grad_backward(
     ggrad_kfp = torch.where(k_factor_proj != 0, per_k, torch.zeros_like(per_k))
 
     ggrad_positions = torch.zeros((n_atoms, 3), dtype=torch.float64, device=device)
+    positions_scratch = _allocate_tiled_scratch(
+        VGradFromFeatGradBackwardPositionsTiledScratch,
+        device,
+        cosines.shape[0],
+        n_atoms,
+        n_sigma,
+    )
     v_grad_from_feat_grad_backward_positions(
         wp.from_torch(grad_raw.detach().contiguous(), dtype=wp.float64),
         wp.from_torch(receiver_phi_hat.detach().contiguous(), dtype=wp.float64),
@@ -2166,6 +2262,7 @@ def _feature_v_grad_backward(
         wp.from_torch(k_vectors.detach().contiguous(), dtype=wp.vec3d),
         wp.from_torch(ggrad_positions, dtype=wp.float64),
         device=str(wp_device),
+        scratch=positions_scratch,
     )
     return ggrad_raw, ggrad_kfp, ggrad_positions
 
@@ -2183,6 +2280,7 @@ register_warp_op_chain(
 # ---- position-grad chain: grad_raw -> grad_positions (register_warp_op_chain) ----
 
 
+@scoped_torch_warp_stream
 def _feature_position_grad_forward(
     grad_raw: torch.Tensor,
     potential: torch.Tensor,
@@ -2202,6 +2300,14 @@ def _feature_position_grad_forward(
     wp_device = wp.device_from_torch(device)
     n_atoms = cosines.shape[1]
     grad_positions = torch.zeros((n_atoms, 3), dtype=torch.float64, device=device)
+    n_sigma = receiver_phi_hat.shape[1]
+    scratch = _allocate_tiled_scratch(
+        PositionGradientFromFeatureGradTiledScratch,
+        device,
+        cosines.shape[0],
+        n_atoms,
+        n_sigma,
+    )
     position_gradient_from_feature_grad(
         wp.from_torch(grad_raw.detach().contiguous(), dtype=wp.float64),
         wp.from_torch(receiver_phi_hat.detach().contiguous(), dtype=wp.float64),
@@ -2212,6 +2318,7 @@ def _feature_position_grad_forward(
         wp.from_torch(k_vectors.detach().contiguous(), dtype=wp.vec3d),
         wp.from_torch(grad_positions, dtype=wp.float64),
         device=str(wp_device),
+        scratch=scratch,
     )
     return grad_positions
 
@@ -2230,6 +2337,7 @@ def _feature_position_grad_forward_fake(
     return positions.new_empty((positions.shape[0], 3), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _feature_position_grad_backward(
     gg_positions: torch.Tensor,
     grad_raw: torch.Tensor,
@@ -2245,8 +2353,16 @@ def _feature_position_grad_backward(
     device = grad_raw.device
     wp_device = wp.device_from_torch(device)
     n_atoms = cosines.shape[1]
+    n_sigma = receiver_phi_hat.shape[1]
 
     ggrad_raw = torch.empty_like(grad_raw)
+    grad_raw_scratch = _allocate_tiled_scratch(
+        FeatPositionGradBackwardGradRawTiledScratch,
+        device,
+        cosines.shape[0],
+        n_atoms,
+        n_sigma,
+    )
     feat_position_grad_backward_grad_raw(
         wp.from_torch(receiver_phi_hat.detach().contiguous(), dtype=wp.float64),
         wp.from_torch(cosines.detach().contiguous(), dtype=wp.float64),
@@ -2257,7 +2373,9 @@ def _feature_position_grad_backward(
         wp.from_torch(k_vectors.detach().contiguous(), dtype=wp.vec3d),
         wp.from_torch(ggrad_raw, dtype=wp.float64),
         device=str(wp_device),
+        scratch=grad_raw_scratch,
     )
+    del grad_raw_scratch
 
     ggrad_v = torch.empty_like(potential)
     feat_position_grad_backward_v(
@@ -2273,6 +2391,13 @@ def _feature_position_grad_backward(
     )
 
     ggrad_positions = torch.zeros((n_atoms, 3), dtype=torch.float64, device=device)
+    positions_scratch = _allocate_tiled_scratch(
+        FeatPositionGradBackwardPositionsTiledScratch,
+        device,
+        cosines.shape[0],
+        n_atoms,
+        n_sigma,
+    )
     feat_position_grad_backward_positions(
         wp.from_torch(grad_raw.detach().contiguous(), dtype=wp.float64),
         wp.from_torch(receiver_phi_hat.detach().contiguous(), dtype=wp.float64),
@@ -2284,6 +2409,7 @@ def _feature_position_grad_backward(
         wp.from_torch(k_vectors.detach().contiguous(), dtype=wp.vec3d),
         wp.from_torch(ggrad_positions, dtype=wp.float64),
         device=str(wp_device),
+        scratch=positions_scratch,
     )
     return ggrad_raw, ggrad_v, ggrad_positions
 
@@ -2309,6 +2435,7 @@ register_warp_op_chain(
         "Tensor potential, int n_lm) -> Tensor"
     ),
 )
+@scoped_torch_warp_stream
 def _feature_phihat_grad_op(
     grad_raw: torch.Tensor,
     cosines: torch.Tensor,
@@ -2359,6 +2486,7 @@ def _feature_phihat_grad_fake(
         "Tensor positions) -> Tensor"
     ),
 )
+@scoped_torch_warp_stream
 def _feature_kphase_grad_op(
     grad_raw: torch.Tensor,
     receiver_phi_hat: torch.Tensor,
@@ -2581,6 +2709,7 @@ def _l2_receiver_block(cache: MultipoleSCFCache) -> torch.Tensor:
     return cache.receiver_phi_hat[:, :, 4:9, :].contiguous()
 
 
+@scoped_torch_warp_stream
 def _project_raw_features_quadrupole_launch(
     potential: torch.Tensor,
     receiver_phi_hat: torch.Tensor,
@@ -2610,6 +2739,7 @@ def _project_raw_features_quadrupole_launch(
 # ---- l=2 V-grad chain: grad_raw -> grad_V (register_warp_op_chain) ----
 
 
+@scoped_torch_warp_stream
 def _feature_v_grad_quadrupole_forward(
     grad_raw: torch.Tensor,
     receiver_phi_hat: torch.Tensor,
@@ -2651,6 +2781,7 @@ def _feature_v_grad_quadrupole_forward_fake(
     )
 
 
+@scoped_torch_warp_stream
 def _feature_v_grad_quadrupole_backward(
     gg_v: torch.Tensor,
     grad_raw: torch.Tensor,
@@ -2707,6 +2838,7 @@ register_warp_op_chain(
 # ---- l=2 position-grad chain: grad_raw -> grad_positions (register_warp_op_chain) ----
 
 
+@scoped_torch_warp_stream
 def _feature_position_grad_quadrupole_forward(
     grad_raw: torch.Tensor,
     potential: torch.Tensor,
@@ -2750,6 +2882,7 @@ def _feature_position_grad_quadrupole_forward_fake(
     return positions.new_empty((positions.shape[0], 3), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _feature_position_grad_quadrupole_backward(
     gg_positions: torch.Tensor,
     grad_raw: torch.Tensor,

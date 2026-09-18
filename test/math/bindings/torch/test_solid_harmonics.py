@@ -79,6 +79,22 @@ class TestShapesAndValidation:
         out = eval_irregular_solid_harmonics_pytorch(pos, max_L=1)
         assert out.shape == (6, 4)
 
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+    def test_regular_current_stream_consumes_event_gated_input(
+        self, torch_stream_runner
+    ):
+        device = torch.device("cuda:0")
+        source = torch.tensor(
+            [[1.0, 2.0, 3.0], [-1.0, 0.0, 1.0]], dtype=torch.float64, device=device
+        )
+        positions = torch.empty_like(source)
+        _, snapshot, expected = torch_stream_runner(
+            source,
+            positions,
+            lambda value: eval_regular_solid_harmonics_pytorch(value, max_L=1),
+        )
+        torch.testing.assert_close(snapshot, expected)
+
     @pytest.mark.parametrize("bad_L", [-1, 2, 3, 4])
     def test_regular_rejects_unsupported_max_L(self, device, bad_L):
         pos = torch.randn(2, 3, dtype=torch.float64, device=device)

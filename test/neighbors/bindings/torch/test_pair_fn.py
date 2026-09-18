@@ -236,6 +236,51 @@ def _two_cluster_positions(device: str):
     )
 
 
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="CUDA is required for stream safety coverage"
+)
+def test_compiled_naive_pair_fn_uses_current_torch_stream(torch_stream_runner):
+    device = torch.device("cuda")
+    source_positions = _two_cluster_positions(str(device))
+    positions = torch.empty_like(source_positions)
+    max_neighbors = 4
+    nm, _nms, nn, nv, nd, pe, pf, pp = _alloc_pair_buffers(
+        positions.shape[0], max_neighbors, str(device)
+    )
+    pair_fn = _compiled_pair_fn("naive_current_stream")
+
+    @torch.compile(fullgraph=True)
+    def run_compiled(positions, nm, nn, nv, nd, pe, pf):
+        return naive_neighbor_list(
+            positions,
+            0.75,
+            max_neighbors=max_neighbors,
+            neighbor_matrix=nm,
+            num_neighbors=nn,
+            return_distances=True,
+            return_vectors=True,
+            neighbor_vectors=nv,
+            neighbor_distances=nd,
+            pair_fn=pair_fn,
+            pair_params=pp,
+            pair_energies=pe,
+            pair_forces=pf,
+        )
+
+    ref_nm, _ref_nms, ref_nn, ref_nv, ref_nd, ref_pe, ref_pf, _ref_pp = (
+        _alloc_pair_buffers(positions.shape[0], max_neighbors, str(device))
+    )
+    source = source_positions, ref_nm, ref_nn, ref_nv, ref_nd, ref_pe, ref_pf
+    target = positions, nm, nn, nv, nd, pe, pf
+    _, snapshots, expected = torch_stream_runner(
+        source,
+        target,
+        lambda values: run_compiled(*values),
+    )
+    for actual, reference in zip(snapshots, expected, strict=True):
+        torch.testing.assert_close(actual, reference)
+
+
 def _single_system_pbc(device: str):
     """Small periodic system whose shape metadata can be precomputed."""
     positions = torch.tensor(

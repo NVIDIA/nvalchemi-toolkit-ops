@@ -335,7 +335,7 @@ class TestCellListJIT:
     def test_jit_with_pbc_precomputed_sizing(self):
         """PBC cell list should work under JIT when sizing is concrete."""
         positions = jnp.array(
-            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            [[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]],
             dtype=jnp.float32,
         )
         cell = jnp.array([[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]])
@@ -344,21 +344,27 @@ class TestCellListJIT:
 
         @jax.jit
         def jitted_cell_list(positions, cell, pbc):
-            return cell_list(
-                positions,
+            neighbor_matrix, num_neighbors, shifts = cell_list(
+                positions + jnp.array([[0.0, 0.0, 0.0], [-1.0, 0.0, 0.0]]),
                 cutoff=1.0,
                 cell=cell,
                 pbc=pbc,
                 max_total_cells=8,
                 neighbor_search_radius=neighbor_search_radius,
             )
+            return neighbor_matrix, num_neighbors, shifts, num_neighbors.sum()
 
-        neighbor_matrix, num_neighbors, shifts = jitted_cell_list(positions, cell, pbc)
+        neighbor_matrix, num_neighbors, shifts, total = jitted_cell_list(
+            positions, cell, pbc
+        )
+        total.block_until_ready()
 
-        assert neighbor_matrix.shape[0] == 2
-        assert num_neighbors.shape == (2,)
-        assert shifts.shape[0] == 2
-        assert shifts.shape[2] == 3
+        np.testing.assert_array_equal(np.asarray(total), 2)
+        np.testing.assert_array_equal(np.asarray(num_neighbors), [1, 1])
+        np.testing.assert_array_equal(np.asarray(neighbor_matrix[:, 0]), [1, 0])
+        np.testing.assert_array_equal(
+            np.asarray(shifts[:, 0]), np.zeros((2, 3), dtype=np.int32)
+        )
 
     def test_jit_fixed_capacity_coo(self):
         """The one-shot cell-list API returns fixed COO recovery metadata."""

@@ -31,6 +31,7 @@ from nvalchemiops.neighbors.neighbor_utils import (
 from nvalchemiops.neighbors.neighbor_utils import (
     compute_naive_num_shifts as wp_compute_naive_num_shifts,
 )
+from nvalchemiops.torch._warp_op_helpers import scoped_torch_warp_stream
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype
 
 __all__ = [
@@ -274,6 +275,7 @@ def _normalize_compiled_single_segment_coo_count(
     pair_counts.copy_(normalized_counts)
 
 
+@scoped_torch_warp_stream
 def compute_naive_num_shifts(
     cell: torch.Tensor,
     cutoff: float,

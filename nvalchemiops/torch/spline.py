@@ -145,6 +145,7 @@ from nvalchemiops.math.spline import (
 # spline -> electrostatics -> pme -> spline import cycle.
 from nvalchemiops.torch._warp_op_helpers import (
     register_warp_op_chain,
+    scoped_torch_warp_stream,
 )
 from nvalchemiops.torch.autograd import (
     OutputSpec,
@@ -237,21 +238,6 @@ def _spline_weight(
 # so we recover qgf as ``-(force @ cell.T)`` via a single matmul.
 
 
-def _scoped_warp_stream(device: torch.device):
-    """Bind Warp's current stream to PyTorch's current CUDA stream.
-
-    Required for ``torch.cuda.graph`` capture: without this, warp kernel
-    launches go to warp's default stream (separate from torch's capturing
-    stream) and aren't recorded into the graph, so replay silently no-ops.
-    """
-    if device.type != "cuda":
-        from contextlib import nullcontext
-
-        return nullcontext()
-    torch_stream = torch.cuda.current_stream(device)
-    return wp.ScopedStream(wp.stream_from_torch(torch_stream))
-
-
 def _wp_from_torch(tensor: torch.Tensor, dtype):
     """Wrap a torch tensor as a Warp array WITHOUT allocating a shadow
     gradient array.
@@ -266,6 +252,7 @@ def _wp_from_torch(tensor: torch.Tensor, dtype):
     return wp.from_torch(tensor, dtype=dtype, requires_grad=False)
 
 
+@scoped_torch_warp_stream
 def _spread_forward_launch(
     positions: torch.Tensor,
     values: torch.Tensor,
@@ -296,28 +283,28 @@ def _spread_forward_launch(
     # with fully-unrolled order^3 stencil and 1D weights in registers.
     per_order_kernel = _PER_ORDER_SPREAD_KERNELS[wp_dtype].get(spline_order)
 
-    with _scoped_warp_stream(positions.device):
-        if per_order_kernel is not None:
-            wp.launch(
-                per_order_kernel,
-                dim=positions.shape[0],
-                inputs=[wp_positions, wp_values, wp_cell_inv_t],
-                outputs=[wp_mesh],
-                device=device,
-            )
-        else:
-            _spread_launch(
-                wp_positions,
-                wp_values,
-                wp_cell_inv_t,
-                spline_order,
-                wp_mesh,
-                wp_dtype=wp_dtype,
-                device=device,
-            )
+    if per_order_kernel is not None:
+        wp.launch(
+            per_order_kernel,
+            dim=positions.shape[0],
+            inputs=[wp_positions, wp_values, wp_cell_inv_t],
+            outputs=[wp_mesh],
+            device=device,
+        )
+    else:
+        _spread_launch(
+            wp_positions,
+            wp_values,
+            wp_cell_inv_t,
+            spline_order,
+            wp_mesh,
+            wp_dtype=wp_dtype,
+            device=device,
+        )
     return mesh
 
 
+@scoped_torch_warp_stream
 def _gather_forward_launch(
     positions: torch.Tensor,
     mesh: torch.Tensor,
@@ -341,19 +328,19 @@ def _gather_forward_launch(
     wp_cell_inv_t = _wp_from_torch(cell_inv_t.contiguous(), dtype=wp_mat_dtype)
     wp_output = _wp_from_torch(output, dtype=wp_dtype)
 
-    with _scoped_warp_stream(positions.device):
-        _gather_launch(
-            wp_positions,
-            wp_cell_inv_t,
-            spline_order,
-            wp_mesh,
-            wp_output,
-            wp_dtype=wp_dtype,
-            device=device,
-        )
+    _gather_launch(
+        wp_positions,
+        wp_cell_inv_t,
+        spline_order,
+        wp_mesh,
+        wp_output,
+        wp_dtype=wp_dtype,
+        device=device,
+    )
     return output
 
 
+@scoped_torch_warp_stream
 def _gather_gradient_forward_launch(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -384,20 +371,20 @@ def _gather_gradient_forward_launch(
     wp_cell_inv_t = _wp_from_torch(cell_inv_t.contiguous(), dtype=wp_mat_dtype)
     wp_forces = _wp_from_torch(forces, dtype=wp_vec_dtype)
 
-    with _scoped_warp_stream(positions.device):
-        _grad_launch(
-            wp_positions,
-            wp_charges,
-            wp_cell_inv_t,
-            spline_order,
-            wp_mesh,
-            wp_forces,
-            wp_dtype=wp_dtype,
-            device=device,
-        )
+    _grad_launch(
+        wp_positions,
+        wp_charges,
+        wp_cell_inv_t,
+        spline_order,
+        wp_mesh,
+        wp_forces,
+        wp_dtype=wp_dtype,
+        device=device,
+    )
     return forces
 
 
+@scoped_torch_warp_stream
 def _spread_gradient_weights_launch(
     positions: torch.Tensor,
     per_atom_vec: torch.Tensor,
@@ -422,19 +409,19 @@ def _spread_gradient_weights_launch(
     wp_cell_inv_t = _wp_from_torch(cell_inv_t.contiguous(), dtype=wp_mat_dtype)
     wp_mesh = _wp_from_torch(mesh, dtype=wp_dtype)
 
-    with _scoped_warp_stream(positions.device):
-        _spline_spread_grad_weights_launch(
-            wp_positions,
-            wp_vec,
-            wp_cell_inv_t,
-            spline_order,
-            wp_mesh,
-            wp_dtype=wp_dtype,
-            device=device,
-        )
+    _spline_spread_grad_weights_launch(
+        wp_positions,
+        wp_vec,
+        wp_cell_inv_t,
+        spline_order,
+        wp_mesh,
+        wp_dtype=wp_dtype,
+        device=device,
+    )
     return mesh
 
 
+@scoped_torch_warp_stream
 def _pos_hessian_forward_launch(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -462,18 +449,17 @@ def _pos_hessian_forward_launch(
     wp_mesh = _wp_from_torch(mesh.to(input_dtype).contiguous(), dtype=wp_dtype)
     wp_grad_pos = _wp_from_torch(grad_positions, dtype=wp_vec_dtype)
 
-    with _scoped_warp_stream(positions.device):
-        _spline_pos_hessian_launch(
-            wp_pos,
-            wp_chg,
-            wp_v,
-            wp_cit,
-            spline_order,
-            wp_mesh,
-            wp_grad_pos,
-            wp_dtype=wp_dtype,
-            device=device,
-        )
+    _spline_pos_hessian_launch(
+        wp_pos,
+        wp_chg,
+        wp_v,
+        wp_cit,
+        spline_order,
+        wp_mesh,
+        wp_grad_pos,
+        wp_dtype=wp_dtype,
+        device=device,
+    )
     return grad_positions
 
 
@@ -925,6 +911,7 @@ def _spline_gather_gradient(
     )
 
 
+@scoped_torch_warp_stream
 def _gather_with_force_forward_launch(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -957,24 +944,23 @@ def _gather_with_force_forward_launch(
 
     per_order_kernel = _PER_ORDER_GATHER_WITH_FORCE_KERNELS[wp_dtype].get(spline_order)
 
-    with _scoped_warp_stream(positions.device):
-        if per_order_kernel is not None:
-            wp.launch(
-                per_order_kernel,
-                dim=num_atoms,
-                inputs=[wp_pos, wp_chg, wp_cit, wp_mesh],
-                outputs=[wp_pot, wp_forces],
-                device=device,
-            )
-        else:
-            kernel = _bspline_gather_with_force_kernel_overload[wp_dtype]
-            wp.launch(
-                kernel,
-                dim=(num_atoms, num_points),
-                inputs=[wp_pos, wp_chg, wp_cit, wp.int32(spline_order), wp_mesh],
-                outputs=[wp_pot, wp_forces],
-                device=device,
-            )
+    if per_order_kernel is not None:
+        wp.launch(
+            per_order_kernel,
+            dim=num_atoms,
+            inputs=[wp_pos, wp_chg, wp_cit, wp_mesh],
+            outputs=[wp_pot, wp_forces],
+            device=device,
+        )
+    else:
+        kernel = _bspline_gather_with_force_kernel_overload[wp_dtype]
+        wp.launch(
+            kernel,
+            dim=(num_atoms, num_points),
+            inputs=[wp_pos, wp_chg, wp_cit, wp.int32(spline_order), wp_mesh],
+            outputs=[wp_pot, wp_forces],
+            device=device,
+        )
     return potential, forces
 
 
@@ -1150,6 +1136,7 @@ def _spline_gather_with_force(
 # cell_inv_t gradient is accumulated per system via index_add_.
 
 
+@scoped_torch_warp_stream
 def _batch_spread_forward_launch(
     positions: torch.Tensor,
     values: torch.Tensor,
@@ -1184,29 +1171,29 @@ def _batch_spread_forward_launch(
     # Per-order specialized batch spread kernel.
     per_order_kernel = _PER_ORDER_BATCH_SPREAD_KERNELS[wp_dtype].get(spline_order)
 
-    with _scoped_warp_stream(positions.device):
-        if per_order_kernel is not None:
-            wp.launch(
-                per_order_kernel,
-                dim=positions.shape[0],
-                inputs=[wp_positions, wp_values, wp_batch_idx, wp_cell_inv_t],
-                outputs=[wp_mesh],
-                device=device,
-            )
-        else:
-            _spread_launch(
-                wp_positions,
-                wp_values,
-                wp_batch_idx,
-                wp_cell_inv_t,
-                spline_order,
-                wp_mesh,
-                wp_dtype=wp_dtype,
-                device=device,
-            )
+    if per_order_kernel is not None:
+        wp.launch(
+            per_order_kernel,
+            dim=positions.shape[0],
+            inputs=[wp_positions, wp_values, wp_batch_idx, wp_cell_inv_t],
+            outputs=[wp_mesh],
+            device=device,
+        )
+    else:
+        _spread_launch(
+            wp_positions,
+            wp_values,
+            wp_batch_idx,
+            wp_cell_inv_t,
+            spline_order,
+            wp_mesh,
+            wp_dtype=wp_dtype,
+            device=device,
+        )
     return mesh
 
 
+@scoped_torch_warp_stream
 def _batch_gather_forward_launch(
     positions: torch.Tensor,
     mesh: torch.Tensor,
@@ -1232,20 +1219,20 @@ def _batch_gather_forward_launch(
     wp_cell_inv_t = _wp_from_torch(cell_inv_t.contiguous(), dtype=wp_mat_dtype)
     wp_output = _wp_from_torch(output, dtype=wp_dtype)
 
-    with _scoped_warp_stream(positions.device):
-        _gather_launch(
-            wp_positions,
-            wp_batch_idx,
-            wp_cell_inv_t,
-            spline_order,
-            wp_mesh,
-            wp_output,
-            wp_dtype=wp_dtype,
-            device=device,
-        )
+    _gather_launch(
+        wp_positions,
+        wp_batch_idx,
+        wp_cell_inv_t,
+        spline_order,
+        wp_mesh,
+        wp_output,
+        wp_dtype=wp_dtype,
+        device=device,
+    )
     return output
 
 
+@scoped_torch_warp_stream
 def _batch_gather_gradient_forward_launch(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -1279,21 +1266,21 @@ def _batch_gather_gradient_forward_launch(
     wp_cell_inv_t = _wp_from_torch(cell_inv_t.contiguous(), dtype=wp_mat_dtype)
     wp_forces = _wp_from_torch(forces, dtype=wp_vec_dtype)
 
-    with _scoped_warp_stream(positions.device):
-        _grad_launch(
-            wp_positions,
-            wp_charges,
-            wp_batch_idx,
-            wp_cell_inv_t,
-            spline_order,
-            wp_mesh,
-            wp_forces,
-            wp_dtype=wp_dtype,
-            device=device,
-        )
+    _grad_launch(
+        wp_positions,
+        wp_charges,
+        wp_batch_idx,
+        wp_cell_inv_t,
+        spline_order,
+        wp_mesh,
+        wp_forces,
+        wp_dtype=wp_dtype,
+        device=device,
+    )
     return forces
 
 
+@scoped_torch_warp_stream
 def _batch_spread_gradient_weights_launch(
     positions: torch.Tensor,
     per_atom_vec: torch.Tensor,
@@ -1323,20 +1310,20 @@ def _batch_spread_gradient_weights_launch(
     wp_cell_inv_t = _wp_from_torch(cell_inv_t.contiguous(), dtype=wp_mat_dtype)
     wp_mesh = _wp_from_torch(mesh, dtype=wp_dtype)
 
-    with _scoped_warp_stream(positions.device):
-        _batch_spline_spread_grad_weights_launch(
-            wp_positions,
-            wp_vec,
-            wp_batch_idx,
-            wp_cell_inv_t,
-            spline_order,
-            wp_mesh,
-            wp_dtype=wp_dtype,
-            device=device,
-        )
+    _batch_spline_spread_grad_weights_launch(
+        wp_positions,
+        wp_vec,
+        wp_batch_idx,
+        wp_cell_inv_t,
+        spline_order,
+        wp_mesh,
+        wp_dtype=wp_dtype,
+        device=device,
+    )
     return mesh
 
 
+@scoped_torch_warp_stream
 def _batch_pos_hessian_forward_launch(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -1366,19 +1353,18 @@ def _batch_pos_hessian_forward_launch(
     wp_mesh = _wp_from_torch(mesh.to(input_dtype).contiguous(), dtype=wp_dtype)
     wp_grad_pos = _wp_from_torch(grad_positions, dtype=wp_vec_dtype)
 
-    with _scoped_warp_stream(positions.device):
-        _batch_spline_pos_hessian_launch(
-            wp_pos,
-            wp_chg,
-            wp_v,
-            wp_bidx,
-            wp_cit,
-            spline_order,
-            wp_mesh,
-            wp_grad_pos,
-            wp_dtype=wp_dtype,
-            device=device,
-        )
+    _batch_spline_pos_hessian_launch(
+        wp_pos,
+        wp_chg,
+        wp_v,
+        wp_bidx,
+        wp_cit,
+        spline_order,
+        wp_mesh,
+        wp_grad_pos,
+        wp_dtype=wp_dtype,
+        device=device,
+    )
     return grad_positions
 
 
@@ -1866,6 +1852,7 @@ def _batch_spline_gather_gradient(
     )
 
 
+@scoped_torch_warp_stream
 def _batch_gather_with_force_forward_launch(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -1905,14 +1892,13 @@ def _batch_gather_with_force_forward_launch(
     wp_pot = _wp_from_torch(potential, dtype=wp_dtype)
     wp_forces = _wp_from_torch(forces, dtype=wp_vec_dtype)
 
-    with _scoped_warp_stream(positions.device):
-        wp.launch(
-            per_order_kernel,
-            dim=num_atoms,
-            inputs=[wp_pos, wp_chg, wp_bidx, wp_cit, wp_mesh],
-            outputs=[wp_pot, wp_forces],
-            device=device,
-        )
+    wp.launch(
+        per_order_kernel,
+        dim=num_atoms,
+        inputs=[wp_pos, wp_chg, wp_bidx, wp_cit, wp_mesh],
+        outputs=[wp_pot, wp_forces],
+        device=device,
+    )
     return potential, forces
 
 

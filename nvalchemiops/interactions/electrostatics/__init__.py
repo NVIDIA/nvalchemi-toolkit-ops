@@ -108,6 +108,14 @@ from nvalchemiops.interactions.electrostatics.ewald_kernels import (
 # here because the batched multipole torch autograd wrappers import them from
 # the package root.
 from nvalchemiops.interactions.electrostatics.multipole_direct_kspace_kernels import (
+    FeatPositionGradBackwardGradRawTiledScratch,
+    FeatPositionGradBackwardPositionsTiledScratch,
+    PositionGradientFromFeatureGradTiledScratch,
+    PositionGradientFromRhokTiledScratch,
+    ProjectFeaturesDipoleTiledScratch,
+    RhokPositionGradBackwardMomentsTiledScratch,
+    RhokPositionGradBackwardPositionsTiledScratch,
+    VGradFromFeatGradBackwardPositionsTiledScratch,
     batch_apply_per_k_factor,
     batch_assemble_rho_k_dipole,
     batch_build_structure_factor_table,
@@ -191,6 +199,15 @@ __all__ = [
     "batch_pme_energy_corrections",
     "pme_energy_corrections_with_charge_grad",
     "batch_pme_energy_corrections_with_charge_grad",
+    # Direct multipole tiled CUDA scratch bundles
+    "PositionGradientFromRhokTiledScratch",
+    "ProjectFeaturesDipoleTiledScratch",
+    "PositionGradientFromFeatureGradTiledScratch",
+    "RhokPositionGradBackwardMomentsTiledScratch",
+    "RhokPositionGradBackwardPositionsTiledScratch",
+    "FeatPositionGradBackwardGradRawTiledScratch",
+    "FeatPositionGradBackwardPositionsTiledScratch",
+    "VGradFromFeatGradBackwardPositionsTiledScratch",
     # Ewald - PyTorch bindings (deprecated, use nvalchemiops.torch.interactions.electrostatics)
     "ewald_real_space",
     "ewald_reciprocal_space",

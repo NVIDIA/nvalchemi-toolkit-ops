@@ -165,7 +165,6 @@ References
 
 import math
 import warnings
-from contextlib import nullcontext
 from typing import Literal
 
 import torch
@@ -187,6 +186,9 @@ from nvalchemiops.torch._warnings import _warn_compile_missing_argument_inferenc
 from nvalchemiops.torch._warp_op_helpers import (
     attach_simple_backward,
     register_warp_op_chain,
+)
+from nvalchemiops.torch._warp_op_helpers import (
+    scoped_warp_stream as _pme_scoped_warp_stream,
 )
 from nvalchemiops.torch.interactions.electrostatics._registration import (
     ensure_electrostatics_ops_registered,
@@ -319,18 +321,6 @@ def _vec2_wp_dtype_for(real_dtype: torch.dtype):
     import warp as _wp
 
     return _wp.vec2f if real_dtype == torch.float32 else _wp.vec2d
-
-
-def _pme_scoped_warp_stream(device: torch.device):
-    """Bind Warp's current stream to PyTorch's current CUDA stream.
-
-    Required for ``torch.cuda.graph`` capture so Warp kernel launches end
-    up on the stream being captured rather than Warp's default stream.
-    """
-    if device.type != "cuda":
-        return nullcontext()
-    torch_stream = torch.cuda.current_stream(device)
-    return wp.ScopedStream(wp.stream_from_torch(torch_stream))
 
 
 def _wp_from_torch(tensor: torch.Tensor, dtype):

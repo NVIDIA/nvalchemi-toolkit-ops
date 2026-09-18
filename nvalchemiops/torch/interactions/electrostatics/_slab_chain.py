@@ -17,12 +17,15 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
-
 import torch
 import warp as wp
 
-from nvalchemiops.torch._warp_op_helpers import register_warp_op_chain
+from nvalchemiops.torch._warp_op_helpers import (
+    register_warp_op_chain,
+)
+from nvalchemiops.torch._warp_op_helpers import (
+    scoped_warp_stream as _scoped_stream,
+)
 from nvalchemiops.torch.interactions.electrostatics._util import (
     _distribute_system_mean_cotangent_to_atoms,
     _is_per_system_uniform_cotangent,
@@ -42,13 +45,6 @@ _SLAB_OPS_REGISTERED = False
 def _wp_from_torch(tensor: torch.Tensor, dtype):
     """Convert a tensor to Warp without allocating unused Warp gradients."""
     return wp.from_torch(tensor.detach().contiguous(), dtype=dtype, requires_grad=False)
-
-
-def _scoped_stream(device: torch.device):
-    """Bind Warp launches to PyTorch's current CUDA stream."""
-    if device.type != "cuda":
-        return nullcontext()
-    return wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream(device)))
 
 
 def _per_system_cotangent(
