@@ -57,3 +57,19 @@ Neighbor List Implementation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. autofunction:: nvalchemiops.jax.interactions.dispersion._dftd3._dftd3_nl_impl
+
+FourierD3: Particle-Mesh DFT-D3
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Evaluates the same correction on a particle mesh, in :math:`O(N \log N)` and with no
+real-space cutoff on the dispersion sum.
+
+.. note::
+   ``mesh_spacing`` reads the cell lengths into Python integers, so it cannot be used inside
+   ``jax.jit``. Pass ``mesh_dimensions`` explicitly when tracing.
+
+.. autofunction:: nvalchemiops.jax.interactions.dispersion.fourier_dftd3
+
+.. autoclass:: nvalchemiops.jax.interactions.dispersion.FourierD3Parameters
+    :members:
+    :undoc-members:

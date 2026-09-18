@@ -34,3 +34,61 @@ Periodic Boundary Conditions (PBC)
 
 .. autofunction:: nvalchemiops.interactions.dispersion._dftd3.dftd3_matrix_pbc
 .. autofunction:: nvalchemiops.interactions.dispersion._dftd3.dftd3_pbc
+
+FourierD3: Particle-Mesh DFT-D3
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. tip::
+   For PyTorch and JAX tensor support, see :doc:`../torch/dispersion` and
+   :doc:`../jax/dispersion`.
+
+FourierD3 evaluates the same DFT-D3(BJ) correction on a particle mesh, in
+:math:`O(N \log N)` and with no real-space cutoff on the dispersion sum. The only
+real-space cutoff that remains is the short coordination-number list.
+
+Unlike the launchers above, these are **component** launchers rather than one end-to-end
+call. Warp has no full-mesh FFT, so the two transforms belong to the calling framework and
+the launchers are driven around them, in the order given by the table in the module
+documentation.
+
+.. automodule:: nvalchemiops.interactions.dispersion._fourier_dftd3
+    :no-members:
+    :no-inherited-members:
+
+Real-Space Passes
+~~~~~~~~~~~~~~~~~
+
+.. autofunction:: nvalchemiops.interactions.dispersion._fourier_dftd3.fd3_coordination_numbers
+.. autofunction:: nvalchemiops.interactions.dispersion._fourier_dftd3.fd3_coordination_numbers_matrix
+.. autofunction:: nvalchemiops.interactions.dispersion._fourier_dftd3.fd3_coefficients
+
+Reciprocal-Space Pass
+~~~~~~~~~~~~~~~~~~~~~
+
+.. autofunction:: nvalchemiops.interactions.dispersion._fourier_dftd3.fd3_kspace
+
+Gradient Passes
+~~~~~~~~~~~~~~~
+
+.. autofunction:: nvalchemiops.interactions.dispersion._fourier_dftd3.fd3_gather_and_force
+.. autofunction:: nvalchemiops.interactions.dispersion._fourier_dftd3.fd3_self_energy
+.. autofunction:: nvalchemiops.interactions.dispersion._fourier_dftd3.fd3_cn_chain
+.. autofunction:: nvalchemiops.interactions.dispersion._fourier_dftd3.fd3_cn_chain_matrix
+
+Reference Tensor Decomposition
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Computed once on the host, not on the GPU. The rank it selects sets the number of mesh
+channels and so the cost of every evaluation that follows.
+
+.. automodule:: nvalchemiops.interactions.dispersion._c6_decomposition
+    :no-members:
+    :no-inherited-members:
+
+.. autofunction:: nvalchemiops.interactions.dispersion._c6_decomposition.decompose_c6_reference
+.. autofunction:: nvalchemiops.interactions.dispersion._c6_decomposition.extract_species_reference_cn
+.. autofunction:: nvalchemiops.interactions.dispersion._c6_decomposition.clear_decomposition_cache
+
+.. autoclass:: nvalchemiops.interactions.dispersion._c6_decomposition.C6Decomposition
+    :members:
+    :undoc-members:

@@ -1,0 +1,25 @@
+# Configuration for the FourierD3 benchmarks.
+#
+# The comparison is against real-space dftd3 at several interaction cutoffs. Only the
+# converged cutoffs are a like-for-like comparison: a 6 Angstrom dispersion sum is a
+# different, unconverged calculation, and is included to make that visible rather than to
+# be beaten.
+
+parameters:
+  # Number density in atoms per cubic Angstrom. 0.1 is representative of a condensed
+  # phase; the comparison depends strongly on this, because the real-space neighbour count
+  # grows as density times cutoff cubed while the mesh cost does not depend on it at all.
+  density: 0.1
+
+  atom_counts: [500, 2000, 8000, 20000]
+
+  # 6.0 is the common MLFF cutoff and is NOT converged for dispersion. 15.0 and 20.0 are
+  # the range where the real-space sum approaches convergence for a condensed phase.
+  real_space_cutoffs: [6.0, 15.0, 20.0]
+
+  timing_runs: 10
+  warmup_runs: 3
+  device: cuda
+
+output:
+  base_dir: benchmarks/results

@@ -2,6 +2,88 @@
 
 # Change Log
 
+## Unreleased
+
+### Added
+
+- FourierD3, a particle-mesh evaluation of the DFT-D3(BJ) dispersion correction. Where
+  `dftd3` sums pair interactions in real space, `fourier_dftd3` evaluates the same
+  correction on a mesh in `O(N log N)` with **no real-space cutoff on the dispersion sum**;
+  the only real-space cutoff remaining is the short coordination-number list a machine-learned
+  force field already builds. This matters because a `1/r^6` interaction summed over three
+  dimensions leaves a truncation error decaying only as `1/r^3`, so converging the real-space
+  form to sub-meV/atom requires cutoffs at which the neighbour list dominates the simulation
+  step. Available as `nvalchemiops.interactions.dispersion._fourier_dftd3` (Warp component
+  launchers), and as `fourier_dftd3` in both the Torch and JAX dispersion modules. Energy,
+  forces and the virial are supported, in float32 and float64, batched, with either neighbour
+  format. `dftd3` is unchanged and remains the right choice for open boundary conditions and
+  small molecules.
+- `FourierD3Parameters` in the Torch and JAX dispersion modules, holding the low-rank
+  decomposition of Grimme's reference tensor for the species present. The decomposition is
+  independent of the damping parameters, so one instance is valid for every functional; the
+  damping values are call-time arguments and are never stored alongside derived quantities.
+- `decompose_c6_reference` in `nvalchemiops.interactions.dispersion._c6_decomposition`, a
+  host-side helper that performs that decomposition and caches it on the content of the
+  reference tables together with every option that can change the result.
+- `batch_spline_spread_channels` and `batch_spline_gather_channels` in
+  `nvalchemiops.math.spline`, Warp-level launchers for the multi-channel B-spline kernels.
+  Both key the cell lookup and the mesh slab off one per-atom index, so a caller partitioning
+  atoms by something other than the system alone can pass a composite index and have each atom
+  touch only its own slab.
+
+- FourierD3 owns its B-spline spread and gather rather than reusing the shared ones from
+  `nvalchemiops.math.spline`. The shared spread skips stencil points whose interpolation
+  weight falls at or below `1e-8`, which is a sound efficiency measure for a value but not
+  for a gradient: dropping a stencil point removes its contribution to the force as well, and
+  for an atom near a mesh cell boundary a quarter of the stencil can fall below the
+  threshold. Keeping every point costs a few extra atomic adds and makes the interpolation
+  the exact B-spline that the gather differentiates. PME is unaffected.
+
+- `FourierD3Setup` in the Torch dispersion module, holding the cell- and mesh-derived
+  quantities that do not change between steps. Passing it to `fourier_dftd3` skips a matrix
+  inversion and a set of spline moduli per call, worth 3.1x at 8,000 atoms, and is required
+  for
+  `torch.compile(mode="reduce-overhead")` because `torch.linalg.inv` cannot be recorded into
+  a CUDA graph. Warp launches are now bound to PyTorch's current stream without an entry
+  synchronisation, which graph capture also forbids.
+
+- `rank_chunk_size` on `fourier_dftd3` in both the Torch and JAX bindings, capping how many
+  rank slots are resident on the mesh at once. The mesh and its transforms dominate the
+  workspace and scale as `num_systems * n_species * rank * nx * ny * nz`, so many species or
+  a large retained rank can exhaust device memory on a fine mesh. Every stage after the
+  coordination number is a sum over rank slots with no coupling between them, so chunking
+  leaves the result unchanged to round-off; the cost is one extra spread, transform pair and
+  gather per chunk. Defaults to `None`, the single-pass behaviour. Host-static, so it is safe
+  under `jax.jit` and `torch.compile`.
+  Only the reciprocal stages -- spread, transforms, contraction and gather -- run per chunk;
+  the self-energy and the coordination chain rule need every slot at once and run once
+  afterwards. Under `jax.jit` the loop is unrolled at trace time, so the traced graph grows
+  linearly in `rank / rank_chunk_size`.
+
+### Changed
+
+- The minimum `warp-lang` requirement is now `>= 1.16.0`, raised from `>= 1.13.0`. The JAX
+  FourierD3 binding passes `block_dim` to `warp.jax_experimental.jax_kernel` to launch its
+  block-per-atom coordination-number and reciprocal-space kernels, and that argument was
+  added to `jax_kernel` in Warp 1.16.0. FourierD3 is the only component that uses it; on an
+  older Warp the JAX binding fails at import with a `TypeError`.
+
+### Notes
+
+- FourierD3 uses a modified coordination-number function that decays to zero at the neighbour
+  list cutoff, where the standard D3 function tends to a non-zero constant. That modification
+  is what makes the coordination numbers independent of the list used to build them, so the
+  two functions are not identical; in practice the difference is small. On diamond with the
+  published tables, FourierD3 agrees to 5.9e-06 relative with `dftd3` extrapolated to an
+  infinite cutoff, while reading only a 6 Angstrom list, where `dftd3` at that same cutoff is
+  still 10% short.
+- `rcov` follows the same convention as `dftd3`: the shipped table already folds in Grimme's
+  4/3 scale, so the counting function crosses one half at a separation equal to the sum of the
+  two tabulated radii. Pass `dftd3` and `fourier_dftd3` the same table.
+- `r_cut` must equal the radius the neighbour list was built with, and has no default, because
+  the reference parameters are conventionally in atomic units and a value meant as 6 Angstrom
+  would otherwise act silently as 6 Bohr.
+
 ## v0.4.1 - 2026-08-03
 
 ### Added
