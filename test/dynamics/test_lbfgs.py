@@ -43,6 +43,7 @@ from nvalchemiops.dynamics.optimizers.lbfgs import (
     LBFGS_CONVERGED,
     LBFGS_NEED_EVAL,
     lbfgs_apply_step,
+    lbfgs_cell_kappa,
     lbfgs_cell_trust_region,
     lbfgs_pack_cell,
     lbfgs_prepare_step,
@@ -1116,6 +1117,36 @@ class TestLBFGSVariableCell:
         np.testing.assert_allclose(
             frac_final, np.broadcast_to(s0, frac.shape), atol=1e-5
         )
+
+
+class TestLBFGSCellKappa:
+    """The cell coordinate scaling, which is divided into the cell force."""
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_zero_atom_system_gets_a_positive_kappa(self, device):
+        """An empty system must not produce ``kappa = 0``.
+
+        ``kappa`` is divided into the cell force and into the unpacked cell, so
+        a zero would turn both infinite. A system with no atoms still owns two
+        cell degrees of freedom, so it is a reachable configuration in a ragged
+        or padded batch rather than a degenerate one.
+        """
+        counts = np.array([4, 0, 3], np.int32)
+        n_atoms = wp.array(counts, dtype=wp.int32, device=device)
+        kappa = wp.zeros(len(counts), dtype=wp.float64, device=device)
+
+        lbfgs_cell_kappa(n_atoms, kappa, cell_force_scale=0.25)
+        wp.synchronize()
+
+        k = kappa.numpy()
+        assert (k > 0.0).all(), f"non-positive kappa: {k}"
+        assert np.isfinite(1.0 / k).all(), "dividing by kappa is not finite"
+        # Populated systems keep the documented scale * count.
+        np.testing.assert_allclose(k[0], 0.25 * 4)
+        np.testing.assert_allclose(k[2], 0.25 * 3)
+        # The empty one is treated as a single atom: the scale is free there,
+        # it only has to be positive.
+        np.testing.assert_allclose(k[1], 0.25)
 
 
 class TestLBFGSRaggedVariableCell:

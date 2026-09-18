@@ -2173,7 +2173,13 @@ def _lbfgs_cell_kappa_kernel(
     """
     tid = wp.tid()
     slot = kappa[tid]
-    kappa[tid] = type(slot)(cell_force_scale) * type(slot)(n_atoms_per_system[tid])
+    # A system with no atoms still owns two cell degrees of freedom, and kappa
+    # is divided into the cell force and the unpacked cell, so it must stay
+    # strictly positive or those become infinite. With no atoms there is
+    # nothing to balance the cell against, which makes the scale free; clamping
+    # the count to one keeps it continuous with a single-atom system.
+    count = wp.max(n_atoms_per_system[tid], wp.int32(1))
+    kappa[tid] = type(slot)(cell_force_scale) * type(slot)(count)
 
 
 @wp.kernel(enable_backward=False)
@@ -2583,6 +2589,14 @@ def lbfgs_cell_kappa(
         OUTPUT. Must match the coordinate precision (float32 or float64).
     cell_force_scale : float, optional
         Multiplier on the atom count.
+
+    Notes
+    -----
+    ``kappa`` is divided into the cell force, so it must never be zero. A
+    system with no atoms is treated as having one, since with nothing to
+    balance the cell against the scale is arbitrary anyway. If you fill
+    ``kappa`` yourself rather than calling this, keep every entry strictly
+    positive.
     """
     if cell_force_scale <= 0.0:
         raise ValueError(f"cell_force_scale must be positive; got {cell_force_scale}")
