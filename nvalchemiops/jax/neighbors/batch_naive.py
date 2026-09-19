@@ -21,6 +21,7 @@ import functools
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import warp as wp
 from warp import JaxCallableGraphMode, jax_callable, jax_kernel
 
@@ -915,8 +916,9 @@ def batch_naive_neighbor_list(
     ):
         raise ValueError("target_indices must be a rank-one int32 array.")
     if target_indices is not None and not isinstance(target_indices, jax.core.Tracer):
-        if bool(jnp.any(target_indices < 0)) or bool(
-            jnp.any(target_indices >= positions.shape[0])
+        concrete_target_indices = np.asarray(target_indices)
+        if np.any(concrete_target_indices < 0) or np.any(
+            concrete_target_indices >= positions.shape[0]
         ):
             raise ValueError("target_indices must contain in-bounds atom indices.")
     if target_indices is not None and rebuild_flags is not None:
