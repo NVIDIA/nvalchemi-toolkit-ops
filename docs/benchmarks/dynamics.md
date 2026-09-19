@@ -233,25 +233,29 @@ are fixed: the forces now come from the package kernels, and the grid runs to
 **Per-step optimizer cost.** Optimizer time only, single system, harmonic
 potential, measured with `--gates`. Both arms run at the stated precision:
 
-The ratio varies by roughly +/- 0.3 between runs. Each run writes
-`lbfgs_gate_timings.csv` alongside the other benchmark results, so this table
-has a regenerable record behind it.
+The ratio varies by roughly +/- 0.7 between runs — measured across four repeats
+at ten thousand atoms in fp32 it ranged 7.9x to 8.6x — so read the magnitude,
+not the digit. Each run writes `lbfgs_gate_timings.csv` alongside the other
+benchmark results, and the table below is one such file rather than a hand
+transcription, so it has a regenerable record behind it.
 
 | Atoms | Precision | Eager (ms) | CUDA graph (ms) | FIRE2 (ms) | vs FIRE2 |
 | --- | --- | --- | --- | --- | --- |
-| 10,000 | float32 | 0.47 | 0.14 | 0.059 | 7.9x |
-| 10,000 | float64 | 0.45 | 0.16 | 0.058 | 7.7x |
-| 100,000 | float32 | 0.98 | 0.98 | 0.116 | 8.5x |
-| 100,000 | float64 | 1.02 | 1.02 | 0.112 | 9.1x |
+| 10,000 | float32 | 0.48 | 0.14 | 0.055 | 8.6x |
+| 10,000 | float64 | 0.46 | 0.17 | 0.060 | 7.8x |
+| 100,000 | float32 | 0.98 | 1.01 | 0.125 | 7.8x |
+| 100,000 | float64 | 1.09 | 1.05 | 0.114 | 9.5x |
 | 1,000,000 | float64 | 3.12 | 3.11 | 0.319 | 9.8x |
 
 The million-atom row predates the precision split and has not been regenerated;
 it is float64 only. Re-run `--gates` without `--gate-sizes` to refresh it.
 
 **Precision moves this less than the halved byte count suggests**, because
-FIRE2 halves too: at a hundred thousand atoms the step goes 1.02 ms to 0.98 ms
-and the ratio moves from 9.1x to 8.5x. It is reported per precision because it
-is a measurement, not something to infer from one run and a factor.
+FIRE2 halves too: at a hundred thousand atoms the step goes 1.09 ms to 0.98 ms,
+a 10% saving rather than a halving. The ratio difference between the two rows
+is inside the run-to-run spread above, so treat the precisions as comparable in
+per-step cost rather than reading a trend into it. It is reported per precision
+because it is a measurement, not something to infer from one run and a factor.
 
 **A single L-BFGS step is roughly ten times more expensive than a FIRE2 step.**
 It runs `2m + O(1)` passes over the degrees of freedom against FIRE2's handful.
@@ -261,7 +265,7 @@ replay recovers nothing.
 
 **Break-even is no longer comfortable.** The model must cost more than roughly
 0.5, 1.1 and 3.7 milliseconds per evaluation at these three sizes for L-BFGS to
-win end to end (fp32: 0.53 and 1.13 ms at the two regenerated sizes). A machine-learned potential is milliseconds per evaluation, so
+win end to end (fp32: 0.55 and 1.10 ms at the two regenerated sizes). A machine-learned potential is milliseconds per evaluation, so
 at ten thousand atoms L-BFGS wins clearly, at a hundred thousand it is close,
 and at a million it needs a genuinely expensive model.
 
