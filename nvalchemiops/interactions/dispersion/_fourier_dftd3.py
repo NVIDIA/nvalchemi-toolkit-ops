@@ -594,17 +594,6 @@ def fd3_coefficients(
 
 
 @wp.func
-def _miller_index(index: int, size: int) -> int:
-    """Signed frequency index for a transform bin.
-
-    Bins above the midpoint represent negative frequencies.
-    """
-    if index * 2 > size:
-        return index - size
-    return index
-
-
-@wp.func
 def _hermitian_weight(index: int, size: int, unit: Any) -> Any:
     """Multiplicity of a real-to-complex transform bin in a full-spectrum sum.
 
@@ -686,9 +675,11 @@ def _fd3_kspace_kernel(
     iy = remainder / nz_half
     iz = remainder % nz_half
 
+    # Bins past the midpoint carry negative frequencies. The last axis is halved by the
+    # real transform, so it has no negative half to fold.
     miller = wp.vector(
-        type(s6)(_miller_index(ix, mesh_nx)),
-        type(s6)(_miller_index(iy, mesh_ny)),
+        type(s6)(wp.where(ix * 2 > mesh_nx, ix - mesh_nx, ix)),
+        type(s6)(wp.where(iy * 2 > mesh_ny, iy - mesh_ny, iy)),
         type(s6)(iz),
     )
     k_vector = k_matrix[system] * miller
