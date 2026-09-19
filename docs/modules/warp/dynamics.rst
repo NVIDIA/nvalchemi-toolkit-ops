@@ -136,14 +136,15 @@ the step length is bounded by ``maxstep`` rather than chosen by comparing
 energies, so a model whose forces are not the gradient of its energy relaxes
 just as well.
 
+The public surface is the two states, the preparation helpers, one step per
+call, and the variable-cell setup below. The phases a step is built from are
+internal decomposition points rather than operations in their own right, so
+they are not documented here.
+
 .. autoclass:: nvalchemiops.dynamics.optimizers.lbfgs.LBFGSState
    :members:
 .. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_prepare_state
 .. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_step
-.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_update
-.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_prepare_step
-.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_apply_step
-.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_reduce
 
 .. note::
    Call :func:`~nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_prepare_state`
@@ -162,12 +163,10 @@ batches as well as uniform ones.
 .. autoclass:: nvalchemiops.dynamics.optimizers.lbfgs.LBFGSCellState
    :members:
 .. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_prepare_cell_state
+.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_step_coord_cell
 .. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_set_reference_cell
 .. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_cell_kappa
-.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_pack_cell
-.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_unpack_cell
-.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_step_coord_cell
-.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_cell_trust_region
+.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.check_cell_is_aligned
 
 FIRE2
 ~~~~~

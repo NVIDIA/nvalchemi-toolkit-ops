@@ -53,27 +53,33 @@ fire2_update
     position/cell application. Use for custom final apply phases such as
     coupled variable-cell optimization.
 
+lbfgs_prepare_state, lbfgs_prepare_cell_state
+    Allocate, initialize and validate an ``LBFGSState`` -- and, for
+    variable-cell relaxation, an ``LBFGSCellState``. Call once; calling again
+    is how you reset.
+
 lbfgs_step
-    Complete L-BFGS step. Consumes exactly one force evaluation per call and
-    reports progress through a per-system ``status`` array. Every call is an
-    accepted step: the direction comes from the two-loop recursion and the step
-    length from a ``maxstep`` trust region, so no energy is read at all.
-    Uses batch_idx batching only.
+    One batched L-BFGS step on coordinates. Consumes exactly one force
+    evaluation: it updates the curvature history, restarts the direction if it
+    stops descending, and takes one ``maxstep``-bounded step. No energy is
+    read, and no tolerance is owned -- deciding when to stop is yours, as it is
+    for FIRE2.
 
-lbfgs_update
-    L-BFGS reductions, line-search decision, history update and two-loop
-    recursion WITHOUT the position update. Use with ``lbfgs_prepare_step``
-    and ``lbfgs_apply_step`` for custom apply phases.
+lbfgs_step_coord_cell
+    The same, relaxing coordinates and cell together. Positions and cell are
+    mapped into a single packed coordinate vector so the two-loop recursion
+    couples them automatically, then mapped back after the step.
 
-    All L-BFGS buffers are caller-owned: the package allocates and initializes
-    nothing. See :mod:`nvalchemiops.dynamics.optimizers.lbfgs` for the required
-    shapes and initial contents.
+lbfgs_set_reference_cell, lbfgs_cell_kappa, check_cell_is_aligned
+    Variable-cell setup, for callers who fill the chart themselves rather than
+    passing ``cell`` and ``n_particles`` to ``lbfgs_prepare_cell_state``.
 
-lbfgs_set_reference_cell, lbfgs_cell_kappa, lbfgs_pack_cell,
-lbfgs_unpack_cell, lbfgs_cell_trust_region
-    Variable-cell relaxation. Positions and cell are mapped into a single
-    packed coordinate vector so the two-loop recursion couples them
-    automatically, then mapped back after the step.
+    The phases each step is built from -- the reductions, the history update,
+    the two-loop recursion, the trust region, the packing -- are internal
+    decomposition points rather than separate operations, so they are not
+    exported here. They remain importable from
+    :mod:`nvalchemiops.dynamics.optimizers.lbfgs` for anyone who genuinely
+    needs to interpose logic between them.
 
 Kernel Selection
 ----------------
@@ -103,18 +109,13 @@ from nvalchemiops.dynamics.optimizers.fire2 import (
 from nvalchemiops.dynamics.optimizers.lbfgs import (
     LBFGSCellState,
     LBFGSState,
-    lbfgs_apply_step,
+    check_cell_is_aligned,
     lbfgs_cell_kappa,
-    lbfgs_cell_trust_region,
-    lbfgs_pack_cell,
     lbfgs_prepare_cell_state,
     lbfgs_prepare_state,
-    lbfgs_prepare_step,
-    lbfgs_reduce,
     lbfgs_set_reference_cell,
     lbfgs_step,
-    lbfgs_unpack_cell,
-    lbfgs_update,
+    lbfgs_step_coord_cell,
 )
 
 __all__ = [
@@ -126,22 +127,19 @@ __all__ = [
     "fire2_update",
     "fire2_apply_step",
     "fire2_reduce",
-    # L-BFGS
+    # L-BFGS: state, preparation, and one step per call. The phase functions
+    # the step is built from are decomposition points, not operations, so they
+    # stay in the module rather than on the public surface.
     "LBFGSState",
     "LBFGSCellState",
     "lbfgs_prepare_state",
     "lbfgs_prepare_cell_state",
     "lbfgs_step",
-    "lbfgs_update",
-    "lbfgs_prepare_step",
-    "lbfgs_apply_step",
-    "lbfgs_reduce",
-    # L-BFGS variable cell
+    "lbfgs_step_coord_cell",
+    # L-BFGS variable-cell setup
     "lbfgs_set_reference_cell",
     "lbfgs_cell_kappa",
-    "lbfgs_pack_cell",
-    "lbfgs_unpack_cell",
-    "lbfgs_cell_trust_region",
+    "check_cell_is_aligned",
     # Low-level kernels
     "_fire_step_no_downhill_ptr_kernel",
     "_fire_step_downhill_ptr_kernel",

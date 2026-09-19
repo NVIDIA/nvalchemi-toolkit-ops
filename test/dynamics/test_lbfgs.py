@@ -860,6 +860,79 @@ def _commit_one_pair(cos_target, vec, np_dtype, device, eps=None, n=64):
     return bool(st.history_count.numpy()[0]), float(st.ys.numpy()[0, 0])
 
 
+class TestLBFGSPublicSurface:
+    """What the package exports, pinned.
+
+    The surface had drifted both ways: it advertised the phase functions a
+    step is built from, and it omitted ``lbfgs_step_coord_cell`` entirely, so
+    the variable-cell entry point could not be reached from the package at all.
+    """
+
+    #: State, preparation, one step per call, and the variable-cell setup.
+    CONTRACT = frozenset(
+        {
+            "LBFGSState",
+            "LBFGSCellState",
+            "lbfgs_prepare_state",
+            "lbfgs_prepare_cell_state",
+            "lbfgs_step",
+            "lbfgs_step_coord_cell",
+            "lbfgs_set_reference_cell",
+            "lbfgs_cell_kappa",
+            "check_cell_is_aligned",
+        }
+    )
+
+    #: Decomposition points a step is built from. Importable, not advertised.
+    PHASES = (
+        "lbfgs_reduce",
+        "lbfgs_update",
+        "lbfgs_prepare_step",
+        "lbfgs_apply_step",
+        "lbfgs_pack_cell",
+        "lbfgs_unpack_cell",
+        "lbfgs_cell_trust_region",
+    )
+
+    def test_package_exports_exactly_the_contract(self):
+        import nvalchemiops.dynamics.optimizers as package
+
+        exported = {
+            n
+            for n in package.__all__
+            if "lbfgs" in n.lower() or n == "check_cell_is_aligned"
+        }
+        assert exported == set(self.CONTRACT)
+
+    def test_every_exported_name_resolves(self):
+        """An `__all__` entry that is not importable breaks ``import *``."""
+        import nvalchemiops.dynamics.optimizers as package
+
+        missing = [n for n in self.CONTRACT if not hasattr(package, n)]
+        assert not missing, f"exported but absent: {missing}"
+
+    def test_the_variable_cell_entry_point_is_reachable(self):
+        """It was missing, so the whole cell path was package-private."""
+        from nvalchemiops.dynamics.optimizers import lbfgs_step_coord_cell
+
+        assert callable(lbfgs_step_coord_cell)
+
+    def test_phases_are_not_advertised(self):
+        """Neither the package nor the module offers them for ``import *``."""
+        import nvalchemiops.dynamics.optimizers as package
+        import nvalchemiops.dynamics.optimizers.lbfgs as module
+
+        leaked = [n for n in self.PHASES if n in package.__all__ or n in module.__all__]
+        assert not leaked, f"decomposition points advertised as API: {leaked}"
+
+    def test_phases_remain_importable(self):
+        """Un-advertised is not removed: the composed path still works."""
+        import nvalchemiops.dynamics.optimizers.lbfgs as module
+
+        missing = [n for n in self.PHASES if not hasattr(module, n)]
+        assert not missing, f"no longer importable: {missing}"
+
+
 class TestLBFGSCurvatureThreshold:
     """The curvature guard, which has to be read in the coordinate precision.
 

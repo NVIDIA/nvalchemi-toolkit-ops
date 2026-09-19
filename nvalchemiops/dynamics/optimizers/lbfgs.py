@@ -82,6 +82,12 @@ length must be settled *before* the atoms move. ``maxstep`` shrinks ``alpha``
 rather than clamping each displacement, since the stored pair ``s = alpha * d``
 is defined through that relation.
 
+That table is the internal structure, not the public surface. Like FIRE2, what
+is exported is the state, the preparation helpers and one step per call; the
+phases are importable from this module by name for anyone who needs to
+interpose logic between them, but they are decomposition points rather than
+operations in their own right.
+
 Restarts, which *are* the optimizer's
 -------------------------------------
 Two things are algorithmic rather than terminal, so they stay inside. A
@@ -292,23 +298,24 @@ import warp as wp
 from nvalchemiops.dynamics.utils.cell_utils import compute_cell_inverse
 from nvalchemiops.segment_ops import compute_ept
 
+#: The public contract: the two states, the preparation helpers, one step per
+#: call, and the variable-cell setup. ``lbfgs_reduce``, ``lbfgs_update``,
+#: ``lbfgs_prepare_step``, ``lbfgs_apply_step``, ``lbfgs_pack_cell``,
+#: ``lbfgs_unpack_cell`` and ``lbfgs_cell_trust_region`` are the decomposition
+#: a step is built from rather than operations in their own right, so they are
+#: deliberately absent -- as ``fire2_apply_step`` and ``fire2_reduce`` are from
+#: ``fire2.__all__``. They remain importable by name for anyone who needs to
+#: interpose logic between phases.
 __all__ = [
     "LBFGSCellState",
     "LBFGSState",
-    "lbfgs_apply_step",
     "check_cell_is_aligned",
     "lbfgs_cell_kappa",
-    "lbfgs_cell_trust_region",
-    "lbfgs_pack_cell",
     "lbfgs_prepare_cell_state",
     "lbfgs_prepare_state",
-    "lbfgs_prepare_step",
-    "lbfgs_reduce",
     "lbfgs_set_reference_cell",
     "lbfgs_step",
     "lbfgs_step_coord_cell",
-    "lbfgs_unpack_cell",
-    "lbfgs_update",
 ]
 
 # =============================================================================
