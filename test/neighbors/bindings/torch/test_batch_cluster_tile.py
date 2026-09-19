@@ -3540,11 +3540,30 @@ class TestBatchClusterTileAutograd:
         )
         cell_batch = torch.eye(3, device=device).repeat(2, 1, 1) * 20.0
         buffer = torch.full(shape, -7.0, device=device, requires_grad=True)
-        before = buffer.detach().clone()
+        scratch = _scratch_kwargs(
+            allocate_batch_cluster_tile_list(
+                batch_ptr,
+                torch.device(device),
+                dtype=positions.dtype,
+                max_tiles_per_group=1,
+            )
+        )
+        for index, tensor in enumerate(scratch.values(), start=1):
+            tensor.fill_(index)
+        supplied = {
+            **scratch,
+            "neighbor_list": torch.full((2, 32), -31, dtype=torch.int32, device=device),
+            "neighbor_list_shifts": torch.full(
+                (32, 3), -32, dtype=torch.int32, device=device
+            ),
+            "pair_counter": torch.full((1,), -33, dtype=torch.int32, device=device),
+            buffer_name: buffer,
+        }
+        before = {name: tensor.detach().clone() for name, tensor in supplied.items()}
         kwargs = {
             "return_distances": buffer_name == "neighbor_distances",
             "return_vectors": buffer_name == "neighbor_vectors",
-            buffer_name: buffer,
+            **supplied,
         }
 
         with pytest.raises(
@@ -3562,4 +3581,7 @@ class TestBatchClusterTileAutograd:
                 max_tiles_per_group=1,
                 **kwargs,
             )
-        torch.testing.assert_close(buffer.detach(), before)
+        assert all(
+            torch.equal(before[name], tensor.detach())
+            for name, tensor in supplied.items()
+        )

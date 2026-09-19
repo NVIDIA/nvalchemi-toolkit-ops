@@ -47,7 +47,8 @@
   count. Requested distances and vectors are returned with the topology, so
   callers no longer need to provide geometry buffers. If reusable buffers are
   supplied, their active portions receive detached value snapshots, while the
-  returned tensors use separate differentiable storage.
+  returned tensors use separate storage, with differentiable geometry when
+  reconstruction is required.
 - Compact batched Torch cluster-tile scratch now sums the capacity required by
   each system instead of sizing every group against the total batch group count.
   The resulting tile storage remains pooled across the batch.

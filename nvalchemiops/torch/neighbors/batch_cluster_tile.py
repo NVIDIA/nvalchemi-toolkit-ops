@@ -3175,6 +3175,18 @@ def batch_cluster_tile_neighbor_list(
     )
     snapshot_vectors = neighbor_vectors is not None
     snapshot_distances = neighbor_distances is not None
+    if format == "coo" and pair_offsets is None and geometry_requested:
+        if max_pairs is None:
+            max_pairs = N * max_neighbors
+        neighbor_vectors, neighbor_distances = _prepare_compact_coo_geometry_buffers(
+            device=device,
+            dtype=positions.dtype,
+            capacity=int(max_pairs),
+            return_vectors=bool(return_vectors),
+            return_distances=bool(return_distances),
+            neighbor_vectors=neighbor_vectors,
+            neighbor_distances=neighbor_distances,
+        )
 
     if sorted_atom_index is None:
         previous_tile_state = (
@@ -3362,19 +3374,7 @@ def batch_cluster_tile_neighbor_list(
             copy_distances = bool(
                 geometry_requested and return_distances and not requires_reconstruction
             )
-            if geometry_requested:
-                neighbor_vectors, neighbor_distances = (
-                    _prepare_compact_coo_geometry_buffers(
-                        device=device,
-                        dtype=positions.dtype,
-                        capacity=int(max_pairs),
-                        return_vectors=bool(return_vectors),
-                        return_distances=bool(return_distances),
-                        neighbor_vectors=neighbor_vectors,
-                        neighbor_distances=neighbor_distances,
-                    )
-                )
-            else:
+            if not geometry_requested:
                 prefix_vectors = torch.empty(
                     (1, 3), dtype=positions.dtype, device=device
                 )
