@@ -1299,9 +1299,11 @@ def fourier_dftd3(
             )
 
     empty = dict(dtype=positions.dtype, device=positions.device)
-    coord_num = torch.zeros(n_atoms, **empty)
-    c6 = torch.zeros(n_atoms, rank, **empty)
-    dc6_dcn = torch.zeros(n_atoms, rank, **empty)
+    # These are cleared by the op that fills them, so zeroing here would write each buffer
+    # twice. Anything *accumulated* across ops below keeps torch.zeros.
+    coord_num = torch.empty(n_atoms, **empty)
+    c6 = torch.empty(n_atoms, rank, **empty)
+    dc6_dcn = torch.empty(n_atoms, rank, **empty)
     idx_j = (
         neighbor_list[1].contiguous().to(torch.int32)
         if neighbor_list is not None
@@ -1341,7 +1343,7 @@ def fourier_dftd3(
     # ``d_energy_d_c6`` stays full width -- the chain rule below needs every slot at once.
     # It is per-atom, not per-mesh-point, so it does not undermine the bound.
     d_energy_d_c6 = torch.zeros(n_atoms, rank, **empty)
-    d_energy_d_cn = torch.zeros(n_atoms, **empty)
+    d_energy_d_cn = torch.empty(n_atoms, **empty)
 
     chunks = _rank_chunks(rank, rank_chunk_size)
     for slot_start, slot_count in chunks:
@@ -1350,13 +1352,13 @@ def fourier_dftd3(
         if len(chunks) == 1:
             chunk_energy, chunk_virial = energy, virial
         else:
-            chunk_energy = torch.zeros(num_systems, **empty)
-            chunk_virial = torch.zeros(num_systems, 3, 3, **empty)
+            chunk_energy = torch.empty(num_systems, **empty)
+            chunk_virial = torch.empty(num_systems, 3, 3, **empty)
 
         c6_chunk = c6[:, slot_start : slot_start + slot_count].contiguous()
         eigs_chunk = params.eigs[slot_start : slot_start + slot_count].contiguous()
 
-        mesh = torch.zeros(
+        mesh = torch.empty(
             num_systems * n_species * slot_count, mesh_nx, mesh_ny, mesh_nz, **empty
         )
         _fd3_spread_op(
@@ -1374,7 +1376,7 @@ def fourier_dftd3(
         mesh_fft_pairs = torch.view_as_real(mesh_fft.resolve_conj()).contiguous()
         del mesh, mesh_fft
 
-        cotangent = torch.zeros_like(mesh_fft_pairs)
+        cotangent = torch.empty_like(mesh_fft_pairs)
         _fd3_kspace_op(
             mesh_fft_pairs,
             k_matrix,
