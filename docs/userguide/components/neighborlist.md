@@ -773,9 +773,10 @@ distinct storage.
 Preparation fixes the atom count, batch partition, shape, dtype, and device.
 For batches, it caches atom/system and padded-layout mappings derived only from
 that partition. Morton ordering, sorted coordinates, cell inverses, and group
-bounds are recomputed from the current positions and cells for nonselective
-executions and selected systems in selective executions. An all-false eager or
-ordinary compiled selective call may preserve them without rebuilding.
+bounds remain geometry-dependent and are recomputed when rebuild work runs. A
+mixed selective batch may still sort all atoms even though only selected
+systems' topology is rebuilt. An all-false eager or ordinary compiled selective
+call may preserve the existing state without rebuilding.
 Execution rejects mismatches before launching kernels. Prepared pair callbacks,
 energies, forces, and caller-provided buffers are not supported.
 

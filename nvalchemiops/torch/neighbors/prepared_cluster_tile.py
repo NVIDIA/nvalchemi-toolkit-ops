@@ -53,9 +53,10 @@ class ClusterTileState:
     overwrite. When matrix geometry requires autograd, execution returns fresh
     differentiable tensors and writes matching detached values to these
     buffers. Build losses from the returned geometry. Batched state caches only
-    metadata derived from the fixed partition; geometry-dependent sorting and
-    bounds are recomputed for nonselective executions and selected systems in
-    selective executions. Eager and ordinary compiled all-false selective calls
+    metadata derived from the fixed partition. Geometry-dependent work is
+    recomputed for nonselective executions and when selective rebuild work runs.
+    A mixed selective call may still sort the full batch; only selected systems'
+    topology is rebuilt. Eager and ordinary compiled all-false selective calls
     preserve existing state and may skip rebuild work. CUDA Graph replay keeps
     the fixed captured launch sequence.
     """
