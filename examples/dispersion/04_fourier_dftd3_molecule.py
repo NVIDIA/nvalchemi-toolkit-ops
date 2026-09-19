@@ -46,6 +46,7 @@ In this example you will learn:
 import numpy as np
 import torch
 
+from nvalchemiops.torch import neighbors
 from nvalchemiops.torch.interactions.dispersion import (
     FourierD3Parameters,
     dftd3,
@@ -125,56 +126,14 @@ print(f"reconstruction error : {params.max_relative_error:.2e}")
 
 r_cut = 6.0 / BOHR_TO_ANGSTROM  # 6 Angstrom, the usual MLFF cutoff, in Bohr
 
-positions_np = positions.cpu().numpy()
-cell_np = cell.cpu().numpy()
-
-
-def build_neighbour_list(cutoff):
-    """A directed CSR list holding both orientations of every pair within ``cutoff``.
-
-    Written out here so the example depends on nothing but NumPy; in practice use
-    ``nvalchemiops.torch.neighbors.neighbor_list``.
-    """
-    reach = int(np.ceil(cutoff / box)) + 1
-    offsets = np.arange(-reach, reach + 1)
-    lattice = np.stack(
-        np.meshgrid(offsets, offsets, offsets, indexing="ij"), axis=-1
-    ).reshape(-1, 3)
-
-    sources, targets, shifts = [], [], []
-    for translation in lattice:
-        delta = (
-            positions_np[None, :, :] + translation @ cell_np - positions_np[:, None, :]
-        )
-        distance = np.linalg.norm(delta, axis=-1)
-        for i in range(n_atoms):
-            for j in range(n_atoms):
-                if (i == j and not translation.any()) or distance[i, j] >= cutoff:
-                    continue
-                sources.append(i)
-                targets.append(j)
-                shifts.append(translation)
-
-    order = np.argsort(sources, kind="stable")
-    sources = np.asarray(sources)[order]
-    targets = np.asarray(targets)[order]
-    shifts = np.asarray(shifts)[order]
-    pointer = np.zeros(n_atoms + 1, dtype=np.int32)
-    for source in sources:
-        pointer[source + 1] += 1
-    pointer = np.cumsum(pointer).astype(np.int32)
-
-    def to_device(array, dtype=torch.int32):
-        return torch.tensor(array, dtype=dtype, device=device)
-
-    return (
-        torch.stack([to_device(sources), to_device(targets)]),
-        to_device(pointer),
-        to_device(shifts),
-    )
-
-
-neighbor_list, neighbor_ptr, unit_shifts = build_neighbour_list(r_cut)
+pbc = torch.tensor([True, True, True], device=device)
+neighbor_list, neighbor_ptr, unit_shifts = neighbors.neighbor_list(
+    positions,
+    cutoff=r_cut,
+    cell=cell,
+    pbc=pbc,
+    return_neighbor_list=True,
+)
 print(
     f"\nneighbour cutoff : {r_cut:.3f} Bohr ({r_cut * BOHR_TO_ANGSTROM:.1f} Angstrom)"
 )
@@ -268,7 +227,13 @@ print(f"\nFourierD3, no dispersion cutoff : {reference:+.10f} Hartree")
 print(f"\n{'cutoff (A)':>10} {'dftd3 (Hartree)':>18} {'short by':>10}")
 for cutoff_angstrom in (6.0, 8.0, 10.0, 12.0, 15.0):
     cutoff = cutoff_angstrom / BOHR_TO_ANGSTROM
-    targets, pointer, images = build_neighbour_list(cutoff)
+    targets, pointer, images = neighbors.neighbor_list(
+        positions,
+        cutoff=cutoff,
+        cell=cell,
+        pbc=pbc,
+        return_neighbor_list=True,
+    )
     value = dftd3(
         positions,
         numbers,
