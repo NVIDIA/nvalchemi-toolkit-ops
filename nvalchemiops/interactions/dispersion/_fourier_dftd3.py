@@ -94,26 +94,21 @@ __all__ = [
     "fd3_cn_chain",
 ]
 
-PI = math.pi
+_PI = math.pi
 
 # Base steepness of the D3 counting function, retained out to the transition radius.
-CN_STEEPNESS = 16.0
+_CN_STEEPNESS = 16.0
 
 # The shipped rcov table already folds in Grimme's 4/3, which the counting ratio is defined
 # on. The transition radius uses the bare covalent radius, so it divides that back out.
-CN_UNSCALE = 3.0 / 4.0
+_CN_UNSCALE = 3.0 / 4.0
 
 # Keeps the steepness finite exactly at the cutoff, where the gap term vanishes.
-CN_EPSILON = 1.0e-6
+_CN_EPSILON = 1.0e-6
 
-# Gaussian width of the reference weighting, L = exp(-CN_GAUSSIAN * (cn - cn_ref)^2).
-CN_GAUSSIAN = 4.0
+# Gaussian width of the reference weighting, L = exp(-_CN_GAUSSIAN * (cn - cn_ref)^2).
+_CN_GAUSSIAN = 4.0
 
-# Reference slots a species does not use are padded with this coordination number.
-CNREF_INVALID = -1.0
-
-# Below this dimensionless argument the closed-form transforms lose precision to
-# cancellation and the series is used instead. The two agree to ~6e-14 at the crossover.
 FD3_CN_BLOCK_SIZE = 32
 """Threads per block in the coordination-number force pass.
 
@@ -133,30 +128,38 @@ launch pads each system's bin count up to a multiple of this so that no block st
 two systems.
 """
 
-SERIES_CUTOFF = 0.1
+# Below this dimensionless argument the closed-form transforms lose precision to
+# cancellation and the series is used instead. The two agree to ~6e-14 at the crossover.
+_SERIES_CUTOFF = 0.1
 
 # Taylor coefficients of N(x)/x. N(x) is entire, so these series are exact rather than
 # asymptotic. Seven terms hold the crossover error near 1e-14.
-R6_C0, R6_C2, R6_C3, R6_C4, R6_C6 = 1.0, -1.0 / 3.0, 0.125, -1.0 / 60.0, 1.0 / 5040.0
-R8_C0 = -0.54119610014619668
-R8_C2 = 0.090199350024366076
-R8_C4 = -0.010888024707303151
-R8_C5 = 1.0 / 360.0
-R8_C6 = -0.00025923868350721731
+_R6_C0, _R6_C2, _R6_C3, _R6_C4, _R6_C6 = (
+    1.0,
+    -1.0 / 3.0,
+    0.125,
+    -1.0 / 60.0,
+    1.0 / 5040.0,
+)
+_R8_C0 = -0.54119610014619668
+_R8_C2 = 0.090199350024366076
+_R8_C4 = -0.010888024707303151
+_R8_C5 = 1.0 / 360.0
+_R8_C6 = -0.00025923868350721731
 
 # Coefficients of the term-by-term derivative of the series above, named rather than formed
 # inline because Warp resolves a scalar cast only for a bare constant.
-R6_D2, R6_D3, R6_D4, R6_D6 = 2.0 * R6_C2, 3.0 * R6_C3, 4.0 * R6_C4, 6.0 * R6_C6
-R8_D2, R8_D4, R8_D5, R8_D6 = 2.0 * R8_C2, 4.0 * R8_C4, 5.0 * R8_C5, 6.0 * R8_C6
+_R6_D2, _R6_D3, _R6_D4, _R6_D6 = 2.0 * _R6_C2, 3.0 * _R6_C3, 4.0 * _R6_C4, 6.0 * _R6_C6
+_R8_D2, _R8_D4, _R8_D5, _R8_D6 = 2.0 * _R8_C2, 4.0 * _R8_C4, 5.0 * _R8_C5, 6.0 * _R8_C6
 
-SQRT3 = math.sqrt(3.0)
-SIN_PI_8 = math.sin(PI / 8.0)
-COS_PI_8 = math.cos(PI / 8.0)
-PI_OVER_3 = PI / 3.0
-PI_OVER_4 = PI / 4.0
-THREE_PI_OVER_4 = 3.0 * PI / 4.0
-TWO_PI_SQ_OVER_3 = 2.0 * PI * PI / 3.0
-PI_SQ = PI * PI
+_SQRT3 = math.sqrt(3.0)
+_SIN_PI_8 = math.sin(_PI / 8.0)
+_COS_PI_8 = math.cos(_PI / 8.0)
+_PI_OVER_3 = _PI / 3.0
+_PI_OVER_4 = _PI / 4.0
+_THREE_PI_OVER_4 = 3.0 * _PI / 4.0
+_TWO_PI_SQ_OVER_3 = 2.0 * _PI * _PI / 3.0
+_PI_SQ = _PI * _PI
 
 
 @wp.func
@@ -195,7 +198,7 @@ def _cn_counting(
     covalent_distance : Any
         Sum of the two covalent radii, on the same scale ``dftd3`` uses: the shipped table
         already folds in Grimme's 4/3 factor, so the counting function crosses one half at
-        ``distance == covalent_distance``. See ``CN_UNSCALE`` for where that factor is
+        ``distance == covalent_distance``. See ``_CN_UNSCALE`` for where that factor is
         divided back out.
     r_cut : Any
         Neighbour-list cutoff. The counting function reaches zero here, so this must be the
@@ -212,13 +215,13 @@ def _cn_counting(
     """
     one = type(distance)(1.0)
     transition = type(distance)(0.5) * (
-        type(distance)(CN_UNSCALE) * covalent_distance + r_cut
+        type(distance)(_CN_UNSCALE) * covalent_distance + r_cut
     )
     stabilised = wp.max(distance, transition)
     gap = r_cut - stabilised
-    denominator = gap * gap + type(distance)(CN_EPSILON)
+    denominator = gap * gap + type(distance)(_CN_EPSILON)
     offset = stabilised - transition
-    steepness = type(distance)(CN_STEEPNESS) + offset * offset / denominator
+    steepness = type(distance)(_CN_STEEPNESS) + offset * offset / denominator
 
     ratio = covalent_distance / distance
     argument = steepness * (ratio - one)
@@ -247,19 +250,19 @@ def _shape_r6(x: Any) -> tuple[Any, Any]:
     loses all precision for small ``x``. The series is the same entire function written so
     that it does not cancel.
     """
-    if x < type(x)(SERIES_CUTOFF):
-        value = type(x)(R6_C0) + x * x * (
-            type(x)(R6_C2)
-            + x * (type(x)(R6_C3) + x * (type(x)(R6_C4) + x * x * type(x)(R6_C6)))
+    if x < type(x)(_SERIES_CUTOFF):
+        value = type(x)(_R6_C0) + x * x * (
+            type(x)(_R6_C2)
+            + x * (type(x)(_R6_C3) + x * (type(x)(_R6_C4) + x * x * type(x)(_R6_C6)))
         )
         derivative = x * (
-            type(x)(R6_D2)
-            + x * (type(x)(R6_D3) + x * (type(x)(R6_D4) + x * x * type(x)(R6_D6)))
+            type(x)(_R6_D2)
+            + x * (type(x)(_R6_D3) + x * (type(x)(_R6_D4) + x * x * type(x)(_R6_D6)))
         )
         return value, derivative
 
-    root3 = type(x)(SQRT3)
-    phase = type(x)(PI_OVER_3) + x * root3 * type(x)(0.5)
+    root3 = type(x)(_SQRT3)
+    phase = type(x)(_PI_OVER_3) + x * root3 * type(x)(0.5)
     decay_full = wp.exp(-x)
     decay_half = wp.exp(-x * type(x)(0.5))
     numerator = decay_full - type(x)(2.0) * decay_half * wp.cos(phase)
@@ -272,21 +275,21 @@ def _shape_r6(x: Any) -> tuple[Any, Any]:
 @wp.func
 def _shape_r8(x: Any) -> tuple[Any, Any]:
     """``N8(x)/x`` and its derivative, on whichever branch is stable at ``x``."""
-    if x < type(x)(SERIES_CUTOFF):
-        value = type(x)(R8_C0) + x * x * (
-            type(x)(R8_C2)
-            + x * x * (type(x)(R8_C4) + x * (type(x)(R8_C5) + x * type(x)(R8_C6)))
+    if x < type(x)(_SERIES_CUTOFF):
+        value = type(x)(_R8_C0) + x * x * (
+            type(x)(_R8_C2)
+            + x * x * (type(x)(_R8_C4) + x * (type(x)(_R8_C5) + x * type(x)(_R8_C6)))
         )
         derivative = x * (
-            type(x)(R8_D2)
-            + x * x * (type(x)(R8_D4) + x * (type(x)(R8_D5) + x * type(x)(R8_D6)))
+            type(x)(_R8_D2)
+            + x * x * (type(x)(_R8_D4) + x * (type(x)(_R8_D5) + x * type(x)(_R8_D6)))
         )
         return value, derivative
 
-    sin8 = type(x)(SIN_PI_8)
-    cos8 = type(x)(COS_PI_8)
-    phase_a = type(x)(PI_OVER_4) + x * cos8
-    phase_b = type(x)(THREE_PI_OVER_4) + x * sin8
+    sin8 = type(x)(_SIN_PI_8)
+    cos8 = type(x)(_COS_PI_8)
+    phase_a = type(x)(_PI_OVER_4) + x * cos8
+    phase_b = type(x)(_THREE_PI_OVER_4) + x * sin8
     decay_a = wp.exp(-x * sin8)
     decay_b = wp.exp(-x * cos8)
     numerator = decay_a * wp.cos(phase_a) + decay_b * wp.cos(phase_b)
@@ -320,8 +323,8 @@ def _reciprocal_kernel(
     g6, dg6 = _shape_r6(x)
     g8, dg8 = _shape_r8(x)
 
-    scale6 = type(k_norm)(TWO_PI_SQ_OVER_3) / (r0 * r0 * r0)
-    scale8 = -type(k_norm)(PI_SQ) / (r0 * r0 * r0 * r0 * r0)
+    scale6 = type(k_norm)(_TWO_PI_SQ_OVER_3) / (r0 * r0 * r0)
+    scale8 = -type(k_norm)(_PI_SQ) / (r0 * r0 * r0 * r0 * r0)
     weight8 = type(k_norm)(3.0) * s8 * sqrt_q_product
 
     value = s6 * scale6 * g6 + weight8 * scale8 * g8
@@ -420,7 +423,7 @@ def _fd3_coefficients_kernel(
         return
 
     cn = coord_num[atom_i]
-    gaussian = type(cn)(CN_GAUSSIAN)
+    gaussian = type(cn)(_CN_GAUSSIAN)
 
     # Largest exponent first, so the weights below cannot all underflow to zero when the
     # coordination number sits far from every reference.
