@@ -665,6 +665,27 @@ class TestLBFGSConvergence:
         )
 
     @pytest.mark.parametrize("device", DEVICES)
+    def test_returned_positions_are_not_where_the_forces_were_taken(self, device):
+        """The documented contract, stated as the negative it actually is.
+
+        The docs used to say the forces you passed in "still describe the
+        positions you get back". They do not: the step moves the positions to a
+        point that has not been evaluated. The forces belong to ``x_base``.
+        Getting this wrong would have a caller test convergence on the wrong
+        geometry.
+        """
+        d = Driver(_cluster(1, 5, seed=4), 1, wp.vec3d, np.float64, device)
+        d.evaluate()
+        evaluated = d.positions.numpy().copy()
+        d.step(maxstep=0.5)
+
+        returned = d.positions.numpy()
+        assert np.abs(returned - evaluated).max() > 0.0, "the step did not move"
+        # The evaluated point is kept, and it is not the one returned.
+        np.testing.assert_allclose(d.state.x_base.numpy(), evaluated, atol=0)
+        assert np.abs(d.state.x_base.numpy() - returned).max() > 0.0
+
+    @pytest.mark.parametrize("device", DEVICES)
     def test_base_buffers_describe_the_evaluated_point(self, device):
         """``x_base``/``force_base`` hold the point the forces were taken at.
 

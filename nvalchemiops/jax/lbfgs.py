@@ -62,9 +62,14 @@ Every per-system scalar follows the coordinate dtype, so an fp32 state is
 fp32 end to end and **needs no** ``JAX_ENABLE_X64``. See the Warp module on why
 fp32 coordinates do not need float64 scalars.
 
-Positions only move *forward* from the evaluated point -- nothing is rolled
-back -- so the ``forces`` you passed in still describe the ``positions`` you
-get back. ``force_base`` holds the same forces alongside ``x_base``.
+After a step, ``positions`` hold a **new** point that has not been evaluated,
+and the ``forces`` you passed in describe the point *before* it. The optimizer
+keeps that point in ``x_base``, with its forces in ``force_base``, so the pair
+always describes the same geometry. Positions only ever move forward -- nothing
+is rolled back -- so a point you have left is never revisited.
+
+This is why convergence is tested *before* stepping: after the call, the forces
+in hand belong to the previous geometry.
 
 Donation and pointer stability
 ------------------------------

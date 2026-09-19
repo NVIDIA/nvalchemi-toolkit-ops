@@ -522,6 +522,48 @@ class TestLBFGSTorchRegistration:
         assert torch.cuda.memory_allocated(device) == before
 
     @pytest.mark.parametrize("device", DEVICES)
+    def test_capture_needs_no_caller_stream_scope(self, device):
+        """The documented claim: no ``wp.ScopedStream`` around the capture.
+
+        The operator binds Warp to PyTorch's current stream itself, and during
+        capture that is the capture stream. The docs previously told callers to
+        wrap it and warned that otherwise "the capture records nothing" --
+        which is false, and would have had them managing stream ownership they
+        do not own.
+
+        Asserted by capturing *without* any scope and checking replay does real
+        work, not by inspecting internals.
+        """
+        d = TorchDriver(_cluster(1, 6, seed=5), 1, torch.float64, device)
+
+        def step():
+            d.evaluate()
+            lbfgs_step_coord(d.positions, d.forces, d.state, d.batch_idx, maxstep=0.5)
+
+        side = torch.cuda.Stream()
+        side.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(side):
+            for _ in range(3):
+                step()
+        torch.cuda.current_stream().wait_stream(side)
+        torch.cuda.synchronize()
+
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):  # deliberately no wp.ScopedStream
+            step()
+        torch.cuda.synchronize()
+
+        before = d.positions.clone()
+        iteration_before = int(d.state.iteration.item())
+        graph.replay()
+        torch.cuda.synchronize()
+
+        assert (d.positions - before).abs().max().item() > 0.0, (
+            "replay did no work, so the capture recorded nothing"
+        )
+        assert int(d.state.iteration.item()) == iteration_before + 1
+
+    @pytest.mark.parametrize("device", DEVICES)
     def test_cuda_graph_replay_matches_eager(self, device):
         """The step captures in a non-empty CUDA graph and replays correctly.
 

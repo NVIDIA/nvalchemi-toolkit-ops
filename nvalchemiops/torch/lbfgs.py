@@ -66,14 +66,18 @@ registered as PyTorch custom operators so they trace under ``torch.compile``.
 CUDA graphs
 -----------
 A step captures in a CUDA graph, worth doing for a loop that runs thousands of
-times. Warp launches must be bound to the capture stream by the caller::
+times. Nothing special is required of the caller::
 
-    with wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream())):
-        with torch.cuda.graph(graph):
-            lbfgs_step_coord(...)
+    with torch.cuda.graph(graph):
+        lbfgs_step_coord(positions, forces, state, batch_idx, maxstep=0.2)
 
-Without that scope the capture records nothing and replay silently does no
-work.
+The registered operators bind Warp to PyTorch's current stream themselves, and
+during capture that *is* the capture stream, so an outer
+``wp.ScopedStream(wp.stream_from_torch(...))`` is redundant here. It is
+harmless if you have one, but it is not what makes capture work.
+
+That does not generalise: a raw Warp launch of your own, in the same captured
+region, still needs the caller to bind the stream, because nothing else will.
 
 See Also
 --------
