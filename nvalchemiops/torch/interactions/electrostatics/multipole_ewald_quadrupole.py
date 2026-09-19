@@ -48,6 +48,7 @@ from nvalchemiops.interactions.electrostatics.multipole_ewald_quadrupole_2nd_bac
     multipole_real_space_quadrupole_csr_cell_grad_backward,
     multipole_real_space_quadrupole_csr_energy_2nd_backward,
 )
+from nvalchemiops.torch._warp_op_helpers import scoped_torch_warp_stream
 from nvalchemiops.torch.types import (
     get_wp_dtype,
     get_wp_mat_dtype,
@@ -62,6 +63,7 @@ from nvalchemiops.torch.types import (
 @torch.library.custom_op(
     "nvalchemiops::multipole_real_space_quadrupole", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _rs_quadrupole_op(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -121,6 +123,7 @@ def _(
 @torch.library.custom_op(
     "nvalchemiops::multipole_real_space_quadrupole_backward", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _rs_quadrupole_backward_op(
     grad_energies: torch.Tensor,
     positions: torch.Tensor,
@@ -202,6 +205,7 @@ def _(
 @torch.library.custom_op(
     "nvalchemiops::multipole_real_space_quadrupole_cell_grad", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _rs_quadrupole_cell_grad_op(
     grad_energies: torch.Tensor,
     positions: torch.Tensor,
@@ -293,6 +297,7 @@ def _rs_quadrupole_cell_grad_setup(ctx, inputs, output):
     ctx.half_neighbor_list = half_neighbor_list
 
 
+@scoped_torch_warp_stream
 def _rs_quadrupole_cell_grad_backward(ctx, g_cell):
     """Backward of ``d/d{grad_energies, positions, charges, dipoles, quadrupoles, cell}``
     of the inner product :math:`\\langle g\\_cell,\\, dE/dcell \\rangle` (l=2 stress-loss)."""
@@ -378,6 +383,7 @@ torch.library.register_autograd(
 @torch.library.custom_op(
     "nvalchemiops::multipole_real_space_quadrupole_double_backward", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _rs_quadrupole_double_backward_op(
     gg_pos: torch.Tensor,
     gg_q: torch.Tensor,
@@ -773,6 +779,7 @@ def multipole_real_space_quadrupole_energy(
 @torch.library.custom_op(
     "nvalchemiops::batch_multipole_real_space_quadrupole", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _batch_rs_quadrupole_op(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -836,6 +843,7 @@ def _(
 @torch.library.custom_op(
     "nvalchemiops::batch_multipole_real_space_quadrupole_backward", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _batch_rs_quadrupole_backward_op(
     grad_energies: torch.Tensor,
     positions: torch.Tensor,
@@ -920,6 +928,7 @@ def _(
 @torch.library.custom_op(
     "nvalchemiops::batch_multipole_real_space_quadrupole_cell_grad", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _batch_rs_quadrupole_cell_grad_op(
     grad_energies: torch.Tensor,
     positions: torch.Tensor,
@@ -1017,6 +1026,7 @@ def _batch_rs_quadrupole_cell_grad_setup(ctx, inputs, output):
     ctx.half_neighbor_list = half_neighbor_list
 
 
+@scoped_torch_warp_stream
 def _batch_rs_quadrupole_cell_grad_backward(ctx, g_cell):
     """Batched backward of ``d/d{grad_energies, positions, charges, dipoles, quadrupoles,
     cells}`` of the inner product :math:`\\langle g\\_cell,\\, dE/dcell \\rangle` (l=2)."""
@@ -1107,6 +1117,7 @@ torch.library.register_autograd(
     "nvalchemiops::batch_multipole_real_space_quadrupole_double_backward",
     mutates_args=(),
 )
+@scoped_torch_warp_stream
 def _batch_rs_quadrupole_double_backward_op(
     gg_pos: torch.Tensor,
     gg_q: torch.Tensor,

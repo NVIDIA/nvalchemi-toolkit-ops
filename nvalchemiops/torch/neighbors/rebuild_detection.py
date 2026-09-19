@@ -30,6 +30,7 @@ from nvalchemiops.neighbors.rebuild import (
     check_cell_list_rebuild,
     check_neighbor_list_rebuild,
 )
+from nvalchemiops.torch._warp_op_helpers import scoped_torch_warp_stream
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 __all__ = [
@@ -47,6 +48,7 @@ __all__ = [
 
 
 @torch.library.custom_op("nvalchemiops::_cell_list_needs_rebuild", mutates_args=())
+@scoped_torch_warp_stream
 def _cell_list_needs_rebuild(
     current_positions: torch.Tensor,
     atom_to_cell_mapping: torch.Tensor,
@@ -215,6 +217,7 @@ def cell_list_needs_rebuild(
 @torch.library.custom_op(
     "nvalchemiops::_neighbor_list_needs_rebuild", mutates_args=("reference_positions",)
 )
+@scoped_torch_warp_stream
 def _neighbor_list_needs_rebuild(
     reference_positions: torch.Tensor,
     current_positions: torch.Tensor,
@@ -529,6 +532,7 @@ def check_neighbor_list_rebuild_needed(
     "nvalchemiops::_batch_neighbor_list_needs_rebuild",
     mutates_args=("reference_positions",),
 )
+@scoped_torch_warp_stream
 def _batch_neighbor_list_needs_rebuild(
     reference_positions: torch.Tensor,
     current_positions: torch.Tensor,
@@ -753,6 +757,7 @@ def batch_neighbor_list_needs_rebuild(
 @torch.library.custom_op(
     "nvalchemiops::_batch_cell_list_needs_rebuild", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _batch_cell_list_needs_rebuild(
     current_positions: torch.Tensor,
     atom_to_cell_mapping: torch.Tensor,

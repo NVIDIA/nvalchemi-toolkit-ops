@@ -30,6 +30,8 @@ test/interactions/dispersion/test_dftd3.py
 
 from __future__ import annotations
 
+import inspect
+
 import numpy as np
 import pytest
 
@@ -46,7 +48,9 @@ if TORCH_AVAILABLE:
     from nvalchemiops.torch.interactions.dispersion import D3Parameters, dftd3
     from nvalchemiops.torch.interactions.dispersion._dftd3 import (
         _dftd3_matrix_op,
+        _dftd3_matrix_pbc_op,
         _dftd3_op,
+        _dftd3_pbc_op,
     )
     from nvalchemiops.torch.neighbors import (
         neighbor_list as build_neighbor_list,
@@ -67,6 +71,33 @@ pytestmark = pytest.mark.skipif(
 def numpy_to_torch(arr: np.ndarray, device: str = "cpu") -> torch.Tensor:
     """Convert numpy array to torch tensor."""
     return torch.from_numpy(arr).to(device)
+
+
+def _d3_parameter_tensors(
+    element_tables: dict[str, np.ndarray],
+    device: str,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Create DFT-D3 parameter tensors for a direct custom-op call."""
+    max_z_inc = element_tables["z_max_inc"]
+    return (
+        numpy_to_torch(element_tables["rcov"], device).float(),
+        numpy_to_torch(element_tables["r4r2"], device).float(),
+        numpy_to_torch(element_tables["c6ref"], device)
+        .float()
+        .reshape(max_z_inc, max_z_inc, 5, 5),
+        numpy_to_torch(element_tables["cnref_i"], device)
+        .float()
+        .reshape(max_z_inc, max_z_inc, 5, 5),
+    )
+
+
+def _d3_parameters(
+    element_tables: dict[str, np.ndarray],
+    device: str,
+) -> D3Parameters:
+    """Create validated DFT-D3 parameters for the public wrapper."""
+    rcov, r4r2, c6ab, cn_ref = _d3_parameter_tensors(element_tables, device)
+    return D3Parameters(rcov=rcov, r4r2=r4r2, c6ab=c6ab, cn_ref=cn_ref)
 
 
 # ==============================================================================
@@ -226,8 +257,8 @@ class TestCustomOpNeighborMatrix:
             .reshape(max_z_inc, max_z_inc, 5, 5)
         )
 
-        # Allocate outputs
-        energy = torch.zeros(1, dtype=torch.float32, device=device)
+        # Sentinel-filled outputs must be cleared by the empty return.
+        energy = torch.full((1,), 17.0, dtype=torch.float32, device=device)
         forces = torch.zeros((0, 3), dtype=torch.float32, device=device)
         coord_num = torch.zeros((0,), dtype=torch.float32, device=device)
         virial = torch.zeros((0, 3, 3), dtype=torch.float32, device=device)
@@ -250,9 +281,48 @@ class TestCustomOpNeighborMatrix:
             virial=virial,
             device=device,
         )
-        energy = energy.cpu().item()
+        assert torch.count_nonzero(energy) == 0
 
-        assert energy == pytest.approx(0.0)
+    @pytest.mark.usefixtures("element_tables", "device")
+    def test_custom_op_pbc_empty_system_clears_outputs(self, request):
+        """PBC matrix custom ops clear sentinels before an empty return."""
+        element_tables = request.getfixturevalue("element_tables")
+        device = request.getfixturevalue("device")
+        covalent_radii, r4r2, c6_reference, coord_num_ref = _d3_parameter_tensors(
+            element_tables, device
+        )
+        positions = torch.zeros((0, 3), dtype=torch.float32, device=device)
+        numbers = torch.zeros(0, dtype=torch.int32, device=device)
+        neighbor_matrix = torch.zeros((0, 0), dtype=torch.int32, device=device)
+        energy = torch.full((1,), 17.0, dtype=torch.float32, device=device)
+        forces = torch.zeros((0, 3), dtype=torch.float32, device=device)
+        coord_num = torch.zeros(0, dtype=torch.float32, device=device)
+        virial = torch.full((1, 3, 3), 17.0, dtype=torch.float32, device=device)
+
+        _dftd3_matrix_pbc_op(
+            positions=positions,
+            numbers=numbers,
+            neighbor_matrix=neighbor_matrix,
+            cell=torch.eye(3, dtype=torch.float32, device=device).unsqueeze(0),
+            neighbor_matrix_shifts=torch.zeros(
+                (0, 0, 3), dtype=torch.int32, device=device
+            ),
+            covalent_radii=covalent_radii,
+            r4r2=r4r2,
+            c6_reference=c6_reference,
+            coord_num_ref=coord_num_ref,
+            a1=0.4,
+            a2=4.0,
+            s8=0.8,
+            energy=energy,
+            forces=forces,
+            coord_num=coord_num,
+            virial=virial,
+            device=device,
+        )
+
+        assert torch.count_nonzero(energy) == 0
+        assert torch.count_nonzero(virial) == 0
 
 
 # ==============================================================================
@@ -331,40 +401,19 @@ class TestCustomOpNeighborList:
         """Test custom op with empty system."""
         element_tables = request.getfixturevalue("element_tables")
         device = request.getfixturevalue("device")
-
-        # Empty system
-        positions = torch.zeros((0, 3), dtype=torch.float32, device=device)
-        numbers = torch.zeros((0,), dtype=torch.int32, device=device)
-        idx_j = torch.zeros((0,), dtype=torch.int32, device=device)
-        neighbor_ptr = torch.zeros((1,), dtype=torch.int32, device=device)
-
-        # Parameters (convert from numpy)
-        max_z_inc = element_tables["z_max_inc"]
-        covalent_radii = numpy_to_torch(element_tables["rcov"], device).float()
-        r4r2 = numpy_to_torch(element_tables["r4r2"], device).float()
-        c6_reference = (
-            numpy_to_torch(element_tables["c6ref"], device)
-            .float()
-            .reshape(max_z_inc, max_z_inc, 5, 5)
+        covalent_radii, r4r2, c6_reference, coord_num_ref = _d3_parameter_tensors(
+            element_tables, device
         )
-        coord_num_ref = (
-            numpy_to_torch(element_tables["cnref_i"], device)
-            .float()
-            .reshape(max_z_inc, max_z_inc, 5, 5)
-        )
+        energy = torch.full((1,), 17.0, dtype=torch.float32, device=device)
+        forces = torch.empty((0, 3), dtype=torch.float32, device=device)
+        coord_num = torch.empty((0,), dtype=torch.float32, device=device)
+        virial = torch.full((1, 3, 3), 17.0, dtype=torch.float32, device=device)
 
-        # Allocate outputs
-        energy = torch.zeros(1, dtype=torch.float32, device=device)
-        forces = torch.zeros((0, 3), dtype=torch.float32, device=device)
-        coord_num = torch.zeros((0,), dtype=torch.float32, device=device)
-        virial = torch.zeros((0, 3, 3), dtype=torch.float32, device=device)
-
-        # Should handle empty case without error
         _dftd3_op(
-            positions=positions,
-            numbers=numbers,
-            idx_j=idx_j,
-            neighbor_ptr=neighbor_ptr,
+            positions=torch.empty((0, 3), dtype=torch.float32, device=device),
+            numbers=torch.empty((0,), dtype=torch.int32, device=device),
+            idx_j=torch.empty((0,), dtype=torch.int32, device=device),
+            neighbor_ptr=torch.zeros((1,), dtype=torch.int32, device=device),
             covalent_radii=covalent_radii,
             r4r2=r4r2,
             c6_reference=c6_reference,
@@ -379,9 +428,106 @@ class TestCustomOpNeighborList:
             device=device,
         )
 
-        energy = energy.cpu().item()
+        assert torch.count_nonzero(energy) == 0
+        assert forces.shape == (0, 3)
+        assert coord_num.shape == (0,)
+        assert torch.count_nonzero(virial) == 0
 
-        assert energy == pytest.approx(0.0)
+    @pytest.mark.usefixtures("element_tables", "device")
+    def test_custom_op_zero_edges_clears_outputs(self, request):
+        """A nonempty zero-edge CSR graph clears caller-owned outputs."""
+        element_tables = request.getfixturevalue("element_tables")
+        device = request.getfixturevalue("device")
+        covalent_radii, r4r2, c6_reference, coord_num_ref = _d3_parameter_tensors(
+            element_tables, device
+        )
+        energy = torch.full((1,), 17.0, dtype=torch.float32, device=device)
+        forces = torch.full((1, 3), 17.0, dtype=torch.float32, device=device)
+        coord_num = torch.full((1,), 17.0, dtype=torch.float32, device=device)
+        virial = torch.full((1, 3, 3), 17.0, dtype=torch.float32, device=device)
+
+        _dftd3_op(
+            positions=torch.zeros((1, 3), dtype=torch.float32, device=device),
+            numbers=torch.ones(1, dtype=torch.int32, device=device),
+            idx_j=torch.empty((0,), dtype=torch.int32, device=device),
+            neighbor_ptr=torch.zeros((2,), dtype=torch.int32, device=device),
+            covalent_radii=covalent_radii,
+            r4r2=r4r2,
+            c6_reference=c6_reference,
+            coord_num_ref=coord_num_ref,
+            a1=0.4,
+            a2=4.0,
+            s8=0.8,
+            energy=energy,
+            forces=forces,
+            coord_num=coord_num,
+            virial=virial,
+            device=device,
+        )
+
+        for output in (energy, forces, coord_num, virial):
+            assert torch.count_nonzero(output) == 0
+
+    @pytest.mark.usefixtures("element_tables", "device")
+    def test_custom_op_pbc_zero_edges_clears_outputs(self, request):
+        """PBC CSR custom ops clear sentinels before a zero-edge return."""
+        element_tables = request.getfixturevalue("element_tables")
+        device = request.getfixturevalue("device")
+        covalent_radii, r4r2, c6_reference, coord_num_ref = _d3_parameter_tensors(
+            element_tables, device
+        )
+        positions = torch.zeros((1, 3), dtype=torch.float32, device=device)
+        numbers = torch.ones(1, dtype=torch.int32, device=device)
+        energy = torch.full((1,), 17.0, dtype=torch.float32, device=device)
+        forces = torch.full((1, 3), 17.0, dtype=torch.float32, device=device)
+        coord_num = torch.full((1,), 17.0, dtype=torch.float32, device=device)
+        virial = torch.full((1, 3, 3), 17.0, dtype=torch.float32, device=device)
+
+        _dftd3_pbc_op(
+            positions=positions,
+            numbers=numbers,
+            idx_j=torch.zeros(0, dtype=torch.int32, device=device),
+            neighbor_ptr=torch.zeros(2, dtype=torch.int32, device=device),
+            cell=torch.eye(3, dtype=torch.float32, device=device).unsqueeze(0),
+            unit_shifts=torch.zeros((0, 3), dtype=torch.int32, device=device),
+            covalent_radii=covalent_radii,
+            r4r2=r4r2,
+            c6_reference=c6_reference,
+            coord_num_ref=coord_num_ref,
+            a1=0.4,
+            a2=4.0,
+            s8=0.8,
+            energy=energy,
+            forces=forces,
+            coord_num=coord_num,
+            virial=virial,
+            device=device,
+        )
+
+        assert torch.count_nonzero(energy) == 0
+        assert torch.count_nonzero(forces) == 0
+        assert torch.count_nonzero(coord_num) == 0
+        assert torch.count_nonzero(virial) == 0
+
+
+@pytest.mark.parametrize(
+    "op, neighbor_parameter",
+    [
+        (_dftd3_matrix_op, "neighbor_matrix"),
+        (_dftd3_matrix_pbc_op, "neighbor_matrix"),
+        (_dftd3_op, "idx_j"),
+        (_dftd3_pbc_op, "idx_j"),
+    ],
+)
+def test_custom_ops_expose_implementation_metadata(op, neighbor_parameter):
+    """Custom-op introspection exposes the decorated implementation contract."""
+    signature = inspect.signature(op)
+
+    assert signature == inspect.signature(op.__wrapped__)
+    assert "positions" in signature.parameters
+    assert "numbers" in signature.parameters
+    assert neighbor_parameter in signature.parameters
+    assert inspect.getdoc(op).startswith("Internal custom op for DFT-D3(BJ)")
 
 
 # ==============================================================================
@@ -619,6 +765,47 @@ class TestDtypeHandling:
 
 class TestTorchCompile:
     """Test torch.compile compatibility."""
+
+    @pytest.mark.parametrize("compute_virial", [False, True])
+    @pytest.mark.usefixtures("element_tables", "device")
+    def test_wrapper_compile_zero_edges(self, request, compute_virial):
+        """Compiled CSR zero-edge calls match eager zero outputs."""
+        element_tables = request.getfixturevalue("element_tables")
+        device = request.getfixturevalue("device")
+        positions = torch.zeros((2, 3), dtype=torch.float32, device=device)
+        numbers = torch.ones(2, dtype=torch.int32, device=device)
+        neighbor_list = torch.empty((2, 0), dtype=torch.int32, device=device)
+        neighbor_ptr = torch.zeros(3, dtype=torch.int32, device=device)
+        periodic_kwargs = (
+            {
+                "cell": torch.eye(3, dtype=torch.float32, device=device).unsqueeze(0),
+                "unit_shifts": torch.empty((0, 3), dtype=torch.int32, device=device),
+            }
+            if compute_virial
+            else {}
+        )
+        kwargs = {
+            "positions": positions,
+            "numbers": numbers,
+            "neighbor_list": neighbor_list,
+            "neighbor_ptr": neighbor_ptr,
+            "d3_params": _d3_parameters(element_tables, device),
+            "a1": 0.4,
+            "a2": 4.0,
+            "s8": 0.8,
+            "compute_virial": compute_virial,
+            "device": device,
+            **periodic_kwargs,
+        }
+
+        eager = dftd3(**kwargs)
+        compiled = torch.compile(dftd3)(**kwargs)
+
+        assert len(compiled) == len(eager)
+        for compiled_output, eager_output in zip(compiled, eager):
+            assert compiled_output.shape == eager_output.shape
+            assert torch.count_nonzero(compiled_output) == 0
+            torch.testing.assert_close(compiled_output, eager_output)
 
     @pytest.mark.usefixtures("element_tables", "device")
     def test_wrapper_compile(self, request):

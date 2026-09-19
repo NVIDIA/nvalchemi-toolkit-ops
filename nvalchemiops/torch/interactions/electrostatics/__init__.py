@@ -39,11 +39,14 @@ from nvalchemiops.torch.interactions.electrostatics.dsf import (
 from nvalchemiops.torch.interactions.electrostatics.ewald import (
     ewald_real_space,
     ewald_reciprocal_space,
+    ewald_reciprocal_space_from_miller_indices,
     ewald_summation,
 )
 from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
+    generate_ewald_miller_indices,
     generate_k_vectors_ewald_summation,
     generate_k_vectors_pme,
+    k_vectors_from_miller_indices,
 )
 from nvalchemiops.torch.interactions.electrostatics.multipole_electrostatics import (
     multipole_electrostatic_energy,
@@ -167,6 +170,7 @@ __all__ = [
     # Ewald
     "ewald_real_space",
     "ewald_reciprocal_space",
+    "ewald_reciprocal_space_from_miller_indices",
     "ewald_summation",
     # Slab correction (Yeh-Berkowitz / Ballenegger Eq. 29)
     "compute_slab_correction",
@@ -178,8 +182,10 @@ __all__ = [
     "pme_green_structure_factor",
     "compute_bspline_moduli_1d",
     # K-vectors
+    "generate_ewald_miller_indices",
     "generate_k_vectors_ewald_summation",
     "generate_k_vectors_pme",
+    "k_vectors_from_miller_indices",
     # Multipole moments packing (e3nn <-> Cartesian)
     "pack_multipole_moments",
     "infer_l_max",

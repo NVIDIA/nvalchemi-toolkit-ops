@@ -2483,10 +2483,15 @@ def npt_velocity_half_step_out(
 
     Parameters
     ----------
-    velocities : wp.array
-        Input velocities (not modified when velocities_out differs).
-    masses, forces, cell_velocities : wp.array
-        System state arrays.
+    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)
+        Input velocities. Shape (N,). Not modified when ``velocities_out``
+        differs.
+    masses : wp.array(dtype=scalar)
+        Particle masses. Shape (N,).
+    forces : wp.array(dtype=wp.vec3f or wp.vec3d)
+        Forces on particles. Shape (N,).
+    cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
+        Strain-rate matrices :math:`\dot{\varepsilon} = p_g/W`. Shape (B,).
     volumes : wp.array, optional
         .. deprecated:: 0.3.1
             Ignored; ``cell_velocities`` is the strain rate ``eps_dot = p_g/W``.
@@ -2510,6 +2515,10 @@ def npt_velocity_half_step_out(
         Pressure control mode: "isotropic", "anisotropic", or "triclinic".
     device : str, optional
         Warp device.
+    _skip_validation : bool, default False
+        Internal flag. When ``True``, skip :func:`validate_out_array` on
+        ``velocities_out``. Used by the in-place wrapper when input and output
+        are the same array.
 
     Returns
     -------
@@ -2680,6 +2689,10 @@ def npt_position_update_out(
         System index for each atom. Required for batched simulations.
     device : str, optional
         Warp device. Default: inferred from ``positions``.
+    _skip_validation : bool, default False
+        Internal flag. When ``True``, skip :func:`validate_out_array` on
+        ``positions_out``. Used by the in-place wrapper when input and output
+        are the same array.
 
     Returns
     -------
@@ -2786,13 +2799,17 @@ def npt_cell_update_out(
     cells : wp.array(dtype=wp.mat33f or wp.mat33d)
         Input cell matrices. Shape (B,). Not modified when ``cells_out`` differs.
     cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
-        Strain-rate matrices :math:`\dot{\varepsilon}`. Shape (B,).
+        Strain-rate matrices :math:`\dot{\varepsilon} = p_g/W`. Shape (B,).
     dt : wp.array(dtype=scalar)
         Full time step per system. Shape (B,).
     cells_out : wp.array(dtype=wp.mat33f or wp.mat33d)
         Pre-allocated output array for updated cell matrices. Shape (B,).
     device : str, optional
         Warp device. Default: inferred from ``cells``.
+    _skip_validation : bool, default False
+        Internal flag. When ``True``, skip :func:`validate_out_array` on
+        ``cells_out``. Used by the in-place wrapper when input and output are
+        the same array.
 
     Returns
     -------
@@ -2915,7 +2932,19 @@ def run_npt_step(
     num_atoms_per_system : wp.array(dtype=wp.int32)
         Number of atoms per system. Shape (B,).
     compute_forces_fn : callable, optional
-        Force computation function.
+        Callback invoked once after the position and cell update (step 6) to
+        recompute forces at the new geometry. Signature::
+
+            compute_forces_fn(positions, cells, forces, virial_tensors)
+
+        ``positions`` and ``cells`` are the integrator state arrays after the
+        update; ``forces`` and ``virial_tensors`` are pre-allocated output
+        buffers that must be filled in-place. ``positions`` and ``forces`` are
+        shape ``(N,)`` arrays of ``wp.vec3f`` or ``wp.vec3d``; ``cells`` is a
+        shape ``(B,)`` array of ``wp.mat33f`` or ``wp.mat33d``; and
+        ``virial_tensors`` is shape ``(B,)`` with the matching
+        ``wp.vec9f``/``wp.vec9d`` precision. Any return value is ignored. If
+        ``None``, force recomputation is skipped.
     batch_idx : wp.array, optional
         System index for each atom.
     device : str, optional
@@ -3488,10 +3517,15 @@ def nph_velocity_half_step_out(
 
     Parameters
     ----------
-    velocities : wp.array
-        Input velocities (not modified when velocities_out differs).
-    masses, forces, cell_velocities : wp.array
-        System state arrays.
+    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)
+        Input velocities. Shape (N,). Not modified when ``velocities_out``
+        differs.
+    masses : wp.array(dtype=scalar)
+        Particle masses. Shape (N,).
+    forces : wp.array(dtype=wp.vec3f or wp.vec3d)
+        Forces on particles. Shape (N,).
+    cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
+        Strain-rate matrices :math:`\dot{\varepsilon} = p_g/W`. Shape (B,).
     volumes : wp.array, optional
         .. deprecated:: 0.3.1
             Ignored; ``cell_velocities`` is the strain rate ``eps_dot = p_g/W``.
@@ -3511,6 +3545,10 @@ def nph_velocity_half_step_out(
         Pressure control mode: "isotropic", "anisotropic", or "triclinic".
     device : str, optional
         Warp device.
+    _skip_validation : bool, default False
+        Internal flag. When ``True``, skip :func:`validate_out_array` on
+        ``velocities_out``. Used by the in-place wrapper when input and output
+        are the same array.
 
     Returns
     -------
@@ -3819,7 +3857,19 @@ def run_nph_step(
     num_atoms_per_system : wp.array(dtype=wp.int32)
         Number of atoms per system. Shape (B,).
     compute_forces_fn : callable, optional
-        Force computation function.
+        Callback invoked once after the position and cell update (step 5) to
+        recompute forces at the new geometry. Signature::
+
+            compute_forces_fn(positions, cells, forces, virial_tensors)
+
+        ``positions`` and ``cells`` are the integrator state arrays after the
+        update; ``forces`` and ``virial_tensors`` are pre-allocated output
+        buffers that must be filled in-place. ``positions`` and ``forces`` are
+        shape ``(N,)`` arrays of ``wp.vec3f`` or ``wp.vec3d``; ``cells`` is a
+        shape ``(B,)`` array of ``wp.mat33f`` or ``wp.mat33d``; and
+        ``virial_tensors`` is shape ``(B,)`` with the matching
+        ``wp.vec9f``/``wp.vec9d`` precision. Any return value is ignored. If
+        ``None``, force recomputation is skipped.
     batch_idx : wp.array, optional
         System index for each atom.
     device : str, optional

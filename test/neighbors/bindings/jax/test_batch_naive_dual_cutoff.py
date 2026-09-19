@@ -24,7 +24,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from nvalchemiops.jax.neighbors import batch_naive_neighbor_list_dual_cutoff
+from nvalchemiops.jax.neighbors import (
+    batch_naive_neighbor_list,
+    batch_naive_neighbor_list_dual_cutoff,
+    compute_naive_num_shifts,
+)
 
 from .conftest import (
     create_batch_idx_and_ptr_jax,
@@ -33,6 +37,30 @@ from .conftest import (
 )
 
 pytestmark = requires_gpu
+
+
+def test_zero_cutoff_fixed_batch_dual_coo_returns_fresh_recovery_metadata():
+    """Batched dual zero cutoff returns fresh recovery metadata."""
+    positions = jnp.zeros((2, 3), dtype=jnp.float32)
+    _l1, _p1, counts1, valid1, _l2, _p2, counts2, valid2 = (
+        batch_naive_neighbor_list_dual_cutoff(
+            positions,
+            0.0,
+            0.0,
+            batch_ptr=jnp.array([0, 2], dtype=jnp.int32),
+            max_neighbors1=1,
+            max_neighbors2=1,
+            num_neighbors1=jnp.full(2, 7, dtype=jnp.int32),
+            num_neighbors2=jnp.full(2, 7, dtype=jnp.int32),
+            return_neighbor_list=True,
+            coo_capacity=2,
+        )
+    )
+
+    np.testing.assert_array_equal(counts1, jnp.zeros(2, dtype=jnp.int32))
+    np.testing.assert_array_equal(counts2, jnp.zeros(2, dtype=jnp.int32))
+    assert bool(valid1) and bool(valid2)
+
 
 dual_module = import_module("nvalchemiops.jax.neighbors.batch_naive_dual_cutoff")
 
@@ -53,6 +81,53 @@ def _active_neighbor_shift_rows(
         axis=1,
     )
     return sorted(tuple(row) for row in rows.tolist())
+
+
+def _assert_fixed_coo_matches_matrix(
+    neighbor_list,
+    neighbor_ptr,
+    neighbor_shifts,
+    reference_matrix,
+    reference_counts,
+    reference_shifts,
+    capacity,
+    fill_value,
+    batch_idx,
+):
+    """Compare fixed COO pointers, pair/shift records, and batch ownership."""
+    neighbor_list = np.asarray(neighbor_list)
+    neighbor_ptr = np.asarray(neighbor_ptr)
+    neighbor_shifts = np.asarray(neighbor_shifts)
+    reference_counts = np.asarray(reference_counts)
+    batch_idx = np.asarray(batch_idx)
+    expected_ptr = np.concatenate(
+        [np.array([0], dtype=np.int32), np.cumsum(reference_counts)]
+    )
+    np.testing.assert_array_equal(neighbor_ptr, expected_ptr)
+    assert neighbor_ptr[0] == 0
+    assert np.all(np.diff(neighbor_ptr) >= 0)
+    assert np.all((neighbor_ptr >= 0) & (neighbor_ptr <= capacity))
+    for source in range(reference_matrix.shape[0]):
+        start, end = int(neighbor_ptr[source]), int(neighbor_ptr[source + 1])
+        expected = _active_neighbor_shift_rows(
+            reference_matrix,
+            reference_shifts,
+            reference_counts,
+            source,
+        )
+        actual = sorted(
+            (int(neighbor_list[1, slot]), *map(int, neighbor_shifts[slot]))
+            for slot in range(start, end)
+        )
+        assert np.all(neighbor_list[0, start:end] == source)
+        assert actual == expected
+        if end > start:
+            assert np.all(batch_idx[source] == batch_idx[neighbor_list[1, start:end]])
+    num_pairs = int(neighbor_ptr[-1])
+    if num_pairs < capacity:
+        np.testing.assert_array_equal(neighbor_list[:, num_pairs:], fill_value)
+        np.testing.assert_array_equal(neighbor_shifts[num_pairs:], 0)
+    return num_pairs
 
 
 class TestBatchedDualCutoffListFormat:
@@ -236,6 +311,126 @@ class TestBatchNaiveDualCutoffJIT:
         assert nm2.shape == (16, 25)
         assert nn1.shape == (16,)
         assert nn2.shape == (16,)
+
+    @pytest.mark.parametrize("use_pbc", [False, True], ids=["no-pbc", "pbc"])
+    def test_jit_fixed_capacity_coo(self, use_pbc):
+        """Batched dual cutoffs have separate fixed COO capacities under JIT."""
+        positions1, cell1, pbc1 = create_simple_cubic_system_jax(
+            num_atoms=8, cell_size=2.0, dtype=jnp.float32
+        )
+        positions2, cell2, pbc2 = create_simple_cubic_system_jax(
+            num_atoms=8, cell_size=2.5, dtype=jnp.float32
+        )
+        positions = jnp.concatenate([positions1, positions2], axis=0)
+        batch_idx, batch_ptr = create_batch_idx_and_ptr_jax([8, 8])
+        cutoff1 = 1.1
+        cutoff2 = 1.5
+        pbc_kwargs = {}
+        if use_pbc:
+            cell = jnp.concatenate([cell1, cell2], axis=0)
+            pbc = jnp.concatenate([pbc1, pbc2], axis=0)
+            shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+                cell,
+                cutoff2,
+                pbc,
+            )
+            pbc_kwargs = {
+                "cell": cell,
+                "pbc": pbc,
+                "shift_range_per_dimension": shift_range,
+                "num_shifts_per_system": num_shifts,
+                "max_shifts_per_system": max_shifts,
+            }
+
+        @jax.jit
+        def jitted_batch_dual(positions, batch_idx, batch_ptr):
+            return batch_naive_neighbor_list_dual_cutoff(
+                positions,
+                cutoff1=cutoff1,
+                cutoff2=cutoff2,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors1=15,
+                max_neighbors2=25,
+                max_atoms_per_system=8,
+                return_neighbor_list=True,
+                coo_capacity=(128, 256),
+                **pbc_kwargs,
+            )
+
+        result = jitted_batch_dual(
+            positions,
+            batch_idx,
+            batch_ptr,
+        )
+        if use_pbc:
+            nl1, ptr1, shifts1, counts1, valid1, nl2, ptr2, shifts2, counts2, valid2 = (
+                result
+            )
+            assert shifts1.shape == (128, 3)
+            assert shifts2.shape == (256, 3)
+        else:
+            nl1, ptr1, counts1, valid1, nl2, ptr2, counts2, valid2 = result
+
+        assert nl1.shape == (2, 128)
+        assert nl2.shape == (2, 256)
+        assert ptr1.shape == ptr2.shape == (17,)
+        assert bool(valid1)
+        assert bool(valid2)
+        assert jnp.all(counts1 >= 0)
+        assert jnp.all(counts2 >= 0)
+
+        reference1 = batch_naive_neighbor_list(
+            positions,
+            cutoff=cutoff1,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cell=pbc_kwargs.get("cell"),
+            pbc=pbc_kwargs.get("pbc"),
+            max_neighbors=15,
+            max_atoms_per_system=8,
+        )
+        reference2 = batch_naive_neighbor_list(
+            positions,
+            cutoff=cutoff2,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cell=pbc_kwargs.get("cell"),
+            pbc=pbc_kwargs.get("pbc"),
+            max_neighbors=25,
+            max_atoms_per_system=8,
+        )
+        if use_pbc:
+            ref_nm1, ref_nn1, ref_shifts1 = reference1
+            ref_nm2, ref_nn2, ref_shifts2 = reference2
+        else:
+            ref_nm1, ref_nn1 = reference1
+            ref_nm2, ref_nn2 = reference2
+            ref_shifts1 = jnp.zeros((positions.shape[0], 15, 3), dtype=jnp.int32)
+            ref_shifts2 = jnp.zeros((positions.shape[0], 25, 3), dtype=jnp.int32)
+        num_pairs1 = _assert_fixed_coo_matches_matrix(
+            nl1,
+            ptr1,
+            shifts1 if use_pbc else jnp.zeros((128, 3), dtype=jnp.int32),
+            ref_nm1,
+            ref_nn1,
+            ref_shifts1,
+            128,
+            positions.shape[0],
+            batch_idx,
+        )
+        num_pairs2 = _assert_fixed_coo_matches_matrix(
+            nl2,
+            ptr2,
+            shifts2 if use_pbc else jnp.zeros((256, 3), dtype=jnp.int32),
+            ref_nm2,
+            ref_nn2,
+            ref_shifts2,
+            256,
+            positions.shape[0],
+            batch_idx,
+        )
+        assert num_pairs1 > 0 and num_pairs2 >= num_pairs1
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])

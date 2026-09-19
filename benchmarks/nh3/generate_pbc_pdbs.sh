@@ -146,10 +146,14 @@ progress_bar() {
     local percent=$((current * 100 / total))
     local filled=$((current * width / total))
 
-    # Build the bar
-    local bar=""
-    for ((i=0; i<filled; i++)); do bar+="█"; done
-    for ((i=0; i<width-filled; i++)); do bar+="░"; done
+    # Build the bar from a blank canvas sliced at `filled`, rather than appending
+    # one character at a time. The leading run becomes solid glyphs, whatever
+    # spaces remain become the empty ones.
+    local canvas
+    printf -v canvas "%*s" "$width" ""
+    local bar="${canvas:0:filled}"
+    bar="${bar// /█}${canvas:filled}"
+    bar="${bar// /░}"
 
     printf "\r${prefix}: [${bar}] %3d%% (%d/%d)" "$percent" "$current" "$total"
     return 0

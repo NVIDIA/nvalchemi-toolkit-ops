@@ -587,5 +587,25 @@ class TestSphericalHarmonicsEdgeCases:
             )
 
 
+@pytest.mark.gpu
+def test_pytorch_wrappers_follow_the_callers_nondefault_stream(torch_stream_runner):
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is required for stream-interoperability coverage")
+
+    device = torch.device("cuda:0")
+    source = torch.randn(8, 3, dtype=torch.float64, device=device)
+    positions = torch.empty_like(source)
+    _, snapshots, expected = torch_stream_runner(
+        source,
+        positions,
+        lambda value: (
+            eval_spherical_harmonics_pytorch(value, L_max=2),
+            eval_spherical_harmonics_gradient_pytorch(value, L_max=2),
+        ),
+    )
+    for actual, reference in zip(snapshots, expected, strict=True):
+        torch.testing.assert_close(actual, reference)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

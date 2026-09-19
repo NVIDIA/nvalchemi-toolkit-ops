@@ -1649,43 +1649,6 @@ _segment_div_overloads = register_overloads(
 # ---------------------------------------------------------------------------
 
 
-# Per-(kernel-id, device-id) Launch object cache.  Keyed by id() so we don't
-# pay a Python attribute-equality hash on every call; warp's kernel/device
-# objects are stable (singletons per (dtype, device)) so identity is safe.
-_segmented_sum_launch_cache: dict[tuple[int, int], wp._src.context.Launch] = {}
-
-
-def _get_segmented_sum_launch(kernel, device, x, idx, out, N, ept):
-    """Return a cached, parameter-reset ``Launch`` for ``_segmented_sum_kernel``.
-
-    First call for a given ``(kernel, device)`` pair builds the Launch via
-    ``wp.launch(record_cmd=True)`` (the expensive path).  Subsequent calls
-    mutate ``dim`` + the five parameter slots in place and skip the bulk of
-    Warp's ``wp.launch`` dispatch (~12.6 KB of validation + kernel-hooks
-    resolution).  At low N this saves ~3 us per call.
-    """
-    key = (id(kernel), id(device))
-    launch = _segmented_sum_launch_cache.get(key)
-    dim = (N + ept - 1) // ept
-    if launch is None:
-        launch = wp.launch(
-            kernel,
-            dim=dim,
-            inputs=[x, idx, out, N, ept],
-            device=device,
-            record_cmd=True,
-        )
-        _segmented_sum_launch_cache[key] = launch
-        return launch
-    launch.set_dim(dim)
-    launch.set_param_at_index(0, x)
-    launch.set_param_at_index(1, idx)
-    launch.set_param_at_index(2, out)
-    launch.set_param_at_index(3, N)
-    launch.set_param_at_index(4, ept)
-    return launch
-
-
 def segmented_sum(
     x: wp.array,
     idx: wp.array,
@@ -1712,23 +1675,21 @@ def segmented_sum(
 
     device = x.device
     M = out.shape[0]
+    kernel = _segmented_sum_overloads[x.dtype]
 
-    # CPU path: keep the unoptimized wp.launch dispatch (device.stream and the
-    # cached Launch path are CUDA-only; the optimization targets low-N CUDA
-    # latency where Python/Warp wrapper overhead dominates).
     if device.is_cpu:
         out.zero_()
         ept = compute_ept(N, max(device.sm_count, 1), x.dtype in _VEC_TYPES)
         dim = (N + ept - 1) // ept
         wp.launch(
-            _segmented_sum_overloads[x.dtype],
+            kernel,
             dim=dim,
             inputs=[x, idx, out, N, ept],
             device=device,
         )
         return
 
-    # CUDA fast path: raw device memset + cached Launch object.
+    # CUDA fast path: raw device memset.
     # The memset bypasses wp.array.zero_()'s autograd-tracking wrapper and
     # mark_init bookkeeping — saves ~0.5 µs per call on top of the
     # cudaMemsetAsync itself.
@@ -1749,7 +1710,7 @@ def segmented_sum(
             x_tail = x[full_blocks * _BLOCK_DIM :]
             idx_tail = idx[full_blocks * _BLOCK_DIM :]
             wp.launch(
-                _segmented_sum_overloads[x.dtype],
+                kernel,
                 dim=remainder,
                 inputs=[x_tail, idx_tail, out, remainder, 1],
                 device=device,
@@ -1772,11 +1733,12 @@ def segmented_sum(
     else:
         ept = max(4, min(p, 16))
 
-    # Cached Launch object — skips ~12.6 KB of wp.launch's validation/dispatch.
-    launch = _get_segmented_sum_launch(
-        _segmented_sum_overloads[x.dtype], device, x, idx, out, N, ept
+    wp.launch(
+        kernel,
+        dim=(N + ept - 1) // ept,
+        inputs=[x, idx, out, N, ept],
+        device=device,
     )
-    launch.launch(stream=device.stream)
 
 
 def segmented_component_sum(

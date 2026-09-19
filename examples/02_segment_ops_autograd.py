@@ -76,7 +76,7 @@ print(f"{n_atoms} atoms over {n_molecules} molecules, running on {device}")
 
 # %%
 # Pooling a per-atom scalar: ``segmented_sum`` and ``segmented_mean``
-# ------------------------------------------------------------------
+# -------------------------------------------------------------------
 # Give every atom a partial charge. ``segmented_sum`` gives each molecule's net
 # charge; ``segmented_mean`` gives its average. Both map ``(n_atoms,)`` down to
 # ``(n_molecules,)``.

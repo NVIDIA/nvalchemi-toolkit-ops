@@ -13,22 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# ruff: noqa: E402
+
 """JAX bindings for electrostatics interactions."""
 
 from __future__ import annotations
 
 import inspect
 import warnings
-from warnings import warn
 
 import jax
 
-if not getattr(jax.config, "jax_enable_x64", False):
-    warn(
-        "Electrostatics kernels rely on FP64, and `jax_enable_x64` is set to False."
-        " `nvalchemiops` will set this value to True by default."
-    )
-    jax.config.update("jax_enable_x64", True)
+jax.config.update("jax_enable_x64", True)
 
 from nvalchemiops.jax.interactions.electrostatics.coulomb import (
     coulomb_energy,
@@ -38,12 +34,15 @@ from nvalchemiops.jax.interactions.electrostatics.coulomb import (
 from nvalchemiops.jax.interactions.electrostatics.ewald import (
     ewald_real_space,
     ewald_reciprocal_space,
+    ewald_reciprocal_space_from_miller_indices,
     ewald_summation,
 )
 from nvalchemiops.jax.interactions.electrostatics.k_vectors import (
+    generate_ewald_miller_indices,
     generate_k_vectors_ewald_summation,
     generate_k_vectors_pme,
     generate_miller_indices,
+    k_vectors_from_miller_indices,
 )
 from nvalchemiops.jax.interactions.electrostatics.parameters import (
     EwaldParameters,
@@ -222,6 +221,7 @@ __all__ = [
     # Ewald
     "ewald_real_space",
     "ewald_reciprocal_space",
+    "ewald_reciprocal_space_from_miller_indices",
     "ewald_summation",
     # PME
     "particle_mesh_ewald",
@@ -231,9 +231,11 @@ __all__ = [
     "pme_energy_corrections_with_charge_grad",
     "compute_bspline_moduli_1d",
     # K-vectors
+    "generate_ewald_miller_indices",
     "generate_k_vectors_ewald_summation",
     "generate_k_vectors_pme",
     "generate_miller_indices",
+    "k_vectors_from_miller_indices",
     # Parameters
     "EwaldParameters",
     "PMEParameters",

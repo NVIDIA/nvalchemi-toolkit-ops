@@ -2,13 +2,86 @@
 
 ## Unreleased
 
-### Changed (neighbors)
+### Changed
 
-- Improved JAX neighbor-list import performance by deferring dtype-specific
-  direct naive and cell-list Warp wrapper registration until first use.
-  Cluster-tile graph callbacks now use bundled callback/preload registrations
-  with lazy direct kernels for naive and cell-list paths. Public behavior is
-  unchanged.
+- Added fixed-capacity ``jax.jit`` support to the method-specific JAX neighbor
+  APIs. Naive and cell-list methods, including batched variants, accept
+  ``coo_capacity`` for padded COO output with clipped pointers, raw required row
+  counts, and a scalar launch-metadata validity flag. Batched pair-centric
+  cell-list calls additionally need static launch metadata under ``jax.jit``.
+  Invalid static launch relationships raise before the CUDA query, while runtime
+  metadata mismatches invalidate the returned counts.
+  ``neighbor_list`` performs eager orchestration, and compact COO output uses
+  eager shape compaction.
+- JAX dual-cutoff neighbor APIs now reject reversed cutoffs. Naive methods
+  require ``cutoff2 >= cutoff1`` and cluster-tile methods require
+  ``cutoff2 >= cutoff``; equal cutoffs remain valid.
+- JAX DFT-D3 now accepts `D3Parameters` directly as a runtime argument to
+  `jax.jit`, without unpacking and reconstructing its parameter arrays.
+- Raised the minimum supported Warp version to 1.15 and migrated JAX bindings
+  from Warp's removed experimental JAX module to its public JAX API, restoring
+  compatibility with `warp>=1.15`.
+- Warp initialization now retains warning-level diagnostics instead of
+  suppressing all Warp log output.
+- CUDA tiled direct-Warp multipole launchers now require caller-owned,
+  operation-specific scratch bundles. PyTorch bindings allocate and retain this
+  scratch internally, so their public APIs are unchanged; CPU direct-Warp paths
+  do not require scratch.
+- PyTorch segmented operations now accept int64 segment indices whose values
+  fit in int32; these inputs are converted to int32 internally.
+
+### Added
+
+- `TileBufferOverflow` reports how many cluster-tile pairs were required, how
+  many the buffer could hold, and which system overflowed a segmented batch.
+  Torch `cluster_tile_neighbor_list` and JAX `build_cluster_tile_list`,
+  `batch_build_cluster_tile_list`, `cluster_tile_neighbor_list`, and
+  `batch_cluster_tile_neighbor_list` now accept `max_tiles_per_group`.
+
+### Changed
+
+- Eager Torch and JAX cluster-tile neighbor-list calls now raise
+  `TileBufferOverflow` when tile-pair construction exceeds the allocated
+  capacity. For cluster-tile calls, `NeighborOverflowError` identifies an
+  undersized final matrix or COO buffer.
+- Compiled JAX cluster-tile calls that allocate tile-index storage now require
+  `max_tiles_per_group` to be a positive static Python integer. Complete
+  caller-supplied tile-index storage determines capacity without that factor.
+  Compiled calls do not raise `TileBufferOverflow`.
+- Torch and JAX Ewald now expose caller-retained reciprocal Miller topology via
+  `generate_ewald_miller_indices(...)` and
+  `k_vectors_from_miller_indices(...)`. Full `ewald_summation(...)` accepts
+  keyword-only `miller_indices=` and materializes Cartesian reciprocal vectors
+  from the current cell. Both backends provide
+  `ewald_reciprocal_space_from_miller_indices(...)` for the reciprocal
+  component. This avoids rebuilding the integer index grid while preserving
+  the reciprocal vectors' dependence on the current cell.
+
+### Fixed
+
+- Torch bindings now launch Warp work on the current PyTorch CUDA stream across
+  neighbors, dynamics, dispersion, electrostatics, spline, and math operations.
+  This prevents Warp from observing unfinished Torch inputs, Torch from
+  consuming incomplete Warp outputs, and Torch temporary storage from being
+  reused while Warp still references it. JAX bindings continue to use
+  XLA-provided streams through Warp's JAX adapters.
+- Corrected the multipole Ewald/PME uniform-background coefficient for
+  non-neutral cells. Split Ewald, PME, and cached Ewald now use the same
+  zero-mode convention as the direct reciprocal calculation, including charge
+  and cell derivatives.
+- Segmented sums no longer retain CUDA graph-pool allocations through cached Warp
+  launches when used from compiled PyTorch custom operators.
+- Fixed JAX autodiff through `ewald_reciprocal_space(...)` when `k_vectors`
+  are derived from the differentiated cell. The custom JVP previously
+  discarded the `k_vectors` tangent and omitted the reciprocal-cell
+  contribution to the cell gradient. It now differentiates through the
+  supplied JAX graph, matching Torch. Cartesian vectors remain fixed only when
+  they have zero tangent in the active JAX transformation, for example when
+  precomputed from a reference cell or passed through
+  `jax.lax.stop_gradient(k_vectors)`. Full
+  `ewald_summation(k_vectors=...)` semantics are unchanged.
+
+## 0.4.1 - 2026-08-03
 
 ### Added
 
@@ -41,15 +114,56 @@
   when a materialized uniform cotangent is proven by value inspection; system
   mode is structurally sync-free for arbitrary `(B,)` loss weights. JAX adds
   API/layout parity only; underlying Warp kernels remain atom-buffer-oriented.
+- PyTorch cluster-tile selective calls can append caller-owned tile state with
+  `return_state=True`, without changing the default neighbor-list return arity.
+
+### Changed
+
+- Improved JAX neighbor-list import performance by deferring dtype-specific
+  direct naive and cell-list Warp wrapper registration until first use.
+  Cluster-tile graph callbacks now use bundled callback/preload registrations
+  with lazy direct kernels for naive and cell-list paths. Public behavior is
+  unchanged.
 
 ### Fixed
 
+- Fixed Torch PME and Ewald energy gradients for connected charge, position, and
+  cell inputs. Non-uniform or weighted energy losses and `create_graph=True`
+  higher-order derivatives no longer double-count upstream chain-rule terms.
+- Torch `ewald_reciprocal_space` now preserves graph-connected reciprocal
+  vectors for cell/strain autograd, restoring the physical reciprocal Ewald
+  virial when vectors are regenerated from the differentiable cell.
+- Torch Ewald, PME, and slab backward paths now compile when an explicit
+  single-system batch (`batch_idx=zeros(N)`) is supplied. Reciprocal PME
+  compiled gradients are also correct when a compiled function is reused across
+  mesh sizes.
+- Torch DFT-D3 custom operators now zero caller-owned energy, forces,
+  coordination-number, and virial buffers before empty-system or zero-edge
+  early returns, so reused output tensors cannot retain stale values.
+- JAX DFT-D3 CSR calls with atoms but no edges return zero-filled per-atom
+  forces and coordination numbers with shapes `(N, 3)` and `(N,)`, matching
+  the neighbor-matrix contract and preserving per-system energy and virial axes.
 - JAX cell-list builds now derive search radii from their realized grids,
   preventing missed neighbors when static capacity changes the constructed
   grid. Batched `capacity_strategy="geometry"` preserves promoted grids for
   all non-empty systems by reserving an equal per-system capacity; volume-based
   sizing remains the default. Fused Warp graph calls with explicit
   `max_total_cells` now require an explicit `neighbor_search_radius`.
+- Unbatched JAX naive dual-cutoff PBC neighbor lists now populate both cutoff
+  outputs when using the default `wrap_positions=True`. Previously this path
+  wrapped positions but skipped the fill kernel, leaving zero counts and padded
+  matrices.
+- Batched PyTorch cluster-tile segmented COO validates fixed topology, offsets,
+  counts, and tile-state capacities before launching Warp kernels.
+- Single-system Torch and JAX segmented cluster-tile COO now require one exact
+  physical interval, bound writes by output capacity, fail closed for malformed
+  offsets, and cap compiled/JIT active counts to writable capacity. Batched
+  per-system physical subsegments remain supported.
+- Compiled unified PyTorch cluster-tile dispatch now rejects tensor-valued PBC
+  rather than treating it as fully periodic. Eagerly validate PBC and compile the
+  direct single-system fixed-state route instead.
+- JAX cluster-tile empty selective rebuilds now preserve false-flag state and
+  clear true-flag pair and tile counts while retaining fixed-capacity storage.
 
 ## 0.4.0 - 2026-07-13
 

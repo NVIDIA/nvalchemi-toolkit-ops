@@ -32,12 +32,14 @@ from __future__ import annotations
 import math
 from enum import IntEnum
 
+import torch
 import warp as wp
 
 from nvalchemiops.math.gto import (
     _eval_gto_density_kernel,
     _eval_gto_fourier_kernel,
 )
+from nvalchemiops.torch._warp_op_helpers import scoped_warp_stream
 
 
 class NormMode(IntEnum):
@@ -175,27 +177,26 @@ def eval_gto_density_pytorch(
     torch.Tensor
         GTO density values [N, num_components].
     """
-    import torch
-
     if device is None:
         device = positions.device
 
     N = positions.shape[0]
     num_components = {0: 1, 1: 4, 2: 9}[L_max]
 
-    output = torch.zeros((N, num_components), dtype=torch.float64, device=device)
+    with scoped_warp_stream(positions.device):
+        output = torch.zeros((N, num_components), dtype=torch.float64, device=device)
 
-    wp_device = wp.device_from_torch(device)
-    wp_positions = wp.from_torch(positions.contiguous(), dtype=wp.vec3d)
-    wp_output = wp.from_torch(output, dtype=wp.float64)
+        wp_device = wp.device_from_torch(device)
+        wp_positions = wp.from_torch(positions.contiguous(), dtype=wp.vec3d)
+        wp_output = wp.from_torch(output, dtype=wp.float64)
 
-    wp.launch(
-        kernel=_eval_gto_density_kernel,
-        dim=N,
-        inputs=[wp_positions, wp.float64(sigma), L_max],
-        outputs=[wp_output],
-        device=wp_device,
-    )
+        wp.launch(
+            kernel=_eval_gto_density_kernel,
+            dim=N,
+            inputs=[wp_positions, wp.float64(sigma), L_max],
+            outputs=[wp_output],
+            device=wp_device,
+        )
 
     return output
 
@@ -224,28 +225,31 @@ def eval_gto_fourier_pytorch(
     tuple[torch.Tensor, torch.Tensor]
         (real_part, imag_part) each of shape [K, num_components].
     """
-    import torch
-
     if device is None:
         device = k_vectors.device
 
     K = k_vectors.shape[0]
     num_components = {0: 1, 1: 4, 2: 9}[L_max]
 
-    output_real = torch.zeros((K, num_components), dtype=torch.float64, device=device)
-    output_imag = torch.zeros((K, num_components), dtype=torch.float64, device=device)
+    with scoped_warp_stream(k_vectors.device):
+        output_real = torch.zeros(
+            (K, num_components), dtype=torch.float64, device=device
+        )
+        output_imag = torch.zeros(
+            (K, num_components), dtype=torch.float64, device=device
+        )
 
-    wp_device = wp.device_from_torch(device)
-    wp_k = wp.from_torch(k_vectors.contiguous(), dtype=wp.vec3d)
-    wp_real = wp.from_torch(output_real, dtype=wp.float64)
-    wp_imag = wp.from_torch(output_imag, dtype=wp.float64)
+        wp_device = wp.device_from_torch(device)
+        wp_k = wp.from_torch(k_vectors.contiguous(), dtype=wp.vec3d)
+        wp_real = wp.from_torch(output_real, dtype=wp.float64)
+        wp_imag = wp.from_torch(output_imag, dtype=wp.float64)
 
-    wp.launch(
-        kernel=_eval_gto_fourier_kernel,
-        dim=K,
-        inputs=[wp_k, wp.float64(sigma), L_max],
-        outputs=[wp_real, wp_imag],
-        device=wp_device,
-    )
+        wp.launch(
+            kernel=_eval_gto_fourier_kernel,
+            dim=K,
+            inputs=[wp_k, wp.float64(sigma), L_max],
+            outputs=[wp_real, wp_imag],
+            device=wp_device,
+        )
 
     return output_real, output_imag

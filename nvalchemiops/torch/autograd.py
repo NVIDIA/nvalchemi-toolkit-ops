@@ -45,6 +45,7 @@ import torch
 import warp as wp
 from torch._subclasses.fake_tensor import is_fake
 
+from nvalchemiops.torch._warp_op_helpers import scoped_warp_stream
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_vec_dtype
 
 # =============================================================================
@@ -289,7 +290,10 @@ def warp_stream_from_torch(*values: Any):
         return
 
     torch_stream = torch.cuda.current_stream(stream_tensor.device)
-    with wp.ScopedStream(wp.stream_from_torch(torch_stream)):
+    with scoped_warp_stream(
+        stream_tensor.device,
+        torch_stream=torch_stream,
+    ):
         yield torch_stream
 
 

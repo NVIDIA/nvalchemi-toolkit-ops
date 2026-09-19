@@ -79,7 +79,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import warp as wp
-from warp.jax_experimental import jax_kernel
+from warp import jax_kernel
 
 from nvalchemiops.math.spline import (
     _PER_ORDER_BATCH_GATHER_WITH_FORCE_KERNELS,

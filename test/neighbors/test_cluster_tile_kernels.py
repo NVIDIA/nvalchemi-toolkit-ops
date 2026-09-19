@@ -31,8 +31,12 @@ from nvalchemiops.neighbors.cluster_tile import (
     TILE_GROUP_SIZE,
     build_cluster_tile_list,
     query_cluster_tile,
+    query_cluster_tile_coo,
 )
-from nvalchemiops.neighbors.cluster_tile.kernels import _bbox_distance_sq
+from nvalchemiops.neighbors.cluster_tile.kernels import (
+    _bbox_distance_sq,
+    _coo_segment_is_valid,
+)
 from nvalchemiops.neighbors.cluster_tile.launchers import (
     _compute_morton,
     _permute_gather_soa,
@@ -52,6 +56,18 @@ def _bbox_distance_sq_test_kernel(
     """Evaluate ``_bbox_distance_sq`` for test vectors."""
     i = wp.tid()
     out[i] = _bbox_distance_sq(d[i], rg_ext[i], cg_ext[i])
+
+
+@wp.kernel(enable_backward=False)
+def _coo_segment_is_valid_test_kernel(
+    starts: wp.array(dtype=wp.int32),
+    stops: wp.array(dtype=wp.int32),
+    max_pairs: wp.int32,
+    out: wp.array(dtype=wp.int32),
+) -> None:
+    """Evaluate segmented COO interval validation for test values."""
+    i = wp.tid()
+    out[i] = _coo_segment_is_valid(starts[i], stops[i], max_pairs)
 
 
 def _mat33f_from_torch(mat: torch.Tensor):
@@ -122,6 +138,141 @@ class TestBBoxDistanceSqHelper:
         )
         expected = torch.tensor([0.0, 1.0, 6.25], dtype=torch.float32, device=device)
         torch.testing.assert_close(out, expected)
+
+
+class TestSegmentedCooPhysicalBounds:
+    """Ensure caller offsets cannot escape physical COO output storage."""
+
+    def test_interval_validation_rejects_negative_reversed_and_oversized(
+        self,
+        device,
+    ):
+        """Only intervals inside the physical COO range are valid."""
+        starts = torch.tensor([0, -1, 8, 0], dtype=torch.int32, device=device)
+        stops = torch.tensor([8, 8, 0, 9], dtype=torch.int32, device=device)
+        out = torch.empty(4, dtype=torch.int32, device=device)
+
+        wp.launch(
+            kernel=_coo_segment_is_valid_test_kernel,
+            dim=4,
+            inputs=[
+                wp.from_torch(starts, dtype=wp.int32, return_ctype=True),
+                wp.from_torch(stops, dtype=wp.int32, return_ctype=True),
+                8,
+                wp.from_torch(out, dtype=wp.int32, return_ctype=True),
+            ],
+            device=device,
+        )
+
+        assert torch.equal(
+            out.cpu(),
+            torch.tensor([1, 0, 0, 0], dtype=torch.int32),
+        )
+
+    def test_single_segment_requires_full_physical_interval(self, device):
+        """A single-system segment must span the full physical COO buffer."""
+        natom = TILE_GROUP_SIZE
+        max_pairs = 8
+        backing_capacity = 1024
+        positions = torch.zeros((natom, 3), dtype=torch.float32, device=device)
+        sorted_atom_index = torch.arange(natom, dtype=torch.int32, device=device)
+        num_tiles = torch.ones(1, dtype=torch.int32, device=device)
+        tile_row_group = torch.zeros(1, dtype=torch.int32, device=device)
+        tile_col_group = torch.zeros(1, dtype=torch.int32, device=device)
+        cell = torch.eye(3, dtype=torch.float32, device=device) * 8.0
+        inv_cell = torch.linalg.inv(cell).contiguous()
+        pair_counter = torch.zeros(1, dtype=torch.int32, device=device)
+        coo_list = torch.full(
+            (backing_capacity, 2),
+            -77,
+            dtype=torch.int32,
+            device=device,
+        )
+        coo_shifts = torch.full(
+            (backing_capacity, 3),
+            -77,
+            dtype=torch.int32,
+            device=device,
+        )
+        rebuild_flags = torch.ones(1, dtype=torch.bool, device=device)
+        pair_offsets = torch.tensor(
+            [0, max_pairs // 2],
+            dtype=torch.int32,
+            device=device,
+        )
+        pair_counts = torch.zeros(1, dtype=torch.int32, device=device)
+
+        query_cluster_tile_coo(
+            sorted_atom_index=wp.from_torch(
+                sorted_atom_index,
+                dtype=wp.int32,
+                return_ctype=True,
+            ),
+            sorted_pos_x=wp.from_torch(
+                positions[:, 0],
+                dtype=wp.float32,
+                return_ctype=True,
+            ),
+            sorted_pos_y=wp.from_torch(
+                positions[:, 1],
+                dtype=wp.float32,
+                return_ctype=True,
+            ),
+            sorted_pos_z=wp.from_torch(
+                positions[:, 2],
+                dtype=wp.float32,
+                return_ctype=True,
+            ),
+            num_tiles=wp.from_torch(num_tiles, dtype=wp.int32, return_ctype=True),
+            tile_row_group=wp.from_torch(
+                tile_row_group,
+                dtype=wp.int32,
+                return_ctype=True,
+            ),
+            tile_col_group=wp.from_torch(
+                tile_col_group,
+                dtype=wp.int32,
+                return_ctype=True,
+            ),
+            cell=_mat33f_from_torch(cell),
+            inv_cell=_mat33f_from_torch(inv_cell),
+            cutoff=2.0,
+            natom=natom,
+            max_pairs=max_pairs,
+            pair_counter=wp.from_torch(
+                pair_counter,
+                dtype=wp.int32,
+                return_ctype=True,
+            ),
+            coo_list=wp.from_torch(coo_list, dtype=wp.int32, return_ctype=True),
+            coo_shifts=wp.from_torch(
+                coo_shifts,
+                dtype=wp.int32,
+                return_ctype=True,
+            ),
+            wp_dtype=wp.float32,
+            device=device,
+            n_tiles=1,
+            rebuild_flags=wp.from_torch(
+                rebuild_flags,
+                dtype=wp.bool,
+                return_ctype=True,
+            ),
+            pair_offsets=wp.from_torch(
+                pair_offsets,
+                dtype=wp.int32,
+                return_ctype=True,
+            ),
+            pair_counts=wp.from_torch(
+                pair_counts,
+                dtype=wp.int32,
+                return_ctype=True,
+            ),
+        )
+
+        assert int(pair_counts.item()) == 0
+        assert torch.all(coo_list == -77)
+        assert torch.all(coo_shifts == -77)
 
 
 class TestComputeMortonLauncher:

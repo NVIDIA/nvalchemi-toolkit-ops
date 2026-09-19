@@ -35,6 +35,8 @@ Tests cover:
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 import torch
 
@@ -2196,6 +2198,39 @@ class TestTorchCompile:
         torch.testing.assert_close(energy_compiled, energy_eager, atol=1e-10, rtol=0.0)
         torch.testing.assert_close(forces_compiled, forces_eager, atol=1e-10, rtol=0.0)
         torch.testing.assert_close(cg_compiled, cg_eager, atol=1e-10, rtol=0.0)
+
+    def test_compiled_batch_system_inference_warns(self, device):
+        """Compiled batch-index system inference warns without changing values."""
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [4.0, 0.0, 0.0], [5.0, 0.0, 0.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        charges = torch.tensor(
+            [1.0, -1.0, 1.0, -1.0], dtype=torch.float64, device=device
+        )
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        neighbor_matrix = torch.tensor(
+            [[1], [0], [3], [2]], dtype=torch.int32, device=device
+        )
+        common = {
+            "cutoff": 2.0,
+            "alpha": 0.2,
+            "neighbor_matrix": neighbor_matrix,
+            "batch_idx": batch_idx,
+            "compute_forces": False,
+        }
+
+        eager = dsf_coulomb(positions, charges, **common)
+        compiled = torch.compile(dsf_coulomb)
+        with pytest.warns(FutureWarning, match="num_systems"):
+            inferred = compiled(positions, charges, **common)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            explicit = compiled(positions, charges, num_systems=2, **common)
+
+        torch.testing.assert_close(inferred[0], eager[0])
+        torch.testing.assert_close(explicit[0], eager[0])
 
 
 # ==============================================================================

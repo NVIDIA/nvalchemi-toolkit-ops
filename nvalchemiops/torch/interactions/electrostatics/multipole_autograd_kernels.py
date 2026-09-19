@@ -63,7 +63,10 @@ from nvalchemiops.interactions.electrostatics.multipole_direct_kspace_kernels im
     source_phi_hat_backward_dipole,
     source_phi_hat_double_backward_dipole,
 )
-from nvalchemiops.torch._warp_op_helpers import register_warp_op_chain
+from nvalchemiops.torch._warp_op_helpers import (
+    register_warp_op_chain,
+    scoped_torch_warp_stream,
+)
 
 
 def _wp_scalar(dtype: torch.dtype):
@@ -103,6 +106,7 @@ def _wp_out(t: torch.Tensor, dtype=wp.float64):
 # =============================================================================
 
 
+@scoped_torch_warp_stream
 def _source_phi_hat_forward(
     k_vectors: torch.Tensor,
     k_norm2: torch.Tensor,
@@ -136,6 +140,7 @@ def _source_phi_hat_forward_fake(
     return k_vectors.new_empty((k_vectors.shape[0], 4, 2), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _source_phi_hat_backward(
     grad_output: torch.Tensor,
     k_vectors: torch.Tensor,
@@ -162,6 +167,7 @@ def _source_phi_hat_backward(
     return grad_k_vec, grad_k_n2
 
 
+@scoped_torch_warp_stream
 def _source_phi_hat_double_backward(
     gg_k_vectors: torch.Tensor,
     gg_k_norm2: torch.Tensor,
@@ -326,6 +332,7 @@ class ReceiverPhiHatFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         k_vectors: torch.Tensor,
@@ -374,6 +381,7 @@ class ReceiverPhiHatFunction(torch.autograd.Function):
         return out
 
     @staticmethod
+    @scoped_torch_warp_stream
     def backward(
         ctx, grad_output: torch.Tensor
     ) -> tuple[torch.Tensor | None, torch.Tensor | None, None, None]:
@@ -451,6 +459,7 @@ class ReceiverPhiHatQuadrupoleFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         k_vectors: torch.Tensor,
@@ -499,6 +508,7 @@ class ReceiverPhiHatQuadrupoleFunction(torch.autograd.Function):
         return out
 
     @staticmethod
+    @scoped_torch_warp_stream
     def backward(
         ctx, grad_output: torch.Tensor
     ) -> tuple[torch.Tensor | None, torch.Tensor | None, None, None]:

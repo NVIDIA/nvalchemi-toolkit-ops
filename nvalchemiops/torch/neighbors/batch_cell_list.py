@@ -30,8 +30,8 @@ The torch wrapper auto-selects between two batch query kernels:
 Auto-select uses sync-free quantities (``total_atoms``, ``num_systems``,
 ``cutoff``); the ``total_cells`` Python int is already paid by
 :func:`estimate_batch_cell_list_sizes` at allocation time.  Defaults
-can be overridden with environment variables; see
-:func:`select_batch_cell_list_strategy`.
+are calibrated empirically; overrides are exposed via environment
+variables - see :func:`select_batch_cell_list_strategy`.
 """
 
 from __future__ import annotations
@@ -60,7 +60,11 @@ from nvalchemiops.neighbors.neighbor_utils import (
 from nvalchemiops.neighbors.output_args import (
     _has_partial_or_pair_outputs,
 )
-from nvalchemiops.torch._warp_op_helpers import register_noop_fake
+from nvalchemiops.torch._warnings import _warn_compile_missing_argument_inference
+from nvalchemiops.torch._warp_op_helpers import (
+    register_noop_fake,
+    scoped_torch_warp_stream,
+)
 from nvalchemiops.torch.neighbors._autograd import (
     _flatten_active_pairs,
     _NeighborForwardOutput,
@@ -104,6 +108,7 @@ def _max_radius_tuple(neighbor_search_radius: torch.Tensor) -> tuple[int, int, i
     return (int(radius[0].item()), int(radius[1].item()), int(radius[2].item()))
 
 
+@scoped_torch_warp_stream
 def estimate_batch_cell_list_sizes(
     cell: torch.Tensor,
     pbc: torch.Tensor,
@@ -234,6 +239,7 @@ def estimate_batch_cell_list_sizes(
         "cell_atom_list",
     ),
 )
+@scoped_torch_warp_stream
 def _batch_build_cell_list_op(
     positions: torch.Tensor,
     cutoff: float,
@@ -435,6 +441,7 @@ def batch_build_cell_list(
     "nvalchemiops::batch_query_cell_list",
     mutates_args=("neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"),
 )
+@scoped_torch_warp_stream
 def _batch_query_cell_list_op(
     positions: torch.Tensor,
     cell: torch.Tensor,
@@ -587,6 +594,10 @@ def _batch_query_cell_list_op(
     n_outer = None
     R_max = None
     if use_pair_centric:
+        _warn_compile_missing_argument_inference(
+            missing='`strategy="atom_centric"`',
+            inference="inferring total-cell allocation from `cells_per_system`",
+        )
         total_cells = int(cells_per_system.sum().item())
         R_max = _max_radius_tuple(neighbor_search_radius)
         n_outer = compute_batch_pair_centric_n_outer(R_max, bool(half_fill))
@@ -681,6 +692,7 @@ def _batch_query_cell_list_op(
     "nvalchemiops::batch_query_cell_list_selective",
     mutates_args=("neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"),
 )
+@scoped_torch_warp_stream
 def _batch_query_cell_list_selective_op(
     positions: torch.Tensor,
     cell: torch.Tensor,
@@ -844,6 +856,11 @@ def batch_query_cell_list(
 ) -> None:
     """Query batch spatial cell lists to build neighbor matrices for multiple systems.
 
+    Let ``num_rows = len(target_indices)`` when ``target_indices`` is supplied,
+    otherwise ``total_atoms``.  Optional distance/energy buffers have shape
+    ``(num_rows, max_neighbors)``; vector/force buffers have shape
+    ``(num_rows, max_neighbors, 3)``.
+
     Parameters
     ----------
     positions : torch.Tensor, shape (total_atoms, 3)
@@ -870,11 +887,11 @@ def batch_query_cell_list(
         Starting index per cell from batch_build_cell_list.
     cell_atom_list : torch.Tensor, shape (total_atoms,), dtype=int32
         Atom list organized by cell from batch_build_cell_list.
-    neighbor_matrix : torch.Tensor, shape (total_atoms, max_neighbors), dtype=int32
+    neighbor_matrix : torch.Tensor, shape (num_rows, max_neighbors), dtype=int32
         OUTPUT: Neighbor matrix to be filled.
-    neighbor_matrix_shifts : torch.Tensor, shape (total_atoms, max_neighbors, 3), dtype=int32
+    neighbor_matrix_shifts : torch.Tensor, shape (num_rows, max_neighbors, 3), dtype=int32
         OUTPUT: Shift vectors for each neighbor relationship.
-    num_neighbors : torch.Tensor, shape (total_atoms,), dtype=int32
+    num_neighbors : torch.Tensor, shape (num_rows,), dtype=int32
         OUTPUT: Number of neighbors per atom.
     half_fill : bool, default=False
         If True, only store half of the neighbor relationships.
@@ -895,9 +912,9 @@ def batch_query_cell_list(
         Selects the atom-centric implementation path. ``"auto"`` resolves to
         ``"direct"``.
     target_indices : torch.Tensor, shape (num_targets,), dtype=int32, optional
-        Indices of the central atoms for compact partial rows. The output
-        ``neighbor_matrix`` and ``num_neighbors`` have ``num_targets`` rows
-        rather than ``total_atoms`` rows, in ``target_indices`` order.
+        If provided, only query neighbors for the subset of atoms listed.
+        Output ``neighbor_matrix`` and ``num_neighbors`` have ``num_rows``
+        rows, where ``num_rows`` is ``len(target_indices)``.
     return_vectors : bool, default=False
         If True and ``neighbor_vectors`` is provided, write per-neighbor
         displacement vectors into ``neighbor_vectors``.
@@ -1323,6 +1340,7 @@ def _register_compiled_batch_query_cell_list_optional_pair_op(compiled: Compiled
     return _compiled_batch_query_cell_list_optional_pair
 
 
+@scoped_torch_warp_stream
 def _batch_query_cell_list_optional(
     positions: torch.Tensor,
     cell: torch.Tensor,
@@ -1529,6 +1547,10 @@ def _batch_query_cell_list_optional(
     n_outer = None
     R_max = None
     if use_pair_centric:
+        _warn_compile_missing_argument_inference(
+            missing='`strategy="atom_centric"`',
+            inference="inferring total-cell allocation from `cells_per_system`",
+        )
         total_cells = int(cells_per_system.sum().item())
         R_max = _max_radius_tuple(neighbor_search_radius)
         n_outer = compute_batch_pair_centric_n_outer(R_max, bool(half_fill))
@@ -1664,17 +1686,20 @@ def batch_cell_list(
     neighbor_distances: torch.Tensor | None = None,
     pair_energies: torch.Tensor | None = None,
     pair_forces: torch.Tensor | None = None,
-) -> (
-    tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
-    | tuple[torch.Tensor, torch.Tensor, torch.Tensor]
-    | tuple[torch.Tensor, torch.Tensor]
-):
+) -> tuple[torch.Tensor, ...]:
     """Build complete batch neighbor matrices using spatial cell list acceleration.
 
     High-level convenience function that processes multiple systems
     simultaneously. Automatically estimates memory requirements, builds batch
     spatial cell list data structures, and queries them to produce complete
     neighbor matrices for all systems.
+
+    Let ``num_rows = len(target_indices)`` when ``target_indices`` is supplied,
+    otherwise ``total_atoms``.  Query output buffers (neighbor matrix, counts,
+    shifts, pair buffers) and COO pointer arrays use ``num_rows`` rows; COO
+    source ids are compact row ids.  Build/cache buffers
+    (``atom_periodic_shifts``, ``atom_to_cell_mapping``, ``cell_atom_list``)
+    remain ``total_atoms``-shaped.
 
     Parameters
     ----------
@@ -1696,6 +1721,14 @@ def batch_cell_list(
         Value to use for padding empty neighbor slots in the matrix. Default is total_atoms.
     return_neighbor_list : bool, optional - default=False
         If True, convert the neighbor matrix to a neighbor list (idx_i, idx_j) format.
+    neighbor_matrix : torch.Tensor, shape (num_rows, max_neighbors), dtype=torch.int32, optional
+        Pre-allocated neighbor indices.  ``num_rows`` is ``total_atoms``
+        normally and ``len(target_indices)`` when partial rows are requested.
+        When omitted, allocated internally.
+    neighbor_matrix_shifts : torch.Tensor, shape (num_rows, max_neighbors, 3), dtype=torch.int32, optional
+        Pre-allocated periodic shift vectors.  When omitted, allocated internally.
+    num_neighbors : torch.Tensor, shape (num_rows,), dtype=torch.int32, optional
+        Pre-allocated per-atom neighbor counts.  When omitted, allocated internally.
     cells_per_dimension : torch.Tensor, shape (num_systems, 3), dtype=int32, optional
         Pre-allocated tensor for cell dimensions.
     neighbor_search_radius : torch.Tensor, shape (num_systems, 3), dtype=int32, optional
@@ -1710,6 +1743,9 @@ def batch_cell_list(
         Pre-allocated tensor for start indices.
     cell_atom_list : torch.Tensor, shape (total_atoms,), dtype=int32, optional
         Pre-allocated tensor for atom list.
+        When compiling, provide this and the other cell-list cache buffers
+        explicitly. Implicit cache allocation emits a ``FutureWarning`` and
+        will become an error in a future release.
     cell_offsets : torch.Tensor, shape (num_systems,), dtype=int32, optional
         Accepted for API compatibility; computed internally and not used from
         this argument.
@@ -1720,11 +1756,55 @@ def batch_cell_list(
         non-rebuilt systems entirely on the GPU (no CPU-GPU sync). When this is used,
         pre-allocated ``neighbor_matrix`` and ``num_neighbors`` tensors must be provided
         and will not be globally zeroed - only rebuilt-system entries are reset.
+    strategy : {"auto", "atom_centric", "pair_centric"}, default "auto"
+        Cell-list query kernel selection.  Both strategies return identical
+        pair sets; per-row ordering inside ``neighbor_matrix`` differs.
+        See :func:`nvalchemiops.neighbors.cell_list.select_batch_cell_list_strategy`
+        for the ``"auto"`` rule.  Pair-centric is CUDA-only.
+    atom_centric_path : {"auto", "direct", "sorted"}, default "auto"
+        Atom-centric implementation path.  ``"auto"`` resolves to ``"direct"``.
+    target_indices : torch.Tensor, shape (num_targets,), dtype=torch.int32, optional
+        Restrict central rows to a subset of atom indices.  Output rows are
+        compact and follow ``target_indices`` order; COO source rows are
+        compact row ids.  User buffers must be ``num_rows``-shaped, not
+        ``total_atoms``-shaped.
+    return_vectors : bool, default=False
+        Write per-pair displacement vectors into ``neighbor_vectors``.
+    return_distances : bool, default=False
+        Write per-pair scalar distances into ``neighbor_distances``.
+    pair_fn : wp.Function or CompiledPairFn, optional
+        Module-scope Warp ``@wp.func`` of signature
+        ``(r_ij, distance, pair_params, i, j) -> (energy, force)`` evaluated
+        as neighbors are enumerated.  Forward-only (not differentiable).
+    pair_params : torch.Tensor, optional
+        Per-atom parameters forwarded to ``pair_fn``.  Required when
+        ``pair_fn`` is set.
+    neighbor_vectors : torch.Tensor, shape (num_rows, max_neighbors, 3), optional
+        OUTPUT: Pre-allocated per-pair displacement vectors, dtype matching
+        ``positions``.  When omitted and ``return_vectors=True``, allocated
+        internally.
+    neighbor_distances : torch.Tensor, shape (num_rows, max_neighbors), optional
+        OUTPUT: Pre-allocated per-pair distances, dtype matching ``positions``.
+        When omitted and ``return_distances=True``, allocated internally.
+    pair_energies : torch.Tensor, shape (num_rows, max_neighbors), optional
+        OUTPUT: Pre-allocated per-pair energies written by ``pair_fn``.  When
+        omitted and ``pair_fn`` is set, allocated internally.
+    pair_forces : torch.Tensor, shape (num_rows, max_neighbors, 3), optional
+        OUTPUT: Pre-allocated per-pair forces written by ``pair_fn``.  When
+        omitted and ``pair_fn`` is set, allocated internally.
 
     Returns
     -------
     results : tuple of torch.Tensor
-        Variable-length tuple with neighbor data in matrix or list format.
+        Variable-length tuple. The base is ``(neighbor_matrix, num_neighbors,
+        neighbor_matrix_shifts)`` in matrix format or ``(neighbor_list,
+        neighbor_ptr, neighbor_list_shifts)`` in list format. Requested pair
+        outputs follow in this order: ``neighbor_distances`` when
+        ``return_distances=True``, then ``neighbor_vectors`` when
+        ``return_vectors=True``, then ``(pair_energies, pair_forces)`` when
+        ``pair_fn`` is set.  Matrix pair outputs use ``num_rows`` rows:
+        distance/energy arrays have shape ``(num_rows, max_neighbors)``;
+        vector/force arrays have shape ``(num_rows, max_neighbors, 3)``.
 
     See Also
     --------
@@ -1839,6 +1919,10 @@ def batch_cell_list(
     )
     cell_list_min_cells = 1 if strategy == "atom_centric" else 4
     if allocated_cell_list:
+        _warn_compile_missing_argument_inference(
+            missing="`cells_per_dimension` and related cache buffers",
+            inference="inferring their allocation from `cell` and `pbc`",
+        )
         max_total_cells, neighbor_search_radius = estimate_batch_cell_list_sizes(
             cell,
             pbc,

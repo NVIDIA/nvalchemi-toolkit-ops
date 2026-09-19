@@ -8,6 +8,159 @@ This guide lists user-visible migrations by release.
 
 ## Unreleased
 
+### JAX Neighbor-List Compilation Boundary
+
+Use `neighbor_list(...)` for eager method selection, capacity estimation,
+allocation, and dispatch. It returns the selected method's outputs without
+checking capacity or retrying. Compile a method-specific function such as
+`naive_neighbor_list(...)`, `cell_list(...)`, or
+`cluster_tile_neighbor_list(...)` after choosing the method and capacities.
+After a compiled call, inspect its matrix counts or fixed-COO recovery metadata
+before consuming the output. If necessary, enlarge the buffers or recompute
+stale pair-centric launch metadata, then invoke another specialization.
+
+Replace a compiled unified-dispatch call:
+
+```python
+import jax
+
+from nvalchemiops.jax.neighbors import neighbor_list
+
+
+@jax.jit
+def build_neighbors(positions):
+    return neighbor_list(
+        positions,
+        cutoff,
+        cell=cell,
+        pbc=pbc,
+        method="naive",
+        max_neighbors=max_neighbors,
+    )
+```
+
+with a method-specific compiled call whose allocation and PBC launch metadata
+are prepared eagerly:
+
+```python
+from nvalchemiops.jax.neighbors import (
+    compute_naive_num_shifts,
+    naive_neighbor_list,
+)
+
+
+shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+    cell, cutoff, pbc
+)
+
+
+@jax.jit
+def build_neighbors(positions):
+    return naive_neighbor_list(
+        positions,
+        cutoff,
+        cell=cell,
+        pbc=pbc,
+        max_neighbors=max_neighbors,
+        shift_range_per_dimension=shift_range,
+        num_shifts_per_system=num_shifts,
+        max_shifts_per_system=max_shifts,
+    )
+```
+
+Treat `cell`, `pbc`, cutoff, allocation sizes, and derived PBC launch metadata
+as one specialization. Recompute the metadata and create another specialization
+when `cell`, `pbc`, cutoff, or an allocation-driving value changes. Search
+radii can be JAX arrays; pair-centric cell-list calls additionally close over
+launch metadata derived from those radii. For compiled fixed COO from naive and
+cell-list methods, pass a static `coo_capacity`. The result appends raw required
+row counts and scalar `metadata_valid`; compare the counts with pointer
+differences outside `jax.jit`, and refresh launch metadata when validity is
+false. See the
+[Neighbor Lists guide](../components/neighborlist.md) for complete
+single-system, batched, matrix, fixed-COO, and cluster-tile contracts.
+
+The unreleased aggregate fixed-COO `overflow` boolean was removed because it
+could not distinguish row-width shortage, global COO shortage, and stale
+pair-centric launch metadata. Raw counts preserve the retry size and the clipped
+pointer preserves exactly what was stored; `metadata_valid` separately reports
+whether those counts are trustworthy.
+
+Dual-cutoff calls now reject reversed cutoffs: naive dual-cutoff methods require
+`cutoff2 >= cutoff1`, and cluster-tile dual-matrix calls require
+`cutoff2 >= cutoff`. Equal cutoffs remain valid.
+
+### Cluster-Tile Buffer Capacity
+
+Cluster-tile construction writes candidate tile pairs to a fixed-size
+intermediate buffer before producing a neighbor matrix or COO list. Previously,
+some eager return paths did not check whether construction filled that buffer,
+while existing guards reported the condition as `NeighborOverflowError`. All
+eager Torch and JAX cluster-tile paths now raise `TileBufferOverflow` when the
+required tile-pair count exceeds the allocated capacity. The exception provides
+the required count as `num_tiles`, the capacity as `max_tiles`, and the affected
+`system_index` for a segmented batch.
+
+The convenience functions continue to estimate an internally allocated buffer
+when `max_tiles_per_group` is `None`. An explicit value that is too small now
+raises instead of returning incomplete neighbor output. The
+{ref}`cluster-tile-buffer-capacity` section explains how the parameter changes
+the allocation and how to calculate a retry value from the exception.
+
+JAX transformations require `max_tiles_per_group` to be a positive static
+Python integer when the call allocates any tile-index array because it then
+determines an output shape. Complete caller-supplied tile-index arrays instead
+determine the capacity; an explicit factor is still validated but never resizes
+those arrays. Compiled output shapes remain fixed, and a compiled function
+cannot turn a data-dependent tile count into a Python exception. Adaptive
+compiled workflows should use the lower-level build function, compare its
+returned tile counts with the supplied capacities after leaving the compiled
+region, and run the query only after that check passes.
+
+A segmented eager build reports the first overflowing system. Resizing can
+therefore require successive retries, and changing segment offsets requires a
+replacement state initialized with every system marked for rebuild.
+
+### Retained Ewald Miller Topology
+
+Torch and JAX can now retain integer Miller topology separately from Cartesian
+reciprocal vectors:
+
+```python
+miller_indices = generate_ewald_miller_indices(reference_cell, k_cutoff=8.0)
+energy = ewald_summation(
+    ...,
+    cell=current_cell,
+    alpha=alpha,
+    miller_indices=miller_indices,
+)
+```
+
+The generator returns positive-half-space integer rows inside conservative
+rectangular Miller bounds. It does not filter individual Cartesian-vector
+magnitudes. The caller owns the topology and must choose bounds that cover all
+intended cell states. Changing its size changes `K` and may recompile JAX.
+
+Both Torch and JAX backends also provide
+`ewald_reciprocal_space_from_miller_indices(...)`. It materializes Cartesian
+vectors from the supplied cell, then calls the reciprocal component. Torch
+retains its component-only `hybrid_forces` option; JAX does not expose it.
+
+JAX `ewald_reciprocal_space(...)` now follows the tangent carried by
+`k_vectors`. Earlier releases dropped that tangent even when vectors were
+constructed from the differentiated cell, so the cell gradient omitted the
+reciprocal-vector contribution. This is fixed. A vector is fixed only when it
+has zero tangent in the active transformation, for example when it was
+precomputed from a reference cell or passed through
+`jax.lax.stop_gradient(k_vectors)`. Matching numerical values alone do not
+create a dependency. Full `ewald_summation(k_vectors=...)` still treats
+explicit vectors as fixed metadata.
+
+A reciprocal-component cell derivative holds positions fixed. For a
+homogeneous-strain derivative, deform positions and cell together.
+
+## v0.4.1: Energy Output Layout
+
 ### Energy Output Layout (`energy_reduction`)
 
 Monopole Torch and JAX Ewald, PME, and slab entry points accept keyword-only
@@ -100,10 +253,16 @@ entry points instead of regenerating it inside hot loops.
 
 These inputs are caches, not differentiable parameters. `alpha`, cutoffs,
 mesh controls, batch metadata, neighbor topology, and PME B-spline moduli are
-treated as constants even if supplied as grad-bearing tensors. Cell-derived
-caches such as `k_vectors`, `k_squared`, `volume`, and `cell_inv_t` remain
-accepted when cell derivatives are requested, but they are static metadata
-assumed to correspond to the current `cell`.
+treated as constants even if supplied as grad-bearing tensors. For
+`ewald_summation`, caller-supplied `k_vectors` remain static metadata assumed
+to correspond to the current `cell`.
+
+The lower-level Torch `ewald_reciprocal_space` component preserves a supplied
+`k_vectors` autograd graph when the cell also requires gradients. Generate those
+vectors from the same differentiable cell to obtain a physical strain
+derivative. Detached Cartesian vectors instead define a fixed-k cell
+derivative; eager execution warns, while the advisory warning is suppressed
+under `torch.compile`.
 
 For fixed-cell loops, build metadata once from a detached or stopped-gradient
 cell and reuse it while the cell is unchanged:

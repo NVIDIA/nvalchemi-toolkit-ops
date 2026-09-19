@@ -24,7 +24,7 @@ from typing import Any, Literal
 
 import jax.numpy as jnp
 import warp as wp
-from warp.jax_experimental import GraphMode, jax_callable, jax_kernel
+from warp import JaxCallableGraphMode, jax_callable, jax_kernel
 
 from nvalchemiops.jax.neighbors._cluster_tile_preload import (
     _preload_cluster_tile_build_kernel,
@@ -105,7 +105,7 @@ def _register_jax_callable(
     callable_obj: Callable[..., Any],
     outputs: _Outputs,
     *,
-    graph_mode: GraphMode,
+    graph_mode: JaxCallableGraphMode,
 ) -> Any:
     """Register a Warp callable using a shared output tuple.
 
@@ -115,7 +115,7 @@ def _register_jax_callable(
         Warp callable to expose to JAX.
     outputs : tuple[str, ...]
         Ordered names of the callable's in-place output arguments.
-    graph_mode : GraphMode
+    graph_mode : JaxCallableGraphMode
         Execution mode used by Warp graph capture.
 
     Returns
@@ -275,7 +275,7 @@ def _cluster_tile_build_registration(
     registered = _register_jax_callable(
         callback,
         _cluster_tile_build_outputs(batched=batched, selective=selective),
-        graph_mode=GraphMode.WARP,
+        graph_mode=JaxCallableGraphMode.WARP,
     )
     return _GraphRegistration(
         callable=registered,
@@ -324,7 +324,7 @@ def _cluster_tile_matrix_registration(
             geometry=geometry,
             pair_fn=pair_fn,
         ),
-        graph_mode=GraphMode.WARP,
+        graph_mode=JaxCallableGraphMode.WARP,
     )
     preload = functools.partial(
         _preload_cluster_tile_query_kernel,
@@ -369,7 +369,7 @@ def _cluster_tile_coo_registration(
     registered = _register_jax_callable(
         callback,
         _cluster_tile_coo_outputs(coo_segmented=coo_segmented),
-        graph_mode=GraphMode.WARP,
+        graph_mode=JaxCallableGraphMode.WARP,
     )
     preload = functools.partial(
         _preload_cluster_tile_coo_kernel,

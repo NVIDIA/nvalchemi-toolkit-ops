@@ -27,12 +27,14 @@ do not participate in autograd.
 
 from __future__ import annotations
 
+import torch
 import warp as wp
 
 from nvalchemiops.math.solid_harmonics import (
     _eval_irregular_solid_harmonics_kernel,
     _eval_regular_solid_harmonics_kernel,
 )
+from nvalchemiops.torch._warp_op_helpers import scoped_warp_stream
 
 
 def eval_regular_solid_harmonics_pytorch(
@@ -57,8 +59,6 @@ def eval_regular_solid_harmonics_pytorch(
         ``(N, (max_L + 1)**2)`` tensor of regular solid harmonic values,
         ordered ``[R_0^0, R_1^{-1}, R_1^{0}, R_1^{+1}]``.
     """
-    import torch
-
     if max_L not in (0, 1):
         raise ValueError(f"max_L must be 0 or 1 (L=2,3 not yet supported), got {max_L}")
 
@@ -67,19 +67,20 @@ def eval_regular_solid_harmonics_pytorch(
 
     N = positions.shape[0]
     num_components = (max_L + 1) ** 2
-    output = torch.zeros((N, num_components), dtype=torch.float64, device=device)
+    with scoped_warp_stream(positions.device):
+        output = torch.zeros((N, num_components), dtype=torch.float64, device=device)
 
-    wp_device = wp.device_from_torch(device)
-    wp_positions = wp.from_torch(positions.contiguous(), dtype=wp.vec3d)
-    wp_output = wp.from_torch(output, dtype=wp.float64)
+        wp_device = wp.device_from_torch(device)
+        wp_positions = wp.from_torch(positions.contiguous(), dtype=wp.vec3d)
+        wp_output = wp.from_torch(output, dtype=wp.float64)
 
-    wp.launch(
-        kernel=_eval_regular_solid_harmonics_kernel,
-        dim=N,
-        inputs=[wp_positions, max_L],
-        outputs=[wp_output],
-        device=wp_device,
-    )
+        wp.launch(
+            kernel=_eval_regular_solid_harmonics_kernel,
+            dim=N,
+            inputs=[wp_positions, max_L],
+            outputs=[wp_output],
+            device=wp_device,
+        )
     return output
 
 
@@ -106,8 +107,6 @@ def eval_irregular_solid_harmonics_pytorch(
         ``(N, (max_L + 1)**2)`` tensor of irregular solid harmonic values,
         ordered ``[I_0^0, I_1^{-1}, I_1^{0}, I_1^{+1}]``.
     """
-    import torch
-
     if max_L not in (0, 1):
         raise ValueError(f"max_L must be 0 or 1 (L=2,3 not yet supported), got {max_L}")
 
@@ -116,17 +115,18 @@ def eval_irregular_solid_harmonics_pytorch(
 
     N = positions.shape[0]
     num_components = (max_L + 1) ** 2
-    output = torch.zeros((N, num_components), dtype=torch.float64, device=device)
+    with scoped_warp_stream(positions.device):
+        output = torch.zeros((N, num_components), dtype=torch.float64, device=device)
 
-    wp_device = wp.device_from_torch(device)
-    wp_positions = wp.from_torch(positions.contiguous(), dtype=wp.vec3d)
-    wp_output = wp.from_torch(output, dtype=wp.float64)
+        wp_device = wp.device_from_torch(device)
+        wp_positions = wp.from_torch(positions.contiguous(), dtype=wp.vec3d)
+        wp_output = wp.from_torch(output, dtype=wp.float64)
 
-    wp.launch(
-        kernel=_eval_irregular_solid_harmonics_kernel,
-        dim=N,
-        inputs=[wp_positions, max_L],
-        outputs=[wp_output],
-        device=wp_device,
-    )
+        wp.launch(
+            kernel=_eval_irregular_solid_harmonics_kernel,
+            dim=N,
+            inputs=[wp_positions, max_L],
+            outputs=[wp_output],
+            device=wp_device,
+        )
     return output

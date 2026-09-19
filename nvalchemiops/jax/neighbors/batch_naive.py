@@ -22,7 +22,7 @@ import functools
 import jax
 import jax.numpy as jnp
 import warp as wp
-from warp.jax_experimental import GraphMode, jax_callable, jax_kernel
+from warp import JaxCallableGraphMode, jax_callable, jax_kernel
 
 from nvalchemiops.jax.neighbors._autograd import (
     _build_index_residuals,
@@ -35,8 +35,11 @@ from nvalchemiops.jax.neighbors._dispatch import (
 )
 from nvalchemiops.jax.neighbors._registration import _lazy_naive_kernel
 from nvalchemiops.jax.neighbors.neighbor_utils import (
+    _pack_fixed_capacity_neighbor_list_from_neighbor_matrix,
+    _validate_coo_capacity,
     compute_naive_num_shifts,
     coo_pack_pair_geometry,
+    get_fixed_capacity_neighbor_list_from_neighbor_matrix,
     get_neighbor_list_from_neighbor_matrix,
     prepare_batch_idx_ptr,
 )
@@ -457,9 +460,9 @@ _BATCH_NAIVE_TILE_SPECS = {
 def _register_batch_naive_tile_callables() -> dict[
     tuple[bool, bool, jnp.dtype], object
 ]:
-    """Register GraphMode.NONE tile callables for the batched naive eager path.
+    """Register JaxCallableGraphMode.NONE tile callables for the batched naive eager path.
 
-    ``GraphMode.NONE`` (not WARP): the tile bodies assume the caller has
+    ``JaxCallableGraphMode.NONE`` (not WARP): the tile bodies assume the caller has
     already pre-filled the output buffers, which the eager
     ``batch_naive_neighbor_list`` path does before dispatch.
     """
@@ -470,7 +473,7 @@ def _register_batch_naive_tile_callables() -> dict[
                 spec[dtype],
                 num_outputs=spec["num_outputs"],
                 in_out_argnames=spec["in_out_argnames"],
-                graph_mode=GraphMode.NONE,
+                graph_mode=JaxCallableGraphMode.NONE,
             )
     return registered
 
@@ -764,6 +767,7 @@ def batch_naive_neighbor_list(
     inv_cell_buffer: jax.Array | None = None,
     strategy: str = "auto",
     *,
+    coo_capacity: int | None = None,
     return_distances: bool = False,
     return_vectors: bool = False,
     neighbor_vectors: jax.Array | None = None,
@@ -882,6 +886,8 @@ def batch_naive_neighbor_list(
     nvalchemiops.jax.neighbors.naive.naive_neighbor_list : Non-batched version
     batch_cell_list : Cell list method for large systems
     """
+    coo_capacity = _validate_coo_capacity(coo_capacity, return_neighbor_list)
+
     if strategy not in {"auto", "scalar", "tile"}:
         raise ValueError(
             f"strategy must be 'auto' | 'scalar' | 'tile', got {strategy!r}",
@@ -1306,17 +1312,25 @@ def batch_naive_neighbor_list(
 
     if cutoff <= 0 or (partial and num_rows == 0):
         if return_neighbor_list:
+            output_pairs = 0 if coo_capacity is None else int(coo_capacity)
+            recovery_counts = jnp.zeros(num_rows, dtype=jnp.int32)
+            metadata_valid = jnp.ones((), dtype=jnp.bool_)
             if pbc is not None:
-                return (
-                    jnp.zeros((2, 0), dtype=jnp.int32),
+                base = (
+                    jnp.full((2, output_pairs), fill_value, dtype=jnp.int32),
                     jnp.zeros((num_rows + 1,), dtype=jnp.int32),
-                    jnp.zeros((0, 3), dtype=jnp.int32),
+                    jnp.zeros((output_pairs, 3), dtype=jnp.int32),
                 )
             else:
-                return (
-                    jnp.zeros((2, 0), dtype=jnp.int32),
+                base = (
+                    jnp.full((2, output_pairs), fill_value, dtype=jnp.int32),
                     jnp.zeros((num_rows + 1,), dtype=jnp.int32),
                 )
+            return (
+                (*base, recovery_counts, metadata_valid)
+                if coo_capacity is not None
+                else base
+            )
         else:
             if pbc is not None:
                 return neighbor_matrix, num_neighbors, neighbor_matrix_shifts
@@ -1704,7 +1718,22 @@ def batch_naive_neighbor_list(
                 )
 
     if return_neighbor_list:
-        if pbc is not None:
+        if coo_capacity is not None and pbc is not None:
+            return get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                neighbor_matrix,
+                num_neighbors=num_neighbors,
+                capacity=coo_capacity,
+                neighbor_shift_matrix=neighbor_matrix_shifts,
+                fill_value=fill_value,
+            )
+        elif coo_capacity is not None:
+            return get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                neighbor_matrix,
+                num_neighbors=num_neighbors,
+                capacity=coo_capacity,
+                fill_value=fill_value,
+            )
+        elif pbc is not None:
             neighbor_list, neighbor_ptr, neighbor_list_shifts = (
                 get_neighbor_list_from_neighbor_matrix(
                     neighbor_matrix,

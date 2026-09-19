@@ -762,13 +762,15 @@ def query_cell_list(
     device : str
         Warp device string (e.g., 'cuda:0', 'cpu').
     sorted_positions : wp.array, shape (total_atoms,), dtype=wp.vec3*, optional
-        Per-cell-contiguous gather scratch.  ``gather_fused`` writes into
-        it each call.  Allocated transiently when omitted; graph/capture
-        callers should pass caller-owned scratch.
+        Per-cell-contiguous gather scratch (shape ``total_atoms``).  Gathered
+        and read only when ``strategy="pair_centric"`` or
+        ``atom_centric_path="sorted"``; direct atom-centric skips the gather.
+        Allocated transiently when omitted; graph/capture callers should pass
+        caller-owned scratch only for paths that use it.
     sorted_atom_periodic_shifts : wp.array, shape (total_atoms,), dtype=wp.vec3i, optional
-        Per-cell-contiguous gather scratch.  ``gather_fused`` writes into
-        it each call.  Allocated transiently when omitted; graph/capture
-        callers should pass caller-owned scratch.
+        Per-cell-contiguous gather scratch for periodic shifts (shape
+        ``total_atoms``).  Paired with ``sorted_positions``; omitted on the
+        direct atom-centric path.
     rebuild_flags : wp.array, shape (1,), dtype=wp.bool, optional
         1-element flag.  ``False`` makes the kernel return immediately.
         When omitted, this launcher uses the non-selective kernel
@@ -786,6 +788,11 @@ def query_cell_list(
         strategy selection (sync-free) lives at the torch-wrapper layer where the
         sync is already paid; direct-warp callers pick explicitly.
         Pair-centric is CUDA-only - CPU callers must use atom-centric.
+    atom_centric_path : {"auto", "direct", "sorted"}, default "auto"
+        Atom-centric sub-path.  ``"auto"`` resolves to ``"direct"``.
+        ``"direct"`` reads central atoms from the unsorted ``positions``
+        layout; ``"sorted"`` reads from the per-cell-contiguous gather
+        scratch.  Pair-centric mode always requires the sorted gather.
     n_outer : int, optional
         Required when ``strategy="pair_centric"``.  Number of non-self
         outer cell offsets at the per-axis search radius - see
@@ -793,6 +800,13 @@ def query_cell_list(
     target_indices : wp.array, shape (num_targets,), dtype=wp.int32, optional
         Restrict central rows to a subset of atom indices.  Output rows are
         compact and follow ``target_indices`` order for both strategies.
+    target_row_lookup : wp.array, shape (total_atoms,), dtype=wp.int32, optional
+        Caller-owned atom-id to compact target-row lookup scratch for
+        pair-centric mode.  When ``target_indices`` is provided and this
+        buffer is omitted, the launcher allocates a transient
+        ``(total_atoms,)`` int32 array, resets it, and fills it from
+        ``target_indices``.  CUDA graph/capture callers should pass
+        caller-owned scratch explicitly.
     return_vectors, return_distances : bool, default ``False``
         Write per-pair displacement vectors / distances into
         ``neighbor_vectors`` / ``neighbor_distances``.
@@ -806,11 +820,17 @@ def query_cell_list(
     pair_energies, pair_forces : wp.array, optional
         OUTPUT buffers for per-pair energies / forces; required with
         ``pair_fn``.
+    max_launch_size : int, default PAIR_CENTRIC_MAX_LINEAR_LAUNCH
+        Internal/test hook for the safe one-dimensional Warp launch limit
+        used when pair-centric launches are coarsened.
 
     Notes
     -----
     - Output and scratch arrays are caller-owned except for the optional
       transient ``target_row_lookup`` allocation described above.
+      Sorted gather scratch is used only on sorted atom-centric and
+      pair-centric paths; direct atom-centric does not read it.
+      ``target_row_lookup`` is separate from sorted gather scratch.
       ``num_neighbors`` must be zeroed before each pair-centric call
       (atomic_add semantics).  Shifts output uses the always-write
       contract (no prefill required).
@@ -1470,14 +1490,54 @@ def batch_query_cell_list(
         specialization is launched and the caller is responsible for
         pre-zeroing ``num_neighbors``.
     sorted_positions : wp.array, shape (total_atoms,), dtype=wp.vec3*, optional
-        Per-cell-contiguous gather scratch.  Allocated transiently when
-        omitted; graph/capture callers should pass caller-owned scratch.
+        Per-cell-contiguous gather scratch (shape ``total_atoms``).  Gathered
+        and read only when ``strategy="pair_centric"`` or
+        ``atom_centric_path="sorted"``; direct atom-centric skips the gather.
+        Allocated transiently when omitted; graph/capture callers should pass
+        caller-owned scratch only for paths that use it.
     sorted_atom_periodic_shifts : wp.array, shape (total_atoms,), dtype=wp.vec3i, optional
-        Per-cell-contiguous gather scratch.  Allocated transiently when
-        omitted; graph/capture callers should pass caller-owned scratch.
+        Per-cell-contiguous gather scratch for periodic shifts (shape
+        ``total_atoms``).  Paired with ``sorted_positions``; omitted on the
+        direct atom-centric path.
+    strategy : {"atom_centric", "pair_centric"}, default "atom_centric"
+        Selects which of the two batch query kernels to launch.
+        ``"pair_centric"`` requires the additional caller-allocated scratch
+        and metadata kwargs documented below and is CUDA-only.
+        ``"atom_centric"`` is valid on CPU and CUDA.
+    atom_centric_path : {"auto", "direct", "sorted"}, default "auto"
+        Atom-centric sub-path.  ``"auto"`` resolves to ``"direct"``.
+        ``"direct"`` reads central atoms from the unsorted ``positions``
+        layout; ``"sorted"`` reads from the per-cell-contiguous gather
+        scratch.  Pair-centric mode always requires the sorted gather.
+    cells_per_system : wp.array, shape (num_systems,), dtype=wp.int32, optional
+        Number of cells per system.  Required for
+        ``strategy="pair_centric"``.  Output from
+        :func:`batch_build_cell_list`.
+    cell_to_system : wp.array, shape (total_cells,), dtype=wp.int32, optional
+        Global-cell to system map scratch.  Required for
+        ``strategy="pair_centric"``.  Caller allocates; overwritten each
+        call by ``_build_cell_to_system_map``.
+    n_outer : int, optional
+        Non-self outer cell offsets at ``R_max``.  Required for
+        ``strategy="pair_centric"``.  From
+        :func:`compute_batch_pair_centric_n_outer`.
+    R_max : tuple[int, int, int], optional
+        Cross-system maximum per-axis search radius.  Required for
+        ``strategy="pair_centric"``.
+    total_cells : int, optional
+        Sum of ``cells_per_system``.  Required for
+        ``strategy="pair_centric"``.  Caller computes once per geometry
+        change.
     target_indices : wp.array, shape (num_targets,), dtype=wp.int32, optional
         Restrict central rows to a subset of atom indices.  Output rows are
         compact and follow ``target_indices`` order for both strategies.
+    target_row_lookup : wp.array, shape (total_atoms,), dtype=wp.int32, optional
+        Caller-owned atom-id to compact target-row lookup scratch for
+        pair-centric mode.  When ``target_indices`` is provided and this
+        buffer is omitted, the launcher allocates a transient
+        ``(total_atoms,)`` int32 array, resets it, and fills it from
+        ``target_indices``.  CUDA graph/capture callers should pass
+        caller-owned scratch explicitly.
     return_vectors, return_distances : bool, default ``False``
         Write per-pair displacement vectors / distances into the
         ``neighbor_vectors`` / ``neighbor_distances`` kwargs.
@@ -1491,14 +1551,18 @@ def batch_query_cell_list(
     pair_energies, pair_forces : wp.array, optional
         OUTPUT buffers for per-pair energies / forces; required with
         ``pair_fn``.
+    max_launch_size : int, default PAIR_CENTRIC_MAX_LINEAR_LAUNCH
+        Internal/test hook for the safe one-dimensional Warp launch limit
+        used when pair-centric launches are coarsened.
 
     Notes
     -----
     - This is a low-level warp interface. For framework bindings, use torch/jax wrappers.
     - Output arrays must be pre-allocated by caller.
-    - Both atom-centric and pair-centric paths consume the per-cell-contiguous
-      ``sorted_positions`` / ``sorted_atom_periodic_shifts`` scratch.  The
-      selected path fills that scratch before launching its neighbor kernel.
+    - Sorted gather scratch is gathered and read only on sorted atom-centric
+      and pair-centric paths; direct atom-centric skips it.  Graph/capture
+      callers need caller-owned sorted scratch only for a path that uses it.
+      ``target_row_lookup`` is separate from sorted gather scratch.
     - Both strategies support compact ``target_indices`` rows, optional
       vector/distance buffers, ``pair_fn`` slot outputs, and selective rebuild
       flags.

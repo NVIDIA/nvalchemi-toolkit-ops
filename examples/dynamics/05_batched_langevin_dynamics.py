@@ -15,14 +15,14 @@
 
 """
 Batched Langevin Dynamics (BAOAB) with Lennard-Jones Potential
-=============================================================
+==============================================================
 
 This example demonstrates **batched** molecular dynamics: multiple independent
 systems are packed into a single set of arrays, and we integrate all systems
 in one go on the GPU.
 
 Why batching matters
--------------------
+--------------------
 Many workflows (sampling, optimization, hyperparameter sweeps) involve running
 many small systems. Batching amortizes kernel launch overhead and improves GPU
 utilization.

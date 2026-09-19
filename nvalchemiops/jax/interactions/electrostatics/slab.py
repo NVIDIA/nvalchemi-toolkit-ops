@@ -21,7 +21,7 @@ from typing import Literal
 
 import jax
 import jax.numpy as jnp
-from jax.interpreters import ad as jax_ad
+from jax.custom_derivatives import SymbolicZero
 
 from nvalchemiops.interactions.electrostatics.slab_kernels import (
     _slab_correction_backward_atoms_kernel_overload,
@@ -258,11 +258,7 @@ def _slab_correction_energy_reference(
 
 def _is_symbolic_zero(tangent) -> bool:
     """Return whether a custom-JVP tangent is JAX's symbolic zero sentinel."""
-    return (
-        tangent is None
-        or isinstance(tangent, jax_ad.Zero)
-        or tangent.__class__.__name__ == "SymbolicZero"
-    )
+    return tangent is None or isinstance(tangent, SymbolicZero)
 
 
 def _tangent_or_zeros(tangent, primal: jax.Array, dtype=None) -> jax.Array:

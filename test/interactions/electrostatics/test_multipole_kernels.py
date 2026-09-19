@@ -21,25 +21,50 @@ import math
 
 import numpy as np
 import pytest
+import torch
 import warp as wp
 
 from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     ewald_real_space_energy,
 )
 from nvalchemiops.interactions.electrostatics.multipole_direct_kspace_kernels import (
+    FeatPositionGradBackwardGradRawTiledScratch,
+    FeatPositionGradBackwardPositionsTiledScratch,
+    PositionGradientFromFeatureGradTiledScratch,
+    PositionGradientFromRhokTiledScratch,
+    ProjectFeaturesDipoleTiledScratch,
+    RhokPositionGradBackwardMomentsTiledScratch,
+    RhokPositionGradBackwardPositionsTiledScratch,
+    VGradFromFeatGradBackwardPositionsTiledScratch,
     apply_per_k_factor,
     assemble_rho_k_dipole,
     build_structure_factor_table,
     compute_energy_product_per_k,
     eval_gto_fourier_dipole,
     eval_receiver_gto_fourier_dipole,
+    feat_position_grad_backward_grad_raw,
+    feat_position_grad_backward_positions,
+    position_gradient_from_feature_grad,
+    position_gradient_from_rhok,
     project_features_dipole,
+    rhok_position_grad_backward_moments,
+    rhok_position_grad_backward_positions,
+    v_grad_from_feat_grad_backward_positions,
 )
 from nvalchemiops.interactions.electrostatics.multipole_ewald_kernels import (
     multipole_real_space_dipole_csr_energy,
     multipole_real_space_monopole_csr_energy,
 )
 from nvalchemiops.torch.math.gto import NormMode, inv_cl
+
+
+@wp.kernel
+def _copy_project_features_kernel(
+    features: wp.array2d(dtype=wp.float64), output: wp.array2d(dtype=wp.float64)
+):
+    """Copy a direct-project output as a same-stream dependent Warp launch."""
+    i, j = wp.tid()
+    output[i, j] = features[i, j]
 
 
 class TestStructureFactorTable:
@@ -547,8 +572,442 @@ def _permuted_out_col_lut(n_sigma: int) -> np.ndarray:
     return lut
 
 
+_TILED_SCRATCH_MAPPING_CASES = (
+    (
+        "position_gradient_from_rhok",
+        PositionGradientFromRhokTiledScratch,
+        (5, 3),
+        "big_cos",
+        "shape",
+    ),
+    (
+        "project_features_dipole",
+        ProjectFeaturesDipoleTiledScratch,
+        (5, 3, 2),
+        "b_flat",
+        "dtype",
+    ),
+    (
+        "position_gradient_from_feature_grad",
+        PositionGradientFromFeatureGradTiledScratch,
+        (5, 3, 2),
+        "contribs",
+        "device",
+    ),
+    (
+        "rhok_position_grad_backward_moments",
+        RhokPositionGradBackwardMomentsTiledScratch,
+        (5, 3),
+        "big_sin",
+        "shape",
+    ),
+    (
+        "rhok_position_grad_backward_positions",
+        RhokPositionGradBackwardPositionsTiledScratch,
+        (5, 3),
+        "beta_cos",
+        "dtype",
+    ),
+    (
+        "feat_position_grad_backward_grad_raw",
+        FeatPositionGradBackwardGradRawTiledScratch,
+        (5, 3, 2),
+        "m_cos",
+        "device",
+    ),
+    (
+        "feat_position_grad_backward_positions",
+        FeatPositionGradBackwardPositionsTiledScratch,
+        (5, 3, 2),
+        "m_sin",
+        "shape",
+    ),
+    (
+        "v_grad_from_feat_grad_backward_positions",
+        VGradFromFeatGradBackwardPositionsTiledScratch,
+        (5, 3, 2),
+        "contribs",
+        "dtype",
+    ),
+)
+
+
+_PROJECT_SCRATCH_PREDICATE_CASES = (
+    ("shape", "a_flat"),
+    ("dtype", "a_flat"),
+    ("device", "a_flat"),
+)
+
+_TILED_SCRATCH_FIELD_INDEX = {
+    "big_cos": 0,
+    "big_sin": 1,
+    "a_flat": 0,
+    "b_flat": 1,
+    "beta_cos": 0,
+    "m_cos": 0,
+    "m_sin": 1,
+    "contribs": 2,
+}
+
+
+def _make_bad_tiled_scratch(
+    scratch_type,
+    shape_args,
+    bad_field,
+    bad_kind,
+    device,
+):
+    """Build one malformed public scratch bundle without calling its validator."""
+    expected_shapes = scratch_type.expected_shapes(*shape_args)
+    bad_index = _TILED_SCRATCH_FIELD_INDEX[bad_field]
+    arrays = []
+    for index, shape in enumerate(expected_shapes):
+        array_shape = shape
+        array_dtype = wp.float64
+        array_device = device
+        if index == bad_index and bad_kind == "shape":
+            array_shape = (shape[0] + 1, shape[1])
+        elif index == bad_index and bad_kind == "dtype":
+            array_dtype = wp.float32
+        elif index == bad_index and bad_kind == "device":
+            array_device = "cpu"
+        arrays.append(wp.empty(array_shape, dtype=array_dtype, device=array_device))
+    return scratch_type(*arrays)
+
+
+def _launch_tiled_scratch_case(launcher_name, scratch, device):
+    """Invoke one public tiled launcher with minimal shape-correct inputs."""
+    n_k, n_atoms, n_sigma = 5, 3, 2
+    cosines = wp.empty((n_k, n_atoms), dtype=wp.float64, device=device)
+    sines = wp.empty((n_k, n_atoms), dtype=wp.float64, device=device)
+    source_phi_hat = wp.empty((n_k, 4, 2), dtype=wp.float64, device=device)
+    receiver_phi_hat = wp.empty((n_k, n_sigma, 4, 2), dtype=wp.float64, device=device)
+    grad_rho = wp.empty((n_k, 2), dtype=wp.float64, device=device)
+    gg_positions = wp.empty((n_atoms, 3), dtype=wp.float64, device=device)
+    k_vectors = wp.empty((n_k,), dtype=wp.vec3d, device=device)
+    k_factor_proj = wp.empty((n_k,), dtype=wp.float64, device=device)
+    potential = wp.empty((n_k, 2), dtype=wp.float64, device=device)
+    grad_raw = wp.empty((n_atoms, n_sigma, 4), dtype=wp.float64, device=device)
+
+    if launcher_name == "position_gradient_from_rhok":
+        charges = wp.empty((n_atoms,), dtype=wp.float64, device=device)
+        dipoles = wp.empty((n_atoms,), dtype=wp.vec3d, device=device)
+        grad_positions = wp.empty((n_atoms, 3), dtype=wp.float64, device=device)
+        position_gradient_from_rhok(
+            charges,
+            dipoles,
+            cosines,
+            sines,
+            source_phi_hat,
+            grad_rho,
+            k_vectors,
+            1.0,
+            grad_positions,
+            wp.float64,
+            device=device,
+            scratch=scratch,
+        )
+    elif launcher_name == "project_features_dipole":
+        source_feats_lm = wp.empty((n_atoms, 4), dtype=wp.float64, device=device)
+        overlap_constants = wp.empty((n_sigma, 2), dtype=wp.float64, device=device)
+        out_col_lut = wp.empty((n_sigma, 4), dtype=wp.int32, device=device)
+        features = wp.empty((n_atoms, n_sigma * 4), dtype=wp.float64, device=device)
+        project_features_dipole(
+            potential,
+            receiver_phi_hat,
+            cosines,
+            sines,
+            k_factor_proj,
+            source_feats_lm,
+            overlap_constants,
+            False,
+            out_col_lut,
+            features,
+            device=device,
+            scratch=scratch,
+        )
+    elif launcher_name == "position_gradient_from_feature_grad":
+        grad_positions = wp.empty((n_atoms, 3), dtype=wp.float64, device=device)
+        position_gradient_from_feature_grad(
+            grad_raw,
+            receiver_phi_hat,
+            cosines,
+            sines,
+            k_factor_proj,
+            potential,
+            k_vectors,
+            grad_positions,
+            device=device,
+            scratch=scratch,
+        )
+    elif launcher_name == "rhok_position_grad_backward_moments":
+        ggrad_moments = wp.empty((n_atoms, 4), dtype=wp.float64, device=device)
+        rhok_position_grad_backward_moments(
+            cosines,
+            sines,
+            source_phi_hat,
+            grad_rho,
+            gg_positions,
+            k_vectors,
+            1.0,
+            ggrad_moments,
+            device=device,
+            scratch=scratch,
+        )
+    elif launcher_name == "rhok_position_grad_backward_positions":
+        charges = wp.empty((n_atoms,), dtype=wp.float64, device=device)
+        dipoles = wp.empty((n_atoms,), dtype=wp.vec3d, device=device)
+        ggrad_positions = wp.empty((n_atoms, 3), dtype=wp.float64, device=device)
+        rhok_position_grad_backward_positions(
+            charges,
+            dipoles,
+            cosines,
+            sines,
+            source_phi_hat,
+            grad_rho,
+            gg_positions,
+            k_vectors,
+            1.0,
+            ggrad_positions,
+            wp.float64,
+            device=device,
+            scratch=scratch,
+        )
+    elif launcher_name == "feat_position_grad_backward_grad_raw":
+        ggrad_grad_raw = wp.empty(
+            (n_atoms, n_sigma, 4), dtype=wp.float64, device=device
+        )
+        feat_position_grad_backward_grad_raw(
+            receiver_phi_hat,
+            cosines,
+            sines,
+            k_factor_proj,
+            potential,
+            gg_positions,
+            k_vectors,
+            ggrad_grad_raw,
+            device=device,
+            scratch=scratch,
+        )
+    elif launcher_name == "feat_position_grad_backward_positions":
+        ggrad_positions = wp.empty((n_atoms, 3), dtype=wp.float64, device=device)
+        feat_position_grad_backward_positions(
+            grad_raw,
+            receiver_phi_hat,
+            cosines,
+            sines,
+            k_factor_proj,
+            potential,
+            gg_positions,
+            k_vectors,
+            ggrad_positions,
+            device=device,
+            scratch=scratch,
+        )
+    elif launcher_name == "v_grad_from_feat_grad_backward_positions":
+        gg_v = wp.empty((n_k, 2), dtype=wp.float64, device=device)
+        ggrad_positions = wp.empty((n_atoms, 3), dtype=wp.float64, device=device)
+        v_grad_from_feat_grad_backward_positions(
+            grad_raw,
+            receiver_phi_hat,
+            cosines,
+            sines,
+            k_factor_proj,
+            gg_v,
+            k_vectors,
+            ggrad_positions,
+            device=device,
+            scratch=scratch,
+        )
+    else:
+        raise AssertionError(f"unknown tiled launcher {launcher_name}")
+
+
 class TestProjectFeaturesDipole:
     """Tests for :func:`project_features_dipole`."""
+
+    @pytest.mark.gpu
+    def test_tiled_cuda_uses_caller_stream_and_scratch(self, device):
+        """The tiled direct Warp path retains the caller stream and scratch."""
+        if "cuda" not in str(device):
+            pytest.skip("requires CUDA")
+        n_k, n_sigma, n_atoms = 5, 1, 3
+        torch_device = torch.device(str(device))
+        producer = torch.cuda.Stream(device=torch_device)
+        caller = torch.cuda.Stream(device=torch_device)
+
+        old_potential = 1.0
+        new_potential = 3.0
+        output_sentinel = -17.0
+        potential_t = torch.full(
+            (n_k, 2), old_potential, dtype=torch.float64, device=torch_device
+        )
+        receiver_phi_hat_t = torch.zeros(
+            (n_k, n_sigma, 4, 2), dtype=torch.float64, device=torch_device
+        )
+        receiver_phi_hat_t[..., 0].fill_(1.0)
+        cosines_t = torch.ones((n_k, n_atoms), dtype=torch.float64, device=torch_device)
+        sines_t = torch.zeros((n_k, n_atoms), dtype=torch.float64, device=torch_device)
+        k_factor_t = torch.ones(n_k, dtype=torch.float64, device=torch_device)
+        source_t = torch.zeros((n_atoms, 4), dtype=torch.float64, device=torch_device)
+        overlap_t = torch.zeros((n_sigma, 2), dtype=torch.float64, device=torch_device)
+        lut_t = torch.as_tensor(
+            _identity_out_col_lut(n_sigma), dtype=torch.int32, device=torch_device
+        )
+        features_t = torch.full(
+            (n_atoms, n_sigma * 4),
+            output_sentinel,
+            dtype=torch.float64,
+            device=torch_device,
+        )
+        copied_t = torch.full_like(features_t, output_sentinel)
+
+        potential = wp.from_torch(potential_t, dtype=wp.float64)
+        phi_wp = wp.from_torch(receiver_phi_hat_t, dtype=wp.float64)
+        cosines_wp = wp.from_torch(cosines_t, dtype=wp.float64)
+        sines_wp = wp.from_torch(sines_t, dtype=wp.float64)
+        k_factor = wp.from_torch(k_factor_t, dtype=wp.float64)
+        source = wp.from_torch(source_t, dtype=wp.float64)
+        overlap = wp.from_torch(overlap_t, dtype=wp.float64)
+        lut = wp.from_torch(lut_t, dtype=wp.int32)
+        features = wp.from_torch(features_t, dtype=wp.float64)
+        copied = wp.from_torch(copied_t, dtype=wp.float64)
+        scratch_tensors = [
+            torch.full(
+                shape,
+                0.0,
+                dtype=torch.float64,
+                device=torch_device,
+            )
+            for shape in ProjectFeaturesDipoleTiledScratch.expected_shapes(
+                n_k, n_atoms, n_sigma
+            )
+        ]
+        scratch = ProjectFeaturesDipoleTiledScratch(
+            *(wp.from_torch(tensor, dtype=wp.float64) for tensor in scratch_tensors)
+        )
+
+        def project_and_copy():
+            project_features_dipole(
+                potential,
+                phi_wp,
+                cosines_wp,
+                sines_wp,
+                k_factor,
+                source,
+                overlap,
+                False,
+                lut,
+                features,
+                device=device,
+                scratch=scratch,
+            )
+            wp.launch(
+                _copy_project_features_kernel,
+                dim=(n_atoms, n_sigma * 4),
+                inputs=[features, copied],
+                device=device,
+            )
+
+        # Compile every project/copy kernel on the caller stream before the
+        # event-gated producer/caller sequence is measured.
+        init_event = torch.cuda.Event()
+        init_event.record()
+        caller.wait_event(init_event)
+        with torch.cuda.stream(caller):
+            with wp.ScopedStream(wp.stream_from_torch(caller), sync_enter=False):
+                project_and_copy()
+        warmup_done = torch.cuda.Event()
+        warmup_done.record(caller)
+        warmup_done.synchronize()
+
+        # Re-establish the known initial state after warm-up, then make both
+        # non-default streams wait for that initialization to complete.
+        potential_t.fill_(old_potential)
+        features_t.fill_(output_sentinel)
+        copied_t.fill_(output_sentinel)
+        for tensor in scratch_tensors:
+            tensor.zero_()
+        init_event = torch.cuda.Event()
+        init_event.record()
+
+        ready = torch.cuda.Event()
+        producer.wait_event(init_event)
+        with torch.cuda.stream(producer):
+            torch.cuda._sleep(1_000_000_000)
+            potential_t.fill_(new_potential)
+            ready.record()
+
+        caller.wait_event(ready)
+        with torch.cuda.stream(caller):
+            with wp.ScopedStream(wp.stream_from_torch(caller), sync_enter=False):
+                project_and_copy()
+        done = torch.cuda.Event()
+        done.record(caller)
+
+        # Waiting on ``done`` drains only the caller stream.  The producer is
+        # deliberately drained after the output snapshot so this test cannot
+        # accidentally hide a missing caller-stream dependency.
+        done.synchronize()
+        snapshot = copied_t.detach().cpu().numpy().copy()
+        producer.synchronize()
+
+        expected_value = 2.0 * n_k * new_potential / (2.0 * math.pi) ** 3
+        np.testing.assert_allclose(
+            snapshot,
+            np.full((n_atoms, n_sigma * 4), expected_value),
+        )
+
+    @pytest.mark.gpu
+    @pytest.mark.parametrize(
+        "launcher_name,scratch_type,shape_args,bad_field,bad_kind",
+        _TILED_SCRATCH_MAPPING_CASES,
+    )
+    def test_tiled_launchers_validate_public_scratch_mapping(
+        self,
+        launcher_name,
+        scratch_type,
+        shape_args,
+        bad_field,
+        bad_kind,
+        device,
+    ):
+        """Each public tiled launcher validates its mapped scratch bundle."""
+        if "cuda" not in str(device):
+            pytest.skip("requires CUDA")
+        scratch = _make_bad_tiled_scratch(
+            scratch_type,
+            shape_args,
+            bad_field,
+            bad_kind,
+            device,
+        )
+        with pytest.raises(
+            ValueError,
+            match=rf"^scratch\.{bad_field} must have shape",
+        ):
+            _launch_tiled_scratch_case(launcher_name, scratch, device)
+
+    @pytest.mark.gpu
+    @pytest.mark.parametrize("bad_kind,bad_field", _PROJECT_SCRATCH_PREDICATE_CASES)
+    def test_project_features_dipole_validates_scratch_predicates(
+        self, bad_kind, bad_field, device
+    ):
+        """The project launcher rejects wrong scratch shape, dtype, and device."""
+        if "cuda" not in str(device):
+            pytest.skip("requires CUDA")
+        scratch = _make_bad_tiled_scratch(
+            ProjectFeaturesDipoleTiledScratch,
+            (5, 3, 2),
+            bad_field,
+            bad_kind,
+            device,
+        )
+        with pytest.raises(
+            ValueError,
+            match=rf"^scratch\.{bad_field} must have shape",
+        ):
+            _launch_tiled_scratch_case("project_features_dipole", scratch, device)
 
     def _launch(
         self,
@@ -583,6 +1042,21 @@ class TestProjectFeaturesDipole:
         oc = wp.from_numpy(overlap_constants_np, dtype=wp.float64, device=device)
         lut = wp.from_numpy(out_col_lut_np, dtype=wp.int32, device=device)
         features = wp.zeros((n_atoms, n_sigma * 4), dtype=wp.float64, device=device)
+        scratch = None
+        if "cuda" in str(device):
+            scratch = ProjectFeaturesDipoleTiledScratch(
+                wp.empty(
+                    (potential_np.shape[0], n_sigma * 4),
+                    dtype=wp.float64,
+                    device=device,
+                ),
+                wp.empty(
+                    (potential_np.shape[0], n_sigma * 4),
+                    dtype=wp.float64,
+                    device=device,
+                ),
+                wp.empty((n_atoms, n_sigma * 4), dtype=wp.float64, device=device),
+            )
         project_features_dipole(
             potential,
             phi,
@@ -595,6 +1069,7 @@ class TestProjectFeaturesDipole:
             lut,
             features,
             device=device,
+            scratch=scratch,
         )
         # Identity LUT → reshape to natural (N_atoms, N_σ, 4); else return raw 2-D.
         if np.array_equal(out_col_lut_np, _identity_out_col_lut(n_sigma)):

@@ -16,6 +16,8 @@
 
 """Pytest configuration for neighbor list tests."""
 
+import os
+
 import pytest
 import warp as wp
 
@@ -30,7 +32,15 @@ def pytest_configure(config):
 
 def pytest_collection_modifyitems(config, items):
     """Modify test collection to add markers based on test names."""
+    # pytest hands every collected item to this hook, not only the ones under
+    # this directory, so a whole-tree run would otherwise apply the rules below
+    # to tests elsewhere. In particular the electrostatics suite deliberately
+    # does not treat "stress" as slow, and that decision must survive.
+    here = os.path.dirname(__file__)
     for item in items:
+        if not str(item.path).startswith(here):
+            continue
+
         # Mark GPU tests
         if "cuda" in item.name.lower() or "gpu" in item.name.lower():
             item.add_marker(pytest.mark.gpu)

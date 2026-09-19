@@ -33,6 +33,7 @@ import warnings
 from nvalchemiops import neighbors as _neighbors
 from nvalchemiops.neighbors import (
     NeighborOverflowError,
+    TileBufferOverflow,
     estimate_max_neighbors,
 )
 from nvalchemiops.neighbors import (
@@ -161,6 +162,7 @@ def __getattr__(name: str):  # pragma: no cover
 
 __all__ = [
     "NeighborOverflowError",
+    "TileBufferOverflow",
     "wp_naive_neighbor_matrix",
     "wp_naive_neighbor_matrix_pbc",
     "wp_build_cell_list",

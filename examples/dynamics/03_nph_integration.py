@@ -15,7 +15,7 @@
 
 """
 NPH Dynamics (MTK) with Lennard-Jones Potential
-==============================================
+===============================================
 
 This example demonstrates **isothermal-free** (no thermostat) NPH dynamics using
 the Martyna-Tobias-Klein (MTK) barostat and the Lennard-Jones (LJ) potential.

@@ -236,8 +236,7 @@ print(f"\nCoordination numbers: {np.array(coord_num)}")
 # - ``max_neighbors`` must be specified (static array shapes)
 # - Functional parameters (``a1``, ``a2``, ``s8``, etc.) must be **static
 #   literals** inside the jitted function (required by Warp FFI kernels)
-# - ``D3Parameters`` should be constructed inside the jitted function from
-#   traced arrays
+# - ``D3Parameters`` can be passed directly as a runtime argument
 # - ``fill_value`` and ``num_systems`` should be static
 
 print("\n" + "=" * 70)
@@ -250,10 +249,7 @@ print("=" * 70)
 def compute_d3_energy_forces(
     positions: jax.Array,
     numbers: jax.Array,
-    rcov: jax.Array,
-    r4r2: jax.Array,
-    c6ab: jax.Array,
-    cn_ref: jax.Array,
+    d3_params: D3Parameters,
     cutoff: float = cutoff_bohr,
     max_neighbors: int = 64,
     fill_value: int = num_atoms,
@@ -261,9 +257,6 @@ def compute_d3_energy_forces(
     """JIT-compiled neighbor list + DFT-D3 pipeline."""
     # Build neighbor matrix inside jit (max_neighbors must be static)
     nbmat, _ = naive_neighbor_list(positions, cutoff, max_neighbors=max_neighbors)
-
-    # Construct D3Parameters inside jit from traced arrays
-    params = D3Parameters(rcov=rcov, r4r2=r4r2, c6ab=c6ab, cn_ref=cn_ref)
 
     # Compute DFT-D3 with PBE0 parameters as static literals
     energy, forces, coord_num = dftd3(
@@ -273,7 +266,7 @@ def compute_d3_energy_forces(
         a2=4.8593,
         s8=1.2177,
         s6=1.0,
-        d3_params=params,
+        d3_params=d3_params,
         neighbor_matrix=nbmat,
         fill_value=fill_value,
     )
@@ -288,10 +281,7 @@ print("\nCompiling and running jitted DFT-D3 pipeline...")
 jit_energy, jit_forces, jit_cn = compute_d3_energy_forces(
     positions_bohr,
     numbers,
-    d3_params.rcov,
-    d3_params.r4r2,
-    d3_params.c6ab,
-    d3_params.cn_ref,
+    d3_params,
 )
 
 jit_energy_ev = float(jit_energy[0]) * HARTREE_TO_EV
@@ -310,10 +300,7 @@ print("\nRunning jitted function again (should reuse compiled code)...")
 jit_energy_2, jit_forces_2, _ = compute_d3_energy_forces(
     positions_bohr,
     numbers,
-    d3_params.rcov,
-    d3_params.r4r2,
-    d3_params.c6ab,
-    d3_params.cn_ref,
+    d3_params,
 )
 print(
     f"  JIT dispersion energy (2nd call): {float(jit_energy_2[0]) * HARTREE_TO_EV:.6f} eV"
@@ -338,7 +325,7 @@ print(
 # - Construct ``D3Parameters`` from JAX arrays
 # - For ``jax.jit``: use static literals for functional parameters
 #   (``a1``, ``a2``, ``s8``), specify ``max_neighbors`` for static shapes,
-#   and construct ``D3Parameters`` inside the jitted function
+#   and pass ``D3Parameters`` directly as a runtime argument
 
 print("\n" + "=" * 70)
 print("SUMMARY")

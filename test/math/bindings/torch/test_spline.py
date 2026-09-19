@@ -125,6 +125,146 @@ def batch_system():
     }
 
 
+class TestSplineStreamSafety:
+    """Verify spline launchers consume inputs on the active Torch stream."""
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+    def test_single_spread_gather_follows_current_stream(
+        self, simple_system, torch_stream_runner
+    ):
+        """Single-system spread and gather consume event-gated inputs."""
+        device = torch.device("cuda:0")
+        source = (
+            simple_system["positions"].to(device),
+            simple_system["charges"].to(device),
+            simple_system["cell"].to(device),
+        )
+        target = tuple(torch.empty_like(value) for value in source)
+
+        def operation(inputs):
+            positions, charges, cell = inputs
+            mesh = spline_spread(
+                positions,
+                charges,
+                cell,
+                simple_system["mesh_dims"],
+                spline_order=4,
+            )
+            return spline_gather(positions, mesh, cell, spline_order=4)
+
+        _, snapshot, expected = torch_stream_runner(source, target, operation)
+        torch.testing.assert_close(snapshot, expected)
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+    def test_batched_spread_gather_follows_current_stream(
+        self, batch_system, torch_stream_runner
+    ):
+        """Batched spread and gather consume event-gated inputs."""
+        device = torch.device("cuda:0")
+        source = (
+            batch_system["positions"].to(device),
+            batch_system["charges"].to(device),
+            batch_system["batch_idx"].to(device),
+            batch_system["cell"].to(device),
+        )
+        target = tuple(torch.empty_like(value) for value in source)
+
+        def operation(inputs):
+            positions, charges, batch_idx, cell = inputs
+            mesh = spline_spread(
+                positions,
+                charges,
+                cell,
+                batch_system["mesh_dims"],
+                spline_order=4,
+                batch_idx=batch_idx,
+            )
+            return spline_gather(
+                positions,
+                mesh,
+                cell,
+                spline_order=4,
+                batch_idx=batch_idx,
+            )
+
+        _, snapshot, expected = torch_stream_runner(source, target, operation)
+        torch.testing.assert_close(snapshot, expected)
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+    def test_compiled_single_spread_gather_follows_current_stream(
+        self, simple_system, torch_stream_runner
+    ):
+        """Compiled single-system spread and gather match eager output."""
+        device = torch.device("cuda:0")
+        source = (
+            simple_system["positions"].to(device),
+            simple_system["charges"].to(device),
+            simple_system["cell"].to(device),
+        )
+        target = tuple(torch.empty_like(value) for value in source)
+        mesh_dims = simple_system["mesh_dims"]
+
+        def eager_operation(positions, charges, cell):
+            mesh = spline_spread(
+                positions,
+                charges,
+                cell,
+                mesh_dims,
+                spline_order=4,
+            )
+            return spline_gather(positions, mesh, cell, spline_order=4)
+
+        eager_output = eager_operation(*source)
+        compiled_operation = torch.compile(eager_operation, fullgraph=True)
+
+        def operation(inputs):
+            return compiled_operation(*inputs)
+
+        _, snapshot, _ = torch_stream_runner(source, target, operation)
+        torch.testing.assert_close(snapshot, eager_output)
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+    def test_compiled_batched_spread_gather_follows_current_stream(
+        self, batch_system, torch_stream_runner
+    ):
+        """Compiled batched spread and gather match eager output."""
+        device = torch.device("cuda:0")
+        source = (
+            batch_system["positions"].to(device),
+            batch_system["charges"].to(device),
+            batch_system["batch_idx"].to(device),
+            batch_system["cell"].to(device),
+        )
+        target = tuple(torch.empty_like(value) for value in source)
+        mesh_dims = batch_system["mesh_dims"]
+
+        def eager_operation(positions, charges, batch_idx, cell):
+            mesh = spline_spread(
+                positions,
+                charges,
+                cell,
+                mesh_dims,
+                spline_order=4,
+                batch_idx=batch_idx,
+            )
+            return spline_gather(
+                positions,
+                mesh,
+                cell,
+                spline_order=4,
+                batch_idx=batch_idx,
+            )
+
+        eager_output = eager_operation(*source)
+        compiled_operation = torch.compile(eager_operation, fullgraph=True)
+
+        def operation(inputs):
+            return compiled_operation(*inputs)
+
+        _, snapshot, _ = torch_stream_runner(source, target, operation)
+        torch.testing.assert_close(snapshot, eager_output)
+
+
 ###########################################################################################
 ########################### B-Spline Weight Function Tests ################################
 ###########################################################################################

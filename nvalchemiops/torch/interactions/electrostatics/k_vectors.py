@@ -20,6 +20,13 @@ import torch
 PI = math.pi
 TWOPI = 2.0 * PI
 
+__all__ = [
+    "generate_ewald_miller_indices",
+    "generate_k_vectors_ewald_summation",
+    "generate_k_vectors_pme",
+    "k_vectors_from_miller_indices",
+]
+
 
 def _prepare_k_cutoff(
     cell: torch.Tensor,
@@ -58,16 +65,51 @@ def _generate_miller_indices(
     return torch.ceil(shared_k_cutoff * cell_lengths).long()
 
 
-def generate_k_vectors_ewald_summation(
+def _ewald_miller_grid(
+    cell: torch.Tensor,
+    k_cutoff: float | torch.Tensor,
+    miller_bounds: tuple[int, int, int] | torch.Tensor | None,
+) -> torch.Tensor:
+    """Build the legacy floating-point FFT-grid Miller representation."""
+    if cell.ndim == 2:
+        cell = cell.unsqueeze(0)
+    device = cell.device
+    dtype = cell.dtype
+    if miller_bounds is None:
+        max_h, max_k, max_l = 2 * _generate_miller_indices(cell, k_cutoff) + 1
+    else:
+        if isinstance(miller_bounds, torch.Tensor):
+            if miller_bounds.numel() != 3:
+                raise ValueError("miller_bounds tensor must contain exactly 3 values")
+            bounds = tuple(int(v) for v in miller_bounds.reshape(3).tolist())
+        else:
+            if len(miller_bounds) != 3:
+                raise ValueError("miller_bounds must contain exactly 3 values")
+            bounds = tuple(int(v) for v in miller_bounds)
+        max_h, max_k, max_l = (2 * bounds[0] + 1, 2 * bounds[1] + 1, 2 * bounds[2] + 1)
+
+    h_range = torch.fft.fftfreq(max_h, device=device, dtype=dtype) * max_h
+    k_range = torch.fft.fftfreq(max_k, device=device, dtype=dtype) * max_k
+    l_range = torch.fft.fftfreq(max_l, device=device, dtype=dtype) * max_l
+    h_grid, k_grid, l_grid = torch.meshgrid(h_range, k_range, l_range, indexing="ij")
+    miller_grid = torch.stack(
+        [h_grid.flatten(), k_grid.flatten(), l_grid.flatten()], dim=1
+    )
+    h, k, m = miller_grid.unbind(dim=1)
+    halfspace_mask = (h > 0) | ((h == 0) & (k > 0)) | ((h == 0) & (k == 0) & (m > 0))
+    return miller_grid[halfspace_mask]
+
+
+def generate_ewald_miller_indices(
     cell: torch.Tensor,
     k_cutoff: float | torch.Tensor,
     miller_bounds: tuple[int, int, int] | torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Generate reciprocal lattice vectors for Ewald summation (half-space).
+    """Generate the positive-half-space Miller topology for Ewald summation.
 
-    Creates k-vectors within the specified cutoff for the reciprocal space
-    summation in the Ewald method. Uses half-space optimization to reduce
-    computational cost by approximately 2x.
+    The returned signed integer rows are caller-owned topology. They can be
+    retained across cell updates and transformed with
+    :func:`k_vectors_from_miller_indices`.
 
     Half-Space Optimization
     -----------------------
@@ -110,32 +152,28 @@ def generate_k_vectors_ewald_summation(
         Unit cell matrix with lattice vectors as rows.
         Shape (3, 3) for single system or (B, 3, 3) for batch.
     k_cutoff : float or torch.Tensor
-        Maximum magnitude of k-vectors to include (:math:`|\\mathbf{k}| \\leq k_{\\text{cutoff}}`).
-        Typical values: 8-12 :math:`\\text{\\AA}^{-1}` for molecular systems.
-        Higher values increase accuracy but also computational cost.
+        Reciprocal cutoff used to derive conservative per-axis Miller bounds.
+        The resulting rectangular topology can contain vectors whose magnitude
+        exceeds this value.
     miller_bounds : tuple[int, int, int] or torch.Tensor, optional
-        Precomputed Miller-index half-bounds as returned by
-        :func:`_generate_miller_indices`. Supplying Python integer bounds skips
-        the device-to-host synchronization needed to derive FFT range sizes from
-        ``cell`` and ``k_cutoff`` inside tight regenerated-k-vector loops. Tensor
-        bounds are accepted for convenience but are read back to Python integers
-        during setup.
+        Explicit Miller half-bounds ``(M_h, M_k, M_l)``. When supplied, their
+        rectangle is enumerated directly and ``k_cutoff`` does not select
+        individual rows. Python integer bounds avoid deriving range sizes from
+        device tensors; tensor bounds are accepted for convenience.
 
     Returns
     -------
     torch.Tensor
-        Reciprocal lattice vectors within the cutoff.
-        Shape (K, 3) for single system or (B, K, 3) for batch.
-        Excludes k=0 and includes only half-space vectors.
+        Signed integer Miller indices of shape ``(K, 3)``. The rows are
+        nonzero, unique, and in the positive half-space.
 
     Examples
     --------
     Single system with explicit k_cutoff::
 
         >>> cell = torch.eye(3, dtype=torch.float64) * 10.0
-        >>> k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
-        >>> k_vectors.shape
-        torch.Size([...])  # Number depends on cell size and cutoff
+        >>> indices = generate_ewald_miller_indices(cell, k_cutoff=8.0)
+        >>> k_vectors = k_vectors_from_miller_indices(cell, indices)
 
     With automatic parameter estimation::
 
@@ -145,62 +183,80 @@ def generate_k_vectors_ewald_summation(
 
     Notes
     -----
-    - The k=0 vector is always excluded (causes division by zero in Green's function).
-    - For batch mode, the same set of Miller indices is used for all systems but
-      transformed using each system's reciprocal cell. If ``k_cutoff`` is given
-      per system, the maximum cutoff across the batch determines the shared
-      Miller bounds.
-    - The number of k-vectors K scales as O(k_cutoff^3 * V) where V is the cell volume.
+    For batch mode, the maximum cutoff across the batch determines shared
+    bounds. A retained topology must conservatively cover every cell state in
+    which it will be used.
 
     See Also
     --------
-    ewald_reciprocal_space : Uses these k-vectors for reciprocal space energy.
+    k_vectors_from_miller_indices : Transform retained indices for a live cell.
     estimate_ewald_parameters : Automatic parameter estimation including k_cutoff.
+    """
+    return torch.round(_ewald_miller_grid(cell, k_cutoff, miller_bounds)).to(
+        torch.int64
+    )
+
+
+def k_vectors_from_miller_indices(
+    cell: torch.Tensor,
+    miller_indices: torch.Tensor,
+) -> torch.Tensor:
+    """Materialize reciprocal vectors from caller-retained Miller indices.
+
+    The supplied ``cell`` defines the live reciprocal transform. Duplicate
+    rows, zero rows, and half-space membership are caller preconditions and are
+    not checked; :func:`generate_ewald_miller_indices` produces valid topology.
+
+    Parameters
+    ----------
+    cell : torch.Tensor
+        Unit cell of shape ``(3, 3)`` or ``(B, 3, 3)``.
+    miller_indices : torch.Tensor
+        Signed integer indices of shape ``(K, 3)`` on the same device as
+        ``cell``. ``(0, 3)`` is valid.
+
+    Returns
+    -------
+    torch.Tensor
+        Reciprocal vectors of shape ``(K, 3)`` or ``(B, K, 3)``.
+    """
+    if cell.ndim not in (2, 3) or cell.shape[-2:] != (3, 3):
+        raise ValueError("cell must have shape (3, 3) or (B, 3, 3)")
+    if miller_indices.ndim != 2 or miller_indices.shape[-1] != 3:
+        raise ValueError("miller_indices must have shape (K, 3)")
+    if miller_indices.dtype not in {
+        torch.int8,
+        torch.int16,
+        torch.int32,
+        torch.int64,
+    }:
+        raise ValueError("miller_indices must have a signed integer dtype")
+    if cell.device != miller_indices.device:
+        raise ValueError("cell and miller_indices must be on the same device")
+
+    if cell.ndim == 2:
+        cell = cell.unsqueeze(0)
+    reciprocal_cell = TWOPI * torch.linalg.inv_ex(cell.transpose(1, 2))[0]
+    return (miller_indices.to(reciprocal_cell.dtype) @ reciprocal_cell).squeeze(0)
+
+
+def generate_k_vectors_ewald_summation(
+    cell: torch.Tensor,
+    k_cutoff: float | torch.Tensor,
+    miller_bounds: tuple[int, int, int] | torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Generate reciprocal lattice vectors for Ewald summation (half-space).
+
+    This compatibility wrapper preserves Torch's historical float32 FFT-grid
+    rounding. Use :func:`generate_ewald_miller_indices` and
+    :func:`k_vectors_from_miller_indices` for caller-retained topology.
     """
     if cell.ndim == 2:
         cell = cell.unsqueeze(0)
-    device = cell.device
-    dtype = cell.dtype
-
-    if miller_bounds is None:
-        max_h, max_k, max_l = 2 * _generate_miller_indices(cell, k_cutoff) + 1
-    else:
-        if isinstance(miller_bounds, torch.Tensor):
-            if miller_bounds.numel() != 3:
-                raise ValueError("miller_bounds tensor must contain exactly 3 values")
-            bounds = tuple(int(v) for v in miller_bounds.reshape(3).tolist())
-        else:
-            if len(miller_bounds) != 3:
-                raise ValueError("miller_bounds must contain exactly 3 values")
-            bounds = tuple(int(v) for v in miller_bounds)
-        max_h, max_k, max_l = (2 * bounds[0] + 1, 2 * bounds[1] + 1, 2 * bounds[2] + 1)
-
-    # Generate all combinations of Miller indices
-    h_range = torch.fft.fftfreq(max_h, device=device, dtype=dtype) * max_h
-    k_range = torch.fft.fftfreq(max_k, device=device, dtype=dtype) * max_k
-    l_range = torch.fft.fftfreq(max_l, device=device, dtype=dtype) * max_l
-
-    h_grid, k_grid, l_grid = torch.meshgrid(h_range, k_range, l_range, indexing="ij")
-    miller_indices = torch.stack(
-        [h_grid.flatten(), k_grid.flatten(), l_grid.flatten()], dim=1
-    )
-
-    # Apply half-space filter: keep only one of each +-k pair
-    # Condition: h > 0 OR (h == 0 AND k > 0) OR (h == 0 AND k == 0 AND l > 0)
-    h = miller_indices[:, 0]
-    k = miller_indices[:, 1]
-    m = miller_indices[:, 2]  # Using 'm' instead of 'l' to avoid E741 ambiguity
-
-    halfspace_mask = (h > 0) | ((h == 0) & (k > 0)) | ((h == 0) & (k == 0) & (m > 0))
-
-    miller_indices = miller_indices[halfspace_mask]
-
-    # Compute reciprocal lattice vectors (2π times reciprocal of direct lattice)
-    reciprocal_cell = (
-        TWOPI * torch.linalg.inv_ex(cell.transpose(1, 2))[0]
-    )  # Transpose for column vectors
-    k_vectors = miller_indices.to(reciprocal_cell.dtype) @ reciprocal_cell
-    return k_vectors.squeeze(0)
+    reciprocal_cell = TWOPI * torch.linalg.inv_ex(cell.transpose(1, 2))[0]
+    return (
+        _ewald_miller_grid(cell, k_cutoff, miller_bounds) @ reciprocal_cell
+    ).squeeze(0)
 
 
 def generate_k_vectors_pme(

@@ -23,7 +23,7 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 import warp as wp
-from warp.jax_experimental import GraphMode, jax_callable, jax_kernel
+from warp import JaxCallableGraphMode, jax_callable, jax_kernel
 
 from nvalchemiops.jax.neighbors._autograd import (
     _build_index_residuals,
@@ -35,10 +35,13 @@ from nvalchemiops.jax.neighbors._dispatch import (
 )
 from nvalchemiops.jax.neighbors._registration import _lazy_naive_kernel
 from nvalchemiops.jax.neighbors.neighbor_utils import (
+    _pack_fixed_capacity_neighbor_list_from_neighbor_matrix,
+    _validate_coo_capacity,
     _validate_graph_mode,
     build_naive_kernel_tables,
     compute_naive_num_shifts,
     coo_pack_pair_geometry,
+    get_fixed_capacity_neighbor_list_from_neighbor_matrix,
     get_neighbor_list_from_neighbor_matrix,
 )
 from nvalchemiops.neighbors.naive.dispatch import (
@@ -90,7 +93,7 @@ _DTYPE_TO_NAIVE_KERNELS = (wp.float32, wp.float64)
 )
 
 # Direct jax_kernel registrations are constructed lazily.  The retained
-# build_naive_kernel_tables tables below remain for GraphMode.WARP callbacks.
+# build_naive_kernel_tables tables below remain for JaxCallableGraphMode.WARP callbacks.
 
 
 _DIRECT_NAIVE_KERNELS = {
@@ -905,7 +908,7 @@ _GRAPH_NAIVE_DTYPE_TO_WARP_CALLABLES = {
 def _register_graph_naive_callables() -> dict[
     tuple[bool, bool, bool, jnp.dtype], object
 ]:
-    """Register GraphMode.WARP callables for all naive graph-mode paths."""
+    """Register JaxCallableGraphMode.WARP callables for all naive graph-mode paths."""
     registered: dict[tuple[bool, bool, bool, jnp.dtype], object] = {}
 
     for key, spec in _GRAPH_NAIVE_DTYPE_TO_WARP_CALLABLES.items():
@@ -921,7 +924,7 @@ def _register_graph_naive_callables() -> dict[
                 spec[dtype],
                 num_outputs=spec["num_outputs"],
                 in_out_argnames=spec["in_out_argnames"],
-                graph_mode=GraphMode.WARP,
+                graph_mode=JaxCallableGraphMode.WARP,
             )
             for wrap_positions in wrap_positions_values:
                 registered[(has_pbc, wrap_positions, selective, dtype)] = callable_obj
@@ -1157,9 +1160,9 @@ _GRAPH_NAIVE_TILE_SPECS = {
 def _register_graph_naive_tile_callables() -> dict[
     tuple[bool, bool, jnp.dtype], object
 ]:
-    """Register GraphMode.NONE tile callables for the naive eager path.
+    """Register JaxCallableGraphMode.NONE tile callables for the naive eager path.
 
-    ``GraphMode.NONE`` (not WARP): the tile bodies assume the caller has
+    ``JaxCallableGraphMode.NONE`` (not WARP): the tile bodies assume the caller has
     already pre-filled the output buffers, which only the eager
     (``graph_mode="none"``) path of ``naive_neighbor_list`` does.
     """
@@ -1170,7 +1173,7 @@ def _register_graph_naive_tile_callables() -> dict[
                 spec[dtype],
                 num_outputs=spec["num_outputs"],
                 in_out_argnames=spec["in_out_argnames"],
-                graph_mode=GraphMode.NONE,
+                graph_mode=JaxCallableGraphMode.NONE,
             )
     return registered
 
@@ -1464,7 +1467,7 @@ _GRAPH_NAIVE_PARTIAL_TILE_WARP_SPECS = {
 def _register_graph_naive_partial_tile_callables() -> dict[
     tuple[bool, bool, jnp.dtype], object
 ]:
-    """Register GraphMode.WARP callables for compact partial tile paths."""
+    """Register JaxCallableGraphMode.WARP callables for compact partial tile paths."""
     registered: dict[tuple[bool, bool, jnp.dtype], object] = {}
     for (has_pbc, wrap_positions), spec in _GRAPH_NAIVE_PARTIAL_TILE_WARP_SPECS.items():
         for dtype in (jnp.dtype(jnp.float32), jnp.dtype(jnp.float64)):
@@ -1472,7 +1475,7 @@ def _register_graph_naive_partial_tile_callables() -> dict[
                 spec[dtype],
                 num_outputs=spec["num_outputs"],
                 in_out_argnames=spec["in_out_argnames"],
-                graph_mode=GraphMode.WARP,
+                graph_mode=JaxCallableGraphMode.WARP,
             )
     return registered
 
@@ -1917,6 +1920,7 @@ def naive_neighbor_list(
     per_atom_cell_offsets_buffer: jax.Array | None = None,
     strategy: str = "auto",
     *,
+    coo_capacity: int | None = None,
     return_distances: bool = False,
     return_vectors: bool = False,
     neighbor_vectors: jax.Array | None = None,
@@ -2045,7 +2049,7 @@ def naive_neighbor_list(
     graph_mode : {"none", "warp"}, default="none"
         Execution mode for the underlying Warp launches. ``"none"``
         preserves the existing per-kernel ``jax_kernel`` dispatch path.
-        ``"warp"`` uses fused ``jax_callable(..., graph_mode=GraphMode.WARP)``
+        ``"warp"`` uses fused ``jax_callable(..., graph_mode=JaxCallableGraphMode.WARP)``
         callbacks and is intended for ``jax.jit`` call sites that donate
         reusable output buffers. Topology-only ``target_indices`` calls are
         supported when ``strategy="tile"`` or when ``"auto"`` selects tile,
@@ -2176,6 +2180,7 @@ def naive_neighbor_list(
     Cutoff, ``half_fill``, and PBC shift metadata are statically specialized.
     """
     graph_mode = _validate_graph_mode(graph_mode)
+    coo_capacity = _validate_coo_capacity(coo_capacity, return_neighbor_list)
 
     if strategy not in {"auto", "scalar", "tile"}:
         raise ValueError(
@@ -2629,10 +2634,16 @@ def naive_neighbor_list(
             if distances_out is not None or vectors_out is not None:
                 active = nm_out != int(fill_value)
                 distances_out, vectors_out = coo_pack_pair_geometry(
-                    active, distances_out, vectors_out
+                    active,
+                    distances_out,
+                    vectors_out,
+                    capacity=coo_capacity,
+                    plan=plan,
                 )
             if pair_fn is not None:
-                pe_out, pf_out = coo_pack_pair_geometry(active, pe_out, pf_out)
+                pe_out, pf_out = coo_pack_pair_geometry(
+                    active, pe_out, pf_out, capacity=coo_capacity, plan=plan
+                )
         elif pbc is not None:
             base = (nm_out, nn_out, shifts_out)
         else:
@@ -3201,7 +3212,22 @@ def naive_neighbor_list(
                 )
 
     if return_neighbor_list:
-        if pbc is not None:
+        if coo_capacity is not None and pbc is not None:
+            return get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                neighbor_matrix,
+                num_neighbors=num_neighbors,
+                capacity=coo_capacity,
+                neighbor_shift_matrix=neighbor_matrix_shifts,
+                fill_value=fill_value,
+            )
+        elif coo_capacity is not None:
+            return get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                neighbor_matrix,
+                num_neighbors=num_neighbors,
+                capacity=coo_capacity,
+                fill_value=fill_value,
+            )
+        elif pbc is not None:
             neighbor_list, neighbor_ptr, neighbor_list_shifts = (
                 get_neighbor_list_from_neighbor_matrix(
                     neighbor_matrix,

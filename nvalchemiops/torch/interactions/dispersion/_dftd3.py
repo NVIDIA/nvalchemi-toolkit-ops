@@ -32,6 +32,8 @@ from nvalchemiops.interactions.dispersion._dftd3 import (
 from nvalchemiops.interactions.dispersion._dftd3 import (
     dftd3_pbc as wp_dftd3_pbc,
 )
+from nvalchemiops.torch import torch_custom_op
+from nvalchemiops.torch._warp_op_helpers import scoped_torch_warp_stream
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 __all__ = [
@@ -234,10 +236,11 @@ class D3Parameters:
 # ==============================================================================
 
 
-@torch.library.custom_op(
+@torch_custom_op(
     "nvalchemiops::dftd3_matrix",
     mutates_args=("energy", "forces", "coord_num", "virial"),
 )
+@scoped_torch_warp_stream
 def _dftd3_matrix_op(
     positions: torch.Tensor,
     numbers: torch.Tensor,
@@ -281,8 +284,11 @@ def _dftd3_matrix_op(
     numbers : torch.Tensor, shape (num_atoms), dtype=int32
         Atomic numbers
     neighbor_matrix : torch.Tensor, shape (num_atoms, max_neighbors), dtype=int32
-        Neighbor indices. See module docstring for format details.
-        Padding entries have values >= fill_value.
+        Neighbor indices in dense row format. Row ``i`` lists the neighbor
+        atom indices of atom ``i``; unused slots are padded with values
+        ``>= fill_value``. Requires a symmetric neighbor representation (each
+        pair appears in both rows). Padding atoms (``numbers[i] == 0``) are
+        skipped.
     covalent_radii : torch.Tensor, shape (max_Z+1), dtype=float32
         Covalent radii indexed by atomic number, in same units as positions
     r4r2 : torch.Tensor, shape (max_Z+1), dtype=float32
@@ -329,7 +335,9 @@ def _dftd3_matrix_op(
     -------
     None
 
-    Modifies input tensors in-place: energy, forces, coord_num, virial (remains zeros)
+    Modifies input tensors in-place: energy, forces, coord_num, virial. Output
+    buffers are reset to zero on every successful call, including empty
+    systems. The non-PBC virial remains zero.
 
     Notes
     -----
@@ -359,6 +367,12 @@ def _dftd3_matrix_op(
     if fill_value is None:
         fill_value = num_atoms
 
+    # Zero output tensors
+    energy.zero_()
+    forces.zero_()
+    coord_num.zero_()
+    virial.zero_()
+
     # Handle empty case
     if num_atoms == 0:
         return
@@ -366,12 +380,6 @@ def _dftd3_matrix_op(
     # Infer device from positions if not provided
     if device is None:
         device = str(positions.device)
-
-    # Zero output tensors
-    energy.zero_()
-    forces.zero_()
-    coord_num.zero_()
-    virial.zero_()
 
     # Detect dtype and set appropriate Warp types
     wp_dtype = get_wp_dtype(positions.dtype)
@@ -458,10 +466,11 @@ def _dftd3_matrix_op(
     )
 
 
-@torch.library.custom_op(
+@torch_custom_op(
     "nvalchemiops::dftd3_matrix_pbc",
     mutates_args=("energy", "forces", "coord_num", "virial"),
 )
+@scoped_torch_warp_stream
 def _dftd3_matrix_pbc_op(
     positions: torch.Tensor,
     numbers: torch.Tensor,
@@ -507,8 +516,11 @@ def _dftd3_matrix_pbc_op(
     numbers : torch.Tensor, shape (num_atoms), dtype=int32
         Atomic numbers
     neighbor_matrix : torch.Tensor, shape (num_atoms, max_neighbors), dtype=int32
-        Neighbor indices. See module docstring for format details.
-        Padding entries have values >= fill_value.
+        Neighbor indices in dense row format. Row ``i`` lists the neighbor
+        atom indices of atom ``i``; unused slots are padded with values
+        ``>= fill_value``. Requires a symmetric neighbor representation (each
+        pair appears in both rows). Padding atoms (``numbers[i] == 0``) are
+        skipped.
     cell : torch.Tensor, shape (num_systems, 3, 3), dtype=float32 or float64
         Unit cell lattice vectors for PBC, in same dtype and units as positions.
     neighbor_matrix_shifts : torch.Tensor, shape (num_atoms, max_neighbors, 3), dtype=int32
@@ -562,7 +574,10 @@ def _dftd3_matrix_pbc_op(
     -------
     None
 
-    Modifies input tensors in-place: energy, forces, coord_num, virial (if compute_virial=True)
+    Modifies input tensors in-place: energy, forces, coord_num, virial. Output
+    buffers are reset to zero on every successful call, including empty
+    systems. ``compute_virial=True`` populates virial; otherwise it remains
+    reset to zero.
 
     Notes
     -----
@@ -593,6 +608,12 @@ def _dftd3_matrix_pbc_op(
     if fill_value is None:
         fill_value = num_atoms
 
+    # Zero output tensors
+    energy.zero_()
+    forces.zero_()
+    coord_num.zero_()
+    virial.zero_()
+
     # Handle empty case
     if num_atoms == 0:
         return
@@ -600,12 +621,6 @@ def _dftd3_matrix_pbc_op(
     # Infer device from positions if not provided
     if device is None:
         device = str(positions.device)
-
-    # Zero output tensors
-    energy.zero_()
-    forces.zero_()
-    coord_num.zero_()
-    virial.zero_()
 
     # Detect dtype and set appropriate Warp types
     wp_dtype = get_wp_dtype(positions.dtype)
@@ -708,10 +723,11 @@ def _dftd3_matrix_pbc_op(
     )
 
 
-@torch.library.custom_op(
+@torch_custom_op(
     "nvalchemiops::dftd3",
     mutates_args=("energy", "forces", "coord_num", "virial"),
 )
+@scoped_torch_warp_stream
 def _dftd3_op(
     positions: torch.Tensor,
     numbers: torch.Tensor,
@@ -798,7 +814,9 @@ def _dftd3_op(
     -------
     None
 
-    Modifies input tensors in-place: energy, forces, coord_num, virial (remains zeros)
+    Modifies input tensors in-place: energy, forces, coord_num, virial. Output
+    buffers are reset to zero on every successful call, including empty systems
+    and CSR graphs with no edges. The non-PBC virial is reset but not computed.
 
     Notes
     -----
@@ -826,6 +844,12 @@ def _dftd3_op(
     num_atoms = positions.size(0)
     num_edges = idx_j.size(0)
 
+    # Zero output tensors
+    energy.zero_()
+    forces.zero_()
+    coord_num.zero_()
+    virial.zero_()
+
     # Handle empty case
     if num_atoms == 0 or num_edges == 0:
         return
@@ -833,12 +857,6 @@ def _dftd3_op(
     # Infer device from positions if not provided
     if device is None:
         device = str(positions.device)
-
-    # Zero output tensors
-    energy.zero_()
-    forces.zero_()
-    coord_num.zero_()
-    virial.zero_()
 
     # Detect dtype and set appropriate Warp types
     wp_dtype = get_wp_dtype(positions.dtype)
@@ -923,10 +941,11 @@ def _dftd3_op(
     )
 
 
-@torch.library.custom_op(
+@torch_custom_op(
     "nvalchemiops::dftd3_pbc",
     mutates_args=("energy", "forces", "coord_num", "virial"),
 )
+@scoped_torch_warp_stream
 def _dftd3_pbc_op(
     positions: torch.Tensor,
     numbers: torch.Tensor,
@@ -1023,7 +1042,10 @@ def _dftd3_pbc_op(
     -------
     None
 
-    Modifies input tensors in-place: energy, forces, coord_num, virial (if compute_virial=True)
+    Modifies input tensors in-place: energy, forces, coord_num, virial. Output
+    buffers are reset to zero on every successful call, including empty systems
+    and CSR graphs with no edges. ``compute_virial=True`` populates virial;
+    otherwise it remains reset to zero.
 
     Notes
     -----
@@ -1052,6 +1074,12 @@ def _dftd3_pbc_op(
     num_atoms = positions.size(0)
     num_edges = idx_j.size(0)
 
+    # Zero output tensors
+    energy.zero_()
+    forces.zero_()
+    coord_num.zero_()
+    virial.zero_()
+
     # Handle empty case
     if num_atoms == 0 or num_edges == 0:
         return
@@ -1059,12 +1087,6 @@ def _dftd3_pbc_op(
     # Infer device from positions if not provided
     if device is None:
         device = str(positions.device)
-
-    # Zero output tensors
-    energy.zero_()
-    forces.zero_()
-    coord_num.zero_()
-    virial.zero_()
 
     # Detect dtype and set appropriate Warp types
     wp_dtype = get_wp_dtype(positions.dtype)
@@ -1274,9 +1296,11 @@ def dftd3(
         Convention: cell[s, i, :] is i-th lattice vector for system s.
         If None, non-periodic calculation. Default: None
     neighbor_matrix : torch.Tensor | None, optional
-        Neighbor indices [num_atoms, max_neighbors] as int32. See module docstring for
-        details on the format. Padding entries have values >= fill_value.
-        Mutually exclusive with neighbor_list. Default: None
+        Neighbor indices [num_atoms, max_neighbors] as int32 in dense row
+        format. Row ``i`` lists the neighbor atom indices of atom ``i``;
+        unused slots are padded with values ``>= fill_value``. Requires a
+        symmetric neighbor representation (each pair appears in both rows).
+        Mutually exclusive with ``neighbor_list``. Default: None
     neighbor_matrix_shifts : torch.Tensor or None, optional
         Integer unit cell shifts [num_atoms, max_neighbors, 3] as int32 for PBC with
         neighbor_matrix format. If None, non-periodic calculation. If provided along

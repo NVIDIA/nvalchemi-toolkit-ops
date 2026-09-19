@@ -523,12 +523,12 @@ Torch/JAX comparison eligibility is limited to ``naive_scalar`` and
 ``batch_naive_scalar``. Both backends must succeed at the same x-value, and
 JAX serial-fallback rows are excluded.
 
-The other strategies remain in the individual backend panels. They are not
-overlaid because the current public APIs use different execution contracts:
-JAX naive-tile runs through an eager public call, the cell-list wrappers can
-choose different cell grids or query paths, pair-centric has backend-specific
-launch guards, and cluster-tile has different traceability between single and
-batched APIs.
+The other strategies appear in the individual backend panels. They are not
+overlaid because the public APIs use different execution contracts: JAX
+method-specific naive-tile and cluster-tile calls use fixed-capacity compiled
+boundaries, the cell-list wrappers can choose different cell grids or query
+paths, and JAX pair-centric calls require caller-supplied static launch metadata
+when cell sizing is traced.
 
 JAX normally dispatches timed calls back-to-back and blocks on the last result.
 If output storage cannot fit that queue, it blocks after each call and records

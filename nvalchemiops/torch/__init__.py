@@ -39,6 +39,7 @@ if importlib.util.find_spec("torch") is None:
         " Please install via `pip install 'nvalchemiops[torch]'`."
     )
 
+from nvalchemiops.torch._warp_op_helpers import torch_custom_op
 from nvalchemiops.torch.fire2 import (
     fire2_compute_extended_reductions,
     fire2_step_coord,
@@ -63,6 +64,7 @@ from nvalchemiops.torch.types import (
 )
 
 __all__ = [
+    "torch_custom_op",
     "get_wp_dtype",
     "get_wp_mat_dtype",
     "get_wp_vec_dtype",

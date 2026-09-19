@@ -80,6 +80,17 @@ in a consistent dtype within each call. The examples use `float64` because
 reciprocal-space electrostatics and gradient checks are accuracy sensitive;
 `float32` is supported when throughput is the priority.
 
+```{important}
+Import `nvalchemiops.jax.interactions.electrostatics` before creating JAX
+arrays intended to be `float64` or compiling JAX functions that operate on
+`float64` arrays.
+
+On import, the module sets JAX 64-bit support process-wide, including when it
+was previously disabled. This cannot restore precision in arrays already
+created as `float32` or update functions that JAX has already compiled.
+`float32` calculations remain supported.
+```
+
 ## Quick Start
 
 :::::::{tab-set}
@@ -413,7 +424,7 @@ Removes the spurious self-interaction introduced by the Gaussian charge distribu
 **Background Correction** (for non-neutral systems):
 
 ```{math}
-E_{\text{background}} = \frac{\pi}{2\alpha^2 V} Q_{\text{total}}^2
+E_{\text{background}} = \frac{\mathrm{FIELD\_CONSTANT}}{8\alpha^2 V} Q_{\text{total}}^2
 ```
 
 ### Usage Examples
@@ -699,7 +710,7 @@ real_energies, real_forces = ewald_real_space(
     compute_forces=True,
 )
 
-# Reciprocal-space only (long-range, smooth)
+# Reciprocal-space only in a fixed-cell loop
 k_vectors = generate_k_vectors_ewald_summation(cell.detach(), k_cutoff=8.0)
 recip_energies, recip_forces = ewald_reciprocal_space(
     positions, charges, cell, k_vectors, alpha, compute_forces=True,
@@ -746,6 +757,25 @@ The sum of real and reciprocal components gives the Ewald energy.
 The self-energy and background corrections are embedded within
 the reciprocal energy.
 ```
+
+For a differentiable cell or strain calculation, generate the Cartesian
+reciprocal vectors inside the energy closure from that same differentiable cell.
+Use fixed Python Miller bounds so the reciprocal-index set remains constant:
+
+```python
+miller_bounds = (12, 12, 12)
+
+def reciprocal_energy(positions, charges, cell):
+    k_vectors = generate_k_vectors_ewald_summation(
+        cell, k_cutoff=8.0, miller_bounds=miller_bounds
+    )
+    return ewald_reciprocal_space(positions, charges, cell, k_vectors, alpha)
+```
+
+Passing detached vectors while differentiating with respect to `cell` holds
+their Cartesian values fixed and does not produce the physical Ewald strain
+virial. The eager Torch component API warns for this case; the advisory warning
+is suppressed under `torch.compile`.
 
 When using the Ewald component functions for slab-like systems, add the slab
 correction explicitly after computing the 3D-periodic real- and reciprocal-space
@@ -1654,14 +1684,26 @@ computes the full periodic multipole energy as a single composite call. It uses
 the GTO-Ewald split
 
 $$
-E = E_{\text{real}} + E_{\text{recip}} - E_{\text{self}},
+E = E_{\text{real}} + E_{\text{recip}} - E_{\text{self}} - E_{\text{background}},
 $$
 
 where the real-space term is a short-ranged pair sum over a neighbor list, the
 reciprocal term is a direct $k$-space sum, and the self term removes the
-spurious self-interaction of each smeared multipole. It supports $l_{\max}=0/1/2$
-energy, forces, stress, and force-loss ($\texttt{create\_graph=True}$) training,
-for both single systems and batches (via `batch_idx`).
+spurious self-interaction of each smeared multipole. For a non-neutral system,
+the positive correction subtracted from the split sum is
+
+$$
+E_{\text{background}} = \frac{\mathrm{FIELD\_CONSTANT}}{8\alpha^2 V} Q^2.
+$$
+
+This is the uniform-neutralizing-background convention. It makes the split
+Ewald and PME routes agree with `multipole_electrostatic_energy`, whose direct
+reciprocal sum omits the $k=0$ mode. The resulting charged-cell energy is a
+well-defined periodic reference, but its absolute value remains dependent on
+total charge, cell volume, and that convention; it is not a model of explicit
+counterions. It supports $l_{\max}=0/1/2$ energy, forces, stress, and force-loss
+($\texttt{create\_graph=True}$) training, for both single systems and batches
+(via `batch_idx`).
 
 The real-space term requires a CSR-style neighbor list: a flat `idx_j` (target
 atoms), a `neighbor_ptr` row pointer of shape $(N+1,)$, and per-pair PBC
@@ -2261,12 +2303,21 @@ potentials (MLIPs) with learned charge models (`q = q(R)`) -- computing total fo
   the Ewald/PME kernel (`compute_forces=True`)
 - **Charge chain-rule forces** `-(dE/dq)(dq/dR)`, computed via PyTorch autograd through the charge model
 
-The legacy `hybrid_forces=True` path computes both contributions without adding
-the fixed-charge positional term twice. In standard mode, `energy.backward()`
-already includes both position and charge terms, so adding explicit forces would
-**double-count** the positional contribution. `hybrid_forces=True` detaches
-positions and cell from the autograd graph and makes energy differentiable only
-through the charges via a straight-through estimator.
+When `charges.requires_grad=True`, ordinary first-order losses whose energy
+cotangent is uniform within each system (for example, `energy.sum()`) use the
+legacy `hybrid_forces=True` cached charge-gradient path. It detaches positions
+and cell and injects charge gradients through a straight-through estimator. Its
+energy therefore contributes only the charge chain-rule term, which can be
+combined with the explicit fixed-charge force without double-counting.
+
+For a weighted per-system objective, first multiply each direct per-atom force
+by `weights[batch_idx]`; raw direct forces are complementary only to unit
+weights.
+
+Non-uniform per-atom energy losses and calls with `create_graph=True` instead
+reconstruct the eager energy graph. They include both the fixed-charge geometry
+term and the charge chain-rule term, just like standard energy autograd. Do not
+add direct analytical forces to those fallback-derived geometry gradients.
 
 ```{important}
 Do not combine explicit forces (`compute_forces=True`) with full autograd
@@ -2298,8 +2349,9 @@ cell_scaled = cell @ scaling
 # Geometry-dependent charges from scaled positions
 q = charge_model(positions_scaled, Z)
 
-# hybrid_forces=True: explicit forces + virial are analytical (forward-only),
-# energy is differentiable w.r.t. charges only (via straight-through trick)
+# For a uniform first-order loss, hybrid_forces=True keeps direct forces and
+# virial forward-only while energy differentiates through the cached charge path.
+# Weighted per-atom losses and create_graph=True use the full eager fallback.
 energies, direct_forces, direct_virial = particle_mesh_ewald(
     positions_scaled, q, cell_scaled,
     neighbor_list=nl, neighbor_ptr=nl_ptr, neighbor_shifts=shifts,
@@ -2307,8 +2359,8 @@ energies, direct_forces, direct_virial = particle_mesh_ewald(
     hybrid_forces=True,
 )
 
-# Differentiate energy w.r.t. positions and scaling.
-# In hybrid mode only the charge pathway is in the autograd graph.
+# Differentiate energy w.r.t. positions and scaling. This uniform first-order
+# loss uses the cached charge pathway in hybrid mode.
 dE_dpos, dE_dscaling = torch.autograd.grad(
     energies.sum(), [positions, scaling],
 )
@@ -2626,8 +2678,9 @@ higher-order support is limited to tested position and charge scalar losses.
 JAX PME stress/cell/strain, alpha, and precomputed-metadata higher-order
 derivatives are unsupported until implemented and tested, including high-level
 `particle_mesh_ewald(..., slab_correction=True)` calls. Energy-returning Ewald,
-PME, and slab paths support non-uniform per-atom losses such as `loss = (weights
-* energies).sum()` for positions, charges, and supported cell derivatives.
+PME, and slab paths support non-uniform per-atom losses such as
+`loss = (weights * energies).sum()` for positions, charges, and supported cell
+derivatives.
 Precomputed static caches still do not recover the derivative of how those
 caches were generated; omit the cache when that derivative is part of the
 intended loss.
@@ -2652,11 +2705,11 @@ Monopole Torch and JAX Ewald, PME, and slab entry points accept keyword-only
 tuples, only the first energy field changes shape; forces remain `(N, 3)`,
 charge gradients remain `(N,)`, and virials remain `(B, 3, 3)`.
 
-Composite Ewald/PME calls apply the same layout to every energy component
-(real, reciprocal, correction, and optional slab) before combining. Hybrid and
-direct-output internals remain atom-major; reduction occurs only at the public
-boundary. Underlying Warp kernels and custom ops continue to use atom-buffer
-layouts.
+Composite Ewald/PME calls apply the requested public layout to their combined
+energy. Torch real-space can write system-major energy directly through
+system-layout Warp/custom-op specializations. Reciprocal, correction, and slab
+components, as well as JAX bindings, may reduce atom-major component outputs
+before composition. Direct derivative fields retain their established shapes.
 
 For batched per-system losses, prefer `energy_reduction="system"` over manually
 reducing per-atom energies:
@@ -2959,9 +3012,9 @@ deprecated flags remain available for compatibility in v0.4.0 but emit a
 
 | Deprecated flag | Replacement |
 |-----------------|-------------|
-| `compute_forces=True` | `forces = -torch.autograd.grad(E.sum(), positions)[0]` (atom mode) or `grad((weights * E).sum(), positions)` (system mode) |
+| `compute_forces=True` | `forces = -torch.autograd.grad(E.sum(), positions)[0]` in either layout; `-torch.autograd.grad((weights * E).sum(), positions)[0]` is the force of a weighted objective and matches deprecated unweighted direct output only when all participating weights are one |
 | `compute_virial=True` | `grad_u = torch.autograd.grad(E.sum(), displacement)[0]` with the row-vector displacement recipe; `virial = -grad_u`, `stress = grad_u / V` |
-| `compute_charge_gradients=True` | `dEdq = torch.autograd.grad(E.sum(), charges)[0]` (atom mode) or `grad((weights * E).sum(), charges)` (system mode) |
+| `compute_charge_gradients=True` | `dEdq = torch.autograd.grad(E.sum(), charges)[0]` in either layout; `torch.autograd.grad((weights * E).sum(), charges)[0]` is the gradient of a weighted objective and matches deprecated unweighted direct output only when all participating weights are one |
 | `hybrid_forces=True` | Keep `charges = charge_model(positions)` in the graph; derive the force from energy (full `q(R)` force) |
 | Manual `scatter_add` / `segment_sum` on atom energy | `energy_reduction="system"` on the monopole Ewald/PME/slab APIs |
 
@@ -3159,7 +3212,7 @@ For periodic systems, overall charge neutrality is required for the electrostati
 energy to be well-defined. Non-neutral systems include a background correction:
 
 ```{math}
-E_{\text{background}} = \frac{\pi}{2\alpha^2 V} Q_{\text{total}}^2
+E_{\text{background}} = \frac{\mathrm{FIELD\_CONSTANT}}{8\alpha^2 V} Q_{\text{total}}^2
 ```
 
 This term represents the interaction of the charged system with a uniform

@@ -30,10 +30,15 @@ always takes the precompute path because backward requires the saved state).
 
 from __future__ import annotations
 
+import gc
+import weakref
+
 import pytest
 import torch
 import warp as wp
 
+from nvalchemiops.segment_ops import segmented_sum as warp_segmented_sum
+from nvalchemiops.torch._warp_op_helpers import scoped_warp_stream
 from nvalchemiops.torch.segment_ops import (
     segmented_dot,
     segmented_matvec,
@@ -44,6 +49,26 @@ from nvalchemiops.torch.segment_ops import (
 )
 
 wp.init()
+
+
+@torch.library.custom_op("nvalchemiops_test::segmented_sum", mutates_args=())
+def _raw_segmented_sum(
+    values: torch.Tensor, idx: torch.Tensor, num_segments: int
+) -> torch.Tensor:
+    """Call the raw Warp segmented-sum API behind an opaque Torch boundary."""
+    out = torch.zeros(num_segments, device=values.device, dtype=values.dtype)
+    with scoped_warp_stream(values.device):
+        warp_segmented_sum(
+            wp.from_torch(values.contiguous()),
+            wp.from_torch(idx.to(torch.int32)),
+            wp.from_torch(out),
+        )
+    return out
+
+
+@_raw_segmented_sum.register_fake
+def _(values: torch.Tensor, idx: torch.Tensor, num_segments: int) -> torch.Tensor:
+    return torch.empty(num_segments, device=values.device, dtype=values.dtype)
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +156,37 @@ class TestSegmentedSum:
             0, idx.long(), x.detach()
         )
         torch.testing.assert_close(out.detach(), ref, **_tols(dtype))
+
+    def test_int64_idx_eager(self, device):
+        """Accept int64 public indices while retaining int32 Warp dispatch."""
+        idx = _make_idx(device).to(torch.int64)
+        x = _leaf((N,), device)
+        out = segmented_sum(x, idx, M)
+        ref = torch.zeros(M, dtype=x.dtype, device=device).index_add_(
+            0, idx, x.detach()
+        )
+
+        torch.testing.assert_close(out.detach(), ref, **_tols(x.dtype))
+        out.sum().backward()
+        torch.testing.assert_close(x.grad, torch.ones_like(x))
+
+    @pytest.mark.slow
+    def test_int64_idx_compiled(self, device):
+        """Keep int64 index conversion inside the full TorchDynamo graph, fwd and bwd."""
+        idx = _make_idx(device).to(torch.int64)
+        x = _leaf((N,), device)
+        compiled = torch.compile(
+            lambda values, indices: segmented_sum(values, indices, M),
+            fullgraph=True,
+        )
+
+        out = compiled(x, idx)
+        ref = torch.zeros(M, dtype=x.dtype, device=device).index_add_(
+            0, idx, x.detach()
+        )
+        torch.testing.assert_close(out.detach(), ref, **_tols(x.dtype))
+        out.sum().backward()
+        torch.testing.assert_close(x.grad, torch.ones_like(x))
 
     def test_gradcheck_scalar(self, device):
         idx = _make_idx(device)
@@ -498,6 +554,17 @@ class TestEdgeCases:
         with pytest.raises(ValueError, match="idx.*range"):
             segmented_sum(x, idx, num_segments=2)
 
+    def test_sum_idx_int64_not_int32_representable_raises(self, device):
+        """``segmented_sum`` must reject int64 values that overflow int32.
+
+        Narrowing to int32 would silently wrap, so the eager validation
+        rejects these inputs before the range check.
+        """
+        x = torch.ones(2, device=device)
+        idx = torch.tensor([0, 2**31], dtype=torch.int64, device=device)
+        with pytest.raises(ValueError, match="idx.*not representable as int32"):
+            segmented_sum(x, idx, num_segments=2)
+
     def test_sum_idx_negative_raises(self, device):
         x = torch.ones(2, device=device)
         idx = torch.tensor([0, -1], dtype=torch.int32, device=device)
@@ -506,8 +573,8 @@ class TestEdgeCases:
 
     def test_sum_idx_wrong_dtype_raises(self, device):
         x = torch.ones(2, device=device)
-        idx = torch.tensor([0, 1], dtype=torch.int64, device=device)
-        with pytest.raises(ValueError, match="idx.*int32"):
+        idx = torch.tensor([0, 1], dtype=torch.float32, device=device)
+        with pytest.raises(ValueError, match="idx.*int32 or int64"):
             segmented_sum(x, idx, num_segments=2)
 
     def test_sum_idx_wrong_rank_raises(self, device):
@@ -1089,5 +1156,32 @@ class TestCompile:
         grads_c = torch.autograd.grad(out_c, leaves2, g)
 
         torch.testing.assert_close(out_c, out_ref)  # fullgraph => no break
-        for gc, gr in zip(grads_c, grads_ref, strict=True):
-            torch.testing.assert_close(gc, gr)
+        for grad_compiled, grad_ref in zip(grads_c, grads_ref, strict=True):
+            torch.testing.assert_close(grad_compiled, grad_ref)
+
+    @pytest.mark.slow
+    def test_cuda_graph_does_not_retain_custom_op_inputs(self, device):
+        """Release transient custom-op inputs after a CUDA graph capture."""
+        if device == "cpu":
+            pytest.skip("CUDAGraph trees require CUDA")
+
+        def reduce(x: torch.Tensor, batch_idx: torch.Tensor) -> torch.Tensor:
+            return _raw_segmented_sum(x, batch_idx, num_segments=2)
+
+        compiled = torch.compile(reduce, fullgraph=True, backend="cudagraphs")
+
+        def invoke() -> tuple[
+            torch.Tensor, weakref.ReferenceType, weakref.ReferenceType
+        ]:
+            values = torch.tensor([1.0, 2.0, 10.0, 20.0], device=device)
+            idx = torch.tensor([0, 0, 1, 1], device=device)
+            values_ref = weakref.ref(values)
+            idx_ref = weakref.ref(idx)
+            return compiled(values, idx), values_ref, idx_ref
+
+        result, values_ref, idx_ref = invoke()
+        torch.testing.assert_close(result, torch.tensor([3.0, 30.0], device=device))
+        torch.cuda.synchronize(device)
+        gc.collect()
+        assert values_ref() is None
+        assert idx_ref() is None

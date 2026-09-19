@@ -9,13 +9,20 @@ These functions accept standard ``torch.Tensor`` inputs and support automatic di
 Ewald and PME support full autograd for positions, charges, and cell parameters.
 DSF supports charge gradients via autograd; forces and virials are computed analytically.
 Setup parameters such as ``alpha``, cutoffs, mesh controls, batch metadata, and
-neighbor topology are treated as constants. Cell-derived caches such as
-``k_vectors``, ``k_squared``, ``volume``, and ``cell_inv_t`` are accepted when
-``cell.requires_grad`` is true, but they are static metadata and are assumed to
-correspond to the current ``cell``; their cache-generation derivatives are not
-recovered. Energy-returning Ewald, PME, and slab paths support atom-weighted
-losses such as ``(weights * energies).sum()`` for positions, charges, and
-supported cell derivatives. Monopole entry points provide the keyword-only
+neighbor topology are treated as constants. On the full ``ewald_summation`` and
+``particle_mesh_ewald`` APIs, cell-derived caches such as ``k_vectors``,
+``k_squared``, ``volume``, and ``cell_inv_t`` are static metadata assumed to
+correspond to the current ``cell``. The lower-level
+``ewald_reciprocal_space`` component follows a ``k_vectors`` autograd edge
+from ``cell`` when one exists. For reusable changing-cell Ewald topology,
+retain signed Miller indices with ``generate_ewald_miller_indices`` and use
+``ewald_reciprocal_space_from_miller_indices`` or
+``ewald_summation(miller_indices=...)``. Energy-returning
+Ewald, PME, and slab paths support
+atom-weighted losses such as ``(weights * energies).sum()`` for positions,
+charges, and supported cell derivatives.
+
+Monopole entry points provide the keyword-only
 ``energy_reduction`` option. The default, ``"atom"``, returns one energy per
 atom with shape ``(N,)``. Set it to ``"system"`` to sum energies within each
 system and return shape ``(B,)``. Other requested outputs, including forces,
@@ -24,7 +31,9 @@ charge gradients, and virials, keep their existing shapes.
 In eager atom mode, recognizing a materialized uniform output gradient may
 require reading its value, which synchronizes CUDA once. System mode avoids
 this check: per-system output gradients go directly to the cached backward.
-Internally, the Warp kernels continue to use per-atom energy buffers.
+Torch real-space forward specializations can write directly to system-major
+energy buffers; other components may retain atom-major intermediate buffers and
+reduce before composition.
 Point-charge Ewald/PME inputs support ``float32`` and ``float64``. Keep all
 floating inputs and precomputed metadata in a call on a consistent dtype.
 
@@ -73,6 +82,7 @@ Individual components of the Ewald summation method.
 
 .. autofunction:: ewald_real_space
 .. autofunction:: ewald_reciprocal_space
+.. autofunction:: ewald_reciprocal_space_from_miller_indices
 
 PME Components
 --------------
@@ -86,6 +96,8 @@ K-Vector Generation
 -------------------
 
 .. autofunction:: generate_k_vectors_ewald_summation
+.. autofunction:: generate_ewald_miller_indices
+.. autofunction:: k_vectors_from_miller_indices
 .. autofunction:: generate_k_vectors_pme
 
 Parameter Estimation

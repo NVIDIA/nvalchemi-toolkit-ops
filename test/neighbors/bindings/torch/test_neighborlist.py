@@ -32,6 +32,7 @@ from nvalchemiops.torch.neighbors.batch_naive_dual_cutoff import (
 from nvalchemiops.torch.neighbors.cell_list import (
     cell_list,
 )
+from nvalchemiops.torch.neighbors.cluster_tile import cluster_tile_neighbor_list
 from nvalchemiops.torch.neighbors.naive import (
     naive_neighbor_list,
 )
@@ -44,6 +45,60 @@ from ...test_utils import (
     assert_neighbor_matrix_equal,
     create_random_system,
 )
+
+
+class TestNeighborListClusterTileCompile:
+    """Validate compiled public cluster-tile dispatcher routes."""
+
+    @pytest.mark.slow
+    def test_compiled_unified_cluster_tile_is_rejected(self):
+        """Unified compiled cluster-tile cannot inspect tensor-valued PBC."""
+        if not torch.cuda.is_available():
+            pytest.skip("cluster_tile requires CUDA")
+        torch.manual_seed(42)
+        natom = 64
+        max_pairs = natom * 64
+        device = "cuda"
+        positions = torch.rand(natom, 3, dtype=torch.float32, device=device) * 6.0
+        cell = torch.eye(3, dtype=torch.float32, device=device).unsqueeze(0) * 6.0
+        pbc = torch.ones(3, dtype=torch.bool, device=device)
+        num_tiles, row, col, *_ = cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell,
+            format="tile",
+        )
+        topology = torch.empty((2, max_pairs), dtype=torch.int32, device=device)
+        pair_offsets = torch.tensor([0, max_pairs], dtype=torch.int32, device=device)
+        pair_counts = torch.zeros(1, dtype=torch.int32, device=device)
+        shifts = torch.empty((max_pairs, 3), dtype=torch.int32, device=device)
+
+        @torch.compile(fullgraph=True)
+        def run(rebuild_flags):
+            return neighbor_list(
+                positions,
+                2.0,
+                cell=cell,
+                pbc=pbc,
+                method="cluster_tile",
+                return_neighbor_list=True,
+                rebuild_flags=rebuild_flags,
+                return_state=True,
+                num_tiles=num_tiles,
+                tile_row_group=row,
+                tile_col_group=col,
+                neighbor_list=topology,
+                pair_offsets=pair_offsets,
+                pair_counts=pair_counts,
+                neighbor_list_shifts=shifts,
+                max_neighbors=64,
+            )
+
+        with pytest.raises(
+            torch._dynamo.exc.Unsupported,
+            match="cannot validate tensor-valued pbc without synchronization",
+        ):
+            run(torch.ones(1, dtype=torch.bool, device=device))
 
 
 class TestNeighborListAutoSelection:
@@ -573,6 +628,89 @@ class TestNeighborListAutoSelection:
         torch.testing.assert_close(captured["cell"][0], cell)
         torch.testing.assert_close(captured["cell"][1], cell)
 
+    def test_explicit_cluster_tile_forwards_return_state(self, monkeypatch):
+        """The dispatcher forwards segmented COO state arguments to cluster_tile."""
+        captured = {}
+        pair_offsets = torch.tensor([0, 32], dtype=torch.int32)
+        pair_counts = torch.zeros(1, dtype=torch.int32)
+
+        def fake_cluster_tile(positions, cutoff, cell, **kwargs):
+            del positions, cutoff, cell
+            captured.update(kwargs)
+            return "cluster_tile"
+
+        monkeypatch.setattr(
+            neighbor_module, "cluster_tile_neighbor_list", fake_cluster_tile
+        )
+
+        result = neighbor_module.neighbor_list(
+            torch.zeros(32, 3, dtype=torch.float32),
+            2.0,
+            cell=torch.eye(3) * 8.0,
+            pbc=torch.ones(3, dtype=torch.bool),
+            method="cluster_tile",
+            return_neighbor_list=True,
+            rebuild_flags=torch.tensor([True], dtype=torch.bool),
+            return_state=True,
+            pair_offsets=pair_offsets,
+            pair_counts=pair_counts,
+        )
+
+        assert result == "cluster_tile"
+        assert captured["format"] == "coo"
+        assert captured["return_state"] is True
+        assert captured["pair_offsets"] is pair_offsets
+        assert captured["pair_counts"] is pair_counts
+
+    def test_explicit_batch_cluster_tile_forwards_return_state(self, monkeypatch):
+        """The dispatcher forwards state-return arguments to batch_cluster_tile."""
+        captured = {}
+
+        def fake_batch_cluster_tile(positions, cutoff, cell, batch_ptr, **kwargs):
+            del positions, cutoff, cell, batch_ptr
+            captured.update(kwargs)
+            return "batch_cluster_tile"
+
+        monkeypatch.setattr(
+            neighbor_module,
+            "batch_cluster_tile_neighbor_list",
+            fake_batch_cluster_tile,
+        )
+
+        result = neighbor_module.neighbor_list(
+            torch.zeros(32, 3, dtype=torch.float32),
+            2.0,
+            cell=torch.eye(3).unsqueeze(0) * 8.0,
+            pbc=torch.ones((1, 3), dtype=torch.bool),
+            batch_ptr=torch.tensor([0, 32], dtype=torch.int32),
+            method="batch_cluster_tile",
+            rebuild_flags=torch.tensor([True], dtype=torch.bool),
+            return_state=True,
+        )
+
+        assert result == "batch_cluster_tile"
+        assert captured["return_state"] is True
+
+    @pytest.mark.parametrize("method", [None, "naive", "batch_cell_list"])
+    def test_return_state_rejects_implicit_or_unsupported_method(self, method):
+        """State return requires an explicit cluster-tile method."""
+        match = (
+            "requires an explicit cluster_tile method"
+            if method is None
+            else "supported only by explicit cluster_tile methods"
+        )
+
+        with pytest.raises(ValueError, match=match):
+            neighbor_module.neighbor_list(
+                torch.zeros(32, 3, dtype=torch.float32),
+                2.0,
+                cell=torch.eye(3) * 8.0,
+                pbc=torch.ones(3, dtype=torch.bool),
+                method=method,
+                rebuild_flags=torch.tensor([True], dtype=torch.bool),
+                return_state=True,
+            )
+
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
     @pytest.mark.parametrize("device", ["cpu", "cuda"])
     def test_auto_select_batch_naive_dual_cutoff(self, dtype, device):
@@ -712,6 +850,45 @@ class TestNeighborListAutoSelection:
                 cutoff=2.0,
                 method="batch_cluster_tile",
                 batch_ptr=batch_ptr,
+                return_neighbor_list=True,
+            )
+
+    @pytest.mark.parametrize("dtype", [torch.float32])
+    def test_explicit_cluster_tile_rejects_partial_pbc(self, dtype):
+        """Explicit cluster-tile rejects any non-periodic dimension."""
+        positions = torch.zeros((64, 3), dtype=dtype)
+        cell = torch.eye(3, dtype=dtype) * 8.0
+        pbc = torch.tensor([True, True, False], dtype=torch.bool)
+
+        with pytest.raises(NotImplementedError, match="pbc with any False"):
+            neighbor_list(
+                positions,
+                cutoff=2.0,
+                cell=cell,
+                pbc=pbc,
+                method="cluster_tile",
+                return_neighbor_list=True,
+            )
+
+    @pytest.mark.parametrize("dtype", [torch.float32])
+    def test_explicit_batch_cluster_tile_rejects_partial_pbc(self, dtype):
+        """Explicit batch cluster-tile rejects any non-periodic dimension."""
+        positions = torch.zeros((128, 3), dtype=dtype)
+        cell = torch.eye(3, dtype=dtype).expand(2, -1, -1).contiguous() * 8.0
+        pbc = torch.tensor(
+            [[True, True, True], [True, False, True]],
+            dtype=torch.bool,
+        )
+        batch_ptr = torch.tensor([0, 64, 128], dtype=torch.int32)
+
+        with pytest.raises(NotImplementedError, match="pbc with any False"):
+            neighbor_list(
+                positions,
+                cutoff=2.0,
+                cell=cell,
+                pbc=pbc,
+                batch_ptr=batch_ptr,
+                method="batch_cluster_tile",
                 return_neighbor_list=True,
             )
 

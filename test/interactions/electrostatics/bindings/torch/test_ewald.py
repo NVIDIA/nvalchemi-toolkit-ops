@@ -34,10 +34,13 @@ The unified API uses:
 
 import math
 import warnings
+from importlib import import_module
 
 import numpy as np
 import pytest
 import torch
+import warp as wp
+from torch.fx.experimental.proxy_tensor import make_fx
 from torchpme.lib.kvectors import _generate_kvectors as _generate_kvectors_torchpme
 
 from nvalchemiops.interactions.electrostatics._factory_common import _DerivState
@@ -45,14 +48,18 @@ from nvalchemiops.torch.interactions.electrostatics import (
     _ewald_real_chain,
     _ewald_recip_chain,
 )
+from nvalchemiops.torch.interactions.electrostatics import ewald as _ewald_module
 from nvalchemiops.torch.interactions.electrostatics.ewald import (
     ewald_real_space,
     ewald_reciprocal_space,
+    ewald_reciprocal_space_from_miller_indices,
     ewald_summation,
 )
 from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
     _generate_miller_indices,
+    generate_ewald_miller_indices,
     generate_k_vectors_ewald_summation,
+    k_vectors_from_miller_indices,
 )
 from nvalchemiops.torch.neighbors import batch_cell_list, cell_list
 
@@ -102,6 +109,17 @@ from test.interactions.electrostatics.conftest import (
 # Tolerances
 TIGHT_TOL = 1e-6
 LOOSE_TOL = 1e-4
+
+
+def test_compiled_single_system_atom_ranges_have_no_atomic_scatter():
+    """Concrete B=1 atom-range setup avoids segmented reduction in compiled graphs."""
+    batch_idx = torch.zeros(3, dtype=torch.long)
+    graph = make_fx(lambda indices: _ewald_module._atom_ranges(indices, 1))(batch_idx)
+
+    assert "index_add" not in graph.code
+    starts, ends = graph(batch_idx)
+    assert torch.equal(starts, torch.tensor([0], dtype=torch.int32))
+    assert torch.equal(ends, torch.tensor([3], dtype=torch.int32))
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
@@ -623,6 +641,54 @@ def create_dipole_system(
     neighbor_ptr = torch.tensor([0, 1, 2], dtype=torch.int32, device=device)
     neighbor_shifts = torch.zeros((2, 3), dtype=torch.int32, device=device)
     return positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts
+
+
+def _compile_ewald_setup(
+    device: torch.device,
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+]:
+    """Build fixed explicit-B=1 Ewald inputs outside compiled callables."""
+    positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts = (
+        create_dipole_system(device, dtype=torch.float64)
+    )
+    batch_idx = torch.zeros(positions.shape[0], dtype=torch.int32, device=device)
+    alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+    k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=3.0)
+    return (
+        positions,
+        charges,
+        cell,
+        batch_idx,
+        alpha,
+        k_vectors,
+        neighbor_list,
+        neighbor_ptr,
+        neighbor_shifts,
+    )
+
+
+def _ewald_energy_and_grads(
+    loss_fn,
+    positions: torch.Tensor,
+    charges: torch.Tensor,
+    cell: torch.Tensor,
+) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+    """Evaluate a scalar Ewald loss and its public first-order derivatives."""
+    positions = positions.clone().requires_grad_(True)
+    charges = charges.clone().requires_grad_(True)
+    cell = cell.clone().requires_grad_(True)
+    loss = loss_fn(positions, charges, cell)
+    gradients = torch.autograd.grad(loss, (positions, charges, cell))
+    return loss, gradients
 
 
 ###########################################################################################
@@ -2828,7 +2894,8 @@ class TestAutogradReciprocalSpace:
             allow_unused=True,
         )
         assert torch.isfinite(grad_cell).all()
-        assert grad_k is None
+        assert grad_k is not None
+        assert torch.isfinite(grad_k).all()
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_autograd_matches_explicit_forces(self, device):
@@ -2972,7 +3039,8 @@ class TestAutogradReciprocalSpace:
             allow_unused=True,
         )
         assert torch.isfinite(grad_cell).all()
-        assert grad_k is None
+        assert grad_k is not None
+        assert torch.isfinite(grad_k).all()
 
 
 class TestAutogradFullEwald:
@@ -5806,6 +5874,24 @@ class TestEwaldRealSpaceVirial:
 class TestEwaldReciprocalSpaceVirial:
     """Test reciprocal-space Ewald virial against finite-difference."""
 
+    @staticmethod
+    def _triclinic_system(device):
+        """Return the issue-136 reciprocal virial regression system."""
+        dtype = torch.float64
+        positions = torch.tensor(
+            [[0.5, 0.5, 0.5], [3.0, 1.0, 2.0], [1.5, 3.5, 4.0], [4.5, 2.5, 1.0]],
+            dtype=dtype,
+            device=device,
+        )
+        charges = torch.tensor([1.0, -1.0, 0.7, -0.7], dtype=dtype, device=device)
+        cell = torch.tensor(
+            [[[6.0, 0.0, 0.0], [1.0, 5.0, 0.0], [0.5, 0.7, 5.5]]],
+            dtype=dtype,
+            device=device,
+        )
+        alpha = torch.tensor([0.4], dtype=dtype, device=device)
+        return positions, charges, cell, alpha
+
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_reciprocal_virial_shape(self, device):
         """Reciprocal virial output has correct shape."""
@@ -5869,6 +5955,192 @@ class TestEwaldReciprocalSpaceVirial:
             rtol=1e-3,
             msg="Reciprocal virial does not match finite-difference reference",
         )
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_generated_k_strain_autograd_matches_fd_and_direct_virial(self, device):
+        """Generated reciprocal vectors preserve the physical strain derivative."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell, alpha = self._triclinic_system(device)
+        miller_bounds = (4, 4, 4)
+
+        def energy_fn(pos, q, c):
+            k_vectors = generate_k_vectors_ewald_summation(
+                c,
+                k_cutoff=4.0,
+                miller_bounds=miller_bounds,
+            )
+            return ewald_reciprocal_space(pos, q, c, k_vectors, alpha)
+
+        fd_virial = fd_strain_virial(
+            energy_fn,
+            positions,
+            charges,
+            cell,
+            eps=1e-6,
+        )
+        autograd_virial = autograd_strain_virial(energy_fn, positions, charges, cell)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            k_vectors = generate_k_vectors_ewald_summation(
+                cell,
+                k_cutoff=4.0,
+                miller_bounds=miller_bounds,
+            )
+            _, direct_virial = ewald_reciprocal_space(
+                positions,
+                charges,
+                cell,
+                k_vectors,
+                alpha,
+                compute_virial=True,
+            )
+
+        torch.testing.assert_close(autograd_virial, fd_virial, rtol=1e-5, atol=1e-6)
+        torch.testing.assert_close(
+            autograd_virial,
+            direct_virial,
+            rtol=1e-5,
+            atol=1e-6,
+        )
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_retained_miller_indices_match_strain_fd_and_direct_virial(self, device):
+        """Caller-retained topology preserves the issue-136 strain derivative."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell, alpha = self._triclinic_system(device)
+        miller_indices = generate_ewald_miller_indices(cell, 4.0, (4, 4, 4))
+
+        def energy_fn(pos, q, c):
+            return ewald_reciprocal_space_from_miller_indices(
+                pos, q, c, miller_indices, alpha
+            )
+
+        fd_virial = fd_strain_virial(
+            energy_fn,
+            positions,
+            charges,
+            cell,
+            eps=1e-6,
+        )
+        autograd_virial = autograd_strain_virial(energy_fn, positions, charges, cell)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            _, direct_virial = ewald_reciprocal_space_from_miller_indices(
+                positions,
+                charges,
+                cell,
+                miller_indices,
+                alpha,
+                compute_virial=True,
+            )
+
+        torch.testing.assert_close(autograd_virial, fd_virial, rtol=1e-5, atol=1e-6)
+        torch.testing.assert_close(
+            autograd_virial,
+            direct_virial,
+            rtol=1e-5,
+            atol=1e-6,
+        )
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_retained_miller_component_forwards_direct_outputs(self, device):
+        """The retained-index component preserves output order and warnings."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell, alpha = self._triclinic_system(device)
+        miller_indices = generate_ewald_miller_indices(cell, 4.0, (4, 4, 4))
+        k_vectors = k_vectors_from_miller_indices(cell, miller_indices)
+
+        with pytest.warns(DeprecationWarning):
+            retained = ewald_reciprocal_space_from_miller_indices(
+                positions,
+                charges,
+                cell,
+                miller_indices,
+                alpha,
+                compute_forces=True,
+                compute_charge_gradients=True,
+                compute_virial=True,
+                energy_reduction="system",
+            )
+        with pytest.warns(DeprecationWarning):
+            direct = ewald_reciprocal_space(
+                positions,
+                charges,
+                cell,
+                k_vectors,
+                alpha,
+                compute_forces=True,
+                compute_charge_gradients=True,
+                compute_virial=True,
+                energy_reduction="system",
+            )
+
+        assert len(retained) == 4
+        assert retained[0].shape == (1,)
+        for retained_value, direct_value in zip(retained, direct, strict=True):
+            torch.testing.assert_close(retained_value, direct_value)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_fixed_k_strain_autograd_matches_fixed_k_fd(self, device):
+        """Fixed Cartesian reciprocal vectors retain fixed-k cell derivatives."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell, alpha = self._triclinic_system(device)
+        fixed_k_vectors = generate_k_vectors_ewald_summation(
+            cell,
+            k_cutoff=4.0,
+            miller_bounds=(4, 4, 4),
+        ).detach()
+
+        def fixed_energy_fn(pos, q, c):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                return ewald_reciprocal_space(pos, q, c, fixed_k_vectors, alpha)
+
+        fd_virial = fd_strain_virial(
+            fixed_energy_fn,
+            positions,
+            charges,
+            cell,
+            eps=1e-6,
+        )
+        autograd_virial = autograd_strain_virial(
+            fixed_energy_fn,
+            positions,
+            charges,
+            cell,
+        )
+        connected_k_vectors = generate_k_vectors_ewald_summation(
+            cell,
+            k_cutoff=4.0,
+            miller_bounds=(4, 4, 4),
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            fixed_energy = ewald_reciprocal_space(
+                positions,
+                charges,
+                cell,
+                fixed_k_vectors,
+                alpha,
+            )
+        connected_energy = ewald_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            connected_k_vectors,
+            alpha,
+        )
+
+        torch.testing.assert_close(autograd_virial, fd_virial, rtol=1e-5, atol=1e-6)
+        torch.testing.assert_close(fixed_energy, connected_energy)
 
 
 class TestEwaldTotalVirial:
@@ -7098,6 +7370,340 @@ class TestEwaldVirialTorchPMEParity:
 class TestEwaldTorchCompile:
     """Verify that ewald_summation under torch.compile matches eager mode."""
 
+    @pytest.mark.slow
+    @pytest.mark.parametrize("device", ["cpu", "cuda"])
+    @pytest.mark.parametrize("part", ["real", "recip", "summation"])
+    def test_explicit_batch_single_system_loss_compile_gradients(self, device, part):
+        """Compiled explicit-B=1 Ewald losses match eager energy gradients."""
+        if device == "cuda" and (
+            not torch.cuda.is_available() or not wp.is_cuda_available()
+        ):
+            pytest.skip("CUDA or Warp CUDA support unavailable")
+
+        torch_device = torch.device(device)
+        (
+            positions,
+            charges,
+            cell,
+            batch_idx,
+            alpha,
+            k_vectors,
+            neighbor_list,
+            neighbor_ptr,
+            neighbor_shifts,
+        ) = _compile_ewald_setup(torch_device)
+
+        def make_loss_fn(bidx: torch.Tensor | None):
+            def loss_fn(
+                pos: torch.Tensor, q: torch.Tensor, box: torch.Tensor
+            ) -> torch.Tensor:
+                if part == "real":
+                    energy = ewald_real_space(
+                        pos,
+                        q,
+                        box,
+                        alpha,
+                        neighbor_list=neighbor_list,
+                        neighbor_ptr=neighbor_ptr,
+                        neighbor_shifts=neighbor_shifts,
+                        batch_idx=bidx,
+                    )
+                elif part == "recip":
+                    energy = ewald_reciprocal_space(
+                        pos, q, box, k_vectors, alpha, batch_idx=bidx
+                    )
+                else:
+                    energy = ewald_summation(
+                        pos,
+                        q,
+                        box,
+                        alpha=alpha,
+                        k_vectors=k_vectors,
+                        neighbor_list=neighbor_list,
+                        neighbor_ptr=neighbor_ptr,
+                        neighbor_shifts=neighbor_shifts,
+                        batch_idx=bidx,
+                    )
+                return energy.sum()
+
+            return loss_fn
+
+        eager_explicit = _ewald_energy_and_grads(
+            make_loss_fn(batch_idx), positions, charges, cell
+        )
+        eager_unbatched = _ewald_energy_and_grads(
+            make_loss_fn(None), positions, charges, cell
+        )
+
+        torch._dynamo.reset()
+        try:
+            compiled_loss_fn = torch.compile(make_loss_fn(batch_idx), dynamic=True)
+            compiled_explicit = _ewald_energy_and_grads(
+                compiled_loss_fn, positions, charges, cell
+            )
+        finally:
+            torch._dynamo.reset()
+
+        for compiled, eager, unbatched in zip(
+            compiled_explicit, eager_explicit, eager_unbatched, strict=True
+        ):
+            if isinstance(compiled, tuple):
+                for grad_index, (
+                    compiled_grad,
+                    eager_grad,
+                    unbatched_grad,
+                ) in enumerate(zip(compiled, eager, unbatched, strict=True)):
+                    # Native erfc and eager float64 wp_erfc differ by ~1.33e-9.
+                    grad_atol = (
+                        1e-8
+                        if part == "real" and device == "cuda" and grad_index < 2
+                        else 1e-9
+                    )
+                    torch.testing.assert_close(
+                        compiled_grad, eager_grad, rtol=1e-7, atol=grad_atol
+                    )
+                    torch.testing.assert_close(
+                        compiled_grad, unbatched_grad, rtol=1e-7, atol=grad_atol
+                    )
+            else:
+                torch.testing.assert_close(compiled, eager, rtol=1e-7, atol=1e-9)
+                torch.testing.assert_close(compiled, unbatched, rtol=1e-7, atol=1e-9)
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("device", ["cpu", "cuda"])
+    def test_full_explicit_batch_direct_outputs_compile(self, device):
+        """Compiled explicit-B=1 Ewald direct outputs match eager references."""
+        if device == "cuda" and (
+            not torch.cuda.is_available() or not wp.is_cuda_available()
+        ):
+            pytest.skip("CUDA or Warp CUDA support unavailable")
+
+        torch_device = torch.device(device)
+        (
+            positions,
+            charges,
+            cell,
+            batch_idx,
+            alpha,
+            k_vectors,
+            neighbor_list,
+            neighbor_ptr,
+            neighbor_shifts,
+        ) = _compile_ewald_setup(torch_device)
+
+        def direct_outputs(
+            pos: torch.Tensor,
+            q: torch.Tensor,
+            box: torch.Tensor,
+            bidx: torch.Tensor | None,
+        ) -> tuple[torch.Tensor, ...]:
+            return ewald_summation(
+                pos,
+                q,
+                box,
+                alpha=alpha,
+                k_vectors=k_vectors,
+                neighbor_list=neighbor_list,
+                neighbor_ptr=neighbor_ptr,
+                neighbor_shifts=neighbor_shifts,
+                batch_idx=bidx,
+                compute_forces=True,
+                compute_charge_gradients=True,
+                compute_virial=True,
+            )
+
+        eager_explicit = _ewald_summation_without_direct_output_deprecation(
+            positions,
+            charges,
+            cell,
+            alpha=alpha,
+            k_vectors=k_vectors,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            batch_idx=batch_idx,
+            compute_forces=True,
+            compute_charge_gradients=True,
+            compute_virial=True,
+        )
+        eager_unbatched = _ewald_summation_without_direct_output_deprecation(
+            positions,
+            charges,
+            cell,
+            alpha=alpha,
+            k_vectors=k_vectors,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            batch_idx=None,
+            compute_forces=True,
+            compute_charge_gradients=True,
+            compute_virial=True,
+        )
+
+        torch._dynamo.reset()
+        try:
+            compiled_explicit = torch.compile(direct_outputs, dynamic=True)(
+                positions, charges, cell, batch_idx
+            )
+        finally:
+            torch._dynamo.reset()
+
+        for compiled, eager, unbatched in zip(
+            compiled_explicit, eager_explicit, eager_unbatched, strict=True
+        ):
+            torch.testing.assert_close(compiled, eager, rtol=1e-7, atol=1e-9)
+            torch.testing.assert_close(compiled, unbatched, rtol=1e-7, atol=1e-9)
+
+    @pytest.mark.parametrize(
+        "device",
+        ["cpu", pytest.param("cuda", marks=pytest.mark.slow)],
+    )
+    def test_explicit_batch_non_neutral_reciprocal_corrections_compile(self, device):
+        """Compiled B=1 reciprocal corrections preserve non-neutral direct outputs."""
+        if device == "cuda" and (
+            not torch.cuda.is_available() or not wp.is_cuda_available()
+        ):
+            pytest.skip("CUDA or Warp CUDA support unavailable")
+
+        torch_device = torch.device(device)
+        positions = torch.tensor(
+            [[2.0, 5.0, 5.0], [8.0, 5.0, 5.0]],
+            dtype=torch.float64,
+            device=torch_device,
+        )
+        charges = torch.tensor([1.0, -0.25], dtype=torch.float64, device=torch_device)
+        cell = (
+            torch.eye(3, dtype=torch.float64, device=torch_device).unsqueeze(0) * 10.0
+        )
+        batch_idx = torch.zeros(2, dtype=torch.int32, device=torch_device)
+        alpha = torch.tensor([0.3], dtype=torch.float64, device=torch_device)
+        k_vectors = torch.zeros((0, 3), dtype=torch.float64, device=torch_device)
+
+        assert charges.sum().item() == pytest.approx(0.75)
+
+        def direct_outputs(
+            pos: torch.Tensor,
+            q: torch.Tensor,
+            box: torch.Tensor,
+            bidx: torch.Tensor | None,
+        ) -> tuple[torch.Tensor, ...]:
+            return ewald_reciprocal_space(
+                pos,
+                q,
+                box,
+                k_vectors,
+                alpha,
+                batch_idx=bidx,
+                compute_forces=True,
+                compute_charge_gradients=True,
+                compute_virial=True,
+            )
+
+        eager_explicit = direct_outputs(positions, charges, cell, batch_idx)
+        eager_unbatched = direct_outputs(positions, charges, cell, None)
+        expected_energy, expected_charge_grad, expected_virial = (
+            _expected_zero_k_reciprocal_corrections(
+                charges,
+                cell,
+                alpha,
+                batch_idx=batch_idx,
+            )
+        )
+        torch.testing.assert_close(eager_explicit[0], expected_energy)
+        torch.testing.assert_close(eager_explicit[1], torch.zeros_like(positions))
+        torch.testing.assert_close(eager_explicit[2], expected_charge_grad)
+        torch.testing.assert_close(eager_explicit[3], expected_virial)
+        assert torch.count_nonzero(expected_virial).item() > 0
+
+        def make_loss_fn(bidx: torch.Tensor | None):
+            def loss_fn(
+                pos: torch.Tensor, q: torch.Tensor, box: torch.Tensor
+            ) -> torch.Tensor:
+                return ewald_reciprocal_space(
+                    pos,
+                    q,
+                    box,
+                    k_vectors,
+                    alpha,
+                    batch_idx=bidx,
+                ).sum()
+
+            return loss_fn
+
+        eager_explicit_grads = _ewald_energy_and_grads(
+            make_loss_fn(batch_idx),
+            positions,
+            charges,
+            cell,
+        )
+        eager_unbatched_grads = _ewald_energy_and_grads(
+            make_loss_fn(None),
+            positions,
+            charges,
+            cell,
+        )
+        assert torch.count_nonzero(eager_explicit_grads[1][2]).item() > 0
+
+        torch._dynamo.reset()
+        try:
+            compiled_explicit = torch.compile(direct_outputs, dynamic=True)(
+                positions,
+                charges,
+                cell,
+                batch_idx,
+            )
+            compiled_explicit_grads = _ewald_energy_and_grads(
+                torch.compile(make_loss_fn(batch_idx), dynamic=True),
+                positions,
+                charges,
+                cell,
+            )
+        finally:
+            torch._dynamo.reset()
+
+        for compiled, eager, unbatched in zip(
+            compiled_explicit,
+            eager_explicit,
+            eager_unbatched,
+            strict=True,
+        ):
+            torch.testing.assert_close(compiled, eager, rtol=1e-7, atol=1e-9)
+            torch.testing.assert_close(compiled, unbatched, rtol=1e-7, atol=1e-9)
+        for compiled, eager, unbatched in zip(
+            compiled_explicit_grads,
+            eager_explicit_grads,
+            eager_unbatched_grads,
+            strict=True,
+        ):
+            if isinstance(compiled, tuple):
+                for compiled_grad, eager_grad, unbatched_grad in zip(
+                    compiled,
+                    eager,
+                    unbatched,
+                    strict=True,
+                ):
+                    torch.testing.assert_close(
+                        compiled_grad,
+                        eager_grad,
+                        rtol=1e-7,
+                        atol=1e-9,
+                    )
+                    torch.testing.assert_close(
+                        compiled_grad,
+                        unbatched_grad,
+                        rtol=1e-7,
+                        atol=1e-9,
+                    )
+            else:
+                torch.testing.assert_close(compiled, eager, rtol=1e-7, atol=1e-9)
+                torch.testing.assert_close(
+                    compiled,
+                    unbatched,
+                    rtol=1e-7,
+                    atol=1e-9,
+                )
+
     @pytest.mark.skipif(
         not torch.cuda.is_available(), reason="CUDA required for torch.compile"
     )
@@ -7891,6 +8497,190 @@ class TestEwaldMillerBounds:
 
         torch.testing.assert_close(explicit, generated, rtol=1e-12, atol=1e-12)
 
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_summation_retained_indices_match_generated_path(self, device):
+        """Full Ewald materializes caller-retained topology from the live cell."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = _contract_dipole(device)
+        pbc = torch.tensor([[True, True, True]], device=device)
+        nl, nptr, ns = cell_list(
+            positions,
+            5.0,
+            cell,
+            pbc,
+            return_neighbor_list=True,
+        )
+        bounds = (4, 4, 4)
+        miller_indices = generate_ewald_miller_indices(cell, 2.0, bounds)
+
+        generated = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=None,
+            k_cutoff=2.0,
+            miller_bounds=bounds,
+            neighbor_list=nl,
+            neighbor_ptr=nptr,
+            neighbor_shifts=ns,
+        )
+        retained = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=None,
+            miller_indices=miller_indices,
+            neighbor_list=nl,
+            neighbor_ptr=nptr,
+            neighbor_shifts=ns,
+        )
+
+        torch.testing.assert_close(retained, generated, rtol=1e-12, atol=1e-12)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_summation_rejects_conflicting_topology_sources(self, device):
+        """Indices conflict, while legacy explicit vectors still override bounds."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = _contract_dipole(device)
+        indices = generate_ewald_miller_indices(cell, 2.0, (4, 4, 4))
+        k_vectors = generate_k_vectors_ewald_summation(cell, 2.0, (4, 4, 4))
+        pbc = torch.tensor([[True, True, True]], device=device)
+        nl, nptr, ns = cell_list(
+            positions,
+            5.0,
+            cell,
+            pbc,
+            return_neighbor_list=True,
+        )
+
+        with pytest.raises(ValueError, match="miller_indices"):
+            ewald_summation(
+                positions,
+                charges,
+                cell,
+                alpha=0.3,
+                miller_indices=indices,
+                k_cutoff=2.0,
+            )
+        with pytest.raises(ValueError, match="k_vectors"):
+            ewald_summation(
+                positions,
+                charges,
+                cell,
+                alpha=0.3,
+                k_vectors=k_vectors,
+                miller_indices=indices,
+            )
+
+        explicit = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            k_vectors=k_vectors,
+            neighbor_list=nl,
+            neighbor_ptr=nptr,
+            neighbor_shifts=ns,
+        )
+        legacy_with_bounds = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            k_vectors=k_vectors,
+            miller_bounds=(1, 1, 1),
+            neighbor_list=nl,
+            neighbor_ptr=nptr,
+            neighbor_shifts=ns,
+        )
+        torch.testing.assert_close(legacy_with_bounds, explicit, rtol=0.0, atol=0.0)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_summation_retained_indices_strain_gradient_matches_virial(self, device):
+        """Full Ewald retained topology preserves the live-cell virial route."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = _contract_dipole(device)
+        pbc = torch.tensor([[True, True, True]], device=device)
+        nl, nptr, ns = cell_list(
+            positions,
+            5.0,
+            cell,
+            pbc,
+            return_neighbor_list=True,
+        )
+        alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+        miller_indices = generate_ewald_miller_indices(cell, 2.0, (4, 4, 4))
+
+        def energy_fn(pos, q, lattice):
+            return ewald_summation(
+                pos,
+                q,
+                lattice,
+                alpha=alpha,
+                miller_indices=miller_indices,
+                neighbor_list=nl,
+                neighbor_ptr=nptr,
+                neighbor_shifts=ns,
+            )
+
+        fd_virial = fd_strain_virial(energy_fn, positions, charges, cell, eps=1e-6)
+        autograd_virial = autograd_strain_virial(energy_fn, positions, charges, cell)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            _, direct_virial = ewald_summation(
+                positions,
+                charges,
+                cell,
+                alpha=alpha,
+                miller_indices=miller_indices,
+                neighbor_list=nl,
+                neighbor_ptr=nptr,
+                neighbor_shifts=ns,
+                compute_virial=True,
+            )
+
+        torch.testing.assert_close(autograd_virial, fd_virial, rtol=1e-5, atol=1e-6)
+        torch.testing.assert_close(
+            autograd_virial,
+            direct_virial,
+            rtol=1e-5,
+            atol=1e-6,
+        )
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_summation_accepts_empty_miller_topology(self, device):
+        """Full Ewald accepts empty retained reciprocal topology."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = _contract_dipole(device)
+        pbc = torch.tensor([[True, True, True]], device=device)
+        nl, nptr, ns = cell_list(
+            positions,
+            5.0,
+            cell,
+            pbc,
+            return_neighbor_list=True,
+        )
+        empty = torch.empty((0, 3), dtype=torch.int64, device=device)
+        energy = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            miller_indices=empty,
+            neighbor_list=nl,
+            neighbor_ptr=nptr,
+            neighbor_shifts=ns,
+        )
+        assert torch.isfinite(energy).all()
+
 
 class TestEwaldPerSystemUniformCotangentFastPath:
     """CUDA atom mode recognizes exact per-system-uniform materialized weights."""
@@ -8485,6 +9275,618 @@ class TestEwaldEnergyDerivativeContract:
         )
 
 
+class TestEwaldHybridSystemRouting:
+    """Connected-charge hybrid system output must retain atom-mode derivatives."""
+
+    @staticmethod
+    def _inputs(device, pbc):
+        """Build a batched fixture with periodic-image real-space interactions."""
+        positions, charges, cell, batch_idx = _contract_batch(device)
+        neighbor_list, neighbor_ptr, neighbor_shifts = batch_cell_list(
+            positions,
+            10.1,
+            cell,
+            pbc,
+            batch_idx=batch_idx,
+            return_neighbor_list=True,
+        )
+        assert torch.any(neighbor_shifts != 0)
+        alpha = torch.tensor([0.3, 0.35], dtype=torch.float64, device=device)
+        weights = torch.tensor([1.3, -0.6], dtype=torch.float64, device=device)
+        return (
+            positions,
+            charges,
+            cell,
+            batch_idx,
+            neighbor_list,
+            neighbor_ptr,
+            neighbor_shifts,
+            alpha,
+            weights,
+        )
+
+    @staticmethod
+    def _objective(energies, reduction, batch_idx, weights):
+        """Reduce either public energy layout to an equivalent weighted scalar."""
+        if reduction == "atom":
+            return (energies * weights.index_select(0, batch_idx.long())).sum()
+        return (energies * weights).sum()
+
+    @staticmethod
+    def _grad_or_zero(objective, inputs, *, create_graph):
+        """Return requested gradients, materializing an unused input as zero."""
+        gradients = torch.autograd.grad(
+            objective,
+            inputs,
+            create_graph=create_graph,
+            allow_unused=True,
+        )
+        return tuple(
+            gradient if gradient is not None else torch.zeros_like(input_tensor)
+            for gradient, input_tensor in zip(gradients, inputs, strict=True)
+        )
+
+    @pytest.mark.parametrize("device", ["cpu", "cuda"])
+    def test_uniform_system_cotangent_uses_cached_charge_path(
+        self, device, monkeypatch
+    ):
+        """Uniform hybrid system losses use cached charge gradients only."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        pbc = torch.tensor([[True, True, True], [True, True, True]], device=device)
+        (
+            positions,
+            charges,
+            cell,
+            batch_idx,
+            neighbor_list,
+            neighbor_ptr,
+            neighbor_shifts,
+            alpha,
+            weights,
+        ) = self._inputs(device, pbc)
+
+        reference_charges = charges.detach().clone().requires_grad_(True)
+        reference_energy = ewald_real_space(
+            positions,
+            reference_charges,
+            cell,
+            alpha,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            batch_idx=batch_idx,
+            energy_reduction="system",
+        )
+        (reference_charge_grad,) = torch.autograd.grad(
+            (weights * reference_energy).sum(),
+            reference_charges,
+        )
+
+        ewald_module = import_module(
+            "nvalchemiops.torch.interactions.electrostatics.ewald"
+        )
+        fallback_calls = 0
+        original_fallback = ewald_module._real_space_energy
+
+        def _counting_fallback(*args, **kwargs):
+            nonlocal fallback_calls
+            fallback_calls += 1
+            return original_fallback(*args, **kwargs)
+
+        monkeypatch.setattr(ewald_module, "_real_space_energy", _counting_fallback)
+        positions_hybrid = positions.detach().clone().requires_grad_(True)
+        charges_hybrid = charges.detach().clone().requires_grad_(True)
+        cell_hybrid = cell.detach().clone().requires_grad_(True)
+        hybrid_energy = ewald_real_space(
+            positions_hybrid,
+            charges_hybrid,
+            cell_hybrid,
+            alpha,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            batch_idx=batch_idx,
+            hybrid_forces=True,
+            energy_reduction="system",
+        )
+        position_grad, charge_grad, cell_grad = torch.autograd.grad(
+            (weights * hybrid_energy).sum(),
+            (positions_hybrid, charges_hybrid, cell_hybrid),
+            allow_unused=True,
+        )
+
+        assert fallback_calls == 0
+        assert position_grad is None
+        assert cell_grad is None
+        torch.testing.assert_close(charge_grad, reference_charge_grad)
+
+    @pytest.mark.parametrize("device", ["cpu", "cuda"])
+    def test_fixed_charge_system_hybrid_uses_system_major_kernel(
+        self, device, monkeypatch
+    ):
+        """Fixed-charge hybrid system output retains the system-major fast path."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        pbc = torch.tensor([[True, True, True], [True, True, True]], device=device)
+        (
+            positions,
+            charges,
+            cell,
+            batch_idx,
+            neighbor_list,
+            neighbor_ptr,
+            neighbor_shifts,
+            alpha,
+            _weights,
+        ) = self._inputs(device, pbc)
+
+        ewald_module = import_module(
+            "nvalchemiops.torch.interactions.electrostatics.ewald"
+        )
+        energy_layouts = []
+        original_outputs = ewald_module._real_space_energy_outputs
+
+        def _recording_outputs(*args, **kwargs):
+            energy_layouts.append(kwargs["energy_layout"])
+            return original_outputs(*args, **kwargs)
+
+        monkeypatch.setattr(
+            ewald_module,
+            "_real_space_energy_outputs",
+            _recording_outputs,
+        )
+        energy = ewald_real_space(
+            positions,
+            charges,
+            cell,
+            alpha,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            batch_idx=batch_idx,
+            hybrid_forces=True,
+            energy_reduction="system",
+        )
+
+        assert energy.shape == (2,)
+        assert energy_layouts == ["system"]
+
+    @pytest.mark.parametrize("device", ["cpu", "cuda"])
+    def test_real_space_leaf_derivatives_match_atom_layout(self, device):
+        """Hybrid real-space system layout matches atom layout for live leaves."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        pbc = torch.tensor([[True, True, True], [True, True, True]], device=device)
+        (
+            positions,
+            charges,
+            cell,
+            batch_idx,
+            neighbor_list,
+            neighbor_ptr,
+            neighbor_shifts,
+            alpha,
+            weights,
+        ) = self._inputs(device, pbc)
+
+        def evaluate(reduction):
+            """Evaluate one independent public-layout graph."""
+            pos = positions.detach().clone().requires_grad_(True)
+            charge = charges.detach().clone().requires_grad_(True)
+            cell_input = cell.detach().clone().requires_grad_(True)
+            energies = ewald_real_space(
+                pos,
+                charge,
+                cell_input,
+                alpha,
+                neighbor_list=neighbor_list,
+                neighbor_ptr=neighbor_ptr,
+                neighbor_shifts=neighbor_shifts,
+                batch_idx=batch_idx,
+                hybrid_forces=True,
+                energy_reduction=reduction,
+            )
+            objective = self._objective(energies, reduction, batch_idx, weights)
+            gradients = self._grad_or_zero(
+                objective,
+                (pos, charge, cell_input),
+                create_graph=True,
+            )
+            return energies, objective, gradients
+
+        atom_energy, atom_objective, atom_grads = evaluate("atom")
+        system_energy, system_objective, system_grads = evaluate("system")
+        expected_system = torch.zeros_like(system_energy).index_add(
+            0,
+            batch_idx.long(),
+            atom_energy,
+        )
+
+        torch.testing.assert_close(system_energy, expected_system)
+        torch.testing.assert_close(system_objective, atom_objective)
+        assert atom_grads[0].norm() > 0
+        assert atom_grads[2].norm() > 0
+        for system_gradient, atom_gradient in zip(
+            system_grads, atom_grads, strict=True
+        ):
+            torch.testing.assert_close(system_gradient, atom_gradient)
+
+    @pytest.mark.parametrize("device", ["cpu", "cuda"])
+    @pytest.mark.parametrize("slab_correction", [False, True])
+    def test_full_qr_gradient_and_hvp_match_atom_layout(self, device, slab_correction):
+        """Hybrid full Ewald q(R) parity survives slab composition."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        pbc = torch.tensor(
+            [[True, True, not slab_correction], [True, True, not slab_correction]],
+            device=device,
+        )
+        (
+            positions,
+            _charges,
+            cell,
+            batch_idx,
+            neighbor_list,
+            neighbor_ptr,
+            neighbor_shifts,
+            alpha,
+            weights,
+        ) = self._inputs(device, pbc)
+        direction = torch.arange(
+            1,
+            positions.numel() + 1,
+            dtype=positions.dtype,
+            device=device,
+        ).reshape_as(positions)
+        direction = direction / direction.norm()
+
+        def evaluate(reduction):
+            """Evaluate a connected-charge hybrid full-Ewald graph."""
+            pos = positions.detach().clone().requires_grad_(True)
+            cell_input = cell.detach().clone().requires_grad_(True)
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="The direct-output flags .* on ewald_summation are deprecated",
+                    category=DeprecationWarning,
+                )
+                energies = ewald_summation(
+                    pos,
+                    toy_charge_model(pos, batch_idx=batch_idx),
+                    cell_input,
+                    alpha=alpha,
+                    k_cutoff=2.0,
+                    neighbor_list=neighbor_list,
+                    neighbor_ptr=neighbor_ptr,
+                    neighbor_shifts=neighbor_shifts,
+                    batch_idx=batch_idx,
+                    hybrid_forces=True,
+                    pbc=pbc,
+                    slab_correction=slab_correction,
+                    energy_reduction=reduction,
+                )
+            objective = self._objective(energies, reduction, batch_idx, weights)
+            grad_positions, grad_cell = torch.autograd.grad(
+                objective,
+                (pos, cell_input),
+                create_graph=True,
+            )
+            (hvp,) = torch.autograd.grad(
+                grad_positions,
+                pos,
+                grad_outputs=direction,
+            )
+            return energies, objective, grad_positions, grad_cell, hvp
+
+        atom_energy, atom_objective, atom_grad, atom_cell_grad, atom_hvp = evaluate(
+            "atom"
+        )
+        (
+            system_energy,
+            system_objective,
+            system_grad,
+            system_cell_grad,
+            system_hvp,
+        ) = evaluate("system")
+        expected_system = torch.zeros_like(system_energy).index_add(
+            0,
+            batch_idx.long(),
+            atom_energy,
+        )
+
+        torch.testing.assert_close(system_energy, expected_system)
+        torch.testing.assert_close(system_objective, atom_objective)
+        assert atom_grad.norm() > 0
+        assert atom_cell_grad.norm() > 0
+        assert atom_hvp.norm() > 0
+        torch.testing.assert_close(system_grad, atom_grad)
+        torch.testing.assert_close(system_cell_grad, atom_cell_grad)
+        torch.testing.assert_close(system_hvp, atom_hvp)
+
+
+class TestEwaldHybridConnectedInputFallback:
+    """Hybrid Ewald q(R) fallback preserves weighted and higher-order derivatives."""
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_qR_nonuniform_gradient_matches_manual_chain(self, device):
+        """Hybrid weighted q(R) gradients match an eager manual chain-rule oracle."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        ewald_module = import_module(
+            "nvalchemiops.torch.interactions.electrostatics.ewald"
+        )
+        positions, _, cell = _contract_dipole(device)
+        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
+            positions,
+            5.0,
+            cell,
+            torch.tensor([[True, True, True]], device=device),
+            return_neighbor_list=True,
+        )
+        alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+        weights = torch.tensor([1.2, 0.8], dtype=torch.float64, device=device)
+
+        def reference_energy_fn(p, q, c):
+            return ewald_module._real_space_energy(
+                p,
+                q,
+                c,
+                alpha,
+                batch_idx=None,
+                idx_j=neighbor_list[1],
+                neighbor_ptr=neighbor_ptr,
+                neighbor_shifts=neighbor_shifts,
+                neighbor_matrix=None,
+                neighbor_matrix_shifts=None,
+                mask_value=p.shape[0],
+            )
+
+        def hybrid_energy_fn(p, q, c):
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="The direct-output flags .* on ewald_real_space are deprecated",
+                    category=DeprecationWarning,
+                )
+                return ewald_real_space(
+                    p,
+                    q,
+                    c,
+                    alpha,
+                    neighbor_list=neighbor_list,
+                    neighbor_ptr=neighbor_ptr,
+                    neighbor_shifts=neighbor_shifts,
+                    hybrid_forces=True,
+                )
+
+        full_grad, manual_grad = qr_manual_chain_gradient(
+            reference_energy_fn,
+            positions,
+            cell,
+            per_atom_weights=weights,
+        )
+        assert torch.allclose(full_grad, manual_grad, rtol=1e-4, atol=1e-6)
+
+        positions_hybrid = positions.detach().clone().requires_grad_(True)
+        energies_hybrid = hybrid_energy_fn(
+            positions_hybrid,
+            toy_charge_model(positions_hybrid),
+            cell,
+        )
+        (hybrid_grad,) = torch.autograd.grad(
+            energies_hybrid,
+            positions_hybrid,
+            grad_outputs=weights,
+        )
+
+        max_abs, max_rel = max_abs_rel(hybrid_grad, manual_grad)
+        assert torch.allclose(hybrid_grad, manual_grad, rtol=1e-4, atol=1e-6), (
+            "hybrid q(R) weighted gradient: "
+            f"max_abs={max_abs:.3e} max_rel={max_rel:.3e}"
+        )
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_qR_weighted_hvp_matches_eager_oracle(self, device):
+        """Hybrid q(R) weighted HVP matches a finite-difference eager oracle."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        ewald_module = import_module(
+            "nvalchemiops.torch.interactions.electrostatics.ewald"
+        )
+        positions, _, cell = _contract_dipole(device)
+        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
+            positions,
+            5.0,
+            cell,
+            torch.tensor([[True, True, True]], device=device),
+            return_neighbor_list=True,
+        )
+        alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+        weights = torch.tensor([1.2, 0.8], dtype=torch.float64, device=device)
+        generator = torch.Generator(device=device)
+        generator.manual_seed(115)
+        direction = torch.randn_like(positions, generator=generator)
+        direction = direction / direction.norm()
+
+        def reference_energy_fn(p, q, c):
+            return ewald_module._real_space_energy(
+                p,
+                q,
+                c,
+                alpha,
+                batch_idx=None,
+                idx_j=neighbor_list[1],
+                neighbor_ptr=neighbor_ptr,
+                neighbor_shifts=neighbor_shifts,
+                neighbor_matrix=None,
+                neighbor_matrix_shifts=None,
+                mask_value=p.shape[0],
+            )
+
+        def hybrid_energy_fn(p, q, c):
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="The direct-output flags .* on ewald_real_space are deprecated",
+                    category=DeprecationWarning,
+                )
+                return ewald_real_space(
+                    p,
+                    q,
+                    c,
+                    alpha,
+                    neighbor_list=neighbor_list,
+                    neighbor_ptr=neighbor_ptr,
+                    neighbor_shifts=neighbor_shifts,
+                    hybrid_forces=True,
+                )
+
+        reference_hvp, finite_difference_hvp = qr_hvp_positions(
+            reference_energy_fn,
+            positions,
+            cell,
+            direction,
+            per_atom_weights=weights,
+        )
+        assert torch.allclose(
+            reference_hvp,
+            finite_difference_hvp,
+            rtol=1e-4,
+            atol=1e-5,
+        )
+
+        positions_hybrid = positions.detach().clone().requires_grad_(True)
+        energies_hybrid = hybrid_energy_fn(
+            positions_hybrid,
+            toy_charge_model(positions_hybrid),
+            cell,
+        )
+        (hybrid_grad,) = torch.autograd.grad(
+            (weights * energies_hybrid).sum(),
+            positions_hybrid,
+            create_graph=True,
+        )
+        (hybrid_hvp,) = torch.autograd.grad(
+            hybrid_grad,
+            positions_hybrid,
+            grad_outputs=direction,
+        )
+
+        max_abs, max_rel = max_abs_rel(hybrid_hvp, finite_difference_hvp)
+        assert torch.allclose(
+            hybrid_hvp,
+            finite_difference_hvp,
+            rtol=1e-4,
+            atol=1e-5,
+        ), f"hybrid q(R) weighted HVP: max_abs={max_abs:.3e} max_rel={max_rel:.3e}"
+
+
+class TestEwaldConnectedChargeCachedRouting:
+    """Connected charge models use the real-space cached first-gradient connector."""
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    @pytest.mark.parametrize("charge_graph", ["positions", "parameters"])
+    def test_connected_charges_uniform_sum_uses_cached_connector(
+        self,
+        device,
+        charge_graph,
+        monkeypatch,
+    ):
+        """Uniform q(R) and q(theta) gradients match eager real-space derivatives."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        ewald_module = import_module(
+            "nvalchemiops.torch.interactions.electrostatics.ewald"
+        )
+        positions, _, cell = _contract_dipole(device)
+        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
+            positions,
+            5.0,
+            cell,
+            torch.tensor([[True, True, True]], device=device),
+            return_neighbor_list=True,
+        )
+        alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+        cached_connector_calls = 0
+        original_apply = ewald_module._InjectCachedEvalGradWithFallback.apply
+
+        def counting_apply(*args, **kwargs):
+            nonlocal cached_connector_calls
+            cached_connector_calls += 1
+            return original_apply(*args, **kwargs)
+
+        monkeypatch.setattr(
+            ewald_module._InjectCachedEvalGradWithFallback,
+            "apply",
+            counting_apply,
+        )
+
+        def public_energy_fn(p, q):
+            return ewald_real_space(
+                p,
+                q,
+                cell,
+                alpha,
+                neighbor_list=neighbor_list,
+                neighbor_ptr=neighbor_ptr,
+                neighbor_shifts=neighbor_shifts,
+            )
+
+        def reference_energy_fn(p, q):
+            return ewald_module._real_space_energy(
+                p,
+                q,
+                cell,
+                alpha,
+                batch_idx=None,
+                idx_j=neighbor_list[1],
+                neighbor_ptr=neighbor_ptr,
+                neighbor_shifts=neighbor_shifts,
+                neighbor_matrix=None,
+                neighbor_matrix_shifts=None,
+                mask_value=p.shape[0],
+            )
+
+        if charge_graph == "positions":
+            positions_eval = positions.detach().clone().requires_grad_(True)
+            energy_eval = public_energy_fn(
+                positions_eval,
+                toy_charge_model(positions_eval),
+            )
+            (grad_eval,) = torch.autograd.grad(energy_eval.sum(), positions_eval)
+
+            positions_ref = positions.detach().clone().requires_grad_(True)
+            energy_ref = reference_energy_fn(
+                positions_ref,
+                toy_charge_model(positions_ref),
+            )
+            (grad_ref,) = torch.autograd.grad(energy_ref.sum(), positions_ref)
+        else:
+            theta_eval = torch.tensor(
+                [0.4, -0.2],
+                dtype=torch.float64,
+                device=device,
+                requires_grad=True,
+            )
+            energy_eval = public_energy_fn(positions, theta_eval - theta_eval.mean())
+            (grad_eval,) = torch.autograd.grad(energy_eval.sum(), theta_eval)
+
+            theta_ref = theta_eval.detach().clone().requires_grad_(True)
+            energy_ref = reference_energy_fn(positions, theta_ref - theta_ref.mean())
+            (grad_ref,) = torch.autograd.grad(energy_ref.sum(), theta_ref)
+
+        assert cached_connector_calls == 1
+        torch.testing.assert_close(grad_eval, grad_ref, rtol=1e-5, atol=1e-7)
+
+
 class TestEwaldQRGeometryFallback:
     """q(R) manual-chain and HVP guards for CUDA non-uniform cotangent fallback."""
 
@@ -8512,9 +9914,14 @@ class TestEwaldQRGeometryFallback:
         return energy_fn
 
     def _recip_energy_fn(self, positions, cell, device, alpha):
-        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=2.0).squeeze(0)
+        miller_bounds = (4, 4, 4)
 
         def energy_fn(p, q, c):
+            k_vectors = generate_k_vectors_ewald_summation(
+                c,
+                k_cutoff=2.0,
+                miller_bounds=miller_bounds,
+            )
             return ewald_reciprocal_space(p, q, c, k_vectors, alpha)
 
         return energy_fn
@@ -8610,7 +10017,7 @@ class TestEwaldQRGeometryFallback:
 class TestEwaldDoubleBackward:
     """Second-order contract: create_graph losses + gradgradcheck (real/recip/summation)."""
 
-    def _energy_fn(self, part, device, triclinic=False):
+    def _energy_fn(self, part, device, triclinic=False, explicit_batch=False):
         """Return (energy_fn, positions, charges, cell) for the requested part."""
         positions, charges, cell = _contract_dipole(device)
         if triclinic:
@@ -8621,15 +10028,31 @@ class TestEwaldDoubleBackward:
                 dtype=torch.float64,
                 device=device,
             )
-        nl, nptr, ns = cell_list(
-            positions,
-            5.0,
-            cell,
-            torch.tensor([[True, True, True]], device=device),
-            return_neighbor_list=True,
+        batch_idx = (
+            torch.zeros(positions.shape[0], dtype=torch.int32, device=device)
+            if explicit_batch
+            else None
         )
+        batch_kwargs = {"batch_idx": batch_idx} if explicit_batch else {}
+        if explicit_batch:
+            nl, nptr, ns = batch_cell_list(
+                positions,
+                5.0,
+                cell,
+                torch.tensor([[True, True, True]], device=device),
+                batch_idx=batch_idx,
+                return_neighbor_list=True,
+            )
+        else:
+            nl, nptr, ns = cell_list(
+                positions,
+                5.0,
+                cell,
+                torch.tensor([[True, True, True]], device=device),
+                return_neighbor_list=True,
+            )
         alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
-        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=2.0).squeeze(0)
+        miller_bounds = (4, 4, 4)
 
         if part == "real":
 
@@ -8642,11 +10065,24 @@ class TestEwaldDoubleBackward:
                     neighbor_list=nl,
                     neighbor_ptr=nptr,
                     neighbor_shifts=ns,
+                    **batch_kwargs,
                 )
         elif part == "recip":
 
             def energy_fn(p, q, c):
-                return ewald_reciprocal_space(p, q, c, k_vectors, alpha)
+                k_vectors = generate_k_vectors_ewald_summation(
+                    c,
+                    k_cutoff=2.0,
+                    miller_bounds=miller_bounds,
+                )
+                return ewald_reciprocal_space(
+                    p,
+                    q,
+                    c,
+                    k_vectors,
+                    alpha,
+                    **batch_kwargs,
+                )
         else:  # summation
 
             def energy_fn(p, q, c):
@@ -8656,12 +10092,45 @@ class TestEwaldDoubleBackward:
                     c,
                     alpha=alpha,
                     k_cutoff=2.0,
+                    miller_bounds=miller_bounds,
                     neighbor_list=nl,
                     neighbor_ptr=nptr,
                     neighbor_shifts=ns,
+                    **batch_kwargs,
                 )
 
         return energy_fn, positions, charges, cell
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    @pytest.mark.parametrize("part", ["real", "recip", "summation"])
+    def test_qR_sibling_positions_force_matches_fd(self, device, part):
+        """Ewald energy derivatives preserve q(R) across sibling graphs."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        energy_fn, positions, _charges, cell = self._energy_fn(part, device)
+        positions = positions.detach().clone().requires_grad_(True)
+
+        def energy_of_base(base):
+            return energy_fn(base * 1.0, toy_charge_model(base), cell).sum()
+
+        (grad_positions,) = torch.autograd.grad(
+            energy_of_base(positions),
+            positions,
+            create_graph=True,
+        )
+        fd_grad = finite_difference_jacobian(
+            energy_of_base,
+            positions.detach(),
+            eps=1e-6,
+        )
+        max_abs, max_rel = max_abs_rel(grad_positions, fd_grad)
+        assert torch.allclose(
+            grad_positions,
+            fd_grad,
+            rtol=C_FORCE_RTOL,
+            atol=C_FORCE_ATOL,
+        ), f"{part} sibling q(R) force: max_abs={max_abs:.3e} max_rel={max_rel:.3e}"
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     @pytest.mark.parametrize("part", ["real", "recip", "summation"])
@@ -8754,6 +10223,33 @@ class TestEwaldDoubleBackward:
         assert gradgradcheck_energy(energy_fn, positions, charges, cell, wrt=wrt)
 
     @pytest.mark.parametrize("device", ["cuda"])
+    def test_gradgradcheck_fixed_k_recip_cell_cuda_canary(self, device):
+        """Fixed-k reciprocal cell gradgradcheck preserves second-order coverage."""
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = _contract_dipole(device)
+        alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+        fixed_k_vectors = generate_k_vectors_ewald_summation(
+            cell,
+            k_cutoff=2.0,
+            miller_bounds=(4, 4, 4),
+        ).detach()
+
+        def energy_fn(p, q, c):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                return ewald_reciprocal_space(p, q, c, fixed_k_vectors, alpha)
+
+        assert gradgradcheck_energy(
+            energy_fn,
+            positions,
+            charges,
+            cell,
+            wrt=("cell",),
+        )
+
+    @pytest.mark.parametrize("device", ["cuda"])
     def test_gradgradcheck_triclinic_mixed_cuda_canary(self, device):
         """Non-slow CUDA canary for triclinic mixed position-cell terms."""
         if not torch.cuda.is_available():
@@ -8771,6 +10267,31 @@ class TestEwaldDoubleBackward:
             cell,
             wrt=("positions", "cell"),
         )
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    @pytest.mark.parametrize(
+        ("part", "wrt", "triclinic"),
+        [
+            ("real", ("positions",), False),
+            ("real", ("positions", "cell"), True),
+            ("recip", ("charges",), False),
+            ("recip", ("cell",), False),
+            ("summation", ("positions",), False),
+        ],
+    )
+    def test_gradgradcheck_explicit_single_batch(self, device, part, wrt, triclinic):
+        """Explicit-B=1 public APIs retain focused float64 second derivatives."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        energy_fn, positions, charges, cell = self._energy_fn(
+            part,
+            device,
+            triclinic=triclinic,
+            explicit_batch=True,
+        )
+        assert gradgradcheck_energy(energy_fn, positions, charges, cell, wrt=wrt)
 
     @pytest.mark.slow
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
@@ -9543,6 +11064,59 @@ class TestMaxAtomsPerSystem:
             positions, charges, cell, k_vectors, alpha, batch_idx=batch_idx
         )
         assert inference_calls >= 1
+
+    def test_compiling_inference_warns_and_explicit_bound_does_not(self):
+        """Only the compiled launch-bound fallback emits its migration warning."""
+        atom_start = torch.tensor([0, 1], dtype=torch.int32)
+        atom_end = torch.tensor([1, 4], dtype=torch.int32)
+        compiled = torch.compile(_ewald_recip_chain._resolve_max_atoms_per_system)
+
+        with pytest.warns(FutureWarning, match="max_atoms_per_system"):
+            assert compiled(0, atom_start, atom_end, 4) == 3
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            assert compiled(3, atom_start, atom_end, 4) == 3
+
+
+class TestReciprocalSymbolicMakeFx:
+    """Symbolic tracing coverage for batched reciprocal Ewald."""
+
+    @staticmethod
+    def _inputs(batch_size: int) -> tuple[torch.Tensor, ...]:
+        positions = torch.arange(batch_size * 6, dtype=torch.float64).reshape(-1, 3)
+        positions = positions.mul(0.01).add(0.1)
+        charges = torch.linspace(-0.4, 0.4, batch_size * 2, dtype=torch.float64)
+        cell = torch.eye(3, dtype=torch.float64).expand(batch_size, -1, -1).clone()
+        batch_idx = torch.arange(batch_size, dtype=torch.int32).repeat_interleave(2)
+        alpha = torch.full((batch_size,), 0.35, dtype=torch.float64)
+        k_vectors = torch.tensor([[[1.0, 0.0, 0.0]]], dtype=torch.float64).expand(
+            batch_size, -1, -1
+        )
+        return positions, charges, cell, batch_idx, alpha, k_vectors
+
+    @pytest.mark.parametrize("energy_reduction", ["atom", "system"])
+    def test_symbolic_make_fx_is_batch_size_independent(self, energy_reduction):
+        """Symbolic reciprocal graphs are independent of the concrete batch size."""
+
+        def reciprocal(positions, charges, cell, batch_idx, alpha, k_vectors):
+            return ewald_reciprocal_space(
+                positions,
+                charges,
+                cell,
+                k_vectors,
+                alpha,
+                batch_idx=batch_idx,
+                max_atoms_per_system=2,
+                energy_reduction=energy_reduction,
+            )
+
+        args4 = self._inputs(4)
+        args5 = self._inputs(5)
+        traced4 = make_fx(reciprocal, tracing_mode="symbolic")(*args4)
+        traced5 = make_fx(reciprocal, tracing_mode="symbolic")(*args5)
+
+        assert traced4.code == traced5.code
+        torch.testing.assert_close(traced4(*args5), reciprocal(*args5))
 
 
 if __name__ == "__main__":

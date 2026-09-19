@@ -202,7 +202,7 @@ print(f"  Virial trace: {float(jnp.trace(virial_3d[0])): .8f}")
 
 # %%
 # Ewald with Slab Correction (Legacy Direct-Output Check)
-# ------------------------------------------------------
+# -------------------------------------------------------
 # Set ``slab_correction=True`` and pass the slab periodicity. The output tuple
 # follows the same ordering as ordinary Ewald: energies, forces, charge
 # gradients, and virial when all optional quantities are requested. For training
@@ -356,7 +356,7 @@ print(
 
 # %%
 # PME with Slab Correction (Legacy Direct-Output Check)
-# ----------------------------------------------------
+# -----------------------------------------------------
 # Full PME accepts the same slab correction arguments as Ewald. The reciprocal
 # PME component itself remains a 3D-periodic reciprocal-space calculation; the
 # slab term is added by the high-level ``particle_mesh_ewald`` wrapper. This

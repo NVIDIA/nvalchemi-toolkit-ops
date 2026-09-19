@@ -76,6 +76,8 @@ from nvalchemiops.interactions.electrostatics.dsf import (
 from nvalchemiops.interactions.electrostatics.dsf import (
     dsf_matrix as wp_dsf_matrix,
 )
+from nvalchemiops.torch._warnings import _warn_compile_missing_argument_inference
+from nvalchemiops.torch._warp_op_helpers import scoped_torch_warp_stream
 from nvalchemiops.torch.interactions.electrostatics._util import _InjectChargeGrad
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
@@ -93,6 +95,7 @@ __all__ = [
     "nvalchemiops::dsf_csr_op",
     mutates_args=("energy", "forces", "virial", "charge_grad"),
 )
+@scoped_torch_warp_stream
 def _dsf_csr_op(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -225,6 +228,7 @@ def _dsf_csr_op_fake(
     "nvalchemiops::dsf_matrix_op",
     mutates_args=("energy", "forces", "virial", "charge_grad"),
 )
+@scoped_torch_warp_stream
 def _dsf_matrix_op(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -424,7 +428,9 @@ def dsf_coulomb(
     compute_virial : bool, default False
         Whether to compute virial tensor (requires PBC and compute_forces).
     num_systems : int, optional
-        Number of systems. Inferred from batch_idx or cell if not given.
+        Number of systems. Inferred from batch_idx or cell if not given. When
+        compiling without a cell, pass this explicitly; inference emits a
+        ``FutureWarning`` and will become an error in a future release.
     device : str, optional
         Warp device string. Inferred from positions if not given.
 
@@ -537,6 +543,10 @@ def dsf_coulomb(
         elif cell is not None:
             num_systems = cell.size(0)
         else:
+            _warn_compile_missing_argument_inference(
+                missing="`num_systems`",
+                inference="inferring it from `batch_idx`",
+            )
             num_systems = int(batch_idx.max().item()) + 1
 
     # Ensure cell matches input dtype

@@ -1005,9 +1005,28 @@ def estimate_neighbor_list_costs(
 def suggest_neighbor_list_method(*args, **kwargs) -> str:
     """Return the cheapest feasible neighbor-list strategy name.
 
-    Thin wrapper over :func:`estimate_neighbor_list_costs` that returns only the
-    top-ranked strategy name.  Accepts the same arguments and shares the same
-    host-only synchronization caveat (call outside ``torch.compile`` /
-    ``jax.jit``).
+    Thin wrapper over :func:`estimate_neighbor_list_costs` returning only the
+    top-ranked strategy name.  Accepts the same arguments and carries the same
+    host-only sync caveat: call outside ``torch.compile`` / ``jax.jit`` and
+    pass the result as an explicit ``method=`` argument.
+
+    Parameters
+    ----------
+    *args
+        Positional arguments forwarded to
+        :func:`estimate_neighbor_list_costs`.
+    **kwargs
+        Keyword arguments forwarded to
+        :func:`estimate_neighbor_list_costs`.
+
+    Returns
+    -------
+    str
+        Name of the cheapest feasible strategy, e.g. ``"cell_list_atom_centric"``
+        or ``"batch_naive_tile"``.
+
+    See Also
+    --------
+    estimate_neighbor_list_costs : Full ranked list of feasible strategies with costs.
     """
     return estimate_neighbor_list_costs(*args, **kwargs)[0][0]

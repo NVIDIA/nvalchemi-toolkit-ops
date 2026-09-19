@@ -27,6 +27,7 @@ from nvalchemiops.interactions.electrostatics.slab_kernels import (
     _slab_reduce_moments_kernel_overload,
     slab_precompute_geometry,
 )
+from nvalchemiops.torch._warp_op_helpers import scoped_torch_warp_stream
 from nvalchemiops.torch.autograd import (
     needs_grad,
     warp_from_torch,
@@ -129,6 +130,7 @@ def _prepare_pbc_for_slab(
         "slab_virial",
     ),
 )
+@scoped_torch_warp_stream
 def _slab_correction_direct_op(
     positions: torch.Tensor,
     charges: torch.Tensor,

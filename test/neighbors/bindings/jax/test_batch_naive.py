@@ -60,6 +60,23 @@ def _sorted_row_multisets(
     return rows
 
 
+def test_zero_cutoff_fixed_coo_returns_fresh_recovery_metadata():
+    """Batched zero cutoff never retains a caller-provided count buffer."""
+    positions = jnp.zeros((2, 3), dtype=jnp.float32)
+    _list, _ptr, counts, metadata_valid = batch_naive_neighbor_list(
+        positions,
+        0.0,
+        batch_ptr=jnp.array([0, 2], dtype=jnp.int32),
+        max_neighbors=1,
+        num_neighbors=jnp.full(2, 7, dtype=jnp.int32),
+        return_neighbor_list=True,
+        coo_capacity=2,
+    )
+
+    np.testing.assert_array_equal(counts, jnp.zeros(2, dtype=jnp.int32))
+    assert bool(metadata_valid)
+
+
 def _distances_from_neighbor_list(
     positions: jax.Array,
     cell: jax.Array,

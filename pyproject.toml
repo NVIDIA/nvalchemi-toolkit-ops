@@ -12,7 +12,7 @@ readme = "README.md"
 requires-python = ">=3.11,<3.15"
 license = "Apache-2.0"
 dependencies = [
-    "warp-lang >= 1.13.0",
+    "warp-lang >= 1.15.0",
     "numpy",
 ]
 keywords = [
@@ -200,6 +200,16 @@ asyncio_mode = "auto"
 branch = true
 concurrency = ["multiprocessing", "thread"]
 source = ["nvalchemiops"]
+
+# Coverage records absolute file paths, and the pull-request tier combines data
+# produced on several runners whose workspace roots differ. This maps them all
+# back onto the local tree so `coverage combine` merges them instead of
+# reporting each copy as a separate, mostly-uncovered file.
+[tool.coverage.paths]
+source = [
+    "nvalchemiops",
+    "*/nvalchemiops",
+]
 
 [tool.coverage.report]
 exclude_lines = [

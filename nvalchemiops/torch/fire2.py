@@ -77,6 +77,11 @@ from nvalchemiops.dynamics.utils.cell_filter import (
     pack_velocities_with_cell,
     unpack_velocities_with_cell,
 )
+from nvalchemiops.torch._warp_op_helpers import (
+    register_noop_fake,
+    scoped_torch_warp_stream,
+    torch_custom_op,
+)
 
 # Torch dtype -> Warp dtype mappings
 _TORCH_TO_WP_VEC = {torch.float32: wp.vec3f, torch.float64: wp.vec3d}
@@ -93,6 +98,19 @@ def _alloc_or_zero(
     return buf
 
 
+def _alloc_if_none(
+    buf: torch.Tensor | None,
+    *shape: int,
+    dtype: torch.dtype,
+    device: torch.device,
+) -> torch.Tensor:
+    """Return a buffer, allocating uninitialized storage if needed."""
+    if buf is None:
+        return torch.empty(*shape, dtype=dtype, device=device)
+    return buf
+
+
+@scoped_torch_warp_stream
 def _coord_cell_ext_metadata(
     batch_idx: torch.Tensor,
     M: int,
@@ -138,6 +156,7 @@ def _coord_cell_ext_metadata(
     return atom_ptr, wp_atom_ptr, wp_ext_atom_ptr, wp_ext_batch_idx
 
 
+@scoped_torch_warp_stream
 def _coord_cell_mix_impl(
     positions,
     velocities,
@@ -318,6 +337,80 @@ def _coord_cell_mix_impl(
     )
 
 
+@torch_custom_op(
+    "nvalchemiops::fire2_step_coord",
+    mutates_args=(
+        "positions",
+        "velocities",
+        "alpha",
+        "dt",
+        "nsteps_inc",
+        "vf",
+        "v_sumsq",
+        "f_sumsq",
+        "max_norm",
+    ),
+)
+@scoped_torch_warp_stream
+def _fire2_step_coord_op(
+    positions: torch.Tensor,
+    velocities: torch.Tensor,
+    forces: torch.Tensor,
+    batch_idx: torch.Tensor,
+    alpha: torch.Tensor,
+    dt: torch.Tensor,
+    nsteps_inc: torch.Tensor,
+    vf: torch.Tensor,
+    v_sumsq: torch.Tensor,
+    f_sumsq: torch.Tensor,
+    max_norm: torch.Tensor,
+    delaystep: int,
+    dtgrow: float,
+    dtshrink: float,
+    alphashrink: float,
+    alpha0: float,
+    tmax: float,
+    tmin: float,
+    maxstep: float,
+    compute_reductions: bool,
+) -> None:
+    """Run the registered coordinate-only FIRE2 operation."""
+    dtype = positions.dtype
+    vec_type = _TORCH_TO_WP_VEC[dtype]
+
+    if compute_reductions:
+        vf.zero_()
+        v_sumsq.zero_()
+        f_sumsq.zero_()
+    max_norm.zero_()
+
+    if positions.shape[0] == 0:
+        return
+
+    fire2_step(
+        wp.from_torch(positions.detach(), dtype=vec_type),
+        wp.from_torch(velocities.detach(), dtype=vec_type),
+        wp.from_torch(forces.detach(), dtype=vec_type),
+        wp.from_torch(batch_idx.detach(), dtype=wp.int32),
+        wp.from_torch(alpha.detach()),
+        wp.from_torch(dt.detach()),
+        wp.from_torch(nsteps_inc.detach(), dtype=wp.int32),
+        wp.from_torch(vf),
+        wp.from_torch(v_sumsq),
+        wp.from_torch(f_sumsq),
+        wp.from_torch(max_norm),
+        delaystep=delaystep,
+        dtgrow=dtgrow,
+        dtshrink=dtshrink,
+        alphashrink=alphashrink,
+        alpha0=alpha0,
+        tmax=tmax,
+        tmin=tmin,
+        maxstep=maxstep,
+        compute_reductions=compute_reductions,
+    )
+
+
 def fire2_step_coord(
     positions: torch.Tensor,
     velocities: torch.Tensor,
@@ -396,10 +489,23 @@ def fire2_step_coord(
             f_sumsq = torch.empty_like(vf)
             max_norm = torch.empty_like(vf)
 
-    delaystep, dtgrow, dtshrink, alphashrink, alpha0, tmax, tmin, maxstep
-        FIRE2 hyperparameters.  See
-        :func:`~nvalchemiops.dynamics.optimizers.fire2.fire2_step` for
-        defaults and descriptions.
+    delaystep : int, default 60
+        Minimum consecutive positive-power steps before timestep growth.
+    dtgrow : float, default 1.05
+        Timestep growth factor applied when ``nsteps_inc > delaystep``.
+    dtshrink : float, default 0.75
+        Timestep shrink factor applied on uphill steps (:math:`P \le 0`).
+    alphashrink : float, default 0.985
+        Alpha decay factor applied after enough positive-power steps.
+    alpha0 : float, default 0.09
+        Alpha reset value for uphill systems (:math:`P \le 0`).
+    tmax : float, default 0.08
+        Maximum allowed per-system timestep.
+    tmin : float, default 0.005
+        Minimum allowed per-system timestep.
+    maxstep : float, default 0.1
+        Maximum allowed displacement per atom. Steps larger than this are
+        rescaled by ``maxstep / max_norm[s]`` per system.
     compute_reductions : bool, default True
         If True, recompute ``vf``/``v_sumsq``/``f_sumsq`` internally. If False,
         use the caller-supplied values in those buffers instead of recomputing
@@ -408,13 +514,6 @@ def fire2_step_coord(
 
     Notes
     -----
-    Default hyperparameters (from the underlying Warp implementation):
-    ``delaystep=60``, ``dtgrow=1.05``, ``dtshrink=0.75``,
-    ``alphashrink=0.985``, ``alpha0=0.09``, ``tmax=0.08``,
-    ``tmin=0.005``, ``maxstep=0.1``.
-    See :func:`nvalchemiops.dynamics.optimizers.fire2.fire2_step` for
-    full descriptions.
-
     For variable-cell optimization (coordinates + cell DOFs), use
     :func:`fire2_step_coord_cell` instead.
 
@@ -445,36 +544,113 @@ def fire2_step_coord(
     dtype = positions.dtype
     device = positions.device
     M = alpha.shape[0]
-    vec_type = _TORCH_TO_WP_VEC[dtype]
 
-    # Scratch buffers: allocate/zero when recomputing; require and preserve
-    # them when the caller supplies precomputed reductions.
     if compute_reductions:
-        vf = _alloc_or_zero(vf, M, dtype, device)
-        v_sumsq = _alloc_or_zero(v_sumsq, M, dtype, device)
-        f_sumsq = _alloc_or_zero(f_sumsq, M, dtype, device)
+        vf = _alloc_if_none(vf, M, dtype=dtype, device=device)
+        v_sumsq = _alloc_if_none(v_sumsq, M, dtype=dtype, device=device)
+        f_sumsq = _alloc_if_none(f_sumsq, M, dtype=dtype, device=device)
     elif vf is None or v_sumsq is None or f_sumsq is None:
         raise ValueError(
             "vf, v_sumsq, f_sumsq must be provided when compute_reductions=False"
         )
-    max_norm = _alloc_or_zero(max_norm, M, dtype, device)
+    max_norm = _alloc_if_none(max_norm, M, dtype=dtype, device=device)
 
-    if positions.shape[0] == 0:
-        return
+    _fire2_step_coord_op(
+        positions,
+        velocities,
+        forces,
+        batch_idx,
+        alpha,
+        dt,
+        nsteps_inc,
+        vf,
+        v_sumsq,
+        f_sumsq,
+        max_norm,
+        delaystep,
+        dtgrow,
+        dtshrink,
+        alphashrink,
+        alpha0,
+        tmax,
+        tmin,
+        maxstep,
+        compute_reductions,
+    )
 
-    # Delegate to the Warp-level fire2_step
-    fire2_step(
-        wp.from_torch(positions.detach(), dtype=vec_type),
-        wp.from_torch(velocities.detach(), dtype=vec_type),
-        wp.from_torch(forces.detach(), dtype=vec_type),
-        wp.from_torch(batch_idx.detach(), dtype=wp.int32),
-        wp.from_torch(alpha.detach()),
-        wp.from_torch(dt.detach()),
-        wp.from_torch(nsteps_inc.detach(), dtype=wp.int32),
-        wp.from_torch(vf),
-        wp.from_torch(v_sumsq),
-        wp.from_torch(f_sumsq),
-        wp.from_torch(max_norm),
+
+@torch_custom_op(
+    "nvalchemiops::fire2_step_coord_cell",
+    mutates_args=(
+        "positions",
+        "velocities",
+        "cell",
+        "cell_velocities",
+        "alpha",
+        "dt",
+        "nsteps_inc",
+        "ext_velocities",
+        "ext_forces",
+        "vf",
+        "v_sumsq",
+        "f_sumsq",
+        "max_norm",
+    ),
+)
+@scoped_torch_warp_stream
+def _fire2_step_coord_cell_op(
+    positions: torch.Tensor,
+    velocities: torch.Tensor,
+    forces: torch.Tensor,
+    cell: torch.Tensor,
+    cell_velocities: torch.Tensor,
+    cell_force: torch.Tensor,
+    batch_idx: torch.Tensor,
+    alpha: torch.Tensor,
+    dt: torch.Tensor,
+    nsteps_inc: torch.Tensor,
+    atom_ptr: torch.Tensor | None,
+    ext_atom_ptr: torch.Tensor | None,
+    ext_positions: torch.Tensor | None,
+    ext_velocities: torch.Tensor,
+    ext_forces: torch.Tensor,
+    ext_batch_idx: torch.Tensor | None,
+    vf: torch.Tensor,
+    v_sumsq: torch.Tensor,
+    f_sumsq: torch.Tensor,
+    max_norm: torch.Tensor,
+    delaystep: int,
+    dtgrow: float,
+    dtshrink: float,
+    alphashrink: float,
+    alpha0: float,
+    tmax: float,
+    tmin: float,
+    maxstep: float,
+    cell_force_scale: float,
+    compute_reductions: bool,
+) -> None:
+    """Run the registered variable-cell FIRE2 operation."""
+    res = _coord_cell_mix_impl(
+        positions,
+        velocities,
+        forces,
+        cell,
+        cell_velocities,
+        cell_force,
+        batch_idx,
+        alpha,
+        dt,
+        nsteps_inc,
+        atom_ptr=atom_ptr,
+        ext_atom_ptr=ext_atom_ptr,
+        ext_velocities=ext_velocities,
+        ext_forces=ext_forces,
+        ext_batch_idx=ext_batch_idx,
+        vf=vf,
+        v_sumsq=v_sumsq,
+        f_sumsq=f_sumsq,
+        max_norm=max_norm,
         delaystep=delaystep,
         dtgrow=dtgrow,
         dtshrink=dtshrink,
@@ -482,8 +658,36 @@ def fire2_step_coord(
         alpha0=alpha0,
         tmax=tmax,
         tmin=tmin,
-        maxstep=maxstep,
+        cell_force_scale=cell_force_scale,
         compute_reductions=compute_reductions,
+        ext_positions=ext_positions,
+    )
+    if res is None:
+        return
+    (
+        wp_pos,
+        wp_vel,
+        wp_cell,
+        wp_cell_vel,
+        wp_dt,
+        wp_vf,
+        wp_ext_batch_idx,
+        wp_ext_atom_ptr,
+        wp_max_norm,
+        wp_device,
+    ) = res
+    _apply_fire2_coord_cell_step(
+        wp_pos,
+        wp_vel,
+        wp_cell,
+        wp_cell_vel,
+        wp_dt,
+        wp_vf,
+        wp_ext_batch_idx,
+        wp_ext_atom_ptr,
+        wp_max_norm,
+        maxstep=maxstep,
+        device=wp_device,
     )
 
 
@@ -617,8 +821,24 @@ def fire2_step_coord_cell(
         zeroed in-place if provided. In this coupled cell adapter,
         ``max_norm`` is the final physical Cartesian atomic displacement norm,
         recomputed after cell motion is coupled back to the atoms.
-    delaystep, dtgrow, dtshrink, alphashrink, alpha0, tmax, tmin, maxstep
-        FIRE2 hyperparameters.
+    delaystep : int, default 60
+        Minimum consecutive positive-power steps before timestep growth.
+    dtgrow : float, default 1.05
+        Timestep growth factor applied when ``nsteps_inc > delaystep``.
+    dtshrink : float, default 0.75
+        Timestep shrink factor applied on uphill steps (:math:`P \le 0`).
+    alphashrink : float, default 0.985
+        Alpha decay factor applied after enough positive-power steps.
+    alpha0 : float, default 0.09
+        Alpha reset value for uphill systems (:math:`P \le 0`).
+    tmax : float, default 0.08
+        Maximum allowed per-system timestep.
+    tmin : float, default 0.005
+        Minimum allowed per-system timestep.
+    maxstep : float, default 0.1
+        Maximum allowed physical Cartesian displacement per atom after cell
+        coupling. Steps larger than this are rescaled by
+        ``maxstep / max_norm[s]`` per system.
     cell_force_scale : float, default=1.0
         Extra positive multiplier for stress-derived cell-force normalization.
         Cell forces are divided by ``atoms_per_system * cell_force_scale``.
@@ -633,13 +853,6 @@ def fire2_step_coord_cell(
 
     Notes
     -----
-    Default hyperparameters (from the underlying Warp implementation):
-    ``delaystep=60``, ``dtgrow=1.05``, ``dtshrink=0.75``,
-    ``alphashrink=0.985``, ``alpha0=0.09``, ``tmax=0.08``,
-    ``tmin=0.005``, ``maxstep=0.1``.
-    See :func:`nvalchemiops.dynamics.optimizers.fire2.fire2_step` for
-    full descriptions.
-
     The high-level variable-cell adapter normalizes raw stress-derived cell
     forces by the number of atoms in each system. ``cell_force_scale`` is an
     extra multiplier on top of that per-system atom-count normalization.
@@ -746,7 +959,27 @@ def fire2_step_coord_cell(
     ...         f_sumsq=f_sumsq, max_norm=max_norm,
     ...     )
     """
-    res = _coord_cell_mix_impl(
+    dtype = positions.dtype
+    device = positions.device
+    N = positions.shape[0]
+    M = alpha.shape[0]
+    N_ext = N + 2 * M
+
+    ext_velocities = _alloc_if_none(
+        ext_velocities, N_ext, 3, dtype=dtype, device=device
+    )
+    ext_forces = _alloc_if_none(ext_forces, N_ext, 3, dtype=dtype, device=device)
+    if compute_reductions or N == 0:
+        vf = _alloc_if_none(vf, M, dtype=dtype, device=device)
+        v_sumsq = _alloc_if_none(v_sumsq, M, dtype=dtype, device=device)
+        f_sumsq = _alloc_if_none(f_sumsq, M, dtype=dtype, device=device)
+    elif vf is None or v_sumsq is None or f_sumsq is None:
+        raise ValueError(
+            "vf, v_sumsq, f_sumsq must be provided when compute_reductions=False"
+        )
+    max_norm = _alloc_if_none(max_norm, M, dtype=dtype, device=device)
+
+    _fire2_step_coord_cell_op(
         positions,
         velocities,
         forces,
@@ -757,54 +990,31 @@ def fire2_step_coord_cell(
         alpha,
         dt,
         nsteps_inc,
-        atom_ptr=atom_ptr,
-        ext_atom_ptr=ext_atom_ptr,
-        ext_velocities=ext_velocities,
-        ext_forces=ext_forces,
-        ext_batch_idx=ext_batch_idx,
-        vf=vf,
-        v_sumsq=v_sumsq,
-        f_sumsq=f_sumsq,
-        max_norm=max_norm,
-        delaystep=delaystep,
-        dtgrow=dtgrow,
-        dtshrink=dtshrink,
-        alphashrink=alphashrink,
-        alpha0=alpha0,
-        tmax=tmax,
-        tmin=tmin,
-        cell_force_scale=cell_force_scale,
-        compute_reductions=compute_reductions,
-        ext_positions=ext_positions,
+        atom_ptr,
+        ext_atom_ptr,
+        ext_positions,
+        ext_velocities,
+        ext_forces,
+        ext_batch_idx,
+        vf,
+        v_sumsq,
+        f_sumsq,
+        max_norm,
+        delaystep,
+        dtgrow,
+        dtshrink,
+        alphashrink,
+        alpha0,
+        tmax,
+        tmin,
+        maxstep,
+        cell_force_scale,
+        compute_reductions,
     )
-    if res is None:
-        return
-    (
-        wp_pos,
-        wp_vel,
-        wp_cell,
-        wp_cell_vel,
-        wp_dt,
-        wp_vf,
-        wp_ext_batch_idx,
-        wp_ext_atom_ptr,
-        wp_max_norm,
-        wp_device,
-    ) = res
-    # Couple + clamp + apply the affine cell update directly on positions/cells.
-    _apply_fire2_coord_cell_step(
-        wp_pos,
-        wp_vel,
-        wp_cell,
-        wp_cell_vel,
-        wp_dt,
-        wp_vf,
-        wp_ext_batch_idx,
-        wp_ext_atom_ptr,
-        wp_max_norm,
-        maxstep=maxstep,
-        device=wp_device,
-    )
+
+
+register_noop_fake(_fire2_step_coord_op)
+register_noop_fake(_fire2_step_coord_cell_op)
 
 
 def fire2_step_coord_cell_mix(
@@ -895,6 +1105,7 @@ def fire2_step_coord_cell_mix(
     )
 
 
+@scoped_torch_warp_stream
 def fire2_step_coord_cell_couple(
     positions: torch.Tensor,
     velocities: torch.Tensor,
@@ -982,6 +1193,7 @@ def fire2_step_coord_cell_couple(
     )
 
 
+@scoped_torch_warp_stream
 def fire2_step_coord_cell_apply(
     positions: torch.Tensor,
     velocities: torch.Tensor,
@@ -1077,6 +1289,7 @@ def fire2_step_coord_cell_apply(
     )
 
 
+@scoped_torch_warp_stream
 def fire2_compute_extended_reductions(
     positions: torch.Tensor,
     velocities: torch.Tensor,
@@ -1279,6 +1492,7 @@ def fire2_compute_extended_reductions(
     return atom_partial, cell_term
 
 
+@scoped_torch_warp_stream
 def fire2_step_extended(
     ext_positions: torch.Tensor,
     ext_velocities: torch.Tensor,
@@ -1351,8 +1565,23 @@ def fire2_step_extended(
         Consecutive positive-power step counter per system.
     vf, v_sumsq, f_sumsq, max_norm : torch.Tensor or None
         Per-system scratch buffers, shape (M,). Allocated internally if None.
-    delaystep, dtgrow, dtshrink, alphashrink, alpha0, tmax, tmin, maxstep :
-        FIRE2 hyperparameters.  See ``fire2_step_coord_cell`` for details.
+    delaystep : int, default 60
+        Minimum consecutive positive-power steps before timestep growth.
+    dtgrow : float, default 1.05
+        Timestep growth factor applied when ``nsteps_inc > delaystep``.
+    dtshrink : float, default 0.75
+        Timestep shrink factor applied on uphill steps (:math:`P \le 0`).
+    alphashrink : float, default 0.985
+        Alpha decay factor applied after enough positive-power steps.
+    alpha0 : float, default 0.09
+        Alpha reset value for uphill systems (:math:`P \le 0`).
+    tmax : float, default 0.08
+        Maximum allowed per-system timestep.
+    tmin : float, default 0.005
+        Minimum allowed per-system timestep.
+    maxstep : float, default 0.1
+        Maximum allowed displacement per packed degree of freedom. Steps
+        larger than this are rescaled by ``maxstep / max_norm[s]`` per system.
 
     Notes
     -----

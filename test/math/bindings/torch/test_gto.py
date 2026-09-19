@@ -174,6 +174,24 @@ def gto_density_reference(
 class TestGTODensityAPI:
     """Test the basic API and shapes."""
 
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+    def test_pytorch_wrappers_follow_current_stream(self, torch_stream_runner):
+        device = torch.device("cuda:0")
+        source = torch.tensor(
+            [[0.25, -0.5, 1.0], [1.5, 0.5, -0.25]], dtype=torch.float64, device=device
+        )
+        positions = torch.empty_like(source)
+        _, snapshots, expected = torch_stream_runner(
+            source,
+            positions,
+            lambda value: (
+                eval_gto_density_pytorch(value, sigma=0.8, L_max=2),
+                *eval_gto_fourier_pytorch(value, sigma=0.8, L_max=2),
+            ),
+        )
+        for actual, expected in zip(snapshots, expected, strict=True):
+            torch.testing.assert_close(actual, expected)
+
     def test_l0_shape(self, random_positions, device):
         """Test L=0 output shape."""
         output = eval_gto_density_pytorch(

@@ -897,6 +897,7 @@ def multipole_ewald_scf_step_energy(
 
     # Delayed imports to avoid circular module graph.
     from nvalchemiops.torch.interactions.electrostatics.multipole_ewald import (
+        _multipole_ewald_background_energy_per_atom,
         _multipole_ewald_self_energy_per_atom,
         multipole_real_space_energy,
     )
@@ -962,5 +963,14 @@ def multipole_ewald_scf_step_energy(
     atom_self = _multipole_ewald_self_energy_per_atom(
         source_feats_l1, sigma, alpha, quadrupoles=quadrupoles
     )
+    atom_background = _multipole_ewald_background_energy_per_atom(
+        source_feats_l1,
+        alpha,
+        cache.volume,
+        batch_idx=batch_idx,
+        n_systems=cache.batch_size if is_batch else None,
+    )
     # Return per-atom (N,)/(N_total,) — caller owns the reduction.
-    return (e_real_per_atom + e_recip_per_atom - atom_self).to(torch.float64)
+    return (e_real_per_atom + e_recip_per_atom - atom_self - atom_background).to(
+        torch.float64
+    )

@@ -15,7 +15,7 @@
 
 """
 FIRE Geometry Optimization (LJ Cluster)
-======================================
+=======================================
 
 This example demonstrates geometry optimization with the FIRE optimizer using:
 - The **package LJ implementation** (neighbor-list accelerated)

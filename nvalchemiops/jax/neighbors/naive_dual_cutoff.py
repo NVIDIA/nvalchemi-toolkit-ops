@@ -20,11 +20,14 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import warp as wp
-from warp.jax_experimental import jax_kernel
+from warp import jax_kernel
 
 from nvalchemiops.jax.neighbors._registration import _lazy_naive_kernel
 from nvalchemiops.jax.neighbors.neighbor_utils import (
+    _validate_coo_capacities,
+    _validate_dual_cutoff_order,
     compute_naive_num_shifts,
+    get_fixed_capacity_neighbor_list_from_neighbor_matrix,
     get_neighbor_list_from_neighbor_matrix,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
@@ -112,8 +115,11 @@ def naive_neighbor_list_dual_cutoff(
     positions_wrapped_buffer: jax.Array | None = None,
     per_atom_cell_offsets_buffer: jax.Array | None = None,
     inv_cell_buffer: jax.Array | None = None,
+    coo_capacity: int | tuple[int, int] | None = None,
 ) -> (
-    tuple[
+    tuple[jax.Array, jax.Array, jax.Array, jax.Array]
+    | tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]
+    | tuple[
         jax.Array,
         jax.Array,
         jax.Array,
@@ -123,8 +129,18 @@ def naive_neighbor_list_dual_cutoff(
         jax.Array,
         jax.Array,
     ]
-    | tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]
-    | tuple[jax.Array, jax.Array, jax.Array, jax.Array]
+    | tuple[
+        jax.Array,
+        jax.Array,
+        jax.Array,
+        jax.Array,
+        jax.Array,
+        jax.Array,
+        jax.Array,
+        jax.Array,
+        jax.Array,
+        jax.Array,
+    ]
 ):
     """Compute neighbor lists for two cutoff distances using naive O(N^2) algorithm.
 
@@ -136,9 +152,9 @@ def naive_neighbor_list_dual_cutoff(
     positions : jax.Array, shape (total_atoms, 3), dtype=float32 or float64
         Atomic coordinates in Cartesian space.
     cutoff1 : float
-        First cutoff distance (typically smaller).
+        First cutoff distance.
     cutoff2 : float
-        Second cutoff distance (typically larger).
+        Second cutoff distance. Must be greater than or equal to ``cutoff1``.
     pbc : jax.Array, shape (1, 3) or (3,), dtype=bool, optional
         Periodic boundary condition flags for each dimension.
     cell : jax.Array, shape (1, 3, 3) or (3, 3), dtype=float32 or float64, optional
@@ -153,6 +169,11 @@ def naive_neighbor_list_dual_cutoff(
         Value to use for padding in neighbor matrices. Default is total_atoms.
     return_neighbor_list : bool, optional - default = False
         If True, convert neighbor matrices to neighbor list (idx_i, idx_j) format.
+    coo_capacity : int or tuple[int, int], optional
+        Static capacity for each cutoff's COO output. One integer applies to
+        both; a tuple sets them independently. Fixed outputs append raw row
+        counts and a scalar metadata-validity flag after each cutoff's topology
+        tuple.
     neighbor_matrix1 : jax.Array, shape (total_atoms, max_neighbors1), dtype=int32, optional
         Pre-allocated first neighbor matrix.
     neighbor_matrix2 : jax.Array, shape (total_atoms, max_neighbors2), dtype=int32, optional
@@ -166,19 +187,37 @@ def naive_neighbor_list_dual_cutoff(
     num_neighbors2 : jax.Array, shape (total_atoms,), dtype=int32, optional
         Pre-allocated second neighbor count array.
     shift_range_per_dimension : jax.Array, shape (1, 3), dtype=int32, optional
-        Shift range in each dimension for the system.
-        Pass in a pre-computed value to avoid recomputation for PBC systems.
+        Shift range in each dimension for the system. For every PBC call under
+        ``jax.jit``, precompute it via :func:`compute_naive_num_shifts` outside
+        the jit boundary. It must correspond to the call's ``cell``, ``pbc``,
+        and larger static cutoff. Eager PBC calls may omit it.
     num_shifts_per_system : jax.Array, shape (1,), dtype=int32, optional
-        Number of periodic shifts for the system.
-        Pass in a pre-computed value to avoid recomputation for PBC systems.
+        Number of periodic shifts for the system. Same ``jax.jit``
+        precomputation requirement as ``shift_range_per_dimension``.
     max_shifts_per_system : int, optional
-        Maximum per-system shift count.
-        Pass in a pre-computed value to avoid recomputation for PBC systems.
+        Maximum per-system shift count. Same ``jax.jit`` precomputation
+        requirement as ``shift_range_per_dimension``.
     wrap_positions : bool, default=True
         If True, wrap input positions into the primary cell before
         neighbor search. Set to False when positions are already
         wrapped (e.g. by a preceding integration step) to save two
         GPU kernel launches per call.
+    rebuild_flags : jax.Array, shape () or (1,), dtype=bool, optional
+        Device-side selective-rebuild flag. When provided, both neighbor
+        matrices are recomputed only if ``rebuild_flags[0]`` is True;
+        otherwise existing buffers are preserved and the fill kernels are
+        skipped. Preservation requires passing back both complete previous
+        matrix/count bundles and, under PBC, both shift buffers; omitted
+        buffers are freshly allocated. No CPU-GPU synchronisation occurs.
+    positions_wrapped_buffer : jax.Array, shape (total_atoms, 3), dtype matches positions, optional
+        Scratch buffer the wrap kernel writes into when ``wrap_positions=True``
+        and PBC is enabled. Allocated internally when None.
+    per_atom_cell_offsets_buffer : jax.Array, shape (total_atoms, 3), dtype=int32, optional
+        Scratch buffer for per-atom cell-image offsets from the wrap kernel.
+        Allocated internally when None.
+    inv_cell_buffer : jax.Array, shape (1, 3, 3) or (num_systems, 3, 3), dtype matches positions, optional
+        Precomputed inverse cell matrix for the wrap kernel. If None,
+        computed from ``cell`` each call.
 
     Returns
     -------
@@ -186,9 +225,11 @@ def naive_neighbor_list_dual_cutoff(
         Variable-length tuple depending on input parameters:
 
         - No PBC, matrix format: ``(neighbor_matrix1, num_neighbors1, neighbor_matrix2, num_neighbors2)``
-        - No PBC, list format: ``(neighbor_list1, neighbor_ptr1, neighbor_list2, neighbor_ptr2)``
+        - No PBC, compact list format: ``(neighbor_list1, neighbor_ptr1, neighbor_list2, neighbor_ptr2)``
+        - No PBC, fixed list format: ``(neighbor_list1, neighbor_ptr1, num_neighbors1, metadata_valid1, neighbor_list2, neighbor_ptr2, num_neighbors2, metadata_valid2)``
         - With PBC, matrix format: ``(neighbor_matrix1, num_neighbors1, neighbor_matrix_shifts1, neighbor_matrix2, num_neighbors2, neighbor_matrix_shifts2)``
-        - With PBC, list format: ``(neighbor_list1, neighbor_ptr1, unit_shifts1, neighbor_list2, neighbor_ptr2, unit_shifts2)``
+        - With PBC, compact list format: ``(neighbor_list1, neighbor_ptr1, unit_shifts1, neighbor_list2, neighbor_ptr2, unit_shifts2)``
+        - With PBC, fixed list format: ``(neighbor_list1, neighbor_ptr1, unit_shifts1, num_neighbors1, metadata_valid1, neighbor_list2, neighbor_ptr2, unit_shifts2, num_neighbors2, metadata_valid2)``
 
     See Also
     --------
@@ -196,6 +237,13 @@ def naive_neighbor_list_dual_cutoff(
     nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_pbc_dual_cutoff : Core warp launcher (with PBC)
     naive_neighbor_list : Single cutoff version
     """
+    _validate_dual_cutoff_order(cutoff1, cutoff2)
+    coo_capacities = _validate_coo_capacities(
+        coo_capacity,
+        return_neighbor_list,
+        num_cutoffs=2,
+    )
+
     if pbc is None and cell is not None:
         raise ValueError("If cell is provided, pbc must also be provided")
     if pbc is not None and cell is None:
@@ -287,22 +335,44 @@ def naive_neighbor_list_dual_cutoff(
 
     if cutoff1 <= 0 and cutoff2 <= 0:
         if return_neighbor_list:
+            capacity1, capacity2 = coo_capacities or (0, 0)
+            recovery_counts = jnp.zeros(positions.shape[0], dtype=jnp.int32)
+            metadata_valid = jnp.ones((), dtype=jnp.bool_)
             if pbc is not None:
-                return (
-                    jnp.zeros((2, 0), dtype=jnp.int32),
+                base = (
+                    jnp.full((2, capacity1), fill_value, dtype=jnp.int32),
                     jnp.zeros((positions.shape[0] + 1,), dtype=jnp.int32),
-                    jnp.zeros((0, 3), dtype=jnp.int32),
-                    jnp.zeros((2, 0), dtype=jnp.int32),
+                    jnp.zeros((capacity1, 3), dtype=jnp.int32),
+                    jnp.full((2, capacity2), fill_value, dtype=jnp.int32),
                     jnp.zeros((positions.shape[0] + 1,), dtype=jnp.int32),
-                    jnp.zeros((0, 3), dtype=jnp.int32),
+                    jnp.zeros((capacity2, 3), dtype=jnp.int32),
                 )
             else:
-                return (
-                    jnp.zeros((2, 0), dtype=jnp.int32),
+                base = (
+                    jnp.full((2, capacity1), fill_value, dtype=jnp.int32),
                     jnp.zeros((positions.shape[0] + 1,), dtype=jnp.int32),
-                    jnp.zeros((2, 0), dtype=jnp.int32),
+                    jnp.full((2, capacity2), fill_value, dtype=jnp.int32),
                     jnp.zeros((positions.shape[0] + 1,), dtype=jnp.int32),
                 )
+            if coo_capacities is None:
+                return base
+            if pbc is not None:
+                return (
+                    *base[:3],
+                    recovery_counts,
+                    metadata_valid,
+                    *base[3:],
+                    recovery_counts,
+                    metadata_valid,
+                )
+            return (
+                *base[:2],
+                recovery_counts,
+                metadata_valid,
+                *base[2:],
+                recovery_counts,
+                metadata_valid,
+            )
         else:
             if pbc is not None:
                 return (
@@ -440,6 +510,83 @@ def naive_neighbor_list_dual_cutoff(
                 per_atom_cell_offsets,
                 launch_dims=(total_atoms,),
             )
+            if rebuild_flags is not None:
+                rf = rebuild_flags.flatten()[:1].astype(jnp.bool_)
+                num_neighbors1 = jnp.where(
+                    rf[0], jnp.zeros_like(num_neighbors1), num_neighbors1
+                )
+                num_neighbors2 = jnp.where(
+                    rf[0], jnp.zeros_like(num_neighbors2), num_neighbors2
+                )
+                (
+                    neighbor_matrix1,
+                    neighbor_matrix_shifts1,
+                    num_neighbors1,
+                    neighbor_matrix2,
+                    neighbor_matrix_shifts2,
+                    num_neighbors2,
+                ) = _DIRECT_NAIVE_DUAL_KERNELS[("wrap_on_entry", True)][
+                    positions.dtype
+                ](
+                    positions_wrapped,
+                    per_atom_cell_offsets,
+                    float(cutoff1 * cutoff1),
+                    float(cutoff2 * cutoff2),
+                    cell,
+                    shift_range_per_dimension,
+                    empty_num_shifts,
+                    empty_batch_idx,
+                    empty_batch_ptr,
+                    empty_target_indices,
+                    neighbor_matrix1,
+                    neighbor_matrix_shifts1,
+                    num_neighbors1,
+                    neighbor_matrix2,
+                    neighbor_matrix_shifts2,
+                    num_neighbors2,
+                    empty_vectors,
+                    empty_distances,
+                    empty_pair_params,
+                    empty_energies,
+                    empty_forces,
+                    rf,
+                    launch_dims=(1, max_shifts_per_system, total_atoms),
+                )
+            else:
+                (
+                    neighbor_matrix1,
+                    neighbor_matrix_shifts1,
+                    num_neighbors1,
+                    neighbor_matrix2,
+                    neighbor_matrix_shifts2,
+                    num_neighbors2,
+                ) = _DIRECT_NAIVE_DUAL_KERNELS[("wrap_on_entry", False)][
+                    positions.dtype
+                ](
+                    positions_wrapped,
+                    per_atom_cell_offsets,
+                    float(cutoff1 * cutoff1),
+                    float(cutoff2 * cutoff2),
+                    cell,
+                    shift_range_per_dimension,
+                    empty_num_shifts,
+                    empty_batch_idx,
+                    empty_batch_ptr,
+                    empty_target_indices,
+                    neighbor_matrix1,
+                    neighbor_matrix_shifts1,
+                    num_neighbors1,
+                    neighbor_matrix2,
+                    neighbor_matrix_shifts2,
+                    num_neighbors2,
+                    empty_vectors,
+                    empty_distances,
+                    empty_pair_params,
+                    empty_energies,
+                    empty_forces,
+                    empty_rebuild_flags,
+                    launch_dims=(1, max_shifts_per_system, total_atoms),
+                )
         else:
             if rebuild_flags is not None:
                 rf = rebuild_flags.flatten()[:1].astype(jnp.bool_)
@@ -516,6 +663,37 @@ def naive_neighbor_list_dual_cutoff(
                 )
 
     if return_neighbor_list:
+        if coo_capacities is not None:
+            capacity1, capacity2 = coo_capacities
+            if pbc is not None:
+                output1 = get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                    neighbor_matrix1,
+                    num_neighbors=num_neighbors1,
+                    capacity=capacity1,
+                    neighbor_shift_matrix=neighbor_matrix_shifts1,
+                    fill_value=fill_value,
+                )
+                output2 = get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                    neighbor_matrix2,
+                    num_neighbors=num_neighbors2,
+                    capacity=capacity2,
+                    neighbor_shift_matrix=neighbor_matrix_shifts2,
+                    fill_value=fill_value,
+                )
+            else:
+                output1 = get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                    neighbor_matrix1,
+                    num_neighbors=num_neighbors1,
+                    capacity=capacity1,
+                    fill_value=fill_value,
+                )
+                output2 = get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                    neighbor_matrix2,
+                    num_neighbors=num_neighbors2,
+                    capacity=capacity2,
+                    fill_value=fill_value,
+                )
+            return (*output1, *output2)
         if pbc is not None:
             neighbor_list1, neighbor_ptr1, neighbor_list_shifts1 = (
                 get_neighbor_list_from_neighbor_matrix(

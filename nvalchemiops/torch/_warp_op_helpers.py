@@ -48,6 +48,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable
 from contextlib import nullcontext
+from functools import update_wrapper, wraps
 from typing import Any
 
 import torch
@@ -57,26 +58,68 @@ __all__ = [
     "attach_simple_backward",
     "register_noop_fake",
     "register_warp_op_chain",
+    "scoped_torch_warp_stream",
     "scoped_warp_stream",
+    "torch_custom_op",
 ]
 
 
-def scoped_warp_stream(device: torch.device | str):
-    """Bind Warp launches to PyTorch's current CUDA stream when needed.
+def scoped_warp_stream(
+    device: torch.device | str,
+    *,
+    torch_stream: torch.cuda.Stream | None = None,
+):
+    """Bind Warp launches to a PyTorch CUDA stream.
 
-    If a caller already installed a matching ``wp.ScopedStream`` (for example
-    around ``wp.capture_begin/end``), reuse that stream. Re-wrapping the same
-    CUDA stream creates a distinct Warp stream wrapper and invalidates capture.
+    The matching Warp stream is reused so CUDA graph capture remains valid.
+    When ``torch_stream`` is omitted, the current PyTorch stream for ``device``
+    is used. Callers must scope allocations, conversions, and launches together.
     """
     torch_device = torch.device(device)
     if torch_device.type != "cuda":
         return nullcontext()
-
-    torch_stream = torch.cuda.current_stream(torch_device)
-    wp_stream = wp.get_stream(str(torch_device))
-    if wp_stream.cuda_stream == torch_stream.cuda_stream:
+    if torch_stream is None:
+        torch_stream = torch.cuda.current_stream(torch_device)
+    warp_stream = wp.get_stream(str(torch_device))
+    if warp_stream.cuda_stream == torch_stream.cuda_stream:
         return nullcontext()
-    return wp.ScopedStream(wp.stream_from_torch(torch_stream))
+    return wp.ScopedStream(
+        wp.stream_from_torch(torch_stream),
+        sync_enter=False,
+    )
+
+
+def scoped_torch_warp_stream(function: Callable[..., Any]) -> Callable[..., Any]:
+    """Run a Torch-storage Warp launch leaf on the current Torch stream."""
+
+    @wraps(function)
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        if torch.compiler.is_compiling():
+            return function(*args, **kwargs)
+        device = next(
+            value.device
+            for value in (*args, *kwargs.values())
+            if isinstance(value, torch.Tensor)
+        )
+        with scoped_warp_stream(device):
+            return function(*args, **kwargs)
+
+    wrapped.__signature__ = inspect.signature(function, eval_str=True)
+    return wrapped
+
+
+def torch_custom_op(
+    name: str,
+    *,
+    mutates_args: tuple[str, ...],
+) -> Callable[[Callable[..., Any]], Any]:
+    """Register a Torch custom op while retaining implementation metadata."""
+
+    def decorator(implementation: Callable[..., Any]) -> Any:
+        op = torch.library.custom_op(name, mutates_args=mutates_args)(implementation)
+        return update_wrapper(op, implementation)
+
+    return decorator
 
 
 def register_noop_fake(op) -> None:

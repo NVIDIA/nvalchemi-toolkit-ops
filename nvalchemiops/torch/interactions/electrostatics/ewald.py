@@ -113,16 +113,17 @@ from nvalchemiops.torch.interactions.electrostatics._util import (
     _component_direct_output_deprecation_msg,
     _detach_setup_tensor,
     _direct_output_deprecation_msg,
-    _has_potentially_geometry_dependent_charges,
     _InjectCachedEvalGrad,
     _InjectCachedEvalGradWithFallback,
     _InjectChargeGrad,
+    _is_static_single_system,
     _reduce_atom_energy,
     _unpack_electrostatic_outputs,
     _validate_energy_reduction,
 )
 from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
     generate_k_vectors_ewald_summation,
+    k_vectors_from_miller_indices,
 )
 from nvalchemiops.torch.interactions.electrostatics.parameters import (
     estimate_ewald_parameters,
@@ -134,6 +135,7 @@ from nvalchemiops.torch.interactions.electrostatics.slab import (
 __all__ = [
     "ewald_real_space",
     "ewald_reciprocal_space",
+    "ewald_reciprocal_space_from_miller_indices",
     "ewald_summation",
 ]
 
@@ -184,7 +186,7 @@ def _prepare_alpha(
         raise TypeError(f"alpha must be float or torch.Tensor, got {type(alpha)}")
 
 
-def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, int]:
+def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, int | torch.SymInt]:
     """Ensure cell is 3D (B, 3, 3) and return number of systems.
 
     Parameters
@@ -196,12 +198,41 @@ def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, int]:
     -------
     cell : torch.Tensor, shape (B, 3, 3)
         Cell with batch dimension.
-    num_systems : int
+    num_systems : int or torch.SymInt
         Number of systems (B).
     """
     if cell.dim() == 2:
         cell = cell.unsqueeze(0)
     return cell, cell.shape[0]
+
+
+def _validate_ewald_topology_inputs(
+    cell: torch.Tensor,
+    k_vectors: torch.Tensor | None,
+    k_cutoff: float | None,
+    miller_bounds: tuple[int, int, int] | torch.Tensor | None,
+    miller_indices: torch.Tensor | None,
+) -> None:
+    """Validate that full Ewald receives one reciprocal-topology source."""
+    if k_vectors is not None and miller_indices is not None:
+        raise ValueError("k_vectors cannot be combined with miller_indices")
+    if miller_indices is not None:
+        if k_cutoff is not None or miller_bounds is not None or k_vectors is not None:
+            raise ValueError(
+                "miller_indices cannot be combined with k_vectors, k_cutoff, or "
+                "miller_bounds"
+            )
+        if miller_indices.ndim != 2 or miller_indices.shape[-1] != 3:
+            raise ValueError("miller_indices must have shape (K, 3)")
+        if miller_indices.dtype not in {
+            torch.int8,
+            torch.int16,
+            torch.int32,
+            torch.int64,
+        }:
+            raise ValueError("miller_indices must have a signed integer dtype")
+        if cell.device != miller_indices.device:
+            raise ValueError("cell and miller_indices must be on the same device")
 
 
 ###########################################################################################
@@ -231,7 +262,7 @@ def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, int]:
 
 
 def _atom_ranges(
-    batch_idx: torch.Tensor, num_systems: int
+    batch_idx: torch.Tensor, num_systems: int | torch.SymInt
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Per-system [start, end) atom index ranges from a sorted ``batch_idx``.
 
@@ -239,6 +270,11 @@ def _atom_ranges(
     (the existing batched-Ewald contract); ``atom_start``/``atom_end`` are int32.
     """
     device = batch_idx.device
+    if _is_static_single_system(num_systems):
+        starts = torch.zeros((1,), dtype=torch.int32, device=device)
+        ends = torch.full((1,), batch_idx.shape[0], dtype=torch.int32, device=device)
+        return starts, ends
+
     counts = torch.zeros(num_systems, dtype=torch.long, device=device)
     counts = counts.index_add(
         0,
@@ -543,12 +579,15 @@ def _apply_reciprocal_corrections(
     if batch_idx is None:
         total_charge = charges.sum().reshape(1)
         return ewald_energy_corrections(e_ksum, charges, volume, alpha, total_charge)
-    total_charges = torch.zeros(
-        volume.shape[0],
-        dtype=charges.dtype,
-        device=charges.device,
-    )
-    total_charges = total_charges.index_add(0, batch_idx.to(torch.long), charges)
+    if volume.shape[0] == 1:
+        total_charges = charges.sum().reshape(1)
+    else:
+        total_charges = torch.zeros(
+            volume.shape[0],
+            dtype=charges.dtype,
+            device=charges.device,
+        )
+        total_charges = total_charges.index_add(0, batch_idx.to(torch.long), charges)
     return ewald_energy_corrections_batch(
         e_ksum,
         charges,
@@ -600,13 +639,13 @@ def _reciprocal_space_energy(
     batch_idx: torch.Tensor | None,
     max_atoms_per_system: int | None = None,
     energy_reduction: Literal["atom", "system"] = "atom",
+    preserve_k_vector_grad: bool = False,
 ) -> torch.Tensor:
     """Per-atom reciprocal-space Ewald energy, connected to autograd via the chain.
 
-    Energy = k-sum (explicit chain, differentiable in positions / charges and,
-    for internally generated reciprocal geometry, cell) minus the Torch-native
-    self + background corrections. Public k-vector leaf gradients are outside
-    the electrostatics contract.
+    Energy = k-sum (explicit chain, differentiable in positions, charges, and
+    reciprocal vectors; cell-dependent paths compose through reciprocal-vector
+    and volume graphs) minus the Torch-native self + background corrections.
     """
     num_atoms = positions.shape[0]
     device = positions.device
@@ -621,10 +660,11 @@ def _reciprocal_space_energy(
     # recompute). ``cell`` flows through ``k_vectors(cell)`` / ``volume`` as before.
     need_pos = bool(positions.requires_grad)
     need_charge = bool(charges.requires_grad)
-    # The recip chain owns the cell first order via grad_kvectors / grad_volume (the
-    # k-major ``kspace`` recompute). Public k-vector leaf gradients are not part of
-    # the contract; the cell path is only valid when k-vectors were generated from
-    # this cell inside the full Ewald call.
+    # ``need_cell`` gates the k-major grad_kvectors / grad_volume backward owned by
+    # the recip chain. The public component preserves a supplied k-vector graph when
+    # both cell and k_vectors require grad; otherwise vectors are fixed Cartesian
+    # metadata for cell derivatives. Leaf vectors without a cell edge still receive
+    # dE/dk; physical strain requires vectors generated from the differentiable cell.
     need_cell = bool(cell.requires_grad)
     ensure_electrostatics_ops_registered()
     if batch_idx is None:
@@ -693,18 +733,27 @@ def _reciprocal_space_energy(
         torch.zeros_like(e_ksum), charges, volume, alpha, batch_idx
     )
 
-    def _system_fallback(p, q, c):
+    def _system_fallback(
+        p,
+        q,
+        c,
+        fallback_batch_idx,
+        fallback_k_vectors,
+        fallback_alpha,
+    ):
         return _reciprocal_system_energy_torch(
             p,
             q,
             c,
-            k_vectors_2d,
-            alpha,
-            batch_idx,
+            fallback_k_vectors,
+            fallback_alpha,
+            fallback_batch_idx,
             num_systems,
         )
 
     if energy_reduction == "system" and cell.requires_grad:
+        if preserve_k_vector_grad:
+            return _reduce_atom_energy(e_ksum + correction, batch_idx, num_systems)
         return _InjectCachedEvalGradWithFallback.apply(
             (e_ksum + correction).detach(),
             positions,
@@ -719,6 +768,8 @@ def _reciprocal_space_energy(
             num_systems,
             True,
             True,
+            k_vectors_2d,
+            alpha,
         )
 
     if (
@@ -814,14 +865,14 @@ def ewald_real_space(
         :math:`W = -\partial E / \partial \varepsilon`.
         Stress = -virial / volume.
     hybrid_forces : bool, default=False
-        When True, positions and cell are detached from the autograd graph and
-        charge gradients are attached to the energy via a straight-through
-        trick.  Forces and virial are forward-only (not differentiable).
-        This is intended for efficient inference with geometry-dependent
-        charges :math:`q = q(R)`, where explicit forces provide
-        :math:`\partial E/\partial R|_q` and autograd through the energy
-        provides the charge chain-rule term
-        :math:`\partial E/\partial q \cdot \mathrm{d}q/\mathrm{d}R`.
+        Enables the legacy direct-output path. When ``charges.requires_grad``,
+        ordinary first-order losses whose cotangent is uniform within each
+        system use detached positions/cell and cached charge gradients through
+        a straight-through connector. Non-uniform per-atom losses and
+        ``create_graph=True`` rebuild the eager energy graph with geometry and
+        charge-chain derivatives. Fixed-charge hybrid calls remain forward-only.
+        Forces and virial are forward-only. Do not add direct analytical forces
+        to a fallback-derived full geometry gradient.
     energy_reduction : {"atom", "system"}, default="atom"
         Return per-atom energies ``(N,)`` or summed per-system energies ``(B,)``.
 
@@ -854,7 +905,7 @@ def ewald_real_space(
 
     """
     _validate_energy_reduction(energy_reduction)
-    num_systems = int(cell.shape[0]) if cell.dim() == 3 else 1
+    num_systems = cell.shape[0] if cell.dim() == 3 else 1
 
     def _select_energy(energy):
         if energy_reduction == "system":
@@ -920,7 +971,7 @@ def ewald_real_space(
 
     want_direct = compute_forces or compute_charge_gradients or compute_virial
 
-    if energy_reduction == "system":
+    if energy_reduction == "system" and not (hybrid_forces and charges.requires_grad):
         system_positions = positions.detach() if hybrid_forces else positions
         system_cell = cell.detach() if hybrid_forces else cell
         energies, forces, charge_grads, virial = _real_space_energy_outputs(
@@ -986,18 +1037,29 @@ def ewald_real_space(
         )
         if charges.requires_grad:
 
-            def _fallback(p, q, c):
+            def _fallback(
+                p,
+                q,
+                c,
+                fallback_batch_idx,
+                fallback_alpha,
+                fallback_idx_j,
+                fallback_neighbor_ptr,
+                fallback_neighbor_shifts,
+                fallback_neighbor_matrix,
+                fallback_neighbor_matrix_shifts,
+            ):
                 return _real_space_energy(
                     p,
                     q,
                     c,
-                    alpha,
-                    batch_idx=batch_idx,
-                    idx_j=idx_j,
-                    neighbor_ptr=neighbor_ptr,
-                    neighbor_shifts=neighbor_shifts,
-                    neighbor_matrix=neighbor_matrix,
-                    neighbor_matrix_shifts=neighbor_matrix_shifts,
+                    fallback_alpha,
+                    batch_idx=fallback_batch_idx,
+                    idx_j=fallback_idx_j,
+                    neighbor_ptr=fallback_neighbor_ptr,
+                    neighbor_shifts=fallback_neighbor_shifts,
+                    neighbor_matrix=fallback_neighbor_matrix,
+                    neighbor_matrix_shifts=fallback_neighbor_matrix_shifts,
                     mask_value=mask_value,
                 )
 
@@ -1013,6 +1075,14 @@ def ewald_real_space(
                 _fallback,
                 energy_reduction,
                 num_systems,
+                False,
+                False,
+                alpha,
+                idx_j,
+                neighbor_ptr,
+                neighbor_shifts,
+                neighbor_matrix,
+                neighbor_matrix_shifts,
             )
         else:
             energies = _select_energy(energies)
@@ -1023,7 +1093,6 @@ def ewald_real_space(
         and not cell.requires_grad
         and not alpha.requires_grad
         and (positions.requires_grad or charges.requires_grad)
-        and not _has_potentially_geometry_dependent_charges(positions, charges)
     ):
         # Ordinary scalar first-derivative evaluations can use detached direct
         # caches. Weighted losses and create_graph=True rebuild the true energy
@@ -1045,18 +1114,29 @@ def ewald_real_space(
             want_virial=False,
         )
 
-        def _fallback(p, q, c):
+        def _fallback(
+            p,
+            q,
+            c,
+            fallback_batch_idx,
+            fallback_alpha,
+            fallback_idx_j,
+            fallback_neighbor_ptr,
+            fallback_neighbor_shifts,
+            fallback_neighbor_matrix,
+            fallback_neighbor_matrix_shifts,
+        ):
             return _real_space_energy(
                 p,
                 q,
                 c,
-                alpha,
-                batch_idx=batch_idx,
-                idx_j=idx_j,
-                neighbor_ptr=neighbor_ptr,
-                neighbor_shifts=neighbor_shifts,
-                neighbor_matrix=neighbor_matrix,
-                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                fallback_alpha,
+                batch_idx=fallback_batch_idx,
+                idx_j=fallback_idx_j,
+                neighbor_ptr=fallback_neighbor_ptr,
+                neighbor_shifts=fallback_neighbor_shifts,
+                neighbor_matrix=fallback_neighbor_matrix,
+                neighbor_matrix_shifts=fallback_neighbor_matrix_shifts,
                 mask_value=mask_value,
             )
 
@@ -1072,6 +1152,14 @@ def ewald_real_space(
             _fallback,
             energy_reduction,
             num_systems,
+            False,
+            False,
+            alpha,
+            idx_j,
+            neighbor_ptr,
+            neighbor_shifts,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
         )
         return energies
 
@@ -1182,6 +1270,10 @@ def ewald_reciprocal_space(
         Unit cell matrices.
     k_vectors : torch.Tensor
         Reciprocal lattice vectors. Shape (K, 3) for single system, (B, K, 3) for batch.
+        If these vectors are computed from the differentiated ``cell`` without
+        detaching them, autograd follows that graph edge. A precomputed or
+        detached tensor has no cell edge and is fixed with respect to the cell
+        derivative.
     alpha : torch.Tensor, shape (1,) or (B,)
         Ewald splitting parameter(s).
     batch_idx : torch.Tensor, shape (N,), optional
@@ -1200,10 +1292,12 @@ def ewald_reciprocal_space(
         :math:`W = -\partial E / \partial \varepsilon`.
         Stress = -virial / volume.
     hybrid_forces : bool, default=False
-        When True, positions and cell are detached from the autograd graph and
-        charge gradients are attached to the energy via a straight-through
-        trick.  Forces and virial are forward-only (not differentiable).
-        See :func:`ewald_real_space` for details.
+        Enables the legacy direct-output path. With ``charges.requires_grad``,
+        uniform first-order cotangents use cached charge gradients; non-uniform
+        per-atom losses and ``create_graph=True`` rebuild the eager energy graph
+        with geometry and charge-chain derivatives. Fixed-charge hybrid calls
+        remain forward-only. See :func:`ewald_real_space` for the complete
+        contract.
     max_atoms_per_system : int, optional, keyword-only
         Maximum number of atoms in any single system when ``batch_idx`` is
         provided. Passing this host-known upper bound avoids CUDA host
@@ -1231,8 +1325,11 @@ def ewald_reciprocal_space(
     ----
     Energies are always float64 for numerical stability during accumulation.
     Forces, virial, and charge gradients match the input dtype (float32 or float64).
-    ``k_vectors`` are setup metadata. Caller-supplied vectors are treated as
-    static values that correspond to the current ``cell``.
+    For eager execution, a differentiable ``cell`` paired with fixed Cartesian
+    ``k_vectors`` emits a warning because its cell derivative omits the
+    reciprocal-vector dependence. This advisory warning is suppressed under
+    ``torch.compile``. A component cell derivative holds positions fixed; for a
+    homogeneous-strain derivative, deform positions and cell together.
 
     When ``charges`` is a non-leaf tensor that may depend on ``positions``
     (:math:`q = q(R)`), ordinary first-order losses may use cached partial
@@ -1242,6 +1339,27 @@ def ewald_reciprocal_space(
     gradients as needed to avoid double-counting that chain term (issue #115).
     """
     _validate_energy_reduction(energy_reduction)
+
+    allow_cell_grad_with_k_vectors = bool(
+        cell.requires_grad and k_vectors.requires_grad
+    )
+    k_vectors_fixed_for_cell = bool(not k_vectors.requires_grad or k_vectors.is_leaf)
+    if (
+        torch.is_grad_enabled()
+        and cell.requires_grad
+        and k_vectors_fixed_for_cell
+        and not hybrid_forces
+        and not torch.compiler.is_compiling()
+    ):
+        warnings.warn(
+            "ewald_reciprocal_space received k_vectors that are fixed Cartesian "
+            "metadata for cell derivatives. If differentiated with respect to "
+            "cell or strain, this call does not produce the physical Ewald strain "
+            "virial. Generate k_vectors from the differentiable cell with fixed "
+            "miller_bounds, or use ewald_summation with k_cutoff.",
+            UserWarning,
+            stacklevel=2,
+        )
     return _ewald_reciprocal_space(
         positions=positions,
         charges=charges,
@@ -1253,7 +1371,45 @@ def ewald_reciprocal_space(
         compute_charge_gradients=compute_charge_gradients,
         compute_virial=compute_virial,
         hybrid_forces=hybrid_forces,
-        allow_cell_grad_with_k_vectors=False,
+        allow_cell_grad_with_k_vectors=allow_cell_grad_with_k_vectors,
+        preserve_k_vector_grad=allow_cell_grad_with_k_vectors,
+        max_atoms_per_system=max_atoms_per_system,
+        energy_reduction=energy_reduction,
+    )
+
+
+def ewald_reciprocal_space_from_miller_indices(
+    positions: torch.Tensor,
+    charges: torch.Tensor,
+    cell: torch.Tensor,
+    miller_indices: torch.Tensor,
+    alpha: torch.Tensor,
+    batch_idx: torch.Tensor | None = None,
+    compute_forces: bool = False,
+    compute_charge_gradients: bool = False,
+    compute_virial: bool = False,
+    hybrid_forces: bool = False,
+    *,
+    max_atoms_per_system: int | None = None,
+    energy_reduction: Literal["atom", "system"] = "atom",
+) -> torch.Tensor | tuple[torch.Tensor, ...]:
+    """Compute the reciprocal component from retained Miller indices.
+
+    Materializes Cartesian vectors from the supplied ``cell``, then delegates
+    to :func:`ewald_reciprocal_space`. Direct outputs, return order,
+    deprecation behavior, and energy reduction match that component.
+    """
+    return ewald_reciprocal_space(
+        positions=positions,
+        charges=charges,
+        cell=cell,
+        k_vectors=k_vectors_from_miller_indices(cell, miller_indices),
+        alpha=alpha,
+        batch_idx=batch_idx,
+        compute_forces=compute_forces,
+        compute_charge_gradients=compute_charge_gradients,
+        compute_virial=compute_virial,
+        hybrid_forces=hybrid_forces,
         max_atoms_per_system=max_atoms_per_system,
         energy_reduction=energy_reduction,
     )
@@ -1271,6 +1427,7 @@ def _ewald_reciprocal_space(
     compute_virial: bool = False,
     hybrid_forces: bool = False,
     allow_cell_grad_with_k_vectors: bool = False,
+    preserve_k_vector_grad: bool = False,
     max_atoms_per_system: int | None = None,
     energy_reduction: Literal["atom", "system"] = "atom",
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
@@ -1313,7 +1470,7 @@ def _ewald_reciprocal_space(
             k_vectors_2d = k_vectors[:1]
         else:
             k_vectors_2d = k_vectors.unsqueeze(0)
-    num_systems = int(k_vectors_2d.shape[0])
+    num_systems = k_vectors_2d.shape[0]
 
     def _select_energy(energy):
         if energy_reduction == "system":
@@ -1395,14 +1552,21 @@ def _ewald_reciprocal_space(
         )
         if charges.requires_grad:
 
-            def _fallback(p, q, c):
+            def _fallback(
+                p,
+                q,
+                c,
+                fallback_batch_idx,
+                fallback_k_vectors,
+                fallback_alpha,
+            ):
                 return _reciprocal_space_energy(
                     p,
                     q,
                     c,
-                    k_vectors_hybrid,
-                    alpha,
-                    batch_idx=batch_idx,
+                    fallback_k_vectors,
+                    fallback_alpha,
+                    batch_idx=fallback_batch_idx,
                     max_atoms_per_system=max_atoms_per_system,
                 )
 
@@ -1418,6 +1582,10 @@ def _ewald_reciprocal_space(
                 _fallback,
                 energy_reduction,
                 num_systems,
+                False,
+                False,
+                k_vectors_hybrid,
+                alpha,
             )
         else:
             energies = _select_energy(energies)
@@ -1463,6 +1631,7 @@ def _ewald_reciprocal_space(
         batch_idx=batch_idx,
         max_atoms_per_system=max_atoms_per_system,
         energy_reduction=energy_reduction if not want_direct else "atom",
+        preserve_k_vector_grad=preserve_k_vector_grad,
     )
 
     if not want_direct:
@@ -1509,33 +1678,45 @@ def _ewald_reciprocal_space(
         )
 
     if energy_reduction == "system" and cell.requires_grad:
+        if preserve_k_vector_grad:
+            energies = _select_energy(energies)
+        else:
 
-        def _system_fallback(p, q, c):
-            return _reciprocal_system_energy_torch(
+            def _system_fallback(
                 p,
                 q,
                 c,
+                fallback_batch_idx,
+                fallback_k_vectors,
+                fallback_alpha,
+            ):
+                return _reciprocal_system_energy_torch(
+                    p,
+                    q,
+                    c,
+                    fallback_k_vectors,
+                    fallback_alpha,
+                    fallback_batch_idx,
+                    num_systems,
+                )
+
+            energies = _InjectCachedEvalGradWithFallback.apply(
+                energies.detach(),
+                positions,
+                charges,
+                cell,
+                None,
+                None,
+                None,
+                batch_idx,
+                _system_fallback,
+                "system",
+                num_systems,
+                True,
+                True,
                 k_vectors_2d,
                 alpha,
-                batch_idx,
-                num_systems,
             )
-
-        energies = _InjectCachedEvalGradWithFallback.apply(
-            energies.detach(),
-            positions,
-            charges,
-            cell,
-            None,
-            None,
-            None,
-            batch_idx,
-            _system_fallback,
-            "system",
-            num_systems,
-            True,
-            True,
-        )
     elif (
         not cell.requires_grad
         and (positions.requires_grad or charges.requires_grad)
@@ -1589,6 +1770,7 @@ def ewald_summation(
     slab_correction: bool = False,
     *,
     miller_bounds: tuple[int, int, int] | torch.Tensor | None = None,
+    miller_indices: torch.Tensor | None = None,
     max_atoms_per_system: int | None = None,
     energy_reduction: Literal["atom", "system"] = "atom",
 ) -> tuple[torch.Tensor, ...] | torch.Tensor:
@@ -1596,6 +1778,9 @@ def ewald_summation(
 
     Computes total Coulomb energy by combining real-space and reciprocal-space
     contributions with self-energy and background corrections.
+    Supply explicit ``k_vectors`` as fixed metadata, retained
+    ``miller_indices`` to materialize vectors from the current cell, or neither
+    to generate vectors from ``k_cutoff`` and optional ``miller_bounds``.
 
     Parameters
     ----------
@@ -1608,13 +1793,18 @@ def ewald_summation(
     alpha : float, torch.Tensor, or None, default=None
         Ewald splitting parameter. Auto-estimated if None.
     k_vectors : torch.Tensor, optional
-        Pre-computed reciprocal lattice vectors.
+        Explicit reciprocal vectors, treated as fixed metadata. When omitted,
+        vectors are generated from ``k_cutoff`` or materialized from
+        ``miller_indices``.
     k_cutoff : float, optional
-        K-space cutoff for generating k_vectors.
+        Reciprocal cutoff used only when generating vectors internally.
     miller_bounds : tuple[int, int, int] or torch.Tensor, optional, keyword-only
-        Precomputed Miller-index half-bounds used when ``k_vectors`` is not
-        supplied. Passing Python integer bounds avoids deriving range sizes from
-        device tensors inside regenerated-k-vector loops.
+        Miller half-bounds used with internally generated vectors. Ignored when
+        explicit ``k_vectors`` are supplied for compatibility.
+    miller_indices : torch.Tensor, optional, keyword-only
+        Caller-retained signed integer topology of shape ``(K, 3)``. Full Ewald
+        materializes vectors from the current ``cell``. Do not combine it with
+        ``k_vectors``, ``k_cutoff``, or ``miller_bounds``.
     max_atoms_per_system : int, optional, keyword-only
         Maximum number of atoms in any single system when ``batch_idx`` is
         provided. See :func:`ewald_reciprocal_space` for the sync-free launch
@@ -1651,10 +1841,12 @@ def ewald_summation(
     accuracy : float, default=1e-6
         Target accuracy for parameter estimation.
     hybrid_forces : bool, default=False
-        When True, positions and cell are detached from the autograd graph and
-        charge gradients are attached to the energy via a straight-through
-        trick.  Forces and virial are forward-only (not differentiable).
-        See :func:`ewald_real_space` for details.
+        Enables the legacy direct-output path. With ``charges.requires_grad``,
+        uniform first-order cotangents use cached charge gradients; non-uniform
+        per-atom losses and ``create_graph=True`` rebuild the eager energy graph
+        with geometry and charge-chain derivatives. Fixed-charge hybrid calls
+        remain forward-only. See :func:`ewald_real_space` for the complete
+        contract.
     pbc : torch.Tensor, shape (3,) or (B, 3), dtype=bool, optional
         Per-system periodic boundary conditions. Required when
         ``slab_correction=True``. Each row has True for periodic directions
@@ -1734,6 +1926,13 @@ def ewald_summation(
         ... )
     """
     _validate_energy_reduction(energy_reduction)
+    _validate_ewald_topology_inputs(
+        cell,
+        k_vectors,
+        k_cutoff,
+        miller_bounds,
+        miller_indices,
+    )
     if compute_forces or compute_virial or compute_charge_gradients or hybrid_forces:
         if torch.compiler.is_compiling():
             _compiled_direct_output_deprecation_signal("ewald_summation")
@@ -1750,11 +1949,13 @@ def ewald_summation(
 
     cell, num_systems = _prepare_cell(cell)
 
-    if alpha is None or (k_cutoff is None and k_vectors is None):
+    if alpha is None or (
+        k_cutoff is None and k_vectors is None and miller_indices is None
+    ):
         params = estimate_ewald_parameters(positions, cell, batch_idx, accuracy)
         if alpha is None:
             alpha = params.alpha
-        if k_cutoff is None:
+        if k_cutoff is None and miller_indices is None:
             k_cutoff = params.reciprocal_space_cutoff
 
     alpha_tensor = _detach_setup_tensor(
@@ -1762,7 +1963,9 @@ def ewald_summation(
     )
 
     generated_k_vectors = k_vectors is None
-    if k_vectors is None:
+    if miller_indices is not None:
+        k_vectors = k_vectors_from_miller_indices(cell, miller_indices)
+    elif k_vectors is None:
         k_vectors = generate_k_vectors_ewald_summation(
             cell, k_cutoff, miller_bounds=miller_bounds
         )

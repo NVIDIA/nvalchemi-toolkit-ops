@@ -116,7 +116,7 @@ print(f"  Neighbors:        {system.neighbor_manager.total_neighbors()}")
 
 # %%
 # Langevin dynamics (BAOAB)
-# ------------------------
+# -------------------------
 
 print("\n--- Equilibration (500 steps) ---")
 _eq_stats = run_langevin_baoab(

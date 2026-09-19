@@ -31,7 +31,11 @@ from nvalchemiops.neighbors.naive.dispatch import (
 from nvalchemiops.neighbors.neighbor_utils import (
     estimate_max_neighbors,
 )
-from nvalchemiops.torch._warp_op_helpers import register_noop_fake
+from nvalchemiops.torch._warnings import _warn_compile_missing_argument_inference
+from nvalchemiops.torch._warp_op_helpers import (
+    register_noop_fake,
+    scoped_torch_warp_stream,
+)
 from nvalchemiops.torch.neighbors._autograd import (
     _flatten_active_pairs,
     _NeighborForwardOutput,
@@ -63,6 +67,7 @@ __all__ = ["batch_naive_neighbor_list"]
     "nvalchemiops::_naive_batch_neighbor_matrix_no_pbc",
     mutates_args=("neighbor_matrix", "num_neighbors"),
 )
+@scoped_torch_warp_stream
 def _batch_naive_neighbor_matrix_no_pbc(
     positions: torch.Tensor,
     cutoff: float,
@@ -174,6 +179,7 @@ def _batch_naive_neighbor_matrix_no_pbc(
     "nvalchemiops::_batch_naive_neighbor_matrix_pbc",
     mutates_args=("neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"),
 )
+@scoped_torch_warp_stream
 def _batch_naive_neighbor_matrix_pbc(
     positions: torch.Tensor,
     cell: torch.Tensor,
@@ -290,6 +296,10 @@ def _batch_naive_neighbor_matrix_pbc(
     )
 
     if max_atoms_per_system is None and target_indices is None:
+        _warn_compile_missing_argument_inference(
+            missing="`max_atoms_per_system`",
+            inference="inferring it from `batch_ptr`",
+        )
         max_atoms_per_system = (batch_ptr[1:] - batch_ptr[:-1]).max().item()
 
     wp_rebuild_flags = None
@@ -360,6 +370,7 @@ def _batch_naive_neighbor_matrix_pbc(
         "neighbor_distances",
     ),
 )
+@scoped_torch_warp_stream
 def _batch_naive_neighbor_matrix_no_pbc_pair(
     positions: torch.Tensor,
     cutoff: float,
@@ -426,6 +437,7 @@ def _batch_naive_neighbor_matrix_no_pbc_pair(
         "neighbor_distances",
     ),
 )
+@scoped_torch_warp_stream
 def _batch_naive_neighbor_matrix_pbc_pair(
     positions: torch.Tensor,
     cell: torch.Tensor,
@@ -530,6 +542,7 @@ def _batch_naive_neighbor_matrix_pbc_pair(
         "neighbor_distances",
     ),
 )
+@scoped_torch_warp_stream
 def _batch_naive_neighbor_matrix_no_pbc_pair_target(
     positions: torch.Tensor,
     cutoff: float,
@@ -591,6 +604,7 @@ def _batch_naive_neighbor_matrix_no_pbc_pair_target(
         "neighbor_distances",
     ),
 )
+@scoped_torch_warp_stream
 def _batch_naive_neighbor_matrix_pbc_pair_target(
     positions: torch.Tensor,
     cell: torch.Tensor,
@@ -698,6 +712,7 @@ def _register_compiled_batch_naive_no_pbc_pair_op(compiled: CompiledPairFn):
             "pair_forces",
         ),
     )
+    @scoped_torch_warp_stream
     def _compiled_batch_naive_no_pbc_pair(
         positions: torch.Tensor,
         cutoff: float,
@@ -794,6 +809,7 @@ def _register_compiled_batch_naive_pbc_pair_op(compiled: CompiledPairFn):
             "pair_forces",
         ),
     )
+    @scoped_torch_warp_stream
     def _compiled_batch_naive_pbc_pair(
         positions: torch.Tensor,
         cell: torch.Tensor,
@@ -915,6 +931,7 @@ def _register_compiled_batch_naive_pbc_pair_op(compiled: CompiledPairFn):
     return _compiled_batch_naive_pbc_pair
 
 
+@scoped_torch_warp_stream
 def _batch_naive_pair_outputs_forward(
     positions: torch.Tensor,
     cell: torch.Tensor | None,
@@ -1734,6 +1751,10 @@ def batch_naive_neighbor_list(
             # graph break under ``torch.compile``.  Pass max_atoms_per_system
             # explicitly to keep the autograd path graph-clean under compile.
             if target_indices is None:
+                _warn_compile_missing_argument_inference(
+                    missing="`max_atoms_per_system`",
+                    inference="inferring it from `batch_ptr`",
+                )
                 max_atoms_per_system = int(
                     (batch_ptr[1:] - batch_ptr[:-1]).max().item()
                 )

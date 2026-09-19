@@ -32,6 +32,7 @@ Supported crystal structures:
 from __future__ import annotations
 
 import gc
+import os
 from typing import NamedTuple
 
 import numpy as np
@@ -52,7 +53,14 @@ def pytest_configure(config):
 
 def pytest_collection_modifyitems(config, items):
     """Modify test collection to add markers based on test names."""
+    # Scoped to this directory: pytest passes every collected item to this hook,
+    # and the rules here differ deliberately from the ones in test/math and
+    # test/neighbors.
+    here = os.path.dirname(__file__)
     for item in items:
+        if not str(item.path).startswith(here):
+            continue
+
         if "cuda" in item.name.lower() or "gpu" in item.name.lower():
             item.add_marker(pytest.mark.gpu)
 

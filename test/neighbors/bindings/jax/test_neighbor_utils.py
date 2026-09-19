@@ -21,11 +21,13 @@ import warnings
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     allocate_cell_list,
     compute_naive_num_shifts,
+    get_fixed_capacity_neighbor_list_from_neighbor_matrix,
     get_neighbor_list_from_neighbor_matrix,
     prepare_batch_idx_ptr,
 )
@@ -252,6 +254,153 @@ class TestGetNeighborListFromNeighborMatrix:
             get_neighbor_list_from_neighbor_matrix(
                 neighbor_matrix, num_neighbors, fill_value=-1
             )
+
+    @pytest.mark.parametrize(
+        "capacity, expected_valid",
+        [(8, True), (3, True), (0, True)],
+    )
+    def test_fixed_capacity_jit_contract(self, capacity, expected_valid):
+        """Fixed COO conversion is JIT-safe and reports recoverable counts."""
+        neighbor_matrix = jnp.array(
+            [[1, 2, -1], [0, -1, -1], [1, 0, -1]],
+            dtype=jnp.int32,
+        )
+        num_neighbors = jnp.array([2, 1, 2], dtype=jnp.int32)
+        shifts = jnp.arange(27, dtype=jnp.int32).reshape(3, 3, 3)
+
+        convert = jax.jit(
+            lambda matrix, counts, matrix_shifts: (
+                get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                    matrix,
+                    counts,
+                    capacity=capacity,
+                    neighbor_shift_matrix=matrix_shifts,
+                    fill_value=-1,
+                )
+            )
+        )
+        neighbor_list, neighbor_ptr, neighbor_shifts, counts, metadata_valid = convert(
+            neighbor_matrix,
+            num_neighbors,
+            shifts,
+        )
+
+        assert neighbor_list.shape == (2, capacity)
+        assert neighbor_shifts.shape == (capacity, 3)
+        assert bool(metadata_valid) is expected_valid
+        np.testing.assert_array_equal(counts, num_neighbors)
+        expected_pairs = jnp.array(
+            [[0, 0, 1, 2, 2], [1, 2, 0, 1, 0]],
+            dtype=jnp.int32,
+        )
+        expected_shifts = jnp.array(
+            [[0, 1, 2], [3, 4, 5], [9, 10, 11], [18, 19, 20], [21, 22, 23]],
+            dtype=jnp.int32,
+        )
+        expected_stored = min(capacity, expected_pairs.shape[1])
+        np.testing.assert_array_equal(
+            neighbor_ptr,
+            jnp.minimum(
+                jnp.array([0, 2, 3, 5], dtype=jnp.int32),
+                jnp.int32(capacity),
+            ),
+        )
+        np.testing.assert_array_equal(
+            neighbor_list[:, :expected_stored], expected_pairs[:, :expected_stored]
+        )
+        np.testing.assert_array_equal(
+            neighbor_shifts[:expected_stored], expected_shifts[:expected_stored]
+        )
+        if capacity > expected_stored:
+            assert jnp.all(neighbor_list[:, expected_stored:] == -1)
+            assert jnp.all(neighbor_shifts[expected_stored:] == 0)
+
+    def test_fixed_capacity_reports_matrix_shortage(self):
+        """A trustworthy raw count survives matrix-row shortage."""
+        neighbor_matrix = jnp.array([[1, 2]], dtype=jnp.int32)
+        num_neighbors = jnp.array([3], dtype=jnp.int32)
+
+        neighbor_list, neighbor_ptr, counts, metadata_valid = jax.jit(
+            lambda matrix, counts: (
+                get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                    matrix,
+                    counts,
+                    capacity=4,
+                    fill_value=-1,
+                )
+            )
+        )(neighbor_matrix, num_neighbors)
+
+        assert neighbor_list.shape == (2, 4)
+        assert int(neighbor_ptr[-1]) == 2
+        np.testing.assert_array_equal(counts, jnp.array([3], dtype=jnp.int32))
+        assert bool(metadata_valid)
+
+    def test_fixed_capacity_reports_mid_row_truncation(self):
+        """A clipped global capacity exposes the partially stored second row."""
+        matrix = jnp.array([[1, 2, 3], [0, 2, 3]], dtype=jnp.int32)
+        raw_counts = jnp.array([3, 3], dtype=jnp.int32)
+
+        _neighbor_list, ptr, counts, metadata_valid = jax.jit(
+            lambda neighbor_matrix, required_counts: (
+                get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                    neighbor_matrix,
+                    required_counts,
+                    capacity=4,
+                    fill_value=-1,
+                )
+            )
+        )(matrix, raw_counts)
+
+        np.testing.assert_array_equal(ptr, jnp.array([0, 3, 4], dtype=jnp.int32))
+        np.testing.assert_array_equal(
+            ptr[1:] - ptr[:-1],
+            jnp.array([3, 1], dtype=jnp.int32),
+        )
+        np.testing.assert_array_equal(counts, raw_counts)
+        assert bool(metadata_valid)
+
+    @pytest.mark.parametrize(
+        ("matrix", "raw_counts", "capacity"),
+        [
+            (
+                jnp.array([[1, 2]], dtype=jnp.int32),
+                jnp.array([3], dtype=jnp.int32),
+                4,
+            ),
+            (
+                jnp.array([[1, 2], [0, 2]], dtype=jnp.int32),
+                jnp.array([2, 2], dtype=jnp.int32),
+                3,
+            ),
+            (
+                jnp.array([[1, 2], [0, 2]], dtype=jnp.int32),
+                jnp.array([3, 3], dtype=jnp.int32),
+                1,
+            ),
+        ],
+        ids=["row-only", "coo-only", "row-and-coo"],
+    )
+    def test_fixed_capacity_shortage_preserves_trustworthy_counts(
+        self,
+        matrix,
+        raw_counts,
+        capacity,
+    ):
+        """Storage shortages do not invalidate trustworthy query metadata."""
+        _list, _ptr, counts, metadata_valid = jax.jit(
+            lambda neighbor_matrix, required_counts: (
+                get_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                    neighbor_matrix,
+                    required_counts,
+                    capacity=capacity,
+                    fill_value=-1,
+                )
+            )
+        )(matrix, raw_counts)
+
+        np.testing.assert_array_equal(counts, raw_counts)
+        assert bool(metadata_valid)
 
 
 # ==============================================================================

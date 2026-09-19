@@ -170,6 +170,9 @@ Exceptions
 .. autoexception:: nvalchemiops.neighbors.NeighborOverflowError
    :show-inheritance:
 
+.. autoexception:: nvalchemiops.neighbors.TileBufferOverflow
+   :show-inheritance:
+
 Utility Functions
 ^^^^^^^^^^^^^^^^^
 

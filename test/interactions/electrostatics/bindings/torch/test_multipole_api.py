@@ -781,6 +781,9 @@ class TestCapabilityMatrix:
         """Value-loss training: ∂value/∂multipole_moments vs central FD."""
         td = _torch_device(device)
         sys = _build_system(mode, l_max, td, seed=3)
+        if entry in ("ewald", "pme"):
+            sys["mm"] = sys["mm"].clone()
+            sys["mm"][:, 0] += 0.2
         value = _make_value_fn(entry, mode, l_max, sys)
         pos, cell = sys["pos"], sys["cell"]
         m = sys["mm"].clone().requires_grad_(True)
@@ -809,6 +812,9 @@ class TestCapabilityMatrix:
         """Stress / virial: d value/d cell vs central FD (fixed topological nlist)."""
         td = _torch_device(device)
         sys = _build_system(mode, l_max, td, seed=5)
+        if entry in ("ewald", "pme"):
+            sys["mm"] = sys["mm"].clone()
+            sys["mm"][:, 0] += 0.2
         value = _make_value_fn(entry, mode, l_max, sys)
         pos, mm = sys["pos"], sys["mm"]
         c = sys["cell"].clone().requires_grad_(True)
@@ -835,6 +841,7 @@ class TestCrossMethodPhysics:
         pos = torch.tensor(pos_np, device=td)
         cell = torch.tensor(np.eye(3) * _BOX, device=td)
         mm = _rand_moments(n, l_max, rng, td)
+        mm[:, 0] += 0.125
         totals = []
         for alpha in (0.4, 0.6, 0.9):
             sc = math.sqrt(_SIGMA**2 + 1.0 / (4.0 * alpha**2))
@@ -867,6 +874,7 @@ class TestCrossMethodPhysics:
         pos = torch.tensor(pos_np, device=td)
         cell = torch.tensor(np.eye(3) * _BOX, device=td)
         mm = _rand_moments(n, l_max, rng, td)
+        mm[:, 0] += 0.125
         idx, cnt, sh = _neigh(pos_np, _BOX, _RCUT)
         ptr = [0] + list(np.cumsum(cnt))
         ij = torch.tensor(idx, dtype=torch.int32, device=td)
@@ -1398,6 +1406,34 @@ class TestCompileAutograd:
             rtol=1e-12,
             atol=1e-14,
         )
+
+
+@pytest.mark.gpu
+def test_scf_energy_and_features_follow_a_nondefault_torch_stream(
+    device, torch_stream_runner
+):
+    """Public SCF routes consume event-gated inputs and feed Torch work on one stream."""
+    if not torch.cuda.is_available() or "cuda" not in str(device):
+        pytest.skip("CUDA is required for stream-interoperability coverage")
+
+    td = _torch_device(device)
+    positions, _, _, cell, source_feats = _build_test_system(
+        seed=41, n_atoms=4, box_len=5.0, device=td
+    )
+    cache = prepare_multipole_scf_cache(
+        cell, sigma=1.0, receiver_sigmas=[0.8, 1.2], k_cutoff=3.5
+    )
+    actual_positions = torch.empty_like(positions)
+    _, snapshots, expected = torch_stream_runner(
+        positions,
+        actual_positions,
+        lambda value: (
+            multipole_scf_step_energy(cache, value, source_feats),
+            multipole_scf_step_features(cache, value, source_feats),
+        ),
+    )
+    for actual, reference in zip(snapshots, expected, strict=True):
+        torch.testing.assert_close(actual, reference)
 
 
 class TestDoubleBackward:

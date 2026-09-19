@@ -77,6 +77,7 @@ from nvalchemiops.interactions.electrostatics.multipole_direct_kspace_kernels im
 )
 from nvalchemiops.torch._warp_op_helpers import (
     register_warp_op_chain,
+    scoped_torch_warp_stream,
 )
 from nvalchemiops.torch.interactions.electrostatics.multipole_scf_cache import (
     MultipoleSCFCache,
@@ -159,6 +160,7 @@ def _atom_bounds_from_batch_idx(
     mutates_args=(),
     schema="(Tensor positions, Tensor k_vectors, Tensor batch_idx) -> (Tensor, Tensor)",
 )
+@scoped_torch_warp_stream
 def _batch_multipole_structure_factor_op(
     positions: torch.Tensor,
     k_vectors: torch.Tensor,
@@ -207,6 +209,7 @@ def _batch_multipole_structure_factor_fake(
 # ---- moments: grad_rho -> (grad_charges, grad_dipoles) via project rewired ----
 
 
+@scoped_torch_warp_stream
 def _batch_rho_moment_grad_forward(
     grad_rho: torch.Tensor,
     cosines: torch.Tensor,
@@ -270,6 +273,7 @@ def _batch_rho_moment_grad_forward_fake(
     return cosines.new_empty((cosines.shape[1], 4), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _batch_rho_moment_grad_backward(
     gg_moments: torch.Tensor,
     grad_rho: torch.Tensor,
@@ -329,6 +333,7 @@ register_warp_op_chain(
 # ---- positions: grad_rho -> grad_positions via batch_position_gradient_from_rhok ----
 
 
+@scoped_torch_warp_stream
 def _batch_rho_position_grad_forward(
     grad_rho: torch.Tensor,
     charges: torch.Tensor,
@@ -387,6 +392,7 @@ def _batch_rho_position_grad_forward_fake(
     return positions.new_empty((positions.shape[0], 3), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _batch_rho_position_grad_backward(
     gg_positions: torch.Tensor,
     grad_rho: torch.Tensor,
@@ -478,6 +484,7 @@ register_warp_op_chain(
 # ---- phi_hat / k-vector phase (forward-only; carry the reciprocal cell-grad) ----
 
 
+@scoped_torch_warp_stream
 def _batch_rho_phihat_grad_forward(
     grad_rho: torch.Tensor,
     charges: torch.Tensor,
@@ -541,6 +548,7 @@ def _batch_rho_phihat_grad_forward_fake(
     )
 
 
+@scoped_torch_warp_stream
 def _batch_rho_phihat_grad_backward(
     g_phi: torch.Tensor,
     grad_rho: torch.Tensor,
@@ -622,6 +630,7 @@ register_warp_op_chain(
 )
 
 
+@scoped_torch_warp_stream
 def _batch_rho_kphase_grad_forward(
     grad_rho: torch.Tensor,
     charges: torch.Tensor,
@@ -686,6 +695,7 @@ def _batch_rho_kphase_grad_forward_fake(
     )
 
 
+@scoped_torch_warp_stream
 def _batch_rho_kphase_grad_backward(
     g_k: torch.Tensor,
     grad_rho: torch.Tensor,
@@ -788,6 +798,7 @@ register_warp_op_chain(
 # ---- V-grad chain: grad_raw -> grad_V (register_warp_op_chain) ----
 
 
+@scoped_torch_warp_stream
 def _batch_feature_v_grad_forward(
     grad_raw: torch.Tensor,
     receiver_phi_hat: torch.Tensor,
@@ -836,6 +847,7 @@ def _batch_feature_v_grad_forward_fake(
     )
 
 
+@scoped_torch_warp_stream
 def _batch_feature_v_grad_backward(
     gg_v: torch.Tensor,
     grad_raw: torch.Tensor,
@@ -927,6 +939,7 @@ register_warp_op_chain(
 # ---- position-grad chain: grad_raw -> grad_positions (register_warp_op_chain) ----
 
 
+@scoped_torch_warp_stream
 def _batch_feature_position_grad_forward(
     grad_raw: torch.Tensor,
     potential: torch.Tensor,
@@ -973,6 +986,7 @@ def _batch_feature_position_grad_forward_fake(
     return positions.new_empty((positions.shape[0], 3), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _batch_feature_position_grad_backward(
     gg_positions: torch.Tensor,
     grad_raw: torch.Tensor,
@@ -1061,6 +1075,7 @@ register_warp_op_chain(
 # ---- l=2 V-grad chain: grad_raw -> grad_V (register_warp_op_chain) ----
 
 
+@scoped_torch_warp_stream
 def _batch_feature_v_grad_quadrupole_forward(
     grad_raw: torch.Tensor,
     receiver_phi_hat: torch.Tensor,
@@ -1108,6 +1123,7 @@ def _batch_feature_v_grad_quadrupole_forward_fake(
     )
 
 
+@scoped_torch_warp_stream
 def _batch_feature_v_grad_quadrupole_backward(
     gg_v: torch.Tensor,
     grad_raw: torch.Tensor,
@@ -1169,6 +1185,7 @@ register_warp_op_chain(
 # ---- l=2 position-grad chain: grad_raw -> grad_positions (register_warp_op_chain) ----
 
 
+@scoped_torch_warp_stream
 def _batch_feature_position_grad_quadrupole_forward(
     grad_raw: torch.Tensor,
     potential: torch.Tensor,
@@ -1215,6 +1232,7 @@ def _batch_feature_position_grad_quadrupole_forward_fake(
     return positions.new_empty((positions.shape[0], 3), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _batch_feature_position_grad_quadrupole_backward(
     gg_positions: torch.Tensor,
     grad_raw: torch.Tensor,
@@ -1311,6 +1329,7 @@ register_warp_op_chain(
         "Tensor batch_idx) -> Tensor"
     ),
 )
+@scoped_torch_warp_stream
 def _batch_multipole_rho_op(
     charges: torch.Tensor,
     dipoles: torch.Tensor,
@@ -1546,6 +1565,7 @@ class BatchMultipoleRhoFunction:
 # ---- Q-channel moment grad: grad_rho -> grad_Q (register_warp_op_chain) ----
 
 
+@scoped_torch_warp_stream
 def _batch_rho_q_moment_grad_forward(
     grad_rho: torch.Tensor,
     positions: torch.Tensor,
@@ -1597,6 +1617,7 @@ def _batch_rho_q_moment_grad_forward_fake(
     return cosines.new_empty((cosines.shape[1], 3, 3), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _batch_rho_q_moment_grad_backward(
     gg_q: torch.Tensor,
     grad_rho: torch.Tensor,
@@ -1669,6 +1690,7 @@ register_warp_op_chain(
 # ---- Q-channel position grad: grad_rho -> grad_positions (register_warp_op_chain) ----
 
 
+@scoped_torch_warp_stream
 def _batch_rho_q_position_grad_forward(
     grad_rho: torch.Tensor,
     quadrupoles: torch.Tensor,
@@ -1726,6 +1748,7 @@ def _batch_rho_q_position_grad_forward_fake(
     return positions.new_empty((positions.shape[0], 3), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _batch_rho_q_position_grad_backward(
     gg_pos: torch.Tensor,
     grad_rho: torch.Tensor,
@@ -1819,6 +1842,7 @@ register_warp_op_chain(
 # ---- coeff2 / k-vector phase (forward-only; carry the l=2 reciprocal cell-grad) ----
 
 
+@scoped_torch_warp_stream
 def _batch_rho_q_coeff2_grad_forward(
     grad_rho: torch.Tensor,
     quadrupoles: torch.Tensor,
@@ -1874,6 +1898,7 @@ def _batch_rho_q_coeff2_grad_forward_fake(
     return cosines.new_empty((volume.shape[0], k_vectors.shape[1]), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _batch_rho_q_coeff2_grad_backward(
     g_c: torch.Tensor,
     grad_rho: torch.Tensor,
@@ -1950,6 +1975,7 @@ register_warp_op_chain(
 )
 
 
+@scoped_torch_warp_stream
 def _batch_rho_q_kvec_grad_forward(
     grad_rho: torch.Tensor,
     quadrupoles: torch.Tensor,
@@ -2007,6 +2033,7 @@ def _batch_rho_q_kvec_grad_forward_fake(
     )
 
 
+@scoped_torch_warp_stream
 def _batch_rho_q_kvec_grad_backward(
     g_k: torch.Tensor,
     grad_rho: torch.Tensor,
@@ -2099,6 +2126,7 @@ register_warp_op_chain(
         "Tensor k_vectors, Tensor volume, Tensor batch_idx) -> Tensor"
     ),
 )
+@scoped_torch_warp_stream
 def _batch_multipole_rho_q_op(
     quadrupoles: torch.Tensor,
     positions: torch.Tensor,
@@ -2560,6 +2588,7 @@ def batch_multipole_reciprocal_space_dipole_fused_scalar(
     )
 
 
+@scoped_torch_warp_stream
 def _batch_project_raw_features_launch(
     potential: torch.Tensor,
     receiver_phi_hat: torch.Tensor,
@@ -2600,6 +2629,7 @@ def _batch_project_raw_features_launch(
     return features_flat.reshape(n_total, n_sigma, 4)
 
 
+@scoped_torch_warp_stream
 def _batch_project_raw_features_quadrupole_launch(
     potential: torch.Tensor,
     receiver_phi_hat: torch.Tensor,
@@ -2631,6 +2661,7 @@ def _batch_project_raw_features_quadrupole_launch(
 # ---- batched phi_hat / k-vector phase (forward-only; carry the cell-grad) ----
 
 
+@scoped_torch_warp_stream
 def _batch_feature_phihat_grad_launch(
     grad_raw: torch.Tensor,
     cosines: torch.Tensor,
@@ -2661,6 +2692,7 @@ def _batch_feature_phihat_grad_launch(
     return grad_phi
 
 
+@scoped_torch_warp_stream
 def _batch_feature_kphase_grad_launch(
     grad_raw: torch.Tensor,
     receiver_phi_hat: torch.Tensor,

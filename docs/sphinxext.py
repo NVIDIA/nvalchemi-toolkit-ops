@@ -12,19 +12,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Compatibility imports for the Sphinx-Gallery worker hooks."""
 
+from _gallery_worker import reset_seeds, run_example
 
-def reset_torch(gallery_conf, fname):
-    """Reset PyTorch's state between examples."""
-    import numpy
-    import torch
-
-    # Clear CUDA memory
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats()
-    # Reset random seeds
-    numpy.random.seed(42)
-    torch.manual_seed(0)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(0)
+__all__ = ["reset_seeds", "run_example"]

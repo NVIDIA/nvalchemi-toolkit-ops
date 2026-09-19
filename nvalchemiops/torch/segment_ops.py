@@ -144,8 +144,10 @@ def _validate_idx(idx: torch.Tensor, num_segments: int, op: str) -> None:
     Raises
     ------
     ValueError
-        On dtype mismatch (not ``int32``), wrong rank (not 1-D), or — in eager
-        mode only — any value outside ``[0, num_segments)``.
+        On dtype mismatch (not ``int32`` or ``int64``), wrong rank (not 1-D),
+        or — in eager mode only — any value outside ``[0, num_segments)`` or,
+        for ``int64`` input, any value not representable as ``int32`` (narrowing
+        would otherwise silently wrap out-of-range values).
 
     Notes
     -----
@@ -156,8 +158,8 @@ def _validate_idx(idx: torch.Tensor, num_segments: int, op: str) -> None:
     them; compiled callers are trusted to pass ``idx`` already validated at
     construction. The cheap dtype/rank guards add no sync and run on every path.
     """
-    if idx.dtype != torch.int32:
-        raise ValueError(f"{op}: idx must be int32; got dtype={idx.dtype}.")
+    if idx.dtype not in (torch.int32, torch.int64):
+        raise ValueError(f"{op}: idx must be int32 or int64; got dtype={idx.dtype}.")
     if idx.ndim != 1:
         raise ValueError(f"{op}: idx must be 1-D; got shape={tuple(idx.shape)}.")
     if torch.compiler.is_compiling():
@@ -166,6 +168,11 @@ def _validate_idx(idx: torch.Tensor, num_segments: int, op: str) -> None:
         return
     idx_min = int(idx.min().item())
     idx_max = int(idx.max().item())
+    if idx.dtype == torch.int64 and idx_max > torch.iinfo(torch.int32).max:
+        raise ValueError(
+            f"{op}: idx contains int64 values not representable as int32 "
+            f"(max={idx_max}); all values must fit in the int32 range."
+        )
     if idx_min < 0:
         raise ValueError(
             f"{op}: idx contains negative values (min={idx_min}); all values "
@@ -177,6 +184,12 @@ def _validate_idx(idx: torch.Tensor, num_segments: int, op: str) -> None:
             f"num_segments={num_segments}); all values must be in the range "
             f"[0, num_segments)."
         )
+
+
+def _normalize_idx(idx: torch.Tensor, num_segments: int, op: str) -> torch.Tensor:
+    """Validate a public index tensor and return Warp's contiguous int32 form."""
+    _validate_idx(idx, num_segments, op)
+    return idx.to(dtype=torch.int32).contiguous()
 
 
 # =============================================================================
@@ -271,7 +284,9 @@ def segmented_sum(
     x : torch.Tensor
         Shape ``(N,)`` or ``(N, 3)``.  dtype float32 or float64.
     idx : torch.Tensor
-        Shape ``(N,)``, dtype int32.  Sorted segment indices in ``[0, num_segments)``.
+        Shape ``(N,)``, dtype int32 or int64. Values must be representable as
+        int32 and lie in ``[0, num_segments)``. int64 inputs are converted to
+        int32 internally.
     num_segments : int
         Number of segments.
 
@@ -280,7 +295,7 @@ def segmented_sum(
     torch.Tensor
         Shape ``(num_segments,)`` or ``(num_segments, 3)``.
     """
-    _validate_idx(idx, num_segments, op="segmented_sum")
+    idx = _normalize_idx(idx, num_segments, op="segmented_sum")
     return _SEGMENTED_SUM_OPS["forward"](x, idx, num_segments)
 
 
@@ -379,7 +394,9 @@ def segmented_dot(
     x, y : torch.Tensor
         Shape ``(N,)`` or ``(N, 3)``.  Same dtype and device.
     idx : torch.Tensor
-        Shape ``(N,)``, dtype int32.
+        Shape ``(N,)``, dtype int32 or int64. Values must be representable as
+        int32 and lie in ``[0, num_segments)``. int64 inputs are converted to
+        int32 internally.
     num_segments : int
         Number of segments.
 
@@ -388,7 +405,7 @@ def segmented_dot(
     torch.Tensor
         Shape ``(num_segments,)`` — scalar per segment.
     """
-    _validate_idx(idx, num_segments, op="segmented_dot")
+    idx = _normalize_idx(idx, num_segments, op="segmented_dot")
     return _SEGMENTED_DOT_OPS["forward"](x, y, idx, num_segments)
 
 
@@ -487,7 +504,9 @@ def segmented_mul(
     y : torch.Tensor
         Shape ``(num_segments,)`` — one scalar per segment.
     idx : torch.Tensor
-        Shape ``(N,)``, dtype int32.
+        Shape ``(N,)``, dtype int32 or int64. Values must be representable as
+        int32 and lie in ``[0, num_segments)``. int64 inputs are converted to
+        int32 internally.
     num_segments : int
         Number of segments.  Must equal ``y.shape[0]``.
 
@@ -510,7 +529,7 @@ def segmented_mul(
             f"segmented_mul: num_segments ({num_segments}) must equal "
             f"y.shape[0] ({y.shape[0]}); y is the per-segment broadcast operand."
         )
-    _validate_idx(idx, num_segments, op="segmented_mul")
+    idx = _normalize_idx(idx, num_segments, op="segmented_mul")
     return _SEGMENTED_MUL_OPS["forward"](x, y, idx, num_segments)
 
 
@@ -634,7 +653,9 @@ def segmented_mean(
     x : torch.Tensor
         Shape ``(N,)`` or ``(N, 3)``.
     idx : torch.Tensor
-        Shape ``(N,)``, dtype int32.  Sorted.
+        Shape ``(N,)``, dtype int32 or int64. Sorted. Values must be
+        representable as int32 and lie in ``[0, num_segments)``. int64 inputs
+        are converted to int32 internally.
     num_segments : int
         Number of segments.
 
@@ -643,7 +664,7 @@ def segmented_mean(
     torch.Tensor
         Shape ``(num_segments,)`` or ``(num_segments, 3)``.
     """
-    _validate_idx(idx, num_segments, op="segmented_mean")
+    idx = _normalize_idx(idx, num_segments, op="segmented_mean")
     out, _ = _SEGMENTED_MEAN_OPS["forward"](x, idx, num_segments)
     return out
 
@@ -787,7 +808,9 @@ def segmented_rms_norm(
     x : torch.Tensor
         Shape ``(N, 3)``.  dtype float32 or float64.
     idx : torch.Tensor
-        Shape ``(N,)``, dtype int32.  Sorted.
+        Shape ``(N,)``, dtype int32 or int64. Sorted. Values must be
+        representable as int32 and lie in ``[0, num_segments)``. int64 inputs
+        are converted to int32 internally.
     num_segments : int
         Number of segments.
 
@@ -796,7 +819,7 @@ def segmented_rms_norm(
     torch.Tensor
         Shape ``(num_segments,)`` — scalar RMS norm per segment.
     """
-    _validate_idx(idx, num_segments, op="segmented_rms_norm")
+    idx = _normalize_idx(idx, num_segments, op="segmented_rms_norm")
     out, _, _ = _SEGMENTED_RMS_NORM_OPS["forward"](x, idx, num_segments)
     return out
 
@@ -895,7 +918,9 @@ def segmented_matvec(
     m : torch.Tensor
         Shape ``(num_segments, 3, 3)`` — one matrix per segment.
     idx : torch.Tensor
-        Shape ``(N,)``, dtype int32.
+        Shape ``(N,)``, dtype int32 or int64. Values must be representable as
+        int32 and lie in ``[0, num_segments)``. int64 inputs are converted to
+        int32 internally.
     num_segments : int
         Number of segments.  Must equal ``m.shape[0]``.
 
@@ -917,5 +942,5 @@ def segmented_matvec(
             f"segmented_matvec: num_segments ({num_segments}) must equal "
             f"m.shape[0] ({m.shape[0]}); m is the per-segment matrix operand."
         )
-    _validate_idx(idx, num_segments, op="segmented_matvec")
+    idx = _normalize_idx(idx, num_segments, op="segmented_matvec")
     return _SEGMENTED_MATVEC_OPS["forward"](v, m, idx, num_segments)

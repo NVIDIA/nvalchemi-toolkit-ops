@@ -1,0 +1,96 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: "Set up test environment"
+description: >-
+  Install system packages, uv, and the project into a fresh virtualenv inside a
+  bare CUDA container. Shared by every GPU job so they cannot drift apart.
+
+inputs:
+  python-version:
+    description: "Python version to create the virtualenv with"
+    required: true
+  torch-extra:
+    description: "uv extra selecting the PyTorch build (torch or torch-cu12)"
+    required: false
+    default: "torch"
+  jax-extra:
+    description: "uv extra selecting the JAX build (jax or jax-cu12)"
+    required: false
+    default: "jax"
+
+outputs:
+  uv-cache-hit:
+    description: "Which uv cache key matched, empty on a miss"
+    value: ${{ steps.uv-cache.outputs.cache-matched-key }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install apt requirements
+      shell: bash -x -e -u -o pipefail {0}
+      env:
+        DEBIAN_FRONTEND: "noninteractive"
+        TZ: "Etc/UTC"
+      run: |
+        apt-get update
+        apt-get install -y curl git build-essential
+
+    - name: Setup UV
+      shell: bash -x -e -u -o pipefail {0}
+      env:
+        UV_VERSION: "0.9.25"
+        UV_CHECKSUM: "10fb1f54d56f3eb60622006797339d4ea0bfda9b358d07db635f73cf89f7094c"
+      run: |
+        UV_INSTALLER=$(mktemp)
+        curl --proto '=https' --tlsv1.2 -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" -o "$UV_INSTALLER"
+        echo "${UV_CHECKSUM}  ${UV_INSTALLER}" | sha256sum -c -
+        sh "$UV_INSTALLER"
+        rm "$UV_INSTALLER"
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    # Cache uv's download cache rather than the built virtualenv. The venv is
+    # 3-5 GB with Torch and JAX and embeds absolute paths; the download cache is
+    # smaller, path-independent, and lets `uv sync` resolve offline from local
+    # wheels. Keyed on the lockfile, so a dependency change falls back to the
+    # prefix and only downloads the delta.
+    - name: Restore uv download cache
+      id: uv-cache
+      uses: actions/cache/restore@v4
+      with:
+        path: /tmp/uv-cache
+        key: uv-py${{ inputs.python-version }}-${{ inputs.torch-extra }}-${{ inputs.jax-extra }}-${{ hashFiles('uv.lock') }}
+        restore-keys: |
+          uv-py${{ inputs.python-version }}-${{ inputs.torch-extra }}-${{ inputs.jax-extra }}-
+
+    - name: Install dependencies
+      shell: bash -x -e -u -o pipefail {0}
+      env:
+        UV_CACHE_DIR: /tmp/uv-cache
+      run: |
+        export PATH="$HOME/.local/bin:$PATH"
+        uv venv --seed --python ${{ inputs.python-version }}
+        uv sync --extra ${{ inputs.torch-extra }} --extra ${{ inputs.jax-extra }}
+        uv pip install -r test/test-requires.txt
+
+    # Without this the restore above matches nothing forever and every GPU job
+    # re-downloads the full Torch and JAX CUDA wheel set. Only saves on an exact
+    # miss, since entries are immutable and a prefix hit is already good enough.
+    - name: Save uv download cache
+      if: steps.uv-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: /tmp/uv-cache
+        key: uv-py${{ inputs.python-version }}-${{ inputs.torch-extra }}-${{ inputs.jax-extra }}-${{ hashFiles('uv.lock') }}
