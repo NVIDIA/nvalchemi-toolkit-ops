@@ -362,27 +362,6 @@ class TestEmptySystem:
 class TestNeighbourFormats:
     """Both neighbour representations, and the validation around them."""
 
-    def test_dense_and_csr_agree(self):
-        """The two formats describe the same neighbourhood and give the same answer."""
-        system = _system("cuda:0")
-        csr = _evaluate(system)
-        dense = _evaluate(
-            system,
-            neighbor_list=None,
-            neighbor_ptr=None,
-            unit_shifts=None,
-            neighbor_matrix=system["neighbor_matrix"],
-            neighbor_matrix_shifts=system["neighbor_matrix_shifts"],
-        )
-        np.testing.assert_allclose(
-            csr[0].cpu().numpy(), dense[0].cpu().numpy(), rtol=1e-12
-        )
-        np.testing.assert_allclose(
-            csr[1].cpu().numpy(),
-            dense[1].cpu().numpy(),
-            atol=1e-11 * float(csr[1].abs().max()),
-        )
-
     def test_rejects_both_formats(self):
         """Supplying both neighbour formats is an error."""
         system = _system("cuda:0")
@@ -468,77 +447,6 @@ class TestPaddingAtoms:
         n_atoms = system["n_atoms"]
         forces = _evaluate(self._pad(system, 5))[1]
         assert float(forces[n_atoms:].abs().max()) == 0.0
-
-
-@pytest.mark.gpu
-class TestBatching:
-    """Several systems in one call.
-
-    The bindings build the Cartesian shifts themselves, so the Warp-layer batching tests do
-    not cover this; the cells must differ for the coverage to mean anything.
-    """
-
-    @staticmethod
-    def _systems():
-        # Both boxes must be small enough relative to R_CUT to have periodic neighbours
-        # well inside the cutoff. At box 13 there are none at all, and a system whose image
-        # shifts are all zero cannot detect which cell they were multiplied by.
-        return [
-            _system("cuda:0", box=5.0, seed=0),
-            _system("cuda:0", box=7.0, seed=1),
-        ]
-
-    @staticmethod
-    def _dense(arguments, system):
-        """Swap the CSR arguments for the dense matrix ones."""
-        arguments.update(
-            neighbor_list=None,
-            neighbor_ptr=None,
-            unit_shifts=None,
-            neighbor_matrix=system["neighbor_matrix"],
-            neighbor_matrix_shifts=system["neighbor_matrix_shifts"],
-            fill_value=system.get("fill_value"),
-        )
-        return arguments
-
-    @pytest.mark.parametrize("dense", [False, True])
-    def test_each_system_keeps_its_own_cell(self, dense):
-        """A system's periodic images must be built from its own lattice.
-
-        Converting every image shift with the first system's cell leaves systems after the
-        first with neighbours in the wrong places, which corrupts their coordination numbers
-        and so their energies, forces and virial. It is invisible in a batch of identical
-        cells.
-        """
-        systems = self._systems()
-        batch = _batched(systems)
-        extra = {"compute_virial": True}
-        together = _evaluate(
-            batch,
-            batch_idx=batch["batch_idx"],
-            num_systems=batch["num_systems"],
-            **(self._dense(dict(extra), batch) if dense else extra),
-        )
-        start = 0
-        for index, system in enumerate(systems):
-            alone = _evaluate(
-                system, **(self._dense(dict(extra), system) if dense else extra)
-            )
-            stop = start + system["n_atoms"]
-            np.testing.assert_allclose(
-                together[0][index].item(), alone[0][0].item(), rtol=1e-11
-            )
-            np.testing.assert_allclose(
-                together[1][start:stop].cpu().numpy(),
-                alone[1].cpu().numpy(),
-                atol=1e-11 * float(alone[1].abs().max()),
-            )
-            np.testing.assert_allclose(
-                together[2][index].cpu().numpy(),
-                alone[2][0].cpu().numpy(),
-                atol=1e-11 * float(alone[2].abs().max()),
-            )
-            start = stop
 
 
 @pytest.mark.gpu

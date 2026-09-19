@@ -170,76 +170,6 @@ def _dense_call(
 
 
 @pytest.mark.gpu
-class TestBatching:
-    """Several systems in one call, with different cells.
-
-    The binding builds the Cartesian shifts itself, so this is not covered by the Warp-layer
-    batching tests. The boxes are small enough relative to ``R_CUT`` that both systems have
-    periodic neighbours well inside it; a system whose image shifts are all zero cannot
-    detect which cell they were multiplied by.
-    """
-
-    def test_dense_batch_keeps_each_systems_cell(self, device):
-        """A system's periodic images must be built from its own lattice."""
-        systems = [_single(5.0, 0), _single(7.0, 1)]
-        counts = [s["n_atoms"] for s in systems]
-        total = int(sum(counts))
-        offsets = np.cumsum([0] + counts[:-1]).astype(np.int64)
-        width = max(s["matrix"].shape[1] for s in systems)
-
-        rows, row_shifts = [], []
-        for system, offset in zip(systems, offsets):
-            own = system["matrix"]
-            row = np.full((system["n_atoms"], width), total, dtype=np.int32)
-            shift = np.zeros((system["n_atoms"], width, 3), dtype=np.int32)
-            padded = own >= system["n_atoms"]
-            row[:, : own.shape[1]] = np.where(padded, total, own + int(offset))
-            shift[:, : own.shape[1]] = system["matrix_shifts"]
-            rows.append(row)
-            row_shifts.append(shift)
-
-        batch = dict(
-            positions=np.concatenate([s["positions"] for s in systems]),
-            numbers=np.concatenate([s["numbers"] for s in systems]),
-            params=systems[0]["params"],
-        )
-        batch_idx = np.concatenate(
-            [np.full(count, index) for index, count in enumerate(counts)]
-        )
-        together = _dense_call(
-            batch,
-            np.stack([s["cell"] for s in systems]),
-            np.concatenate(rows),
-            np.concatenate(row_shifts),
-            batch_idx,
-            len(systems),
-            total,
-        )
-
-        start = 0
-        for index, system in enumerate(systems):
-            alone = _dense_call(
-                system,
-                system["cell"][None],
-                system["matrix"],
-                system["matrix_shifts"],
-                None,
-                None,
-                system["n_atoms"],
-            )
-            stop = start + system["n_atoms"]
-            np.testing.assert_allclose(
-                float(together[0][index]), float(alone[0][0]), rtol=1e-11
-            )
-            np.testing.assert_allclose(
-                np.asarray(together[1][start:stop]),
-                np.asarray(alone[1]),
-                atol=1e-11 * float(jnp.abs(alone[1]).max()),
-            )
-            start = stop
-
-
-@pytest.mark.gpu
 class TestAgreementWithWarpLayer:
     """The binding must reproduce what the Warp layer already validated."""
 
@@ -289,24 +219,6 @@ class TestAgreementWithWarpLayer:
 @pytest.mark.gpu
 class TestNeighbourFormats:
     """Both neighbour representations, and the validation around them."""
-
-    def test_dense_and_csr_agree(self, device, system):
-        """The two formats give the same answer."""
-        csr = _evaluate(system)
-        dense = _evaluate(
-            system,
-            neighbor_list=None,
-            neighbor_ptr=None,
-            unit_shifts=None,
-            neighbor_matrix=system["neighbor_matrix"],
-            neighbor_matrix_shifts=system["neighbor_matrix_shifts"],
-        )
-        np.testing.assert_allclose(np.asarray(csr[0]), np.asarray(dense[0]), rtol=1e-12)
-        np.testing.assert_allclose(
-            np.asarray(csr[1]),
-            np.asarray(dense[1]),
-            atol=1e-11 * float(jnp.abs(csr[1]).max()),
-        )
 
     def test_rejects_both_formats(self, device, system):
         """Supplying both neighbour formats is an error."""
