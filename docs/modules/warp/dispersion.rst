@@ -62,6 +62,15 @@ Real-Space Passes
 .. autofunction:: nvalchemiops.interactions.dispersion._fourier_dftd3.fd3_coordination_numbers_matrix
 .. autofunction:: nvalchemiops.interactions.dispersion._fourier_dftd3.fd3_coefficients
 
+Mesh Spread
+~~~~~~~~~~~
+
+Pass 3, between the real-space passes and the forward transform. Unlike the general channel
+spread in :mod:`nvalchemiops.math.spline`, this one applies no stencil-weight threshold, so
+the interpolation is the exact B-spline that :func:`fd3_gather_and_force` differentiates.
+
+.. autofunction:: nvalchemiops.interactions.dispersion._fourier_dftd3.fd3_spread
+
 Reciprocal-Space Pass
 ~~~~~~~~~~~~~~~~~~~~~
 
