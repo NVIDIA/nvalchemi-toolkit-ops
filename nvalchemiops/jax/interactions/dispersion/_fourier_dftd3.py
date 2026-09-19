@@ -310,6 +310,34 @@ def _resolve_mesh(mesh_dimensions, mesh_spacing, cells, spline_order):
     )
 
 
+def _reject_uncovered_species(species_index, numbers):
+    """Reject atoms whose element the decomposition does not cover.
+
+    ``species_map`` marks both padding and uncovered elements with ``-1``, and the mesh
+    grouping below treats every ``-1`` as padding. A real element missing from
+    ``fd3_params`` would therefore be dropped from the sum with no error at all, which is
+    the worst kind of wrong: a plausible energy that is quietly missing atoms.
+
+    Atomic number zero is padding and is skipped by design; only a real element that the
+    decomposition misses is an error. Reading the mask is impossible while tracing, so under
+    ``jax.jit`` the check is skipped rather than failing, exactly as in
+    :func:`_reject_half_filled`.
+    """
+    uncovered = (species_index < 0) & (numbers != 0)
+    try:
+        missing = np.unique(np.asarray(numbers)[np.asarray(uncovered)]).tolist()
+    except (
+        jax.errors.ConcretizationTypeError,
+        jax.errors.TracerArrayConversionError,
+    ):
+        return
+    if missing:
+        raise ValueError(
+            f"Atomic numbers {missing} are not covered by fd3_params. Rebuild the "
+            f"decomposition with every species present in the system."
+        )
+
+
 def _reject_half_filled(
     neighbor_list,
     unit_shifts,
@@ -522,6 +550,8 @@ def fourier_dftd3(
     eigs = jnp.asarray(params.eigs, dtype=dtype)
     sqrt_q = jnp.asarray(params.sqrt_q, dtype=dtype)
     species_index = params.species_map[numbers].astype(jnp.int32)
+
+    _reject_uncovered_species(species_index, numbers)
 
     _reject_half_filled(
         neighbor_list,

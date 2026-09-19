@@ -719,6 +719,77 @@ class TestJit:
 
 
 @pytest.mark.gpu
+class TestUncoveredSpecies:
+    """An element missing from ``fd3_params`` must not be dropped in silence.
+
+    ``species_map`` marks padding and uncovered elements alike with ``-1``, and the mesh
+    grouping treats every ``-1`` as padding, so without a check a real atom simply vanishes
+    from the sum and the energy comes back plausible but wrong.
+    """
+
+    @staticmethod
+    def _call(parts, params, numbers):
+        return fourier_dftd3(
+            jnp.asarray(parts["positions"]),
+            numbers,
+            **DAMPING,
+            fd3_params=params,
+            cell=jnp.asarray(parts["cell"]),
+            r_cut=R_CUT,
+            mesh_dimensions=MESH,
+            neighbor_matrix=jnp.asarray(parts["matrix"], dtype=jnp.int32),
+            neighbor_matrix_shifts=jnp.asarray(parts["matrix_shifts"], dtype=jnp.int32),
+        )
+
+    @staticmethod
+    def _partial_params():
+        """Parameters built without the last species the system actually contains."""
+        c6ab, cn_ref, species = _reference_tables()
+        max_z = c6ab.shape[0]
+        rcov = np.zeros(max_z)
+        rcov[[1, 6, 8]] = [0.6, 1.2, 1.1]
+        r4r2 = np.zeros(max_z)
+        r4r2[[1, 6, 8]] = [1.0, 1.4, 1.2]
+        return FourierD3Parameters.from_tables(
+            rcov, r4r2, c6ab, cn_ref, list(species[:-1])
+        ), int(species[-1])
+
+    def test_eager_rejects_an_uncovered_element(self):
+        """The message has to name the element so the fix is obvious."""
+        parts = _single(5.0, 0)
+        params, missing = self._partial_params()
+        numbers = np.asarray(parts["numbers"]).copy()
+        numbers[0] = missing
+        with pytest.raises(ValueError, match="not covered by fd3_params"):
+            self._call(parts, params, jnp.asarray(numbers, dtype=jnp.int32))
+
+    def test_padding_is_not_mistaken_for_an_uncovered_element(self):
+        """Atomic number zero is padding by design and must still be accepted."""
+        parts = _single(5.0, 0)
+        numbers = np.asarray(parts["numbers"]).copy()
+        numbers[:2] = 0
+        energy = self._call(
+            parts, parts["params"], jnp.asarray(numbers, dtype=jnp.int32)
+        )[0]
+        assert np.isfinite(np.asarray(energy)).all()
+
+    def test_under_jit_the_check_is_skipped_rather_than_failing(self):
+        """``numbers`` is a tracer, so the mask cannot be read back.
+
+        Pinned deliberately: the limitation is documented, and a caller who sees no error
+        under ``jax.jit`` should be able to find this test rather than assume it is covered.
+        """
+        parts = _single(5.0, 0)
+        params, missing = self._partial_params()
+        numbers = np.asarray(parts["numbers"]).copy()
+        numbers[0] = missing
+
+        traced = jax.jit(lambda n: self._call(parts, params, n))
+        energy = traced(jnp.asarray(numbers, dtype=jnp.int32))[0]
+        assert np.isfinite(np.asarray(energy)).all()
+
+
+@pytest.mark.gpu
 class TestParametersUnderJit:
     """``FourierD3Parameters`` has to survive being a traced argument.
 
