@@ -38,6 +38,7 @@ import torch
 
 from nvalchemiops.dynamics.optimizers.lbfgs import (
     _CELL_BUFFERS,
+    _CELL_SCRATCH,
     _OPTIMIZER_BUFFERS,
 )
 from nvalchemiops.torch.lbfgs import (
@@ -103,6 +104,48 @@ def make_torch_cell_state(num_atoms, num_systems, dtype, device, counts=None):
         n_per_system, state.kappa, cell_force_scale=1.0 / float(counts_np.max())
     )
     return state
+
+
+def _schema_of(op_name):
+    """The schema PyTorch actually registered, not the tuple we handed it."""
+    return getattr(torch.ops.nvalchemiops, op_name).default._schema
+
+
+def _schema_writable(op_name):
+    """Argument names the registered schema declares as written.
+
+    Read from ``alias_info`` rather than from the private ``mutates_args``
+    tuple. Those are the input and the output of registration: checking the
+    input cannot catch a name that failed to reach the schema, and a state
+    argument missing its write declaration is exactly what lets
+    ``torch.compile`` treat that state as unchanged.
+    """
+    return tuple(
+        a.name
+        for a in _schema_of(op_name).arguments
+        if a.alias_info is not None and a.alias_info.is_write
+    )
+
+
+def _snapshot(*states):
+    """Clone every tensor field of the given dataclasses, keyed by name."""
+    out = {}
+    for prefix, state in states:
+        for field in dataclasses.fields(state):
+            value = getattr(state, field.name)
+            out[f"{prefix}.{field.name}"] = value.clone()
+    return out
+
+
+def _assert_same_state(compiled, eager):
+    """Every mutated tensor must agree exactly, not just the ones we plot."""
+    assert compiled.keys() == eager.keys()
+    differing = [name for name in eager if not torch.equal(compiled[name], eager[name])]
+    assert not differing, (
+        "compiled and eager execution left different state in "
+        f"{differing}; a missing writable declaration lets torch.compile "
+        "treat that argument as unchanged"
+    )
 
 
 class TorchDriver:
@@ -289,11 +332,55 @@ class TestLBFGSTorchState:
         assert set(_MUTATED) == {"positions"} | set(_OPTIMIZER_BUFFERS)
         assert len(_MUTATED) == len(_OPTIMIZER_BUFFERS) + 1
 
+    @pytest.mark.parametrize(
+        "op_name,expected",
+        [
+            ("lbfgs_step", ("positions",) + _OPTIMIZER_BUFFERS),
+            (
+                "lbfgs_step_coord_cell",
+                ("positions", "cell") + _OPTIMIZER_BUFFERS + _CELL_SCRATCH,
+            ),
+        ],
+    )
+    def test_registered_schema_declares_the_writable_state(self, op_name, expected):
+        """The *schema* must declare every mutated argument, in order.
+
+        The test above checks the tuple we pass to registration; this checks
+        what came out of it. They are different things, and only this one
+        catches a name that never reached the schema -- under which
+        ``torch.compile`` is entitled to assume that argument is unchanged and
+        to reuse a stale value.
+        """
+        assert _schema_writable(op_name) == expected
+
+    @pytest.mark.parametrize(
+        "op_name,read_only",
+        [
+            ("lbfgs_step", ("forces", "batch_idx")),
+            (
+                "lbfgs_step_coord_cell",
+                ("forces", "stress", "batch_idx") + _CELL_BUFFERS[:5],
+            ),
+        ],
+    )
+    def test_registered_schema_declares_nothing_else_writable(self, op_name, read_only):
+        """Inputs the step only reads must carry no alias at all.
+
+        Over-declaring is not free: the chart and topology arrays are shared
+        across systems and never written, and claiming otherwise would block
+        legitimate reuse and force needless copies.
+        """
+        by_name = {a.name: a for a in _schema_of(op_name).arguments}
+        for name in read_only:
+            assert by_name[name].alias_info is None, (
+                f"{op_name} declares {name} as aliased, but the step only reads it"
+            )
+
     def test_schema_arity_matches_the_signature(self):
         """The registered schema sees every argument the implementation takes."""
         from nvalchemiops.torch.lbfgs import _lbfgs_step_op
 
-        schema = torch.ops.nvalchemiops.lbfgs_step.default._schema
+        schema = _schema_of("lbfgs_step")
         assert len(schema.arguments) == len(
             inspect.signature(_lbfgs_step_op).parameters
         )
@@ -476,7 +563,53 @@ class TestLBFGSTorchRegistration:
             compiled_driver.positions, compiled_driver.forces
         )
         torch.cuda.synchronize()
-        torch.testing.assert_close(compiled_driver.positions, eager.positions)
+
+        # The whole state, not just the positions: an argument torch.compile
+        # believes is unchanged is by definition one a narrow comparison does
+        # not look at.
+        expected = _snapshot(("state", eager.state))
+        expected["positions"] = eager.positions.clone()
+        actual = _snapshot(("state", compiled_driver.state))
+        actual["positions"] = compiled_driver.positions.clone()
+        assert len(expected) == 1 + len(_OPTIMIZER_BUFFERS)
+        _assert_same_state(actual, expected)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_compiled_region_sees_the_state_change(self, device):
+        """Clone state inside the graph, step, and diff -- the stale-value probe.
+
+        Comparing state *after* a compiled call is a weak test of the write
+        declarations: measured against a deliberately under-declared operator,
+        the mutation still lands, because nothing gave Dynamo a reason to act
+        on its wrong assumption. It acts when a value read *before* the call is
+        reused *after* it -- then an undeclared argument is folded to its old
+        value and the difference collapses to zero.
+
+        So this clones inside the compiled region rather than outside, which is
+        the shape that actually exercises the declaration.
+        """
+        d = TorchDriver(_cluster(1, 4), 1, torch.float64, device)
+        d.evaluate()
+        torch._dynamo.reset()
+
+        def body(positions, forces):
+            # ``iteration`` moves -1 -> 0 on the first step, and ``positions``
+            # moves by the trust-region step.
+            iteration_before = d.state.iteration.clone()
+            positions_before = positions.clone()
+            lbfgs_step_coord(positions, forces, d.state, d.batch_idx, maxstep=0.5)
+            return (
+                d.state.iteration - iteration_before,
+                (positions - positions_before).abs().max(),
+            )
+
+        d_iter, d_pos = torch.compile(body, fullgraph=True)(d.positions, d.forces)
+        torch.cuda.synchronize()
+        assert int(d_iter.item()) == 1, (
+            "the compiled graph did not observe the iteration counter advance; "
+            "the operator's write declaration is not reaching torch.compile"
+        )
+        assert float(d_pos.item()) > 0.0, "the compiled graph saw no motion"
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_compiles_with_zero_graph_breaks(self, device):
@@ -891,6 +1024,80 @@ class TestLBFGSTorchCoordCell:
         assert set(_CELL_MUTATED) == (
             {"positions", "cell"} | set(_OPTIMIZER_BUFFERS) | set(_CELL_BUFFERS[5:])
         )
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_compiled_run_leaves_identical_state(self, device):
+        """Every mutated tensor must match after compilation, not just ``cell``.
+
+        Comparing a handful of outputs cannot distinguish a correctly declared
+        state from one ``torch.compile`` believes is unchanged: the arguments
+        it is free to treat as read-only are exactly the ones a narrow
+        comparison never looks at.
+        """
+        from nvalchemiops.torch.lbfgs import lbfgs_step_coord_cell
+
+        n = 6
+        batch_idx = torch.zeros(n, dtype=torch.int32, device=device)
+
+        def one_run(compiled):
+            positions, cell, state, cell_state, potential = self._setup(device, n)
+            forces, stress = self._evaluate(positions, cell, potential, device)
+
+            def body(p, c, f, s):
+                lbfgs_step_coord_cell(
+                    p, c, f, s, state, cell_state, batch_idx, maxstep=0.2
+                )
+
+            torch._dynamo.reset()
+            fn = torch.compile(body, fullgraph=True) if compiled else body
+            fn(positions, cell, forces, stress)
+            torch.cuda.synchronize()
+            snap = _snapshot(("state", state), ("cell_state", cell_state))
+            snap["positions"] = positions.clone()
+            snap["cell"] = cell.clone()
+            return snap
+
+        eager = one_run(False)
+        compiled = one_run(True)
+        # 2 tensors + 19 optimizer fields + 14 cell fields.
+        assert len(eager) == 2 + len(_OPTIMIZER_BUFFERS) + len(_CELL_BUFFERS)
+        _assert_same_state(compiled, eager)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_compiled_cell_region_sees_the_state_change(self, device):
+        """The stale-value probe for the variable-cell operator.
+
+        Same shape as the coordinate test: clone inside the graph, step, diff.
+        This is what exercises the write declarations, as distinct from
+        comparing state after the call.
+        """
+        from nvalchemiops.torch.lbfgs import lbfgs_step_coord_cell
+
+        n = 6
+        positions, cell, state, cell_state, potential = self._setup(device, n)
+        forces, stress = self._evaluate(positions, cell, potential, device)
+        batch_idx = torch.zeros(n, dtype=torch.int32, device=device)
+        torch._dynamo.reset()
+
+        def body(p, c, f, s):
+            iteration_before = state.iteration.clone()
+            cell_before = c.clone()
+            scratch_before = cell_state.ext_positions.clone()
+            lbfgs_step_coord_cell(p, c, f, s, state, cell_state, batch_idx, maxstep=0.2)
+            return (
+                state.iteration - iteration_before,
+                (c - cell_before).abs().max(),
+                (cell_state.ext_positions - scratch_before).abs().max(),
+            )
+
+        d_iter, d_cell, d_scratch = torch.compile(body, fullgraph=True)(
+            positions, cell, forces, stress
+        )
+        torch.cuda.synchronize()
+        assert int(d_iter.item()) == 1, "iteration change invisible to the graph"
+        assert float(d_cell.item()) > 0.0, "cell change invisible to the graph"
+        # A scratch buffer, to cover the ``_CELL_SCRATCH`` half of the schema.
+        assert float(d_scratch.item()) > 0.0, "scratch change invisible to the graph"
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_compiles_fullgraph_and_matches_eager(self, device):
