@@ -761,6 +761,9 @@ is not an allocation-free API. Finish backward, or copy every result that must
 survive, before reusing the same state. A second state owns distinct storage.
 
 Preparation fixes the atom count, batch partition, shape, dtype, and device.
+For batches, it caches atom/system and padded-layout mappings derived only from
+that partition. Morton ordering, sorted coordinates, cell inverses, and group
+bounds are recomputed from the current positions and cells on every execution.
 Execution rejects mismatches before launching kernels. Prepared pair callbacks,
 energies, forces, caller-provided buffers, and selective rebuilds are not
 supported.

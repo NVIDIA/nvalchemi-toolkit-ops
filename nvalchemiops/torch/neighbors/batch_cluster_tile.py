@@ -26,6 +26,8 @@ Scope: float32, orthorhombic or triclinic PBC, one cell per system,
 arbitrary natom per system (padded internally).
 """
 
+from typing import NamedTuple
+
 import torch
 import warp as wp
 
@@ -645,6 +647,67 @@ def allocate_batch_cluster_tile_list(
 # =============================================================================
 # Morton sort + padded scatter (torch side)
 # =============================================================================
+class _BatchPartitionMetadata(NamedTuple):
+    """Tensors derived only from a fixed batch partition."""
+
+    atom_system: torch.Tensor
+    batch_ptr_padded: torch.Tensor
+    padded_slot_system: torch.Tensor
+    real_sorted_rank_to_padded_slot: torch.Tensor
+    group_ptr: torch.Tensor
+    group_system: torch.Tensor
+
+
+def _prepare_batch_partition_metadata(
+    batch_ptr: torch.Tensor,
+    *,
+    num_atoms: int,
+    padded_slot_system: torch.Tensor,
+    batch_ptr_padded: torch.Tensor,
+    group_system: torch.Tensor,
+    group_ptr: torch.Tensor,
+) -> _BatchPartitionMetadata:
+    """Build partition metadata into the fixed scratch views."""
+    num_systems = batch_ptr.shape[0] - 1
+    device = batch_ptr.device
+    atoms_per_system = batch_ptr[1:] - batch_ptr[:-1]
+    padded_atoms_per_system = (
+        (atoms_per_system + TILE_GROUP_SIZE - 1) // TILE_GROUP_SIZE
+    ) * TILE_GROUP_SIZE
+
+    atom_system = torch.repeat_interleave(
+        torch.arange(num_systems, dtype=torch.int32, device=device),
+        atoms_per_system.to(torch.int64),
+        output_size=num_atoms,
+    ).contiguous()
+    padded_ptr = torch.zeros(num_systems + 1, dtype=torch.int32, device=device)
+    torch.cumsum(padded_atoms_per_system, dim=0, out=padded_ptr[1:])
+    slot_system = torch.repeat_interleave(
+        torch.arange(num_systems, dtype=torch.int32, device=device),
+        padded_atoms_per_system.to(torch.int64),
+        output_size=padded_slot_system.shape[0],
+    ).contiguous()
+    real_rank = torch.arange(num_atoms, dtype=torch.int32, device=device)
+    padded_slot = (
+        padded_ptr[atom_system] + real_rank - batch_ptr[atom_system]
+    ).contiguous()
+    group_level_ptr = (padded_ptr // TILE_GROUP_SIZE).to(torch.int32).contiguous()
+    group_owner = slot_system[::TILE_GROUP_SIZE].to(torch.int32).contiguous()
+
+    batch_ptr_padded.copy_(padded_ptr)
+    padded_slot_system.copy_(slot_system)
+    group_ptr.copy_(group_level_ptr)
+    group_system.copy_(group_owner)
+    return _BatchPartitionMetadata(
+        atom_system=atom_system,
+        batch_ptr_padded=batch_ptr_padded,
+        padded_slot_system=padded_slot_system,
+        real_sorted_rank_to_padded_slot=padded_slot,
+        group_ptr=group_ptr,
+        group_system=group_system,
+    )
+
+
 def _per_atom_morton_codes(
     positions: torch.Tensor,
     batch_idx: torch.Tensor,
@@ -670,34 +733,24 @@ def _per_atom_morton_codes(
 
 def _batched_morton_sort_padded(
     positions: torch.Tensor,
-    batch_idx: torch.Tensor,
     batch_ptr: torch.Tensor,
     inv_cell_batch: torch.Tensor,
+    atom_system: torch.Tensor,
+    padded_slot_system: torch.Tensor,
+    real_sorted_rank_to_padded_slot: torch.Tensor,
     sorted_atom_index: torch.Tensor,
     sort_inv: torch.Tensor,
     sorted_pos_x: torch.Tensor,
     sorted_pos_y: torch.Tensor,
     sorted_pos_z: torch.Tensor,
-    batch_idx_sorted: torch.Tensor,
-    batch_ptr_padded: torch.Tensor,
 ) -> None:
     """Per-system Morton sort into the padded layout (torch ops only)."""
     N = positions.shape[0]
-    num_systems = inv_cell_batch.shape[0]
     device = positions.device
 
-    natom_per_system = batch_ptr[1:] - batch_ptr[:-1]
-    natom_padded_per_system = (
-        (natom_per_system + TILE_GROUP_SIZE - 1) // TILE_GROUP_SIZE
-    ) * TILE_GROUP_SIZE
-
-    bpp = torch.zeros(num_systems + 1, dtype=torch.int32, device=device)
-    torch.cumsum(natom_padded_per_system, dim=0, out=bpp[1:])
-    batch_ptr_padded.copy_(bpp)
-
-    codes = _per_atom_morton_codes(positions, batch_idx, inv_cell_batch)
+    codes = _per_atom_morton_codes(positions, atom_system, inv_cell_batch)
     # System-major key: system index in high 32 bits, Morton code in low.
-    system_major = codes.to(torch.int64) | (batch_idx.to(torch.int64) << 32)
+    system_major = codes.to(torch.int64) | (atom_system.to(torch.int64) << 32)
     sorted_atom_index_real = torch.argsort(system_major).to(torch.int32)
 
     # Inverse permutation over real atoms.
@@ -709,18 +762,6 @@ def _batched_morton_sort_padded(
     )
     sort_inv.copy_(inv)
 
-    # Placement indices for each real atom in the padded layout.
-    batch_idx_sorted_real = batch_idx[sorted_atom_index_real]
-    within_system = (
-        torch.arange(
-            N,
-            dtype=torch.int32,
-            device=device,
-        )
-        - batch_ptr[batch_idx_sorted_real]
-    )
-    padded_slot = bpp[batch_idx_sorted_real] + within_system
-
     # sorted_atom_index[k] = N is the padding sentinel.
     sp = torch.full(
         (sorted_atom_index.shape[0],),
@@ -728,20 +769,8 @@ def _batched_morton_sort_padded(
         dtype=torch.int32,
         device=device,
     )
-    sp[padded_slot] = sorted_atom_index_real
+    sp[real_sorted_rank_to_padded_slot] = sorted_atom_index_real
     sorted_atom_index.copy_(sp)
-
-    # System index for every padded slot.
-    bis = (
-        torch.repeat_interleave(
-            torch.arange(num_systems, dtype=torch.int32, device=device),
-            natom_padded_per_system,
-            output_size=batch_idx_sorted.shape[0],
-        )
-        .to(torch.int32)
-        .contiguous()
-    )
-    batch_idx_sorted.copy_(bis)
 
     # Padding slots duplicate each system's first real atom, so
     # tile_min / tile_max over the group remain well-formed.  Duplicates
@@ -750,7 +779,7 @@ def _batched_morton_sort_padded(
     first_atom_per_system = batch_ptr[:-1]
     position_index = torch.where(
         sp == N,
-        first_atom_per_system[bis],
+        first_atom_per_system[padded_slot_system],
         sp,
     )
     sorted_pos = positions[position_index].contiguous()
@@ -770,10 +799,6 @@ def _batched_morton_sort_padded(
         "sorted_pos_x",
         "sorted_pos_y",
         "sorted_pos_z",
-        "batch_idx_sorted",
-        "batch_ptr_padded",
-        "group_system",
-        "group_ptr",
         "group_ctr_x",
         "group_ctr_y",
         "group_ctr_z",
@@ -794,7 +819,8 @@ def _batch_build_cluster_tile_list_op(
     cell_batch: torch.Tensor,
     inv_cell_batch: torch.Tensor,
     batch_ptr: torch.Tensor,
-    batch_idx: torch.Tensor,
+    atom_system: torch.Tensor,
+    real_sorted_rank_to_padded_slot: torch.Tensor,
     sorted_atom_index: torch.Tensor,
     sort_inv: torch.Tensor,
     sorted_pos_x: torch.Tensor,
@@ -825,21 +851,16 @@ def _batch_build_cluster_tile_list_op(
 
     _batched_morton_sort_padded(
         positions,
-        batch_idx,
         batch_ptr,
         inv_cell_batch,
+        atom_system,
+        batch_idx_sorted,
+        real_sorted_rank_to_padded_slot,
         sorted_atom_index,
         sort_inv,
         sorted_pos_x,
         sorted_pos_y,
         sorted_pos_z,
-        batch_idx_sorted,
-        batch_ptr_padded,
-    )
-
-    group_ptr.copy_((batch_ptr_padded // TILE_GROUP_SIZE).to(torch.int32).contiguous())
-    group_system.copy_(
-        batch_idx_sorted[::TILE_GROUP_SIZE].to(torch.int32).contiguous(),
     )
 
     if not use_segmented:
@@ -921,7 +942,8 @@ def _(
     cell_batch: torch.Tensor,
     inv_cell_batch: torch.Tensor,
     batch_ptr: torch.Tensor,
-    batch_idx: torch.Tensor,
+    atom_system: torch.Tensor,
+    real_sorted_rank_to_padded_slot: torch.Tensor,
     sorted_atom_index: torch.Tensor,
     sort_inv: torch.Tensor,
     sorted_pos_x: torch.Tensor,
@@ -1068,7 +1090,8 @@ def _validate_batch_cluster_tile_scratch(
         raise ValueError("scratch padded atom length must match the current batch_ptr")
 
 
-def batch_build_cluster_tile_list(
+def _batch_build_cluster_tile_list_normalized(
+    partition_metadata: _BatchPartitionMetadata | None,
     positions: torch.Tensor,
     cutoff: float,
     cell_batch: torch.Tensor,
@@ -1219,11 +1242,22 @@ def batch_build_cluster_tile_list(
     if inv_cell_batch is None:
         inv_cell_batch = torch.linalg.inv(cell_batch).contiguous()
 
-    batch_idx = torch.repeat_interleave(
-        torch.arange(num_systems, dtype=torch.int32, device=positions.device),
-        (batch_ptr[1:] - batch_ptr[:-1]).to(torch.int64),
-        output_size=N,
-    )
+    if partition_metadata is None:
+        partition_metadata = _prepare_batch_partition_metadata(
+            batch_ptr,
+            num_atoms=N,
+            padded_slot_system=batch_idx_sorted,
+            batch_ptr_padded=batch_ptr_padded,
+            group_system=group_system,
+            group_ptr=group_ptr,
+        )
+    elif (
+        partition_metadata.batch_ptr_padded is not batch_ptr_padded
+        or partition_metadata.padded_slot_system is not batch_idx_sorted
+        or partition_metadata.group_system is not group_system
+        or partition_metadata.group_ptr is not group_ptr
+    ):
+        raise ValueError("prepared partition metadata must belong to batch scratch")
 
     use_segmented = (tile_offsets is not None) or (tile_counts is not None)
     if (tile_offsets is None) != (tile_counts is None):
@@ -1242,7 +1276,8 @@ def batch_build_cluster_tile_list(
         cell_batch,
         inv_cell_batch,
         batch_ptr,
-        batch_idx,
+        partition_metadata.atom_system,
+        partition_metadata.real_sorted_rank_to_padded_slot,
         sorted_atom_index,
         sort_inv,
         sorted_pos_x,
@@ -1268,6 +1303,73 @@ def batch_build_cluster_tile_list(
         bool(use_rebuild_flags),
         bool(use_segmented),
     )
+
+
+def batch_build_cluster_tile_list(
+    positions: torch.Tensor,
+    cutoff: float,
+    cell_batch: torch.Tensor,
+    batch_ptr: torch.Tensor,
+    sorted_atom_index: torch.Tensor,
+    sort_inv: torch.Tensor,
+    sorted_pos_x: torch.Tensor,
+    sorted_pos_y: torch.Tensor,
+    sorted_pos_z: torch.Tensor,
+    batch_idx_sorted: torch.Tensor,
+    batch_ptr_padded: torch.Tensor,
+    group_system: torch.Tensor,
+    group_ptr: torch.Tensor,
+    group_ctr_x: torch.Tensor,
+    group_ctr_y: torch.Tensor,
+    group_ctr_z: torch.Tensor,
+    group_ext_x: torch.Tensor,
+    group_ext_y: torch.Tensor,
+    group_ext_z: torch.Tensor,
+    num_tiles: torch.Tensor,
+    tile_row_group: torch.Tensor,
+    tile_col_group: torch.Tensor,
+    tile_system: torch.Tensor,
+    inv_cell_batch: torch.Tensor | None = None,
+    rebuild_flags: torch.Tensor | None = None,
+    tile_offsets: torch.Tensor | None = None,
+    tile_counts: torch.Tensor | None = None,
+) -> None:
+    """Build batched cluster-tile state into caller-owned scratch."""
+    _batch_build_cluster_tile_list_normalized(
+        None,
+        positions,
+        cutoff,
+        cell_batch,
+        batch_ptr,
+        sorted_atom_index,
+        sort_inv,
+        sorted_pos_x,
+        sorted_pos_y,
+        sorted_pos_z,
+        batch_idx_sorted,
+        batch_ptr_padded,
+        group_system,
+        group_ptr,
+        group_ctr_x,
+        group_ctr_y,
+        group_ctr_z,
+        group_ext_x,
+        group_ext_y,
+        group_ext_z,
+        num_tiles,
+        tile_row_group,
+        tile_col_group,
+        tile_system,
+        inv_cell_batch=inv_cell_batch,
+        rebuild_flags=rebuild_flags,
+        tile_offsets=tile_offsets,
+        tile_counts=tile_counts,
+    )
+
+
+batch_build_cluster_tile_list.__doc__ = (
+    _batch_build_cluster_tile_list_normalized.__doc__
+)
 
 
 @torch.library.custom_op(
@@ -2603,7 +2705,8 @@ def _validate_batch_matrix_state(
                 raise ValueError(f"{name} matrix state has an invalid shape or dtype")
 
 
-def batch_cluster_tile_neighbor_list(
+def _batch_cluster_tile_neighbor_list_normalized(
+    partition_metadata: _BatchPartitionMetadata | None,
     positions: torch.Tensor,
     cutoff: float,
     cell_batch: torch.Tensor,
@@ -3281,7 +3384,8 @@ def batch_cluster_tile_neighbor_list(
             tile_system=tile_system,
         )
 
-    batch_build_cluster_tile_list(
+    _batch_build_cluster_tile_list_normalized(
+        partition_metadata,
         positions.detach() if requires_reconstruction else positions,
         build_cutoff,
         cell_batch.detach() if requires_reconstruction else cell_batch,
@@ -3790,3 +3894,122 @@ def batch_cluster_tile_neighbor_list(
             tile_system,
         )
     return outputs
+
+
+def batch_cluster_tile_neighbor_list(
+    positions: torch.Tensor,
+    cutoff: float,
+    cell_batch: torch.Tensor,
+    batch_ptr: torch.Tensor,
+    max_neighbors: int | None = None,
+    fill_value: int | None = None,
+    format: str = "matrix",
+    max_pairs: int | None = None,
+    cutoff2: float | None = None,
+    rebuild_flags: torch.Tensor | None = None,
+    return_state: bool = False,
+    neighbor_matrix: torch.Tensor | None = None,
+    neighbor_matrix_shifts: torch.Tensor | None = None,
+    num_neighbors: torch.Tensor | None = None,
+    neighbor_matrix2: torch.Tensor | None = None,
+    neighbor_matrix_shifts2: torch.Tensor | None = None,
+    num_neighbors2: torch.Tensor | None = None,
+    neighbor_list: torch.Tensor | None = None,
+    neighbor_list_shifts: torch.Tensor | None = None,
+    pair_counter: torch.Tensor | None = None,
+    pair_offsets: torch.Tensor | None = None,
+    pair_counts: torch.Tensor | None = None,
+    inv_cell_batch: torch.Tensor | None = None,
+    sorted_atom_index: torch.Tensor | None = None,
+    sort_inv: torch.Tensor | None = None,
+    sorted_pos_x: torch.Tensor | None = None,
+    sorted_pos_y: torch.Tensor | None = None,
+    sorted_pos_z: torch.Tensor | None = None,
+    batch_idx_sorted: torch.Tensor | None = None,
+    batch_ptr_padded: torch.Tensor | None = None,
+    group_system: torch.Tensor | None = None,
+    group_ptr: torch.Tensor | None = None,
+    group_ctr_x: torch.Tensor | None = None,
+    group_ctr_y: torch.Tensor | None = None,
+    group_ctr_z: torch.Tensor | None = None,
+    group_ext_x: torch.Tensor | None = None,
+    group_ext_y: torch.Tensor | None = None,
+    group_ext_z: torch.Tensor | None = None,
+    num_tiles: torch.Tensor | None = None,
+    tile_row_group: torch.Tensor | None = None,
+    tile_col_group: torch.Tensor | None = None,
+    tile_system: torch.Tensor | None = None,
+    tile_offsets: torch.Tensor | None = None,
+    tile_counts: torch.Tensor | None = None,
+    return_vectors: bool = False,
+    return_distances: bool = False,
+    pair_fn: wp.Function | None = None,
+    pair_params: torch.Tensor | None = None,
+    neighbor_vectors: torch.Tensor | None = None,
+    neighbor_distances: torch.Tensor | None = None,
+    pair_energies: torch.Tensor | None = None,
+    pair_forces: torch.Tensor | None = None,
+    max_tiles_per_group: int | None = None,
+) -> tuple[torch.Tensor, ...]:
+    """Build and query a batched cluster-pair tile neighbor list in one call."""
+    return _batch_cluster_tile_neighbor_list_normalized(
+        None,
+        positions,
+        cutoff,
+        cell_batch,
+        batch_ptr,
+        max_neighbors=max_neighbors,
+        fill_value=fill_value,
+        format=format,
+        max_pairs=max_pairs,
+        cutoff2=cutoff2,
+        rebuild_flags=rebuild_flags,
+        return_state=return_state,
+        neighbor_matrix=neighbor_matrix,
+        neighbor_matrix_shifts=neighbor_matrix_shifts,
+        num_neighbors=num_neighbors,
+        neighbor_matrix2=neighbor_matrix2,
+        neighbor_matrix_shifts2=neighbor_matrix_shifts2,
+        num_neighbors2=num_neighbors2,
+        neighbor_list=neighbor_list,
+        neighbor_list_shifts=neighbor_list_shifts,
+        pair_counter=pair_counter,
+        pair_offsets=pair_offsets,
+        pair_counts=pair_counts,
+        inv_cell_batch=inv_cell_batch,
+        sorted_atom_index=sorted_atom_index,
+        sort_inv=sort_inv,
+        sorted_pos_x=sorted_pos_x,
+        sorted_pos_y=sorted_pos_y,
+        sorted_pos_z=sorted_pos_z,
+        batch_idx_sorted=batch_idx_sorted,
+        batch_ptr_padded=batch_ptr_padded,
+        group_system=group_system,
+        group_ptr=group_ptr,
+        group_ctr_x=group_ctr_x,
+        group_ctr_y=group_ctr_y,
+        group_ctr_z=group_ctr_z,
+        group_ext_x=group_ext_x,
+        group_ext_y=group_ext_y,
+        group_ext_z=group_ext_z,
+        num_tiles=num_tiles,
+        tile_row_group=tile_row_group,
+        tile_col_group=tile_col_group,
+        tile_system=tile_system,
+        tile_offsets=tile_offsets,
+        tile_counts=tile_counts,
+        return_vectors=return_vectors,
+        return_distances=return_distances,
+        pair_fn=pair_fn,
+        pair_params=pair_params,
+        neighbor_vectors=neighbor_vectors,
+        neighbor_distances=neighbor_distances,
+        pair_energies=pair_energies,
+        pair_forces=pair_forces,
+        max_tiles_per_group=max_tiles_per_group,
+    )
+
+
+batch_cluster_tile_neighbor_list.__doc__ = (
+    _batch_cluster_tile_neighbor_list_normalized.__doc__
+)

@@ -25,8 +25,10 @@ from nvalchemiops.neighbors.cluster_tile import estimate_max_tiles_per_group
 from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
 from nvalchemiops.torch.neighbors.batch_cluster_tile import (
     TILE_GROUP_SIZE,
+    _batch_cluster_tile_neighbor_list_normalized,
+    _BatchPartitionMetadata,
+    _prepare_batch_partition_metadata,
     allocate_batch_cluster_tile_list,
-    batch_cluster_tile_neighbor_list,
     estimate_batch_max_tiles_per_group,
 )
 from nvalchemiops.torch.neighbors.cluster_tile import (
@@ -48,7 +50,9 @@ class ClusterTileState:
 
     Create a state with :func:`prepare_cluster_tile`. Configuration attributes
     cannot be reassigned. ``neighbor_vectors`` and ``neighbor_distances`` are
-    borrowed buffers that a later execution may overwrite.
+    borrowed buffers that a later execution may overwrite. Batched state caches
+    only metadata derived from the fixed partition; geometry-dependent sorting
+    and bounds are recomputed for every execution.
     """
 
     format: str
@@ -66,6 +70,7 @@ class ClusterTileState:
     return_distances: bool
     max_tiles_per_group: int
     _batch_ptr: torch.Tensor | None = field(repr=False)
+    _partition_metadata: _BatchPartitionMetadata | None = field(repr=False)
     _cell_shape: tuple[int, ...] = field(repr=False)
     _scratch: tuple[torch.Tensor, ...] = field(repr=False)
     _topology: tuple[torch.Tensor, ...] = field(repr=False)
@@ -279,6 +284,16 @@ def prepare_cluster_tile(
             dtype=positions.dtype,
             max_tiles_per_group=max_tiles_per_group,
         )
+    partition_metadata = None
+    if protected_batch_ptr is not None:
+        partition_metadata = _prepare_batch_partition_metadata(
+            protected_batch_ptr,
+            num_atoms=num_atoms,
+            padded_slot_system=scratch[5],
+            batch_ptr_padded=scratch[6],
+            group_system=scratch[7],
+            group_ptr=scratch[8],
+        )
 
     topology: tuple[torch.Tensor, ...] = ()
     if format == "matrix":
@@ -332,6 +347,7 @@ def prepare_cluster_tile(
         return_distances=bool(return_distances),
         max_tiles_per_group=max_tiles_per_group,
         _batch_ptr=protected_batch_ptr,
+        _partition_metadata=partition_metadata,
         _cell_shape=tuple(cell.shape),
         _scratch=scratch,
         _topology=topology,
@@ -427,7 +443,8 @@ def cluster_tile_neighbor_list_prepared(
             tile_col_group,
             tile_system,
         ) = state._scratch
-        return batch_cluster_tile_neighbor_list(
+        return _batch_cluster_tile_neighbor_list_normalized(
+            state._partition_metadata,
             positions,
             state.cutoff,
             cell,

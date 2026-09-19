@@ -45,6 +45,8 @@
   snapshots and remain non-differentiable storage.
 - Prepared Torch cluster-tile state now rejects dual-cutoff vectors or
   distances during preparation instead of failing later during execution.
+- Prepared batched Torch cluster-tile state now reuses fixed partition and
+  padded-layout metadata while recomputing geometry-dependent data each call.
 - Torch cluster-tile compact COO outputs are now trimmed to the actual pair
   count. Requested distances and vectors are returned with the topology, so
   callers no longer need to provide geometry buffers. If reusable buffers are

@@ -495,6 +495,84 @@ def test_prepared_rejects_dual_cutoff_geometry_before_allocation(
 
 
 @pytest.mark.gpu
+def test_prepared_batch_partition_metadata_is_cached() -> None:
+    """Prepared batches reuse only partition-derived metadata tensors."""
+    positions = torch.tensor(
+        [
+            [0.0, 0.0, 0.0],
+            [0.4, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [0.5, 0.0, 0.0],
+            [3.0, 0.0, 0.0],
+        ],
+        dtype=torch.float32,
+        device="cuda",
+    )
+    cell = torch.eye(3, dtype=torch.float32, device="cuda").repeat(3, 1, 1) * 8.0
+    batch_ptr = torch.tensor([0, 0, 2, 5], dtype=torch.int32, device="cuda")
+    state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        batch_ptr=batch_ptr,
+        max_neighbors=8,
+        max_tiles_per_group=2,
+    )
+    metadata = state._partition_metadata
+    assert metadata is not None
+    assert metadata._fields == (
+        "atom_system",
+        "batch_ptr_padded",
+        "padded_slot_system",
+        "real_sorted_rank_to_padded_slot",
+        "group_ptr",
+        "group_system",
+    )
+    assert metadata.atom_system.tolist() == [1, 1, 2, 2, 2]
+    assert metadata.batch_ptr_padded.tolist() == [0, 0, 32, 64]
+    assert metadata.padded_slot_system.tolist() == [1] * 32 + [2] * 32
+    assert metadata.real_sorted_rank_to_padded_slot.tolist() == [0, 1, 32, 33, 34]
+    assert metadata.group_ptr.tolist() == [0, 0, 1, 2]
+    assert metadata.group_system.tolist() == [1, 2]
+    assert metadata.padded_slot_system is state._scratch[5]
+    assert metadata.batch_ptr_padded is state._scratch[6]
+    assert metadata.group_system is state._scratch[7]
+    assert metadata.group_ptr is state._scratch[8]
+
+    metadata_tensors = tuple(metadata)
+    metadata_values = tuple(value.clone() for value in metadata_tensors)
+    metadata_pointers = tuple(value.data_ptr() for value in metadata_tensors)
+    cluster_tile_neighbor_list_prepared(positions, cell, state)
+    sorted_positions_before = state._scratch[2].clone()
+
+    changed_positions = positions.clone()
+    changed_positions[1, 0] = 0.9
+    changed_positions[3, 1] = 0.7
+    changed_cell = cell.clone()
+    changed_cell[2, 0, 0] = 9.0
+    actual = cluster_tile_neighbor_list_prepared(
+        changed_positions,
+        changed_cell,
+        state,
+    )
+    expected = batch_cluster_tile_neighbor_list(
+        changed_positions,
+        1.2,
+        changed_cell,
+        batch_ptr,
+        format="matrix",
+        max_neighbors=8,
+        max_tiles_per_group=2,
+    )
+    _assert_same(actual, expected, format="matrix", batched=True)
+    assert not torch.equal(sorted_positions_before, state._scratch[2])
+    assert tuple(value.data_ptr() for value in metadata_tensors) == metadata_pointers
+    for value, expected_value in zip(metadata_tensors, metadata_values):
+        assert torch.equal(value, expected_value)
+
+
+@pytest.mark.gpu
 def test_prepared_storage_is_owned_and_reused() -> None:
     """States own distinct buffers and reuse each borrowed matrix result."""
     positions, cell, _ = _inputs(False)
