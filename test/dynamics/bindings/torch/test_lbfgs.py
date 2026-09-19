@@ -738,6 +738,47 @@ class TestLBFGSTorchCoordCell:
         )
 
     @pytest.mark.parametrize("device", DEVICES)
+    def test_setup_helpers_bind_warp_to_the_torch_stream(self, device, monkeypatch):
+        """Every Warp launch from this module must be stream-scoped.
+
+        Unbound, a launch sits on Warp's own stream. That happens to serialize
+        against PyTorch's legacy default stream, so the defect is invisible in
+        ordinary use -- but on a non-default stream nothing orders it against
+        the producer of its inputs or the consumer of its outputs.
+
+        Asserted structurally rather than by racing: the race is real but
+        latent, and a timing-based test passes just as happily without the fix,
+        which would be worse than no test at all.
+        """
+        import nvalchemiops.torch.lbfgs as module
+
+        entered = []
+        original = module.scoped_warp_stream
+
+        def spy(dev):
+            entered.append(dev)
+            return original(dev)
+
+        monkeypatch.setattr(module, "scoped_warp_stream", spy)
+
+        cell = torch.eye(3, dtype=torch.float64, device=device).expand(2, 3, 3)
+        cell = cell.contiguous()
+        ref_cell, ref_cell_inv = torch.zeros_like(cell), torch.zeros_like(cell)
+        module.lbfgs_set_reference_cell(cell, ref_cell, ref_cell_inv)
+        assert entered, "lbfgs_set_reference_cell launched Warp unscoped"
+
+        entered.clear()
+        counts = torch.full((2,), 8, dtype=torch.int32, device=device)
+        kappa = torch.zeros(2, dtype=torch.float64, device=device)
+        module.lbfgs_cell_kappa(counts, kappa, cell_force_scale=0.5)
+        assert entered, "lbfgs_cell_kappa launched Warp unscoped"
+
+        # ...and the results are still right when driven from a side stream.
+        torch.cuda.synchronize()
+        torch.testing.assert_close(ref_cell, cell)
+        torch.testing.assert_close(kappa, torch.full_like(kappa, 4.0))
+
+    @pytest.mark.parametrize("device", DEVICES)
     def test_zero_atom_system_gets_a_positive_kappa(self, device):
         """An empty system must not produce ``kappa = 0``.
 

@@ -611,7 +611,14 @@ def lbfgs_set_reference_cell(
         OUTPUT. Caller-owned buffers for the reference cell and its inverse.
     """
     mat = _TORCH_TO_WP_MAT[cell.dtype]
-    _wp_set_reference_cell(_wp(cell, mat), _wp(ref_cell, mat), _wp(ref_cell_inv, mat))
+    # Bind Warp to PyTorch's current stream, as the step operators do. Without
+    # it the launch sits on Warp's own stream and, on a non-default Torch
+    # stream, can race the producer of `cell` or the next consumer of the
+    # outputs.
+    with scoped_warp_stream(cell.device):
+        _wp_set_reference_cell(
+            _wp(cell, mat), _wp(ref_cell, mat), _wp(ref_cell_inv, mat)
+        )
 
 
 def lbfgs_cell_kappa(
@@ -640,11 +647,12 @@ def lbfgs_cell_kappa(
     """
     if kappa.dtype not in _TORCH_TO_WP_SCALAR:
         raise ValueError(f"kappa must be float32 or float64; got {kappa.dtype}")
-    _wp_cell_kappa(
-        _wp(n_particles, wp.int32),
-        _wp(kappa, _TORCH_TO_WP_SCALAR[kappa.dtype]),
-        cell_force_scale=cell_force_scale,
-    )
+    with scoped_warp_stream(kappa.device):
+        _wp_cell_kappa(
+            _wp(n_particles, wp.int32),
+            _wp(kappa, _TORCH_TO_WP_SCALAR[kappa.dtype]),
+            cell_force_scale=cell_force_scale,
+        )
 
 
 def lbfgs_step_coord_cell(
