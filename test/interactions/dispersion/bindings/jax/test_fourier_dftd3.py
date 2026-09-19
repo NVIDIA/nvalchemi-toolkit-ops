@@ -1097,7 +1097,7 @@ class TestParameterValidation:
         return dict(
             rcov=jnp.zeros(5),
             sqrt_q=jnp.zeros(2),
-            cnref=jnp.zeros((2, 3)),
+            cn_ref=jnp.zeros((2, 3)),
             v_q=jnp.zeros((2, 3, 4)),
             eigs=jnp.zeros(4),
             species_map=jnp.zeros(5, dtype=jnp.int32),
@@ -1116,7 +1116,7 @@ class TestParameterValidation:
         total = jax.jit(lambda bundle: bundle.eigs.sum())(params)
         assert float(total) == 0.0
 
-    @pytest.mark.parametrize("name", ["rcov", "sqrt_q", "cnref", "v_q", "eigs"])
+    @pytest.mark.parametrize("name", ["rcov", "sqrt_q", "cn_ref", "v_q", "eigs"])
     def test_numeric_fields_must_be_floating(self, name):
         """An integral eigs silently truncates the decomposition."""
         fields = self._fields()
@@ -1133,7 +1133,7 @@ class TestParameterValidation:
 
     @pytest.mark.parametrize(
         ("name", "shape"),
-        [("rcov", (1, 5)), ("sqrt_q", (1, 2)), ("eigs", (1, 4)), ("cnref", (2, 3, 1))],
+        [("rcov", (1, 5)), ("sqrt_q", (1, 2)), ("eigs", (1, 4)), ("cn_ref", (2, 3, 1))],
     )
     def test_ranks_are_enforced(self, name, shape):
         """A stray axis passes the pairwise shape checks but not the kernels."""

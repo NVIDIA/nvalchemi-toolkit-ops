@@ -216,7 +216,7 @@ class TestCoefficients:
         decomposition = _toy_decomposition()
         channels = np.array([decomposition.species_map[1]])
         # Sit exactly on a reference coordination number of hydrogen.
-        coordination = np.array([decomposition.cnref[channels[0], 0]])
+        coordination = np.array([decomposition.cn_ref[channels[0], 0]])
         coefficients, _ = low_rank_coefficients(coordination, channels, decomposition)
         assert np.all(np.isfinite(coefficients))
         assert coefficients.shape == (1, decomposition.rank)

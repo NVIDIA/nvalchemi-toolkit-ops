@@ -180,7 +180,7 @@ def low_rank_coefficients(coordination, channels, decomposition):
     """
     from nvalchemiops.interactions.dispersion._c6_decomposition import K3_WEIGHT
 
-    reference = decomposition.cnref[channels]
+    reference = decomposition.cn_ref[channels]
     valid = decomposition.valid[channels]
     delta = coordination[:, None] - reference
     weights = np.where(valid, np.exp(-K3_WEIGHT * delta**2), 0.0)

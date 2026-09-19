@@ -150,7 +150,7 @@ _cn_forces_matrix_kernels = _make_jax_kernels(
 
 @partial(
     jax.tree_util.register_dataclass,
-    data_fields=["rcov", "sqrt_q", "cnref", "v_q", "eigs", "species_map"],
+    data_fields=["rcov", "sqrt_q", "cn_ref", "v_q", "eigs", "species_map"],
     meta_fields=["max_relative_error"],
 )
 @dataclass
@@ -168,7 +168,7 @@ class FourierD3Parameters:
         Covalent radii indexed by atomic number.
     sqrt_q : jax.Array, shape (n_species,)
         Square root of the quadrupole-to-dipole ratio, per species channel.
-    cnref : jax.Array, shape (n_species, n_ref)
+    cn_ref : jax.Array, shape (n_species, n_ref)
         Reference coordination numbers, negative in unused slots.
     v_q : jax.Array, shape (n_species, n_ref, rank)
         Eigenvectors of the decomposed reference tensor.
@@ -182,7 +182,7 @@ class FourierD3Parameters:
 
     rcov: jax.Array
     sqrt_q: jax.Array
-    cnref: jax.Array
+    cn_ref: jax.Array
     v_q: jax.Array
     eigs: jax.Array
     species_map: jax.Array
@@ -198,7 +198,7 @@ class FourierD3Parameters:
         fields = {
             "rcov": self.rcov,
             "sqrt_q": self.sqrt_q,
-            "cnref": self.cnref,
+            "cn_ref": self.cn_ref,
             "v_q": self.v_q,
             "eigs": self.eigs,
         }
@@ -217,7 +217,7 @@ class FourierD3Parameters:
             "sqrt_q": 1,
             "eigs": 1,
             "species_map": 1,
-            "cnref": 2,
+            "cn_ref": 2,
             "v_q": 3,
         }
         for name, expected in ranks.items():
@@ -235,7 +235,7 @@ class FourierD3Parameters:
     @property
     def n_species(self) -> int:
         """Number of species channels."""
-        return int(self.cnref.shape[0])
+        return int(self.cn_ref.shape[0])
 
     @classmethod
     def from_tables(
@@ -263,7 +263,7 @@ class FourierD3Parameters:
         return cls(
             rcov=jnp.asarray(rcov, dtype=dtype),
             sqrt_q=jnp.asarray(np.asarray(r4r2)[decomposition.species], dtype=dtype),
-            cnref=jnp.asarray(decomposition.cnref, dtype=dtype),
+            cn_ref=jnp.asarray(decomposition.cn_ref, dtype=dtype),
             v_q=jnp.asarray(decomposition.v_q, dtype=dtype),
             eigs=jnp.asarray(decomposition.eigs, dtype=dtype),
             species_map=jnp.asarray(decomposition.species_map, dtype=jnp.int32),
@@ -664,7 +664,7 @@ def fourier_dftd3(
 
     params = fd3_params
     rcov = jnp.asarray(params.rcov, dtype=dtype)
-    cnref = jnp.asarray(params.cnref, dtype=dtype)
+    cn_ref = jnp.asarray(params.cn_ref, dtype=dtype)
     v_q = jnp.asarray(params.v_q, dtype=dtype)
     eigs = jnp.asarray(params.eigs, dtype=dtype)
     sqrt_q = jnp.asarray(params.sqrt_q, dtype=dtype)
@@ -755,7 +755,7 @@ def fourier_dftd3(
     c6, dc6_dcn = _coefficient_kernels[dtype](
         coordination,
         species_index,
-        cnref,
+        cn_ref,
         v_q,
         launch_dims=(n_atoms,),
         output_dims={"c6": (n_atoms, rank), "dc6_dcn": (n_atoms, rank)},

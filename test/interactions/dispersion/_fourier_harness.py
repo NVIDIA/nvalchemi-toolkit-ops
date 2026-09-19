@@ -156,7 +156,7 @@ def fourier_d3_energy(
     fd3.fd3_coefficients(
         coordination,
         channels_wp,
-        to_wp(decomposition.cnref, wp_dtype),
+        to_wp(decomposition.cn_ref, wp_dtype),
         to_wp(decomposition.v_q, wp_dtype),
         c6,
         dc6_dcn,

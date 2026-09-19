@@ -86,7 +86,7 @@ class FourierD3Parameters:
         Covalent radii indexed by atomic number.
     sqrt_q : torch.Tensor, shape (n_species,)
         Square root of the quadrupole-to-dipole ratio, per species channel.
-    cnref : torch.Tensor, shape (n_species, n_ref)
+    cn_ref : torch.Tensor, shape (n_species, n_ref)
         Reference coordination numbers, negative in unused slots.
     v_q : torch.Tensor, shape (n_species, n_ref, rank)
         Eigenvectors of the decomposed reference tensor.
@@ -100,7 +100,7 @@ class FourierD3Parameters:
 
     rcov: torch.Tensor
     sqrt_q: torch.Tensor
-    cnref: torch.Tensor
+    cn_ref: torch.Tensor
     v_q: torch.Tensor
     eigs: torch.Tensor
     species_map: torch.Tensor
@@ -111,7 +111,7 @@ class FourierD3Parameters:
         tensors = {
             "rcov": self.rcov,
             "sqrt_q": self.sqrt_q,
-            "cnref": self.cnref,
+            "cn_ref": self.cn_ref,
             "v_q": self.v_q,
             "eigs": self.eigs,
             "species_map": self.species_map,
@@ -122,7 +122,7 @@ class FourierD3Parameters:
         # An integral eigs truncates the decomposition to whole numbers, and a floating
         # species_map indexes as something else again; both used to run and return a
         # plausible energy.
-        for name in ("rcov", "sqrt_q", "cnref", "v_q", "eigs"):
+        for name in ("rcov", "sqrt_q", "cn_ref", "v_q", "eigs"):
             dtype = tensors[name].dtype
             if dtype not in (torch.float32, torch.float64):
                 raise TypeError(f"{name} must be float32 or float64, got {dtype}.")
@@ -142,23 +142,25 @@ class FourierD3Parameters:
             raise ValueError(
                 f"All FourierD3Parameters tensors must share one device, got {devices}."
             )
-        if self.cnref.ndim != 2:
-            raise ValueError(f"cnref must be 2D, got shape {tuple(self.cnref.shape)}.")
+        if self.cn_ref.ndim != 2:
+            raise ValueError(
+                f"cn_ref must be 2D, got shape {tuple(self.cn_ref.shape)}."
+            )
         if self.v_q.ndim != 3:
             raise ValueError(f"v_q must be 3D, got shape {tuple(self.v_q.shape)}.")
-        if self.v_q.shape[:2] != self.cnref.shape:
+        if self.v_q.shape[:2] != self.cn_ref.shape:
             raise ValueError(
-                f"v_q and cnref disagree on (n_species, n_ref): "
-                f"{tuple(self.v_q.shape[:2])} against {tuple(self.cnref.shape)}."
+                f"v_q and cn_ref disagree on (n_species, n_ref): "
+                f"{tuple(self.v_q.shape[:2])} against {tuple(self.cn_ref.shape)}."
             )
         if self.eigs.shape[0] != self.v_q.shape[2]:
             raise ValueError(
                 f"eigs has rank {self.eigs.shape[0]} but v_q has rank {self.v_q.shape[2]}."
             )
-        if self.sqrt_q.shape[0] != self.cnref.shape[0]:
+        if self.sqrt_q.shape[0] != self.cn_ref.shape[0]:
             raise ValueError(
-                f"sqrt_q covers {self.sqrt_q.shape[0]} species but cnref covers "
-                f"{self.cnref.shape[0]}."
+                f"sqrt_q covers {self.sqrt_q.shape[0]} species but cn_ref covers "
+                f"{self.cn_ref.shape[0]}."
             )
 
     @property
@@ -169,7 +171,7 @@ class FourierD3Parameters:
     @property
     def n_species(self) -> int:
         """Number of species channels."""
-        return int(self.cnref.shape[0])
+        return int(self.cn_ref.shape[0])
 
     @property
     def device(self) -> torch.device:
@@ -184,7 +186,7 @@ class FourierD3Parameters:
         return FourierD3Parameters(
             rcov=self.rcov.to(device=device, dtype=dtype),
             sqrt_q=self.sqrt_q.to(device=device, dtype=dtype),
-            cnref=self.cnref.to(device=device, dtype=dtype),
+            cn_ref=self.cn_ref.to(device=device, dtype=dtype),
             v_q=self.v_q.to(device=device, dtype=dtype),
             eigs=self.eigs.to(device=device, dtype=dtype),
             species_map=self.species_map.to(device=device),
@@ -262,7 +264,7 @@ class FourierD3Parameters:
                     decomposition.species, dtype=torch.long, device=r4r2.device
                 )
             ].to(device=device),
-            cnref=as_tensor(decomposition.cnref),
+            cn_ref=as_tensor(decomposition.cn_ref),
             v_q=as_tensor(decomposition.v_q),
             eigs=as_tensor(decomposition.eigs),
             species_map=torch.as_tensor(
@@ -1353,7 +1355,7 @@ def fourier_dftd3(
         species_index,
         cartesian_shifts,
         params.rcov,
-        params.cnref,
+        params.cn_ref,
         params.v_q,
         r_cut,
         coord_num,

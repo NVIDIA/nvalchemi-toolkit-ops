@@ -427,7 +427,7 @@ class TestCoefficients:
                 system["channels"].astype(np.int32), dtype=wp.int32, device=device
             ),
             wp.array(
-                decomposition.cnref.astype(np_dtype), dtype=wp_dtype, device=device
+                decomposition.cn_ref.astype(np_dtype), dtype=wp_dtype, device=device
             ),
             wp.array(decomposition.v_q.astype(np_dtype), dtype=wp_dtype, device=device),
             coefficients,
@@ -464,7 +464,7 @@ class TestCoefficients:
         fd3.fd3_coefficients(
             wp.array(np.ones(n_atoms), dtype=wp.float64, device=device),
             wp.array(channels.astype(np.int32), dtype=wp.int32, device=device),
-            wp.array(decomposition.cnref, dtype=wp.float64, device=device),
+            wp.array(decomposition.cn_ref, dtype=wp.float64, device=device),
             wp.array(decomposition.v_q, dtype=wp.float64, device=device),
             coefficients,
             derivative,

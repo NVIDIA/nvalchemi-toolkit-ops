@@ -350,7 +350,7 @@ def _decomposition_view(parameters):
         species = None
         eigs = parameters.eigs.cpu().numpy()
         v_q = parameters.v_q.cpu().numpy()
-        cnref = parameters.cnref.cpu().numpy()
+        cn_ref = parameters.cn_ref.cpu().numpy()
         species_map = parameters.species_map.cpu().numpy()
         n_species = parameters.n_species
         rank = parameters.rank
@@ -935,7 +935,7 @@ class TestMeshAndUnits:
         rescaled["params"] = FourierD3Parameters(
             rcov=parameters.rcov * scale,
             sqrt_q=parameters.sqrt_q * scale,
-            cnref=parameters.cnref,
+            cn_ref=parameters.cn_ref,
             v_q=parameters.v_q,
             eigs=parameters.eigs * scale**6,
             species_map=parameters.species_map,
@@ -1005,7 +1005,7 @@ class TestParameters:
             FourierD3Parameters(
                 rcov=parameters.rcov,
                 sqrt_q=parameters.sqrt_q,
-                cnref=parameters.cnref,
+                cn_ref=parameters.cn_ref,
                 v_q=parameters.v_q,
                 eigs=parameters.eigs[:-1],
                 species_map=parameters.species_map,
@@ -1020,7 +1020,7 @@ class TestParameters:
             FourierD3Parameters(
                 rcov=parameters.rcov.cpu(),
                 sqrt_q=parameters.sqrt_q,
-                cnref=parameters.cnref,
+                cn_ref=parameters.cn_ref,
                 v_q=parameters.v_q,
                 eigs=parameters.eigs,
                 species_map=parameters.species_map,
@@ -1520,7 +1520,7 @@ class TestParameterValidation:
         return dict(
             rcov=torch.zeros(5),
             sqrt_q=torch.zeros(2),
-            cnref=torch.zeros(2, 3),
+            cn_ref=torch.zeros(2, 3),
             v_q=torch.zeros(2, 3, 4),
             eigs=torch.zeros(4),
             species_map=torch.zeros(5, dtype=torch.int32),
@@ -1533,7 +1533,7 @@ class TestParameterValidation:
         assert params.rank == 4
         assert params.n_species == 2
 
-    @pytest.mark.parametrize("name", ["rcov", "sqrt_q", "cnref", "v_q", "eigs"])
+    @pytest.mark.parametrize("name", ["rcov", "sqrt_q", "cn_ref", "v_q", "eigs"])
     def test_numeric_fields_must_be_floating(self, name):
         """An integral eigs silently truncates the decomposition."""
         fields = self._fields()

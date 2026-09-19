@@ -53,7 +53,9 @@ functional parametrisation.
 Units
 -----
 This module is unit-agnostic. ``eigs`` and ``v_q`` carry whatever units ``c6ab`` uses, and
-``cnref`` whatever units ``cn_ref`` uses (coordination numbers are dimensionless).
+the returned ``cn_ref`` whatever units the input ``cn_ref`` table uses (coordination numbers
+are dimensionless). The two differ in layout, not in meaning: the input is pair-indexed
+``(max_z + 1, max_z + 1, n_ref, n_ref)``, the output per-species ``(n_species, n_ref)``.
 
 References
 ----------
@@ -100,7 +102,7 @@ class C6Decomposition:
     v_q : np.ndarray, shape (n_species, n_ref, rank), dtype=float64
         Eigenvectors :math:`v_{\\ell, Z}(\\theta^p)`. Rows for invalid reference slots are
         zero.
-    cnref : np.ndarray, shape (n_species, n_ref), dtype=float64
+    cn_ref : np.ndarray, shape (n_species, n_ref), dtype=float64
         Reference coordination numbers per species, padded with ``CNREF_INVALID``.
     valid : np.ndarray, shape (n_species, n_ref), dtype=bool
         True where a reference slot carries data.
@@ -113,7 +115,7 @@ class C6Decomposition:
     species: np.ndarray
     eigs: np.ndarray
     v_q: np.ndarray
-    cnref: np.ndarray
+    cn_ref: np.ndarray
     valid: np.ndarray
     species_map: np.ndarray
     max_relative_error: float
@@ -131,7 +133,7 @@ class C6Decomposition:
     @property
     def n_ref(self) -> int:
         """Reference-coordination-number slots per species, including padding."""
-        return int(self.cnref.shape[1])
+        return int(self.cn_ref.shape[1])
 
     @property
     def num_channels(self) -> int:
@@ -442,7 +444,7 @@ def decompose_c6_reference(
         species=unique_species.astype(np.int32),
         eigs=np.ascontiguousarray(eigvals[:rank]),
         v_q=np.ascontiguousarray(factors),
-        cnref=cnref,
+        cn_ref=cnref,
         valid=valid,
         species_map=_build_species_map(unique_species, max_z),
         max_relative_error=achieved,

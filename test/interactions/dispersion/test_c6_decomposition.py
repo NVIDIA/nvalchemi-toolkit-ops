@@ -62,7 +62,7 @@ def _synthetic_tables(seed: int = 0, n_used=(2, 3, 5)):
 
 def _reference_weights(decomposition, channel, coordination_number):
     """Gaussian reference weights for one atom, zero on unused slots."""
-    delta = coordination_number - decomposition.cnref[channel]
+    delta = coordination_number - decomposition.cn_ref[channel]
     return np.where(decomposition.valid[channel], np.exp(-K3_WEIGHT * delta**2), 0.0)
 
 
@@ -297,7 +297,7 @@ class TestCaching:
         mutated = cn_ref.copy()
         mutated[1, :, 0, :] += 0.1
         result = decompose_c6_reference(c6ab, mutated, [1, 2])
-        assert not np.allclose(result.cnref, base.cnref)
+        assert not np.allclose(result.cn_ref, base.cn_ref)
 
     def test_options_participate_in_the_key(self, tables):
         """Every option that can change the rank is part of the cache key."""
