@@ -52,7 +52,10 @@ Usage
 
 ``--device`` matches ``benchmark_fire2.py``, since this runner reports a ratio
 against FIRE2 and the two have to be pointed at the same GPU to compare. It is
-threaded through every allocation rather than read from a module global.
+threaded through every allocation *and* made the current device at entry --
+CUDA events, streams, graphs and ``current_stream()`` take the current device
+rather than an argument, so without that the data would sit on the requested
+GPU while the capture and timing resources came from another.
 """
 
 from __future__ import annotations
@@ -281,6 +284,35 @@ def best_fire2(make_system, force_tol, sweep=None, eval_cap=EVAL_CAP,
     return best
 
 
+def select_device(device):
+    """Make ``device`` current, and return it resolved.
+
+    Passing a device to every allocation is not enough. CUDA events, streams,
+    graphs and ``torch.cuda.current_stream()`` all come from whatever device is
+    *current*, so on a multi-GPU host ``--device cuda:1`` would otherwise put
+    the data on one GPU and the capture and timing resources on another --
+    which fails outright, or, worse, times the wrong device.
+
+    Set once at entry rather than scoped per block: this runner targets a
+    single GPU for its whole run, and every helper below creates one of those
+    implicitly-placed resources.
+
+    Parameters
+    ----------
+    device : str
+        CUDA device, e.g. ``"cuda:0"``.
+
+    Returns
+    -------
+    torch.device
+    """
+    resolved = torch.device(device)
+    if resolved.type != "cuda":
+        raise ValueError(f"this benchmark needs a CUDA device; got {device!r}")
+    torch.cuda.set_device(resolved)
+    return resolved
+
+
 def _time_ms(fn, warmup=10, runs=50):
     """Median-free mean over CUDA events, warmup excluded."""
     for _ in range(warmup):
@@ -317,6 +349,8 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50, device=DEFAULT_DEVICE):
     from nvalchemiops.dynamics.optimizers import fire2_step
     from nvalchemiops.torch.lbfgs import lbfgs_step_coord
 
+    # Before any stream, event, graph or scoped stream is created.
+    select_device(device)
     print(
         f"{'atoms':>9} {'eager ms':>9} {'graph ms':>9} {'fire2 ms':>9} "
         f"{'eager/f2':>9} {'graph gain':>11} {'break-even':>12}"
@@ -550,6 +584,7 @@ def main():
     )
     args = parser.parse_args()
 
+    select_device(args.device)
     config, output_config, potential = _load_lbfgs_config(args.config)
     gates_config = config.get("gates", {}) or {}
     output_dir = _resolve_output_dir(args.output_dir, output_config, args.config)

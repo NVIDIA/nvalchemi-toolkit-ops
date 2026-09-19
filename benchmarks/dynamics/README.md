@@ -312,7 +312,9 @@ flagged; their ratios are upper bounds on L-BFGS's advantage.
 
 `--device` selects the GPU and defaults to `cuda:0`, matching
 `benchmark_fire2.py` — point both at the same device when comparing their
-numbers.
+numbers. It is made the current CUDA device at entry, not just passed to
+allocations, because CUDA events, streams and graphs take the current device
+rather than an argument.
 
 With no `--output-dir`, results go to `output.results_dir` from the config,
 resolved relative to the config file — the same rule the neighborlist and
