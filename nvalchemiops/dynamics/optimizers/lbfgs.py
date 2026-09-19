@@ -490,7 +490,7 @@ def _lbfgs_convergence_kernel(
 
 @wp.kernel(enable_backward=False)
 def _lbfgs_stress_norm_kernel(
-    stress: wp.array(dtype=wp.mat33d),
+    stress: wp.array(dtype=Any),
     smax: wp.array(dtype=wp.float64),
 ):
     """Spectral norm of each system's Cauchy stress, for the cell criterion.
@@ -509,11 +509,15 @@ def _lbfgs_stress_norm_kernel(
         OUTPUT. Largest singular value of the stress tensor.
     """
     tid = wp.tid()
-    u = wp.mat33d()
-    sv = wp.vec3d()
-    v = wp.mat33d()
-    wp.svd3(stress[tid], u, sv, v)
-    smax[tid] = wp.max(wp.max(wp.abs(sv[0]), wp.abs(sv[1])), wp.abs(sv[2]))
+    s = stress[tid]
+    # Workspace at the stress's own precision. Warp rejects `type()` on a
+    # matrix component, so derive the zero matrix and zero vector by
+    # subtraction -- the same idiom the cell kernels use.
+    u = s - s
+    v = s - s
+    sv = u[0]
+    wp.svd3(s, u, sv, v)
+    smax[tid] = wp.float64(wp.max(wp.max(wp.abs(sv[0]), wp.abs(sv[1])), wp.abs(sv[2])))
 
 
 # =============================================================================
@@ -1265,6 +1269,7 @@ _history_update_overloads = {}
 _loop1_overloads = {}
 _loop2_overloads = {}
 _apply_step_overloads = {}
+_stress_norm_overloads = {}
 
 _F64 = wp.float64
 _I32 = wp.int32
@@ -1499,7 +1504,7 @@ def lbfgs_reduce(
         if smax is None:
             raise ValueError("smax must be provided when stress is given")
         wp.launch(
-            _lbfgs_stress_norm_kernel,
+            _stress_norm_overloads[stress.dtype],
             dim=smax.shape[0],
             inputs=[stress, smax],
             device=device,
@@ -2402,6 +2407,13 @@ _cell_trust_region_overloads = {}
 _SCALAR_OF = {wp.vec3f: wp.float32, wp.vec3d: wp.float64}
 
 for _v, _mt in _MAT_TYPES.items():
+    _stress_norm_overloads[_mt] = wp.overload(
+        _lbfgs_stress_norm_kernel,
+        [
+            wp.array(dtype=_mt),  # stress
+            wp.array(dtype=_F64),  # smax
+        ],
+    )
     _sc = _SCALAR_OF[_v]
     _cell_kappa_overloads[_v] = wp.overload(
         _lbfgs_cell_kappa_kernel,

@@ -1187,6 +1187,57 @@ class TestLBFGSCellKappa:
         np.testing.assert_allclose(k[1], 0.25)
 
 
+class TestLBFGSCellPrecision:
+    """The variable-cell path at both coordinate precisions.
+
+    Every cell test elsewhere in this file uses float64, which is how an fp32
+    dispatch failure went unnoticed: the stress reduction was hard-coded to
+    ``mat33d`` while the fp32 bindings pass ``mat33f``.
+    """
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize(
+        ("vec", "mat", "np_dtype"),
+        [
+            pytest.param(wp.vec3f, wp.mat33f, np.float32, id="cell_f32"),
+            pytest.param(wp.vec3d, wp.mat33d, np.float64, id="cell_f64"),
+        ],
+    )
+    def test_variable_cell_step_dispatches(self, device, vec, mat, np_dtype):
+        """A cell step runs, and the stress criterion sees the right norm."""
+        n, num_systems = 4, 1
+        rng = np.random.default_rng(0)
+        cell_np = np.diag([6.0, 6.5, 7.0]).astype(np_dtype)
+        # Diagonal stress, so the spectral norm is the largest entry.
+        stress_np = np.diag([0.3, 0.2, 0.1]).astype(np_dtype)[None]
+
+        st = make_lbfgs_state(n + 2 * num_systems, num_systems, HISTORY_SIZE,
+                              vec, device)  # fmt: skip
+        cs = make_lbfgs_cell_state(n, num_systems, vec, device)
+        positions = wp.array(
+            rng.normal(size=(n, 3)).astype(np_dtype), dtype=vec, device=device
+        )
+        forces = wp.array(
+            (rng.normal(size=(n, 3)) * 0.1).astype(np_dtype), dtype=vec, device=device
+        )
+        cell = wp.array(cell_np[None], dtype=mat, device=device)
+        stress = wp.array(stress_np, dtype=mat, device=device)
+        batch_idx = wp.zeros(n, dtype=wp.int32, device=device)
+        n_particles = wp.array(np.array([n], np.int32), dtype=wp.int32, device=device)
+
+        lbfgs_set_reference_cell(cell, cs["ref_cell"], cs["ref_cell_inv"])
+        lbfgs_step_coord_cell(
+            positions, forces, cell, stress, batch_idx, n_particles,
+            *st.values(), *cs.values(),
+            force_tol=1e-4, stress_tol=1e-4, maxstep=0.2,
+        )  # fmt: skip
+        wp.synchronize()
+
+        np.testing.assert_allclose(st["smax"].numpy()[0], 0.3, rtol=1e-6)
+        assert np.isfinite(positions.numpy()).all()
+        assert np.isfinite(cell.numpy()).all()
+
+
 class TestLBFGSRaggedVariableCell:
     """Variable-cell relaxation of a batch whose systems differ in size."""
 
