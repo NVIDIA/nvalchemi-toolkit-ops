@@ -307,13 +307,23 @@ class TestCaching:
         assert decompose_c6_reference(c6ab, cn_ref, [1, 2, 3], max_rank=2) is not base
 
     def test_cache_is_bounded(self, tables):
-        """Sweeping many compositions does not grow the cache without limit."""
-        from nvalchemiops.interactions.dispersion import _c6_decomposition
+        """Sweeping many compositions evicts rather than growing without limit.
 
+        Observed through the public entry point: a repeat of the oldest key comes back as a
+        fresh object once enough distinct keys have gone through behind it.
+        """
         c6ab, cn_ref, _ = tables
-        for tol in np.logspace(-2, -10, 40):
+        tolerances = np.logspace(-2, -10, 200)
+        oldest = decompose_c6_reference(c6ab, cn_ref, [1, 2], tol=float(tolerances[0]))
+        assert decompose_c6_reference(
+            c6ab, cn_ref, [1, 2], tol=float(tolerances[0])
+        ) is (oldest)
+        for tol in tolerances[1:]:
             decompose_c6_reference(c6ab, cn_ref, [1, 2], tol=float(tol))
-        assert len(_c6_decomposition._CACHE) <= _c6_decomposition._CACHE_SIZE
+        assert (
+            decompose_c6_reference(c6ab, cn_ref, [1, 2], tol=float(tolerances[0]))
+            is not oldest
+        )
 
 
 class TestValidation:
