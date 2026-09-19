@@ -41,8 +41,6 @@ import warp as wp
 
 from nvalchemiops.dynamics.optimizers.lbfgs import (
     _OPTIMIZER_BUFFERS,
-    LBFGS_CONVERGED,
-    LBFGS_NEED_EVAL,
     lbfgs_apply_step,
     lbfgs_cell_kappa,
     lbfgs_cell_trust_region,
@@ -117,22 +115,37 @@ class Driver:
             forces=self.forces,
             state=self.state,
             batch_idx=self.batch_idx,
-            n_particles=self.n_particles,
             **kwargs,
         )
         wp.synchronize()
 
-    def run(self, max_evals=300, **kwargs):
+    def fmax(self):
+        """Largest per-atom force magnitude in each system.
+
+        The optimizer owns no tolerance, so the driver computes this itself,
+        which is exactly what a real caller does.
+        """
+        norms = np.linalg.norm(self.forces.numpy().astype(np.float64), axis=1)
+        return np.array(
+            [
+                norms[self.batch_np == s].max(initial=0.0)
+                for s in range(self.num_systems)
+            ]
+        )
+
+    def run(self, max_evals=300, force_tol=1e-6, **kwargs):
+        """Relax until every system is under ``force_tol``.
+
+        Convergence is tested *before* stepping: the forces describe the
+        current positions, and after a step they describe the previous point.
+        """
         for _ in range(max_evals):
             self.evaluate()
-            self.step(**kwargs)
-            if not (self.state.status.numpy() == LBFGS_NEED_EVAL).any():
+            self.converged = self.fmax() <= force_tol
+            if self.converged.all():
                 break
+            self.step(**kwargs)
         return self
-
-    @property
-    def status(self):
-        return self.state.status.numpy()
 
     def system_mask(self, s):
         return self.batch_np == s
@@ -166,7 +179,7 @@ class TestLBFGSTwoLoop:
         depths = set()
         for _ in range(40):
             d.evaluate()
-            d.step(force_tol=1e-10, maxstep=0.5)
+            d.step(maxstep=0.5)
             st = d.state
             n_loop = st.n_loop.numpy()
             hist_count = st.history_count.numpy()
@@ -192,7 +205,7 @@ class TestLBFGSTwoLoop:
                 )
                 scale = max(np.abs(ref).max(), 1e-30)
                 worst = max(worst, np.abs(ref - direction[mask]).max() / scale)
-            if not (d.status == LBFGS_NEED_EVAL).any():
+            if (d.fmax() <= 1e-12).all():
                 break
 
         # The history vectors live at the coordinate precision, so the
@@ -306,7 +319,7 @@ class TestLBFGSTwoLoop:
         # Fill the ring.
         for _ in range(60):
             d.evaluate()
-            d.step(force_tol=1e-12, maxstep=0.5)
+            d.step(maxstep=0.5)
             if d.state.history_count.numpy()[0] == d.history_size:
                 break
         assert d.state.history_count.numpy()[0] == d.history_size, "ring never filled"
@@ -316,7 +329,7 @@ class TestLBFGSTwoLoop:
         # accepted step is guaranteed to be discarded.
         for _ in range(40):
             d.evaluate()
-            d.step(force_tol=1e-12, maxstep=0.5, curvature_eps=1e30)
+            d.step(maxstep=0.5, curvature_eps=1e30)
             if int(d.state.history_count.numpy()[0]) < d.history_size:
                 break
 
@@ -327,7 +340,7 @@ class TestLBFGSTwoLoop:
             "end advanced despite the pair being discarded"
         )
         assert np.isfinite(d.state.direction.numpy()).all()
-        assert d.status[0] == LBFGS_NEED_EVAL
+        assert d.fmax()[0] > 1e-12, "the run converged before the discard mattered"
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_direction_uses_only_committed_slots_after_a_discard(self, device):
@@ -336,13 +349,13 @@ class TestLBFGSTwoLoop:
         d = Driver(_cluster(1, 5, seed=33), 1, wp.vec3d, np.float64, device)
         for _ in range(60):
             d.evaluate()
-            d.step(force_tol=1e-12, maxstep=0.5)
+            d.step(maxstep=0.5)
             if d.state.history_count.numpy()[0] == d.history_size:
                 break
 
         for _ in range(40):
             d.evaluate()
-            d.step(force_tol=1e-12, maxstep=0.5, curvature_eps=1e30)
+            d.step(maxstep=0.5, curvature_eps=1e30)
             st = d.state
             count = int(st.history_count.numpy()[0])
             if count == d.history_size:
@@ -399,11 +412,11 @@ class TestLBFGSTrustRegion:
         """
         d = _one_atom(5.0, device)
         d.evaluate()
-        d.step(force_tol=1e-12, maxstep=0.5)
+        d.step(maxstep=0.5)
         assert int(d.state.iteration.numpy()[0]) == 0  # seeded
         for expected in range(1, 8):
             d.evaluate()
-            d.step(force_tol=1e-12, maxstep=0.5)
+            d.step(maxstep=0.5)
             assert int(d.state.iteration.numpy()[0]) == expected
 
     @pytest.mark.parametrize("device", DEVICES)
@@ -414,10 +427,10 @@ class TestLBFGSTrustRegion:
         for _ in range(40):
             before = d.positions.numpy().copy()
             d.evaluate()
-            d.step(force_tol=1e-12, maxstep=maxstep)
+            d.step(maxstep=maxstep)
             moved = np.abs(d.positions.numpy() - before).max()
             assert moved <= maxstep + 1e-12, moved
-            if not (d.status == LBFGS_NEED_EVAL).any():
+            if (d.fmax() <= 1e-12).all():
                 break
 
     @pytest.mark.parametrize("device", DEVICES)
@@ -430,11 +443,11 @@ class TestLBFGSTrustRegion:
         """
         d = _one_atom(100.0, device)
         d.evaluate()
-        d.step(force_tol=1e-12, maxstep=0.1)  # heavily capped
+        d.step(maxstep=0.1)  # heavily capped
         assert float(d.state.alpha_step.numpy()[0]) < 1.0
         # With the cap lifted the full quasi-Newton step must be available.
         d.evaluate()
-        d.step(force_tol=1e-12, maxstep=0.0)  # trust region disabled
+        d.step(maxstep=0.0)  # trust region disabled
         np.testing.assert_allclose(d.state.alpha_step.numpy()[0], 1.0)
 
     @pytest.mark.parametrize("device", DEVICES)
@@ -442,9 +455,9 @@ class TestLBFGSTrustRegion:
         """``maxstep = 0`` means no bound, not a zero-length step."""
         d = _one_atom(1.0, device)
         d.evaluate()
-        d.step(force_tol=1e-12, maxstep=0.0)
+        d.step(maxstep=0.0)
         d.evaluate()
-        d.step(force_tol=1e-12, maxstep=0.0)
+        d.step(maxstep=0.0)
         np.testing.assert_allclose(d.state.alpha_step.numpy()[0], 1.0)
         assert np.isfinite(d.positions.numpy()).all()
 
@@ -530,16 +543,14 @@ class TestLBFGSTrustRegion:
         wp.launch(
             _lbfgs_restart_check_kernel,
             dim=1,
-            inputs=[st.gg, st.d0, st.status, st.end, st.n_loop,
-                    st.history_count],
+            inputs=[st.gg, st.d0, st.end, st.n_loop, st.history_count],
             device=device,
         )  # fmt: skip
         wp.launch(
             _seed_direction_overloads[wp.vec3d],
             dim=n,
             inputs=[forces, positions, st.x_base, st.force_base,
-                    st.direction, batch_idx, st.status, st.n_loop,
-                    st.gg],
+                    st.direction, batch_idx, st.n_loop, st.gg],
             device=device,
         )  # fmt: skip
         lbfgs_prepare_step(st, maxstep=0.2)
@@ -570,7 +581,7 @@ class TestLBFGSConvergence:
         d = Driver(_cluster(2, 4), 2, vec_dtype, np_dtype, device).run(
             force_tol=force_tol, maxstep=0.5
         )
-        assert (d.status == LBFGS_CONVERGED).all(), d.status
+        assert d.converged.all(), d.fmax()
         assert np.abs(d.positions.numpy()).max() < 10 * force_tol
 
     @pytest.mark.parametrize("device", DEVICES)
@@ -579,7 +590,7 @@ class TestLBFGSConvergence:
         d = Driver(_cluster(1, 8, seed=3), 1, wp.vec3d, np.float64, device).run(
             force_tol=1e-6, maxstep=0.5
         )
-        assert d.status[0] == LBFGS_CONVERGED
+        assert d.converged[0]
         assert d.n_evals < 60, f"took {d.n_evals} evaluations"
 
     @pytest.mark.parametrize("device", DEVICES)
@@ -594,50 +605,80 @@ class TestLBFGSConvergence:
         d = Driver(np.vstack(blocks), 3, wp.vec3d, np.float64, device).run(
             force_tol=1e-8, maxstep=0.5
         )
-        assert (d.status == LBFGS_CONVERGED).all(), d.status
+        assert d.converged.all(), d.fmax()
         for s in range(3):
             block = d.positions.numpy()[d.system_mask(s)]
             assert np.abs(block).max() < 1e-7, f"system {s} not relaxed"
 
     @pytest.mark.parametrize("device", DEVICES)
-    def test_already_converged_input_does_not_move(self, device):
-        """A relaxed geometry is reported converged and left untouched.
+    def test_a_restart_step_moves_by_maxstep_however_small_the_force(self, device):
+        """The sharp edge of owning convergence: test *before* you step.
 
-        The base buffers must still be seeded, or they would stay at the zeros
-        left by the required initial contents while the positions hold the
-        real geometry.
+        A restart direction is the force normalized, so the trust region caps
+        it at exactly ``maxstep`` no matter how small the force is. Stepping a
+        geometry that is already at the minimum therefore kicks it by
+        ``maxstep`` rather than leaving it alone. The optimizer cannot know it
+        has arrived -- that is the caller's test -- so this is pinned here to
+        keep the documented "test before stepping" advice honest.
         """
         start = np.full((3, 3), 1e-9)
         d = Driver(start, 1, wp.vec3d, np.float64, device)
         d.evaluate()
-        d.step(force_tol=1e-5, maxstep=0.5)
+        assert d.fmax()[0] < 1e-8, "the fixture is meant to start at the minimum"
+        d.step(maxstep=0.5)
 
-        assert d.status[0] == LBFGS_CONVERGED
-        np.testing.assert_allclose(d.positions.numpy(), start, atol=0)
-        np.testing.assert_allclose(d.state.x_base.numpy(), start, atol=0)
-        np.testing.assert_allclose(d.state.force_base.numpy(), d.forces.numpy(), atol=0)
-
-    @pytest.mark.parametrize("device", DEVICES)
-    def test_base_buffers_track_the_returned_geometry(self, device):
-        """On any terminal status the base buffers describe what is returned."""
-        d = Driver(_cluster(1, 5, seed=9), 1, wp.vec3d, np.float64, device).run(
-            force_tol=1e-8, maxstep=0.5
-        )
-        assert d.status[0] == LBFGS_CONVERGED
-        np.testing.assert_allclose(d.state.x_base.numpy(), d.positions.numpy(), atol=0)
+        # ``maxstep`` bounds the per-atom displacement norm, not a component.
+        moved = np.linalg.norm(d.positions.numpy() - start, axis=1).max()
+        np.testing.assert_allclose(moved, 0.5, rtol=1e-9)
 
     @pytest.mark.parametrize("device", DEVICES)
-    def test_tolerances_combine_conservatively(self, device):
-        """Enabling a second criterion can only make convergence stricter."""
-        loose = Driver(_cluster(1, 4, seed=21), 1, wp.vec3d, np.float64, device).run(
-            force_tol=1e-4, maxstep=0.5
+    def test_a_two_loop_step_vanishes_with_the_force(self, device):
+        """Once a curvature model exists the step scales with the force.
+
+        This is the complement of the restart case above: the direction is
+        ``H F`` rather than a unit vector, so approaching the minimum shrinks
+        the step instead of holding it at ``maxstep``.
+        """
+        d = Driver(_cluster(1, 5, seed=9), 1, wp.vec3d, np.float64, device)
+        displacements = []
+        for _ in range(40):
+            d.evaluate()
+            if d.state.history_count.numpy()[0] > 0:
+                before = d.positions.numpy().copy()
+                d.step(maxstep=0.5)
+                displacements.append(np.abs(d.positions.numpy() - before).max())
+            else:
+                d.step(maxstep=0.5)
+            if d.fmax()[0] < 1e-10:
+                break
+
+        assert len(displacements) > 5, "no two-loop steps were taken"
+        assert displacements[-1] < displacements[0] * 1e-3, (
+            f"step did not shrink with the force: {displacements[0]:.3e} -> "
+            f"{displacements[-1]:.3e}"
         )
-        strict = Driver(_cluster(1, 4, seed=21), 1, wp.vec3d, np.float64, device).run(
-            force_tol=1e-4, rms_tol=1e-8, maxstep=0.5
-        )
-        assert loose.status[0] == LBFGS_CONVERGED
-        assert strict.status[0] == LBFGS_CONVERGED
-        assert strict.n_evals >= loose.n_evals
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_base_buffers_describe_the_evaluated_point(self, device):
+        """``x_base``/``force_base`` hold the point the forces were taken at.
+
+        Not the point that comes back: the step moves *forward* from the
+        evaluated geometry, so after a call ``positions`` is ahead of
+        ``x_base`` by exactly ``alpha * direction``. This is what lets the
+        caller test convergence on the forces it just supplied.
+        """
+        d = Driver(_cluster(1, 5, seed=9), 1, wp.vec3d, np.float64, device)
+        for _ in range(6):
+            d.evaluate()
+            evaluated = d.positions.numpy().copy()
+            forces_here = d.forces.numpy().copy()
+            d.step(maxstep=0.5)
+            np.testing.assert_allclose(d.state.x_base.numpy(), evaluated, atol=0)
+            np.testing.assert_allclose(d.state.force_base.numpy(), forces_here, atol=0)
+
+            alpha = float(d.state.alpha_step.numpy()[0])
+            expected = evaluated + alpha * d.state.direction.numpy()
+            np.testing.assert_allclose(d.positions.numpy(), expected, rtol=1e-12)
 
 
 class TestLBFGSSignConvention:
@@ -652,7 +693,7 @@ class TestLBFGSSignConvention:
         """A global sign flip would move away and diverge immediately."""
         d = _one_atom(3.0, device)
         d.evaluate()
-        d.step(force_tol=1e-10, maxstep=0.5)
+        d.step(maxstep=0.5)
         assert d.positions.numpy()[0, 0] < 3.0
 
     @pytest.mark.parametrize("device", DEVICES)
@@ -678,8 +719,8 @@ class TestLBFGSSignConvention:
         d = Driver(_cluster(1, 5, seed=6), 1, wp.vec3d, np.float64, device)
         for _ in range(20):
             d.evaluate()
-            d.step(force_tol=1e-10, maxstep=0.5)
-            if d.status[0] != LBFGS_NEED_EVAL:
+            d.step(maxstep=0.5)
+            if d.fmax()[0] <= 1e-12:
                 break
             dotted = (d.state.force_base.numpy() * d.state.direction.numpy()).sum()
             assert dotted > 0.0, f"direction opposes the force: {dotted}"
@@ -691,16 +732,21 @@ class TestLBFGSEdgeCases:
     @pytest.mark.parametrize("device", DEVICES)
     def test_single_atom(self, device):
         d = _one_atom(2.0, device).run(force_tol=1e-9, maxstep=0.5)
-        assert d.status[0] == LBFGS_CONVERGED
+        assert d.converged[0]
 
     @pytest.mark.parametrize("device", DEVICES)
-    def test_zero_force_converges_without_moving(self, device):
-        """A geometry exactly at the minimum is handled without dividing by zero."""
+    def test_zero_force_does_not_divide_by_zero(self, device):
+        """Exactly zero force normalizes to nothing rather than to NaN.
+
+        The restart direction is ``F / ||F||``, so this is the one case where
+        it cannot be normalized. It must produce no motion, not a NaN.
+        """
         d = Driver(np.zeros((3, 3)), 1, wp.vec3d, np.float64, device)
         d.evaluate()
-        d.step(force_tol=1e-8, maxstep=0.5)
-        assert d.status[0] == LBFGS_CONVERGED
+        np.testing.assert_array_equal(d.forces.numpy(), 0.0)
+        d.step(maxstep=0.5)
         assert np.isfinite(d.positions.numpy()).all()
+        np.testing.assert_array_equal(d.positions.numpy(), 0.0)
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_empty_system(self, device):
@@ -711,7 +757,6 @@ class TestLBFGSEdgeCases:
             forces=wp.zeros(0, dtype=wp.vec3d, device=device),
             state=state,
             batch_idx=wp.zeros(0, dtype=wp.int32, device=device),
-            n_particles=wp.zeros(1, dtype=wp.int32, device=device),
         )
         wp.synchronize()
 
@@ -721,7 +766,7 @@ class TestLBFGSEdgeCases:
         d = Driver(
             _cluster(1, 4, seed=8), 1, wp.vec3d, np.float64, device, history_size=1
         ).run(force_tol=1e-6, maxstep=0.5)
-        assert d.status[0] == LBFGS_CONVERGED
+        assert d.converged[0]
         assert d.state.history_count.numpy()[0] <= 1
 
     @pytest.mark.parametrize("device", DEVICES)
@@ -730,10 +775,10 @@ class TestLBFGSEdgeCases:
         d = Driver(_cluster(2, 6, seed=99), 2, wp.vec3d, np.float64, device)
         for _ in range(120):
             d.evaluate()
-            d.step(force_tol=1e-9, maxstep=0.3)
+            d.step(maxstep=0.3)
             assert np.isfinite(d.state.direction.numpy()).all()
             assert np.isfinite(d.positions.numpy()).all()
-            if not (d.status == LBFGS_NEED_EVAL).any():
+            if (d.fmax() <= 1e-12).all():
                 break
 
 
@@ -750,7 +795,6 @@ class TestLBFGSStepErrors:
                 forces=wp.zeros(2, dtype=wp.vec3d, device=device),
                 batch_idx=d.batch_idx,
                 state=d.state,
-                n_particles=d.n_particles,
             )
 
     @pytest.mark.parametrize("device", DEVICES)
@@ -763,7 +807,6 @@ class TestLBFGSStepErrors:
                 forces=d.forces,
                 batch_idx=wp.zeros(2, dtype=wp.int32, device=device),
                 state=d.state,
-                n_particles=d.n_particles,
             )
 
     @pytest.mark.parametrize("device", DEVICES)
@@ -777,7 +820,6 @@ class TestLBFGSStepErrors:
                 forces=d.forces,
                 batch_idx=d.batch_idx,
                 state=d.state,
-                n_particles=d.n_particles,
             )
 
 
@@ -805,7 +847,7 @@ class TestLBFGSStateValidation:
         it is a ratio of differences of nearly equal vectors.
         """
         st = make_lbfgs_state(3, 1, HISTORY_SIZE, wp.vec3d, device)
-        for name in _OPTIMIZER_BUFFERS[5:18]:
+        for name in _OPTIMIZER_BUFFERS[5:15]:
             old = getattr(st, name)
             setattr(st, name, wp.zeros(old.shape, dtype=wp.float32, device=device))
         st.validate()  # internally consistent, so this alone does not catch it
@@ -817,7 +859,6 @@ class TestLBFGSStateValidation:
                 forces=d.forces,
                 state=st,
                 batch_idx=d.batch_idx,
-                n_particles=d.n_particles,
             )
 
     @pytest.mark.parametrize("device", DEVICES)
@@ -917,7 +958,6 @@ class CellDriver:
             self.state,
             self.cell_state,
             self.batch_idx,
-            self.n_atoms_per_system,
             **kwargs,
         )
         wp.synchronize()
@@ -935,10 +975,6 @@ class CellDriver:
             forces=cs.ext_forces,
             state=st,
             batch_idx=cs.ext_batch_idx,
-            n_particles=self.n_atoms_per_system,
-            cart_forces=self.forces,
-            atom_batch_idx=self.batch_idx,
-            stress=self.stress,
             measure_trust_region=False,
             **kwargs,
         )
@@ -950,8 +986,6 @@ class CellDriver:
             self.batch_idx,
             cs.ext_atom_ptr,
             cs.kappa,
-            st.status,
-            st.n_loop,
             st.dmax,
             st.dquad,
         )
@@ -965,12 +999,20 @@ class CellDriver:
         self.unpack()
         wp.synchronize()
 
-    def run(self, max_evals=400, **kwargs):
+    def fmax_smax(self):
+        """Largest force magnitude and stress component, as a caller would."""
+        f = np.linalg.norm(self.forces.numpy(), axis=1).max(initial=0.0)
+        return f, np.abs(self.stress.numpy()).max()
+
+    def run(self, max_evals=400, force_tol=1e-6, stress_tol=1e-6, **kwargs):
+        """Relax until both the forces and the stress are small enough."""
         for _ in range(max_evals):
             self.evaluate()
-            self.step(**kwargs)
-            if self.state.status.numpy()[0] != LBFGS_NEED_EVAL:
+            f, s = self.fmax_smax()
+            self.converged = f <= force_tol and s <= stress_tol
+            if self.converged:
                 break
+            self.step(**kwargs)
         return self
 
 
@@ -1083,15 +1125,13 @@ class TestLBFGSVariableCell:
         two = CellDriver(positions, cell, potential, device)
         for _ in range(12):
             one.evaluate()
-            one.step(force_tol=1e-9, stress_tol=1e-9, maxstep=0.2)
+            one.step(maxstep=0.2)
             two.evaluate()
-            two.step_composed(force_tol=1e-9, stress_tol=1e-9, maxstep=0.2)
+            two.step_composed(maxstep=0.2)
             np.testing.assert_array_equal(one.positions.numpy(), two.positions.numpy())
             np.testing.assert_array_equal(one.cell.numpy(), two.cell.numpy())
-            if one.state.status.numpy()[0] != LBFGS_NEED_EVAL:
-                break
         np.testing.assert_array_equal(
-            one.state.status.numpy(), two.state.status.numpy()
+            one.state.iteration.numpy(), two.state.iteration.numpy()
         )
 
     @pytest.mark.parametrize("device", DEVICES)
@@ -1118,7 +1158,7 @@ class TestLBFGSVariableCell:
 
         d = CellDriver(positions, cell, potential, device)
         d.evaluate()
-        d.step(force_tol=1e-8, stress_tol=1e-8, maxstep=0.2)
+        d.step(maxstep=0.2)
 
         dquad = float(d.state.dquad.numpy()[0])
         alpha = float(d.state.alpha_step.numpy()[0])
@@ -1147,9 +1187,7 @@ class TestLBFGSVariableCell:
         d = CellDriver(positions, cell, potential, device).run(
             force_tol=1e-6, stress_tol=1e-6, maxstep=0.2
         )
-        assert d.state.status.numpy()[0] == LBFGS_CONVERGED, (
-            f"status {d.state.status.numpy()[0]} after {d.n_evals} evaluations"
-        )
+        assert d.converged, f"fmax/smax {d.fmax_smax()} after {d.n_evals} evaluations"
         volume = abs(np.linalg.det(d.cell.numpy()[0]))
         np.testing.assert_allclose(volume, potential.target_volume, rtol=1e-4)
         frac_final = (np.linalg.inv(d.cell.numpy()[0]) @ d.positions.numpy().T).T
@@ -1224,18 +1262,17 @@ class TestLBFGSCellPrecision:
         cell = wp.array(cell_np[None], dtype=mat, device=device)
         stress = wp.array(stress_np, dtype=mat, device=device)
         batch_idx = wp.zeros(n, dtype=wp.int32, device=device)
-        n_particles = wp.array(np.array([n], np.int32), dtype=wp.int32, device=device)
 
         lbfgs_set_reference_cell(cell, cs.ref_cell, cs.ref_cell_inv)
         lbfgs_step_coord_cell(
-            positions, forces, cell, stress, st, cs, batch_idx, n_particles,
-            force_tol=1e-4, stress_tol=1e-4, maxstep=0.2,
+            positions, forces, cell, stress, st, cs, batch_idx, maxstep=0.2,
         )  # fmt: skip
         wp.synchronize()
 
-        np.testing.assert_allclose(st.smax.numpy()[0], 0.3, rtol=1e-6)
+        # A non-zero stress must drive the cell, at either precision.
         assert np.isfinite(positions.numpy()).all()
         assert np.isfinite(cell.numpy()).all()
+        assert not np.allclose(cell.numpy()[0], cell_np), "the cell did not move"
 
 
 class TestLBFGSRaggedVariableCell:
@@ -1277,10 +1314,6 @@ class TestLBFGSRaggedVariableCell:
             dtype=wp.int32,
             device=device,
         )
-        n_particles = wp.array(
-            np.asarray(counts, np.int32), dtype=wp.int32, device=device
-        )
-
         cell_state = make_lbfgs_cell_state(
             num_atoms, num_systems, v, device, counts=counts
         )
@@ -1315,18 +1348,21 @@ class TestLBFGSRaggedVariableCell:
                 state,
                 cell_state,
                 batch_idx,
-                n_particles,
-                force_tol=1e-6,
-                stress_tol=1e-6,
                 maxstep=0.2,
             )
             wp.synchronize()
-            if not (state.status.numpy() == LBFGS_NEED_EVAL).any():
-                break
 
-        np.testing.assert_array_equal(
-            state.status.numpy(), np.full(num_systems, LBFGS_CONVERGED)
+        # Convergence is the caller's, so it is tested here rather than read
+        # off a status array.
+        fmax = np.array(
+            [
+                np.linalg.norm(all_f[offsets[s] : offsets[s + 1]], axis=1).max()
+                for s in range(num_systems)
+            ]
         )
+        smax = np.abs(all_s).reshape(num_systems, -1).max(axis=1)
+        assert (fmax <= 1e-6).all(), fmax
+        assert (smax <= 1e-6).all(), smax
         volumes = np.abs(np.linalg.det(cell.numpy()))
         np.testing.assert_allclose(
             volumes,

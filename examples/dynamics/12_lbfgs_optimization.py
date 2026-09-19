@@ -51,8 +51,6 @@ import warp as wp
 from _dynamics_utils import MDSystem, create_random_cluster
 
 from nvalchemiops.dynamics.optimizers import (
-    LBFGS_CONVERGED,
-    LBFGS_NEED_EVAL,
     fire2_step,
     lbfgs_prepare_state,
     lbfgs_step,
@@ -112,7 +110,8 @@ wp_vec_dtype = system.wp_vec_dtype
 # and initializes every array the optimizer needs and hands them back as an
 # :class:`~nvalchemiops.dynamics.optimizers.lbfgs.LBFGSState`. Calling it again
 # is how you restart. It is a plain dataclass, so every field stays reachable
-# -- ``state.fmax``, ``state.status`` -- and you can build one from arrays you
+# -- ``state.alpha_step``, ``state.history_count`` -- and you can build one
+# from arrays you
 # already own instead, then call ``state.validate()``.
 #
 # ``history_size`` is the memory knob; 3 to 7 is usual. Coordinates may be
@@ -127,7 +126,6 @@ state = lbfgs_prepare_state(
 
 # Batching metadata: all zeros for a single system.
 batch_idx = wp.zeros(num_atoms, dtype=wp.int32, device=device)
-n_particles = wp.array([num_atoms], dtype=wp.int32, device=device)
 
 
 # %%
@@ -157,26 +155,22 @@ print(f"  maxstep={maxstep} Å")
 log_interval = 10
 lbfgs_evals = 0
 
+lbfgs_converged = False
+
 for step in range(max_evals):
     # One force evaluation per step. This is the expensive part with a
     # real potential, and the reason L-BFGS is worth its extra bookkeeping.
     energies = system.compute_forces()
     lbfgs_evals += 1
 
-    lbfgs_step(
-        positions=system.wp_positions,
-        forces=system.wp_forces,
-        state=state,
-        batch_idx=batch_idx,
-        n_particles=n_particles,
-        force_tol=force_tolerance,
-        maxstep=maxstep,
-    )
+    # Convergence is yours, exactly as it is for FIRE2: the optimizer owns no
+    # tolerance and never decides you are finished. Test *before* stepping --
+    # these forces describe the geometry you have, and after a step they would
+    # describe the previous one.
+    forces_np = system.wp_forces.numpy()
+    current_fmax = float(np.linalg.norm(forces_np, axis=1).max())
 
-    # `fmax` is computed on the device every call, so logging it is free of an
-    # extra reduction; reading it back is the only synchronization.
     pe = float(energies.numpy().sum())
-    current_fmax = float(state.fmax.numpy()[0])
     energy_hist.append(pe)
     maxf_hist.append(current_fmax)
     alpha_hist_log.append(float(state.alpha_step.numpy()[0]))
@@ -189,23 +183,34 @@ for step in range(max_evals):
             f"hist={int(state.history_count.numpy()[0]):2d}"
         )
 
-    state_now = int(state.status.numpy()[0])
-    if state_now != LBFGS_NEED_EVAL:
+    if current_fmax < force_tolerance:
+        lbfgs_converged = True
         break
 
-# %%
-# Reading ``status``
-# ------------------
-#
-# ``status`` is the only value you need to inspect, and it has just two values:
-# keep going, or converged. There is no failure state -- a trust-region step
-# cannot exhaust a budget the way a line search can.
+    lbfgs_step(
+        positions=system.wp_positions,
+        forces=system.wp_forces,
+        state=state,
+        batch_idx=batch_idx,
+        maxstep=maxstep,
+    )
 
-final_status = int(state.status.numpy()[0])
-status_name = {
-    LBFGS_NEED_EVAL: "NEED_EVAL (ran out of evaluations)",
-    LBFGS_CONVERGED: "CONVERGED",
-}[final_status]
+# %%
+# Deciding when to stop
+# ---------------------
+#
+# There is no ``status`` to read. The optimizer updates its history, restarts
+# if the direction stops descending, and takes one bounded step; whether that
+# is good enough is a question about your system, not about the algorithm, so
+# it stays with you. That also means you can stop on anything you like -- a
+# force threshold, an evaluation budget, a wall clock.
+#
+# One consequence worth knowing: a restart direction is the force *normalized*,
+# so the trust region caps it at exactly ``maxstep`` however small the force
+# is. Stepping a geometry that has already arrived would kick it by ``maxstep``
+# rather than leave it alone. Test before you step, as the loop above does.
+
+status_name = "CONVERGED" if lbfgs_converged else "ran out of evaluations"
 print(f"\nFinished after {lbfgs_evals} force evaluations: {status_name}")
 print(f"  final max|F| = {maxf_hist[-1]:.3e} eV/Å")
 print(f"  final PE     = {energy_hist[-1]:.6f} eV")
@@ -277,7 +282,7 @@ print(
     f"  FIRE2  : {fire2_evals:5d}  "
     f"({'converged, tuned settings' if fire2_converged else 'hit the evaluation cap'})"
 )
-if fire2_converged and final_status == LBFGS_CONVERGED:
+if fire2_converged and lbfgs_converged:
     print(f"  ratio  : {lbfgs_evals / fire2_evals:.3f} (lower is better for L-BFGS)")
 else:
     print("  ratio  : not comparable, one optimizer did not converge")

@@ -92,7 +92,8 @@ Geometry Optimization Examples
     - Quasi-Newton search direction with a ``maxstep`` trust-region step
     - Caller-driven loop: one force evaluation per ``lbfgs_step`` call, and no
       energy input at all
-    - Progress reported through a per-system ``status`` array
+    - Convergence is the caller's, as it is for FIRE2; shows why the test goes
+      *before* the step
     - Prepares the state once with ``lbfgs_prepare_state`` and reads progress
       off it by field name
     - Head-to-head force-evaluation count against FIRE2 on the same cluster

@@ -44,8 +44,10 @@ L-BFGS Optimizer
 ----------------
 
 Quasi-Newton relaxation with a ``maxstep`` trust region. Each step consumes one
-force evaluation and reports progress through the ``status`` buffer. The step
-length comes from a ``maxstep`` trust region, so no energy is read.
+force evaluation, updates the history, restarts a non-descending direction and
+takes one bounded step. As with FIRE2, convergence is the caller's: there is no
+tolerance and no terminal status. No energy is read either -- the step length
+comes from the trust region.
 
 .. note::
    Call :func:`~nvalchemiops.torch.lbfgs.lbfgs_prepare_state` once to allocate,

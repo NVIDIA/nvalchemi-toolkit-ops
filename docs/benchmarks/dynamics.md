@@ -172,7 +172,8 @@ Total throughput (atom-steps/s) for batched optimization.
 L-BFGS is a quasi-Newton method: it approximates the inverse Hessian from recent
 position and force differences to choose a search direction, then takes a step
 along it bounded by a `maxstep` trust region. There is no line search and no
-energy input, so the step costs exactly one force evaluation.
+energy input, so the step costs exactly one force evaluation. As with FIRE2,
+convergence is the caller's, so the figures below are optimizer time only.
 
 **Evaluations to convergence.** The metric that matters when a machine-learned
 potential dominates the optimizer's own kernel time. Lennard-Jones clusters in
@@ -199,9 +200,9 @@ Median of three runs; the ratio varies by roughly +/- 0.3 between runs.
 
 | Atoms | Eager (ms) | CUDA graph (ms) | FIRE2 (ms) | vs FIRE2 |
 | --- | --- | --- | --- | --- |
-| 10,000 | 0.50 | 0.17 | 0.056 | 8.9x |
-| 100,000 | 1.09 | 1.07 | 0.115 | 9.5x |
-| 1,000,000 | 3.22 | 3.21 | 0.322 | 10.0x |
+| 10,000 | 0.49 | 0.16 | 0.055 | 9.0x |
+| 100,000 | 1.02 | 1.02 | 0.113 | 9.0x |
+| 1,000,000 | 3.12 | 3.11 | 0.320 | 9.8x |
 
 **A single L-BFGS step is roughly ten times more expensive than a FIRE2 step.**
 It runs `2m + O(1)` passes over the degrees of freedom against FIRE2's handful.
@@ -210,7 +211,7 @@ about 2.9x; from one hundred thousand upwards the device work dominates and
 replay recovers nothing.
 
 That cost is not the reason to choose L-BFGS, and it is not usually the cost
-that matters. The model must cost more than roughly 10, 29 and 108 microseconds
+that matters. The model must cost more than roughly 10, 20 and 95 microseconds
 per evaluation at these three sizes for L-BFGS to win end to end — a
 machine-learned potential exceeds that by two to three orders of magnitude, and
 L-BFGS needs several times fewer evaluations. Prefer FIRE2 when the force
@@ -219,7 +220,7 @@ evaluation is genuinely cheap.
 **Memory.** With `P` degrees of freedom, `M` systems and history size `m`:
 
 ```text
-bytes = (2m + 3) * 3 * sizeof(dof) * P + (4m + 9) * 8 * M + 5 * 4 * M
+bytes = (2m + 3) * 3 * sizeof(dof) * P + (4m + 6) * 8 * M + 4 * 4 * M
 ```
 
 At `m = 6` that is 180 bytes per degree of freedom with float32 coordinates and

@@ -77,8 +77,6 @@ from nvalchemiops.batch_utils import atom_ptr_to_batch_idx
 from nvalchemiops.dynamics.utils import align_cell, wrap_positions_to_cell
 from nvalchemiops.dynamics.utils.cell_filter import extend_atom_ptr
 from nvalchemiops.torch.lbfgs import (
-    LBFGS_CONVERGED,
-    LBFGS_NEED_EVAL,
     lbfgs_prepare_cell_state,
     lbfgs_prepare_state,
     lbfgs_step_coord_cell,
@@ -254,37 +252,28 @@ print("=" * 95)
 print(f"{'eval':>6} {'PE (eV)':>14} {'max|F|':>11} {'|stress| GPa':>13} {'a (Å)':>9}")
 
 n_evals = 0
+converged = False
+
 for step in range(max_evals):
     energies, forces, virial = md_system.compute_forces_virial()
     stress = virial_to_stress(virial, md_system.wp_cell, target_pressure, device)
     n_evals += 1
 
-    lbfgs_step_coord_cell(
-        positions_t,
-        cell_t,
-        wp.to_torch(forces),
-        wp.to_torch(stress).reshape(num_systems, 3, 3),
-        state,
-        cell_state,
-        batch_idx,
-        n_particles,
-        force_tol=force_tol,
-        stress_tol=stress_tol,
-        maxstep=maxstep,
-    )
+    # Both criteria are the caller's, and both are physical: they are applied
+    # to the *Cartesian* forces and the stress, never to packed norms, so they
+    # keep their meaning however far the cell deforms. Tested before stepping.
+    forces_t = wp.to_torch(forces)
+    stress_t = wp.to_torch(stress).reshape(num_systems, 3, 3)
+    fmax_now = float(forces_t.norm(dim=1).max())
+    smax_now = float(np.linalg.svd(stress.numpy()[0], compute_uv=False).max())
+    converged = fmax_now < force_tol and smax_now < stress_tol
 
-    # Positions were written in place; the cell needs handing back so its
-    # inverse is recomputed and the neighbor list is rebuilt.
-    md_system.update_cell(cell)
-
-    converged = int(state.status.item()) != LBFGS_NEED_EVAL
     if step < 20 or step % 25 == 0 or converged:
         volume = float(np.linalg.det(cell_t.detach().cpu().numpy()[0]))
         stress_np = stress.numpy()[0]
         stress_gpa = pressure_ev_per_a3_to_gpa(0.5 * (stress_np + stress_np.T))
         stress_residual = float(np.linalg.svd(stress_gpa, compute_uv=False).max())
         pe = float(energies.numpy().sum())
-        fmax_now = float(state.fmax.item())
 
         energy_hist.append(pe)
         max_force_hist.append(fmax_now)
@@ -298,21 +287,33 @@ for step in range(max_evals):
     if converged:
         break
 
+    lbfgs_step_coord_cell(
+        positions_t,
+        cell_t,
+        forces_t,
+        stress_t,
+        state,
+        cell_state,
+        batch_idx,
+        maxstep=maxstep,
+    )
+
+    # Positions were written in place; the cell needs handing back so its
+    # inverse is recomputed and the neighbor list is rebuilt.
+    md_system.update_cell(cell)
+
 # %%
 # Result
 # ------
 
-final_status = int(state.status.item())
-status_name = {
-    LBFGS_NEED_EVAL: "NEED_EVAL (ran out of evaluations)",
-    LBFGS_CONVERGED: "CONVERGED",
-}[final_status]
+
+status_name = "CONVERGED" if converged else "ran out of evaluations"
 
 final_volume = float(np.linalg.det(cell_t.detach().cpu().numpy()[0]))
 final_a = (final_volume / (n_cells**3)) ** (1 / 3)
 print(f"\nFinished after {n_evals} evaluations: {status_name}")
 print(f"  lattice constant: {a_initial:.4f} Å -> {final_a:.4f} Å")
-print(f"  final max|F|    : {float(state.fmax.item()):.3e} eV/Å")
+print(f"  final max|F|    : {fmax_now:.3e} eV/Å")
 print(f"  final volume    : {final_volume:.2f} Å³")
 print(f"  final |stress|  : {pressure_hist[-1]:.4f} GPa")
 print("  (textbook FCC argon equilibrium is near 5.26 Å)")

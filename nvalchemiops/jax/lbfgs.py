@@ -31,14 +31,22 @@ pytrees, so a state crosses ``jax.jit`` as one argument and one
     @functools.partial(jax.jit, donate_argnums=(0, 1))
     def relax_step(positions, state, forces):
         return lbfgs_step_coord(
-            positions, forces, state, batch_idx, n_particles
+            positions, forces, state, batch_idx
         )
 
-    while True:
+    for _ in range(max_steps):
         forces = model(positions)
-        positions, state = relax_step(positions, state, forces)
-        if bool(lbfgs_converged(state.status)):
+        if float(jnp.linalg.norm(forces, axis=1).max()) < force_tol:
             break
+        positions, state = relax_step(positions, state, forces)
+
+**Convergence is yours.** The optimizer owns no tolerance and has no terminal
+status: each call updates the history, restarts if the direction stops
+descending, and takes one bounded step. This matches FIRE2. Test before
+stepping, as above -- the forces you were handed describe the positions you
+have, and after the step they describe the previous point. Reading a norm back
+costs a host synchronization, so a caller that wants to amortize it can test
+every few steps instead of every step.
 
 State
 -----
@@ -67,8 +75,8 @@ buffer for the matching output. Two consequences, both about performance:
   moving the pointers. On the variable-cell path donate ``state`` but not
   ``cell_state``: its five chart fields are read-only and come back unchanged,
   so XLA cannot reuse their buffers.
-- **Keep topology out of the donated set.** ``batch_idx`` and ``n_particles``
-  never change, so close over them.
+- **Keep topology out of the donated set.** ``batch_idx`` never changes, so
+  close over it.
 
 Under ``JaxCallableGraphMode.WARP`` the step replays as a CUDA graph. The
 capture is keyed on input addresses, so a fresh ``forces`` array each step
@@ -76,8 +84,8 @@ gives a small working set rather than one graph; measurements settle at four or
 five. If the count grows without bound, pass ``graph_mode="warp_staged"``,
 which keys on the call instead at the cost of one copy per staged array.
 
-Scalars are baked into the compiled call, so changing ``force_tol`` or
-``maxstep`` between steps triggers a recompilation.
+Scalars are baked into the compiled call, so changing ``maxstep`` between
+steps triggers a recompilation.
 
 These operations are **not differentiable**. ``jax.grad`` through a step fails
 rather than returning a silently wrong answer.
@@ -102,8 +110,6 @@ from nvalchemiops.dynamics.optimizers.lbfgs import (
     _CELL_BUFFERS,
     _CELL_SCRATCH,
     _OPTIMIZER_BUFFERS,
-    LBFGS_CONVERGED,
-    LBFGS_NEED_EVAL,
     LBFGSCellState,
     LBFGSState,
 )
@@ -113,12 +119,9 @@ from nvalchemiops.dynamics.optimizers.lbfgs import (
 from nvalchemiops.dynamics.optimizers.lbfgs import _lbfgs_step_impl as _warp_step
 
 __all__ = [
-    "LBFGS_CONVERGED",
-    "LBFGS_NEED_EVAL",
     "LBFGSCellState",
     "LBFGSState",
     "lbfgs_cell_kappa",
-    "lbfgs_converged",
     "lbfgs_prepare_cell_state",
     "lbfgs_prepare_state",
     "lbfgs_set_reference_cell",
@@ -148,7 +151,6 @@ _GRAPH_MODES = {
 def _lbfgs_body_f32(
     forces: wp.array(dtype=wp.vec3f),
     batch_idx: wp.array(dtype=wp.int32),
-    n_particles: wp.array(dtype=wp.int32),
     positions: wp.array(dtype=wp.vec3f),
     x_base: wp.array(dtype=wp.vec3f),
     force_base: wp.array(dtype=wp.vec3f),
@@ -161,21 +163,14 @@ def _lbfgs_body_f32(
     beta_hist: wp.array(dtype=wp.float64, ndim=2),
     ss: wp.array(dtype=wp.float64),
     gg: wp.array(dtype=wp.float64),
-    fmax: wp.array(dtype=wp.float64),
-    frms_sq: wp.array(dtype=wp.float64),
-    smax: wp.array(dtype=wp.float64),
     d0: wp.array(dtype=wp.float64),
     dmax: wp.array(dtype=wp.float64),
     dquad: wp.array(dtype=wp.float64),
     alpha_step: wp.array(dtype=wp.float64),
-    status: wp.array(dtype=wp.int32),
     iteration: wp.array(dtype=wp.int32),
     end: wp.array(dtype=wp.int32),
     n_loop: wp.array(dtype=wp.int32),
     history_count: wp.array(dtype=wp.int32),
-    force_tol: wp.float64,
-    rms_tol: wp.float64,
-    stress_tol: wp.float64,
     maxstep: wp.float64,
     curvature_eps: wp.float64,
 ) -> None:
@@ -189,7 +184,6 @@ def _lbfgs_body_f32(
         positions=positions,
         forces=forces,
         batch_idx=batch_idx,
-        n_particles=n_particles,
         x_base=x_base,
         force_base=force_base,
         direction=direction,
@@ -201,21 +195,14 @@ def _lbfgs_body_f32(
         beta_hist=beta_hist,
         ss=ss,
         gg=gg,
-        fmax=fmax,
-        frms_sq=frms_sq,
-        smax=smax,
         d0=d0,
         dmax=dmax,
         dquad=dquad,
         alpha_step=alpha_step,
-        status=status,
         iteration=iteration,
         end=end,
         n_loop=n_loop,
         history_count=history_count,
-        force_tol=force_tol,
-        rms_tol=rms_tol,
-        stress_tol=stress_tol,
         maxstep=maxstep,
         curvature_eps=curvature_eps,
     )
@@ -224,7 +211,6 @@ def _lbfgs_body_f32(
 def _lbfgs_body_f64(
     forces: wp.array(dtype=wp.vec3d),
     batch_idx: wp.array(dtype=wp.int32),
-    n_particles: wp.array(dtype=wp.int32),
     positions: wp.array(dtype=wp.vec3d),
     x_base: wp.array(dtype=wp.vec3d),
     force_base: wp.array(dtype=wp.vec3d),
@@ -237,21 +223,14 @@ def _lbfgs_body_f64(
     beta_hist: wp.array(dtype=wp.float64, ndim=2),
     ss: wp.array(dtype=wp.float64),
     gg: wp.array(dtype=wp.float64),
-    fmax: wp.array(dtype=wp.float64),
-    frms_sq: wp.array(dtype=wp.float64),
-    smax: wp.array(dtype=wp.float64),
     d0: wp.array(dtype=wp.float64),
     dmax: wp.array(dtype=wp.float64),
     dquad: wp.array(dtype=wp.float64),
     alpha_step: wp.array(dtype=wp.float64),
-    status: wp.array(dtype=wp.int32),
     iteration: wp.array(dtype=wp.int32),
     end: wp.array(dtype=wp.int32),
     n_loop: wp.array(dtype=wp.int32),
     history_count: wp.array(dtype=wp.int32),
-    force_tol: wp.float64,
-    rms_tol: wp.float64,
-    stress_tol: wp.float64,
     maxstep: wp.float64,
     curvature_eps: wp.float64,
 ) -> None:
@@ -265,7 +244,6 @@ def _lbfgs_body_f64(
         positions=positions,
         forces=forces,
         batch_idx=batch_idx,
-        n_particles=n_particles,
         x_base=x_base,
         force_base=force_base,
         direction=direction,
@@ -277,21 +255,14 @@ def _lbfgs_body_f64(
         beta_hist=beta_hist,
         ss=ss,
         gg=gg,
-        fmax=fmax,
-        frms_sq=frms_sq,
-        smax=smax,
         d0=d0,
         dmax=dmax,
         dquad=dquad,
         alpha_step=alpha_step,
-        status=status,
         iteration=iteration,
         end=end,
         n_loop=n_loop,
         history_count=history_count,
-        force_tol=force_tol,
-        rms_tol=rms_tol,
-        stress_tol=stress_tol,
         maxstep=maxstep,
         curvature_eps=curvature_eps,
     )
@@ -302,8 +273,8 @@ _BODIES = {jnp.float32: _lbfgs_body_f32, jnp.float64: _lbfgs_body_f64}
 # The bodies are written out by hand, so pin their parameter names to the
 # canonical buffer order. A reordering would silently swap two arrays, and
 # neither warp nor XLA would notice.
-# forces, batch_idx, n_particles, positions
-_STATE_SLICE = slice(4, 4 + len(_OPTIMIZER_BUFFERS))
+# forces, batch_idx, positions
+_STATE_SLICE = slice(3, 3 + len(_OPTIMIZER_BUFFERS))
 for _name, _body in (("f32", _lbfgs_body_f32), ("f64", _lbfgs_body_f64)):
     _params = tuple(inspect.signature(_body).parameters)[_STATE_SLICE]
     if _params != _OPTIMIZER_BUFFERS:
@@ -359,7 +330,7 @@ def lbfgs_prepare_state(
 
     Call this once, before the first step. The three fields that do not start
     at zero are set for you -- ``alpha_step`` to one, ``iteration`` to minus
-    one, ``status`` to ``LBFGS_NEED_EVAL``. Calling it again is how you reset.
+    one. Calling it again is how you reset.
 
     :class:`LBFGSState` is a registered pytree, so the whole thing can be
     passed through ``jax.jit``, donated, and carried by ``lax.while_loop``.
@@ -396,11 +367,10 @@ def lbfgs_prepare_state(
         s_history=jnp.zeros((m, num_dofs, 3), dtype),
         y_history=jnp.zeros((m, num_dofs, 3), dtype),
         ys=z64(m, n), yy=z64(m, n), alpha_hist=z64(m, n), beta_hist=z64(m, n),
-        ss=z64(n), gg=z64(n), fmax=z64(n), frms_sq=z64(n), smax=z64(n),
+        ss=z64(n), gg=z64(n),
         d0=z64(n), dmax=z64(n), dquad=z64(n),
         # The only three fields whose initial value is not zero.
         alpha_step=jnp.ones(n, jnp.float64),
-        status=jnp.full(n, LBFGS_NEED_EVAL, jnp.int32),
         iteration=jnp.full(n, -1, jnp.int32),
         end=jnp.zeros(n, jnp.int32),
         n_loop=jnp.zeros(n, jnp.int32),
@@ -418,11 +388,7 @@ def lbfgs_step_coord(
     forces: jax.Array,
     state: LBFGSState,
     batch_idx: jax.Array,
-    n_particles: jax.Array,
     *,
-    force_tol: float = 0.05,
-    rms_tol: float = 0.0,
-    stress_tol: float = 0.0,
     maxstep: float = 0.2,
     curvature_eps: float = 1e-10,
     graph_mode: str = "warp",
@@ -442,12 +408,6 @@ def lbfgs_step_coord(
         From :func:`lbfgs_prepare_state`, or built from your own arrays.
     batch_idx : jax.Array, shape (num_atoms,), dtype int32
         Sorted system index per atom. Static topology, so close over it.
-    n_particles : jax.Array, shape (num_systems,), dtype int32
-        Atom count per system, for the optional RMS criterion.
-    force_tol : float, optional
-        Threshold on the largest per-atom force magnitude. Zero disables it.
-    rms_tol, stress_tol : float, optional
-        Additional criteria, disabled by default; all enabled ones must hold.
     maxstep : float, optional
         Largest distance an atom may move in one step. Zero disables the trust
         region.
@@ -471,29 +431,14 @@ def lbfgs_step_coord(
     ValueError
         If this call's inputs are incompatible with the state.
     """
-    _validate(positions, forces, batch_idx, n_particles, state)
+    _validate(positions, forces, batch_idx, state)
     call = _get_callable(positions.dtype, graph_mode)
     out = call(
-        forces, batch_idx, n_particles, positions,
+        forces, batch_idx, positions,
         *(getattr(state, name) for name in _OPTIMIZER_BUFFERS),
-        float(force_tol), float(rms_tol), float(stress_tol),
         float(maxstep), float(curvature_eps),
     )  # fmt: skip
     return out[0], LBFGSState(**dict(zip(_OPTIMIZER_BUFFERS, out[1:], strict=True)))
-
-
-def lbfgs_converged(status: jax.Array) -> jax.Array:
-    """Whether every system has finished, as a device-side boolean.
-
-    Reading this back costs a host synchronization, so a caller that wants to
-    amortize it can check every few steps instead of every step.
-
-    Parameters
-    ----------
-    status : jax.Array, shape (num_systems,), dtype int32
-        The ``status`` buffer returned by the last step.
-    """
-    return jnp.all(status != LBFGS_NEED_EVAL)
 
 
 def _check_scalar_precision(state) -> None:
@@ -512,7 +457,7 @@ def _check_scalar_precision(state) -> None:
         )
 
 
-def _validate(positions, forces, batch_idx, n_particles, state) -> None:
+def _validate(positions, forces, batch_idx, state) -> None:
     """Confirm this call's inputs match the state.
 
     The state checked its own internal consistency when it was built, so only
@@ -540,18 +485,12 @@ def _validate(positions, forces, batch_idx, n_particles, state) -> None:
             f"batch_idx length {batch_idx.shape[0]} != positions length "
             f"{positions.shape[0]}"
         )
-    if n_particles.shape[0] != state.num_systems:
-        raise ValueError(
-            f"n_particles length {n_particles.shape[0]} != number of systems "
-            f"{state.num_systems}"
-        )
 
 
 def _lbfgs_cell_body_f32(
     forces: wp.array(dtype=wp.vec3f),
     stress: wp.array(dtype=wp.mat33f),
     batch_idx: wp.array(dtype=wp.int32),
-    n_particles: wp.array(dtype=wp.int32),
     positions: wp.array(dtype=wp.vec3f),
     cell: wp.array(dtype=wp.mat33f),
     x_base: wp.array(dtype=wp.vec3f),
@@ -565,14 +504,10 @@ def _lbfgs_cell_body_f32(
     beta_hist: wp.array(dtype=wp.float64, ndim=2),
     ss: wp.array(dtype=wp.float64),
     gg: wp.array(dtype=wp.float64),
-    fmax: wp.array(dtype=wp.float64),
-    frms_sq: wp.array(dtype=wp.float64),
-    smax: wp.array(dtype=wp.float64),
     d0: wp.array(dtype=wp.float64),
     dmax: wp.array(dtype=wp.float64),
     dquad: wp.array(dtype=wp.float64),
     alpha_step: wp.array(dtype=wp.float64),
-    status: wp.array(dtype=wp.int32),
     iteration: wp.array(dtype=wp.int32),
     end: wp.array(dtype=wp.int32),
     n_loop: wp.array(dtype=wp.int32),
@@ -591,9 +526,6 @@ def _lbfgs_cell_body_f32(
     cell_force_b: wp.array(dtype=wp.vec3f),
     ext_positions: wp.array(dtype=wp.vec3f),
     ext_forces: wp.array(dtype=wp.vec3f),
-    force_tol: wp.float64,
-    rms_tol: wp.float64,
-    stress_tol: wp.float64,
     maxstep: wp.float64,
     curvature_eps: wp.float64,
 ) -> None:
@@ -609,7 +541,6 @@ def _lbfgs_cell_body_f32(
         cell=cell,
         stress=stress,
         batch_idx=batch_idx,
-        n_particles=n_particles,
         x_base=x_base,
         force_base=force_base,
         direction=direction,
@@ -621,14 +552,10 @@ def _lbfgs_cell_body_f32(
         beta_hist=beta_hist,
         ss=ss,
         gg=gg,
-        fmax=fmax,
-        frms_sq=frms_sq,
-        smax=smax,
         d0=d0,
         dmax=dmax,
         dquad=dquad,
         alpha_step=alpha_step,
-        status=status,
         iteration=iteration,
         end=end,
         n_loop=n_loop,
@@ -647,9 +574,6 @@ def _lbfgs_cell_body_f32(
         cell_force_b=cell_force_b,
         ext_positions=ext_positions,
         ext_forces=ext_forces,
-        force_tol=force_tol,
-        rms_tol=rms_tol,
-        stress_tol=stress_tol,
         maxstep=maxstep,
         curvature_eps=curvature_eps,
     )
@@ -659,7 +583,6 @@ def _lbfgs_cell_body_f64(
     forces: wp.array(dtype=wp.vec3d),
     stress: wp.array(dtype=wp.mat33d),
     batch_idx: wp.array(dtype=wp.int32),
-    n_particles: wp.array(dtype=wp.int32),
     positions: wp.array(dtype=wp.vec3d),
     cell: wp.array(dtype=wp.mat33d),
     x_base: wp.array(dtype=wp.vec3d),
@@ -673,14 +596,10 @@ def _lbfgs_cell_body_f64(
     beta_hist: wp.array(dtype=wp.float64, ndim=2),
     ss: wp.array(dtype=wp.float64),
     gg: wp.array(dtype=wp.float64),
-    fmax: wp.array(dtype=wp.float64),
-    frms_sq: wp.array(dtype=wp.float64),
-    smax: wp.array(dtype=wp.float64),
     d0: wp.array(dtype=wp.float64),
     dmax: wp.array(dtype=wp.float64),
     dquad: wp.array(dtype=wp.float64),
     alpha_step: wp.array(dtype=wp.float64),
-    status: wp.array(dtype=wp.int32),
     iteration: wp.array(dtype=wp.int32),
     end: wp.array(dtype=wp.int32),
     n_loop: wp.array(dtype=wp.int32),
@@ -699,9 +618,6 @@ def _lbfgs_cell_body_f64(
     cell_force_b: wp.array(dtype=wp.vec3d),
     ext_positions: wp.array(dtype=wp.vec3d),
     ext_forces: wp.array(dtype=wp.vec3d),
-    force_tol: wp.float64,
-    rms_tol: wp.float64,
-    stress_tol: wp.float64,
     maxstep: wp.float64,
     curvature_eps: wp.float64,
 ) -> None:
@@ -717,7 +633,6 @@ def _lbfgs_cell_body_f64(
         cell=cell,
         stress=stress,
         batch_idx=batch_idx,
-        n_particles=n_particles,
         x_base=x_base,
         force_base=force_base,
         direction=direction,
@@ -729,14 +644,10 @@ def _lbfgs_cell_body_f64(
         beta_hist=beta_hist,
         ss=ss,
         gg=gg,
-        fmax=fmax,
-        frms_sq=frms_sq,
-        smax=smax,
         d0=d0,
         dmax=dmax,
         dquad=dquad,
         alpha_step=alpha_step,
-        status=status,
         iteration=iteration,
         end=end,
         n_loop=n_loop,
@@ -755,9 +666,6 @@ def _lbfgs_cell_body_f64(
         cell_force_b=cell_force_b,
         ext_positions=ext_positions,
         ext_forces=ext_forces,
-        force_tol=force_tol,
-        rms_tol=rms_tol,
-        stress_tol=stress_tol,
         maxstep=maxstep,
         curvature_eps=curvature_eps,
     )
@@ -776,11 +684,11 @@ _CELL_BODIES = {jnp.float32: _lbfgs_cell_body_f32, jnp.float64: _lbfgs_cell_body
 for _name, _body in (("f32", _lbfgs_cell_body_f32), ("f64", _lbfgs_cell_body_f64)):
     _p = tuple(inspect.signature(_body).parameters)
     _n = len(_OPTIMIZER_BUFFERS)
-    if _p[6 : 6 + _n] != _OPTIMIZER_BUFFERS:
+    if _p[5 : 5 + _n] != _OPTIMIZER_BUFFERS:
         raise RuntimeError(
             f"_OPTIMIZER_BUFFERS and _lbfgs_cell_body_{_name} have diverged"
         )
-    if _p[6 + _n : 6 + _n + len(_CELL_BUFFERS)] != _CELL_BUFFERS:
+    if _p[5 + _n : 5 + _n + len(_CELL_BUFFERS)] != _CELL_BUFFERS:
         raise RuntimeError(f"_CELL_BUFFERS and _lbfgs_cell_body_{_name} have diverged")
 
 _CELL_CALLABLES: dict[tuple, object] = {}
@@ -976,11 +884,7 @@ def lbfgs_step_coord_cell(
     state: LBFGSState,
     cell_state: LBFGSCellState,
     batch_idx: jax.Array,
-    n_particles: jax.Array,
     *,
-    force_tol: float = 0.05,
-    rms_tol: float = 0.0,
-    stress_tol: float = 0.0,
     maxstep: float = 0.2,
     curvature_eps: float = 1e-10,
     graph_mode: str = "warp",
@@ -1001,13 +905,9 @@ def lbfgs_step_coord_cell(
         Lattice vectors as columns. Kept lower-triangular, so the cell cannot
         drift into a rotation.
     stress : jax.Array, shape (num_systems, 3, 3)
-        Cauchy stress. Drives the cell degrees of freedom, and is what
-        ``stress_tol`` is compared against.
+        Cauchy stress, which drives the cell degrees of freedom.
     state, cell_state : LBFGSState, LBFGSCellState
         From the preparation functions, or built from your own arrays.
-    force_tol, rms_tol, stress_tol : float, optional
-        Convergence thresholds, always evaluated on the Cartesian forces and
-        the stress rather than on packed norms.
 
     Returns
     -------
@@ -1026,10 +926,9 @@ def lbfgs_step_coord_cell(
     _validate_cell(positions, forces, cell, stress, batch_idx, state, cell_state)
     call = _get_cell_callable(positions.dtype, graph_mode)
     out = call(
-        forces, stress, batch_idx, n_particles, positions, cell,
+        forces, stress, batch_idx, positions, cell,
         *(getattr(state, name) for name in _OPTIMIZER_BUFFERS),
         *(getattr(cell_state, name) for name in _CELL_BUFFERS),
-        float(force_tol), float(rms_tol), float(stress_tol),
         float(maxstep), float(curvature_eps),
     )  # fmt: skip
     n_opt = len(_OPTIMIZER_BUFFERS)

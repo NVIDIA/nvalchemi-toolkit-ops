@@ -125,11 +125,16 @@ L-BFGS
 
 Limited-memory quasi-Newton optimizer with a ``maxstep`` trust region. Each
 :func:`~nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_step` call consumes exactly
-one force evaluation and reports progress through a per-system ``status``
-array, so a whole batch relaxes in one stream of kernel launches. There is no
-line search and no energy input: the step length is bounded by ``maxstep``
-rather than chosen by comparing energies, so a model whose forces are not the
-gradient of its energy relaxes just as well.
+one force evaluation: it updates the curvature history, restarts if the
+direction stops descending, and takes one bounded step. A whole batch relaxes
+in one stream of kernel launches.
+
+Like FIRE2, it owns no tolerance and has no terminal status -- testing
+convergence and ending the loop are the caller's, which keeps the stopping
+rule where the physics is. There is no line search and no energy input either:
+the step length is bounded by ``maxstep`` rather than chosen by comparing
+energies, so a model whose forces are not the gradient of its energy relaxes
+just as well.
 
 .. autoclass:: nvalchemiops.dynamics.optimizers.lbfgs.LBFGSState
    :members:

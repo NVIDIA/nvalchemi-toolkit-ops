@@ -19,7 +19,6 @@ Coordinate Relaxation
 
 .. autofunction:: nvalchemiops.jax.lbfgs.lbfgs_prepare_state
 .. autofunction:: nvalchemiops.jax.lbfgs.lbfgs_step_coord
-.. autofunction:: nvalchemiops.jax.lbfgs.lbfgs_converged
 
 Variable-Cell Relaxation
 ------------------------

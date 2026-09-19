@@ -101,8 +101,6 @@ from nvalchemiops.dynamics.optimizers.fire2 import (
     fire2_update,
 )
 from nvalchemiops.dynamics.optimizers.lbfgs import (
-    LBFGS_CONVERGED,
-    LBFGS_NEED_EVAL,
     LBFGSCellState,
     LBFGSState,
     lbfgs_apply_step,
@@ -144,8 +142,6 @@ __all__ = [
     "lbfgs_pack_cell",
     "lbfgs_unpack_cell",
     "lbfgs_cell_trust_region",
-    "LBFGS_NEED_EVAL",
-    "LBFGS_CONVERGED",
     # Low-level kernels
     "_fire_step_no_downhill_ptr_kernel",
     "_fire_step_downhill_ptr_kernel",

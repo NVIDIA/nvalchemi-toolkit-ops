@@ -56,8 +56,6 @@ import warp as wp
 
 from benchmarks.dynamics.shared_utils import load_config
 from nvalchemiops.dynamics.optimizers import (
-    LBFGS_CONVERGED,
-    LBFGS_NEED_EVAL,
     fire2_step,
     lbfgs_prepare_state,
     lbfgs_step,
@@ -110,27 +108,24 @@ def run_lbfgs(start, force_tol, history_size=6, maxstep=0.2, eval_cap=EVAL_CAP):
     positions = wp.array(start.copy(), dtype=wp.vec3d, device=DEVICE)
     forces = wp.zeros(num_atoms, dtype=wp.vec3d, device=DEVICE)
     batch_idx = wp.zeros(num_atoms, dtype=wp.int32, device=DEVICE)
-    n_particles = wp.array(
-        np.array([num_atoms], np.int32), dtype=wp.int32, device=DEVICE
-    )
     state = _allocate_lbfgs_state(num_atoms, 1, history_size)
 
+    # Deliberately the same shape as ``run_fire2`` below: both optimizers
+    # leave convergence to the caller, so both loops test then step.
     for n_evals in range(1, eval_cap + 1):
-        _, f = lennard_jones(positions.numpy())
+        f = lennard_jones(positions.numpy())[1]
+        current = np.linalg.norm(f, axis=1).max()
+        if current <= force_tol:
+            return n_evals, True, current
         forces.assign(f)
         lbfgs_step(
             positions=positions,
             forces=forces,
             state=state,
             batch_idx=batch_idx,
-            n_particles=n_particles,
-            force_tol=force_tol,
             maxstep=maxstep,
         )
         wp.synchronize()
-        if state.status.numpy()[0] != LBFGS_NEED_EVAL:
-            final = np.linalg.norm(lennard_jones(positions.numpy())[1], axis=1).max()
-            return n_evals, state.status.numpy()[0] == LBFGS_CONVERGED, final
     final = np.linalg.norm(lennard_jones(positions.numpy())[1], axis=1).max()
     return eval_cap, False, final
 
@@ -250,7 +245,6 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50):
             rng.normal(size=(num_atoms, 3)), dtype=torch.float64, device=DEVICE
         )
         batch_idx = torch.zeros(num_atoms, dtype=torch.int32, device=DEVICE)
-        n_particles = torch.full((1,), num_atoms, dtype=torch.int32, device=DEVICE)
         stiffness = torch.tensor([1.0, 4.0, 9.0], dtype=torch.float64, device=DEVICE)
 
         positions = start.clone()
@@ -285,25 +279,16 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50):
 
         def step():
             evaluate(positions, forces)
-            lbfgs_step_coord(
-                positions,
-                forces,
-                buffers,
-                batch_idx,
-                n_particles,
-                force_tol=1e-8,
-                maxstep=0.5,
-            )
+            lbfgs_step_coord(positions, forces, buffers, batch_idx, maxstep=0.5)
 
         def check(phase):
             """Fail loudly if the timed steps were not representative."""
-            status = int(buffers.status.item())
             history = int(buffers.history_count.item())
-            if status != LBFGS_NEED_EVAL or history != GATE_HISTORY:
+            if history != GATE_HISTORY:
                 raise RuntimeError(
-                    f"{phase} timing at {num_atoms} atoms left status={status}, "
-                    f"history_count={history}; the steps measured were not "
-                    "active full-history iterations"
+                    f"{phase} timing at {num_atoms} atoms left "
+                    f"history_count={history}, not {GATE_HISTORY}; the steps "
+                    "measured were not full-history iterations"
                 )
 
         # Subtract the model, which runs inside every timed call.

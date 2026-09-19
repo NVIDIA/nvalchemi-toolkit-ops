@@ -50,8 +50,6 @@ from nvalchemiops.torch.fire2 import (
     fire2_step_extended,
 )
 from nvalchemiops.torch.lbfgs import (
-    LBFGS_CONVERGED,
-    LBFGS_NEED_EVAL,
     LBFGSCellState,
     LBFGSState,
     lbfgs_cell_kappa,
@@ -94,8 +92,6 @@ __all__ = [
     "segmented_mul",
     "segmented_rms_norm",
     "segmented_sum",
-    "LBFGS_NEED_EVAL",
-    "LBFGS_CONVERGED",
     "lbfgs_cell_kappa",
     "LBFGSState",
     "LBFGSCellState",

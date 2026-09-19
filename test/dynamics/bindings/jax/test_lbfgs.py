@@ -49,9 +49,6 @@ jax = pytest.importorskip("jax")
 jnp = pytest.importorskip("jax.numpy")
 
 from nvalchemiops.jax.lbfgs import (  # noqa: E402
-    LBFGS_CONVERGED,
-    LBFGS_NEED_EVAL,
-    lbfgs_converged,
     lbfgs_prepare_cell_state,
     lbfgs_prepare_state,
     lbfgs_step_coord,
@@ -145,23 +142,24 @@ class JaxDriver:
         forces = self.model(self.positions)
         self.n_evals += 1
         self.positions, self.state = lbfgs_step_coord(
-            self.positions,
-            forces,
-            self.state,
-            self.batch_idx,
-            self.n_particles,
-            **kwargs,
+            self.positions, forces, self.state, self.batch_idx, **kwargs
         )
 
-    @property
-    def status(self):
-        return self.state.status
+    def fmax(self):
+        """Largest per-atom force magnitude per system, as a caller would."""
+        norms = jnp.linalg.norm(self.model(self.positions), axis=1)
+        return jnp.zeros(self.num_systems, norms.dtype).at[self.batch_idx].max(norms)
 
-    def run(self, max_evals=200, **kwargs):
+    def run(self, max_evals=200, force_tol=1e-8, **kwargs):
+        """Relax until every system is under ``force_tol``.
+
+        Tested before stepping: the forces describe the current positions.
+        """
         for _ in range(max_evals):
-            self.step(**kwargs)
-            if bool(lbfgs_converged(self.status)):
+            self.converged = self.fmax() <= force_tol
+            if bool(self.converged.all()):
                 break
+            self.step(**kwargs)
         return self
 
 
@@ -229,11 +227,8 @@ class TestLBFGSJaxRegistration:
             assert not (params & banned), f"{name} takes {sorted(params & banned)}"
             assert "maxstep" in params, f"{name} lost its trust region"
 
-        # And no status can report a line-search failure.
-        assert {c for c in dir(module) if c.startswith("LBFGS_")} == {
-            "LBFGS_NEED_EVAL",
-            "LBFGS_CONVERGED",
-        }
+        # No status constants at all: termination is the caller's.
+        assert not [c for c in dir(module) if c.startswith("LBFGS_")]
 
     def test_public_entry_points_take_the_states(self):
         """Both wrappers take the states as objects, in a fixed position.
@@ -247,15 +242,9 @@ class TestLBFGSJaxRegistration:
         from nvalchemiops.jax.lbfgs import lbfgs_step_coord_cell
 
         coord = tuple(inspect.signature(lbfgs_step_coord).parameters)
-        assert coord[:5] == (
-            "positions",
-            "forces",
-            "state",
-            "batch_idx",
-            "n_particles",
-        )
+        assert coord[:4] == ("positions", "forces", "state", "batch_idx")
         cell = tuple(inspect.signature(lbfgs_step_coord_cell).parameters)
-        assert cell[:8] == (
+        assert cell[:7] == (
             "positions",
             "cell",
             "forces",
@@ -263,7 +252,6 @@ class TestLBFGSJaxRegistration:
             "state",
             "cell_state",
             "batch_idx",
-            "n_particles",
         )
 
     @pytest.mark.parametrize("suffix", ["f32", "f64"])
@@ -273,7 +261,7 @@ class TestLBFGSJaxRegistration:
 
         body = getattr(module, f"_lbfgs_body_{suffix}")
         params = tuple(inspect.signature(body).parameters)
-        offset = 4  # forces, batch_idx, n_particles, positions
+        offset = 3  # forces, batch_idx, positions
         assert params[offset : offset + len(_OPTIMIZER_BUFFERS)] == _OPTIMIZER_BUFFERS
 
     @pytest.mark.parametrize("graph_mode", ["none", "warp", "warp_staged"])
@@ -316,7 +304,6 @@ class TestLBFGSJaxRegistration:
         assert state.gg.dtype == jnp.float64
         np.testing.assert_array_equal(state.iteration, np.full(3, -1))
         np.testing.assert_array_equal(state.alpha_step, np.ones(3))
-        np.testing.assert_array_equal(state.status, np.zeros(3, np.int32))
         # Everything else starts at zero.
         for name in set(_OPTIMIZER_BUFFERS) - {"iteration", "alpha_step"}:
             assert not np.asarray(getattr(state, name)).any(), (
@@ -329,15 +316,15 @@ class TestLBFGSJax:
     """Behaviour on device."""
 
     def test_reaches_the_minimum(self, _gpu):
-        d = JaxDriver(_cluster(8)).run(force_tol=1e-8, maxstep=0.5)
-        assert int(d.status[0]) == LBFGS_CONVERGED
+        d = JaxDriver(_cluster(8)).run(maxstep=0.5)
+        assert bool(d.converged[0])
         assert float(jnp.abs(d.positions).max()) < 1e-7
 
     def test_batched_systems_converge_independently(self, _gpu):
         rng = np.random.default_rng(17)
         blocks = [rng.normal(size=(4, 3)) * s for s in (0.001, 1.0, 5.0)]
-        d = JaxDriver(np.vstack(blocks), num_systems=3).run(force_tol=1e-8, maxstep=0.5)
-        np.testing.assert_array_equal(np.asarray(d.status), np.full(3, LBFGS_CONVERGED))
+        d = JaxDriver(np.vstack(blocks), num_systems=3).run(maxstep=0.5)
+        assert bool(d.converged.all()), d.fmax()
 
     def test_matches_the_warp_layer(self, _gpu):
         """A thin adapter must agree with the Warp layer step for step."""
@@ -355,29 +342,26 @@ class TestLBFGSJax:
         wp_pos = wp.array(start.copy(), dtype=wp.vec3d, device=device)
         wp_forces = wp.zeros(n, dtype=wp.vec3d, device=device)
         wp_batch = wp.zeros(n, dtype=wp.int32, device=device)
-        wp_nparts = wp.array(np.array([n], np.int32), dtype=wp.int32, device=device)
         wp_state = make_lbfgs_state(n, 1, 6, wp.vec3d, device)
+        stiffness = np.asarray(STIFFNESS)
 
         for _ in range(30):
-            d.step(force_tol=1e-8, maxstep=0.5)
-            x = wp_pos.numpy()
-            wp_forces.assign(-(STIFFNESS * x))
+            d.step(maxstep=0.5)
+            wp_forces.assign(-(stiffness * wp_pos.numpy()))
             warp_step(
                 positions=wp_pos,
                 forces=wp_forces,
                 state=wp_state,
                 batch_idx=wp_batch,
-                n_particles=wp_nparts,
-                force_tol=1e-8,
                 maxstep=0.5,
             )
             wp.synchronize()
             np.testing.assert_allclose(
                 np.asarray(d.positions), wp_pos.numpy(), rtol=1e-12, atol=1e-14
             )
-            if bool(lbfgs_converged(d.status)):
-                break
-        np.testing.assert_array_equal(np.asarray(d.status), wp_state.status.numpy())
+        np.testing.assert_array_equal(
+            np.asarray(d.state.iteration), wp_state.iteration.numpy()
+        )
 
     @pytest.mark.parametrize("graph_mode", ["none", "warp", "warp_staged"])
     def test_graph_modes_agree(self, _gpu, graph_mode):
@@ -387,17 +371,14 @@ class TestLBFGSJax:
         start: replay that silently drops work would show up here.
         """
         start = _cluster(6, seed=23)
-        reference = JaxDriver(start).run(
-            force_tol=1e-10, maxstep=0.5, graph_mode="none"
-        )
-        candidate = JaxDriver(start).run(
-            force_tol=1e-10, maxstep=0.5, graph_mode=graph_mode
-        )
+        reference = JaxDriver(start).run(maxstep=0.5, graph_mode="none")
+        candidate = JaxDriver(start).run(maxstep=0.5, graph_mode=graph_mode)
         np.testing.assert_array_equal(
             np.asarray(candidate.positions), np.asarray(reference.positions)
         )
         np.testing.assert_array_equal(
-            np.asarray(candidate.status), np.asarray(reference.status)
+            np.asarray(candidate.state.iteration),
+            np.asarray(reference.state.iteration),
         )
 
     def test_donated_replay_keeps_the_capture_count_bounded(self, _gpu):
@@ -411,7 +392,7 @@ class TestLBFGSJax:
         from nvalchemiops.jax.lbfgs import _get_callable
 
         d = JaxDriver(_cluster(6, seed=31))
-        batch_idx, n_particles = d.batch_idx, d.n_particles
+        batch_idx = d.batch_idx
 
         # Donate positions and all 26 state, which is what lets XLA reuse
         # them in place instead of copying a fresh set every step.
@@ -422,8 +403,6 @@ class TestLBFGSJax:
                 forces,
                 state,
                 batch_idx,
-                n_particles,
-                force_tol=1e-12,
                 maxstep=0.5,
             )
 
@@ -465,8 +444,6 @@ class TestLBFGSJax:
                 forces,
                 d.state,
                 d.batch_idx,
-                d.n_particles,
-                force_tol=1e-8,
             )
             return moved.sum()
 
@@ -486,7 +463,6 @@ class TestLBFGSJaxErrors:
                 jnp.zeros((2, 3)),
                 d.state,
                 d.batch_idx,
-                d.n_particles,
             )
 
     def test_scalars_must_be_float64(self, _gpu):
@@ -501,14 +477,12 @@ class TestLBFGSJaxErrors:
             d.state,
             **{
                 name: getattr(d.state, name).astype(jnp.float32)
-                for name in _OPTIMIZER_BUFFERS[5:18]
+                for name in _OPTIMIZER_BUFFERS[5:15]
             },
         )
         st.validate()  # internally consistent
         with pytest.raises(ValueError, match="must be float64"):
-            lbfgs_step_coord(
-                d.positions, d.model(d.positions), st, d.batch_idx, d.n_particles
-            )
+            lbfgs_step_coord(d.positions, d.model(d.positions), st, d.batch_idx)
 
     def test_history_size_mismatch(self, _gpu):
         d = JaxDriver(_cluster(3))
@@ -520,7 +494,6 @@ class TestLBFGSJaxErrors:
                 forces,
                 other,
                 d.batch_idx,
-                d.n_particles,
             )
 
 
@@ -561,12 +534,17 @@ class TestLBFGSJaxCoordCell:
         n = 6
         positions, cell, state, cell_state, potential = self._setup(n)
         batch_idx = jnp.zeros(n, jnp.int32)
-        n_particles = jnp.full((1,), n, jnp.int32)
 
         for _ in range(400):
             _, f, s = potential.energy_forces_stress(
                 np.asarray(positions), np.asarray(cell)[0]
             )
+            # Both criteria, tested *before* stepping: these forces describe
+            # the geometry in hand, and after a step they would not.
+            fmax = float(np.linalg.norm(f, axis=1).max())
+            smax = float(np.abs(s).max())
+            if fmax < 1e-6 and smax < 1e-6:
+                break
             positions, cell, state, cell_state = lbfgs_step_coord_cell(
                 positions,
                 cell,
@@ -575,15 +553,10 @@ class TestLBFGSJaxCoordCell:
                 state,
                 cell_state,
                 batch_idx,
-                n_particles,
-                force_tol=1e-6,
-                stress_tol=1e-6,
                 maxstep=0.2,
             )
-            if int(state.status[0]) != LBFGS_NEED_EVAL:
-                break
 
-        assert int(state.status[0]) == LBFGS_CONVERGED, int(state.status[0])
+        assert fmax < 1e-6 and smax < 1e-6, (fmax, smax)
         volume = abs(np.linalg.det(np.asarray(cell)[0]))
         np.testing.assert_allclose(volume, potential.target_volume, rtol=1e-4)
 
@@ -604,7 +577,6 @@ class TestLBFGSJaxCoordCell:
         n, device = 6, "cuda:0"
         positions, cell, state, cell_state, potential = self._setup(n)
         batch_idx = jnp.zeros(n, jnp.int32)
-        n_particles = jnp.full((1,), n, jnp.int32)
 
         start_pos = np.asarray(positions).copy()
         start_cell = np.asarray(cell)[0].copy()
@@ -613,7 +585,6 @@ class TestLBFGSJaxCoordCell:
         wp_forces = wp.zeros(n, dtype=wp.vec3d, device=device)
         wp_stress = wp.zeros(1, dtype=wp.mat33d, device=device)
         wp_batch = wp.zeros(n, dtype=wp.int32, device=device)
-        wp_nparts = wp.array(np.array([n], np.int32), dtype=wp.int32, device=device)
         wp_cell_state = make_lbfgs_cell_state(n, 1, wp.vec3d, device)
         warp_set_ref(wp_cell, wp_cell_state.ref_cell, wp_cell_state.ref_cell_inv)
         wp_state = make_lbfgs_state(n + 2, 1, 6, wp.vec3d, device)
@@ -630,9 +601,6 @@ class TestLBFGSJaxCoordCell:
                 state,
                 cell_state,
                 batch_idx,
-                n_particles,
-                force_tol=1e-8,
-                stress_tol=1e-8,
                 maxstep=0.2,
             )
 
@@ -649,9 +617,6 @@ class TestLBFGSJaxCoordCell:
                 wp_state,
                 wp_cell_state,
                 wp_batch,
-                wp_nparts,
-                force_tol=1e-8,
-                stress_tol=1e-8,
                 maxstep=0.2,
             )
             wp.synchronize()
@@ -661,9 +626,9 @@ class TestLBFGSJaxCoordCell:
             np.testing.assert_allclose(
                 np.asarray(cell), wp_cell.numpy(), rtol=1e-12, atol=1e-14
             )
-            if int(state.status[0]) != LBFGS_NEED_EVAL:
-                break
-        np.testing.assert_array_equal(np.asarray(state.status), wp_state.status.numpy())
+        np.testing.assert_array_equal(
+            np.asarray(state.iteration), wp_state.iteration.numpy()
+        )
 
     def test_cell_callable_aliases_every_mutable_array(self, _gpu):
         """All 37 outputs are aliases; a future pure output must come last.
@@ -704,7 +669,6 @@ class TestLBFGSJaxCoordCell:
                 wrong,
                 cell_state,
                 jnp.zeros(n, jnp.int32),
-                jnp.full((1,), n, jnp.int32),
             )
 
     def test_jit_with_donation_matches_uncompiled(self, _gpu):
@@ -718,8 +682,7 @@ class TestLBFGSJaxCoordCell:
 
         n = 6
         batch_idx = jnp.zeros(n, jnp.int32)
-        n_particles = jnp.full((1,), n, jnp.int32)
-        opts = dict(force_tol=1e-8, stress_tol=1e-8, maxstep=0.2)
+        opts = dict(maxstep=0.2)
 
         def one_run(jit):
             positions, cell, state, cell_state, potential = self._setup(n)
@@ -728,9 +691,7 @@ class TestLBFGSJaxCoordCell:
             )
 
             def body(p, c, f_, s_, st, cs):
-                return lbfgs_step_coord_cell(
-                    p, c, f_, s_, st, cs, batch_idx, n_particles, **opts
-                )
+                return lbfgs_step_coord_cell(p, c, f_, s_, st, cs, batch_idx, **opts)
 
             # Donate positions, cell and the optimizer state. The cell state
             # is left undonated: its five chart fields are read-only and come
@@ -745,7 +706,7 @@ class TestLBFGSJaxCoordCell:
                 cell_state,
             )
             jax.block_until_ready(out_p)
-            return np.asarray(out_p), np.asarray(out_c), np.asarray(out_st.status)
+            return np.asarray(out_p), np.asarray(out_c), np.asarray(out_st.iteration)
 
         eager = one_run(False)
         jitted = one_run(True)
@@ -802,8 +763,6 @@ class TestLBFGSJaxCoordCell:
             state,
             cell_state,
             jnp.zeros(n, jnp.int32),
-            jnp.full((m_sys,), n, jnp.int32),
-            force_tol=1e-4,
             maxstep=0.2,
         )
         assert out_p.dtype == f32
