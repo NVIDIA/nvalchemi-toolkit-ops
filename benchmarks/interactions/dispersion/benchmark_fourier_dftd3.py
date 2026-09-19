@@ -174,6 +174,9 @@ def benchmark_fourier_d3(
     def tensor(array):
         return torch.tensor(array, dtype=dtype, device=device)
 
+    # Matching dtype matters here: ``fourier_dftd3`` coerces the bundle to the positions'
+    # dtype on every call, so float64 parameters would put five tensor conversions inside
+    # the timed region that the real-space comparison does not pay.
     parameters = FourierD3Parameters.from_tables(
         tensor(rcov),
         tensor(r4r2),
@@ -181,6 +184,7 @@ def benchmark_fourier_d3(
         tensor(cn_ref),
         species=[1, 6],
         device=device,
+        dtype=dtype,
     )
     pbc = torch.tensor([True, True, True], device=device)
     mesh = mesh_for(num_atoms)
