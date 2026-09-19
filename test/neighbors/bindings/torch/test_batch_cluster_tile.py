@@ -1820,6 +1820,44 @@ class TestBatchTileNeighborListFormats:
         )
         assert torch.equal(atom_system[nl[0].long()], atom_system[nl[1].long()])
 
+    def test_compact_coo_mixed_dense_batch_rows(self, device, dtype):
+        """Empty, singleton, and unequal dense systems keep exact CSR rows."""
+        sizes = [0, 1, 33, 65]
+        batch_ptr = torch.tensor(
+            [0, 0, 1, 34, 99], dtype=torch.int32, device=device
+        )
+        positions = torch.zeros((batch_ptr[-1].item(), 3), dtype=dtype, device=device)
+        cell_batch = torch.eye(3, dtype=dtype, device=device).repeat(4, 1, 1) * 8.0
+        expected_counts = torch.cat(
+            [
+                torch.full((size,), size - 1, dtype=torch.int32, device=device)
+                for size in sizes
+                if size > 0
+            ]
+        )
+        expected_pairs = int(expected_counts.sum().item())
+
+        pairs, pointer, shifts = batch_cluster_tile_neighbor_list(
+            positions,
+            1.0,
+            cell_batch,
+            batch_ptr,
+            format="coo",
+            max_pairs=expected_pairs,
+            max_tiles_per_group=3,
+        )
+
+        assert pairs.shape == (2, expected_pairs)
+        torch.testing.assert_close(pointer[1:] - pointer[:-1], expected_counts)
+        rows = _compact_coo_pair_sets(pairs, pointer, shifts)
+        assert [len(row) for row in rows] == expected_counts.cpu().tolist()
+        atom_system = torch.bucketize(
+            torch.arange(positions.shape[0], dtype=torch.int32, device=device),
+            batch_ptr[1:],
+            right=True,
+        )
+        assert torch.equal(atom_system[pairs[0].long()], atom_system[pairs[1].long()])
+
     def test_format_coo_with_preallocated_buffers(self, device, dtype):
         sizes = [48, 48]
         positions, cell_batch, batch_ptr = _make_batch(

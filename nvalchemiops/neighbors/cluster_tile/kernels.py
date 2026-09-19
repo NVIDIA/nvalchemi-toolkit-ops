@@ -1300,7 +1300,8 @@ def _get_query_cluster_tile_direct_csr_count_kernel(*, batched: bool) -> wp.Kern
         -----
         - Thread launch: One tiled thread block per launched tile slot; slots at
           or beyond ``num_tiles[0]`` return without writing.
-        - Modifies: ``row_counts`` through atomic increments for both pair directions.
+        - Modifies: ``row_counts`` through one atomic increment per occupied
+          forward row and one per occupied reverse lane in each tile.
 
         See Also
         --------
@@ -1329,6 +1330,7 @@ def _get_query_cluster_tile_direct_csr_count_kernel(*, batched: bool) -> wp.Kern
         )
         cell_mat = cell[system_idx]
         inv_cell_mat = inv_cell[system_idx]
+        reverse_count = wp.int32(0)
         for i_local in range(TILE_GROUP_SIZE):
             i_sorted = row_group * TILE + i_local
             i_orig = wp.tile_extract(i_orig_tile, i_local)
@@ -1339,11 +1341,21 @@ def _get_query_cluster_tile_direct_csr_count_kernel(*, batched: bool) -> wp.Kern
             )
             wrapped, _ = _wrap_triclinic(d, cell_mat, inv_cell_mat)
             distance_sq = wp.dot(wrapped, wrapped)
+            valid = wp.int32(0)
             if _direct_coo_pair_is_accepted(
                 i_sorted, j_sorted, i_orig, j_orig, natom, distance_sq, cutoff_sq
             ):
-                wp.atomic_add(row_counts, i_orig, 1)
-                wp.atomic_add(row_counts, j_orig, 1)
+                valid = wp.int32(1)
+                reverse_count += wp.int32(1)
+
+            valid_tile = wp.tile(valid)
+            scan_tile = wp.tile_scan_inclusive(valid_tile)
+            forward_count = wp.tile_extract(scan_tile, TILE - 1)
+            if lane == 0 and forward_count > 0:
+                wp.atomic_add(row_counts, i_orig, forward_count)
+
+        if reverse_count > 0:
+            wp.atomic_add(row_counts, j_orig, reverse_count)
 
     return _kernel
 
@@ -1441,6 +1453,9 @@ def _get_query_cluster_tile_direct_csr_fill_kernel(
         - Thread launch: One tiled thread block per launched tile slot; slots at
           or beyond ``num_tiles[0]`` return without writing.
         - Modifies: ``cursors``, topology buffers, and enabled pair-output buffers.
+          A first tile traversal reserves one reverse-row range per occupied
+          lane. A second traversal reserves one forward-row range per occupied
+          row and writes through block-local cursors.
 
         See Also
         --------
@@ -1469,6 +1484,7 @@ def _get_query_cluster_tile_direct_csr_fill_kernel(
         )
         cell_mat = cell[system_idx]
         inv_cell_mat = inv_cell[system_idx]
+        reverse_count = wp.int32(0)
         for i_local in range(TILE_GROUP_SIZE):
             i_sorted = row_group * TILE + i_local
             i_orig = wp.tile_extract(i_orig_tile, i_local)
@@ -1477,7 +1493,7 @@ def _get_query_cluster_tile_direct_csr_fill_kernel(
                 pj_y - wp.tile_extract(pi_y_tile, i_local),
                 pj_z - wp.tile_extract(pi_z_tile, i_local),
             )
-            wrapped, shift = _wrap_triclinic(d, cell_mat, inv_cell_mat)
+            wrapped, _ = _wrap_triclinic(d, cell_mat, inv_cell_mat)
             if _direct_coo_pair_is_accepted(
                 i_sorted,
                 j_sorted,
@@ -1487,9 +1503,59 @@ def _get_query_cluster_tile_direct_csr_fill_kernel(
                 wp.dot(wrapped, wrapped),
                 cutoff_sq,
             ):
-                forward = wp.atomic_add(cursors, i_orig, 1)
-                reverse = wp.atomic_add(cursors, j_orig, 1)
-                if forward < physical_capacity:
+                reverse_count += wp.int32(1)
+
+        reverse_base = wp.int32(0)
+        if reverse_count > 0:
+            reverse_base = wp.atomic_add(cursors, j_orig, reverse_count)
+        reverse_cursor = wp.int32(0)
+
+        for i_local in range(TILE_GROUP_SIZE):
+            i_sorted = row_group * TILE + i_local
+            i_orig = wp.tile_extract(i_orig_tile, i_local)
+            d = wp.vec3f(
+                pj_x - wp.tile_extract(pi_x_tile, i_local),
+                pj_y - wp.tile_extract(pi_y_tile, i_local),
+                pj_z - wp.tile_extract(pi_z_tile, i_local),
+            )
+            wrapped, shift = _wrap_triclinic(d, cell_mat, inv_cell_mat)
+            distance_sq = wp.dot(wrapped, wrapped)
+            valid = wp.int32(0)
+            if _direct_coo_pair_is_accepted(
+                i_sorted,
+                j_sorted,
+                i_orig,
+                j_orig,
+                natom,
+                distance_sq,
+                cutoff_sq,
+            ):
+                valid = wp.int32(1)
+
+            valid_tile = wp.tile(valid)
+            scan_tile = wp.tile_scan_inclusive(valid_tile)
+            forward_count = wp.tile_extract(scan_tile, TILE - 1)
+            forward_base = wp.int32(0)
+            if lane == 0 and forward_count > 0:
+                forward_base = wp.atomic_add(cursors, i_orig, forward_count)
+            forward_base_tile = wp.tile_from_thread(
+                shape=TILE,
+                value=forward_base,
+                thread_idx=0,
+                storage="shared",
+            )
+            forward_base_lane = wp.untile(forward_base_tile)
+            scan_lane = wp.untile(scan_tile)
+
+            if valid == 1:
+                forward = forward_base_lane + scan_lane - 1
+                reverse = reverse_base + reverse_cursor
+                reverse_cursor += wp.int32(1)
+                distance = wp.float32(0.0)
+                if RETURN_DISTANCES or HAS_PAIR_FN:
+                    distance = wp.sqrt(distance_sq)
+
+                if forward >= 0 and forward < physical_capacity:
                     coo_list[forward, 0] = i_orig
                     coo_list[forward, 1] = j_orig
                     coo_shifts[forward, 0] = shift[0]
@@ -1498,7 +1564,6 @@ def _get_query_cluster_tile_direct_csr_fill_kernel(
                     if RETURN_VECTORS:
                         neighbor_vectors[forward] = wrapped
                     if RETURN_DISTANCES or HAS_PAIR_FN:
-                        distance = wp.sqrt(wp.dot(wrapped, wrapped))
                         if RETURN_DISTANCES:
                             neighbor_distances[forward] = distance
                         if HAS_PAIR_FN:
@@ -1507,7 +1572,7 @@ def _get_query_cluster_tile_direct_csr_fill_kernel(
                             )
                             pair_energies[forward] = energy
                             pair_forces[forward] = force
-                if reverse < physical_capacity:
+                if reverse >= 0 and reverse < physical_capacity:
                     coo_list[reverse, 0] = j_orig
                     coo_list[reverse, 1] = i_orig
                     coo_shifts[reverse, 0] = -shift[0]
@@ -1516,7 +1581,6 @@ def _get_query_cluster_tile_direct_csr_fill_kernel(
                     if RETURN_VECTORS:
                         neighbor_vectors[reverse] = -wrapped
                     if RETURN_DISTANCES or HAS_PAIR_FN:
-                        distance = wp.sqrt(wp.dot(wrapped, wrapped))
                         if RETURN_DISTANCES:
                             neighbor_distances[reverse] = distance
                         if HAS_PAIR_FN:

@@ -501,6 +501,68 @@ class TestTileNeighborListCorrectness:
         assert pointer.tolist() == [0, 2, 4, 6]
         _compact_coo_pair_sets(pairs, pointer, shifts)
 
+    def test_compact_coo_dense_tiles_exact_and_one_short(self, device, dtype):
+        """Dense diagonal and off-diagonal tiles fill exact CSR capacity."""
+        natom = 48
+        expected_pairs = natom * (natom - 1)
+        positions = torch.zeros((natom, 3), dtype=dtype, device=device)
+        cell = _orthorhombic_cell(8.0, device, dtype)
+
+        pairs, pointer, shifts = cluster_tile_neighbor_list(
+            positions,
+            1.0,
+            cell,
+            format="coo",
+            max_pairs=expected_pairs,
+            max_tiles_per_group=2,
+        )
+
+        assert pairs.shape == (2, expected_pairs)
+        assert torch.equal(
+            pointer[1:] - pointer[:-1],
+            torch.full((natom,), natom - 1, dtype=torch.int32, device=device),
+        )
+        rows = _compact_coo_pair_sets(pairs, pointer, shifts)
+        assert all(len(row) == natom - 1 for row in rows)
+
+        with pytest.raises(NeighborOverflowError) as caught:
+            cluster_tile_neighbor_list(
+                positions,
+                1.0,
+                cell,
+                format="coo",
+                max_pairs=expected_pairs - 1,
+                max_tiles_per_group=2,
+            )
+        assert caught.value.max_neighbors == expected_pairs - 1
+        assert caught.value.num_neighbors == expected_pairs
+
+    def test_compact_coo_half_cell_tie_keeps_reverse_shift(self, device, dtype):
+        """A half-cell tie emits opposite shifts for the two CSR rows."""
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+            dtype=dtype,
+            device=device,
+        )
+        cell = _orthorhombic_cell(4.0, device, dtype)
+
+        pairs, pointer, shifts = cluster_tile_neighbor_list(
+            positions,
+            2.1,
+            cell,
+            format="coo",
+            max_pairs=2,
+            max_tiles_per_group=1,
+        )
+
+        rows = _compact_coo_pair_sets(pairs, pointer, shifts)
+        assert len(rows[0]) == len(rows[1]) == 1
+        forward = next(iter(rows[0]))
+        reverse = next(iter(rows[1]))
+        assert forward[0] == 1
+        assert reverse[0] == 0
+        assert reverse[1:] == tuple(-value for value in forward[1:])
+
     def test_compact_coo_ignores_oversized_physical_tail(self, device, dtype):
         """Only the logical compact capacity may be written or returned."""
         positions = torch.tensor(
