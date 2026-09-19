@@ -197,20 +197,26 @@ def run_fire2(atoms, calculator, device, torch_dtype, dt_start, force_tol=FORCE_
 
 
 def best_fire2(atoms, calculator, device, torch_dtype, grid=FIRE2_DT_GRID, **kwargs):
-    """FIRE2 at its best over the timestep grid."""
-    best = (EVAL_CAP + 1, False, np.inf, None)
+    """FIRE2 at its best over the timestep grid.
+
+    When nothing converges, the first capped run is reported as it stands
+    rather than re-run. It already bounds the evaluation count from below, and
+    repeating a configuration that has just hit the cap would spend another
+    ``eval_cap`` model evaluations reproducing a number already in hand --
+    which with MACE is the most expensive thing this benchmark could do.
+    """
+    best = None
+    first_capped = None
     for dt_start in grid:
         evals, converged, final = run_fire2(
             atoms, calculator, device, torch_dtype, dt_start, **kwargs
         )
-        if converged and evals < best[0]:
-            best = (evals, converged, final, dt_start)
-    if best[3] is None:
-        evals, converged, final = run_fire2(
-            atoms, calculator, device, torch_dtype, grid[0], **kwargs
-        )
-        return evals, converged, final, "none converged"
-    return best
+        if converged:
+            if best is None or evals < best[0]:
+                best = (evals, converged, final, dt_start)
+        elif first_capped is None:
+            first_capped = (evals, converged, final, f"none converged (dt={dt_start})")
+    return best if best is not None else first_capped
 
 
 def main():

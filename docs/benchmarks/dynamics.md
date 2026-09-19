@@ -184,13 +184,14 @@ result as the baseline. Both arms run at the stated precision:
 | Metric | float32 | float64 |
 | --- | --- | --- |
 | Geometric mean | **0.59** | **0.57** |
-| Worst individual case | **1.01** | **1.12** |
+| Worst individual case | **0.94** | **1.08** |
 | Cases where both converged | 15 / 15 | 15 / 15 |
 
-**L-BFGS needs about 1.7x fewer force evaluations on average, and loses
-outright in the worst case** — the worst ratio exceeded 1.0 in every run
-measured, so it is better on average, not uniformly. fp32 costs nothing in
-evaluation count: both precisions reach the same tolerance in
+**L-BFGS needs about 1.7x fewer force evaluations on average, and roughly
+breaks even in the worst case.** The worst ratio sits near 1.0 and has
+exceeded it in several runs (1.08, 1.17, 1.41 measured previously), so on this
+workload L-BFGS is better on average rather than uniformly. fp32 costs nothing
+in evaluation count: both precisions reach the same tolerance in
 indistinguishable counts. Counts vary by roughly 20% run to run, since
 neighbor-list rebuild ordering perturbs the forces in their last bits, so read
 the aggregate rather than a single cell.

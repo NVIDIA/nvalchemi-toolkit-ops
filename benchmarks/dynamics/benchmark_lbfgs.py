@@ -296,9 +296,15 @@ def best_fire2(make_system, force_tol, sweep=None, eval_cap=EVAL_CAP,
 
     ``make_system`` is called once per sweep entry, because each relaxation
     consumes the system it is given.
+
+    When nothing converges, the first capped run is reported as it stands
+    rather than re-run: it already bounds the evaluation count from below, and
+    repeating a configuration that has just hit the cap would spend another
+    ``eval_cap`` evaluations reproducing a number already in hand.
     """
     sweep = FIRE2_SWEEP if sweep is None else sweep
-    best = (eval_cap + 1, False, np.inf, None)
+    best = None
+    first_capped = None
     for dt_start in sweep["dt_start"]:
         for factor in sweep.get("tmax_factor", [2.0]):
             evals, converged, final = run_fire2(
@@ -310,14 +316,15 @@ def best_fire2(make_system, force_tol, sweep=None, eval_cap=EVAL_CAP,
                 eval_cap=eval_cap,
                 device=device,
             )
-            if converged and evals < best[0]:
-                best = (evals, converged, final, (dt_start, factor))
-    if best[3] is None:
-        evals, converged, final = run_fire2(
-            make_system(), force_tol, eval_cap=eval_cap, device=device
-        )
-        return evals, converged, final, "none converged"
-    return best
+            if converged:
+                if best is None or evals < best[0]:
+                    best = (evals, converged, final, (dt_start, factor))
+            elif first_capped is None:
+                first_capped = (
+                    evals, converged, final,
+                    f"none converged ({dt_start}, {factor})",
+                )  # fmt: skip
+    return best if best is not None else first_capped
 
 
 def select_device(device):
