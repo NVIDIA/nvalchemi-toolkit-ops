@@ -1220,6 +1220,32 @@ class TestPrecomputedSetup:
             result[0].cpu().numpy(), coarse[0].cpu().numpy(), rtol=1e-12
         )
 
+    @pytest.mark.parametrize("order", [-2, 0, 1, 7, 9])
+    def test_an_unsupported_spline_order_is_refused(self, order):
+        """A setup overrides the call's order, so it has to apply the same range check.
+
+        Without it the bad order reaches the kernels: order 1 returned an energy around
+        1e19 and order 7 returned the wrong sign, both without complaint.
+        """
+        system = _system("cuda:0")
+        with pytest.raises(ValueError, match="between 2 and 6"):
+            FourierD3Setup.build(
+                system["cell"], system["params"].n_species, MESH, spline_order=order
+            )
+
+    @pytest.mark.parametrize("order", [2, 3, 4, 5, 6])
+    def test_supported_orders_match_the_direct_call(self, order):
+        """The guard must not narrow the range that already worked."""
+        system = _system("cuda:0")
+        setup = FourierD3Setup.build(
+            system["cell"], system["params"].n_species, MESH, spline_order=order
+        )
+        direct = _evaluate(system, spline_order=order)[0]
+        reused = _evaluate(system, setup=setup, mesh_dimensions=None)[0]
+        np.testing.assert_allclose(
+            reused.cpu().numpy(), direct.cpu().numpy(), rtol=1e-12
+        )
+
     def test_it_holds_no_autograd_graph(self):
         """A setup outlives the step that built it, so it must not pin the cell's graph.
 

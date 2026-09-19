@@ -760,6 +760,7 @@ class FourierD3Setup:
         # graph would pin it for the lifetime of a setup that is deliberately long-lived.
         cells = cell.detach().reshape(-1, 3, 3)
         dtype, device = cells.dtype, cells.device
+        _check_spline_order(spline_order, "FourierD3Setup.build")
         mesh_nx, mesh_ny, mesh_nz = _check_mesh_supports_stencil(
             tuple(int(n) for n in mesh_dimensions),
             spline_order,
@@ -874,6 +875,20 @@ def _next_fft_friendly(size):
         if remainder == 1:
             return candidate
         candidate += 1
+
+
+def _check_spline_order(spline_order, origin):
+    """Reject an interpolation order the kernels are not built for.
+
+    Orders outside 2 to 6 are not merely inaccurate: order 1 returns an energy around 1e19,
+    order 0 recurses until the stack gives out, and a negative order fails inside
+    ``torch.arange``. A setup carries its order through to the call and overrides whatever
+    was passed there, so both entry points have to apply this or the check is bypassable.
+    """
+    if spline_order < 2 or spline_order > 6:
+        raise ValueError(
+            f"spline_order must be between 2 and 6, got {spline_order} (from {origin})."
+        )
 
 
 def _check_mesh_supports_stencil(mesh, spline_order, origin):
@@ -1178,8 +1193,7 @@ def fourier_dftd3(
     )
     if cell is None:
         raise ValueError("cell is required: FourierD3 evaluates a periodic sum.")
-    if spline_order < 2 or spline_order > 6:
-        raise ValueError(f"spline_order must be between 2 and 6, got {spline_order}.")
+    _check_spline_order(spline_order, "fourier_dftd3")
 
     positions = positions if positions.is_floating_point() else positions.double()
     cells = cell.reshape(-1, 3, 3).to(dtype=positions.dtype, device=positions.device)
