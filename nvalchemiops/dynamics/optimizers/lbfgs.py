@@ -3317,6 +3317,62 @@ def _check_inputs(positions, forces, batch_idx, state: LBFGSState) -> None:
         )
 
 
+def _check_cell_inputs(positions, forces, cell, stress, batch_idx, state, cell_state):
+    """Confirm this call's inputs match both prepared states.
+
+    The variable-cell counterpart of :func:`_check_inputs`, and as thorough:
+    the entry point is public, both states are plain dataclasses whose fields
+    can be reassigned between steps, and the kernels here index a *packed*
+    array built from three separate topologies. Shapes and dtypes only -- no
+    device reads -- so it costs nothing next to the launches that follow.
+
+    This does not reuse :func:`_check_inputs`: there ``positions`` spans the
+    whole degree-of-freedom vector, whereas here it holds atoms only and the
+    state is sized for ``num_atoms + 2 * num_systems``.
+    """
+    state.validate()
+    cell_state.validate(num_atoms=positions.shape[0])
+    num_systems = state.num_systems
+
+    if state.num_dofs != cell_state.num_packed_dofs:
+        raise ValueError(
+            f"state is sized for {state.num_dofs} degrees of freedom but the "
+            f"cell state is packed for {cell_state.num_packed_dofs}"
+        )
+    expected = positions.shape[0] + 2 * num_systems
+    if expected != state.num_dofs:
+        raise ValueError(
+            f"{positions.shape[0]} atoms in {num_systems} systems needs "
+            f"{expected} degrees of freedom, but the state has {state.num_dofs}"
+        )
+    if forces.shape[0] != positions.shape[0]:
+        raise ValueError(
+            f"forces has {forces.shape[0]} entries, positions has {positions.shape[0]}"
+        )
+    if batch_idx.shape[0] != positions.shape[0]:
+        raise ValueError(
+            f"batch_idx has {batch_idx.shape[0]} entries, positions has "
+            f"{positions.shape[0]}"
+        )
+    for name, array in (("cell", cell), ("stress", stress)):
+        if array.shape[0] != num_systems:
+            raise ValueError(
+                f"{name} has {array.shape[0]} entries, but there are "
+                f"{num_systems} systems"
+            )
+    # The packed arrays are written from the Cartesian ones, so a precision
+    # mismatch would surface as a kernel launch failure rather than as this.
+    if forces.dtype != positions.dtype:
+        raise ValueError(
+            f"forces dtype {forces.dtype} != positions dtype {positions.dtype}"
+        )
+    if cell.dtype != stress.dtype:
+        raise ValueError(f"cell dtype {cell.dtype} != stress dtype {stress.dtype}")
+    devices = {str(a.device) for a in (positions, forces, cell, stress, batch_idx)}
+    if len(devices) > 1:
+        raise ValueError(f"inputs are spread across devices {sorted(devices)}")
+
+
 def lbfgs_reduce(forces, state: LBFGSState, batch_idx) -> None:
     """Compute the per-system reduction for one call. See :func:`lbfgs_step`."""
     _lbfgs_reduce_impl(forces, state.direction, batch_idx, state.gg)
@@ -3389,17 +3445,7 @@ def lbfgs_step_coord_cell(positions, forces, cell, stress, state: LBFGSState,
     :func:`lbfgs_set_reference_cell` and :func:`lbfgs_cell_kappa` once before
     the first step.
     """
-    if state.num_dofs != cell_state.num_packed_dofs:
-        raise ValueError(
-            f"state is sized for {state.num_dofs} degrees of freedom but the "
-            f"cell state is packed for {cell_state.num_packed_dofs}"
-        )
-    if positions.shape[0] + 2 * state.num_systems != state.num_dofs:
-        raise ValueError(
-            f"{positions.shape[0]} atoms in {state.num_systems} systems needs "
-            f"{positions.shape[0] + 2 * state.num_systems} degrees of freedom, "
-            f"but the state has {state.num_dofs}"
-        )
+    _check_cell_inputs(positions, forces, cell, stress, batch_idx, state, cell_state)
     _lbfgs_step_coord_cell_impl(
         positions=positions, forces=forces, cell=cell, stress=stress,
         batch_idx=batch_idx,

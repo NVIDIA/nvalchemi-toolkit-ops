@@ -47,6 +47,7 @@ from nvalchemiops.dynamics.optimizers.lbfgs import (
     lbfgs_cell_kappa,
     lbfgs_cell_trust_region,
     lbfgs_pack_cell,
+    lbfgs_prepare_cell_state,
     lbfgs_prepare_state,
     lbfgs_prepare_step,
     lbfgs_set_reference_cell,
@@ -1388,6 +1389,101 @@ class TestLBFGSCellPrecision:
         assert np.isfinite(positions.numpy()).all()
         assert np.isfinite(cell.numpy()).all()
         assert not np.allclose(cell.numpy()[0], cell_np), "the cell did not move"
+
+
+class TestLBFGSCellStepErrors:
+    """The variable-cell entry point validates as thoroughly as the others.
+
+    It is public, both states are plain dataclasses whose fields can be
+    reassigned after preparation, and its kernels index a *packed* array built
+    from three separate topologies -- so anything inconsistent that gets past
+    here is an out-of-bounds read rather than an error. Measured before this
+    was added: a short ``forces``, a short ``batch_idx`` and a state field left
+    on the host all reached the kernels with no error at all.
+    """
+
+    @staticmethod
+    def _inputs(device, n=4, m=1):
+        cell = wp.array((np.eye(3) * 6.0)[None], dtype=wp.mat33d, device=device)
+        npart = wp.array(np.array([n], np.int32), dtype=wp.int32, device=device)
+        ep = wp.array(np.array([0, n], np.int32), dtype=wp.int32, device=device)
+        eb = wp.zeros(n + 2 * m, dtype=wp.int32, device=device)
+        st = lbfgs_prepare_state(n + 2 * m, m, device=device)
+        cs = lbfgs_prepare_cell_state(
+            n, m, eb, ep, cell=cell, n_particles=npart, device=device
+        )
+        return dict(
+            positions=wp.zeros(n, dtype=wp.vec3d, device=device),
+            forces=wp.zeros(n, dtype=wp.vec3d, device=device),
+            cell=cell,
+            stress=wp.zeros(m, dtype=wp.mat33d, device=device),
+            state=st,
+            cell_state=cs,
+            batch_idx=wp.zeros(n, dtype=wp.int32, device=device),
+        )
+
+    @staticmethod
+    def _step(kw):
+        lbfgs_step_coord_cell(
+            kw["positions"], kw["forces"], kw["cell"], kw["stress"],
+            kw["state"], kw["cell_state"], kw["batch_idx"], maxstep=0.2,
+        )  # fmt: skip
+        wp.synchronize()
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_accepts_consistent_inputs(self, device):
+        """The fixture itself must be valid, or the rest proves nothing."""
+        self._step(self._inputs(device))
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_short_forces_are_rejected(self, device):
+        kw = self._inputs(device)
+        kw["forces"] = wp.zeros(2, dtype=wp.vec3d, device=device)
+        with pytest.raises(ValueError, match="forces has 2 entries"):
+            self._step(kw)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_short_batch_idx_is_rejected(self, device):
+        kw = self._inputs(device)
+        kw["batch_idx"] = wp.zeros(2, dtype=wp.int32, device=device)
+        with pytest.raises(ValueError, match="batch_idx has 2 entries"):
+            self._step(kw)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_a_reassigned_history_buffer_is_rejected(self, device):
+        kw = self._inputs(device)
+        kw["state"].s_history = wp.zeros((6, 2), dtype=wp.vec3d, device=device)
+        with pytest.raises(ValueError, match="s_history starts with dimensions"):
+            self._step(kw)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_a_reassigned_scalar_precision_is_rejected(self, device):
+        """Without this it surfaced as a raw warp launch error, not a ValueError."""
+        kw = self._inputs(device)
+        kw["state"].gg = wp.zeros(1, dtype=wp.float32, device=device)
+        with pytest.raises(ValueError, match="must share one dtype"):
+            self._step(kw)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_a_field_left_on_the_host_is_rejected(self, device):
+        kw = self._inputs(device)
+        kw["state"].d0 = wp.zeros(1, dtype=wp.float64, device="cpu")
+        with pytest.raises(ValueError, match="spread across devices"):
+            self._step(kw)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_a_reassigned_cell_scratch_buffer_is_rejected(self, device):
+        kw = self._inputs(device)
+        kw["cell_state"].ext_forces = wp.zeros(2, dtype=wp.vec3d, device=device)
+        with pytest.raises(ValueError, match="ext_forces starts with dimensions"):
+            self._step(kw)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_a_stress_for_the_wrong_system_count_is_rejected(self, device):
+        kw = self._inputs(device)
+        kw["stress"] = wp.zeros(3, dtype=wp.mat33d, device=device)
+        with pytest.raises(ValueError, match="stress has 3 entries"):
+            self._step(kw)
 
 
 class TestLBFGSCellConvention:
