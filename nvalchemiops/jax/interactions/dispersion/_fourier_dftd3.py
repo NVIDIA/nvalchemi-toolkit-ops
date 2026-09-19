@@ -367,6 +367,30 @@ def _resolve_mesh(mesh_dimensions, mesh_spacing, cells, spline_order):
     )
 
 
+def _reject_cpu_backend(positions):
+    """Refuse a CPU backend, where this binding does not compute the right answer.
+
+    The coordination-number and reciprocal-space passes are launched one block per atom and
+    per bin, with the threads of a block striding through the work and reducing at the end.
+    Warp's CPU backend has no block launches, so the stride runs with a single active thread
+    and most of each atom's neighbours are never visited. The Warp launchers used by the
+    Torch binding collapse the stride to one on CPU for exactly this reason; ``jax_kernel``
+    is given the block size at registration, so this path cannot do the same and would
+    otherwise return a plausible energy that is several percent wrong.
+    """
+    try:
+        platforms = {device.platform for device in positions.devices()}
+    except (AttributeError, jax.errors.ConcretizationTypeError):
+        platforms = {jax.default_backend()}
+    if platforms and not platforms & {"gpu", "cuda", "rocm"}:
+        raise RuntimeError(
+            f"FourierD3's JAX binding requires a GPU backend, got {sorted(platforms)}. "
+            "Its block-per-atom passes need real block launches, which Warp's CPU backend "
+            "does not provide; on CPU the result would be silently wrong rather than slow. "
+            "The Torch binding runs correctly on either device."
+        )
+
+
 def _reject_out_of_range_batch(batch_idx, num_systems):
     """Reject batch indices that point at no system.
 
@@ -643,6 +667,7 @@ def fourier_dftd3(
                 "unit_shifts is required: FourierD3 is periodic, so every neighbour needs "
                 "its lattice image."
             )
+    _reject_cpu_backend(positions)
     if cell is None:
         raise ValueError("cell is required: FourierD3 evaluates a periodic sum.")
     if spline_order < 2 or spline_order > 6:

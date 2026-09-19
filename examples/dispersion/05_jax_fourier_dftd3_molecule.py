@@ -69,8 +69,11 @@ from nvalchemiops.jax.interactions.dispersion import (  # noqa: E402
 BOHR_TO_ANGSTROM = 0.529177210544
 HARTREE_TO_EV = 27.211386245981
 
+# Unlike the Torch binding, this one is GPU-only: its block-per-atom passes need real block
+# launches, which Warp's CPU backend does not provide. ``fourier_dftd3`` refuses a CPU
+# backend rather than returning a wrong answer, so skip rather than fail here.
 if jax.default_backend() == "cpu":
-    print("FourierD3 requires a CUDA device. Skipping.")
+    print("FourierD3's JAX binding requires a GPU backend. Skipping.")
     raise SystemExit(0)
 
 # %%

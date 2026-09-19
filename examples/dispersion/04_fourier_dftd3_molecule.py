@@ -56,10 +56,10 @@ from nvalchemiops.torch.interactions.dispersion import (
 BOHR_TO_ANGSTROM = 0.529177210544
 HARTREE_TO_EV = 27.211386245981
 
+# The Torch binding runs on either device: the Warp launchers collapse their block-per-atom
+# passes to one thread per atom on CPU, and the transforms are ``torch.fft``. CPU is far
+# slower, but it agrees with CUDA to round-off.
 device = "cuda" if torch.cuda.is_available() else "cpu"
-if device == "cpu":
-    print("FourierD3 requires a CUDA device. Skipping.")
-    raise SystemExit(0)
 
 # %%
 # A periodic cell
