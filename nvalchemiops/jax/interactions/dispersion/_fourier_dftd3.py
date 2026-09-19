@@ -84,19 +84,22 @@ their own sizes.
 
 
 def _make_jax_kernels(overloads, num_outputs, in_out_argnames=None, block_dim=None):
-    """Wrap a dtype-keyed set of Warp overloads as JAX kernels."""
-    jax_to_wp = {jnp.float32: wp.float32, jnp.float64: wp.float64}
-    extra = {} if in_out_argnames is None else {"in_out_argnames": in_out_argnames}
-    if block_dim is not None:
-        extra["block_dim"] = block_dim
+    """Wrap a dtype-keyed set of Warp overloads as JAX kernels.
+
+    ``jax_kernel`` takes ``None`` for both optional arguments, so they pass straight through.
+    """
     return {
         jax_dtype: jax_kernel(
             overloads[wp_dtype],
             num_outputs=num_outputs,
             enable_backward=False,
-            **extra,
+            in_out_argnames=in_out_argnames,
+            block_dim=block_dim,
         )
-        for jax_dtype, wp_dtype in jax_to_wp.items()
+        for jax_dtype, wp_dtype in (
+            (jnp.float32, wp.float32),
+            (jnp.float64, wp.float64),
+        )
     }
 
 
