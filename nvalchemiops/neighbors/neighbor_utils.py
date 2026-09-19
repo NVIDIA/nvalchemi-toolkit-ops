@@ -1872,7 +1872,7 @@ def _make_selective_fill_neighbor_matrix_tail_kernel(*, batched: bool, block_dim
         fill_value : wp.int32
             Value written to unused columns.
         neighbor_matrix : wp.array, shape (natom, max_neighbors), dtype=wp.int32
-            MODIFIED: Neighbor matrix whose selected inactive tails are filled.
+            OUTPUT: Neighbor matrix whose selected inactive tails are filled.
 
         Returns
         -------
@@ -1888,22 +1888,22 @@ def _make_selective_fill_neighbor_matrix_tail_kernel(*, batched: bool, block_dim
         --------
         _selective_fill_neighbor_matrix_tail : Launch this selective tail-fill kernel.
         """
-        row = wp.tid()
-        if row >= natom:
+        atom_i = wp.tid()
+        if atom_i >= natom:
             return
         isys = wp.int32(0)
         if BATCHED:
-            isys = batch_idx[row]
+            isys = batch_idx[atom_i]
         if not rebuild_flags[isys]:
             return
-        nn = num_neighbors[row]
+        nn = num_neighbors[atom_i]
         if nn >= max_neighbors:
             return
         lane_tile = wp.tile_arange(block_dim_const, dtype=wp.int32)
         lane = wp.untile(lane_tile)
         k = nn + lane
         while k < max_neighbors:
-            neighbor_matrix[row, k] = fill_value
+            neighbor_matrix[atom_i, k] = fill_value
             k += block_dim_const
 
     base = (
