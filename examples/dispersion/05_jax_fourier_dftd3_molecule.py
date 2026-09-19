@@ -157,7 +157,7 @@ print(f"directed edges   : {neighbor_list.shape[1]}")
 
 damping = dict(a1=0.4289, a2=4.4407, s8=0.7875)  # PBE-D3(BJ)
 common = dict(
-    fd3_params=params,
+    fourier_d3_params=params,
     cell=cell,
     r_cut=r_cut,
     mesh_dimensions=(32, 32, 32),
@@ -189,7 +189,7 @@ jitted = jax.jit(
         pos,
         num,
         **damping,
-        fd3_params=params,
+        fourier_d3_params=params,
         cell=cell,
         r_cut=r_cut,
         mesh_dimensions=(32, 32, 32),
@@ -223,7 +223,7 @@ for size in (16, 24, 32, 48):
             positions,
             numbers,
             **damping,
-            fd3_params=params,
+            fourier_d3_params=params,
             cell=cell,
             r_cut=r_cut,
             mesh_dimensions=(size, size, size),

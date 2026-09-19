@@ -994,7 +994,7 @@ neighbors, pointer, shifts = neighbor_list(
 energy, forces = fourier_dftd3(
     positions, numbers,
     a1=0.4289, a2=4.4407, s8=0.7875,      # PBE-D3(BJ)
-    fd3_params=params, cell=cell, r_cut=r_cut,
+    fourier_d3_params=params, cell=cell, r_cut=r_cut,
     mesh_dimensions=(32, 32, 32),
     neighbor_list=neighbors, neighbor_ptr=pointer, unit_shifts=shifts,
 )
@@ -1187,7 +1187,7 @@ evaluation only --- the neighbour list is built outside the timed region, per th
 [kernel style guide](../about/kernel-style-guide.md).
 
 ```{warning}
-`fd3_params` must cover every element in the system. `species_map` marks both padding
+`fourier_d3_params` must cover every element in the system. `species_map` marks both padding
 (atomic number 0) and uncovered elements with `-1`, and the mesh grouping treats `-1` as
 padding, so an uncovered element would otherwise be dropped from the sum and the energy would
 come back plausible but wrong.

@@ -1036,7 +1036,7 @@ def fourier_dftd3(
     a2: float,
     s8: float,
     *,
-    fd3_params: FourierD3Parameters,
+    fourier_d3_params: FourierD3Parameters,
     cell: torch.Tensor,
     r_cut: float,
     mesh_dimensions: tuple[int, int, int] | None = None,
@@ -1071,7 +1071,7 @@ def fourier_dftd3(
         Atomic numbers. Zero marks a padding atom.
     a1, a2, s8 : float
         Becke-Johnson damping parameters for the exchange-correlation functional in use.
-    fd3_params : FourierD3Parameters
+    fourier_d3_params : FourierD3Parameters
         Separable coefficients covering every species present.
     cell : torch.Tensor, shape (3, 3), (1, 3, 3) or (B, 3, 3)
         Lattice vectors as rows. Required: FourierD3 is periodic.
@@ -1183,7 +1183,7 @@ def fourier_dftd3(
     --------
     >>> energy, forces = fourier_dftd3(
     ...     positions, numbers, a1=0.4289, a2=4.4407, s8=0.7875,
-    ...     fd3_params=params, cell=cell, r_cut=11.34,
+    ...     fourier_d3_params=params, cell=cell, r_cut=11.34,
     ...     mesh_dimensions=(32, 32, 32),
     ...     neighbor_list=pairs, neighbor_ptr=pointer, unit_shifts=shifts,
     ... )
@@ -1247,7 +1247,7 @@ def fourier_dftd3(
             )
             batch_idx = batch_idx.clamp(0, num_systems - 1)
 
-    params = fd3_params.to(device=positions.device, dtype=positions.dtype)
+    params = fourier_d3_params.to(device=positions.device, dtype=positions.dtype)
     species_index = params.species_map[numbers.long()].to(torch.int32)
     # Reading the answer back synchronises, which breaks a compile graph and is illegal
     # under capture, so this is skipped in both. Z=0 is padding; only a real uncovered
@@ -1256,7 +1256,7 @@ def fourier_dftd3(
     if not torch.compiler.is_compiling() and not _capturing() and bool(uncovered.any()):
         missing = torch.unique(numbers[uncovered]).tolist()
         raise ValueError(
-            f"Atomic numbers {missing} are not covered by fd3_params. Rebuild the "
+            f"Atomic numbers {missing} are not covered by fourier_d3_params. Rebuild the "
             f"decomposition with every species present in the system."
         )
 

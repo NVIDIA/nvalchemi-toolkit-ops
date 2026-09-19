@@ -110,7 +110,7 @@ def system():
 def _evaluate(system, **kwargs):
     """Call the public API with the CSR neighbour list unless told otherwise."""
     arguments = dict(
-        fd3_params=system["params"],
+        fourier_d3_params=system["params"],
         cell=system["cell"],
         r_cut=R_CUT,
         mesh_dimensions=MESH,
@@ -158,7 +158,7 @@ def _dense_call(
         jnp.asarray(parts["positions"]),
         jnp.asarray(parts["numbers"], dtype=jnp.int32),
         **DAMPING,
-        fd3_params=parts["params"],
+        fourier_d3_params=parts["params"],
         cell=jnp.asarray(cells),
         r_cut=R_CUT,
         mesh_dimensions=MESH,
@@ -413,7 +413,7 @@ class TestPrecision:
                 system,
                 positions=jnp.asarray(numpy["positions"], dtype=dtype),
                 cell=jnp.asarray(numpy["cell"], dtype=dtype),
-                fd3_params=parameters,
+                fourier_d3_params=parameters,
             )
         double, single = outputs[jnp.float64], outputs[jnp.float32]
         assert single[0].dtype == jnp.float32
@@ -469,7 +469,7 @@ class TestSkewedCell:
             jnp.asarray(positions),
             case["numbers"],
             **DAMPING,
-            fd3_params=case["params"],
+            fourier_d3_params=case["params"],
             cell=jnp.asarray(cell),
             r_cut=R_CUT,
             mesh_dimensions=MESH,
@@ -541,7 +541,7 @@ class TestEmptySystem:
             jnp.zeros((0, 3)),
             jnp.zeros(0, dtype=jnp.int32),
             **DAMPING,
-            fd3_params=system["params"],
+            fourier_d3_params=system["params"],
             cell=jnp.broadcast_to(system["cell"], (num_systems, 3, 3)),
             r_cut=R_CUT,
             mesh_dimensions=MESH,
@@ -577,7 +577,7 @@ class TestEmptySystem:
                 jnp.zeros((0, 3)),
                 jnp.zeros(0, dtype=jnp.int32),
                 **DAMPING,
-                fd3_params=system["params"],
+                fourier_d3_params=system["params"],
                 cell=system["cell"],
                 r_cut=R_CUT,
                 neighbor_list=jnp.zeros((2, 0), dtype=jnp.int32),
@@ -640,7 +640,7 @@ class TestModulusConvention:
             tensor(numpy["positions"]),
             tensor(numpy["numbers"], torch.int32),
             **DAMPING,
-            fd3_params=parameters,
+            fourier_d3_params=parameters,
             cell=tensor(numpy["cell"]),
             r_cut=R_CUT,
             mesh_dimensions=MESH,
@@ -673,7 +673,7 @@ class TestJit:
             return fourier_dftd3(
                 positions,
                 system["numbers"],
-                fd3_params=system["params"],
+                fourier_d3_params=system["params"],
                 cell=system["cell"],
                 r_cut=R_CUT,
                 mesh_dimensions=MESH,
@@ -703,7 +703,7 @@ class TestJit:
             return fourier_dftd3(
                 system["positions"],
                 system["numbers"],
-                fd3_params=system["params"],
+                fourier_d3_params=system["params"],
                 cell=cell,
                 r_cut=R_CUT,
                 mesh_dimensions=None,
@@ -733,7 +733,7 @@ class TestBatchArgumentValidation:
             jnp.asarray(parts["positions"]),
             jnp.asarray(parts["numbers"], dtype=jnp.int32),
             **DAMPING,
-            fd3_params=parts["params"],
+            fourier_d3_params=parts["params"],
             cell=jnp.asarray(parts["cell"]),
             r_cut=R_CUT,
             mesh_dimensions=MESH,
@@ -838,7 +838,7 @@ class TestNeighbourArgumentValidation:
             jnp.asarray(parts["positions"]),
             jnp.asarray(parts["numbers"], dtype=jnp.int32),
             **DAMPING,
-            fd3_params=parts["params"],
+            fourier_d3_params=parts["params"],
             cell=jnp.asarray(parts["cell"]),
             r_cut=R_CUT,
             mesh_dimensions=MESH,
@@ -880,7 +880,7 @@ class TestNeighbourArgumentValidation:
 
 @pytest.mark.gpu
 class TestUncoveredSpecies:
-    """An element missing from ``fd3_params`` must not be dropped in silence.
+    """An element missing from ``fourier_d3_params`` must not be dropped in silence.
 
     ``species_map`` marks padding and uncovered elements alike with ``-1``, and the mesh
     grouping treats every ``-1`` as padding, so without a check a real atom simply vanishes
@@ -893,7 +893,7 @@ class TestUncoveredSpecies:
             jnp.asarray(parts["positions"]),
             numbers,
             **DAMPING,
-            fd3_params=params,
+            fourier_d3_params=params,
             cell=jnp.asarray(parts["cell"]),
             r_cut=R_CUT,
             mesh_dimensions=MESH,
@@ -920,7 +920,7 @@ class TestUncoveredSpecies:
         params, missing = self._partial_params()
         numbers = np.asarray(parts["numbers"]).copy()
         numbers[0] = missing
-        with pytest.raises(ValueError, match="not covered by fd3_params"):
+        with pytest.raises(ValueError, match="not covered by fourier_d3_params"):
             self._call(parts, params, jnp.asarray(numbers, dtype=jnp.int32))
 
     def test_padding_is_not_mistaken_for_an_uncovered_element(self):
@@ -990,7 +990,7 @@ class TestParametersUnderJit:
                 positions,
                 jnp.asarray(parts["numbers"], dtype=jnp.int32),
                 **DAMPING,
-                fd3_params=params,
+                fourier_d3_params=params,
                 cell=jnp.asarray(parts["cell"]),
                 r_cut=R_CUT,
                 mesh_dimensions=MESH,
@@ -1027,7 +1027,7 @@ class TestEnergyIsNotDifferentiable:
                 positions,
                 jnp.asarray(parts["numbers"], dtype=jnp.int32),
                 **DAMPING,
-                fd3_params=parts["params"],
+                fourier_d3_params=parts["params"],
                 cell=jnp.asarray(parts["cell"]),
                 r_cut=R_CUT,
                 mesh_dimensions=MESH,
@@ -1063,7 +1063,7 @@ class TestRankChunking:
                 positions,
                 jnp.asarray(parts["numbers"], dtype=jnp.int32),
                 **DAMPING,
-                fd3_params=parts["params"],
+                fourier_d3_params=parts["params"],
                 cell=jnp.asarray(parts["cell"]),
                 r_cut=R_CUT,
                 mesh_dimensions=MESH,
@@ -1092,7 +1092,7 @@ class TestRankChunking:
                 jnp.asarray(parts["positions"]),
                 jnp.asarray(parts["numbers"], dtype=jnp.int32),
                 **DAMPING,
-                fd3_params=parts["params"],
+                fourier_d3_params=parts["params"],
                 cell=jnp.asarray(parts["cell"]),
                 r_cut=R_CUT,
                 mesh_dimensions=MESH,
@@ -1178,7 +1178,7 @@ class TestBackendGuard:
             positions,
             numbers,
             **DAMPING,
-            fd3_params=parts["params"],
+            fourier_d3_params=parts["params"],
             cell=cell,
             r_cut=R_CUT,
             mesh_dimensions=MESH,

@@ -233,7 +233,7 @@ def benchmark_fourier_d3(
         return fourier_dftd3(
             positions,
             numbers,
-            fd3_params=parameters,
+            fourier_d3_params=parameters,
             cell=cell,
             r_cut=CN_CUTOFF,
             mesh_dimensions=(mesh, mesh, mesh),

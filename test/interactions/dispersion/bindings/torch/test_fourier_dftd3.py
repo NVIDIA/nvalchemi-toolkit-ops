@@ -235,7 +235,7 @@ def _evaluate_at(system, positions=None, cell=None, **kwargs):
 def _evaluate(system, **kwargs):
     """Call the public API with the CSR neighbour list unless told otherwise."""
     arguments = dict(
-        fd3_params=system["params"],
+        fourier_d3_params=system["params"],
         cell=system["cell"],
         r_cut=R_CUT,
         mesh_dimensions=MESH,
@@ -454,7 +454,7 @@ class TestEmptySystem:
             zeros,
             torch.zeros(0, dtype=torch.int32, device=device),
             **DAMPING,
-            fd3_params=system["params"],
+            fourier_d3_params=system["params"],
             cell=system["cell"].expand(num_systems, 3, 3),
             r_cut=R_CUT,
             mesh_dimensions=MESH,
@@ -497,7 +497,7 @@ class TestEmptySystem:
                 torch.zeros(0, 3, dtype=system["positions"].dtype, device=device),
                 torch.zeros(0, dtype=torch.int32, device=device),
                 **DAMPING,
-                fd3_params=system["params"],
+                fourier_d3_params=system["params"],
                 cell=system["cell"],
                 r_cut=R_CUT,
                 neighbor_list=torch.zeros(2, 0, dtype=torch.int32, device=device),
@@ -682,7 +682,7 @@ class TestPaddingAtoms:
         numbers[0] = 7
         rejected = dict(system)
         rejected["numbers"] = numbers
-        with pytest.raises(ValueError, match="not covered by fd3_params"):
+        with pytest.raises(ValueError, match="not covered by fourier_d3_params"):
             _evaluate(rejected)
 
 
@@ -959,7 +959,7 @@ class TestMeshAndUnits:
         numbers = system["numbers"].clone()
         numbers[0] = 7
         system["numbers"] = numbers
-        with pytest.raises(ValueError, match="not covered by fd3_params"):
+        with pytest.raises(ValueError, match="not covered by fourier_d3_params"):
             _evaluate(system)
 
 
@@ -1098,7 +1098,7 @@ class TestTorchCompile:
             return fourier_dftd3(
                 positions,
                 system["numbers"],
-                fd3_params=system["params"],
+                fourier_d3_params=system["params"],
                 cell=system["cell"],
                 r_cut=R_CUT,
                 mesh_dimensions=MESH,
@@ -1187,7 +1187,7 @@ class TestPrecomputedSetup:
             return fourier_dftd3(
                 positions,
                 system["numbers"],
-                fd3_params=system["params"],
+                fourier_d3_params=system["params"],
                 cell=system["cell"],
                 r_cut=R_CUT,
                 mesh_dimensions=MESH,

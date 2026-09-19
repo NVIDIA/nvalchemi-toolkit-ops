@@ -440,7 +440,7 @@ def _reject_uncovered_species(species_index, numbers):
 
     ``species_map`` marks both padding and uncovered elements with ``-1``, and the mesh
     grouping below treats every ``-1`` as padding. A real element missing from
-    ``fd3_params`` would therefore be dropped from the sum with no error at all, which is
+    ``fourier_d3_params`` would therefore be dropped from the sum with no error at all, which is
     the worst kind of wrong: a plausible energy that is quietly missing atoms.
 
     Atomic number zero is padding and is skipped by design; only a real element that the
@@ -464,7 +464,7 @@ def _reject_uncovered_species(species_index, numbers):
         return jnp.where(jnp.any(uncovered), jnp.nan, 1.0)
     if missing:
         raise ValueError(
-            f"Atomic numbers {missing} are not covered by fd3_params. Rebuild the "
+            f"Atomic numbers {missing} are not covered by fourier_d3_params. Rebuild the "
             f"decomposition with every species present in the system."
         )
     return 1.0
@@ -523,7 +523,7 @@ def fourier_dftd3(
     a2: float,
     s8: float,
     *,
-    fd3_params: FourierD3Parameters,
+    fourier_d3_params: FourierD3Parameters,
     cell,
     r_cut: float,
     mesh_dimensions: tuple[int, int, int] | None = None,
@@ -558,7 +558,7 @@ def fourier_dftd3(
         Atomic numbers. Zero marks a padding atom.
     a1, a2, s8 : float
         Becke-Johnson damping parameters.
-    fd3_params : FourierD3Parameters
+    fourier_d3_params : FourierD3Parameters
         Separable coefficients covering every species present.
     cell : jax.Array, shape (3, 3), (1, 3, 3) or (B, 3, 3)
         Lattice vectors as rows. Required: FourierD3 is periodic.
@@ -630,7 +630,7 @@ def fourier_dftd3(
 
     Notes
     -----
-    ``fd3_params`` must cover every element present. Eagerly this raises and names the
+    ``fourier_d3_params`` must cover every element present. Eagerly this raises and names the
     missing elements; under ``jax.jit`` the mask cannot be read back, so the energy, forces
     and virial come back NaN rather than silently omitting those atoms.
 
@@ -704,7 +704,7 @@ def fourier_dftd3(
     if fill_value is None:
         fill_value = n_atoms
 
-    params = fd3_params
+    params = fourier_d3_params
     covalent_radii = jnp.asarray(params.rcov, dtype=dtype)
     cn_ref = jnp.asarray(params.cn_ref, dtype=dtype)
     v_q = jnp.asarray(params.v_q, dtype=dtype)
