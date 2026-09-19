@@ -74,6 +74,7 @@ from typing import Any
 
 import warp as wp
 
+from nvalchemiops.math import wp_logistic
 from nvalchemiops.math.spline import (
     bspline_grid_offset,
     bspline_weight_3d,
@@ -163,20 +164,6 @@ _PI_SQ = _PI * _PI
 
 
 @wp.func
-def _logistic(argument: Any) -> Any:
-    """Logistic function evaluated so the exponent is never positive.
-
-    The counting-function steepness diverges at the cutoff, so the naive
-    ``1 / (1 + exp(-x))`` overflows there. Harmless in float64, a real failure in float32.
-    """
-    one = type(argument)(1.0)
-    decay = wp.exp(-wp.abs(argument))
-    if argument >= type(argument)(0.0):
-        return one / (one + decay)
-    return decay / (one + decay)
-
-
-@wp.func
 def _cn_counting(
     distance: Any,
     covalent_distance: Any,
@@ -225,7 +212,7 @@ def _cn_counting(
 
     ratio = covalent_distance / distance
     argument = steepness * (ratio - one)
-    value = _logistic(argument)
+    value = wp_logistic(argument)
 
     if not compute_derivative:
         return value, type(distance)(0.0)
