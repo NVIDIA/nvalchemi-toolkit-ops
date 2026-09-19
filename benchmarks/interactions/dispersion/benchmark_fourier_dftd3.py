@@ -51,6 +51,7 @@ from benchmarks.suite_utils import (  # noqa: E402
     build_failure_result,
     build_result,
     cuda_timed_runs,
+    failure_error_type,
     make_row_meta,
     measure_memory_torch,
     save_results,
@@ -332,6 +333,7 @@ def run_from_config(config: dict, output_dir, backend: str = "torch") -> list[di
                     build_failure_result(
                         method=method,
                         error=str(error),
+                        error_type=failure_error_type(error),
                         timing_runs=num_runs,
                         warmup_runs=warmup_runs,
                         **row_meta,
@@ -363,6 +365,7 @@ def run_from_config(config: dict, output_dir, backend: str = "torch") -> list[di
                     build_failure_result(
                         method=f"dftd3_cutoff_{cutoff:g}",
                         error=str(error),
+                        error_type=failure_error_type(error),
                         timing_runs=num_runs,
                         warmup_runs=warmup_runs,
                         **row_meta,
