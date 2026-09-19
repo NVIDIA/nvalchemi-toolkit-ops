@@ -95,6 +95,7 @@ from nvalchemiops.dynamics.optimizers.lbfgs import (
     _OPTIMIZER_BUFFERS,
     LBFGSCellState,
     LBFGSState,
+    _resolve_curvature_eps,
 )
 from nvalchemiops.dynamics.optimizers.lbfgs import (
     _lbfgs_step_coord_cell_impl as _wp_step_cell,
@@ -367,7 +368,7 @@ def lbfgs_step_coord(
     batch_idx: torch.Tensor,
     *,
     maxstep: float = 0.2,
-    curvature_eps: float = 1e-10,
+    curvature_eps: float | None = None,
     compute_reductions: bool = True,
 ) -> None:
     """Advance one batched L-BFGS step, consuming one force evaluation.
@@ -385,7 +386,10 @@ def lbfgs_step_coord(
     maxstep : float, optional
         Largest distance any atom may move in one step.
     curvature_eps : float, optional
-        Threshold below which a curvature pair is discarded.
+        Relative threshold below which a curvature pair is discarded. Defaults
+        to ``1e-6`` for float32 coordinates and ``1e-10`` for float64: ``ys``
+        is accumulated at the coordinate precision, so one value cannot serve
+        both.
     compute_reductions : bool, optional
         Set ``False`` only if you have already filled the reduction fields of
         ``state`` yourself for this geometry.
@@ -398,7 +402,8 @@ def lbfgs_step_coord(
     _validate(positions, forces, batch_idx, state)
     _lbfgs_step_op(
         positions, forces, batch_idx, **_state_args(state),
-        maxstep=maxstep, curvature_eps=curvature_eps,
+        maxstep=maxstep,
+        curvature_eps=_resolve_curvature_eps(curvature_eps, _TORCH_TO_WP_SCALAR[positions.dtype]),
         compute_reductions=compute_reductions,
     )  # fmt: skip
 
@@ -430,7 +435,7 @@ def lbfgs_step_coord_cell(
     batch_idx: torch.Tensor,
     *,
     maxstep: float = 0.2,
-    curvature_eps: float = 1e-10,
+    curvature_eps: float | None = None,
 ) -> None:
     """Advance one variable-cell step, relaxing coordinates and cell together.
 
@@ -455,7 +460,8 @@ def lbfgs_step_coord_cell(
     _lbfgs_step_coord_cell_op(
         forces, stress, batch_idx, positions, cell,
         **_state_args(state), **_state_args(cell_state),
-        maxstep=maxstep, curvature_eps=curvature_eps,
+        maxstep=maxstep,
+        curvature_eps=_resolve_curvature_eps(curvature_eps, _TORCH_TO_WP_SCALAR[positions.dtype]),
     )  # fmt: skip
 
 

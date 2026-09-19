@@ -112,6 +112,7 @@ from nvalchemiops.dynamics.optimizers.lbfgs import (
     _OPTIMIZER_BUFFERS,
     LBFGSCellState,
     LBFGSState,
+    _resolve_curvature_eps,
 )
 from nvalchemiops.dynamics.optimizers.lbfgs import (
     _lbfgs_step_coord_cell_impl as _warp_step_cell,
@@ -140,6 +141,9 @@ for _cls in (LBFGSState, LBFGSCellState):
 #: The mutable arrays, in the order the callable takes them, which is also the
 #: order :func:`lbfgs_step_coord` returns them in.
 _LBFGS_IN_OUT_ARGS: tuple[str, ...] = ("positions",) + _OPTIMIZER_BUFFERS
+
+#: JAX coordinate dtype -> the Warp scalar the curvature default is keyed on.
+_WP_SCALAR = {jnp.float32: wp.float32, jnp.float64: wp.float64}
 
 _GRAPH_MODES = {
     "none": JaxCallableGraphMode.NONE,
@@ -389,7 +393,7 @@ def lbfgs_step_coord(
     batch_idx: jax.Array,
     *,
     maxstep: float = 0.2,
-    curvature_eps: float = 1e-10,
+    curvature_eps: float | None = None,
     graph_mode: str = "warp",
 ) -> tuple[jax.Array, LBFGSState]:
     """Advance one batched L-BFGS step, consuming one force evaluation.
@@ -411,7 +415,10 @@ def lbfgs_step_coord(
         Largest distance an atom may move in one step. Zero disables the trust
         region.
     curvature_eps : float, optional
-        Threshold below which a curvature pair is discarded.
+        Relative threshold below which a curvature pair is discarded. Defaults
+        to ``1e-6`` for float32 coordinates and ``1e-10`` for float64: ``ys``
+        is accumulated at the coordinate precision, so one value cannot serve
+        both.
     graph_mode : {"warp", "warp_staged", "none"}, optional
         How the step is captured. ``"warp"`` replays a CUDA graph and is the
         default; ``"warp_staged"`` keys the capture on the call rather than on
@@ -435,7 +442,8 @@ def lbfgs_step_coord(
     out = call(
         forces, batch_idx, positions,
         *(getattr(state, name) for name in _OPTIMIZER_BUFFERS),
-        float(maxstep), float(curvature_eps),
+        float(maxstep),
+        float(_resolve_curvature_eps(curvature_eps, _WP_SCALAR[jnp.dtype(positions.dtype).type])),
     )  # fmt: skip
     return out[0], LBFGSState(**dict(zip(_OPTIMIZER_BUFFERS, out[1:], strict=True)))
 
@@ -868,7 +876,7 @@ def lbfgs_step_coord_cell(
     batch_idx: jax.Array,
     *,
     maxstep: float = 0.2,
-    curvature_eps: float = 1e-10,
+    curvature_eps: float | None = None,
     graph_mode: str = "warp",
 ) -> tuple[jax.Array, jax.Array, LBFGSState, LBFGSCellState]:
     """Advance one variable-cell step, relaxing coordinates and cell together.
@@ -911,7 +919,8 @@ def lbfgs_step_coord_cell(
         forces, stress, batch_idx, positions, cell,
         *(getattr(state, name) for name in _OPTIMIZER_BUFFERS),
         *(getattr(cell_state, name) for name in _CELL_BUFFERS),
-        float(maxstep), float(curvature_eps),
+        float(maxstep),
+        float(_resolve_curvature_eps(curvature_eps, _WP_SCALAR[jnp.dtype(positions.dtype).type])),
     )  # fmt: skip
     n_opt = len(_OPTIMIZER_BUFFERS)
     new_state = LBFGSState(

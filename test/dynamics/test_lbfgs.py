@@ -41,6 +41,7 @@ import warp as wp
 
 from nvalchemiops.dynamics.optimizers.lbfgs import (
     _OPTIMIZER_BUFFERS,
+    _resolve_curvature_eps,
     lbfgs_apply_step,
     lbfgs_cell_kappa,
     lbfgs_cell_trust_region,
@@ -821,6 +822,98 @@ class TestLBFGSStepErrors:
                 batch_idx=d.batch_idx,
                 state=d.state,
             )
+
+
+def _commit_one_pair(cos_target, vec, np_dtype, device, eps=None, n=64):
+    """Drive exactly one curvature pair with a chosen ``cos(s, y)``.
+
+    ``s`` and ``y`` are built directly rather than produced by a relaxation, so
+    the angle between them is the single thing under test. Setting
+    ``iteration`` to zero makes the state machine treat this as an accepted
+    step, which is what puts the pair through the commit kernel.
+
+    Returns ``(kept, computed_ys)``.
+    """
+    rng = np.random.default_rng(0)
+    s = rng.normal(size=(n, 3))
+    perp = rng.normal(size=(n, 3))
+    perp -= s * (np.dot(s.ravel(), perp.ravel()) / np.dot(s.ravel(), s.ravel()))
+    s /= np.linalg.norm(s)
+    perp /= np.linalg.norm(perp)
+    y = cos_target * s + np.sqrt(1.0 - cos_target**2) * perp
+
+    st = make_lbfgs_state(n, 1, HISTORY_SIZE, vec, device)
+    st.iteration.assign(np.array([0], np.int32))
+    # x_base and force_base start at zero, so s = positions and y = -forces.
+    lbfgs_update(
+        wp.array(s.astype(np_dtype), dtype=vec, device=device),
+        wp.array((-y).astype(np_dtype), dtype=vec, device=device),
+        st,
+        wp.zeros(n, dtype=wp.int32, device=device),
+        maxstep=0.2,
+        curvature_eps=eps,
+    )
+    wp.synchronize()
+    return bool(st.history_count.numpy()[0]), float(st.ys.numpy()[0, 0])
+
+
+class TestLBFGSCurvatureThreshold:
+    """The curvature guard, which has to be read in the coordinate precision.
+
+    ``ys`` is accumulated at the coordinate precision, so the relative
+    threshold ``ys > eps * sqrt(ss * yy)`` can only reject on a sign it can
+    actually resolve. Measured on deliberately orthogonal pairs the computed
+    cosine bottoms out around 1e-8 in float32 and 1e-17 in float64, so a single
+    default cannot serve both.
+    """
+
+    def test_default_follows_the_coordinate_dtype(self):
+        """One number cannot sit above both noise floors."""
+        assert _resolve_curvature_eps(None, wp.float32) == 1e-6
+        assert _resolve_curvature_eps(None, wp.float64) == 1e-10
+        assert _resolve_curvature_eps(3e-9, wp.float32) == 3e-9, "override ignored"
+
+    @pytest.mark.parametrize("cos", [1e-9, 1e-8, 1e-7])
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_fp32_rejects_a_pair_it_cannot_resolve(self, device, cos):
+        """Inside the float32 noise band the pair must be discarded.
+
+        The magnitude is not merely imprecise there, it is wrong: at
+        ``cos = 1e-9`` the computed ``ys`` comes out near ``9e-9``, and it is
+        that value which would scale the initial inverse Hessian through
+        ``gamma = ys / yy``.
+        """
+        kept, ys = _commit_one_pair(cos, wp.vec3f, np.float32, device)
+        assert not kept, f"kept a pair at cos={cos:.0e} with ys={ys:.3e}"
+
+    @pytest.mark.parametrize("cos", [1e-5, 1e-3, 0.5])
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_fp32_keeps_a_pair_it_can_resolve(self, device, cos):
+        """The guard must not become so strict that it discards real curvature."""
+        kept, _ = _commit_one_pair(cos, wp.vec3f, np.float32, device)
+        assert kept, f"discarded a usable pair at cos={cos:.0e}"
+
+    @pytest.mark.parametrize("cos", [1e-9, 1e-8, 1e-7])
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_fp64_keeps_what_fp32_cannot(self, device, cos):
+        """float64 resolves this band comfortably, so it must not be rejected.
+
+        This is what makes the default dtype-dependent rather than simply
+        raised: the same pair is signal in one precision and noise in the other.
+        """
+        kept, _ = _commit_one_pair(cos, wp.vec3d, np.float64, device)
+        assert kept, f"discarded a resolvable pair at cos={cos:.0e}"
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_the_old_shared_default_admitted_noise(self, device):
+        """Pins what changed: 1e-10 in float32 accepts an unresolvable pair.
+
+        Passing it explicitly still does, since the caller overrides the
+        default -- what moved is only what happens when nothing is passed.
+        """
+        kept_old, _ = _commit_one_pair(1e-8, wp.vec3f, np.float32, device, eps=1e-10)
+        kept_new, _ = _commit_one_pair(1e-8, wp.vec3f, np.float32, device)
+        assert kept_old and not kept_new
 
 
 class TestLBFGSStateValidation:

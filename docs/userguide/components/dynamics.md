@@ -484,6 +484,13 @@ so an fp32 state is fp32 throughout and an fp64 state fp64 throughout — there
 is no mixed configuration, and a mismatched one is rejected rather than
 silently half-converted.
 
+One knob follows from that choice. `curvature_eps` gates the history on
+`ys > eps * sqrt(ss * yy)`, a floor on the cosine between `s` and `y`, and `ys`
+is accumulated at the coordinate precision — so the floor has to sit above the
+level at which that sum is still signal. It defaults to `1e-6` for float32 and
+`1e-10` for float64; a single value cannot serve both, since a pair that is
+resolvable in float64 is noise in float32.
+
 **You own the loop, and you own convergence.** Each `lbfgs_step` call consumes
 exactly one force evaluation: it updates the history, restarts the direction if
 it stops descending, and takes one bounded step. It owns no tolerance and has

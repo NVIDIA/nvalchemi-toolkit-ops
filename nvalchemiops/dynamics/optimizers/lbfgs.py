@@ -133,6 +133,15 @@ arithmetic, and in JAX they were forced to enable ``JAX_ENABLE_X64`` for an
 fp32 run. If some future reduction genuinely needs a wider accumulator, widen
 *that* reduction and bring the measurement with it.
 
+One threshold does follow from this and is not a free parameter.
+``curvature_eps`` gates the history on ``ys > eps * sqrt(ss * yy)`` -- a floor
+on the cosine between ``s`` and ``y`` -- and ``ys`` is accumulated at the
+coordinate precision. The floor therefore has to sit above the level at which
+that sum is still signal, which is about ``1e-8`` in float32 and ``1e-17`` in
+float64. It defaults to ``1e-6`` and ``1e-10`` respectively; see
+:data:`_CURVATURE_EPS`. Pass a value to override, per system precision as you
+see fit.
+
 State
 -----
 :func:`lbfgs_prepare_state` allocates, initializes and validates everything in
@@ -579,6 +588,25 @@ _NLOOP_RESTART = -1  # first step or restart: take a steepest-descent direction
 # Stands in for "no trust-region limit". Must be representable in float32 as
 # well as float64, since the per-system scalars follow the coordinate dtype.
 _BIG = 1.0e30
+
+#: Default relative curvature threshold, chosen per coordinate precision.
+#:
+#: The guard is ``ys > eps * sqrt(ss * yy)``, i.e. a floor on the cosine
+#: between ``s`` and ``y``. ``ys`` is accumulated at the coordinate precision,
+#: so the floor has to sit above the level at which that sum is still signal.
+#: Measured on deliberately orthogonal pairs (true ``ys`` exactly zero), the
+#: computed cosine lands around ``1e-9`` to ``3.5e-8`` in float32 and ``1e-17``
+#: in float64. A single default of ``1e-10`` is therefore comfortably above the
+#: float64 floor but *below* the float32 one, where it cannot reject anything
+#: on the strength of the sign it is testing.
+#:
+#: The float32 value sits one to three orders of magnitude above its floor and
+#: still far below any usable curvature: a pair with ``cos(s, y) < 1e-6``
+#: contributes a ``gamma = ys / yy`` so small that it carries no scale. Swept
+#: over twelve Lennard-Jones relaxations, every value from ``1e-10`` to
+#: ``1e-3`` gave identical evaluation counts, so this costs nothing on a
+#: well-conditioned system; it matters where ``ys`` crosses zero.
+_CURVATURE_EPS = {wp.float32: 1.0e-6, wp.float64: 1.0e-10}
 
 
 # =============================================================================
@@ -1765,6 +1793,20 @@ def _lbfgs_reduce_impl(
     )
 
 
+def _resolve_curvature_eps(value, scalar_dtype) -> float:
+    """Pick the curvature threshold, defaulting by coordinate precision.
+
+    ``None`` means "choose for me"; see :data:`_CURVATURE_EPS` for why the
+    default cannot be a single number across both precisions.
+    """
+    if value is not None:
+        return float(value)
+    try:
+        return _CURVATURE_EPS[scalar_dtype]
+    except KeyError:  # pragma: no cover - guarded by the overload registry
+        raise ValueError(f"no curvature default for dtype {scalar_dtype}") from None
+
+
 def _lbfgs_update_impl(
     positions: wp.array,
     forces: wp.array,
@@ -1790,7 +1832,7 @@ def _lbfgs_update_impl(
     history_count: wp.array,
     *,
     maxstep: float = 0.2,
-    curvature_eps: float = 1e-10,
+    curvature_eps: float | None = None,
     compute_reductions: bool = True,
     measure_trust_region: bool = True,
 ) -> None:
@@ -1818,7 +1860,9 @@ def _lbfgs_update_impl(
         zero to disable the trust region.
     curvature_eps : float, optional
         Relative threshold below which a history pair is judged to carry no
-        usable curvature and is discarded.
+        usable curvature and is discarded. Defaults to ``1e-6`` for float32
+        coordinates and ``1e-10`` for float64: ``ys`` is accumulated at the
+        coordinate precision, so one value cannot serve both.
     compute_reductions : bool, optional
         When ``False``, ``gg`` is taken as given rather than recomputed.
     measure_trust_region : bool, optional
@@ -1925,7 +1969,7 @@ def _lbfgs_update_impl(
             n_loop,
             history_count,
             m,
-            ss.dtype(curvature_eps),
+            ss.dtype(_resolve_curvature_eps(curvature_eps, ss.dtype)),
         ],  # fmt: skip
         device=device,
     )
@@ -2185,7 +2229,7 @@ def _lbfgs_step_impl(
     history_count: wp.array,
     *,
     maxstep: float = 0.2,
-    curvature_eps: float = 1e-10,
+    curvature_eps: float | None = None,
     compute_reductions: bool = True,
 ) -> None:
     """Consume one energy/force evaluation and produce the next trial geometry.
@@ -2966,7 +3010,7 @@ def _lbfgs_step_coord_cell_impl(
     ext_forces: wp.array,
     *,
     maxstep: float = 0.2,
-    curvature_eps: float = 1e-10,
+    curvature_eps: float | None = None,
 ) -> None:
     """Advance one variable-cell step, relaxing coordinates and cell together.
 

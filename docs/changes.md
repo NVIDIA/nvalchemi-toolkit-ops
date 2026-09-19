@@ -27,7 +27,10 @@
 - Every array in the state follows the coordinate dtype, so float32
   coordinates give an fp32 optimizer end to end and float64 an fp64 one, with
   no mixed configuration. In JAX this means an fp32 relaxation needs no
-  `JAX_ENABLE_X64`.
+  `JAX_ENABLE_X64`. The curvature threshold `curvature_eps` follows the same
+  rule and now defaults per precision -- `1e-6` for float32, `1e-10` for
+  float64 -- because `ys` is accumulated in the coordinate precision and one
+  value cannot sit above both noise floors.
 - State is grouped into two transparent dataclasses, `LBFGSState` and
   `LBFGSCellState`. `lbfgs_prepare_state` and `lbfgs_prepare_cell_state`
   allocate, initialize and validate a complete state in one call -- shapes,
