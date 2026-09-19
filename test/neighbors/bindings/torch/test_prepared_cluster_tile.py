@@ -120,6 +120,102 @@ def _run_uninitialized_selective_fullgraph() -> subprocess.CompletedProcess[str]
     )
 
 
+def _run_direct_eager_capture() -> subprocess.CompletedProcess[str]:
+    """Attempt unsupported direct eager prepared execution during capture."""
+    script = textwrap.dedent(
+        """
+        import torch
+        from nvalchemiops.torch.neighbors import (
+            cluster_tile_neighbor_list,
+            prepare_cluster_tile,
+        )
+
+        positions = torch.rand((32, 3), dtype=torch.float32, device="cuda")
+        cell = torch.eye(3, dtype=torch.float32, device="cuda") * 8.0
+        state = prepare_cluster_tile(
+            positions,
+            1.0,
+            cell,
+            format="matrix",
+            max_neighbors=32,
+            max_tiles_per_group=2,
+        )
+        graph = torch.cuda.CUDAGraph()
+        torch.cuda.synchronize()
+        with torch.cuda.graph(graph):
+            cluster_tile_neighbor_list(positions, None, cell, state=state)
+        """
+    )
+    return subprocess.run(  # noqa: S603
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+
+
+def _run_singular_prepared_fullgraph(
+    batched: bool,
+) -> subprocess.CompletedProcess[str]:
+    """Run one compiled prepared call with a singular current cell."""
+    route = (
+        "batch_cluster_tile_neighbor_list" if batched else "cluster_tile_neighbor_list"
+    )
+    batch_setup = (
+        "batch_ptr = torch.tensor([0, 16, 32], dtype=torch.int32, device='cuda')\n"
+        "cell = torch.eye(3, dtype=torch.float32, device='cuda').repeat(2, 1, 1)"
+        if batched
+        else "batch_ptr = None\ncell = torch.eye(3, dtype=torch.float32, device='cuda')"
+    ).replace("\n", "\n        ")
+    singular_update = "cell[1].zero_()" if batched else "cell.zero_()"
+    call = (
+        "batch_cluster_tile_neighbor_list(values, None, box, None, state=state)"
+        if batched
+        else "cluster_tile_neighbor_list(values, None, box, state=state)"
+    )
+    script = textwrap.dedent(
+        f"""
+        import torch
+        from nvalchemiops.torch.neighbors import (
+            {route},
+            prepare_cluster_tile,
+        )
+
+        positions = torch.rand((32, 3), dtype=torch.float32, device="cuda")
+        {batch_setup}
+        state = prepare_cluster_tile(
+            positions,
+            1.0,
+            cell,
+            format="matrix",
+            batch_ptr=batch_ptr,
+            max_neighbors=32,
+            max_tiles_per_group=2,
+        )
+
+        @torch.compile(fullgraph=True)
+        def run(values, box):
+            return {call}
+
+        run(positions, cell)
+        torch.cuda.synchronize()
+        {singular_update}
+        print("SINGULAR_CALL_STARTED", flush=True)
+        run(positions, cell)
+        torch.cuda.synchronize()
+        print("SINGULAR_CALL_RETURNED", flush=True)
+        """
+    )
+    return subprocess.run(  # noqa: S603
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+
+
 def _direct(
     positions: torch.Tensor,
     cell: torch.Tensor,
@@ -1412,6 +1508,284 @@ def test_selective_dual_matrix_fullgraph_preserves_false_rows() -> None:
         assert (
             _matrix_records(output, start)[17:] == _matrix_records(expected, start)[17:]
         )
+
+
+@pytest.mark.gpu
+@pytest.mark.slow
+@pytest.mark.parametrize("batched", [False, True])
+def test_selective_compiled_all_false_preserves_all_state(batched: bool) -> None:
+    """Ordinary compiled all-false execution leaves prepared storage unchanged."""
+    positions, cell, batch_ptr = _inputs(batched)
+    state = prepare_cluster_tile(
+        positions,
+        1.2,
+        cell,
+        format="matrix",
+        batch_ptr=batch_ptr,
+        selective=True,
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    flags = torch.ones(state.num_systems, dtype=torch.bool, device="cuda")
+    _prepared_neighbor_list(positions, cell, state, rebuild_flags=flags)
+
+    @torch.compile(fullgraph=True)
+    def run(values: torch.Tensor, rebuild: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        return _prepared_neighbor_list(
+            values,
+            cell,
+            state,
+            rebuild_flags=rebuild,
+        )
+
+    run(positions, flags)
+    torch.cuda.synchronize()
+    storage = (*state._scratch, *state._topology)
+    pointers = tuple(value.data_ptr() for value in storage)
+    snapshot = tuple(value.clone() for value in storage)
+    flags.zero_()
+    run(positions * 0.25, flags)
+    torch.cuda.synchronize()
+    assert tuple(value.data_ptr() for value in storage) == pointers
+    assert all(torch.equal(value, saved) for value, saved in zip(storage, snapshot))
+
+
+@pytest.mark.gpu
+@pytest.mark.slow
+@pytest.mark.parametrize("selective", [False, True])
+@pytest.mark.parametrize("dual", [False, True])
+@pytest.mark.parametrize("batched", [False, True])
+def test_prepared_matrix_cuda_graph_replay(
+    batched: bool,
+    dual: bool,
+    selective: bool,
+) -> None:
+    """A warmed compiled matrix call observes new values on graph replay."""
+    positions, cell, batch_ptr = _inputs(batched)
+    live_positions = positions.clone()
+    live_cell = cell.clone()
+    state = prepare_cluster_tile(
+        live_positions,
+        1.2,
+        live_cell,
+        format="matrix",
+        batch_ptr=batch_ptr,
+        selective=selective,
+        cutoff2=1.6 if dual else None,
+        max_neighbors=32,
+        max_tiles_per_group=4,
+    )
+    flags = torch.ones(state.num_systems, dtype=torch.bool, device="cuda")
+    if selective:
+        _prepared_neighbor_list(
+            live_positions,
+            live_cell,
+            state,
+            rebuild_flags=flags,
+        )
+
+        @torch.compile(fullgraph=True)
+        def run(
+            values: torch.Tensor,
+            box: torch.Tensor,
+            rebuild: torch.Tensor,
+        ) -> tuple[torch.Tensor, ...]:
+            return _prepared_neighbor_list(
+                values,
+                box,
+                state,
+                rebuild_flags=rebuild,
+            )
+
+        def execute() -> tuple[torch.Tensor, ...]:
+            return run(live_positions, live_cell, flags)
+
+    else:
+
+        @torch.compile(fullgraph=True)
+        def run(
+            values: torch.Tensor,
+            box: torch.Tensor,
+        ) -> tuple[torch.Tensor, ...]:
+            return _prepared_neighbor_list(values, box, state)
+
+        def execute() -> tuple[torch.Tensor, ...]:
+            return run(live_positions, live_cell)
+
+    warm_stream = torch.cuda.Stream()
+    warm_stream.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(warm_stream):
+        execute()
+    warm_stream.synchronize()
+
+    if selective:
+        flags.zero_()
+    graph = torch.cuda.CUDAGraph()
+    torch.cuda.synchronize()
+    with torch.cuda.graph(graph):
+        graph_output = execute()
+
+    topology_pointers = tuple(value.data_ptr() for value in state._topology)
+    assert tuple(value.data_ptr() for value in graph_output) == topology_pointers
+
+    changed = positions * 0.5
+    live_positions.copy_(changed)
+    if selective:
+        flags.fill_(True)
+    graph.replay()
+    torch.cuda.synchronize()
+    expected = _direct(
+        changed,
+        live_cell,
+        batch_ptr,
+        format="matrix",
+        cutoff2=1.6 if dual else None,
+    )
+    _assert_same(
+        graph_output,
+        expected,
+        format="matrix",
+        batched=batched,
+        dual=dual,
+    )
+    assert tuple(value.data_ptr() for value in graph_output) == topology_pointers
+
+    if selective:
+        snapshot = tuple(value.clone() for value in graph_output)
+        live_positions.copy_(positions * 0.2)
+        flags.zero_()
+        graph.replay()
+        torch.cuda.synchronize()
+        assert all(
+            torch.equal(value, saved) for value, saved in zip(graph_output, snapshot)
+        )
+
+    cell_probe_positions = positions.clone()
+    cell_probe_positions[0] = torch.tensor([0.1, 0.0, 0.0], device="cuda")
+    cell_probe_positions[1] = torch.tensor([7.9, 0.0, 0.0], device="cuda")
+    if batched:
+        cell_probe_positions[17] = torch.tensor([0.1, 0.0, 0.0], device="cuda")
+        cell_probe_positions[18] = torch.tensor([7.9, 0.0, 0.0], device="cuda")
+    live_positions.copy_(cell_probe_positions)
+    live_cell.copy_(cell)
+    if selective:
+        flags.fill_(True)
+    graph.replay()
+    torch.cuda.synchronize()
+    original_expected = _direct(
+        live_positions,
+        live_cell,
+        batch_ptr,
+        format="matrix",
+        cutoff2=1.6 if dual else None,
+    )
+    _assert_same(
+        graph_output,
+        original_expected,
+        format="matrix",
+        batched=batched,
+        dual=dual,
+    )
+    original_cell_records = _matrix_records(graph_output)
+
+    changed_cell = cell * 1.25
+    live_cell.copy_(changed_cell)
+    graph.replay()
+    torch.cuda.synchronize()
+    expected = _direct(
+        live_positions,
+        changed_cell,
+        batch_ptr,
+        format="matrix",
+        cutoff2=1.6 if dual else None,
+    )
+    _assert_same(
+        graph_output,
+        expected,
+        format="matrix",
+        batched=batched,
+        dual=dual,
+    )
+    assert _matrix_records(graph_output) != original_cell_records
+
+    if selective and batched:
+        snapshot = tuple(value.clone() for value in graph_output)
+        live_positions[:17].copy_(positions[:17] * 0.15)
+        flags.copy_(torch.tensor([True, False], device="cuda"))
+        graph.replay()
+        torch.cuda.synchronize()
+        expected = _direct(
+            live_positions,
+            live_cell,
+            batch_ptr,
+            format="matrix",
+            cutoff2=1.6 if dual else None,
+        )
+        starts = (0, 3) if dual else (0,)
+        for start in starts:
+            assert (
+                _matrix_records(graph_output, start)[:17]
+                == _matrix_records(expected, start)[:17]
+            )
+            assert all(
+                torch.equal(value[17:], saved[17:])
+                for value, saved in zip(
+                    graph_output[start : start + 3],
+                    snapshot[start : start + 3],
+                )
+            )
+
+        snapshot = tuple(value.clone() for value in graph_output)
+        live_positions[17:].copy_(positions[17:] * 0.1)
+        flags.copy_(torch.tensor([False, True], device="cuda"))
+        graph.replay()
+        torch.cuda.synchronize()
+        expected = _direct(
+            live_positions,
+            live_cell,
+            batch_ptr,
+            format="matrix",
+            cutoff2=1.6 if dual else None,
+        )
+        for start in starts:
+            assert all(
+                torch.equal(value[:17], saved[:17])
+                for value, saved in zip(
+                    graph_output[start : start + 3],
+                    snapshot[start : start + 3],
+                )
+            )
+            assert (
+                _matrix_records(graph_output, start)[17:]
+                == _matrix_records(expected, start)[17:]
+            )
+
+    assert tuple(value.data_ptr() for value in graph_output) == topology_pointers
+
+
+@pytest.mark.gpu
+@pytest.mark.slow
+def test_direct_eager_prepared_capture_has_actionable_error() -> None:
+    """Direct eager prepared capture directs callers to the compiled route."""
+    result = _run_direct_eager_capture()
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "direct eager prepared execution cannot be captured" in output
+    assert "torch.compile(fullgraph=True)" in output
+    assert "matrix-topology callable" in output
+
+
+@pytest.mark.gpu
+@pytest.mark.slow
+@pytest.mark.parametrize("batched", [False, True])
+def test_compiled_prepared_singular_cell_asserts_on_device(batched: bool) -> None:
+    """Compiled inverse validation rejects singular current cells asynchronously."""
+    result = _run_singular_prepared_fullgraph(batched)
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "SINGULAR_CALL_STARTED" in output
+    assert "SINGULAR_CALL_RETURNED" not in output
+    assert "non-singular" in output or "device-side assert" in output.lower()
 
 
 @pytest.mark.gpu

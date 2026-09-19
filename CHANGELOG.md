@@ -45,6 +45,9 @@
   `cluster_tile_neighbor_list(..., state=state)` or
   `batch_cluster_tile_neighbor_list(..., state=state)`, with optional selective
   matrix rebuilds for single systems and batches.
+- Warmed, compiled prepared matrix-topology calls can be captured with
+  `torch.cuda.CUDAGraph` and replayed after copying new positions, cells, or
+  selective rebuild flags into the original input tensors.
 
 ### Changed
 

@@ -233,7 +233,9 @@ def prepare_cluster_tile(
     Notes
     -----
     Preparation allocates storage but does not build a neighbor list. Capture
-    the returned state as a closure constant for ``torch.compile``.
+    the returned state as a closure constant for ``torch.compile``. A warmed,
+    compiled matrix-topology callable supports CUDA Graph capture with stable
+    input and state storage; direct eager prepared execution does not.
     """
     _validate_positions(positions)
     if format not in ("tile", "matrix", "coo"):
@@ -443,6 +445,11 @@ def _execute_prepared_cluster_tile(
     A selective eager call invalidates every selected system before rebuilding
     it and marks the systems initialized only after the complete call succeeds.
     After a failed rebuild, those systems cannot be preserved with false flags.
+
+    Warmed ``torch.compile(fullgraph=True)`` matrix-topology execution supports
+    CUDA Graph capture with stable tensor storage. Selective flags may change
+    between replays, but replay always executes the fixed captured launch
+    sequence.
     """
     if not isinstance(state, ClusterTileState):
         raise TypeError("state must be a ClusterTileState")
@@ -462,6 +469,15 @@ def _execute_prepared_cluster_tile(
         raise ValueError("rebuild_flags requires a selective ClusterTileState")
     if state.selective and rebuild_flags is None:
         raise ValueError("selective ClusterTileState requires rebuild_flags")
+    if not torch.compiler.is_compiling():
+        with torch.cuda.device(state.device):
+            capturing = torch.cuda.is_current_stream_capturing()
+        if capturing:
+            raise RuntimeError(
+                "direct eager prepared execution cannot be captured; "
+                "warm and capture a torch.compile(fullgraph=True) prepared "
+                "matrix-topology callable instead"
+            )
     if state.selective:
         if (
             rebuild_flags.dtype != torch.bool
@@ -484,6 +500,8 @@ def _execute_prepared_cluster_tile(
                 "selective ClusterTileState cannot preserve uninitialized systems"
             )
         if not torch.compiler.is_compiling():
+            if not bool(rebuild_flags.any().item()):
+                return state._topology
             initialized.copy_(torch.where(rebuild_flags, False, initialized))
 
     topology = state._topology

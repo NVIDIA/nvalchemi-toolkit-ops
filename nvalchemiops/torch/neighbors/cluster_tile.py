@@ -608,16 +608,8 @@ def allocate_cluster_tile_list(
 # =============================================================================
 # Internal helpers
 # =============================================================================
-def _cell_invcell_from_cell(
-    cell: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Normalize a ``(3, 3)`` or ``(1, 3, 3)`` cell to ``(cell_3x3,
-    inv_cell_3x3)`` torch tensors for the Warp kernels.
-
-    Accepts any non-degenerate cell (orthorhombic or triclinic).
-    The downstream Warp kernels use ``_wrap_triclinic`` which is a
-    strict superset of the old orthorhombic-only path.
-    """
+def _cell_from_cell(cell: torch.Tensor) -> torch.Tensor:
+    """Normalize a single-system cell to one contiguous ``(3, 3)`` tensor."""
     if cell.ndim == 3:
         if cell.shape[0] != 1:
             raise ValueError(
@@ -632,7 +624,14 @@ def _cell_invcell_from_cell(
         cell_mat = cell
     else:
         raise ValueError(f"cell must be (3, 3) or (1, 3, 3); got {tuple(cell.shape)}")
-    cell_mat = cell_mat.contiguous()
+    return cell_mat.contiguous()
+
+
+def _cell_invcell_from_cell(
+    cell: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Normalize a cell and compute its inverse for eager execution."""
+    cell_mat = _cell_from_cell(cell)
     inv_cell_mat = torch.linalg.inv(cell_mat).contiguous()
     return cell_mat, inv_cell_mat
 
@@ -680,6 +679,7 @@ def _mat33f_from_torch(mat: torch.Tensor):
         "group_ext_x",
         "group_ext_y",
         "group_ext_z",
+        "inv_cell",
         "num_tiles",
         "tile_row_group",
         "tile_col_group",
@@ -707,6 +707,7 @@ def _build_cluster_tile_list_op(
     tile_col_group: torch.Tensor,
     rebuild_flags: torch.Tensor,
     use_rebuild_flags: bool,
+    compute_inv_cell: bool,
 ) -> None:
     """Compute Morton codes + argsort + SoA gather in torch, then run
     bbox reduction + tile enumeration on the warp side.
@@ -719,10 +720,19 @@ def _build_cluster_tile_list_op(
     --------
     nvalchemiops.neighbors.cluster_tile.build_cluster_tile_list : warp launcher
     """
+    device = positions.device
+    with torch.cuda.device(device):
+        capturing = torch.cuda.is_current_stream_capturing()
+    if use_rebuild_flags and not capturing and not bool(rebuild_flags.any().item()):
+        return
+    if compute_inv_cell:
+        computed_inv_cell, info = torch.linalg.inv_ex(cell, check_errors=False)
+        torch._assert_async(info == 0, "cell matrix must be non-singular")
+        inv_cell.copy_(computed_inv_cell)
+
     N = positions.shape[0]
     if N == 0:
         return
-    device = positions.device
     wp_device = str(device)
     wp_dtype = get_wp_dtype(positions.dtype)
 
@@ -862,8 +872,67 @@ def _(
     tile_col_group: torch.Tensor,
     rebuild_flags: torch.Tensor,
     use_rebuild_flags: bool,
+    compute_inv_cell: bool,
 ) -> None:
     return None
+
+
+def _build_cluster_tile_list_normalized(
+    positions: torch.Tensor,
+    cutoff: float,
+    cell: torch.Tensor,
+    sorted_atom_index: torch.Tensor,
+    morton_codes: torch.Tensor,
+    sorted_pos_x: torch.Tensor,
+    sorted_pos_y: torch.Tensor,
+    sorted_pos_z: torch.Tensor,
+    group_ctr_x: torch.Tensor,
+    group_ctr_y: torch.Tensor,
+    group_ctr_z: torch.Tensor,
+    group_ext_x: torch.Tensor,
+    group_ext_y: torch.Tensor,
+    group_ext_z: torch.Tensor,
+    num_tiles: torch.Tensor,
+    tile_row_group: torch.Tensor,
+    tile_col_group: torch.Tensor,
+    *,
+    rebuild_flags: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build tiles and return the normalized cell and inverse used by queries."""
+    if positions.dtype != torch.float32:
+        raise TypeError("positions must be float32")
+    cell_mat = _cell_from_cell(cell).to(positions.dtype)
+    compute_inv_cell = torch.compiler.is_compiling()
+    inv_cell_mat = (
+        torch.empty_like(cell_mat)
+        if compute_inv_cell
+        else torch.linalg.inv(cell_mat).contiguous()
+    )
+    dummy_rebuild_flags = torch.empty(1, dtype=torch.bool, device=positions.device)
+    _build_cluster_tile_list_op(
+        positions,
+        cutoff,
+        cell_mat,
+        inv_cell_mat,
+        sorted_atom_index,
+        morton_codes,
+        sorted_pos_x,
+        sorted_pos_y,
+        sorted_pos_z,
+        group_ctr_x,
+        group_ctr_y,
+        group_ctr_z,
+        group_ext_x,
+        group_ext_y,
+        group_ext_z,
+        num_tiles,
+        tile_row_group,
+        tile_col_group,
+        rebuild_flags if rebuild_flags is not None else dummy_rebuild_flags,
+        rebuild_flags is not None,
+        compute_inv_cell,
+    )
+    return cell_mat, inv_cell_mat
 
 
 def build_cluster_tile_list(
@@ -941,17 +1010,10 @@ def build_cluster_tile_list(
     :func:`nvalchemiops.neighbors.cluster_tile.build_cluster_tile_list` :
         Warp-level launcher called internally.
     """
-    if positions.dtype != torch.float32:
-        raise TypeError("positions must be float32")
-    cell_mat, inv_cell_mat = _cell_invcell_from_cell(cell)
-    cell_mat = cell_mat.to(positions.dtype)
-    inv_cell_mat = inv_cell_mat.to(positions.dtype)
-    dummy_rebuild_flags = torch.empty(1, dtype=torch.bool, device=positions.device)
-    _build_cluster_tile_list_op(
+    _build_cluster_tile_list_normalized(
         positions,
         cutoff,
-        cell_mat,
-        inv_cell_mat,
+        cell,
         sorted_atom_index,
         morton_codes,
         sorted_pos_x,
@@ -966,8 +1028,7 @@ def build_cluster_tile_list(
         num_tiles,
         tile_row_group,
         tile_col_group,
-        rebuild_flags if rebuild_flags is not None else dummy_rebuild_flags,
-        rebuild_flags is not None,
+        rebuild_flags=rebuild_flags,
     )
 
 
@@ -1094,7 +1155,7 @@ def _(
     return None
 
 
-def query_cluster_tile(
+def _query_cluster_tile_normalized(
     sorted_atom_index: torch.Tensor,
     sorted_pos_x: torch.Tensor,
     sorted_pos_y: torch.Tensor,
@@ -1109,6 +1170,7 @@ def query_cluster_tile(
     num_neighbors: torch.Tensor,
     neighbor_matrix_shifts: torch.Tensor,
     *,
+    inv_cell_mat: torch.Tensor | None = None,
     cutoff2: float | None = None,
     neighbor_matrix2: torch.Tensor | None = None,
     num_neighbors2: torch.Tensor | None = None,
@@ -1219,9 +1281,11 @@ def query_cluster_tile(
         allocate_missing=False,
     )
 
-    cell_mat, inv_cell_mat = _cell_invcell_from_cell(cell)
-    cell_mat = cell_mat.to(sorted_pos_x.dtype)
-    inv_cell_mat = inv_cell_mat.to(sorted_pos_x.dtype)
+    cell_mat = _cell_from_cell(cell).to(sorted_pos_x.dtype)
+    if inv_cell_mat is None:
+        inv_cell_mat = torch.linalg.inv(cell_mat).contiguous()
+    else:
+        inv_cell_mat = inv_cell_mat.to(sorted_pos_x.dtype)
     # Eager execution tightens the launch to the emitted tile count. Compiled
     # execution validates on device and launches the full static capacity.
     tile_capacity = int(tile_row_group.shape[0])
@@ -1412,6 +1476,69 @@ def query_cluster_tile(
         False,
         False,
     )
+
+
+def query_cluster_tile(
+    sorted_atom_index: torch.Tensor,
+    sorted_pos_x: torch.Tensor,
+    sorted_pos_y: torch.Tensor,
+    sorted_pos_z: torch.Tensor,
+    num_tiles: torch.Tensor,
+    tile_row_group: torch.Tensor,
+    tile_col_group: torch.Tensor,
+    cell: torch.Tensor,
+    cutoff: float,
+    natom: int,
+    neighbor_matrix: torch.Tensor,
+    num_neighbors: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor,
+    *,
+    cutoff2: float | None = None,
+    neighbor_matrix2: torch.Tensor | None = None,
+    num_neighbors2: torch.Tensor | None = None,
+    neighbor_matrix_shifts2: torch.Tensor | None = None,
+    rebuild_flags: torch.Tensor | None = None,
+    return_vectors: bool = False,
+    return_distances: bool = False,
+    pair_fn: wp.Function | None = None,
+    pair_params: torch.Tensor | None = None,
+    neighbor_vectors: torch.Tensor | None = None,
+    neighbor_distances: torch.Tensor | None = None,
+    pair_energies: torch.Tensor | None = None,
+    pair_forces: torch.Tensor | None = None,
+) -> None:
+    """Convert the tile pair list to neighbor-matrix form in place."""
+    _query_cluster_tile_normalized(
+        sorted_atom_index,
+        sorted_pos_x,
+        sorted_pos_y,
+        sorted_pos_z,
+        num_tiles,
+        tile_row_group,
+        tile_col_group,
+        cell,
+        cutoff,
+        natom,
+        neighbor_matrix,
+        num_neighbors,
+        neighbor_matrix_shifts,
+        cutoff2=cutoff2,
+        neighbor_matrix2=neighbor_matrix2,
+        num_neighbors2=num_neighbors2,
+        neighbor_matrix_shifts2=neighbor_matrix_shifts2,
+        rebuild_flags=rebuild_flags,
+        return_vectors=return_vectors,
+        return_distances=return_distances,
+        pair_fn=pair_fn,
+        pair_params=pair_params,
+        neighbor_vectors=neighbor_vectors,
+        neighbor_distances=neighbor_distances,
+        pair_energies=pair_energies,
+        pair_forces=pair_forces,
+    )
+
+
+query_cluster_tile.__doc__ = _query_cluster_tile_normalized.__doc__
 
 
 @torch.library.custom_op(
@@ -3049,7 +3176,7 @@ def cluster_tile_neighbor_list(
                 tile_row_group = previous_row
             if previous_col is not None:
                 tile_col_group = previous_col
-    build_cluster_tile_list(
+    cell_mat, inv_cell_mat = _build_cluster_tile_list_normalized(
         positions.detach() if requires_reconstruction else positions,
         build_cutoff,
         cell.detach() if requires_reconstruction else cell,
@@ -3136,8 +3263,6 @@ def cluster_tile_neighbor_list(
             n_tiles = _check_tile_buffer_capacity(num_tiles, tile_capacity)
             launch_tiles = tile_capacity if is_compiling else n_tiles
             row_counts = torch.zeros(N, dtype=torch.int32, device=device)
-            direct_cell = cell.detach() if requires_reconstruction else cell
-            cell_mat, inv_cell_mat = _cell_invcell_from_cell(direct_cell)
             _cluster_tile_direct_csr_count_op(
                 cutoff,
                 N,
@@ -3373,7 +3498,7 @@ def cluster_tile_neighbor_list(
                 device=device,
             )
 
-    query_cluster_tile(
+    _query_cluster_tile_normalized(
         sorted_atom_index,
         sorted_pos_x,
         sorted_pos_y,
@@ -3387,6 +3512,7 @@ def cluster_tile_neighbor_list(
         neighbor_matrix,
         num_neighbors,
         neighbor_matrix_shifts,
+        inv_cell_mat=inv_cell_mat,
         cutoff2=cutoff2,
         neighbor_matrix2=neighbor_matrix2,
         num_neighbors2=num_neighbors2,

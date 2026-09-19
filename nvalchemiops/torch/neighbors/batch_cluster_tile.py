@@ -808,6 +808,7 @@ def _batched_morton_sort_padded(
         "group_ext_x",
         "group_ext_y",
         "group_ext_z",
+        "inv_cell_batch",
         "num_tiles",
         "tile_row_group",
         "tile_col_group",
@@ -848,8 +849,25 @@ def _batch_build_cluster_tile_list_op(
     tile_counts: torch.Tensor,
     use_rebuild_flags: bool,
     use_segmented: bool,
+    compute_inv_cell_batch: bool,
 ) -> None:
-    wp_device = str(positions.device)
+    device = positions.device
+    with torch.cuda.device(device):
+        capturing = torch.cuda.is_current_stream_capturing()
+    if use_rebuild_flags and not capturing and not bool(rebuild_flags.any().item()):
+        return
+    if compute_inv_cell_batch:
+        computed_inv_cell_batch, info = torch.linalg.inv_ex(
+            cell_batch,
+            check_errors=False,
+        )
+        torch._assert_async(
+            (info == 0).all(),
+            "cell matrices must be non-singular",
+        )
+        inv_cell_batch.copy_(computed_inv_cell_batch)
+
+    wp_device = str(device)
     wp_dtype = get_wp_dtype(positions.dtype)
 
     _batched_morton_sort_padded(
@@ -971,6 +989,7 @@ def _(
     tile_counts: torch.Tensor,
     use_rebuild_flags: bool,
     use_segmented: bool,
+    compute_inv_cell_batch: bool,
 ) -> None:
     return None
 
@@ -1122,7 +1141,7 @@ def _batch_build_cluster_tile_list_normalized(
     rebuild_flags: torch.Tensor | None = None,
     tile_offsets: torch.Tensor | None = None,
     tile_counts: torch.Tensor | None = None,
-) -> None:
+) -> torch.Tensor:
     """Build batched tile neighbor list state into pre-allocated outputs.
 
     Runs the per-system Morton sort + padded SoA gather in torch, then
@@ -1257,8 +1276,13 @@ def _batch_build_cluster_tile_list_normalized(
     ):
         raise ValueError("prepared partition metadata must belong to batch scratch")
 
+    compute_inv_cell_batch = inv_cell_batch is None and torch.compiler.is_compiling()
     if inv_cell_batch is None:
-        inv_cell_batch = torch.linalg.inv(cell_batch).contiguous()
+        inv_cell_batch = (
+            torch.empty_like(cell_batch)
+            if compute_inv_cell_batch
+            else torch.linalg.inv(cell_batch).contiguous()
+        )
 
     use_segmented = (tile_offsets is not None) or (tile_counts is not None)
     if (tile_offsets is None) != (tile_counts is None):
@@ -1303,7 +1327,9 @@ def _batch_build_cluster_tile_list_normalized(
         tile_counts if tile_counts is not None else dummy_i32,
         bool(use_rebuild_flags),
         bool(use_segmented),
+        bool(compute_inv_cell_batch),
     )
+    return inv_cell_batch
 
 
 def batch_build_cluster_tile_list(
@@ -3527,7 +3553,7 @@ def _batch_cluster_tile_neighbor_list_impl(
             group_ptr=group_ptr,
         )
 
-    _batch_build_cluster_tile_list_normalized(
+    inv_cell_batch = _batch_build_cluster_tile_list_normalized(
         partition_metadata,
         positions.detach() if requires_reconstruction else positions,
         build_cutoff,

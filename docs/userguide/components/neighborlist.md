@@ -805,6 +805,34 @@ call cannot preserve any system selected by the failed call. Retry those
 systems with true flags after changing the geometry, or prepare a new state
 with sufficient capacity.
 
+##### CUDA Graph capture
+
+A warmed `torch.compile(fullgraph=True)` prepared callable can be captured with
+`torch.cuda.CUDAGraph` when it returns matrix topology. This supports single and
+batched state, one or two cutoffs, and selective or nonselective execution. For
+selective state, initialize every system before capture. Warm the compiled
+all-true path on a side stream and synchronize that stream before capture.
+
+Keep the prepared state object and the positions, cells, rebuild flags, output,
+and scratch tensors at the same addresses. Shapes, dtypes, devices, capacities,
+the batch partition, and the output format must remain fixed. Update positions,
+cells, and flags by copying into the existing tensors. Do not execute or replay
+the same mutable state concurrently.
+
+Selective replay accepts different flag values without recapture. The captured
+graph always records the complete build and query sequence; device-side flags
+decide which systems are updated on each replay. Therefore an all-false replay
+preserves topology but does not skip sorting or reduce the recorded launch
+sequence. Outside graph capture, eager all-false calls return immediately and
+ordinary compiled all-false calls skip the build after reading the flags on the
+host.
+
+Capture is not supported for a direct eager prepared call, exact COO output,
+tile output, pair geometry, or backward execution. A device assertion during
+replay does not leave the prepared state recoverable. CUDA Graph-private
+temporary allocations may occur; the guarantee is stable prepared/public
+storage and no forbidden host synchronization during capture.
+
 #### Compiled JAX
 
 JAX fixes array shapes while tracing a transformed or compiled function. When a
