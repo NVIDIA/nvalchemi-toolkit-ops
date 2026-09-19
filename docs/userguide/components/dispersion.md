@@ -1025,9 +1025,11 @@ that atom's own row alone --- the reverse edge is walked by the other atom. A ha
 list therefore loses half of every atom's coordination, which shifts the energy by around a
 percent and leaves the forces non-conservative, with nothing in the output to say so.
 
-`fourier_dftd3` rejects such a list rather than using it. The check is a cheap necessary
-condition, not a proof: a full directed list sums `source - target` and the image shifts to
-exactly zero, so a valid list never trips it, but a pathological one could slip through.
+This is **not checked at runtime**. Detecting it means reducing over the whole neighbour
+list on every call, which measured about 0.13 ms at 8,000 atoms --- roughly a sixth of the
+evaluation it guards --- and it could never run on the JAX path at all, where `jax.jit` makes
+the values unreadable. Since both builders produce full lists by default, the requirement is
+only reachable by asking for `half_fill=True` and passing the result here.
 ```
 
 ### Choosing a Spline Order

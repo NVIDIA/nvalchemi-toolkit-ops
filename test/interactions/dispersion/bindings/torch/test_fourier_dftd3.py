@@ -556,37 +556,6 @@ class TestNeighbourFormats:
             atol=1e-11 * float(csr[1].abs().max()),
         )
 
-    def test_rejects_a_half_filled_list(self):
-        """A half-filled list silently loses coordination, so it must not be accepted.
-
-        Each atom's coordination number is accumulated from its own row alone, with the
-        reverse edge walked by the other atom. Half of the contributions simply go missing,
-        which shifts the energy and leaves the forces non-conservative rather than raising.
-        """
-        system = _system("cuda:0", box=5.0)
-        half = _halve(system)
-        with pytest.raises(ValueError, match="both directions of every pair"):
-            _evaluate(
-                system,
-                neighbor_list=half["neighbor_list"],
-                neighbor_ptr=half["neighbor_ptr"],
-                unit_shifts=half["unit_shifts"],
-            )
-
-    def test_rejects_a_half_filled_matrix(self):
-        """The dense format carries the same requirement."""
-        system = _system("cuda:0", box=5.0)
-        half = _halve(system)
-        with pytest.raises(ValueError, match="both directions of every pair"):
-            _evaluate(
-                system,
-                neighbor_list=None,
-                neighbor_ptr=None,
-                unit_shifts=None,
-                neighbor_matrix=half["neighbor_matrix"],
-                neighbor_matrix_shifts=half["neighbor_matrix_shifts"],
-            )
-
     def test_rejects_both_formats(self):
         """Supplying both neighbour formats is an error."""
         system = _system("cuda:0")

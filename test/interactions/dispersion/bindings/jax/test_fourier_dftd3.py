@@ -327,31 +327,6 @@ class TestNeighbourFormats:
             atol=1e-11 * float(jnp.abs(csr[1]).max()),
         )
 
-    def test_rejects_a_half_filled_list(self, device, system):
-        """Half of the coordination contributions would simply go missing."""
-        numpy = system["numpy"]
-        sources = np.repeat(np.arange(numpy["n_atoms"]), np.diff(numpy["pointer"]))
-        targets, shifts = numpy["targets"], numpy["shifts"]
-        lexicographic = np.where(
-            shifts[:, 0] != 0,
-            shifts[:, 0],
-            np.where(shifts[:, 1] != 0, shifts[:, 1], shifts[:, 2]),
-        )
-        keep = (sources < targets) | ((sources == targets) & (lexicographic > 0))
-        order = np.argsort(sources[keep], kind="stable")
-        half_sources = sources[keep][order]
-        pointer = np.zeros(numpy["n_atoms"] + 1, dtype=np.int32)
-        np.add.at(pointer, half_sources + 1, 1)
-        with pytest.raises(ValueError, match="both directions of every pair"):
-            _evaluate(
-                system,
-                neighbor_list=jnp.asarray(
-                    np.stack([half_sources, targets[keep][order]]), dtype=jnp.int32
-                ),
-                neighbor_ptr=jnp.asarray(np.cumsum(pointer), dtype=jnp.int32),
-                unit_shifts=jnp.asarray(shifts[keep][order], dtype=jnp.int32),
-            )
-
     def test_a_spacing_derived_mesh_transforms_well(self, device, system):
         """An automatic mesh is rounded up to factors of 2, 3, 5 and 7, as in Torch."""
         for spacing in (0.07, 0.0709, 0.0711, 0.073, 0.11, 0.37):

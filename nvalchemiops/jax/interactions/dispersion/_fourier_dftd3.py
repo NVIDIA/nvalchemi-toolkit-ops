@@ -411,52 +411,6 @@ def _reject_uncovered_species(species_index, numbers):
     return 1.0
 
 
-def _reject_half_filled(
-    neighbor_list,
-    unit_shifts,
-    neighbor_matrix,
-    neighbor_matrix_shifts,
-    fill_value,
-    n_atoms,
-):
-    """Reject a neighbour list that does not hold both directions of every pair.
-
-    FourierD3 accumulates each atom's coordination number, and the chain rule from it, out
-    of that atom's own row only; the reverse edge is walked by the other atom's block. Both
-    orientations therefore have to be present, which is what the neighbour builders produce
-    unless asked for ``half_fill=True``.
-
-    In a full directed list every edge is cancelled by its reverse, so ``source - target``
-    and the image shifts each sum to exactly zero. The test is sound as a rejection -- a
-    valid list can never trip it -- without being complete. Reading the sums is impossible
-    while tracing, so under ``jax.jit`` the check is skipped rather than failing.
-    """
-    if neighbor_matrix is not None:
-        valid = jnp.asarray(neighbor_matrix) < fill_value
-        rows = jnp.arange(n_atoms, dtype=jnp.int64)[:, None]
-        balance = jnp.where(valid, rows - jnp.asarray(neighbor_matrix), 0).sum()
-        drift = jnp.where(valid[..., None], jnp.asarray(neighbor_matrix_shifts), 0).sum(
-            axis=(0, 1)
-        )
-    else:
-        balance = (neighbor_list[0] - neighbor_list[1]).sum()
-        drift = jnp.asarray(unit_shifts).sum(axis=0)
-    try:
-        residual = int(abs(balance)) + int(jnp.abs(drift).sum())
-    except (
-        jax.errors.ConcretizationTypeError,
-        jax.errors.TracerArrayConversionError,
-    ):
-        return
-    if residual != 0:
-        raise ValueError(
-            "The neighbour list does not hold both directions of every pair. FourierD3 "
-            "builds each atom's coordination number from its own row, so a half-filled "
-            "list omits contributions and yields wrong energies and non-conservative "
-            "forces. Rebuild it with half_fill=False."
-        )
-
-
 def fourier_dftd3(
     positions,
     numbers,
@@ -518,8 +472,9 @@ def fourier_dftd3(
         It must hold **both directions of every pair**, which is what the neighbour builders
         produce by default. FourierD3 accumulates each atom's coordination number from its
         own row alone, so a list built with ``half_fill=True`` loses half of every atom's
-        coordination and yields wrong energies and non-conservative forces. Such a list is
-        rejected rather than used, except while tracing, where the values cannot be read.
+        coordination and yields wrong energies and non-conservative forces. This is not
+        checked: the values are unreadable under ``jax.jit``, which is the documented path,
+        and the builders' default already satisfies it.
     fill_value : int, optional
         Padding sentinel for the dense format. Defaults to the atom count.
     s6 : float, default=1.0
@@ -654,15 +609,6 @@ def fourier_dftd3(
     species_index = params.species_map[numbers].astype(jnp.int32)
 
     covered = _reject_uncovered_species(species_index, numbers)
-
-    _reject_half_filled(
-        neighbor_list,
-        unit_shifts,
-        neighbor_matrix,
-        neighbor_matrix_shifts,
-        fill_value,
-        n_atoms,
-    )
 
     mesh_nx, mesh_ny, mesh_nz = _resolve_mesh(
         mesh_dimensions, mesh_spacing, cells, spline_order

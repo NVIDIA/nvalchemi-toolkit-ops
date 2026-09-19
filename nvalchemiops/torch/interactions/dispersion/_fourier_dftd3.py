@@ -952,24 +952,6 @@ def _validate_neighbours(
         )
 
 
-def _pairing_residual(sources, targets, shifts):
-    """How far a neighbour list is from holding both directions of every pair.
-
-    FourierD3 accumulates each atom's coordination number, and the chain rule from it, out
-    of that atom's own row only; the reverse edge is walked by the other atom's block. Both
-    orientations therefore have to be present, which is what the neighbour builders produce
-    unless asked for ``half_fill=True``.
-
-    In a full directed list every edge is cancelled by its reverse, so ``source - target``
-    and the image shifts each sum to exactly zero. A half-filled list generally breaks both.
-    The residual is therefore sound as a rejection -- a valid list can never produce a
-    non-zero one -- without being complete.
-    """
-    balance = (sources.to(torch.int64) - targets.to(torch.int64)).sum().abs()
-    drift = shifts.to(torch.int64).flatten(end_dim=-2).sum(dim=0).abs().sum()
-    return balance + drift
-
-
 def fourier_dftd3(
     positions: torch.Tensor,
     numbers: torch.Tensor,
@@ -1043,7 +1025,8 @@ def fourier_dftd3(
         the neighbour builders produce by default. FourierD3 accumulates each atom's
         coordination number from its own row alone, so a list built with ``half_fill=True``
         loses half of every atom's coordination and yields wrong energies and
-        non-conservative forces. Such a list is rejected rather than used.
+        non-conservative forces. This is not checked: detecting it costs a reduction over
+        the whole list on every call, and the builders' default already satisfies it.
     fill_value : int, optional
         Padding sentinel for the dense format. Defaults to the atom count.
     s6 : float, default=1.0
@@ -1200,32 +1183,6 @@ def fourier_dftd3(
             f"Atomic numbers {missing} are not covered by fourier_d3_params. Rebuild the "
             f"decomposition with every species present in the system."
         )
-
-    # A half-filled list gives silently wrong coordination numbers, so wrong energies and
-    # non-conservative forces. Skipped under compile and capture, as the species check is.
-    if not torch.compiler.is_compiling() and not _capturing():
-        if neighbor_matrix is not None:
-            limit = n_atoms if fill_value is None else fill_value
-            valid = neighbor_matrix < limit
-            rows = torch.arange(
-                neighbor_matrix.shape[0], device=neighbor_matrix.device
-            ).unsqueeze(1)
-            residual = _pairing_residual(
-                rows.expand_as(neighbor_matrix)[valid],
-                neighbor_matrix[valid],
-                neighbor_matrix_shifts[valid],
-            )
-        else:
-            residual = _pairing_residual(
-                neighbor_list[0], neighbor_list[1], unit_shifts
-            )
-        if bool(residual != 0):
-            raise ValueError(
-                "The neighbour list does not hold both directions of every pair. "
-                "FourierD3 builds each atom's coordination number from its own row, so a "
-                "half-filled list omits contributions and yields wrong energies and "
-                "non-conservative forces. Rebuild it with half_fill=False."
-            )
 
     if setup is not None:
         setup.validate_for(cells, params.n_species, mesh_dimensions, mesh_spacing)
