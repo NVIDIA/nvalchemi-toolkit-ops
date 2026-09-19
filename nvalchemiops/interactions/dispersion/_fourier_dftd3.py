@@ -212,6 +212,73 @@ def _cn_counting(
     return value, value * (one - value) * d_argument
 
 
+# ---------------------------------------------------------------------------------------
+# Host-side mesh helpers. Pure Python, no framework types, so both bindings share them.
+# ---------------------------------------------------------------------------------------
+
+
+def _next_fft_friendly(size):
+    """Smallest size at least ``size`` whose only prime factors are 2, 3, 5 and 7.
+
+    cuFFT has specialised radix kernels for these factors and falls back to Bluestein's
+    algorithm otherwise, and the difference is not marginal -- a prime or large-factor edge can
+    cost several times what the next friendly size does.
+
+    Only a mesh derived from ``mesh_spacing`` is rounded. An explicit ``mesh_dimensions`` is a
+    number the caller chose and is passed through exactly, even when it is a poor size.
+    """
+    candidate = max(1, int(size))
+    while True:
+        remainder = candidate
+        for prime in (2, 3, 5, 7):
+            while remainder % prime == 0:
+                remainder //= prime
+        if remainder == 1:
+            return candidate
+        candidate += 1
+
+
+def _check_mesh_supports_stencil(mesh, spline_order, origin):
+    """Refuse a mesh too short to hold the interpolation stencil.
+
+    Every axis must hold at least ``spline_order`` nodes. The stencil is that wide and wraps
+    periodically, so on a shorter axis two stencil points land on the same node and the
+    interpolation stops being the B-spline the gather differentiates. Equality is fine: the
+    stencil then covers each node exactly once.
+    """
+    if min(mesh) < spline_order:
+        raise ValueError(
+            f"{origin} gives mesh {mesh}, but every axis must hold at least "
+            f"spline_order = {spline_order} nodes. The interpolation stencil is that wide "
+            f"and wraps periodically, so a shorter axis would visit a node twice."
+        )
+    return mesh
+
+
+def _rank_chunks(rank, rank_chunk_size):
+    """Split the retained rank into consecutive groups of slots.
+
+    ``None`` keeps every slot in one group, which is the original single-pass behaviour and
+    the fastest option when the mesh fits. A smaller size lowers the peak mesh allocation in
+    proportion, at the cost of one extra spread, transform pair and gather per group.
+
+    The size is a host-side Python integer, never a tensor: it decides how many kernel
+    launches happen, so it has to be known before any of them are issued.
+    """
+    if rank_chunk_size is None:
+        return [(0, rank)]
+    if not isinstance(rank_chunk_size, int) or isinstance(rank_chunk_size, bool):
+        raise TypeError(
+            f"rank_chunk_size must be an int or None, got {type(rank_chunk_size).__name__}. "
+            "It sets the number of kernel launches, so it cannot be a tensor or a traced "
+            "value."
+        )
+    if rank_chunk_size < 1:
+        raise ValueError(f"rank_chunk_size must be at least 1, got {rank_chunk_size}.")
+    size = min(rank_chunk_size, rank)
+    return [(start, min(size, rank - start)) for start in range(0, rank, size)]
+
+
 @wp.func
 def _shape_r6(x: Any) -> tuple[Any, Any]:
     """``N6(x)/x`` and its derivative, on whichever branch is stable at ``x``.
