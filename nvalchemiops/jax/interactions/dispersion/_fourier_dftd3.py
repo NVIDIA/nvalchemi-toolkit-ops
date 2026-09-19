@@ -65,6 +65,7 @@ from nvalchemiops.interactions.dispersion._fourier_dftd3 import (
     _fd3_spread_kernel_overload,
     _next_fft_friendly,
 )
+from nvalchemiops.jax.types import normalize_float_dtype
 
 __all__ = [
     "FourierD3Parameters",
@@ -80,15 +81,6 @@ than left to ``jax_kernel``'s default, which is this same value but not part of 
 contract. The coordination-number and reciprocal-space passes reduce within a block and set
 their own sizes.
 """
-
-
-def _normalize_dtype(dtype):
-    """Resolve a JAX dtype to the key used for kernel dispatch."""
-    if dtype == jnp.float32 or str(dtype) == "float32":
-        return jnp.float32
-    if dtype == jnp.float64 or str(dtype) == "float64":
-        return jnp.float64
-    raise ValueError(f"Unsupported dtype for FourierD3 positions: {dtype}")
 
 
 def _make_jax_kernels(overloads, num_outputs, in_out_argnames=None, block_dim=None):
@@ -575,7 +567,7 @@ def fourier_dftd3(
     if spline_order < 2 or spline_order > 6:
         raise ValueError(f"spline_order must be between 2 and 6, got {spline_order}.")
 
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype, "FourierD3 positions")
     positions = jnp.asarray(positions, dtype=dtype)
     cells = jnp.asarray(cell, dtype=dtype).reshape(-1, 3, 3)
     n_atoms = positions.shape[0]
