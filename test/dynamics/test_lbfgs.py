@@ -42,6 +42,7 @@ import warp as wp
 from nvalchemiops.dynamics.optimizers.lbfgs import (
     _OPTIMIZER_BUFFERS,
     _resolve_curvature_eps,
+    check_cell_is_aligned,
     lbfgs_apply_step,
     lbfgs_cell_kappa,
     lbfgs_cell_trust_region,
@@ -1370,6 +1371,101 @@ class TestLBFGSCellPrecision:
         assert np.isfinite(positions.numpy()).all()
         assert np.isfinite(cell.numpy()).all()
         assert not np.allclose(cell.numpy()[0], cell_np), "the cell did not move"
+
+
+class TestLBFGSCellConvention:
+    """The cell rules L-BFGS shares with FIRE2, pinned against FIRE2 itself.
+
+    The contract in the module docstring claims the alignment and the
+    six-component packing are *the same* as FIRE2's, not merely similar. That
+    claim is only worth making if something checks it.
+    """
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_packs_the_same_six_components_as_fire2(self, device):
+        """Same index set, same order, read out of FIRE2's own packer."""
+        from nvalchemiops.dynamics.utils.cell_filter import pack_positions_with_cell
+
+        n, m = 4, 1
+        rng = np.random.default_rng(0)
+        # An aligned cell with distinct entries, so a transposition would show.
+        h = np.tril(rng.uniform(1.0, 2.0, size=(3, 3))) + np.eye(3) * 5.0
+        cell = wp.array(h[None], dtype=wp.mat33d, device=device)
+        positions = wp.array(rng.normal(size=(n, 3)), dtype=wp.vec3d, device=device)
+        atom_ptr = wp.array(np.array([0, n], np.int32), dtype=wp.int32, device=device)
+        ext_atom_ptr = wp.array(
+            np.array([0, n + 2], np.int32), dtype=wp.int32, device=device
+        )
+        packed = wp.zeros(n + 2 * m, dtype=wp.vec3d, device=device)
+        pack_positions_with_cell(
+            positions, cell, packed, atom_ptr, ext_atom_ptr, device=device
+        )
+        fire2_rows = packed.numpy()[n : n + 2]
+
+        # The same six entries the L-BFGS chart writes, in the same order.
+        expected = np.array([[h[0, 0], h[1, 0], h[2, 0]], [h[1, 1], h[2, 1], h[2, 2]]])
+        np.testing.assert_allclose(fire2_rows, expected, rtol=0, atol=0)
+
+        # And the L-BFGS chart, with the reference set to the identity so that
+        # Phi == H and kappa == 1, must produce those same six numbers.
+        cs = make_lbfgs_cell_state(n, m, wp.vec3d, device)
+        cs.ref_cell.assign(np.eye(3)[None])
+        cs.ref_cell_inv.assign(np.eye(3)[None])
+        cs.kappa.assign(np.ones(m))
+        lbfgs_pack_cell(
+            positions,
+            wp.zeros(n, dtype=wp.vec3d, device=device),
+            cell,
+            wp.zeros(m, dtype=wp.mat33d, device=device),
+            cs.ref_cell_inv,
+            cs.kappa,
+            cs.ext_batch_idx,
+            cs.ext_atom_ptr,
+            cs.phi,
+            cs.phi_inv,
+            cs.cell_dof_a,
+            cs.cell_dof_b,
+            cs.cell_force_a,
+            cs.cell_force_b,
+            cs.ext_positions,
+            cs.ext_forces,
+        )
+        wp.synchronize()
+        lbfgs_rows = np.stack([cs.cell_dof_a.numpy()[0], cs.cell_dof_b.numpy()[0]])
+        np.testing.assert_allclose(lbfgs_rows, expected, rtol=1e-12, atol=0)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_an_unaligned_cell_is_rejected_at_setup(self, device):
+        """The packing only means what it says in the aligned frame.
+
+        Measured: relaxing an unaligned cell leaves entries above the diagonal
+        at O(1) -- a rotation the six components cannot remove. FIRE2 documents
+        the same requirement; this one is checked, because preparation runs
+        once and can afford the read.
+        """
+        unaligned = np.array([[5.0, 1.0, 2.0], [0.0, 6.0, 1.0], [0.0, 0.0, 7.0]])
+        with pytest.raises(ValueError, match="not aligned"):
+            check_cell_is_aligned(
+                wp.array(unaligned[None], dtype=wp.mat33d, device=device)
+            )
+        aligned = np.tril(np.array([[5.0, 0.0, 0.0], [1.0, 6.0, 0.0], [2.0, 1.0, 7.0]]))
+        check_cell_is_aligned(wp.array(aligned[None], dtype=wp.mat33d, device=device))
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_align_cell_output_is_accepted(self, device):
+        """Whatever ``align_cell`` produces must satisfy the check.
+
+        Pins the two against each other, so a change to either is caught.
+        """
+        from nvalchemiops.dynamics.utils.cell_filter import align_cell
+
+        rng = np.random.default_rng(3)
+        h = rng.normal(size=(3, 3)) + np.eye(3) * 6.0
+        positions = wp.array(rng.normal(size=(5, 3)), dtype=wp.vec3d, device=device)
+        cell = wp.array(h[None], dtype=wp.mat33d, device=device)
+        align_cell(cell=cell, positions=positions,
+                   transform=wp.zeros(1, dtype=wp.mat33d, device=device))  # fmt: skip
+        check_cell_is_aligned(cell)
 
 
 class TestLBFGSRaggedVariableCell:

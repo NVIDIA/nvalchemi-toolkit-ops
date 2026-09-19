@@ -160,7 +160,7 @@ class Quadratic:
 
 
 def lower_triangular_cell(seed, diagonal_offset=2.0):
-    """A random lower-triangular cell with lattice vectors as columns.
+    """A random aligned cell with lattice vectors as columns.
 
     Deliberately triclinic: cubic or isotropically scaled cells commute with
     one another, so they would pass a chart test under either multiplication

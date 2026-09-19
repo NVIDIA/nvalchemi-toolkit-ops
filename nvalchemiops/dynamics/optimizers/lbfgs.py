@@ -189,17 +189,75 @@ Buffer                                                 Shape                 dty
 =====================================================  ====================  ==========
 
 ``kappa`` matches the *coordinate* precision, not float64, because it scales
-matrices. ``ref_cell``, ``ref_cell_inv`` and ``kappa`` are the chart: pass
-``cell`` and ``n_particles`` to :func:`lbfgs_prepare_cell_state` to have them
-filled there, or fill them yourself with :func:`lbfgs_set_reference_cell` and
-:func:`lbfgs_cell_kappa`. The rest is scratch. Build the packed topology
-yourself, so ragged batches work::
+matrices. ``ref_cell``, ``ref_cell_inv`` and ``kappa`` are the chart; the rest
+is scratch.
 
-    from nvalchemiops.batch_utils import atom_ptr_to_batch_idx
-    from nvalchemiops.dynamics.utils.cell_filter import extend_atom_ptr
+.. _lbfgs-cell-contract:
 
-    extend_atom_ptr(atom_ptr, ext_atom_ptr)        # ext_atom_ptr[s] = atom_ptr[s] + 2s
-    atom_ptr_to_batch_idx(ext_atom_ptr, ext_batch_idx)
+The variable-cell contract
+--------------------------
+**This is the one authoritative statement of these rules.** The PyTorch and
+JAX bindings and the user guide all defer here rather than restating them.
+
+*1. Align the cell first, exactly as FIRE2 requires.*
+   Call :func:`~nvalchemiops.dynamics.utils.cell_filter.align_cell` once,
+   before the first step, and pass the aligned cell and rotated positions in.
+   This is the same requirement and the same helper that
+   ``fire2_step_coord_cell`` documents -- not a second convention.
+
+   The package calls the result **upper-triangular**, in the lattice-vector
+   reading: ``a`` along x, ``b`` in the xy-plane, ``c`` general. As a *matrix*
+   with lattice vectors in columns that is zeros strictly **above** the
+   diagonal, which is why the same object gets described both ways in the
+   wild. Only one wording is used here, the package's.
+
+   :func:`lbfgs_prepare_cell_state` checks this for you when you hand it a
+   ``cell``, because it is a one-time setup cost rather than a per-step one.
+
+*2. Six components, the same six FIRE2 packs.*
+   ``(0,0), (1,0), (2,0) | (1,1), (2,1), (2,2)`` -- two ``vec3`` entries per
+   system, in that order, matching
+   :func:`~nvalchemiops.dynamics.utils.cell_filter.pack_positions_with_cell`.
+   The three strictly-upper entries are not represented at all, so the cell
+   cannot drift into a rotation. This is why step 1 is required rather than
+   advisory: in an unaligned frame those three entries are *not* the redundant
+   ones, and constraining them constrains the wrong thing.
+
+*3. What L-BFGS does differently, and why.*
+   FIRE2 packs the cell itself. L-BFGS packs the deformation gradient
+   ``Phi = H H_ref^-1`` against a **fixed** reference cell, scaled by
+   ``kappa`` (ASE's ``UnitCellFilter`` chart). The stored ``(s, y)`` pairs
+   compare cell coordinates *across steps*, so those coordinates must mean the
+   same thing at every step -- which they do only if the reference is held
+   fixed for the whole relaxation.
+
+   **Re-referencing invalidates every stored pair.** Calling
+   :func:`lbfgs_set_reference_cell` again, or rebuilding the chart mid-run,
+   silently makes the history describe a frame that no longer exists. If you
+   must re-reference, reset the state with :func:`lbfgs_prepare_state` in the
+   same breath. FIRE2 carries no such history and so has no such rule; this is
+   the one place the two genuinely differ.
+
+*4. Topology is yours, which is what makes ragged batches work.*
+   ``ext_batch_idx`` and ``ext_atom_ptr`` are required rather than derived,
+   because deriving them would mean assuming an even split::
+
+       from nvalchemiops.batch_utils import atom_ptr_to_batch_idx
+       from nvalchemiops.dynamics.utils.cell_filter import extend_atom_ptr
+
+       extend_atom_ptr(atom_ptr, ext_atom_ptr)   # ext_atom_ptr[s] = atom_ptr[s] + 2s
+       atom_ptr_to_batch_idx(ext_atom_ptr, ext_batch_idx)
+
+   Systems may have different atom counts. Each contributes exactly two packed
+   entries regardless, so ``P = num_atoms + 2 * M`` holds for any split, and
+   :meth:`LBFGSCellState.validate` checks that relationship.
+
+*5. Empty systems.*
+   A system with no atoms still owns its two cell degrees of freedom. Its
+   ``kappa`` would be zero on the atom count alone, and ``kappa`` divides the
+   cell force, so :func:`lbfgs_cell_kappa` clamps the count to one. The scale
+   is arbitrary there anyway -- there is nothing to balance the cell against.
+   The JAX helper follows the same contract.
 
 Memory
 ------
@@ -238,6 +296,7 @@ __all__ = [
     "LBFGSCellState",
     "LBFGSState",
     "lbfgs_apply_step",
+    "check_cell_is_aligned",
     "lbfgs_cell_kappa",
     "lbfgs_cell_trust_region",
     "lbfgs_pack_cell",
@@ -2318,7 +2377,7 @@ def _lbfgs_step_impl(
 #
 #     Phi = H H0^-1          deformation gradient, identity at the start
 #     u   = Phi^-1 r         atom coordinates in the reference frame
-#     c   = kappa * Phi      cell coordinates, six lower-triangular components
+#     c   = kappa * Phi      cell coordinates, the six aligned components
 #     f_u = Phi^T F
 #     f_c = -(V sigma) Phi^-T / kappa
 #
@@ -2480,8 +2539,8 @@ def _lbfgs_unpack_cell_kernel(
 ):
     """Rebuild the cell from its packed coordinates.
 
-    Only the six lower-triangular components are stored, so the cell stays
-    lower-triangular by construction and cannot drift into a rotation.
+    Only six components are stored -- the same six FIRE2 packs -- so the cell
+    keeps its aligned form by construction and cannot drift into a rotation.
 
     Thread launch
     -------------
@@ -2707,6 +2766,52 @@ for _v, _mt in _MAT_TYPES.items():
     )
 
 
+def check_cell_is_aligned(cell, atol: float = 1e-10) -> None:
+    """Confirm the cell is in the aligned form the packing assumes.
+
+    The six-component cell parameterization represents only the entries that
+    are non-zero once
+    :func:`~nvalchemiops.dynamics.utils.cell_filter.align_cell` has run; in an
+    unaligned frame the omitted entries are not the redundant ones, and the
+    cell keeps a rotation the optimizer cannot remove. See
+    :ref:`the variable-cell contract <lbfgs-cell-contract>`.
+
+    This reads the cell back to the host, so it is a setup-time check. It is
+    called for you by :func:`lbfgs_prepare_cell_state` and by
+    :func:`lbfgs_set_reference_cell`, both of which run once.
+
+    Parameters
+    ----------
+    cell : array(dtype=mat33), shape (num_systems,)
+        Cell matrices, lattice vectors in columns.
+    atol : float, optional
+        Absolute tolerance on the entries that must be zero.
+
+    Raises
+    ------
+    ValueError
+        If any system's cell is not aligned.
+    """
+    import numpy as _np
+
+    values = _np.asarray(cell.numpy())
+    if values.ndim != 3 or values.shape[1:] != (3, 3):
+        raise ValueError(
+            f"cell must have shape (num_systems, 3, 3); got {values.shape}"
+        )
+    # Strictly above the diagonal: zero once the cell is aligned.
+    offenders = _np.abs(_np.triu(values, 1)).max(axis=(1, 2))
+    bad = _np.flatnonzero(offenders > atol)
+    if bad.size:
+        raise ValueError(
+            f"cell for system(s) {bad.tolist()} is not aligned: the entries "
+            f"above the diagonal reach {offenders[bad].max():.3e}, not zero. "
+            "Call nvalchemiops.dynamics.utils.cell_filter.align_cell(positions, "
+            "cell, transform) once before the first step, as fire2_step_coord_cell "
+            "also requires; see the variable-cell contract in this module."
+        )
+
+
 def lbfgs_set_reference_cell(
     cell: wp.array,
     ref_cell: wp.array,
@@ -2728,11 +2833,18 @@ def lbfgs_set_reference_cell(
     Parameters
     ----------
     cell : wp.array(dtype=mat33), shape (num_systems,)
-        Current cell, lattice vectors as columns. Should already be in the
-        lower-triangular form the optimizer preserves.
+        Current cell, lattice vectors as columns, already aligned by
+        :func:`~nvalchemiops.dynamics.utils.cell_filter.align_cell`. Checked
+        here, since this runs once.
     ref_cell, ref_cell_inv : wp.array(dtype=mat33), shape (num_systems,)
         OUTPUT. ``H0`` and its inverse.
+
+    See Also
+    --------
+    :ref:`The variable-cell contract <lbfgs-cell-contract>` : why the reference
+        is fixed, and what calling this a second time costs.
     """
+    check_cell_is_aligned(cell)
     wp.copy(ref_cell, cell)
     compute_cell_inverse(cell, ref_cell_inv, device=str(cell.device))
 
@@ -3022,10 +3134,11 @@ def _lbfgs_step_coord_cell_impl(
     :func:`lbfgs_step`, and like it has no terminal state: deciding when the
     forces and stress are small enough is yours.
 
-    Every buffer is caller-owned; nothing is allocated here. Call
-    :func:`lbfgs_set_reference_cell` and :func:`lbfgs_cell_kappa` once before
-    the first step, and build ``ext_batch_idx`` / ``ext_atom_ptr`` yourself so
-    ragged batches are expressible.
+    Align the cell before the first step and keep the reference fixed for the
+    whole relaxation; build ``ext_batch_idx`` / ``ext_atom_ptr`` yourself so
+    ragged batches stay expressible. All of that is stated once in
+    :ref:`the variable-cell contract <lbfgs-cell-contract>`, which this
+    function follows rather than restates.
 
     Parameters
     ----------
@@ -3034,8 +3147,8 @@ def _lbfgs_step_coord_cell_impl(
     forces : wp.array, shape (num_atoms,)
         Cartesian forces at ``positions``. Forces, not gradients.
     cell : wp.array(dtype=mat33), shape (num_systems,)
-        Cell with lattice vectors as columns, advanced in place. Kept
-        lower-triangular, so it cannot drift into a rotation.
+        Cell with lattice vectors as columns, advanced in place. Must be
+        aligned first; see :ref:`the variable-cell contract <lbfgs-cell-contract>`.
     stress : wp.array(dtype=mat33), shape (num_systems,)
         Cauchy stress per system, which drives the cell degrees of freedom.
     batch_idx : wp.array(dtype=int32), shape (num_atoms,)

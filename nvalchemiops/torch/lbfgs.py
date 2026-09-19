@@ -445,7 +445,10 @@ def lbfgs_step_coord_cell(
     Parameters
     ----------
     cell : torch.Tensor, shape (num_systems, 3, 3)
-        Lattice vectors as columns, kept lower-triangular.
+        Lattice vectors as columns, aligned by ``align_cell`` before the
+        first step. See :ref:`the variable-cell contract <lbfgs-cell-contract>`
+        in :mod:`nvalchemiops.dynamics.optimizers.lbfgs`, which is the single
+        authoritative statement of the cell rules.
     stress : torch.Tensor, shape (num_systems, 3, 3)
         Cauchy stress, which drives the cell degrees of freedom.
     state, cell_state : LBFGSState, LBFGSCellState

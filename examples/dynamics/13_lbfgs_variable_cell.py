@@ -41,20 +41,29 @@ at the start and lattice vectors held as columns, the deformation gradient is
 
 Two consequences are worth knowing:
 
+- The cell must be aligned with ``align_cell`` before the first step, exactly
+  as ``fire2_step_coord_cell`` requires, and the six packed cell components are
+  the same six FIRE2 packs.
 - ``lbfgs_set_reference_cell`` must be called **once**, before the first step.
-  Re-referencing mid-run invalidates every stored curvature pair.
+  Re-referencing mid-run invalidates every stored curvature pair, because they
+  compare cell coordinates across steps. This is the one rule FIRE2 does not
+  share: it keeps no history.
 - The optimizer buffers must be sized for ``num_atoms + 2 * num_systems``
   degrees of freedom, because the cell contributes two packed entries per
   system.
 
-Every buffer is caller-owned. Nothing is allocated or initialized for you, so
-this example shows the full allocation, including how to build the extended
-topology arrays with the generic batch utilities -- which is also what makes
-ragged batches (systems with different atom counts) expressible.
+The preparation functions allocate and initialize both states, but the packed
+topology stays yours: this example builds it with the generic batch utilities,
+which is what makes ragged batches (systems with different atom counts)
+expressible.
 
-Convergence is always evaluated on the **Cartesian** forces and the stress, so
-``force_tol`` keeps its meaning as a force per atom however far the cell
-deforms.
+Apply your thresholds to the **Cartesian** forces and the stress, never to the
+packed norms, so they keep their physical meaning however far the cell deforms.
+
+The full set of cell rules -- alignment, the six-component convention, the
+fixed reference, topology, and ragged and empty systems -- is stated once in
+the :mod:`nvalchemiops.dynamics.optimizers.lbfgs` module documentation. This
+example follows it rather than restating it.
 """
 
 from __future__ import annotations
@@ -128,7 +137,7 @@ md_system = MDSystem(
 # Align the Cell, Once
 # --------------------
 #
-# The optimizer keeps the cell lower-triangular, stopping it drifting into a
+# The optimizer keeps the cell in its aligned form, stopping it drifting into a
 # rotation. Align *before* capturing the reference cell: re-aligning mid-run
 # redefines the chart and invalidates the history.
 

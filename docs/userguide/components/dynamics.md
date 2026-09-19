@@ -555,13 +555,26 @@ decrease monotonically, though the force does converge.
 **Variable cell.** The packed layout interleaves each system's atoms with its
 two cell entries, so the `LBFGSState` must be sized for
 `num_atoms + 2 * num_systems` degrees of freedom, and a second
-`LBFGSCellState` from `lbfgs_prepare_cell_state` carries the chart. Build
-`ext_atom_ptr` and `ext_batch_idx` with the generic `extend_atom_ptr` and
-`atom_ptr_to_batch_idx` utilities and pass them in; because nothing assumes a
-uniform split, ragged batches whose systems have different atom counts work the
-same way uniform ones do. Pass `cell` and `n_particles` to the preparation
-function to have the chart captured there, or fill it yourself with
-`lbfgs_set_reference_cell` and `lbfgs_cell_kappa` before the first step.
+`LBFGSCellState` from `lbfgs_prepare_cell_state` carries the chart. Pass `cell`
+and `n_particles` to the preparation function to have the chart captured there,
+or fill it yourself with `lbfgs_set_reference_cell` and `lbfgs_cell_kappa`
+before the first step.
+
+**Align the cell first**, with
+`nvalchemiops.dynamics.utils.cell_filter.align_cell` — the same requirement and
+the same helper `fire2_step_coord_cell` has, and the same six packed cell
+components. Preparation checks it for you.
+
+The one L-BFGS-specific rule is that the reference cell is **fixed** for the
+whole relaxation: the stored curvature pairs compare cell coordinates across
+steps, so re-referencing mid-run silently invalidates them. Reset the state if
+you must re-reference. FIRE2 keeps no history and so has no such rule.
+
+The full contract — alignment, the six-component convention, the fixed
+reference, the topology rules, and ragged and empty-system behaviour — is
+stated once in the `nvalchemiops.dynamics.optimizers.lbfgs` module
+documentation. This page and both bindings defer to it rather than restating
+it, so there is one place to read and one place to change.
 
 On this path convergence has two parts, and both stay with you: apply your
 thresholds to the **Cartesian** forces and the stress, never to the packed
