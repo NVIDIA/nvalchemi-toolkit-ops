@@ -1289,7 +1289,7 @@ def _get_query_cluster_tile_direct_csr_count_kernel(*, batched: bool) -> wp.Kern
             System index for each tile pair. Ignored by the single-system
             specialization.
         row_counts : wp.array, shape (natom,), dtype=wp.int32
-            MODIFIED: Accepted neighbor count for each source atom.
+            OUTPUT: Accepted neighbor count for each source atom.
 
         Returns
         -------
@@ -1422,24 +1422,24 @@ def _get_query_cluster_tile_direct_csr_fill_kernel(
             System index for each tile pair. Ignored by the single-system
             specialization.
         cursors : wp.array, shape (natom,), dtype=wp.int32
-            MODIFIED: Per-source insertion cursors initialized from row pointers.
+            OUTPUT: Per-source insertion cursors initialized from row pointers.
         coo_list : wp.array, shape (physical_capacity, 2), dtype=wp.int32
-            MODIFIED: Directed source-target pairs in CSR row ownership.
+            OUTPUT: Directed source-target pairs in CSR row ownership.
         coo_shifts : wp.array, shape (physical_capacity, 3), dtype=wp.int32
-            MODIFIED: Periodic shifts aligned with ``coo_list``.
+            OUTPUT: Periodic shifts aligned with ``coo_list``.
         neighbor_vectors : wp.array, shape (physical_capacity,), dtype=wp.vec3f
-            MODIFIED: Optional displacement vectors aligned with pairs. Sentinel
+            OUTPUT: Optional displacement vectors aligned with pairs. Sentinel
             when disabled.
         neighbor_distances : wp.array, shape (physical_capacity,), dtype=wp.float32
-            MODIFIED: Optional distances aligned with pairs. Sentinel when
+            OUTPUT: Optional distances aligned with pairs. Sentinel when
             disabled.
         pair_params : wp.array, shape (natom, K), dtype=wp.float32
             Pair-function parameters. Sentinel when no pair function is active.
         pair_energies : wp.array, shape (physical_capacity,), dtype=wp.float32
-            MODIFIED: Optional pair-function energies aligned with pairs.
+            OUTPUT: Optional pair-function energies aligned with pairs.
             Sentinel when disabled.
         pair_forces : wp.array, shape (physical_capacity,), dtype=wp.vec3f
-            MODIFIED: Optional pair-function forces aligned with pairs. Sentinel
+            OUTPUT: Optional pair-function forces aligned with pairs. Sentinel
             when disabled.
 
         Returns
