@@ -767,6 +767,60 @@ class TestLBFGSJaxCoordCell:
         np.testing.assert_array_equal(jitted[1], eager[1])
         np.testing.assert_array_equal(jitted[2], eager[2])
 
+    def test_cell_kappa_requires_an_explicit_dtype(self, _gpu):
+        """``kappa`` must match the coordinates, and cannot be guessed here.
+
+        Unlike the Warp and PyTorch helpers, which write into an array the
+        caller already allocated, this one *returns* the array and so has to
+        choose a precision -- with nothing passed in to infer it from. A
+        float64 default silently handed fp32 callers a buffer the cell step
+        rejects, so the argument is required.
+        """
+        from nvalchemiops.jax.lbfgs import lbfgs_cell_kappa
+
+        counts = jnp.asarray([4, 3], jnp.int32)
+        assert lbfgs_cell_kappa(counts, dtype=jnp.float32).dtype == jnp.float32
+        assert lbfgs_cell_kappa(counts, dtype=jnp.float64).dtype == jnp.float64
+        with pytest.raises(TypeError, match="dtype"):
+            lbfgs_cell_kappa(counts)
+
+    def test_fp32_variable_cell_step_runs(self, _gpu):
+        """The fp32 cell path works end to end, kappa included.
+
+        Every other variable-cell test here is float64, which is how an fp32
+        kappa mismatch went unnoticed.
+        """
+        from nvalchemiops.jax.lbfgs import (
+            lbfgs_cell_kappa,
+            lbfgs_set_reference_cell,
+            lbfgs_step_coord_cell,
+        )
+
+        n, m_sys, f32 = 4, 1, jnp.float32
+        cell = jnp.asarray(np.diag([6.0, 6.5, 7.0])[None], f32)
+        buffers = make_jax_buffers(n + 2 * m_sys, m_sys, dtype=f32)
+        cell_buffers = make_jax_cell_buffers(n, m_sys, dtype=f32)
+        ref_cell, ref_cell_inv = lbfgs_set_reference_cell(cell)
+        cell_buffers[0], cell_buffers[1] = ref_cell, ref_cell_inv
+        cell_buffers[_CELL_BUFFERS.index("kappa")] = lbfgs_cell_kappa(
+            jnp.asarray([n], jnp.int32), dtype=f32
+        )
+
+        out = lbfgs_step_coord_cell(
+            jnp.zeros((n, 3), f32),
+            cell,
+            jnp.full((n, 3), 0.01, f32),
+            jnp.zeros((m_sys, 3, 3), f32),
+            jnp.zeros(n, jnp.int32),
+            jnp.full((m_sys,), n, jnp.int32),
+            *buffers,
+            *cell_buffers,
+            force_tol=1e-4,
+            maxstep=0.2,
+        )
+        assert out[0].dtype == f32
+        assert bool(jnp.isfinite(out[0]).all())
+
     def test_zero_atom_system_gets_a_positive_kappa(self, _gpu):
         """An empty system must not produce ``kappa = 0``.
 
@@ -779,7 +833,11 @@ class TestLBFGSJaxCoordCell:
         from nvalchemiops.jax.lbfgs import lbfgs_cell_kappa
 
         kappa = np.asarray(
-            lbfgs_cell_kappa(jnp.asarray([4, 0, 3], jnp.int32), cell_force_scale=0.25)
+            lbfgs_cell_kappa(
+                jnp.asarray([4, 0, 3], jnp.int32),
+                dtype=jnp.float64,
+                cell_force_scale=0.25,
+            )
         )
         assert (kappa > 0.0).all(), f"non-positive kappa: {kappa}"
         assert np.isfinite(1.0 / kappa).all()

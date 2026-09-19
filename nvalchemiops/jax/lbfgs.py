@@ -782,8 +782,8 @@ def lbfgs_set_reference_cell(cell: jax.Array) -> tuple[jax.Array, jax.Array]:
 def lbfgs_cell_kappa(
     n_particles: jax.Array,
     *,
+    dtype,
     cell_force_scale: float = 1.0,
-    dtype=None,
 ) -> jax.Array:
     """Return the per-system cell coordinate scaling.
 
@@ -799,10 +799,13 @@ def lbfgs_cell_kappa(
         Multiplier on the atom count. Larger values make the cell move less per
         step relative to the atoms; ``1 / atoms_per_system`` puts the two on a
         comparable footing.
-    dtype : optional
-        Result precision, defaulting to the coordinate precision in use.
-        ``kappa`` scales matrices, so it must match the **coordinates**, not
-        the float64 per-system scalars.
+    dtype : jnp.float32 or jnp.float64
+        Result precision. **Required**, and must match the *coordinates*:
+        ``kappa`` scales matrices, so unlike the other per-system scalars it is
+        not float64. There is no coordinate array here to infer it from, and
+        guessing float64 would silently hand an fp32 caller a buffer the cell
+        step rejects. The Warp and PyTorch helpers take no ``dtype`` because
+        they write into an array the caller already allocated.
 
     Returns
     -------
@@ -816,7 +819,7 @@ def lbfgs_cell_kappa(
     """
     if cell_force_scale <= 0.0:
         raise ValueError(f"cell_force_scale must be positive; got {cell_force_scale}")
-    dtype = jnp.float64 if dtype is None else jnp.dtype(dtype).type
+    dtype = jnp.dtype(dtype).type
     if dtype not in _CELL_BODIES:
         raise ValueError(f"dtype must be float32 or float64; got {dtype}")
     # Clamp an empty system to one atom, matching the Warp kernel: kappa is
