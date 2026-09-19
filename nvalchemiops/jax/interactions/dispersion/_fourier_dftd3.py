@@ -372,12 +372,14 @@ def _reject_out_of_range_batch(batch_idx, num_systems):
 
     Out of range, an atom lands on a mesh slab belonging to no system and its contribution
     vanishes with no error: a whole-system ``batch_idx`` of 5 against one system returns
-    exactly zero energy. The shapes above are static and always checked; these are values, so
-    reading them is impossible while tracing and the check is skipped under ``jax.jit``, as in
-    :func:`_reject_half_filled`.
+    exactly zero energy.
+
+    Returns ``(multiplier, batch_idx)``. Eagerly the values can be read, so this raises and
+    the pair passes through unchanged. While tracing they cannot, and ``jax.jit`` is the
+    documented path, so the indices are clamped into range and the multiplier is NaN.
     """
     if batch_idx.shape[0] == 0:
-        return
+        return 1.0, batch_idx
     try:
         lowest = int(np.asarray(batch_idx).min())
         highest = int(np.asarray(batch_idx).max())
@@ -385,12 +387,20 @@ def _reject_out_of_range_batch(batch_idx, num_systems):
         jax.errors.ConcretizationTypeError,
         jax.errors.TracerArrayConversionError,
     ):
-        return
+        # Tracing: the values cannot be read, so this is handled on device in two parts.
+        # The clamp keeps the kernels in bounds -- an index past the last system otherwise
+        # reaches the grouped cell and the mesh out of range, which is an illegal access
+        # rather than a wrong number. The multiplier then poisons the result, so the clamp
+        # cannot quietly turn bad input into a plausible answer.
+        in_range = (batch_idx >= 0) & (batch_idx < num_systems)
+        guard = jnp.where(jnp.all(in_range), 1.0, jnp.nan)
+        return guard, jnp.clip(batch_idx, 0, num_systems - 1)
     if lowest < 0 or highest >= num_systems:
         raise ValueError(
             f"batch_idx values span [{lowest}, {highest}], outside "
             f"[0, {num_systems}) for {num_systems} system(s)."
         )
+    return 1.0, batch_idx
 
 
 def _reject_uncovered_species(species_index, numbers):
@@ -657,7 +667,7 @@ def fourier_dftd3(
             f"batch_idx has {batch_idx.shape[0]} entries but there are {n_atoms} atoms."
         )
     batch_idx = batch_idx.astype(jnp.int32)
-    _reject_out_of_range_batch(batch_idx, num_systems)
+    batch_guard, batch_idx = _reject_out_of_range_batch(batch_idx, num_systems)
     numbers = numbers.astype(jnp.int32)
     if fill_value is None:
         fill_value = n_atoms
@@ -935,6 +945,7 @@ def fourier_dftd3(
 
     # 1.0 unless tracing found an element the decomposition misses; see
     # :func:`_reject_uncovered_species`.
+    covered = covered * batch_guard
     energy_total = energy_total * covered
     forces_total = forces_total * covered
     if compute_virial:

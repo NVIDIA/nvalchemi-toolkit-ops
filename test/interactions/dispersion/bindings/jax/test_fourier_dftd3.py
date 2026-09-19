@@ -769,6 +769,25 @@ class TestBatchArgumentValidation:
                 jnp.asarray(parts["positions"])
             )
 
+    def test_the_traced_path_is_guarded_too(self):
+        """``jax.jit`` is documented as mandatory, so the check must survive tracing.
+
+        The values cannot be read while tracing, so the indices are clamped to keep the
+        kernels in bounds and the result is poisoned to keep the clamp honest.
+        """
+        parts = _single(5.0, 0)
+        traced = jax.jit(lambda b: self._call(parts, batch_idx=b)[0])
+
+        valid = jnp.zeros(parts["n_atoms"], jnp.int32)
+        np.testing.assert_allclose(
+            np.asarray(traced(valid)),
+            np.asarray(self._call(parts, batch_idx=valid)[0]),
+            rtol=1e-12,
+        )
+
+        out_of_range = jnp.full((parts["n_atoms"],), 5, jnp.int32)
+        assert np.isnan(np.asarray(traced(out_of_range))).all()
+
     def test_a_valid_single_system_batch_is_accepted(self):
         """The guard must not reject the ordinary case it is wrapped around."""
         parts = _single(5.0, 0)

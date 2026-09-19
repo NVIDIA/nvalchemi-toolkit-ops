@@ -1493,6 +1493,37 @@ class TestBatchArgumentValidation:
         with pytest.raises(ValueError, match="outside"):
             _evaluate(system, batch_idx=out_of_range)
 
+    def test_the_compiled_path_is_guarded_too(self):
+        """``reduce-overhead`` is documented, so the check has to survive capture.
+
+        A host read is illegal under graph capture, so the bounds cannot be raised on.
+        Instead the indices are clamped, which keeps the kernels from reading the grouped
+        cell and the mesh out of range, and the result is poisoned so the clamp cannot pass
+        bad input off as a plausible energy.
+        """
+        system = _system("cuda:0")
+        setup = FourierD3Setup.build(system["cell"], system["params"].n_species, MESH)
+        n_atoms = system["positions"].shape[0]
+
+        def run(batch):
+            return _evaluate(
+                system, setup=setup, mesh_dimensions=None, batch_idx=batch
+            )[0]
+
+        compiled = torch.compile(run, mode="reduce-overhead")
+        valid = torch.zeros(n_atoms, dtype=torch.int32, device="cuda:0")
+        for _ in range(3):
+            warmed = compiled(valid)
+        torch.cuda.synchronize()
+        np.testing.assert_allclose(
+            warmed.cpu().numpy(), run(valid).cpu().numpy(), rtol=1e-12
+        )
+
+        out_of_range = torch.full((n_atoms,), 5, dtype=torch.int32, device="cuda:0")
+        poisoned = compiled(out_of_range)
+        torch.cuda.synchronize()
+        assert np.isnan(poisoned.cpu().numpy()).all()
+
     def test_a_valid_single_system_batch_is_accepted(self):
         """The guard must not reject the ordinary case it is wrapped around."""
         system = _system("cuda:0")
