@@ -566,12 +566,26 @@ _CELL_BUFFERS: tuple[str, ...] = tuple(
 #: configuration and topology, so they are inputs rather than in-out aliases.
 _CELL_SCRATCH: tuple[str, ...] = _CELL_BUFFERS[5:]
 
+#: Warp spells one precision as a vector, a matrix and a scalar; these map
+#: onto the scalar so the three can be compared. PyTorch and JAX dtypes pass
+#: through :func:`_precision_of` unchanged, because theirs already are scalars.
+_PRECISION_OF = {
+    wp.vec3f: wp.float32, wp.mat33f: wp.float32, wp.float32: wp.float32,
+    wp.vec3d: wp.float64, wp.mat33d: wp.float64, wp.float64: wp.float64,
+}  # fmt: skip
+
+#: Groups holding integers, which carry no floating-point precision to agree
+#: on. Keyed by label rather than by dtype, because ``wp.int32``,
+#: ``torch.int32`` and JAX's ``int32`` are three unrelated objects.
+_INTEGER_KINDS = frozenset({"per-system integer control fields", "topology indices"})
+
+
 #: Fields grouped by what they hold, for validation. Every field in a group
 #: must share one dtype -- that is the check, rather than a named dtype,
 #: because the same state is expressed in Warp, PyTorch and JAX types.
 _STATE_KINDS: dict[str, tuple[str, ...]] = {
     "per-degree-of-freedom vectors": _OPTIMIZER_BUFFERS[:5],
-    "per-system float64 scalars": _OPTIMIZER_BUFFERS[5:15],
+    "per-system scalars": _OPTIMIZER_BUFFERS[5:15],
     "per-system integer control fields": _OPTIMIZER_BUFFERS[15:],
 }
 _CELL_KINDS: dict[str, tuple[str, ...]] = {
@@ -585,6 +599,10 @@ _CELL_KINDS: dict[str, tuple[str, ...]] = {
         "ext_forces",
     ),  # fmt: skip
     "topology indices": ("ext_batch_idx", "ext_atom_ptr"),
+    # Its own group: kappa scales matrices, so it is the scalar counterpart of
+    # the coordinate precision rather than a companion of any other field. The
+    # cross-group check below is what ties it to the rest.
+    "cell scaling": ("kappa",),
 }
 
 # The groups are written out by slice and by hand, so pin them to the field
@@ -599,19 +617,47 @@ for _names, _all, _label in (
     if len(_grouped) != len(set(_grouped)) or not set(_grouped) <= set(_all):
         # Raised rather than asserted so the guard survives `python -O`.
         raise RuntimeError(f"{_label} does not partition its fields: {_grouped}")
-    # ``kappa`` is deliberately ungrouped: it is the only cell field whose
-    # dtype is the scalar counterpart of the coordinate precision.
-    if _ungrouped - {"kappa"}:
+    if _ungrouped:
         raise RuntimeError(f"{_label} leaves fields unchecked: {sorted(_ungrouped)}")
+# Pin the flags to real group labels. A renamed label would otherwise drop out
+# of this set silently, and its integer dtype would then be compared against
+# the floating-point ones as if it were a precision.
+_ALL_KIND_LABELS = set(_STATE_KINDS) | set(_CELL_KINDS)
+if not _INTEGER_KINDS <= _ALL_KIND_LABELS:
+    # Raised rather than asserted so the guard survives `python -O`.
+    raise RuntimeError(
+        f"_INTEGER_KINDS names groups that do not exist: "
+        f"{sorted(_INTEGER_KINDS - _ALL_KIND_LABELS)}"
+    )
+
+
+def _precision_of(dtype):
+    """The scalar precision a coordinate, matrix or scalar dtype implies.
+
+    Warp spells the same precision three ways -- ``vec3d``, ``mat33d``,
+    ``float64`` -- while PyTorch and JAX store coordinates in an array whose
+    dtype already *is* the scalar. Mapping the Warp composites onto their
+    scalar and passing everything else through unchanged lets one comparison
+    serve all three frameworks.
+    """
+    return _PRECISION_OF.get(dtype, dtype)
 
 
 def _check_kinds(state, kinds: dict[str, tuple[str, ...]], cls_name: str) -> None:
-    """Check that grouped fields share a dtype, and the whole state a device.
+    """Check dtypes within and across groups, and the device across the state.
 
-    Both are read off the arrays themselves, so this works unchanged for Warp,
+    Three checks. Every field in a group shares a dtype. Every group that
+    carries a floating-point precision agrees on *which* precision, so a state
+    cannot pair fp64 coordinates with an fp32 scalar group -- that combination
+    is not registered, and without this it reaches the kernel launcher and
+    fails there with a dtype error rather than here with a documented one.
+    And the whole state lives on one device.
+
+    All read off the arrays themselves, so this works unchanged for Warp,
     PyTorch and JAX. A JAX tracer has no device, so the device check is skipped
     for anything that does not expose one rather than failing under ``jit``.
     """
+    precisions = {}
     for label, names in kinds.items():
         seen = {getattr(state, n).dtype for n in names}
         if len(seen) > 1:
@@ -619,6 +665,18 @@ def _check_kinds(state, kinds: dict[str, tuple[str, ...]], cls_name: str) -> Non
             raise ValueError(
                 f"{cls_name} {label} must share one dtype, got {len(seen)}: {offenders}"
             )
+        if label not in _INTEGER_KINDS:
+            precisions.setdefault(_precision_of(seen.pop()), []).append(label)
+    if len(precisions) > 1:
+        raise ValueError(
+            f"{cls_name} mixes floating-point precisions: "
+            + "; ".join(
+                f"{p} in {sorted(labels)}"
+                for p, labels in sorted(precisions.items(), key=lambda kv: str(kv[0]))
+            )
+            + ". Every array follows the coordinate dtype; see the precision "
+            "section of the module documentation."
+        )
     devices = {}
     for f in dataclasses.fields(state):
         device = getattr(getattr(state, f.name), "device", None)

@@ -970,6 +970,30 @@ class TestLBFGSStateValidation:
         st.validate()
 
     @pytest.mark.parametrize("device", DEVICES)
+    def test_scalars_must_match_the_coordinate_precision(self, device):
+        """A uniformly fp32 scalar group under fp64 coordinates is not a state.
+
+        Each group agreeing with itself is not enough: that combination is not
+        a registered overload, so without the cross-group check it passes
+        validation and then dies inside the kernel launcher with a dtype error
+        instead of here.
+        """
+        st = make_lbfgs_state(4, 1, HISTORY_SIZE, wp.vec3d, device)
+        for name in _OPTIMIZER_BUFFERS[5:15]:
+            old = getattr(st, name)
+            setattr(st, name, wp.zeros(old.shape, dtype=wp.float32, device=device))
+        with pytest.raises(ValueError, match="mixes floating-point precisions"):
+            st.validate()
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_cell_scaling_must_match_the_coordinate_precision(self, device):
+        """``kappa`` is checked too, though it shares a group with nothing."""
+        cs = make_lbfgs_cell_state(4, 1, wp.vec3d, device)
+        cs.kappa = wp.zeros(1, dtype=wp.float32, device=device)
+        with pytest.raises(ValueError, match="mixes floating-point precisions"):
+            cs.validate()
+
+    @pytest.mark.parametrize("device", DEVICES)
     def test_a_mixed_state_is_rejected(self, device):
         """Promoting one scalar to float64 must not silently half-work."""
         st = make_lbfgs_state(6, 1, HISTORY_SIZE, wp.vec3f, device)
