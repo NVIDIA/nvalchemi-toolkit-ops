@@ -15,10 +15,16 @@
 
 """Tests for the Warp-level L-BFGS optimizer.
 
+This module owns the numerical certification: the two bindings cover only
+what is specific to PyTorch and JAX, and do not restate the algorithm.
+
 Tests cover:
 
 - The two-loop recursion, against a NumPy reference and against algebraic
-  identities that hold for any correct implementation.
+  identities that hold for any correct implementation. Both are applied to
+  the production kernels -- the identities through
+  :meth:`Driver.apply_inverse_hessian`, which turns the public step into a
+  matrix-vector product -- so none of them can pass on a reference alone.
 - The line-search state machine, against closed-form outcomes derived on paper
   for a one-dimensional quadratic.
 - Convergence on anisotropic quadratics, single and batched.
@@ -42,7 +48,6 @@ import pytest
 import warp as wp
 
 from nvalchemiops.dynamics.optimizers.lbfgs import (
-    _OPTIMIZER_BUFFERS,
     _resolve_curvature_eps,
     check_cell_is_aligned,
     lbfgs_apply_step,
@@ -62,6 +67,7 @@ from nvalchemiops.dynamics.optimizers.lbfgs import (
 from .conftest import (
     DEVICES,
     DTYPE_CONFIGS,
+    STATE_FIELDS,
     CellPotential,
     Quadratic,
     history_slots,
@@ -69,6 +75,7 @@ from .conftest import (
     make_lbfgs_cell_state,
     make_lbfgs_state,
     numpy_two_loop,
+    per_system_scalar_fields,
 )
 
 HISTORY_SIZE = 6
@@ -156,6 +163,53 @@ class Driver:
     def system_mask(self, s):
         return self.batch_np == s
 
+    def apply_inverse_hessian(self, q):
+        """``H q``, computed by the production two-loop kernels.
+
+        The kernels expose no matrix-vector entry point, so this drives them
+        through the public step. Positions are put back exactly on ``x_base``,
+        which makes the candidate pair ``s = x - x_base`` zero; the curvature
+        guard then discards it, the history is left as it was, and
+        ``state.direction`` is that history's ``H`` applied to the force
+        passed in.
+
+        The ring must not be full: the candidate is written into the slot
+        ``end`` points at before its curvature is known, which on a full ring
+        is the oldest live pair, so probing there would consume history rather
+        than leave it alone. Both the count and the write position are checked
+        afterwards rather than assumed -- had the pair been stored, every
+        identity measured this way would be against a different operator than
+        the one intended.
+        """
+        count = self.state.history_count.numpy().copy()
+        assert (count < self.history_size).all(), (
+            "the probe destroys the oldest pair on a full ring; relax for "
+            "fewer steps, or the operator under test is not the one read out"
+        )
+        end = self.state.end.numpy().copy()
+        self.positions.assign(self.state.x_base.numpy())
+        self.forces.assign(q.astype(self.np_dtype))
+        self.step(maxstep=0.1)
+        np.testing.assert_array_equal(
+            self.state.history_count.numpy(),
+            count,
+            err_msg="the probe pair was stored; H is not the operator intended",
+        )
+        np.testing.assert_array_equal(self.state.end.numpy(), end)
+        return self.state.direction.numpy()
+
+    def history_pairs(self, s=0):
+        """The ``(s, y)`` pairs currently in the ring, newest first."""
+        st = self.state
+        slots = history_slots(
+            st.end.numpy()[s], int(st.history_count.numpy()[s]), self.history_size
+        )
+        mask = self.system_mask(s)
+        return (
+            [st.s_history.numpy()[j][mask] for j in slots],
+            [st.y_history.numpy()[j][mask] for j in slots],
+        )
+
 
 def _cluster(num_systems, atoms_per_system, seed=42, scale=2.0):
     rng = np.random.default_rng(seed)
@@ -227,86 +281,98 @@ class TestLBFGSTwoLoop:
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_secant_condition_holds(self, device):
-        """``H y_newest == s_newest`` for the history the kernels produced.
+        """``H y_newest == s_newest``, from the kernels themselves.
 
-        This is an identity of the L-BFGS operator, independent of the line
-        search and of the initial scaling, so it needs no reference to compare
-        against.
+        The defining identity of the L-BFGS operator, independent of the trust
+        region and of the initial scaling, so it needs no reference to compare
+        against. Applied through :meth:`Driver.apply_inverse_hessian`, so what
+        is certified is the production two-loop rather than a NumPy stand-in.
         """
+        # Short of filling the ring, so the probe leaves the history alone.
         d = Driver(_cluster(1, 5), 1, wp.vec3d, np.float64, device).run(
-            max_evals=25, force_tol=1e-12, maxstep=0.5
+            max_evals=4, force_tol=1e-12, maxstep=0.5
         )
-        st = d.state
-        hist_count = int(st.history_count.numpy()[0])
-        assert hist_count > 0
-        slots = history_slots(st.end.numpy()[0], hist_count, d.history_size)
-        s_hist, y_hist = st.s_history.numpy(), st.y_history.numpy()
-        ys, yy = st.ys.numpy(), st.yy.numpy()
-        mask = d.system_mask(0)
-        s_vecs = [s_hist[j][mask] for j in slots]
-        y_vecs = [y_hist[j][mask] for j in slots]
-        ys_v = [ys[j][0] for j in slots]
-        yy_v = [yy[j][0] for j in slots]
+        assert 0 < int(d.state.history_count.numpy()[0]) < HISTORY_SIZE
+        s_vecs, y_vecs = d.history_pairs()
 
-        for gamma in (None, 1.0, 3.7):
-            got = numpy_two_loop(s_vecs, y_vecs, ys_v, yy_v, y_vecs[0], gamma=gamma)
-            np.testing.assert_allclose(got, s_vecs[0], rtol=1e-9, atol=1e-12)
+        got = d.apply_inverse_hessian(y_vecs[0])
+        np.testing.assert_allclose(got, s_vecs[0], rtol=1e-9, atol=1e-12)
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_operator_is_symmetric_and_positive_definite(self, device):
-        """``u . H v == v . H u`` and ``g . H g > 0`` on the produced history."""
+        """``u . H v == v . H u`` and ``u . H u > 0``, from the kernels.
+
+        Symmetry and positive definiteness are what make the direction a
+        descent direction at all; lose either and the trust region is bounding
+        a step that points the wrong way. Two probes against one unchanged
+        history, so both matvecs are the same operator.
+        """
         d = Driver(_cluster(1, 5), 1, wp.vec3d, np.float64, device).run(
-            max_evals=25, force_tol=1e-12, maxstep=0.5
+            max_evals=4, force_tol=1e-12, maxstep=0.5
         )
-        st = d.state
-        hist_count = int(st.history_count.numpy()[0])
-        slots = history_slots(st.end.numpy()[0], hist_count, d.history_size)
-        mask = d.system_mask(0)
-        s_vecs = [st.s_history.numpy()[j][mask] for j in slots]
-        y_vecs = [st.y_history.numpy()[j][mask] for j in slots]
-        ys_v = [st.ys.numpy()[j][0] for j in slots]
-        yy_v = [st.yy.numpy()[j][0] for j in slots]
+        assert 0 < int(d.state.history_count.numpy()[0]) < HISTORY_SIZE
 
         rng = np.random.default_rng(7)
-        u = rng.normal(size=s_vecs[0].shape)
-        v = rng.normal(size=s_vecs[0].shape)
-        hu = numpy_two_loop(s_vecs, y_vecs, ys_v, yy_v, u)
-        hv = numpy_two_loop(s_vecs, y_vecs, ys_v, yy_v, v)
+        u = rng.normal(size=(d.num_dofs, 3))
+        v = rng.normal(size=(d.num_dofs, 3))
+        hu = d.apply_inverse_hessian(u)
+        hv = d.apply_inverse_hessian(v)
+
         np.testing.assert_allclose((u * hv).sum(), (v * hu).sum(), rtol=1e-10)
         assert (u * hu).sum() > 0.0
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_matches_scipy_with_identity_initial_hessian(self, device):
-        """Cross-check the recursion against scipy at ``gamma == 1``.
+        """Cross-check the kernels against scipy at ``gamma == 1``.
 
-        ``LbfgsInvHessProduct`` uses an identity initial inverse Hessian with no
-        ``ys / yy`` scaling, so the comparison is only meaningful when the two
-        agree on that factor. Building the history with ``ys == yy`` forces
-        ``gamma == 1`` and still exercises the whole alpha/beta structure.
+        ``LbfgsInvHessProduct`` uses an identity initial inverse Hessian with
+        no ``ys / yy`` scaling, so the comparison is only meaningful when the
+        two agree on that factor. A relaxation will not produce such a history
+        on demand, so one is written into the state -- whose fields are public
+        -- with ``ys == yy`` in every pair, forcing ``gamma == 1`` while still
+        exercising the whole alpha/beta structure. The step is then driven
+        exactly as in the identity tests above, so it is the production
+        recursion that scipy is checked against.
         """
         scipy_opt = pytest.importorskip("scipy.optimize")
         rng = np.random.default_rng(11)
         n, b = 12, 4
-        s_vecs, y_vecs = [], []
-        for _ in range(b):
-            sv = rng.normal(size=n)
-            yv = rng.normal(size=n)
-            if sv @ yv < 0:
-                yv = -yv
-            yv *= (sv @ yv) / (yv @ yv)  # force ys == yy, hence gamma == 1
-            s_vecs.append(sv)
-            y_vecs.append(yv)
-        ys_v = [s @ y for s, y in zip(s_vecs, y_vecs)]
-        yy_v = [y @ y for y in y_vecs]
-        np.testing.assert_allclose(ys_v, yy_v, rtol=1e-12)
 
-        q = rng.normal(size=n)
-        # scipy stores pairs oldest-first; ours are newest-first.
+        d = Driver(_cluster(1, n), 1, wp.vec3d, np.float64, device)
+        s_hist = np.zeros((d.history_size, n, 3))
+        y_hist = np.zeros((d.history_size, n, 3))
+        ys = np.zeros((d.history_size, 1))
+        yy = np.zeros((d.history_size, 1))
+        for j in range(b):
+            sv = rng.normal(size=(n, 3))
+            yv = rng.normal(size=(n, 3))
+            if (sv * yv).sum() < 0:
+                yv = -yv
+            yv *= (sv * yv).sum() / (yv * yv).sum()  # ys == yy, hence gamma == 1
+            s_hist[j], y_hist[j] = sv, yv
+            ys[j, 0], yy[j, 0] = (sv * yv).sum(), (yv * yv).sum()
+        np.testing.assert_allclose(ys[:b], yy[:b], rtol=1e-12)
+
+        st = d.state
+        st.s_history.assign(s_hist)
+        st.y_history.assign(y_hist)
+        st.ys.assign(ys)
+        st.yy.assign(yy)
+        st.history_count.assign(np.array([b], np.int32))
+        st.end.assign(np.array([b % d.history_size], np.int32))
+        st.iteration.assign(np.array([1], np.int32))
+        st.x_base.assign(d.positions.numpy())
+
+        q = rng.normal(size=(n, 3))
+        got = d.apply_inverse_hessian(q)
+
+        # scipy stores pairs oldest-first, which is slots 0..b-1 here.
         prod = scipy_opt.LbfgsInvHessProduct(
-            np.array(s_vecs[::-1]), np.array(y_vecs[::-1])
+            np.array([s_hist[j].ravel() for j in range(b)]),
+            np.array([y_hist[j].ravel() for j in range(b)]),
         )
         np.testing.assert_allclose(
-            numpy_two_loop(s_vecs, y_vecs, ys_v, yy_v, q), prod.matvec(q), rtol=1e-10
+            got, prod.matvec(q.ravel()).reshape(n, 3), rtol=1e-10
         )
 
     @pytest.mark.parametrize("device", DEVICES)
@@ -918,6 +984,12 @@ class TestLBFGSPublicSurface:
     )
 
     def test_package_exports_exactly_the_contract(self):
+        """Advertised and importable are both required, and both had drifted.
+
+        An ``__all__`` entry that does not resolve breaks ``import *``, and
+        ``lbfgs_step_coord_cell`` was absent altogether, which left the whole
+        variable-cell path unreachable from the package.
+        """
         import nvalchemiops.dynamics.optimizers as package
 
         exported = {
@@ -926,32 +998,20 @@ class TestLBFGSPublicSurface:
             if "lbfgs" in n.lower() or n == "check_cell_is_aligned"
         }
         assert exported == set(self.CONTRACT)
-
-    def test_every_exported_name_resolves(self):
-        """An `__all__` entry that is not importable breaks ``import *``."""
-        import nvalchemiops.dynamics.optimizers as package
-
         missing = [n for n in self.CONTRACT if not hasattr(package, n)]
         assert not missing, f"exported but absent: {missing}"
 
-    def test_the_variable_cell_entry_point_is_reachable(self):
-        """It was missing, so the whole cell path was package-private."""
-        from nvalchemiops.dynamics.optimizers import lbfgs_step_coord_cell
+    def test_phases_are_importable_but_not_advertised(self):
+        """Un-advertised is not removed: the composed path still works.
 
-        assert callable(lbfgs_step_coord_cell)
-
-    def test_phases_are_not_advertised(self):
-        """Neither the package nor the module offers them for ``import *``."""
+        Neither the package nor the module offers them for ``import *``, and
+        both still resolve for a caller that reaches for them deliberately.
+        """
         import nvalchemiops.dynamics.optimizers as package
         import nvalchemiops.dynamics.optimizers.lbfgs as module
 
         leaked = [n for n in self.PHASES if n in package.__all__ or n in module.__all__]
         assert not leaked, f"decomposition points advertised as API: {leaked}"
-
-    def test_phases_remain_importable(self):
-        """Un-advertised is not removed: the composed path still works."""
-        import nvalchemiops.dynamics.optimizers.lbfgs as module
-
         missing = [n for n in self.PHASES if not hasattr(module, n)]
         assert not missing, f"no longer importable: {missing}"
 
@@ -1098,7 +1158,7 @@ class TestLBFGSStateValidation:
         st = lbfgs_prepare_state(7, 3, dtype=vec, history_size=4, device=device)
         np.testing.assert_array_equal(st.iteration.numpy(), np.full(3, -1))
         np.testing.assert_array_equal(st.alpha_step.numpy(), np.ones(3))
-        for name in set(_OPTIMIZER_BUFFERS) - {"iteration", "alpha_step"}:
+        for name in set(STATE_FIELDS) - {"iteration", "alpha_step"}:
             assert not getattr(st, name).numpy().any(), f"{name} should start zeroed"
 
     @pytest.mark.parametrize("device", DEVICES)
@@ -1123,7 +1183,7 @@ class TestLBFGSStateValidation:
         run free of float64 arithmetic entirely.
         """
         st = make_lbfgs_state(6, 2, HISTORY_SIZE, vec, device)
-        for name in _OPTIMIZER_BUFFERS[5:15]:
+        for name in per_system_scalar_fields(st, 6):
             assert getattr(st, name).dtype is scalar, name
         st.validate()
 
@@ -1137,7 +1197,7 @@ class TestLBFGSStateValidation:
         instead of here.
         """
         st = make_lbfgs_state(4, 1, HISTORY_SIZE, wp.vec3d, device)
-        for name in _OPTIMIZER_BUFFERS[5:15]:
+        for name in per_system_scalar_fields(st, 4):
             old = getattr(st, name)
             setattr(st, name, wp.zeros(old.shape, dtype=wp.float32, device=device))
         with pytest.raises(ValueError, match="mixes floating-point precisions"):

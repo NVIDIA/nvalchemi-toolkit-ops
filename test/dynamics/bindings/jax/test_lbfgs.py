@@ -15,12 +15,15 @@
 
 """Tests for the JAX L-BFGS binding.
 
+Binding behaviour only: the numerics belong to the Core suite.
+
 Tests cover:
 
-- The registration contract: input-output aliasing, argument order and graph
-  mode. These need no GPU and catch ABI drift cheaply.
-- Relaxation results, checked against the Warp layer rather than restating the
-  algorithm.
+- The registration contract: input-output aliasing and graph mode. These need
+  no GPU and catch ABI drift cheaply.
+- Parity with the Warp layer over a few steps, comparing the complete public
+  state each time. The numerics are Core's; what is specific to JAX is that a
+  functional, donated, jit-compiled call preserves them.
 - Donation and CUDA-graph replay, including that the capture count stays
   bounded rather than growing with the step count.
 - That the step is not differentiable, which is a contract rather than an
@@ -37,10 +40,12 @@ import warnings
 import numpy as np
 import pytest
 
-from nvalchemiops.dynamics.optimizers.lbfgs import (
-    _OPTIMIZER_BUFFERS,
+from ...conftest import (
+    CELL_FIELDS,
+    STATE_FIELDS,
+    assert_state_matches,
+    per_system_scalar_fields,
 )
-
 from .conftest import requires_gpu
 
 jax = pytest.importorskip("jax")
@@ -199,7 +204,7 @@ class TestLBFGSJax:
         wp_state = make_lbfgs_state(n, 1, 6, wp.vec3d, device)
         stiffness = np.asarray(STIFFNESS)
 
-        for _ in range(30):
+        for _ in range(3):
             d.step(maxstep=0.5)
             wp_forces.assign(-(stiffness * wp_pos.numpy()))
             warp_step(
@@ -213,9 +218,7 @@ class TestLBFGSJax:
             np.testing.assert_allclose(
                 np.asarray(d.positions), wp_pos.numpy(), rtol=1e-12, atol=1e-14
             )
-        np.testing.assert_array_equal(
-            np.asarray(d.state.iteration), wp_state.iteration.numpy()
-        )
+            assert_state_matches(d.state, wp_state, STATE_FIELDS)
 
     @pytest.mark.parametrize("graph_mode", ["none", "warp", "warp_staged"])
     def test_graph_modes_agree(self, _gpu, graph_mode):
@@ -327,7 +330,7 @@ class TestLBFGSJaxErrors:
         coordinates do not need float64 scalars.
         """
         st = lbfgs_prepare_state(3, 1, dtype=dtype)
-        for name in _OPTIMIZER_BUFFERS[5:15]:
+        for name in per_system_scalar_fields(st, 3):
             assert jnp.dtype(getattr(st, name).dtype) == jnp.dtype(dtype), name
 
     def test_fp32_runs_without_x64(self, _gpu):
@@ -386,9 +389,6 @@ class TestLBFGSJaxErrors:
 class TestLBFGSJaxCoordCell:
     """The variable-cell binding."""
 
-    #: Where ``positions`` and ``cell`` sit in the flat result tuple.
-    N_OPT = len(_OPTIMIZER_BUFFERS)
-
     @staticmethod
     def _setup(num_atoms=6, seed=11):
         from nvalchemiops.jax.lbfgs import lbfgs_set_reference_cell
@@ -441,7 +441,7 @@ class TestLBFGSJaxCoordCell:
         warp_set_ref(wp_cell, wp_cell_state.ref_cell, wp_cell_state.ref_cell_inv)
         wp_state = make_lbfgs_state(n + 2, 1, 6, wp.vec3d, device)
 
-        for _ in range(25):
+        for _ in range(3):
             _, f, s = potential.energy_forces_stress(
                 np.asarray(positions), np.asarray(cell)[0]
             )
@@ -478,9 +478,8 @@ class TestLBFGSJaxCoordCell:
             np.testing.assert_allclose(
                 np.asarray(cell), wp_cell.numpy(), rtol=1e-12, atol=1e-14
             )
-        np.testing.assert_array_equal(
-            np.asarray(state.iteration), wp_state.iteration.numpy()
-        )
+            assert_state_matches(state, wp_state, STATE_FIELDS, "optimizer ")
+            assert_state_matches(cell_state, wp_cell_state, CELL_FIELDS, "cell ")
 
     def test_buffers_sized_for_the_wrong_dof_count_are_rejected(self, _gpu):
         from nvalchemiops.jax.lbfgs import lbfgs_step_coord_cell
@@ -614,9 +613,8 @@ class TestLBFGSJaxCoordCell:
                 cell_force_scale=0.25,
             )
 
-    def test_populated_systems_keep_the_documented_scale(self, _gpu):
-        from nvalchemiops.jax.lbfgs import lbfgs_cell_kappa
-
+        # Positive control, so the rejection cannot pass by rejecting
+        # everything. The scale itself is Core's to certify.
         kappa = lbfgs_cell_kappa(
             jnp.asarray([4, 2, 3], jnp.int32),
             dtype=jnp.float64,

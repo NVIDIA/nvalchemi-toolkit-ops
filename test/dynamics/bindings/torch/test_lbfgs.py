@@ -15,15 +15,19 @@
 
 """Tests for the PyTorch L-BFGS binding.
 
+Binding behaviour only: the numerics belong to the Core suite, and are not
+restated here. What is specific to PyTorch is that the state survives eager,
+traced, compiled and captured execution intact.
+
 Tests cover:
 
-- The registered operator's schema, and that its parameters stay in the
-  canonical field order of :class:`LBFGSState`.
-- That the superseded allocators really are gone.
+- The registered operators' schemas: which arguments they declare written,
+  and that nothing read-only carries an alias. Compared as sets -- the names
+  are the contract, the order they appear in is not.
 - Tracing under ``make_fx`` and compilation under ``torch.compile``.
 - CUDA-graph capture and replay, and that a step allocates nothing.
-- Relaxation results, checked against the Warp layer rather than restating the
-  algorithm.
+- Parity with the Warp layer over a few steps, comparing the complete public
+  state each time rather than a long trajectory seen through positions alone.
 """
 
 from __future__ import annotations
@@ -35,15 +39,19 @@ import numpy as np
 import pytest
 import torch
 
-from nvalchemiops.dynamics.optimizers.lbfgs import (
-    _CELL_BUFFERS,
-    _CELL_SCRATCH,
-    _OPTIMIZER_BUFFERS,
-)
 from nvalchemiops.torch.lbfgs import (
     lbfgs_prepare_cell_state,
     lbfgs_prepare_state,
     lbfgs_step_coord,
+)
+
+from ...conftest import (
+    CELL_FIELDS,
+    CELL_FIELDS_READ_ONLY,
+    CELL_FIELDS_WRITTEN,
+    STATE_FIELDS,
+    assert_state_matches,
+    per_system_scalar_fields,
 )
 
 DEVICES = ["cuda:0"]
@@ -212,23 +220,25 @@ class TestLBFGSTorchState:
     @pytest.mark.parametrize(
         "op_name,expected",
         [
-            ("lbfgs_step", ("positions",) + _OPTIMIZER_BUFFERS),
+            ("lbfgs_step", ("positions",) + STATE_FIELDS),
             (
                 "lbfgs_step_coord_cell",
-                ("positions", "cell") + _OPTIMIZER_BUFFERS + _CELL_SCRATCH,
+                ("positions", "cell") + STATE_FIELDS + CELL_FIELDS_WRITTEN,
             ),
         ],
     )
     def test_registered_schema_declares_the_writable_state(self, op_name, expected):
-        """The *schema* must declare every mutated argument, in order.
+        """The *schema* must declare every mutated argument.
 
-        The test above checks the tuple we pass to registration; this checks
-        what came out of it. They are different things, and only this one
-        catches a name that never reached the schema -- under which
+        Only this catches a name that never reached the schema -- under which
         ``torch.compile`` is entitled to assume that argument is unchanged and
         to reuse a stale value.
+
+        Compared as a set: which arguments are declared written is the
+        contract, the order they appear in is not, and pinning the order turns
+        a harmless reordering of the state class into a failure.
         """
-        assert _schema_writable(op_name) == expected
+        assert set(_schema_writable(op_name)) == set(expected)
 
     @pytest.mark.parametrize(
         "op_name,read_only",
@@ -236,7 +246,7 @@ class TestLBFGSTorchState:
             ("lbfgs_step", ("forces", "batch_idx")),
             (
                 "lbfgs_step_coord_cell",
-                ("forces", "stress", "batch_idx") + _CELL_BUFFERS[:5],
+                ("forces", "stress", "batch_idx") + CELL_FIELDS_READ_ONLY,
             ),
         ],
     )
@@ -314,9 +324,12 @@ class TestLBFGSTorchCoord:
     def test_matches_the_warp_layer(self, device):
         """The binding is a thin adapter, so it must agree exactly.
 
-        Compared step by step against the Warp implementation on identical
-        inputs. Both run the same kernels in the same order, so this is an
-        exact comparison rather than a tolerance check.
+        A few steps, but the *whole* public state each time, rather than a
+        long trajectory checked through positions alone: a binding that fails
+        to pass an array through is visible only in that array, which a narrow
+        comparison is by construction not looking at. Both sides run the same
+        kernels in the same order, so this is exact rather than a tolerance.
+        Convergence on this potential is Core's to certify, not the binding's.
         """
         import warp as wp
 
@@ -334,7 +347,7 @@ class TestLBFGSTorchCoord:
         wp_state = make_lbfgs_state(num_dofs, 1, 6, wp.vec3d, device)
         stiffness = STIFFNESS.numpy()
 
-        for _ in range(30):
+        for _ in range(3):
             torch_driver.evaluate()
             torch_driver.step(maxstep=0.5)
 
@@ -352,9 +365,7 @@ class TestLBFGSTorchCoord:
             np.testing.assert_array_equal(
                 torch_driver.positions.cpu().numpy(), wp_positions.numpy()
             )
-        np.testing.assert_array_equal(
-            torch_driver.state.iteration.cpu().numpy(), wp_state.iteration.numpy()
-        )
+            assert_state_matches(torch_driver.state, wp_state, STATE_FIELDS)
 
 
 class TestLBFGSTorchRegistration:
@@ -376,7 +387,7 @@ class TestLBFGSTorchRegistration:
             # make_fx traces tensors, not dataclasses, so the state is rebuilt
             # here from the traced ones to keep every tensor in the graph.
             state = dataclasses.replace(
-                d.state, **dict(zip(_OPTIMIZER_BUFFERS, fields, strict=True))
+                d.state, **dict(zip(STATE_FIELDS, fields, strict=True))
             )
             lbfgs_step_coord(
                 positions, forces, state, batch_idx,
@@ -388,7 +399,7 @@ class TestLBFGSTorchRegistration:
             d.positions,
             d.forces,
             d.batch_idx,
-            *(getattr(d.state, name) for name in _OPTIMIZER_BUFFERS),
+            *(getattr(d.state, name) for name in STATE_FIELDS),
         )
         target = torch.ops.nvalchemiops.lbfgs_step.default
         nodes = [n for n in graph.graph.nodes if n.target is target]
@@ -429,7 +440,7 @@ class TestLBFGSTorchRegistration:
         expected["positions"] = eager.positions.clone()
         actual = _snapshot(("state", compiled_driver.state))
         actual["positions"] = compiled_driver.positions.clone()
-        assert len(expected) == 1 + len(_OPTIMIZER_BUFFERS)
+        assert len(expected) == 1 + len(STATE_FIELDS)
         _assert_same_state(actual, expected)
 
     @pytest.mark.parametrize("device", DEVICES)
@@ -654,7 +665,7 @@ class TestLBFGSTorchErrors:
     def test_scalars_follow_the_coordinate_dtype(self, device, dtype):
         """An fp32 state is fp32 throughout, so fp32 needs no fp64 arithmetic."""
         st = lbfgs_prepare_state(3, 1, dtype=dtype, device=device)
-        for name in _OPTIMIZER_BUFFERS[5:15]:
+        for name in per_system_scalar_fields(st, 3):
             assert getattr(st, name).dtype == dtype, name
 
     @pytest.mark.parametrize("device", DEVICES)
@@ -749,7 +760,11 @@ class TestLBFGSTorchCoordCell:
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_matches_the_warp_layer(self, device):
-        """The binding is a thin adapter, so it must agree exactly."""
+        """The binding is a thin adapter, so it must agree exactly.
+
+        As in the coordinate case: a few steps, both public states compared in
+        full each time.
+        """
         import warp as wp
 
         from nvalchemiops.dynamics.optimizers.lbfgs import (
@@ -777,7 +792,7 @@ class TestLBFGSTorchCoordCell:
         warp_set_ref(wp_cell, wp_cell_state.ref_cell, wp_cell_state.ref_cell_inv)
         wp_state = make_lbfgs_state(n + 2, 1, 6, wp.vec3d, device)
 
-        for _ in range(25):
+        for _ in range(3):
             forces, stress = self._evaluate(positions, cell, potential, device)
             lbfgs_step_coord_cell(
                 positions,
@@ -807,9 +822,8 @@ class TestLBFGSTorchCoordCell:
             torch.cuda.synchronize()
             np.testing.assert_array_equal(positions.cpu().numpy(), wp_pos.numpy())
             np.testing.assert_array_equal(cell.cpu().numpy(), wp_cell.numpy())
-        np.testing.assert_array_equal(
-            state.iteration.cpu().numpy(), wp_state.iteration.numpy()
-        )
+            assert_state_matches(state, wp_state, STATE_FIELDS, "optimizer ")
+            assert_state_matches(cell_state, wp_cell_state, CELL_FIELDS, "cell ")
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_state_sized_for_the_wrong_dof_count_is_rejected(self, device):
@@ -867,7 +881,7 @@ class TestLBFGSTorchCoordCell:
         eager = one_run(False)
         compiled = one_run(True)
         # 2 tensors + 19 optimizer fields + 14 cell fields.
-        assert len(eager) == 2 + len(_OPTIMIZER_BUFFERS) + len(_CELL_BUFFERS)
+        assert len(eager) == 2 + len(STATE_FIELDS) + len(CELL_FIELDS)
         _assert_same_state(compiled, eager)
 
     @pytest.mark.parametrize("device", DEVICES)
@@ -903,7 +917,7 @@ class TestLBFGSTorchCoordCell:
         torch.cuda.synchronize()
         assert int(d_iter.item()) == 1, "iteration change invisible to the graph"
         assert float(d_cell.item()) > 0.0, "cell change invisible to the graph"
-        # A scratch buffer, to cover the ``_CELL_SCRATCH`` half of the schema.
+        # A scratch buffer, to cover the written half of the cell schema.
         assert float(d_scratch.item()) > 0.0, "scratch change invisible to the graph"
 
     @pytest.mark.parametrize("device", DEVICES)

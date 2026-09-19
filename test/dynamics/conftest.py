@@ -21,14 +21,87 @@ it can be collected alongside both binding suites in a single process.
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pytest
 import warp as wp
 
 from nvalchemiops.dynamics.optimizers.lbfgs import (
+    LBFGSCellState,
+    LBFGSState,
     lbfgs_prepare_cell_state,
     lbfgs_prepare_state,
 )
+
+#: Public field names of the two states. Taken from the dataclasses, which are
+#: the contract, rather than from the module-private tuples the bindings build
+#: their signatures out of -- those are one binding's spelling of it, and a
+#: test that pins them fails on a reordering that breaks nothing.
+STATE_FIELDS = tuple(f.name for f in dataclasses.fields(LBFGSState))
+CELL_FIELDS = tuple(f.name for f in dataclasses.fields(LBFGSCellState))
+
+#: Cell fields a step writes. Named, because this is a documented property of
+#: the step and not a consequence of where they happen to sit in the class.
+CELL_FIELDS_WRITTEN = (
+    "phi",
+    "phi_inv",
+    "d_phi",
+    "cell_dof_a",
+    "cell_dof_b",
+    "cell_force_a",
+    "cell_force_b",
+    "ext_positions",
+    "ext_forces",
+)
+CELL_FIELDS_READ_ONLY = tuple(n for n in CELL_FIELDS if n not in CELL_FIELDS_WRITTEN)
+
+
+def to_numpy(value):
+    """A Warp, PyTorch or JAX array as NumPy, without importing either."""
+    if hasattr(value, "cpu"):  # torch
+        value = value.cpu()
+    if hasattr(value, "numpy"):  # torch, warp
+        return np.asarray(value.numpy())
+    return np.asarray(value)  # jax
+
+
+def assert_state_matches(actual, expected, fields, label=""):
+    """Every named field must agree exactly between two states.
+
+    Used to check a binding against the Warp implementation it wraps. The
+    whole public state, not the one or two fields a trajectory plot would
+    show: a binding that drops a write is only visible in the field it
+    dropped, which is by definition not the field a narrow check looks at.
+    """
+    differing = [
+        name
+        for name in fields
+        if not np.array_equal(
+            to_numpy(getattr(actual, name)), to_numpy(getattr(expected, name))
+        )
+    ]
+    assert not differing, f"{label}binding and Warp disagree in {differing}"
+
+
+def per_system_scalar_fields(state, num_dofs):
+    """Names of the per-system floating-point fields of a prepared ``state``.
+
+    Selected by what the arrays *are* -- real-valued and carrying no
+    degree-of-freedom axis -- so the same call works on a Warp, PyTorch or JAX
+    state and survives any reordering of the class. Call it with
+    ``num_dofs != num_systems``, or the two axes cannot be told apart.
+    """
+    names = []
+    for name in STATE_FIELDS:
+        value = getattr(state, name)
+        if "int" in str(value.dtype):
+            continue
+        if num_dofs in tuple(value.shape):
+            continue
+        names.append(name)
+    return tuple(names)
+
 
 DEVICES = ["cuda:0"]
 
