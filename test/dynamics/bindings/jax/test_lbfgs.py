@@ -35,6 +35,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import os
+import time
 import warnings
 
 import numpy as np
@@ -50,6 +51,8 @@ from .conftest import requires_gpu
 
 jax = pytest.importorskip("jax")
 jnp = pytest.importorskip("jax.numpy")
+
+import warp.jax_experimental.ffi as ffi  # noqa: E402
 
 from nvalchemiops.jax.lbfgs import (  # noqa: E402
     lbfgs_prepare_cell_state,
@@ -243,51 +246,72 @@ class TestLBFGSJax:
 
         The other graph-mode tests compare numbers, and this regression
         produces *correct* numbers -- it just captures afresh every call, so
-        graph mode becomes pure overhead. Nothing else here would notice.
+        graph mode stops being an optimisation and becomes pure overhead.
+        Nothing else here would notice.
 
-        Measured from a cleared cache so the separation is unambiguous:
-        replaying leaves a handful of entries however many steps are taken,
-        while capturing per step leaves one per step (up to warp's own cache
-        cap). No machine-tuned constant, because 1 and 20 are not close.
-
-        What this does *not* claim to bound is memory: warp caps the cache at
-        ``graph_cache_max`` itself, so captures cannot grow without limit
-        whatever this code does.
+        Stated as the property that matters, and measured through warp's
+        public interface: capturing is far more expensive than replaying, so a
+        healthy graph mode is faster than no graph mode, and one that
+        re-captures per call is slower. The threshold is the sign of the
+        effect rather than a tuned constant -- measured here, replaying runs
+        at 0.3-0.4x the ungraphed time while re-capturing every step runs at
+        1.1x, and the regression is simulated below rather than assumed, by
+        clearing warp's cache between steps.
         """
-        from nvalchemiops.jax.lbfgs import _get_callable
+        timings = {}
+        for mode in ("none", "warp"):
+            ffi.clear_jax_callable_graph_cache()
+            timings[mode] = self._time_steps(mode)
 
-        call = _get_callable(jnp.float64, "warp")
-        # Fail here rather than silently measuring nothing if warp renames it.
-        assert hasattr(call, "graph_cache_size") and hasattr(call, "captures"), (
-            "warp no longer exposes its graph cache; this test measures "
-            "nothing until it is pointed at the replacement"
+        # The regression, reproduced: a cache cleared between steps is exactly
+        # a capture per call. Without this the threshold below would be a bare
+        # number with nothing showing it can fail.
+        ffi.clear_jax_callable_graph_cache()
+        recapturing = self._time_steps("warp", clear_each_step=True)
+
+        assert timings["warp"] < 0.8 * timings["none"], (
+            f"graph mode took {timings['warp']:.3f} ms/step against "
+            f"{timings['none']:.3f} ms/step ungraphed; replay is not "
+            "happening and graph mode is pure overhead"
+        )
+        assert recapturing > timings["warp"], (
+            "capturing every step was not slower than replaying, so this "
+            "test cannot distinguish the two and measures nothing"
         )
 
-        d = JaxDriver(_cluster(6, seed=31))
+    @staticmethod
+    def _time_steps(graph_mode, steps=60, num_atoms=64, clear_each_step=False):
+        """Mean wall-clock per relaxation step, in milliseconds."""
+        d = JaxDriver(_cluster(num_atoms, seed=31))
         batch_idx = d.batch_idx
 
         @functools.partial(jax.jit, donate_argnums=(0, 1))
         def relax_step(positions, state, forces):
-            return lbfgs_step_coord(positions, forces, state, batch_idx, maxstep=0.5)
+            return lbfgs_step_coord(
+                positions, forces, state, batch_idx, maxstep=0.5,
+                graph_mode=graph_mode,
+            )  # fmt: skip
 
-        steps = 20
-        # Start from empty, so this measures these steps rather than whatever
-        # earlier tests left in the module-wide callable.
-        call.captures.clear()
+        def advance():
+            forces = d.model(d.positions)
+            d.positions, d.state = relax_step(d.positions, d.state, forces)
+
         # A refused donation is only a warning; make it fail, since losing
-        # donation is the usual route to a growing capture set.
+        # donation is the usual route to a fresh buffer, and so a fresh
+        # capture, every step.
         with warnings.catch_warnings():
             warnings.simplefilter("error", UserWarning)
-            for _ in range(steps):
-                forces = d.model(d.positions)
-                d.positions, d.state = relax_step(d.positions, d.state, forces)
-        jax.block_until_ready(d.positions)
+            for _ in range(3):  # compile, and capture once
+                advance()
+            jax.block_until_ready(d.positions)
 
-        assert call.graph_cache_size < steps // 4, (
-            f"{steps} steps left {call.graph_cache_size} graphs cached; the "
-            "capture count is tracking the step count, so replay is not "
-            "happening and graph mode is pure overhead"
-        )
+            start = time.perf_counter()
+            for _ in range(steps):
+                if clear_each_step:
+                    ffi.clear_jax_callable_graph_cache()
+                advance()
+            jax.block_until_ready(d.positions)
+            return (time.perf_counter() - start) / steps * 1e3
 
     def test_step_is_not_differentiable(self, _gpu):
         """Differentiating must fail loudly rather than return zeros."""
