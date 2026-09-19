@@ -34,7 +34,6 @@ converted; ``r_cut`` has no default for that reason.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from contextlib import nullcontext
 from dataclasses import dataclass
 from functools import wraps
 
@@ -58,6 +57,7 @@ from nvalchemiops.interactions.dispersion._fourier_dftd3 import (
     fd3_spread,
 )
 from nvalchemiops.torch import torch_custom_op
+from nvalchemiops.torch.autograd import warp_from_torch, warp_stream_from_torch
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 __all__ = [
@@ -279,44 +279,31 @@ def _capturing() -> bool:
     return torch.cuda.is_available() and torch.cuda.is_current_stream_capturing()
 
 
-def _scoped_warp_stream(device):
-    """Bind Warp launches to PyTorch's current CUDA stream, without synchronising.
+def _warp_view(tensor, dtype):
+    """View a Torch tensor as a Warp array without copying.
 
-    Warp otherwise launches on a stream of its own, which prevents ``torch.cuda.graph``
-    capture and forces a cross-stream dependency on every call. ``wp.ScopedStream``
-    synchronises on entry by default, which is itself illegal mid-capture, so that is
-    disabled here; ordering is already guaranteed by both sides using the same stream.
+    ``requires_grad=False`` is explicit: these kernels run with ``enable_backward=False``
+    and forces are an output, so the lightweight ctype view is always the right one.
     """
-    if torch.device(device).type != "cuda":
-        return nullcontext()
-    torch_stream = torch.cuda.current_stream(device)
-    if wp.get_stream(str(device)).cuda_stream == torch_stream.cuda_stream:
-        return nullcontext()
-    return wp.ScopedStream(wp.stream_from_torch(torch_stream), sync_enter=False)
+    return warp_from_torch(tensor, dtype, requires_grad=False)
 
 
 def _on_torch_stream(function):
     """Run a Warp-launching op on PyTorch's current CUDA stream.
 
-    Warp otherwise launches on a stream of its own. That prevents ``torch.cuda.graph``
-    capture, which is what ``torch.compile(mode="reduce-overhead")`` uses, and forces a
-    cross-stream dependency on every call.
+    Warp otherwise launches on a stream of its own, which prevents ``torch.cuda.graph``
+    capture -- what ``torch.compile(mode="reduce-overhead")`` uses -- and forces a
+    cross-stream dependency on every call. ``sync_enter=False`` because an entry
+    synchronisation is illegal mid-capture, and ordering is already guaranteed by both
+    sides using the same stream.
     """
 
     @wraps(function)
     def wrapper(*args, **kwargs):
-        device = next(
-            argument.device for argument in args if isinstance(argument, torch.Tensor)
-        )
-        with _scoped_warp_stream(device):
+        with warp_stream_from_torch(*args, sync_enter=False):
             return function(*args, **kwargs)
 
     return wrapper
-
-
-def _wp(tensor, dtype):
-    """View a Torch tensor as a Warp array without copying."""
-    return wp.from_torch(tensor, dtype=dtype, return_ctype=True)
 
 
 def _dtypes(reference: torch.Tensor):
@@ -363,38 +350,38 @@ def _fd3_prologue_op(
 
     if neighbor_matrix is not None:
         fd3_coordination_numbers_matrix(
-            _wp(positions.detach(), vec_dtype),
-            _wp(numbers, wp.int32),
-            _wp(neighbor_matrix, wp.int32),
-            _wp(cartesian_shifts, vec_dtype),
-            _wp(covalent_radii, wp_dtype),
+            _warp_view(positions.detach(), vec_dtype),
+            _warp_view(numbers, wp.int32),
+            _warp_view(neighbor_matrix, wp.int32),
+            _warp_view(cartesian_shifts, vec_dtype),
+            _warp_view(covalent_radii, wp_dtype),
             r_cut,
-            _wp(coord_num, wp_dtype),
+            _warp_view(coord_num, wp_dtype),
             wp_dtype,
             device,
             fill_value,
         )
     else:
         fd3_coordination_numbers(
-            _wp(positions.detach(), vec_dtype),
-            _wp(numbers, wp.int32),
-            _wp(neighbor_list, wp.int32),
-            _wp(neighbor_ptr, wp.int32),
-            _wp(cartesian_shifts, vec_dtype),
-            _wp(covalent_radii, wp_dtype),
+            _warp_view(positions.detach(), vec_dtype),
+            _warp_view(numbers, wp.int32),
+            _warp_view(neighbor_list, wp.int32),
+            _warp_view(neighbor_ptr, wp.int32),
+            _warp_view(cartesian_shifts, vec_dtype),
+            _warp_view(covalent_radii, wp_dtype),
             r_cut,
-            _wp(coord_num, wp_dtype),
+            _warp_view(coord_num, wp_dtype),
             wp_dtype,
             device,
         )
 
     fd3_coefficients(
-        _wp(coord_num, wp_dtype),
-        _wp(species_index, wp.int32),
-        _wp(cnref, wp_dtype),
-        _wp(v_q, wp_dtype),
-        _wp(c6, wp_dtype),
-        _wp(dc6_dcn, wp_dtype),
+        _warp_view(coord_num, wp_dtype),
+        _warp_view(species_index, wp.int32),
+        _warp_view(cnref, wp_dtype),
+        _warp_view(v_q, wp_dtype),
+        _warp_view(c6, wp_dtype),
+        _warp_view(dc6_dcn, wp_dtype),
         wp_dtype,
         device,
     )
@@ -420,13 +407,13 @@ def _fd3_spread_op(
         device = str(positions.device)
     wp_dtype, vec_dtype, mat_dtype = _dtypes(positions)
     fd3_spread(
-        _wp(positions.detach(), vec_dtype),
-        _wp(c6, wp_dtype),
-        _wp(group_idx, wp.int32),
-        _wp(cell_inv_t, mat_dtype),
+        _warp_view(positions.detach(), vec_dtype),
+        _warp_view(c6, wp_dtype),
+        _warp_view(group_idx, wp.int32),
+        _warp_view(cell_inv_t, mat_dtype),
         spline_order,
         rank,
-        _wp(mesh, wp_dtype),
+        _warp_view(mesh, wp_dtype),
         wp_dtype,
         device,
     )
@@ -470,14 +457,14 @@ def _fd3_kspace_op(
     wp_dtype, _, mat_dtype = _dtypes(volumes)
     pair_dtype = wp.vec2f if wp_dtype == wp.float32 else wp.vec2d
     fd3_kspace(
-        _wp(mesh_fft, pair_dtype),
-        _wp(k_matrix, mat_dtype),
-        _wp(moduli_x, wp_dtype),
-        _wp(moduli_y, wp_dtype),
-        _wp(moduli_z, wp_dtype),
-        _wp(volumes, wp_dtype),
-        _wp(sqrt_q, wp_dtype),
-        _wp(eigs, wp_dtype),
+        _warp_view(mesh_fft, pair_dtype),
+        _warp_view(k_matrix, mat_dtype),
+        _warp_view(moduli_x, wp_dtype),
+        _warp_view(moduli_y, wp_dtype),
+        _warp_view(moduli_z, wp_dtype),
+        _warp_view(volumes, wp_dtype),
+        _warp_view(sqrt_q, wp_dtype),
+        _warp_view(eigs, wp_dtype),
         s6,
         s8,
         a1,
@@ -485,9 +472,9 @@ def _fd3_kspace_op(
         (mesh_nx, mesh_ny, mesh_nz),
         n_species,
         rank,
-        _wp(energy, wp_dtype),
-        _wp(cotangent, pair_dtype),
-        _wp(virial, mat_dtype),
+        _warp_view(energy, wp_dtype),
+        _warp_view(cotangent, pair_dtype),
+        _warp_view(virial, mat_dtype),
         wp_dtype,
         device,
         compute_virial,
@@ -524,15 +511,15 @@ def _fd3_gather_op(
     wp_dtype, vec_dtype, mat_dtype = _dtypes(positions)
 
     fd3_gather_and_force(
-        _wp(potential, wp_dtype),
-        _wp(positions.detach(), vec_dtype),
-        _wp(c6, wp_dtype),
-        _wp(group_idx, wp.int32),
-        _wp(cell_inv_t, mat_dtype),
+        _warp_view(potential, wp_dtype),
+        _warp_view(positions.detach(), vec_dtype),
+        _warp_view(c6, wp_dtype),
+        _warp_view(group_idx, wp.int32),
+        _warp_view(cell_inv_t, mat_dtype),
         spline_order,
         rank,
-        _wp(d_energy_d_c6, wp_dtype),
-        _wp(forces, vec_dtype),
+        _warp_view(d_energy_d_c6, wp_dtype),
+        _warp_view(forces, vec_dtype),
         wp_dtype,
         device,
     )
@@ -589,34 +576,34 @@ def _fd3_finalise_op(
     wp_dtype, vec_dtype, mat_dtype = _dtypes(positions)
 
     fd3_self_energy(
-        _wp(c6, wp_dtype),
-        _wp(species_index, wp.int32),
-        _wp(batch_idx, wp.int32),
-        _wp(sqrt_q, wp_dtype),
-        _wp(eigs, wp_dtype),
+        _warp_view(c6, wp_dtype),
+        _warp_view(species_index, wp.int32),
+        _warp_view(batch_idx, wp.int32),
+        _warp_view(sqrt_q, wp_dtype),
+        _warp_view(eigs, wp_dtype),
         s6,
         s8,
         a1,
         a2,
-        _wp(energy, wp_dtype),
-        _wp(d_energy_d_c6, wp_dtype),
+        _warp_view(energy, wp_dtype),
+        _warp_view(d_energy_d_c6, wp_dtype),
         wp_dtype,
         device,
     )
 
     common = (
-        _wp(d_energy_d_c6, wp_dtype),
-        _wp(dc6_dcn, wp_dtype),
-        _wp(positions.detach(), vec_dtype),
-        _wp(numbers, wp.int32),
+        _warp_view(d_energy_d_c6, wp_dtype),
+        _warp_view(dc6_dcn, wp_dtype),
+        _warp_view(positions.detach(), vec_dtype),
+        _warp_view(numbers, wp.int32),
     )
     tail = (
-        _wp(covalent_radii, wp_dtype),
+        _warp_view(covalent_radii, wp_dtype),
         r_cut,
-        _wp(batch_idx, wp.int32),
-        _wp(d_energy_d_cn, wp_dtype),
-        _wp(forces, vec_dtype),
-        _wp(virial, mat_dtype),
+        _warp_view(batch_idx, wp.int32),
+        _warp_view(d_energy_d_cn, wp_dtype),
+        _warp_view(forces, vec_dtype),
+        _warp_view(virial, mat_dtype),
         wp_dtype,
         device,
         compute_virial,
@@ -624,17 +611,17 @@ def _fd3_finalise_op(
     if neighbor_matrix is not None:
         fd3_cn_chain_matrix(
             *common,
-            _wp(neighbor_matrix, wp.int32),
-            _wp(cartesian_shifts, vec_dtype),
+            _warp_view(neighbor_matrix, wp.int32),
+            _warp_view(cartesian_shifts, vec_dtype),
             *tail,
             fill_value,
         )
     else:
         fd3_cn_chain(
             *common,
-            _wp(neighbor_list, wp.int32),
-            _wp(neighbor_ptr, wp.int32),
-            _wp(cartesian_shifts, vec_dtype),
+            _warp_view(neighbor_list, wp.int32),
+            _warp_view(neighbor_ptr, wp.int32),
+            _warp_view(cartesian_shifts, vec_dtype),
             *tail,
         )
 

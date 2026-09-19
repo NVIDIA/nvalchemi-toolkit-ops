@@ -257,7 +257,7 @@ def _normalize_outputs(result: Any) -> tuple[torch.Tensor, ...]:
 
 
 @contextmanager
-def warp_stream_from_torch(*values: Any):
+def warp_stream_from_torch(*values: Any, sync_enter: bool = True):
     """Bind Warp launches to PyTorch's current CUDA stream when tensors are CUDA.
 
     Finds the first CUDA tensor in ``values`` and switches Warp to its stream
@@ -269,6 +269,12 @@ def warp_stream_from_torch(*values: Any):
     *values : Any
         Arbitrary arguments; only ``torch.Tensor`` instances on CUDA are
         inspected for stream information.
+    sync_enter : bool, default=True
+        Whether to synchronise the previous Warp stream into this one on entry.
+        Required when Warp may have outstanding work on another stream, which is
+        why it is the default. Pass ``False`` under ``torch.cuda.graph`` capture,
+        where an entry synchronisation is illegal and invalidates the capture;
+        ordering is then guaranteed by both sides already using the same stream.
 
     Yields
     ------
@@ -289,7 +295,7 @@ def warp_stream_from_torch(*values: Any):
         return
 
     torch_stream = torch.cuda.current_stream(stream_tensor.device)
-    with wp.ScopedStream(wp.stream_from_torch(torch_stream)):
+    with wp.ScopedStream(wp.stream_from_torch(torch_stream), sync_enter=sync_enter):
         yield torch_stream
 
 
