@@ -923,10 +923,15 @@ For detailed API documentation, see the [PyTorch API](../../modules/torch/disper
 
 ## FourierD3: Dispersion Without a Real-Space Cutoff
 
-`fourier_dftd3` evaluates the same DFT-D3(BJ) correction on a particle mesh, in
-`O(N log N)`, with **no real-space cutoff on the dispersion sum**. The only real-space cutoff
-left is the short coordination-number list, which a machine-learned force field already builds
-for its own descriptors.
+`fourier_dftd3` evaluates a periodic particle-mesh variant of DFT-D3(BJ) in `O(N log N)`,
+using the same damped dispersion lattice sum with a modified coordination-number model. It has
+**no real-space cutoff on the dispersion sum**; the only real-space cutoff left is the short
+coordination-number list, which a machine-learned force field already builds for its own
+descriptors.
+
+Because the coordination number sets the environment-dependent `C6` coefficients, that
+modification means `fourier_dftd3` is not expected to reproduce `dftd3` exactly. The
+comparison below sets out where the two differ.
 
 ### Choosing between `dftd3` and `fourier_dftd3`
 

@@ -42,8 +42,9 @@ FourierD3: Particle-Mesh DFT-D3
    For PyTorch and JAX tensor support, see :doc:`../torch/dispersion` and
    :doc:`../jax/dispersion`.
 
-FourierD3 evaluates the same DFT-D3(BJ) correction on a particle mesh, in
-:math:`O(N \log N)` and with no real-space cutoff on the dispersion sum. The only
+FourierD3 evaluates a periodic particle-mesh variant of DFT-D3(BJ) in
+:math:`O(N \log N)`, using the same damped dispersion lattice sum with a modified
+coordination-number model, and with no real-space cutoff on the dispersion sum. The only
 real-space cutoff that remains is the short coordination-number list.
 
 Unlike the launchers above, these are **component** launchers rather than one end-to-end

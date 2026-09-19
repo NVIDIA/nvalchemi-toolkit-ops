@@ -61,7 +61,8 @@ Neighbor List Implementation
 FourierD3: Particle-Mesh DFT-D3
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Evaluates the same correction on a particle mesh, in :math:`O(N \log N)` and with no
+Evaluates a periodic particle-mesh variant of DFT-D3(BJ) in :math:`O(N \log N)`, using the
+same damped dispersion lattice sum with a modified coordination-number model, and with no
 real-space cutoff on the dispersion sum.
 
 .. note::
