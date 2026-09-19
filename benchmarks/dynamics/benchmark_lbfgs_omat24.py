@@ -162,22 +162,29 @@ def run_fire2(atoms, calculator, device, torch_dtype, dt_start, force_tol=FORCE_
 
     positions = torch.tensor(atoms.get_positions(), dtype=torch_dtype, device=device)
     forces = torch.empty_like(positions)
-    wp_positions = wp.from_torch(positions, dtype=vec_dtype)
-    wp_forces = wp.from_torch(forces, dtype=vec_dtype)
-    wp_velocities = wp.zeros(n, dtype=vec_dtype, device=device)
-    wp_batch = wp.zeros(n, dtype=wp.int32, device=device)
-    alpha = wp.array(np.array([0.09], np_dtype), dtype=scalar, device=device)
-    dt = wp.array(np.array([dt_start], np_dtype), dtype=scalar, device=device)
-    nsteps_inc = wp.zeros(1, dtype=wp.int32, device=device)
-    scratch = [wp.zeros(1, dtype=scalar, device=device) for _ in range(4)]
 
-    for _ in range(eval_cap):
-        f = model.forces(positions.detach().cpu().numpy())
-        current = _fmax(f)
-        if current <= force_tol:
-            return model.n_evals, True, current
-        forces.copy_(torch.as_tensor(f, dtype=torch_dtype, device=device))
-        with wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream())):
+    # ``fire2_step`` is a raw Warp launcher over PyTorch storage, so Warp has
+    # to be bound to the Torch stream. The scope covers the Warp allocations
+    # and the ``from_torch`` views as well as the launches, and is held across
+    # the whole relaxation: a view built on one stream and launched on another
+    # is ordered against neither its producer nor its consumer. The L-BFGS arm
+    # needs none of this -- its registered operator binds the stream itself.
+    with wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream())):
+        wp_positions = wp.from_torch(positions, dtype=vec_dtype)
+        wp_forces = wp.from_torch(forces, dtype=vec_dtype)
+        wp_velocities = wp.zeros(n, dtype=vec_dtype, device=device)
+        wp_batch = wp.zeros(n, dtype=wp.int32, device=device)
+        alpha = wp.array(np.array([0.09], np_dtype), dtype=scalar, device=device)
+        dt = wp.array(np.array([dt_start], np_dtype), dtype=scalar, device=device)
+        nsteps_inc = wp.zeros(1, dtype=wp.int32, device=device)
+        scratch = [wp.zeros(1, dtype=scalar, device=device) for _ in range(4)]
+
+        for _ in range(eval_cap):
+            f = model.forces(positions.detach().cpu().numpy())
+            current = _fmax(f)
+            if current <= force_tol:
+                return model.n_evals, True, current
+            forces.copy_(torch.as_tensor(f, dtype=torch_dtype, device=device))
             fire2_step(
                 wp_positions, wp_velocities, wp_forces, wp_batch,
                 alpha, dt, nsteps_inc, *scratch,
@@ -185,7 +192,7 @@ def run_fire2(atoms, calculator, device, torch_dtype, dt_start, force_tol=FORCE_
                 dtgrow=1.1, dtshrink=0.5, delaystep=5,
                 alpha0=0.09, alphashrink=0.99,
             )  # fmt: skip
-        torch.cuda.synchronize()
+            torch.cuda.synchronize()
     return model.n_evals, False, current
 
 

@@ -242,21 +242,21 @@ It is still not uniform: two structures out of 120 cost more, the worst at
 **Per-step optimizer cost.** Optimizer time only, single system, harmonic
 potential, `--gates`. The table is a transcription of the
 `lbfgs_gate_timings.csv` each run writes, so it has a regenerable record
-behind it. The ratio varies by about ±0.7 between runs (four repeats at ten
+behind it. The ratio varies by about ±0.7 between runs (five repeats at ten
 thousand atoms in fp32 ranged 7.9x to 8.6x), so read the magnitude, not the
 digit.
 
 | Atoms | Precision | Eager (ms) | CUDA graph (ms) | FIRE2 (ms) | vs FIRE2 |
 | --- | --- | --- | --- | --- | --- |
-| 10,000 | float32 | 0.48 | 0.14 | 0.055 | 8.6x |
-| 10,000 | float64 | 0.46 | 0.17 | 0.060 | 7.8x |
-| 100,000 | float32 | 0.98 | 1.01 | 0.125 | 7.8x |
-| 100,000 | float64 | 1.09 | 1.05 | 0.114 | 9.5x |
+| 10,000 | float32 | 0.47 | 0.14 | 0.057 | 8.2x |
+| 10,000 | float64 | 0.44 | 0.16 | 0.053 | 8.3x |
+| 100,000 | float32 | 0.98 | 0.98 | 0.132 | 7.4x |
+| 100,000 | float64 | 1.02 | 1.02 | 0.119 | 8.6x |
 | 1,000,000 | float64 | 3.12 | 3.11 | 0.319 | 9.8x |
 
 The million-atom row predates the precision split and is float64 only; re-run
 `--gates` without `--gate-sizes` to refresh it. Precision moves per-step cost
-less than the halved byte count suggests, because FIRE2 halves too — 1.09 ms
+less than the halved byte count suggests, because FIRE2 halves too — 1.02 ms
 to 0.98 ms at a hundred thousand atoms, and the ratio difference between the
 two rows is inside the run-to-run spread.
 

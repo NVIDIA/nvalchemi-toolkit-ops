@@ -487,34 +487,39 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50, device=DEFAULT_DEVICE,
         # FIRE2 gets the same model, so the ratio compares like with like.
         f2_positions = start.clone()
         f2_forces = torch.empty_like(f2_positions)
-        wp_positions = wp.from_torch(f2_positions, dtype=vec_dtype)
-        wp_forces = wp.from_torch(f2_forces, dtype=vec_dtype)
-        wp_velocities = wp.zeros(num_atoms, dtype=vec_dtype, device=device)
-        wp_batch = wp.zeros(num_atoms, dtype=wp.int32, device=device)
-        alpha = wp.array(np.array([0.09], np_dtype), dtype=scalar_dtype, device=device)
-        dt = wp.array(np.array([0.02], np_dtype), dtype=scalar_dtype, device=device)
-        nsteps_inc = wp.zeros(1, dtype=wp.int32, device=device)
-        scratch = [wp.zeros(1, dtype=scalar_dtype, device=device) for _ in range(4)]
-
-        def fire2_once():
-            evaluate(f2_positions, f2_forces)
-            fire2_step(
-                wp_positions,
-                wp_velocities,
-                wp_forces,
-                wp_batch,
-                alpha,
-                dt,
-                nsteps_inc,
-                *scratch,
-                maxstep=0.05,
-            )
-
         # Bind Warp to the stream the events are recorded on: the model is a
         # PyTorch op and fire2_step a raw Warp launcher, so otherwise the
-        # events bracket only the PyTorch half. The L-BFGS arm's custom op
-        # binds the stream itself. Scoped once, not per call.
+        # events bracket only the PyTorch half. The scope covers the Warp
+        # allocations and the ``from_torch`` views as well as the launches --
+        # a view built on one stream and launched on another is ordered
+        # against neither its producer nor its consumer. The L-BFGS arm's
+        # custom op binds the stream itself and needs none of this.
         with wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream())):
+            wp_positions = wp.from_torch(f2_positions, dtype=vec_dtype)
+            wp_forces = wp.from_torch(f2_forces, dtype=vec_dtype)
+            wp_velocities = wp.zeros(num_atoms, dtype=vec_dtype, device=device)
+            wp_batch = wp.zeros(num_atoms, dtype=wp.int32, device=device)
+            alpha = wp.array(
+                np.array([0.09], np_dtype), dtype=scalar_dtype, device=device
+            )
+            dt = wp.array(np.array([0.02], np_dtype), dtype=scalar_dtype, device=device)
+            nsteps_inc = wp.zeros(1, dtype=wp.int32, device=device)
+            scratch = [wp.zeros(1, dtype=scalar_dtype, device=device) for _ in range(4)]
+
+            def fire2_once():
+                evaluate(f2_positions, f2_forces)
+                fire2_step(
+                    wp_positions,
+                    wp_velocities,
+                    wp_forces,
+                    wp_batch,
+                    alpha,
+                    dt,
+                    nsteps_inc,
+                    *scratch,
+                    maxstep=0.05,
+                )
+
             fire2 = _time_ms(fire2_once, warmup, runs) - model_ms
 
         # n_L (C + O_L) < n_F (C + O_F), with n_L / n_F = eval_ratio.
