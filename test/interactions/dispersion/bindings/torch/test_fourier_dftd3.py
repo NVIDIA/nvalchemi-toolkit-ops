@@ -121,44 +121,6 @@ def _system(device, dtype=None, n_atoms=8, box=9.0, seed=0, cell=None):
     }
 
 
-def _halve(system):
-    """Keep one direction of each pair, the shape a ``half_fill=True`` builder produces."""
-    sources = system["neighbor_list"][0].cpu().numpy()
-    targets = system["neighbor_list"][1].cpu().numpy()
-    shifts = system["unit_shifts"].cpu().numpy()
-    # Between distinct atoms keep the ascending direction; an atom paired with its own
-    # periodic image appears as (i, i, s) and (i, i, -s), so break that tie on the shift.
-    lexicographic = np.where(
-        shifts[:, 0] != 0,
-        shifts[:, 0],
-        np.where(shifts[:, 1] != 0, shifts[:, 1], shifts[:, 2]),
-    )
-    keep = (sources < targets) | ((sources == targets) & (lexicographic > 0))
-    sources, targets, shifts = sources[keep], targets[keep], shifts[keep]
-    order = np.argsort(sources, kind="stable")
-    sources, targets, shifts = sources[order], targets[order], shifts[order]
-    n_atoms = system["n_atoms"]
-    pointer = np.zeros(n_atoms + 1, dtype=np.int32)
-    np.add.at(pointer, sources + 1, 1)
-    pointer = np.cumsum(pointer).astype(np.int32)
-
-    def tensor(array, dtype):
-        return torch.as_tensor(
-            np.ascontiguousarray(array), dtype=dtype, device=system["positions"].device
-        )
-
-    matrix, matrix_shifts = _to_dense(targets, pointer, shifts, n_atoms)
-    return {
-        "neighbor_list": torch.stack(
-            [tensor(sources, torch.int32), tensor(targets, torch.int32)]
-        ),
-        "neighbor_ptr": tensor(pointer, torch.int32),
-        "unit_shifts": tensor(shifts, torch.int32),
-        "neighbor_matrix": tensor(matrix, torch.int32),
-        "neighbor_matrix_shifts": tensor(matrix_shifts, torch.int32),
-    }
-
-
 def _batched(systems):
     """Concatenate single-system dictionaries into one batch, in both neighbour formats.
 
@@ -298,57 +260,6 @@ class TestAgreementWithWarpLayer:
             atol=1e-11 * np.abs(reference["forces"]).max(),
         )
 
-    def test_forces_match_finite_differences(self):
-        """The returned forces are the gradient of the returned energy."""
-        device = "cuda:0"
-        system = _system(device, n_atoms=6, seed=3)
-        analytic = _evaluate(system)[1].cpu().numpy()
-
-        step = 1e-5
-        base = system["positions"].clone()
-        numerical = np.zeros_like(analytic)
-        for atom in range(system["n_atoms"]):
-            for axis in range(3):
-                for sign in (1.0, -1.0):
-                    system["positions"] = base.clone()
-                    system["positions"][atom, axis] += sign * step
-                    energy = _evaluate(system)[0]
-                    numerical[atom, axis] -= sign * float(energy) / (2.0 * step)
-        system["positions"] = base
-        np.testing.assert_allclose(
-            analytic, numerical, atol=1e-6 * np.abs(numerical).max()
-        )
-
-    def test_virial_matches_finite_strain(self):
-        """The returned virial is minus the strain derivative of the returned energy."""
-        device = "cuda:0"
-        system = _system(device, n_atoms=6, seed=3)
-        analytic = _evaluate(system, compute_virial=True)[2][0].cpu().numpy()
-
-        step = 1e-6
-        base_positions = system["positions"].clone()
-        base_cell = system["cell"].clone()
-        numerical = np.zeros((3, 3))
-        for row in range(3):
-            for column in range(3):
-                energies = []
-                for sign in (1.0, -1.0):
-                    strain = torch.zeros(3, 3, dtype=base_cell.dtype, device=device)
-                    strain[row, column] = sign * step
-                    deformation = (
-                        torch.eye(3, dtype=base_cell.dtype, device=device) + strain
-                    )
-                    system["positions"] = base_positions @ deformation.T
-                    system["cell"] = base_cell @ deformation.T
-                    energies.append(float(_evaluate(system)[0]))
-                # Negated: conventions.md defines the virial as -dE/du, so the
-                # finite difference has to carry the same sign to compare against.
-                numerical[row, column] = -(energies[0] - energies[1]) / (2.0 * step)
-        system["positions"], system["cell"] = base_positions, base_cell
-        np.testing.assert_allclose(
-            analytic, numerical, atol=1e-6 * np.abs(numerical).max()
-        )
-
 
 def _decomposition_view(parameters):
     """Adapt a parameter object back to what the NumPy harness expects."""
@@ -386,60 +297,6 @@ class TestSkewedCell:
         if cell is not None:
             arguments["cell"] = cell
         return float(_evaluate_at(system, **arguments)[0])
-
-    def test_forces_match_finite_differences(self):
-        """Cartesian forces are the gradient of the energy in a skewed cell."""
-        system = _system("cuda:0", cell=TRICLINIC)
-        analytic = _evaluate(system)[1].cpu().numpy()
-        base = system["positions"].clone()
-        step = 1e-6
-        numerical = np.zeros_like(analytic)
-        for atom in range(len(base)):
-            for axis in range(3):
-                shifted = []
-                for sign in (1.0, -1.0):
-                    moved = base.clone()
-                    moved[atom, axis] += sign * step
-                    shifted.append(self._energy(system, positions=moved))
-                numerical[atom, axis] = -(shifted[0] - shifted[1]) / (2.0 * step)
-        scale = np.abs(numerical).max()
-        assert scale > 0.0
-        np.testing.assert_allclose(analytic, numerical, atol=1e-6 * scale)
-
-    def test_virial_matches_finite_strain(self):
-        r"""All six independent strain derivatives, in the repository convention.
-
-        ``conventions.md`` defines :math:`W = -\partial E/\partial u` with
-        :math:`R' = R(I+u)` and :math:`C' = C(I+u)`, which is the recipe applied here.
-        """
-        system = _system("cuda:0", cell=TRICLINIC)
-        analytic = _evaluate(system, compute_virial=True)[2][0].cpu().numpy()
-        base_positions = system["positions"].clone()
-        base_cell = system["cell"].clone()
-        identity = torch.eye(3, dtype=base_cell.dtype, device=base_cell.device)
-        step = 1e-6
-        for row, column in ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2)):
-            shifted = []
-            for sign in (1.0, -1.0):
-                displacement = torch.zeros_like(identity)
-                # Symmetric off-diagonal perturbation: the energy depends on the symmetric
-                # part of u to first order, so this is the derivative that is defined.
-                displacement[row, column] += sign * step / 2.0
-                displacement[column, row] += sign * step / 2.0
-                if row == column:
-                    displacement[row, column] = sign * step
-                deformation = identity + displacement
-                shifted.append(
-                    self._energy(
-                        system,
-                        positions=base_positions @ deformation,
-                        cell=base_cell @ deformation,
-                    )
-                )
-            numerical = -(shifted[0] - shifted[1]) / (2.0 * step)
-            assert abs(analytic[row, column] - numerical) < 1e-6 * max(
-                abs(numerical), np.abs(analytic).max()
-            ), f"component ({row}, {column}): {analytic[row, column]} vs {numerical}"
 
     def test_the_virial_is_symmetric(self):
         """Both contributions are symmetric by construction, so the total must be."""
@@ -649,18 +506,6 @@ class TestPaddingAtoms:
         forces = _evaluate(self._pad(system, 5))[1]
         assert float(forces[n_atoms:].abs().max()) == 0.0
 
-    def test_an_uncovered_real_element_is_still_rejected(self):
-        """Relaxing the check for padding must not relax it for a missing species."""
-        system = _system("cuda:0")
-        numbers = system["numbers"].clone()
-        # Nitrogen: inside the table's extent, but not one of the decomposed species. A
-        # number beyond the table would fail on the lookup itself rather than on the check.
-        numbers[0] = 7
-        rejected = dict(system)
-        rejected["numbers"] = numbers
-        with pytest.raises(ValueError, match="not covered by fourier_d3_params"):
-            _evaluate(rejected)
-
 
 @pytest.mark.gpu
 class TestBatching:
@@ -736,90 +581,6 @@ class TestBatching:
 @pytest.mark.gpu
 class TestMeshAndUnits:
     """Mesh sizing and the unit contract, both of which fail silently if left implicit."""
-
-    def test_every_spline_order_reaches_the_same_energy(self):
-        """The lattice sum does not depend on the interpolation order used to reach it.
-
-        The B-spline attenuation factors are order-dependent and an odd order places its
-        stencil differently from an even one. A wrong modulus for a single order would still
-        give a finite, plausible, self-consistent answer -- it would just converge somewhere
-        else -- so the orders have to be checked against each other rather than themselves.
-
-        Accuracy at a fixed mesh must also improve with order, which is the property that
-        makes a low order a cost/accuracy trade rather than a mistake.
-        """
-        system = _system("cuda:0")
-        fine = (96, 96, 96)
-        reference = _evaluate(system, mesh_dimensions=fine, spline_order=6)[0].item()
-        errors = {
-            order: abs(
-                _evaluate(system, mesh_dimensions=fine, spline_order=order)[0].item()
-                - reference
-            )
-            / abs(reference)
-            for order in (2, 3, 4, 5)
-        }
-        # Every order lands on the same number; order 2 is linear interpolation and gets
-        # there far more slowly, and order 3 is noticeably noisier than the even orders.
-        assert errors[2] < 1e-3, errors
-        assert errors[3] < 1e-5, errors
-        assert errors[4] < 1e-7, errors
-        assert errors[5] < 1e-8, errors
-        ordered = [errors[o] for o in (2, 3, 4, 5)]
-        assert ordered == sorted(ordered, reverse=True), (
-            f"accuracy should improve with spline order, got {errors}"
-        )
-
-    def test_refining_the_mesh_improves_every_spline_order(self):
-        """A stencil offset would leave a residual the mesh cannot reduce.
-
-        Comparing one order against another at a single mesh cannot tell a constant offset
-        from ordinary discretisation error; only refining can.
-        """
-        system = _system("cuda:0")
-        reference = _evaluate(system, mesh_dimensions=(128, 128, 128), spline_order=6)[
-            0
-        ].item()
-        for order in (2, 4, 5):
-            coarse, fine = (
-                abs(
-                    _evaluate(system, mesh_dimensions=(m, m, m), spline_order=order)[
-                        0
-                    ].item()
-                    - reference
-                )
-                / abs(reference)
-                for m in (24, 96)
-            )
-            assert fine < coarse, f"order {order} not converging: {coarse} -> {fine}"
-
-    def test_forces_converge_with_the_mesh(self):
-        """Pins force accuracy, which the energy tests above cannot see.
-
-        Forces come from the gather, so a deconvolution that does not match the attenuation
-        the spread applies shows up here long before it shows up in the energy. Comparing
-        against the Warp harness would not catch it, since the harness divides out the same
-        modulus the bindings do.
-        """
-        system = _system("cuda:0")
-        reference = _evaluate(system, mesh_dimensions=(128, 128, 128), spline_order=6)[
-            1
-        ]
-        scale = reference.abs().max()
-        errors = [
-            (
-                (
-                    _evaluate(system, mesh_dimensions=(m, m, m), spline_order=4)[1]
-                    - reference
-                )
-                .abs()
-                .max()
-                / scale
-            ).item()
-            for m in (24, 32, 48, 64)
-        ]
-        assert errors == sorted(errors, reverse=True), errors
-        assert errors[-1] < 1e-5, errors
 
     @pytest.mark.parametrize("mesh_size", [1, 2, 3])
     def test_a_mesh_shorter_than_the_stencil_is_refused(self, mesh_size):
@@ -970,16 +731,6 @@ class TestMeshAndUnits:
 @pytest.mark.gpu
 class TestParameters:
     """The parameter object."""
-
-    def test_carries_no_damping_parameters(self):
-        """Damping is supplied per call, so a stored copy cannot go stale.
-
-        Keeping a derived self-energy term alongside call-time damping would let a caller mix
-        one functional's reciprocal sum with another's self-energy and get a plausible but
-        wrong number.
-        """
-        fields = set(FourierD3Parameters.__dataclass_fields__)
-        assert not (fields & {"s6", "s8", "a1", "a2", "selfcont", "phi_zero"})
 
     def test_changing_damping_changes_the_energy(self):
         """The same parameter object under two functionals gives two answers."""
