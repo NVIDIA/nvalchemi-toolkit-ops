@@ -283,7 +283,7 @@ for cutoff_angstrom in (6.0, 8.0, 10.0, 12.0, 15.0):
         neighbor_list=targets,
         neighbor_ptr=pointer,
         unit_shifts=images,
-    )[0][0].item()
+    )[0].item()
     print(
         f"{cutoff_angstrom:10.1f} {value:+18.10f} "
         f"{abs(value - reference) / abs(reference):9.1%}"
