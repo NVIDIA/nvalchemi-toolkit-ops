@@ -246,16 +246,16 @@ class TestNeighborListRebuildJIT:
     def test_jit_beyond_skin(self):
         """Test JIT: rebuild needed when atom moves beyond skin distance."""
         reference = jnp.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=jnp.float32)
-        current = reference + jnp.array(
-            [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]], dtype=jnp.float32
+        producer = jax.jit(
+            lambda value: value + jnp.array([[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
         )
 
         @jax.jit
         def check_rebuild(ref, cur):
-            return neighbor_list_needs_rebuild(ref, cur, 0.5)
+            return jnp.where(neighbor_list_needs_rebuild(ref, cur, 0.5), 1, 0)
 
-        result = check_rebuild(reference, current)
-        assert result.item()
+        result = check_rebuild(reference, producer(reference)).block_until_ready()
+        assert result.item() == 1
 
     def test_jit_within_skin(self):
         """Test JIT: no rebuild for small movements within skin distance."""

@@ -34,6 +34,23 @@ pytestmark = requires_gpu
 batch_naive_module = import_module("nvalchemiops.jax.neighbors.batch_naive")
 
 
+def test_zero_cutoff_fixed_coo_returns_fresh_recovery_metadata():
+    """Batched zero cutoff never retains a caller-provided count buffer."""
+    positions = jnp.zeros((2, 3), dtype=jnp.float32)
+    _list, _ptr, counts, metadata_valid = batch_naive_neighbor_list(
+        positions,
+        0.0,
+        batch_ptr=jnp.array([0, 2], dtype=jnp.int32),
+        max_neighbors=1,
+        num_neighbors=jnp.full(2, 7, dtype=jnp.int32),
+        return_neighbor_list=True,
+        coo_capacity=2,
+    )
+
+    np.testing.assert_array_equal(counts, jnp.zeros(2, dtype=jnp.int32))
+    assert bool(metadata_valid)
+
+
 def _distances_from_neighbor_list(
     positions: jax.Array,
     cell: jax.Array,
@@ -728,8 +745,60 @@ class TestBatchNaiveEdgeCases:
 class TestBatchNaiveJIT:
     """Smoke tests for batch_naive_neighbor_list with jax.jit."""
 
-    def test_jit_no_pbc(self):
-        """Test batched naive neighbor list without PBC works with jax.jit."""
+    @pytest.mark.parametrize("strategy", ["scalar", "tile"])
+    def test_jit_no_pbc_fixed_buffers_keep_systems_isolated(self, strategy):
+        """Scalar and tile packed calls reuse buffers without cross-system pairs."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [10.0, 0.0, 0.0],
+                [10.5, 0.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+        neighbor_matrix = jnp.full((4, 10), -1, dtype=jnp.int32)
+        num_neighbors = jnp.full((4,), -1, dtype=jnp.int32)
+
+        @jax.jit
+        def jitted_batch_naive(
+            positions,
+            batch_idx,
+            batch_ptr,
+            neighbor_matrix,
+            num_neighbors,
+        ):
+            return batch_naive_neighbor_list(
+                positions,
+                cutoff=1.0,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=10,
+                strategy=strategy,
+                neighbor_matrix=neighbor_matrix,
+                num_neighbors=num_neighbors,
+            )
+
+        neighbor_matrix, num_neighbors = jitted_batch_naive(
+            positions,
+            batch_idx,
+            batch_ptr,
+            neighbor_matrix,
+            num_neighbors,
+        )
+
+        assert neighbor_matrix.shape == (4, 10)
+        assert num_neighbors.shape == (4,)
+        np.testing.assert_array_equal(np.asarray(num_neighbors), np.ones(4, dtype=int))
+        np.testing.assert_array_equal(
+            np.asarray(neighbor_matrix[:, 0]),
+            np.array([1, 0, 3, 2]),
+        )
+
+    def test_jit_fixed_capacity_coo(self):
+        """Batched naive exposes padded COO data and recovery metadata."""
         positions = jnp.array(
             [
                 [0.0, 0.0, 0.0],
@@ -743,22 +812,26 @@ class TestBatchNaiveJIT:
         batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
 
         @jax.jit
-        def jitted_batch_naive(positions, batch_idx, batch_ptr):
+        def jitted_batch_naive(positions):
             return batch_naive_neighbor_list(
                 positions,
                 cutoff=1.0,
                 batch_idx=batch_idx,
                 batch_ptr=batch_ptr,
-                max_neighbors=10,
+                max_neighbors=4,
+                return_neighbor_list=True,
+                coo_capacity=6,
             )
 
-        neighbor_matrix, num_neighbors = jitted_batch_naive(
-            positions, batch_idx, batch_ptr
+        neighbor_list, neighbor_ptr, counts, metadata_valid = jitted_batch_naive(
+            positions
         )
 
-        assert neighbor_matrix.shape == (4, 10)
-        assert num_neighbors.shape == (4,)
-        assert jnp.all(num_neighbors >= 0)
+        assert neighbor_list.shape == (2, 6)
+        assert neighbor_ptr.shape == (5,)
+        assert int(neighbor_ptr[-1]) == 4
+        np.testing.assert_array_equal(counts, jnp.ones(4, dtype=jnp.int32))
+        assert bool(metadata_valid)
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])

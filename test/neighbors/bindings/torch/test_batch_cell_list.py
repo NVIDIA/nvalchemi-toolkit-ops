@@ -27,6 +27,7 @@ from nvalchemiops.torch.neighbors.batch_cell_list import (
 )
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     allocate_cell_list,
+    get_neighbor_list_from_neighbor_matrix,
 )
 
 from ...test_utils import (
@@ -951,6 +952,98 @@ class TestBatchEdgeCases:
 
 class TestBatchCellListComponentsAPI:
     """Test the modular batch cell list API functions."""
+
+    @pytest.mark.gpu
+    def test_components_use_current_torch_stream_with_selective_rebuild(
+        self, torch_stream_runner
+    ):
+        """Split batch cell-list buffers work on a non-default Torch stream."""
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA is required for stream safety coverage")
+        device = torch.device("cuda")
+        cutoff = 0.75
+        initial = torch.tensor(
+            ((4.8, 0.0, 0.0), (0.2, 0.0, 0.0), (0.0, 0.0, 0.0), (2.0, 0.0, 0.0)),
+            dtype=torch.float32,
+            device=device,
+        )
+        updated = torch.tensor(
+            ((1.0, 0.0, 0.0), (3.0, 0.0, 0.0), (3.0, 0.0, 0.0), (3.5, 0.0, 0.0)),
+            dtype=torch.float32,
+            device=device,
+        )
+        positions = torch.empty_like(initial)
+        cell = torch.eye(3, dtype=torch.float32, device=device).repeat(2, 1, 1) * 5.0
+        pbc = torch.ones((2, 3), dtype=torch.bool, device=device)
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        max_cells, radius = estimate_batch_cell_list_sizes(cell, pbc, cutoff)
+        cell_list_cache = allocate_cell_list(4, max_cells, radius, device)
+        neighbor_matrix = torch.full((4, 4), 4, dtype=torch.int32, device=device)
+        neighbor_matrix_shifts = torch.zeros(
+            (4, 4, 3), dtype=torch.int32, device=device
+        )
+        num_neighbors = torch.zeros(4, dtype=torch.int32, device=device)
+        rebuild_flags = torch.tensor([False, True], dtype=torch.bool, device=device)
+
+        def query(work, flags=None):
+            return batch_query_cell_list(
+                work,
+                cell,
+                pbc,
+                cutoff,
+                batch_idx,
+                *cell_list_cache,
+                neighbor_matrix,
+                neighbor_matrix_shifts,
+                num_neighbors,
+                rebuild_flags=flags,
+            )
+
+        def run_sequence(value):
+            work = value.clone()
+            batch_build_cell_list(work, cutoff, cell, pbc, batch_idx, *cell_list_cache)
+            query(work)
+            work.copy_(updated)
+            batch_build_cell_list(work, cutoff, cell, pbc, batch_idx, *cell_list_cache)
+            query(work, rebuild_flags)
+            pairs, ptr, shifts = get_neighbor_list_from_neighbor_matrix(
+                neighbor_matrix, num_neighbors, neighbor_matrix_shifts, fill_value=4
+            )
+            return (
+                neighbor_matrix,
+                num_neighbors,
+                neighbor_matrix_shifts,
+                pairs,
+                ptr,
+                shifts,
+            )
+
+        _, snapshot, _ = torch_stream_runner(
+            initial,
+            positions,
+            run_sequence,
+            lambda: (
+                neighbor_matrix.fill_(4),
+                neighbor_matrix_shifts.zero_(),
+                num_neighbors.zero_(),
+            ),
+        )
+        matrix, counts, shift_matrix, pairs, ptr, shifts = snapshot
+        assert torch.equal(
+            matrix[:, 0], torch.tensor([1, 0, 3, 2], device=device, dtype=torch.int32)
+        ) and torch.equal(counts, torch.ones(4, device=device, dtype=torch.int32))
+        torch.testing.assert_close(shift_matrix[2:], torch.zeros_like(shift_matrix[2:]))
+        torch.testing.assert_close(
+            shift_matrix[:2, 0],
+            torch.tensor([[1, 0, 0], [-1, 0, 0]], device=device, dtype=torch.int32),
+        )
+        assert torch.equal(
+            pairs,
+            torch.tensor(
+                [[0, 1, 2, 3], [1, 0, 3, 2]], device=device, dtype=torch.int32
+            ),
+        ) and torch.equal(ptr, torch.arange(5, device=device, dtype=torch.int32))
+        torch.testing.assert_close(shifts, shift_matrix[:, 0])
 
     def test_batch_build_and_query_cell_list(self, device, dtype):
         """Test building and querying batch cell list separately."""

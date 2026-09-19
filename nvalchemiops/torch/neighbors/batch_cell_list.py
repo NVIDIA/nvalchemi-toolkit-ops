@@ -61,7 +61,10 @@ from nvalchemiops.neighbors.output_args import (
     _has_partial_or_pair_outputs,
 )
 from nvalchemiops.torch._warnings import _warn_compile_missing_argument_inference
-from nvalchemiops.torch._warp_op_helpers import register_noop_fake
+from nvalchemiops.torch._warp_op_helpers import (
+    register_noop_fake,
+    scoped_torch_warp_stream,
+)
 from nvalchemiops.torch.neighbors._autograd import (
     _flatten_active_pairs,
     _NeighborForwardOutput,
@@ -105,6 +108,7 @@ def _max_radius_tuple(neighbor_search_radius: torch.Tensor) -> tuple[int, int, i
     return (int(radius[0].item()), int(radius[1].item()), int(radius[2].item()))
 
 
+@scoped_torch_warp_stream
 def estimate_batch_cell_list_sizes(
     cell: torch.Tensor,
     pbc: torch.Tensor,
@@ -235,6 +239,7 @@ def estimate_batch_cell_list_sizes(
         "cell_atom_list",
     ),
 )
+@scoped_torch_warp_stream
 def _batch_build_cell_list_op(
     positions: torch.Tensor,
     cutoff: float,
@@ -436,6 +441,7 @@ def batch_build_cell_list(
     "nvalchemiops::batch_query_cell_list",
     mutates_args=("neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"),
 )
+@scoped_torch_warp_stream
 def _batch_query_cell_list_op(
     positions: torch.Tensor,
     cell: torch.Tensor,
@@ -686,6 +692,7 @@ def _batch_query_cell_list_op(
     "nvalchemiops::batch_query_cell_list_selective",
     mutates_args=("neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"),
 )
+@scoped_torch_warp_stream
 def _batch_query_cell_list_selective_op(
     positions: torch.Tensor,
     cell: torch.Tensor,
@@ -1333,6 +1340,7 @@ def _register_compiled_batch_query_cell_list_optional_pair_op(compiled: Compiled
     return _compiled_batch_query_cell_list_optional_pair
 
 
+@scoped_torch_warp_stream
 def _batch_query_cell_list_optional(
     positions: torch.Tensor,
     cell: torch.Tensor,

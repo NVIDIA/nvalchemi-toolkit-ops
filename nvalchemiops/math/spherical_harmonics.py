@@ -103,6 +103,8 @@ References
 
 from __future__ import annotations
 
+from importlib import import_module
+
 import warp as wp
 
 # =============================================================================
@@ -797,106 +799,15 @@ def _eval_spherical_harmonics_gradient_kernel(
         output[i, 8] = spherical_harmonic_2p2_gradient(r)
 
 
-def eval_spherical_harmonics_pytorch(
-    positions,
-    L_max: int = 2,
-    device=None,
-):
-    """Evaluate spherical harmonics from PyTorch tensors.
-
-    This is a convenience wrapper for testing the Warp implementation.
-
-    Parameters
-    ----------
-    positions : torch.Tensor
-        Input positions [N, 3] as float64.
-    L_max : int
-        Maximum angular momentum (0, 1, or 2). Default: 2.
-    device : torch.device, optional
-        Device for computation.
-
-    Returns
-    -------
-    torch.Tensor
-        Spherical harmonic values [N, num_components] where num_components is
-        1 (L_max=0), 4 (L_max=1), or 9 (L_max=2).
-    """
-    import torch
-
-    if device is None:
-        device = positions.device
-
-    N = positions.shape[0]
-
-    # Number of components for each L_max
-    num_components = {0: 1, 1: 4, 2: 9}[L_max]
-
-    # Allocate output
-    output = torch.zeros((N, num_components), dtype=torch.float64, device=device)
-
-    # Convert to Warp arrays
-    wp_device = wp.device_from_torch(device)
-    wp_positions = wp.from_torch(positions.contiguous(), dtype=wp.vec3d)
-    wp_output = wp.from_torch(output, dtype=wp.float64)
-
-    # Launch kernel
-    wp.launch(
-        kernel=_eval_spherical_harmonics_kernel,
-        dim=N,
-        inputs=[wp_positions, L_max],
-        outputs=[wp_output],
-        device=wp_device,
-    )
-
-    return output
+_TORCH_COMPAT_EXPORTS = {
+    "eval_spherical_harmonics_gradient_pytorch",
+    "eval_spherical_harmonics_pytorch",
+}
 
 
-def eval_spherical_harmonics_gradient_pytorch(
-    positions,
-    L_max: int = 2,
-    device=None,
-):
-    """Evaluate spherical harmonic gradients from PyTorch tensors.
-
-    Parameters
-    ----------
-    positions : torch.Tensor
-        Input positions [N, 3] as float64.
-    L_max : int
-        Maximum angular momentum (0, 1, or 2). Default: 2.
-    device : torch.device, optional
-        Device for computation.
-
-    Returns
-    -------
-    torch.Tensor
-        Gradient vectors [N, num_components, 3].
-    """
-    import torch
-
-    if device is None:
-        device = positions.device
-
-    N = positions.shape[0]
-
-    # Number of components for each L_max
-    num_components = {0: 1, 1: 4, 2: 9}[L_max]
-
-    # Allocate output
-    output = torch.zeros((N, num_components, 3), dtype=torch.float64, device=device)
-
-    # Convert to Warp arrays
-    wp_device = wp.device_from_torch(device)
-    wp_positions = wp.from_torch(positions.contiguous(), dtype=wp.vec3d)
-    wp_output = wp.from_torch(output, dtype=wp.vec3d)
-
-    # Launch kernel
-    wp.launch(
-        kernel=_eval_spherical_harmonics_gradient_kernel,
-        dim=N,
-        inputs=[wp_positions, L_max],
-        outputs=[wp_output],
-        device=wp_device,
-    )
-
-    return output
+def __getattr__(name: str):
+    """Lazily resolve the historical direct-module PyTorch wrappers."""
+    if name in _TORCH_COMPAT_EXPORTS:
+        module = import_module("nvalchemiops.torch.math.spherical_harmonics")
+        return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

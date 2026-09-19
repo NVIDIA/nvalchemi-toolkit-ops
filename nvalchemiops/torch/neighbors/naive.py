@@ -28,7 +28,11 @@ from nvalchemiops.neighbors.neighbor_utils import (
     estimate_max_neighbors,
     selective_zero_num_neighbors_single,
 )
-from nvalchemiops.torch._warp_op_helpers import register_noop_fake, scoped_warp_stream
+from nvalchemiops.torch._warp_op_helpers import (
+    register_noop_fake,
+    scoped_torch_warp_stream,
+    scoped_warp_stream,
+)
 from nvalchemiops.torch.neighbors._autograd import (
     _flatten_active_pairs,
     _NeighborForwardOutput,
@@ -53,6 +57,7 @@ __all__ = ["naive_neighbor_list"]
     "nvalchemiops::_naive_neighbor_matrix_no_pbc",
     mutates_args=("neighbor_matrix", "num_neighbors"),
 )
+@scoped_torch_warp_stream
 def _naive_neighbor_matrix_no_pbc(
     positions: torch.Tensor,
     cutoff: float,
@@ -139,6 +144,7 @@ def _naive_neighbor_matrix_no_pbc(
     "nvalchemiops::_naive_neighbor_matrix_pbc",
     mutates_args=("neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"),
 )
+@scoped_torch_warp_stream
 def _naive_neighbor_matrix_pbc(
     positions: torch.Tensor,
     cutoff: float,
@@ -303,6 +309,7 @@ def _naive_neighbor_matrix_pbc(
         "neighbor_distances",
     ),
 )
+@scoped_torch_warp_stream
 def _naive_neighbor_matrix_no_pbc_pair(
     positions: torch.Tensor,
     cutoff: float,
@@ -359,6 +366,7 @@ def _naive_neighbor_matrix_no_pbc_pair(
         "neighbor_distances",
     ),
 )
+@scoped_torch_warp_stream
 def _naive_neighbor_matrix_pbc_pair(
     positions: torch.Tensor,
     cutoff: float,
@@ -450,6 +458,7 @@ def _naive_neighbor_matrix_pbc_pair(
         "neighbor_distances",
     ),
 )
+@scoped_torch_warp_stream
 def _naive_neighbor_matrix_no_pbc_pair_target(
     positions: torch.Tensor,
     cutoff: float,
@@ -503,6 +512,7 @@ def _naive_neighbor_matrix_no_pbc_pair_target(
         "neighbor_distances",
     ),
 )
+@scoped_torch_warp_stream
 def _naive_neighbor_matrix_pbc_pair_target(
     positions: torch.Tensor,
     cutoff: float,
@@ -594,6 +604,7 @@ def _register_compiled_naive_no_pbc_pair_op(compiled: CompiledPairFn):
             "pair_forces",
         ),
     )
+    @scoped_torch_warp_stream
     def _compiled_naive_no_pbc_pair(
         positions: torch.Tensor,
         cutoff: float,
@@ -682,6 +693,7 @@ def _register_compiled_naive_pbc_pair_op(compiled: CompiledPairFn):
             "pair_forces",
         ),
     )
+    @scoped_torch_warp_stream
     def _compiled_naive_pbc_pair(
         positions: torch.Tensor,
         cutoff: float,
@@ -805,6 +817,7 @@ def _validate_output_buffer(
         )
 
 
+@scoped_torch_warp_stream
 def _naive_pair_outputs_forward(
     positions: torch.Tensor,
     cell: torch.Tensor | None,

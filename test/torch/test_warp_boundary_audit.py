@@ -27,6 +27,8 @@ import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+CORE_ROOT = ROOT / "nvalchemiops"
+JAX_ROOT = CORE_ROOT / "jax"
 AUDITED_ROOTS = (
     ROOT / "nvalchemiops" / "torch" / "neighbors",
     ROOT / "nvalchemiops" / "torch" / "interactions" / "electrostatics",
@@ -47,6 +49,7 @@ RAW_WARP_ATTRS = {
 # Backlog of existing non-decorated raw-Warp helpers. The comprehensive
 # compile-ready work should shrink this set; this audit prevents it growing.
 APPROVED_RAW_WARP_FUNCTIONS = {
+    "nvalchemiops/torch/interactions/electrostatics/multipole_autograd.py::_allocate_tiled_scratch",
     "nvalchemiops/torch/interactions/electrostatics/multipole_autograd.py::_assemble_rho_launch",
     "nvalchemiops/torch/interactions/electrostatics/multipole_autograd.py::_feature_position_grad_backward",
     "nvalchemiops/torch/interactions/electrostatics/multipole_autograd.py::_feature_position_grad_forward",
@@ -200,7 +203,6 @@ APPROVED_RAW_WARP_FUNCTIONS = {
     "nvalchemiops/torch/interactions/electrostatics/pme_multipole.py::_pme_k_squared_forward",
     "nvalchemiops/torch/interactions/electrostatics/pme_multipole.py::_quad_gradpos",
     "nvalchemiops/torch/interactions/electrostatics/pme_multipole.py::_quad_spread",
-    "nvalchemiops/torch/interactions/electrostatics/pme_multipole.py::_scoped_warp_stream",
     "nvalchemiops/torch/interactions/electrostatics/pme_multipole.py::_wp_from_torch",
     "nvalchemiops/torch/interactions/electrostatics/_ewald_corrections_chain.py::_batch_energy_corrections_backward_launch",
     "nvalchemiops/torch/interactions/electrostatics/_ewald_corrections_chain.py::_batch_energy_corrections_double_backward_launch",
@@ -208,10 +210,8 @@ APPROVED_RAW_WARP_FUNCTIONS = {
     "nvalchemiops/torch/interactions/electrostatics/_ewald_corrections_chain.py::_energy_corrections_backward_launch",
     "nvalchemiops/torch/interactions/electrostatics/_ewald_corrections_chain.py::_energy_corrections_double_backward_launch",
     "nvalchemiops/torch/interactions/electrostatics/_ewald_corrections_chain.py::_energy_corrections_forward_launch",
-    "nvalchemiops/torch/interactions/electrostatics/_ewald_corrections_chain.py::_scoped_stream",
     "nvalchemiops/torch/interactions/electrostatics/_ewald_corrections_chain.py::_wp_from_torch",
     "nvalchemiops/torch/interactions/electrostatics/_ewald_direct.py::_fill",
-    "nvalchemiops/torch/interactions/electrostatics/_ewald_direct.py::_scoped_stream",
     "nvalchemiops/torch/interactions/electrostatics/_ewald_direct.py::_wp",
     "nvalchemiops/torch/interactions/electrostatics/_ewald_real_chain.py::_backward_impl",
     "nvalchemiops/torch/interactions/electrostatics/_ewald_real_chain.py::_double_backward_impl",
@@ -219,7 +219,6 @@ APPROVED_RAW_WARP_FUNCTIONS = {
     "nvalchemiops/torch/interactions/electrostatics/_ewald_real_chain.py::_literal_cell_grad_backward",
     "nvalchemiops/torch/interactions/electrostatics/_ewald_real_chain.py::_literal_cell_grad_forward",
     "nvalchemiops/torch/interactions/electrostatics/_ewald_real_chain.py::_real_cell_grad_via_kernel",
-    "nvalchemiops/torch/interactions/electrostatics/_ewald_real_chain.py::_scoped_stream",
     "nvalchemiops/torch/interactions/electrostatics/_ewald_real_chain.py::_wp",
     "nvalchemiops/torch/interactions/electrostatics/_ewald_real_chain.py::f64",
     "nvalchemiops/torch/interactions/electrostatics/_ewald_recip_chain.py::_backward_impl",
@@ -227,11 +226,9 @@ APPROVED_RAW_WARP_FUNCTIONS = {
     "nvalchemiops/torch/interactions/electrostatics/_ewald_recip_chain.py::_forward_impl",
     "nvalchemiops/torch/interactions/electrostatics/_ewald_recip_chain.py::_run_fill",
     "nvalchemiops/torch/interactions/electrostatics/_ewald_recip_chain.py::_s_int_empty",
-    "nvalchemiops/torch/interactions/electrostatics/_ewald_recip_chain.py::_scoped_stream",
     "nvalchemiops/torch/interactions/electrostatics/_ewald_recip_chain.py::_wp",
     "nvalchemiops/torch/interactions/electrostatics/_slab_chain.py::_run_geometry",
     "nvalchemiops/torch/interactions/electrostatics/_slab_chain.py::_run_moments",
-    "nvalchemiops/torch/interactions/electrostatics/_slab_chain.py::_scoped_stream",
     "nvalchemiops/torch/interactions/electrostatics/_slab_chain.py::_slab_backward_values",
     # Shared runtime bodies for the registered atom- and system-layout op chains.
     "nvalchemiops/torch/interactions/electrostatics/_slab_chain.py::_slab_double_backward_layout",
@@ -250,7 +247,6 @@ APPROVED_RAW_WARP_FUNCTIONS = {
     "nvalchemiops/torch/interactions/electrostatics/pme.py::_pme_convolve_backward",
     "nvalchemiops/torch/interactions/electrostatics/pme.py::_pme_convolve_double_backward",
     "nvalchemiops/torch/interactions/electrostatics/pme.py::_pme_convolve_forward",
-    "nvalchemiops/torch/interactions/electrostatics/pme.py::_pme_scoped_warp_stream",
     "nvalchemiops/torch/interactions/electrostatics/pme.py::_virial_bg_correction_backward_launch",
     "nvalchemiops/torch/interactions/electrostatics/pme.py::_virial_bg_correction_forward_launch",
     "nvalchemiops/torch/interactions/electrostatics/pme.py::_wp_from_torch",
@@ -436,3 +432,97 @@ def test_custom_ops_have_fake_or_are_classified() -> None:
         if not has_fake and qualified not in APPROVED_CUSTOM_OPS_WITHOUT_FAKE
     ]
     assert not disallowed, "Custom ops without register_fake:\n" + "\n".join(disallowed)
+
+
+def test_core_does_not_select_framework_streams() -> None:
+    """Framework stream selection remains confined to the Torch adapter layer."""
+    disallowed = []
+    for path in CORE_ROOT.rglob("*.py"):
+        if (
+            "torch" in path.relative_to(CORE_ROOT).parts
+            or "jax" in path.relative_to(CORE_ROOT).parts
+        ):
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = ast.unparse(node.func)
+            if name in {
+                "torch.cuda.current_stream",
+                "wp.stream_from_torch",
+            }:
+                disallowed.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+    assert not disallowed, "Core framework-stream selection:\n" + "\n".join(disallowed)
+
+
+def test_jax_launch_callbacks_are_adapter_owned() -> None:
+    """JAX callback launches must be reachable only from ``jax_callable``."""
+    disallowed = []
+    kernel_bindings = 0
+    for path in JAX_ROOT.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        parents = {
+            child: parent
+            for parent in ast.walk(tree)
+            for child in ast.iter_child_nodes(parent)
+        }
+        functions = {
+            node.name: node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+        }
+        callbacks = set()
+        dynamic_callbacks = False
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = ast.unparse(node.func)
+            kernel_bindings += name.endswith("jax_kernel")
+            if not name.endswith("jax_callable") or not node.args:
+                continue
+            target = node.args[0]
+            if isinstance(target, ast.Name):
+                callbacks.add(target.id)
+            elif isinstance(target, ast.Call) and isinstance(target.func, ast.Name):
+                callbacks.add(target.func.id)
+            elif isinstance(target, ast.Subscript):
+                dynamic_callbacks = True
+        if dynamic_callbacks:
+            callbacks.update(
+                value.id
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Dict)
+                for value in node.values
+                if isinstance(value, ast.Name) and value.id in functions
+            )
+        reachable = callbacks & functions.keys()
+        while True:
+            callees = {
+                call.func.id
+                for callback in reachable
+                for call in ast.walk(functions[callback])
+                if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+            }
+            new_reachable = reachable | (callees & functions.keys())
+            if new_reachable == reachable:
+                break
+            reachable = new_reachable
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = ast.unparse(node.func)
+            if name in {"torch.cuda.current_stream", "wp.stream_from_torch"}:
+                disallowed.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+            if name not in {"wp.launch", "wp.launch_tiled"}:
+                continue
+            owner = parents[node]
+            ancestors = set()
+            while owner is not None:
+                if isinstance(owner, ast.FunctionDef):
+                    ancestors.add(owner.name)
+                owner = parents.get(owner)
+            if not ancestors & reachable:
+                disallowed.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+    assert kernel_bindings, "No JAX single-launch jax_kernel bindings found"
+    assert not disallowed, "Unclassified JAX launch boundary:\n" + "\n".join(disallowed)

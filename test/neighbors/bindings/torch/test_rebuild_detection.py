@@ -50,6 +50,21 @@ dtypes = [torch.float32, torch.float64]
 class TestRebuildDetection:
     """Test rebuild detection functionality."""
 
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+    def test_current_stream_consumes_event_gated_input(self, torch_stream_runner):
+        """Rebuild output feeds a scalar Torch read on the caller's stream."""
+        device = torch.device("cuda:0")
+        reference = torch.zeros((4, 3), dtype=torch.float32, device=device)
+        moved = reference.clone()
+        moved[0, 0] = 1.0
+        current = torch.empty_like(moved)
+        _, snapshot, expected = torch_stream_runner(
+            moved,
+            current,
+            lambda value: neighbor_list_needs_rebuild(reference, value, 0.5),
+        )
+        torch.testing.assert_close(snapshot, expected)
+
     @pytest.fixture(scope="class")
     def simple_system(self):
         """Create a simple test system."""

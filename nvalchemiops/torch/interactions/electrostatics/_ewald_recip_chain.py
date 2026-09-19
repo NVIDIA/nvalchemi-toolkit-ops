@@ -82,6 +82,9 @@ from nvalchemiops.torch._warnings import _warn_compile_missing_argument_inferenc
 from nvalchemiops.torch._warp_op_helpers import (
     register_warp_op_chain,
 )
+from nvalchemiops.torch._warp_op_helpers import (
+    scoped_warp_stream as _scoped_stream,
+)
 from nvalchemiops.torch.interactions.electrostatics._util import (
     _broadcast_system_values_to_atoms,
     _distribute_system_mean_cotangent_to_atoms,
@@ -118,15 +121,6 @@ def _wp_empty_f64(shape, device: torch.device):
 def _wp_zeros_f64(shape, device: torch.device):
     """Allocate a zeroed Torch CUDA buffer and expose it to Warp."""
     return _wp(torch.zeros(shape, dtype=torch.float64, device=device), wp.float64)
-
-
-def _scoped_stream(device: torch.device):
-    """Bind Warp's stream to PyTorch's current CUDA stream (graph-capture safe)."""
-    if device.type != "cuda":
-        from contextlib import nullcontext
-
-        return nullcontext()
-    return wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream(device)))
 
 
 def _per_system_cotangent(grad_energy_atom, batch_idx, num_systems, num_atoms):
