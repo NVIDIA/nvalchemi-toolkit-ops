@@ -336,7 +336,11 @@ lbfgs:
     # Measured L-BFGS/FIRE2 evaluation ratio from a default run of the sweep
     # above, used only for the break-even model cost. Re-measure and update it
     # if the sizes or the tolerance change.
-    eval_ratio: 0.129
+    #
+    # This is the geometric mean over cases where *both* optimizers converged.
+    # Cases where FIRE2 hit the cap are excluded: its count is then only a
+    # lower bound, so the ratio bounds rather than measures.
+    eval_ratio: 0.169
 
 # System Configuration (shared across all benchmarks)
 # ---------------------------------------------------

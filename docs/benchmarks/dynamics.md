@@ -183,15 +183,22 @@ used as the baseline:
 
 | Metric | L-BFGS / FIRE2 |
 | --- | --- |
-| Geometric mean over the sweep | **0.129** |
+| Geometric mean, cases where both converged | **0.169** |
 | Worst individual case | **0.557** |
-| Runs converged | 15 / 15 |
+| Cases where both converged | 12 / 15 |
+| L-BFGS converged | 15 / 15 |
 
-FIRE2 hit the 20,000-evaluation cap in 3 of the 15 cases, so those ratios are
-upper bounds on the advantage rather than measurements; the worst individual
-ratio, 0.557, comes from a case where FIRE2 converged and is the honest
-headline. Note that these are LJ clusters, not a machine-learned potential on a
-realistic materials workload.
+The aggregate covers only the 12 cases where **both** optimizers converged.
+FIRE2 hit the 20,000-evaluation cap in the other 3; its true count there is at
+least the cap, so those ratios (0.033, 0.039, 0.065) bound rather than measure,
+and averaging them in would report a number that is partly not a measurement.
+It would also flatter L-BFGS: including them moves the headline from 0.169 to
+0.129, a 31% improvement drawn entirely from cases that establish no ratio.
+L-BFGS converged in all 15.
+
+The worst individual ratio, 0.557, comes from a case where FIRE2 converged and
+is the conservative headline. Note that these are LJ clusters, not a
+machine-learned potential on a realistic materials workload.
 
 **Per-step optimizer cost.** Optimizer time only, single system, fp64, harmonic
 potential, measured with `--gates`:
@@ -202,9 +209,9 @@ this table has a regenerable record behind it.
 
 | Atoms | Eager (ms) | CUDA graph (ms) | FIRE2 (ms) | vs FIRE2 |
 | --- | --- | --- | --- | --- |
-| 10,000 | 0.49 | 0.16 | 0.055 | 9.0x |
-| 100,000 | 1.02 | 1.02 | 0.113 | 9.0x |
-| 1,000,000 | 3.12 | 3.11 | 0.320 | 9.8x |
+| 10,000 | 0.46 | 0.16 | 0.053 | 8.7x |
+| 100,000 | 1.02 | 1.02 | 0.114 | 9.0x |
+| 1,000,000 | 3.12 | 3.11 | 0.319 | 9.8x |
 
 **A single L-BFGS step is roughly ten times more expensive than a FIRE2 step.**
 It runs `2m + O(1)` passes over the degrees of freedom against FIRE2's handful.
@@ -213,11 +220,15 @@ about 2.9x; from one hundred thousand upwards the device work dominates and
 replay recovers nothing.
 
 That cost is not the reason to choose L-BFGS, and it is not usually the cost
-that matters. The model must cost more than roughly 10, 20 and 95 microseconds
+that matters. The model must cost more than roughly 30, 70 and 250 microseconds
 per evaluation at these three sizes for L-BFGS to win end to end — a
-machine-learned potential exceeds that by two to three orders of magnitude, and
+machine-learned potential exceeds that by one to two orders of magnitude, and
 L-BFGS needs several times fewer evaluations. Prefer FIRE2 when the force
 evaluation is genuinely cheap.
+
+(These break-even figures follow from the evaluation ratio above, so correcting
+that ratio raised them: they were quoted as 10, 20 and 95 microseconds when the
+aggregate still included the capped cases.)
 
 **Memory.** With `P` degrees of freedom, `M` systems and history size `m`:
 

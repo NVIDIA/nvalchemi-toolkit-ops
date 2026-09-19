@@ -41,7 +41,7 @@ Usage
                                                   [--force-tol 1e-4]
                                                   [--output-dir DIR]
                                                   [--device cuda:0]
-    python -m benchmarks.dynamics.benchmark_lbfgs --gates [--eval-ratio 0.129]
+    python -m benchmarks.dynamics.benchmark_lbfgs --gates [--eval-ratio 0.169]
                                                           [--device cuda:0]
 
 ``--device`` matches ``benchmark_fire2.py``, since this runner reports a ratio
@@ -509,7 +509,7 @@ def main():
                 [10_000, 100_000, 1_000_000],
                 section=gates_config,
             ),
-            pick(args.eval_ratio, "eval_ratio", 0.129, section=gates_config),
+            pick(args.eval_ratio, "eval_ratio", 0.169, section=gates_config),
             gates_config.get("warmup", 10),
             gates_config.get("runs", 50),
             device=args.device,
@@ -580,17 +580,50 @@ def main():
                 f"{'' if (lb_ok and f2_ok) else '  (capped)'}"
             )
 
-    ratios = [r["ratio"] for r in rows]
-    geo_mean = float(np.exp(np.mean(np.log(ratios))))
-    all_lbfgs_ok = all(r["lbfgs_converged"] for r in rows)
-    print(f"\ngeometric mean evaluation ratio (L-BFGS / FIRE2): {geo_mean:.3f}")
-    print(f"worst individual ratio:                          {max(ratios):.3f}")
-    print(f"every L-BFGS run converged:                      {all_lbfgs_ok}")
-    capped = [r for r in rows if not r["fire2_converged"]]
-    if capped:
+    # The aggregate is over cases where *both* optimizers converged. A capped
+    # FIRE2 run only bounds its evaluation count from below, so its ratio
+    # bounds rather than measures; averaging bounds together with measurements
+    # would report a number that is partly not a measurement -- and in the
+    # direction that flatters L-BFGS, since a capped run divides by a count
+    # that is too small.
+    comparable = [r for r in rows if r["lbfgs_converged"] and r["fire2_converged"]]
+    fire2_capped = [
+        r for r in rows if r["lbfgs_converged"] and not r["fire2_converged"]
+    ]
+    lbfgs_failed = [r for r in rows if not r["lbfgs_converged"]]
+    both_failed = [r for r in lbfgs_failed if not r["fire2_converged"]]
+
+    print()
+    if comparable:
+        ratios = [r["ratio"] for r in comparable]
+        geo_mean = float(np.exp(np.mean(np.log(ratios))))
         print(
-            f"note: FIRE2 hit the {eval_cap}-evaluation cap in {len(capped)} case(s), "
-            "so those ratios are upper bounds on L-BFGS's advantage."
+            f"cases where both converged:                      "
+            f"{len(comparable)}/{len(rows)}"
+        )
+        print(f"geometric mean evaluation ratio (L-BFGS / FIRE2): {geo_mean:.3f}")
+        print(f"worst individual ratio:                          {max(ratios):.3f}")
+    else:
+        print("no case had both optimizers converge; no ratio can be quoted")
+
+    if fire2_capped:
+        bounds = ", ".join(f"{r['ratio']:.3f}" for r in fire2_capped)
+        print(
+            f"\nexcluded -- FIRE2 hit the {eval_cap}-evaluation cap in "
+            f"{len(fire2_capped)} case(s). Its true count is at least the cap, so "
+            f"each ratio ({bounds}) is an upper bound on that case's ratio, not a "
+            "measurement. L-BFGS converged in all of them."
+        )
+    if lbfgs_failed:
+        print(
+            f"\nexcluded -- L-BFGS hit the cap in {len(lbfgs_failed)} case(s)"
+            + (
+                f", {len(both_failed)} of which FIRE2 also failed "
+                "(those establish no comparison at all)"
+                if both_failed
+                else ""
+            )
+            + "."
         )
 
     if output_dir is not None and rows:
