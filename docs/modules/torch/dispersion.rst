@@ -60,6 +60,16 @@ required by the kernels.
     :members:
     :undoc-members:
 
+:class:`FourierD3Setup` is a different kind of object: a cache of cell- and mesh-derived
+quantities, optional for correctness but required for
+``torch.compile(mode="reduce-overhead")``, since ``torch.linalg.inv`` cannot be recorded into
+a CUDA graph. It is tied to the cell, batch size, species count, precision and device it was
+built for, and refuses any call that does not match.
+
+.. autoclass:: nvalchemiops.torch.interactions.dispersion.FourierD3Setup
+    :members:
+    :undoc-members:
+
 Internal Custom Operators
 -------------------------
 
