@@ -193,11 +193,11 @@ class FourierD3Parameters:
     max_relative_error: float
 
     def __post_init__(self):
-        """Validate dtypes and ranks, matching the Torch container.
+        """Validate dtypes, ranks and cross-field shapes, matching the Torch container.
 
         This also runs when the pytree is rebuilt inside ``jax.jit``, where the fields are
-        tracers. Only ``dtype`` and ``ndim`` are read, which tracers carry, so the checks
-        hold while tracing as well as eagerly.
+        tracers. Only ``dtype``, ``ndim`` and ``shape`` are read, which tracers carry, so the
+        checks hold while tracing as well as eagerly.
         """
         fields = {
             "rcov": self.rcov,
@@ -230,6 +230,21 @@ class FourierD3Parameters:
                 raise ValueError(
                     f"{name} must be {expected}D, got shape {tuple(array.shape)}."
                 )
+        # Shapes are static under trace, so these hold while tracing too.
+        if self.v_q.shape[:2] != self.cn_ref.shape:
+            raise ValueError(
+                f"v_q and cn_ref disagree on (n_species, n_ref): "
+                f"{tuple(self.v_q.shape[:2])} against {tuple(self.cn_ref.shape)}."
+            )
+        if self.eigs.shape[0] != self.v_q.shape[2]:
+            raise ValueError(
+                f"eigs has rank {self.eigs.shape[0]} but v_q has rank {self.v_q.shape[2]}."
+            )
+        if self.sqrt_q.shape[0] != self.cn_ref.shape[0]:
+            raise ValueError(
+                f"sqrt_q covers {self.sqrt_q.shape[0]} species but cn_ref covers "
+                f"{self.cn_ref.shape[0]}."
+            )
 
     @property
     def rank(self) -> int:

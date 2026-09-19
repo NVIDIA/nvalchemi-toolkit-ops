@@ -1133,6 +1133,22 @@ class TestParameterValidation:
         with pytest.raises(ValueError, match="must be .D"):
             FourierD3Parameters(**fields)
 
+    @pytest.mark.parametrize(
+        ("name", "shape", "message"),
+        [
+            ("v_q", (2, 2, 4), "disagree on"),
+            ("cn_ref", (3, 2), "disagree on"),
+            ("eigs", (3,), "eigs has rank"),
+            ("sqrt_q", (3,), "sqrt_q covers"),
+        ],
+    )
+    def test_cross_field_shapes_are_enforced(self, name, shape, message):
+        """Each field is individually well formed, so only the relationships catch these."""
+        fields = self._fields()
+        fields[name] = jnp.zeros(shape)
+        with pytest.raises(ValueError, match=message):
+            FourierD3Parameters(**fields)
+
 
 @pytest.mark.gpu
 class TestBackendGuard:
