@@ -6,11 +6,13 @@
 # be beaten.
 
 parameters:
-  # Number density in atoms per cubic Angstrom. 0.1 is representative of a condensed
-  # phase; the comparison depends strongly on this, because the real-space neighbour count
-  # grows as density times cutoff cubed while the mesh cost does not depend on it at all.
-  density: 0.1
-
+  # Systems are CsCl (B2) supercells from the shared benchmark builders, so the density is
+  # the lattice's own (about 0.029 atoms per cubic Angstrom) rather than a chosen number.
+  # It is reported with the results, because the comparison depends on it: the real-space
+  # neighbour count grows as density times cutoff cubed, while the mesh cost does not
+  # depend on density at all.
+  #
+  # Counts are rounded up to whole unit cells, so a request of 500 builds 686 atoms.
   atom_counts: [500, 2000, 8000, 20000]
 
   # 6.0 is the common MLFF cutoff and is NOT converged for dispersion. 15.0 and 20.0 are

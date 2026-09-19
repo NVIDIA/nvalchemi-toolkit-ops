@@ -105,7 +105,6 @@ class TestConfiguration:
         config = benchmark_module.load_yaml_config(benchmark_module.DEFAULT_CONFIG)
         parameters = config["parameters"]
         for key in (
-            "density",
             "atom_counts",
             "real_space_cutoffs",
             "timing_runs",
@@ -113,18 +112,17 @@ class TestConfiguration:
         ):
             assert key in parameters, key
         assert config["output"]["base_dir"]
+        # Density comes from the CsCl lattice now, so configuring it would be misleading.
+        assert "density" not in parameters
 
     def test_cli_flags_override_the_config_only_when_given(self):
         """An unset flag must leave the configured value alone."""
-        args = argparse.Namespace(
-            atom_counts=None, density=0.25, timing_runs=None, warmup_runs=None
-        )
+        args = argparse.Namespace(atom_counts=[9], timing_runs=None, warmup_runs=None)
         config = benchmark_module.merge_cli_overrides(
-            {"parameters": {"atom_counts": [7], "density": 0.1, "timing_runs": 4}}, args
+            {"parameters": {"atom_counts": [7], "timing_runs": 4}}, args
         )
-        assert config["parameters"]["atom_counts"] == [7]
+        assert config["parameters"]["atom_counts"] == [9]
         assert config["parameters"]["timing_runs"] == 4
-        assert config["parameters"]["density"] == 0.25
 
     @pytest.mark.gpu
     def test_results_land_in_the_configured_base_dir(self, monkeypatch, tmp_path):
@@ -145,7 +143,7 @@ class TestConfiguration:
 
         benchmark_module.run_from_config(config, None)
 
-        assert list(tmp_path.glob("fd3_*/fd3-random-system-size-scaling.csv"))
+        assert list(tmp_path.glob("fd3_*/fd3-cscl-system-size-scaling.csv"))
 
 
 class TestBackendGuard:

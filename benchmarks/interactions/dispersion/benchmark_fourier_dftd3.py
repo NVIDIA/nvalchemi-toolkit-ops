@@ -25,6 +25,9 @@ three dimensions leaves a truncation error decaying as ``1/r^3``, so a real-spac
 FourierD3 against a 6 Angstrom ``dftd3`` compares two different calculations and flatters
 the truncated one. Both are reported here so the distinction stays visible.
 
+Systems are CsCl (B2) supercells from the shared benchmark builders, so the geometry and the
+density are a real crystal's rather than a chosen number.
+
 Timings include the neighbour-list build, because that is what a caller pays. FourierD3 needs
 only the short coordination-number list, which an MLFF already builds, so a second set of
 columns reports the evaluation alone -- the marginal cost when the list comes for free.
@@ -41,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -48,6 +52,11 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from benchmarks.config import load_yaml_config  # noqa: E402
+from benchmarks.suite_systems import (  # noqa: E402
+    compute_atomic_density,
+    create_system,
+    cscl_actual_atoms,
+)
 from benchmarks.suite_utils import (  # noqa: E402
     build_failure_result,
     build_result,
@@ -89,16 +98,21 @@ def mesh_for(num_atoms: int) -> int:
     return MESH_SCHEDULE[-1][1]
 
 
-def _synthetic_tables(max_z: int = 10):
-    """Reference tables shaped like the DFT-D3 parametrisation.
+def _synthetic_tables(species: Sequence[int]):
+    """Reference tables shaped like the DFT-D3 parametrisation, for the given species.
 
-    The benchmark measures cost, not chemistry, and generating the tables keeps the run free
-    of a network fetch. Rank and therefore mesh channel count follow the real tables closely
-    enough for timing to be representative.
+    The geometry is a real crystal, but the parameters are generated: the benchmark measures
+    cost, not chemistry, and fetching Grimme's tables would put a network download in the
+    path of a timing run. What has to be right for timing is the shape -- the number of
+    reference slots per species, and so the decomposition rank and the mesh channel count --
+    and that follows the real tables closely enough.
     """
     rng = np.random.default_rng(0)
+    species = sorted({int(z) for z in species})
+    max_z = max(species) + 1
     n_ref = 5
-    used = {1: 2, 6: 5}
+    # Uneven reference counts, as the real tables have, so the padding path is exercised.
+    used = {z: 2 + (i % (n_ref - 1)) for i, z in enumerate(species)}
     c6ab = np.zeros((max_z, max_z, n_ref, n_ref))
     cn_ref = np.zeros_like(c6ab)
     factors = {z: rng.normal(size=(n, 3)) for z, n in used.items()}
@@ -108,14 +122,24 @@ def _synthetic_tables(max_z: int = 10):
             for p in range(n_i):
                 cn_ref[z_i, z_j, p, :n_j] = np.linspace(0.0, 3.5, n_i)[p]
     rcov = np.zeros(max_z)
-    rcov[[1, 6]] = [0.6, 1.2]
     r4r2 = np.zeros(max_z)
-    r4r2[[1, 6]] = [1.0, 1.4]
+    for i, z in enumerate(species):
+        rcov[z] = 0.6 + 0.3 * i
+        r4r2[z] = 1.0 + 0.4 * i
     return rcov, r4r2, c6ab, cn_ref
 
 
-def _make_system(num_atoms: int, density: float, device: str, dtype=None):
-    """A random periodic cell at the requested number density.
+def _make_system(num_atoms: int, device: str, dtype=None):
+    """A CsCl supercell of approximately ``num_atoms`` atoms.
+
+    The shared builder the rest of the suite uses, rather than a uniform random cell. A
+    random cell at a chosen density puts atoms at arbitrary separations, including overlaps,
+    and its coordination numbers sit far above anything the reference tables cover; a B2
+    lattice has the near-neighbour structure and the density of a real solid, which is what
+    the neighbour list and the coordination-number pass actually cost.
+
+    The atom count is rounded up to whole unit cells, so the caller must read the count back
+    from the returned positions rather than assume it got what it asked for.
 
     The precision is single by default, matching how MLFF inference runs and keeping every
     method in the sweep on the same footing. Double precision is a large penalty on hardware
@@ -124,20 +148,18 @@ def _make_system(num_atoms: int, density: float, device: str, dtype=None):
     import torch
 
     dtype = dtype or torch.float32
-    rng = np.random.default_rng(1)
-    box = (num_atoms / density) ** (1.0 / 3.0)
-    positions = torch.tensor(
-        rng.uniform(0.0, box, (num_atoms, 3)), dtype=dtype, device=device
+    system = create_system("cscl", num_atoms=num_atoms, device=device, dtype=dtype)
+    cell = system["cell"].reshape(-1, 3, 3)[0]
+    return (
+        system["positions"],
+        system["atomic_numbers"].to(torch.int32),
+        cell,
+        compute_atomic_density(system),
     )
-    numbers = torch.tensor(
-        rng.choice([1, 6], num_atoms), dtype=torch.int32, device=device
-    )
-    cell = torch.eye(3, dtype=dtype, device=device) * box
-    return positions, numbers, cell, box
 
 
 def benchmark_fourier_d3(
-    num_atoms, density, device, num_runs, warmup_runs, reuse_setup=False, dtype=None
+    num_atoms, device, num_runs, warmup_runs, reuse_setup=False, dtype=None
 ):
     """Time one FourierD3 evaluation, and the neighbour-list build separately.
 
@@ -168,8 +190,9 @@ def benchmark_fourier_d3(
     from nvalchemiops.torch.neighbors import neighbor_list
 
     dtype = dtype or torch.float32
-    positions, numbers, cell, _box = _make_system(num_atoms, density, device, dtype)
-    rcov, r4r2, c6ab, cn_ref = _synthetic_tables()
+    positions, numbers, cell, density = _make_system(num_atoms, device, dtype)
+    species = sorted(set(numbers.tolist()))
+    rcov, r4r2, c6ab, cn_ref = _synthetic_tables(species)
 
     def tensor(array):
         return torch.tensor(array, dtype=dtype, device=device)
@@ -182,7 +205,7 @@ def benchmark_fourier_d3(
         tensor(r4r2),
         tensor(c6ab),
         tensor(cn_ref),
-        species=[1, 6],
+        species=species,
         device=device,
         dtype=dtype,
     )
@@ -228,6 +251,8 @@ def benchmark_fourier_d3(
         "time_total_seconds": time_list + time_eval,
         "time_eval_seconds": time_eval,
         "time_neighbor_seconds": time_list,
+        "atoms": int(positions.shape[0]),
+        "density": density,
         "mesh": mesh,
         "edges": int(neighbors.shape[1]),
         "mem_info": mem_info,
@@ -235,7 +260,7 @@ def benchmark_fourier_d3(
 
 
 def benchmark_real_space_d3(
-    num_atoms, density, cutoff, device, num_runs, warmup_runs, dtype=None
+    num_atoms, cutoff, device, num_runs, warmup_runs, dtype=None
 ):
     """Time one real-space ``dftd3`` evaluation at a given interaction cutoff."""
     import torch
@@ -246,8 +271,9 @@ def benchmark_real_space_d3(
     from nvalchemiops.torch.neighbors import neighbor_list
 
     dtype = dtype or torch.float32
-    positions, numbers, cell, _box = _make_system(num_atoms, density, device, dtype)
-    rcov, r4r2, c6ab, cn_ref = _synthetic_tables()
+    positions, numbers, cell, density = _make_system(num_atoms, device, dtype)
+    species = sorted(set(numbers.tolist()))
+    rcov, r4r2, c6ab, cn_ref = _synthetic_tables(species)
 
     def tensor(array):
         return torch.tensor(array, dtype=dtype, device=device)
@@ -297,6 +323,8 @@ def benchmark_real_space_d3(
         "time_total_seconds": time_list + time_eval,
         "time_eval_seconds": time_eval,
         "time_neighbor_seconds": time_list,
+        "atoms": int(positions.shape[0]),
+        "density": density,
         "mem_info": mem_info,
     }
 
@@ -324,7 +352,6 @@ def run_from_config(config: dict, output_dir, backend: str | None = None) -> lis
     backend = _resolve_backend(config, backend)
     parameters = config.get("parameters", {})
     atom_counts = parameters.get("atom_counts", [500, 2000, 8000, 20000])
-    density = parameters.get("density", 0.1)
     cutoffs = parameters.get("real_space_cutoffs", [6.0, 15.0, 20.0])
     num_runs = parameters.get("timing_runs", 10)
     warmup_runs = parameters.get("warmup_runs", 3)
@@ -332,13 +359,14 @@ def run_from_config(config: dict, output_dir, backend: str | None = None) -> lis
     results: list[dict] = []
 
     for num_atoms in atom_counts:
-        row_meta = make_row_meta(
-            "random", "system_size", backend, num_atoms, 1, num_atoms
-        )
+        # A CsCl supercell fills whole unit cells, so the realised count is rounded up from
+        # the request. Every row reports what was actually built.
+        actual = cscl_actual_atoms(num_atoms)
+        row_meta = make_row_meta("cscl", "system_size", backend, actual, 1, actual)
         for method, reuse in (("fourier_dftd3", False), ("fourier_dftd3_setup", True)):
             try:
                 measured = benchmark_fourier_d3(
-                    num_atoms, density, device, num_runs, warmup_runs, reuse_setup=reuse
+                    num_atoms, device, num_runs, warmup_runs, reuse_setup=reuse
                 )
                 results.append(
                     build_result(
@@ -349,7 +377,7 @@ def run_from_config(config: dict, output_dir, backend: str | None = None) -> lis
                         warmup_runs=warmup_runs,
                         cutoff=CN_CUTOFF,
                         mesh=measured["mesh"],
-                        density=density,
+                        density=measured["density"],
                         time_total_seconds=measured["time_total_seconds"],
                         time_eval_seconds=measured["time_eval_seconds"],
                         time_neighbor_seconds=measured["time_neighbor_seconds"],
@@ -371,7 +399,7 @@ def run_from_config(config: dict, output_dir, backend: str | None = None) -> lis
         for cutoff in cutoffs:
             try:
                 measured = benchmark_real_space_d3(
-                    num_atoms, density, cutoff, device, num_runs, warmup_runs
+                    num_atoms, cutoff, device, num_runs, warmup_runs
                 )
                 results.append(
                     build_result(
@@ -381,7 +409,7 @@ def run_from_config(config: dict, output_dir, backend: str | None = None) -> lis
                         timing_runs=num_runs,
                         warmup_runs=warmup_runs,
                         cutoff=cutoff,
-                        density=density,
+                        density=measured["density"],
                         time_total_seconds=measured["time_total_seconds"],
                         time_eval_seconds=measured["time_eval_seconds"],
                         time_neighbor_seconds=measured["time_neighbor_seconds"],
@@ -408,7 +436,7 @@ def run_from_config(config: dict, output_dir, backend: str | None = None) -> lis
     if output_dir is not None:
         save_results(
             results,
-            Path(output_dir) / "fd3-random-system-size-scaling.csv",
+            Path(output_dir) / "fd3-cscl-system-size-scaling.csv",
             replace_backend=backend,
         )
     return results
@@ -442,7 +470,6 @@ def parse_args():
         help="Directory for the results CSV. Defaults to output.base_dir from the config.",
     )
     parser.add_argument("--atom-counts", type=int, nargs="+", default=None)
-    parser.add_argument("--density", type=float, default=None)
     parser.add_argument("--timing-runs", type=int, default=None)
     parser.add_argument("--warmup-runs", type=int, default=None)
     parser.add_argument("--dry-run", action="store_true")
@@ -454,7 +481,6 @@ def merge_cli_overrides(config: dict, args: argparse.Namespace) -> dict:
     parameters = config.setdefault("parameters", {})
     for flag, key in (
         ("atom_counts", "atom_counts"),
-        ("density", "density"),
         ("timing_runs", "timing_runs"),
         ("warmup_runs", "warmup_runs"),
     ):
@@ -468,15 +494,18 @@ def main():
     """Run the sweep and print a summary table."""
     args = parse_args()
     config = merge_cli_overrides(load_yaml_config(args.config), args)
-    density = config["parameters"].get("density", 0.1)
     if args.dry_run:
         for case in dry_run_from_config(config):
             print(case)
         return 0
 
     results = run_from_config(config, args.output_dir)
+    density = next(
+        (row["density"] for row in results if row.get("success", True)), float("nan")
+    )
     print(
-        f"\ndensity {density} atoms/A^3;  times in ms. 'eval' is the reported metric: "
+        f"\nCsCl supercells at {density:.4f} atoms/A^3;  times in ms. 'eval' is the "
+        f"reported metric: "
         f"the kernel style\nguide keeps neighbour-list construction out of kernel timing. "
         f"'nlist' and 'total' are shown\nbecause the list a method needs is part of what a "
         f"converged correction costs.\n"

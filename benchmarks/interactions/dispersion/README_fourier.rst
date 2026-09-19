@@ -25,6 +25,13 @@ leaves a truncation error decaying as ``1/r^3``, so a 6 Angstrom dispersion cuto
 converged calculation. It is reported here so that the distinction is visible, not as a
 target to beat.
 
-The comparison also depends strongly on number density, which is why it is a parameter: the
-real-space neighbour count grows as density times cutoff cubed, while the mesh cost does not
-depend on density at all.
+Systems are CsCl (B2) supercells from the shared benchmark builders, the same periodic
+crystal the electrostatics suite uses, rather than a uniform random cell. A random cell at a
+chosen density places atoms at arbitrary separations, including overlaps, and gives
+coordination numbers far outside anything the reference tables cover; a real lattice has the
+near-neighbour structure and the density that the neighbour list and the coordination-number
+pass actually cost.
+
+Density therefore comes from the lattice rather than being chosen, and is reported with the
+results. It still matters to the comparison: the real-space neighbour count grows as density
+times cutoff cubed, while the mesh cost does not depend on density at all.
