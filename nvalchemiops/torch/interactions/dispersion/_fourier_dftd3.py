@@ -66,9 +66,6 @@ __all__ = [
     "fourier_dftd3",
 ]
 
-# Reference coordination numbers are stored per species with unused slots marked negative.
-_UNUSED_REFERENCE = -1.0
-
 
 @dataclass
 class FourierD3Parameters:
