@@ -566,12 +566,20 @@ has $g=\sum_i\lceil N_i/32\rceil$ groups in total.
 
 The build stores discovered tile pairs in one buffer shared by all row groups.
 If `max_tiles_per_group` is $m$, a single-system build with $g$ groups reserves
-$C=g\,\min(g,m)$ records. A compact batch with $G=\sum_i g_i$ groups reserves
-$C=G\,\min(G,m)$ records. Segmented batches instead reserve
-$C_i=g_i\,\min(g_i,m)$ records for system $i$. Each record contains two
-`int32` group indices, so the tile-index arrays use $8C$ bytes for one system.
-A compact batch also records the system index and uses $12C$ bytes. Other
-scratch buffers and the neighbor output do not depend on $m$.
+$C=g\,\min(g,m)$ records. A compact Torch batch reserves
+
+$$
+C=\sum_i g_i\,\min(g_i,m)
+$$
+
+records in one buffer pooled across all systems. This formula determines only
+the total capacity; it does not impose per-system quotas. Segmented batches use
+the same per-system terms but assign each system a fixed interval. Compact JAX
+batches retain their fixed-shape $C=G\,\min(G,m)$ allocation, where
+$G=\sum_i g_i$. Each record contains two `int32` group indices, so the
+tile-index arrays use $8C$ bytes for one system. A compact batch also records
+the system index and uses $12C$ bytes. Other scratch buffers and the neighbor
+output do not depend on $m$.
 
 #### Choosing a capacity
 
@@ -583,7 +591,7 @@ execution, they call
 cell volume, and cutoff; its `safety` parameter adds headroom for uneven density
 or changing geometries.
 
-There are three ways to choose a capacity:
+Available capacity choices are:
 
 - Before execution, use the estimator for a heuristic based on the current
   geometry.
@@ -591,7 +599,10 @@ There are three ways to choose a capacity:
   requirement for that geometry.
 - For a geometry-independent single-system bound, require capacity of at least
   $g(g+1)/2$ and use `max_tiles_per_group=ceil((g + 1) / 2)`.
-- For a compact batch, require total capacity of at least
+- For a compact Torch batch, the conservative geometry-independent shared
+  factor $m=\max_i\lceil(g_i+1)/2\rceil$ gives every system enough contribution
+  for its dense upper triangle while keeping the resulting buffer pooled.
+- For a compact JAX batch, require total capacity of at least
   $\sum_i g_i(g_i+1)/2$. With $G=\sum_i g_i$, the minimum shared factor is
   $\left\lceil\sum_i g_i(g_i+1)/(2G)\right\rceil$ for a nonempty batch.
 - For a segmented batch, require each segment to hold at least
@@ -606,13 +617,24 @@ cutoff when calling the estimator directly. JAX cluster-tile APIs require
 
 `TileBufferOverflow` reports the required tile-pair count as
 `error.num_tiles` and the allocated capacity as `error.max_tiles`. For a compact
-single-system or batch build, the exact retry value for that geometry is
+single-system build, the exact retry value for that geometry is
 
 $$
 m_{\mathrm{retry}} = \left\lceil\frac{\mathtt{error.num\_tiles}}{g}\right\rceil,
 $$
 
-where $g$ is the total group count for the compact build.
+where $g$ is the system's group count. For a compact Torch batch, choose the
+smallest positive integer $m$ satisfying
+
+$$
+\sum_i g_i\,\min(g_i,m) \ge \mathtt{error.num\_tiles}.
+$$
+
+The capacity remains pooled: one system may consume more than its individual
+term as long as the batch's total count fits. For a compact JAX batch, use the
+single-buffer retry
+$m_{\mathrm{retry}}=\lceil\mathtt{error.num\_tiles}/G\rceil$ with the total
+group count $G$.
 
 A segmented batch gives each system its own interval in the tile buffer. System
 $i$ has capacity `tile_offsets[i + 1] - tile_offsets[i]` and reports its required

@@ -616,6 +616,80 @@ def test_core_batch_max_tiles_per_group_validates_monotonic_batch_ptr():
         )
 
 
+def _batch_ptr_from_sizes(sizes: list[int]) -> torch.Tensor:
+    """Create a CPU batch pointer from per-system atom counts."""
+    offsets = [0]
+    for size in sizes:
+        offsets.append(offsets[-1] + size)
+    return torch.tensor(offsets, dtype=torch.int32)
+
+
+@pytest.mark.parametrize(
+    ("sizes", "max_tiles_per_group", "expected_capacity"),
+    [
+        ([0, 0, 0], 2, 0),
+        ([0, 1, 31, 32, 33, 63, 64, 65], 2, 21),
+        ([192, 32, 32], 3, 20),
+        ([192, 32, 32], 8, 38),
+    ],
+)
+def test_compact_tile_capacity_sums_per_system(
+    sizes, max_tiles_per_group, expected_capacity
+):
+    """Compact capacity sums bounded contributions from each system."""
+    batch_ptr = _batch_ptr_from_sizes(sizes)
+    *_, max_tiles, _ = estimate_batch_cluster_tile_list_sizes(
+        batch_ptr,
+        max_tiles_per_group=max_tiles_per_group,
+    )
+    assert max_tiles == expected_capacity
+
+
+def test_compact_tile_capacity_matches_single_system_formula():
+    """One-system batching agrees with the single-system capacity formula."""
+    batch_ptr = _batch_ptr_from_sizes([191])
+    *_, max_tiles, _ = estimate_batch_cluster_tile_list_sizes(
+        batch_ptr,
+        max_tiles_per_group=3,
+    )
+    assert max_tiles == 6 * min(6, 3)
+
+
+def test_compact_tile_capacity_many_small_systems_stays_linear():
+    """One thousand one-group systems allocate one thousand tile entries."""
+    batch_ptr = _batch_ptr_from_sizes([1] * 1000)
+    *_, max_tiles, _ = estimate_batch_cluster_tile_list_sizes(batch_ptr)
+    assert max_tiles == 1000
+
+
+def test_compact_tile_capacity_matches_summed_segmented_capacities():
+    """Compact and segmented sizing sum the same per-system contributions."""
+    batch_ptr = _batch_ptr_from_sizes([0, 1, 33, 96])
+    *_, compact_capacity, _ = estimate_batch_cluster_tile_list_sizes(
+        batch_ptr,
+        max_tiles_per_group=2,
+    )
+    segmented_capacities, *_ = estimate_batch_cluster_tile_segments(
+        batch_ptr,
+        max_neighbors=8,
+        max_tiles_per_group=2,
+    )
+    assert compact_capacity == int(segmented_capacities.sum().item())
+
+
+def test_compact_allocator_uses_exact_capacity_for_all_tile_arrays():
+    """All three pooled tile arrays use the summed compact capacity."""
+    batch_ptr = _batch_ptr_from_sizes([192, 32, 32])
+    state = allocate_batch_cluster_tile_list(
+        batch_ptr,
+        torch.device("cpu"),
+        max_tiles_per_group=3,
+    )
+    assert state[16].shape == (20,)
+    assert state[17].shape == (20,)
+    assert state[18].shape == (20,)
+
+
 def _canonicalize_matrix_full(
     neighbor_matrix: torch.Tensor,
     num_neighbors: torch.Tensor,
@@ -1074,6 +1148,88 @@ class TestBatchTileNeighborListCorrectness:
         )
         assert int(result[0].item()) == next(iter(required_counts.values()))
         assert int(result[0].item()) <= result[1].shape[0]
+
+    def test_compact_mixed_system_capacity_reports_actual_overflow(self, device, dtype):
+        """Tighter compact sizing reports the pooled count without truncation."""
+        positions = torch.zeros((256, 3), dtype=dtype, device=device)
+        cell_batch = torch.eye(3, dtype=dtype, device=device).repeat(3, 1, 1) * 100.0
+        batch_ptr = torch.tensor([0, 192, 224, 256], dtype=torch.int32, device=device)
+
+        with pytest.raises(TileBufferOverflow) as caught:
+            batch_cluster_tile_neighbor_list(
+                positions,
+                1.0,
+                cell_batch,
+                batch_ptr,
+                format="tile",
+                max_tiles_per_group=3,
+            )
+        assert caught.value.max_tiles == 20
+        assert caught.value.num_tiles == 23
+        assert caught.value.system_index is None
+
+        result = batch_cluster_tile_neighbor_list(
+            positions,
+            1.0,
+            cell_batch,
+            batch_ptr,
+            format="tile",
+            max_tiles_per_group=4,
+        )
+        assert int(result[0].item()) == 23
+        assert result[1].shape == (26,)
+        assert result[2].shape == (26,)
+        assert result[3].shape == (26,)
+
+    def test_compact_capacity_is_pooled_across_systems(self, device, dtype):
+        """One system may exceed its sizing term when total capacity is sufficient."""
+        positions = torch.zeros((384, 3), dtype=dtype, device=device)
+        for group in range(6):
+            positions[192 + 32 * group : 192 + 32 * (group + 1), 0] = 10.0 * (group + 1)
+        cell_batch = torch.eye(3, dtype=dtype, device=device).repeat(2, 1, 1) * 1000.0
+        batch_ptr = torch.tensor([0, 192, 384], dtype=torch.int32, device=device)
+
+        result = batch_cluster_tile_neighbor_list(
+            positions,
+            1.0,
+            cell_batch,
+            batch_ptr,
+            format="tile",
+            max_tiles_per_group=3,
+        )
+
+        assert result[1].shape == (36,)
+        assert int(result[0].item()) == 27
+        per_system = torch.bincount(result[3][:27].to(torch.long), minlength=2)
+        assert per_system.tolist() == [21, 6]
+
+    def test_oversized_caller_scratch_remains_the_launch_capacity(self, device, dtype):
+        """An explicit factor does not shrink complete caller-owned scratch."""
+        positions = torch.zeros((384, 3), dtype=dtype, device=device)
+        cell_batch = torch.eye(3, dtype=dtype, device=device).repeat(2, 1, 1) * 100.0
+        batch_ptr = torch.tensor([0, 192, 384], dtype=torch.int32, device=device)
+        scratch = _scratch_kwargs(
+            allocate_batch_cluster_tile_list(
+                batch_ptr,
+                torch.device(device),
+                dtype=dtype,
+                max_tiles_per_group=6,
+            )
+        )
+
+        result = batch_cluster_tile_neighbor_list(
+            positions,
+            1.0,
+            cell_batch,
+            batch_ptr,
+            format="tile",
+            max_tiles_per_group=1,
+            **scratch,
+        )
+
+        assert result[1] is scratch["tile_row_group"]
+        assert result[1].shape == (72,)
+        assert int(result[0].item()) == 42
 
     def test_matrix_overflow_reports_eager_fields(self, device, dtype):
         """Batched matrix overflow identifies the compact capacity and count."""
@@ -1714,6 +1870,66 @@ class TestBatchClusterTileCompile:
     ``_batch_query_cluster_tile``, ``_batch_query_cluster_tile_coo``) survive a
     ``torch.compile`` round-trip.
     """
+
+    @pytest.mark.slow
+    def test_compact_per_system_capacity_matches_eager_and_fullgraph(
+        self, device, dtype
+    ):
+        """The exact pooled allocation supports equal eager and compiled tiles."""
+        positions = torch.zeros((256, 3), dtype=dtype, device=device)
+        cell_batch = torch.eye(3, dtype=dtype, device=device).repeat(3, 1, 1) * 100.0
+        batch_ptr = torch.tensor([0, 192, 224, 256], dtype=torch.int32, device=device)
+        compiled_scratch = _scratch_kwargs(
+            allocate_batch_cluster_tile_list(
+                batch_ptr,
+                torch.device(device),
+                dtype=dtype,
+                max_tiles_per_group=4,
+            )
+        )
+
+        @torch.compile(fullgraph=True)
+        def run(runtime_positions):
+            return batch_cluster_tile_neighbor_list(
+                runtime_positions,
+                1.0,
+                cell_batch,
+                batch_ptr,
+                format="tile",
+                max_tiles_per_group=4,
+                **compiled_scratch,
+            )
+
+        eager = batch_cluster_tile_neighbor_list(
+            positions,
+            1.0,
+            cell_batch,
+            batch_ptr,
+            format="tile",
+            max_tiles_per_group=4,
+        )
+        compiled = run(positions)
+        expected_count = int(eager[0].item())
+        actual_count = int(compiled[0].item())
+        assert expected_count == actual_count == 23
+        assert eager[1].shape == compiled[1].shape == (26,)
+        expected_tiles = set(
+            zip(
+                eager[1][:expected_count].tolist(),
+                eager[2][:expected_count].tolist(),
+                eager[3][:expected_count].tolist(),
+                strict=True,
+            )
+        )
+        actual_tiles = set(
+            zip(
+                compiled[1][:actual_count].tolist(),
+                compiled[2][:actual_count].tolist(),
+                compiled[3][:actual_count].tolist(),
+                strict=True,
+            )
+        )
+        assert actual_tiles == expected_tiles
 
     @pytest.mark.slow
     def test_batch_cluster_tile_neighbor_list_compile(self, device, dtype):

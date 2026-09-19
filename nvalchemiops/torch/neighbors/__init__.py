@@ -184,10 +184,12 @@ def neighbor_list(
             Can be provided to aid in allocation for naive dual cutoff method.
         max_tiles_per_group : int, optional
             Capacity factor for the intermediate tile-pair buffer used by
-            cluster-tile methods. For ``g`` row groups, the buffer holds
-            ``g * min(g, max_tiles_per_group)`` tile pairs. Increasing the value
-            up to ``g`` uses more memory and accommodates more candidate tile
-            pairs. Eager calls estimate the value when it is ``None``. See
+            cluster-tile methods. For batched Torch calls, a system with ``g_i``
+            row groups contributes
+            ``g_i * min(g_i, max_tiles_per_group)`` entries to one pooled
+            buffer. Increasing the value uses more memory and accommodates more
+            candidate tile pairs. Eager calls estimate the value when it is
+            ``None``. See
             :ref:`cluster-tile-buffer-capacity` for sizing details.
         neighbor_matrix : torch.Tensor, optional
             Pre-allocated tensor of shape (num_rows, max_neighbors) for neighbor indices,

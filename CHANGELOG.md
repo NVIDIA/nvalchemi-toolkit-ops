@@ -40,6 +40,9 @@
 
 ### Changed
 
+- Compact batched Torch cluster-tile scratch now sums the capacity required by
+  each system instead of sizing every group against the total batch group count.
+  The resulting tile storage remains pooled across the batch.
 - Eager Torch and JAX cluster-tile neighbor-list calls now raise
   `TileBufferOverflow` when tile-pair construction exceeds the allocated
   capacity. For cluster-tile calls, `NeighborOverflowError` identifies an

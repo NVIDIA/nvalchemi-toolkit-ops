@@ -175,8 +175,9 @@ def estimate_batch_cluster_tile_list_sizes(
         Cumulative atom counts defining per-system ranges.
     max_tiles_per_group : int, default 256
         Sets the capacity of the tile-pair buffer shared by all row groups. If
-        the batch has ``ngroup_total`` groups, its compact capacity is
-        ``ngroup_total * min(ngroup_total, max_tiles_per_group)`` entries.
+        system ``i`` has ``g_i`` groups, its compact capacity contribution is
+        ``g_i * min(g_i, max_tiles_per_group)`` entries. Contributions are
+        summed into one pooled buffer shared by the whole batch.
 
     Returns
     -------
@@ -199,11 +200,19 @@ def estimate_batch_cluster_tile_list_sizes(
         (natom_per_system + TILE_GROUP_SIZE - 1) // TILE_GROUP_SIZE
     ) * TILE_GROUP_SIZE
     n_padded = int(natom_padded_per_system.sum().item())
-    ngroup = n_padded // TILE_GROUP_SIZE
+    ngroup_per_system = natom_padded_per_system // TILE_GROUP_SIZE
+    ngroup = int(ngroup_per_system.sum().item())
     ngroup_padded = (
         (ngroup + TILE_GROUP_SIZE - 1) // TILE_GROUP_SIZE
     ) * TILE_GROUP_SIZE + TILE_GROUP_SIZE
-    max_tiles = ngroup * min(ngroup, max_tiles_per_group)
+    max_tiles = int(
+        (
+            ngroup_per_system
+            * torch.clamp(ngroup_per_system, max=int(max_tiles_per_group))
+        )
+        .sum()
+        .item()
+    )
     return n_padded, ngroup, ngroup_padded, max_tiles, num_systems
 
 
@@ -295,11 +304,11 @@ def allocate_batch_cluster_tile_list(
     dtype : torch.dtype, default torch.float32
         Floating-point dtype for position and group-centroid tensors.
     max_tiles_per_group : int, default 256
-        Capacity factor for the intermediate tile-pair buffer. For ``g`` row
-        groups, the buffer holds ``g * min(g, max_tiles_per_group)`` tile pairs.
-        Increasing the value up to ``g`` uses more memory and accommodates more
-        candidate tile pairs. See :ref:`cluster-tile-buffer-capacity` for
-        sizing details.
+        Capacity factor for the intermediate tile-pair buffer. A system with
+        ``g_i`` row groups contributes
+        ``g_i * min(g_i, max_tiles_per_group)`` entries to one pooled buffer.
+        Increasing the value uses more memory and accommodates more candidate
+        tile pairs. See :ref:`cluster-tile-buffer-capacity` for sizing details.
 
     Returns
     -------
@@ -2542,11 +2551,10 @@ def batch_cluster_tile_neighbor_list(
         / ``pair_fn`` is active.
     max_tiles_per_group : int, optional
         Capacity factor for an internally allocated intermediate tile-pair
-        buffer. For ``g`` row groups, the buffer holds
-        ``g * min(g, max_tiles_per_group)`` tile pairs. Increasing the value up
-        to ``g`` uses more memory and accommodates more candidate tile pairs.
+        buffer. A system with ``g_i`` row groups contributes
+        ``g_i * min(g_i, max_tiles_per_group)`` entries to one pooled buffer.
         Eager calls estimate the value when it is ``None``. Caller-owned tile
-        arrays determine the actual capacity. See
+        arrays determine the actual physical capacity. See
         :ref:`cluster-tile-buffer-capacity` for sizing details.
 
     Returns
