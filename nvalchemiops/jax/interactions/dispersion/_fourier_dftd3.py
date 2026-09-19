@@ -663,7 +663,7 @@ def fourier_dftd3(
         fill_value = n_atoms
 
     params = fd3_params
-    rcov = jnp.asarray(params.rcov, dtype=dtype)
+    covalent_radii = jnp.asarray(params.rcov, dtype=dtype)
     cn_ref = jnp.asarray(params.cn_ref, dtype=dtype)
     v_q = jnp.asarray(params.v_q, dtype=dtype)
     eigs = jnp.asarray(params.eigs, dtype=dtype)
@@ -730,7 +730,7 @@ def fourier_dftd3(
             numbers,
             neighbours,
             cartesian_shifts,
-            rcov,
+            covalent_radii,
             float(r_cut),
             int(fill_value),
             int(FD3_CN_BLOCK_SIZE),
@@ -744,7 +744,7 @@ def fourier_dftd3(
             neighbours,
             jnp.asarray(neighbor_ptr, dtype=jnp.int32),
             cartesian_shifts,
-            rcov,
+            covalent_radii,
             float(r_cut),
             int(FD3_CN_BLOCK_SIZE),
             launch_dims=(n_atoms, FD3_CN_BLOCK_SIZE),
@@ -905,7 +905,7 @@ def fourier_dftd3(
             numbers,
             neighbours,
             cartesian_shifts,
-            rcov,
+            covalent_radii,
             float(r_cut),
             int(fill_value),
             batch_idx,
@@ -923,7 +923,7 @@ def fourier_dftd3(
             neighbours,
             jnp.asarray(neighbor_ptr, dtype=jnp.int32),
             cartesian_shifts,
-            rcov,
+            covalent_radii,
             float(r_cut),
             batch_idx,
             int(FD3_CN_BLOCK_SIZE),
