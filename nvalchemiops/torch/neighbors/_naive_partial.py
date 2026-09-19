@@ -40,6 +40,10 @@ def _validate_partial_request(
         raise ValueError("target_indices must be a rank-one int32 tensor.")
     if target_indices.device != positions.device:
         raise ValueError("target_indices must be on the same device as positions.")
+    if not torch.compiler.is_compiling() and bool(
+        torch.any((target_indices < 0) | (target_indices >= positions.shape[0]))
+    ):
+        raise ValueError("target_indices must contain in-bounds atom indices.")
     if rebuild_flags is not None:
         raise NotImplementedError(
             "Partial neighbor lists do not support rebuild_flags",
@@ -94,6 +98,8 @@ def _prepare_partial_outputs(
     num_rows = int(target_indices.shape[0])
     if max_neighbors is None and neighbor_matrix is not None:
         max_neighbors = int(neighbor_matrix.shape[1])
+    if max_neighbors is None and cutoff <= 0:
+        max_neighbors = 0
     if max_neighbors is None:
         max_neighbors = estimate_max_neighbors(cutoff)
     if fill_value is None:

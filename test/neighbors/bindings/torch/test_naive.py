@@ -1810,3 +1810,46 @@ class TestNaiveAutograd:
             row_a = sorted(nm_a[i, :n].tolist())
             row_b = sorted(nm_b[i, :n].tolist())
             assert row_a == row_b
+
+
+@pytest.mark.parametrize(
+    "targets",
+    [torch.tensor([-1], dtype=torch.int32), torch.tensor([3], dtype=torch.int32)],
+)
+def test_partial_targets_eager_bounds_are_rejected(targets):
+    """Concrete compact targets must be in bounds."""
+    with pytest.raises(ValueError, match="in-bounds atom indices"):
+        naive_neighbor_list(torch.zeros((3, 3)), 1.0, target_indices=targets)
+
+
+@pytest.mark.gpu
+def test_partial_targets_compiled_invalid_rows_are_empty(device):
+    """Compiled invalid compact rows rely on native zero-write guards."""
+    if not str(device).startswith("cuda"):
+        pytest.skip("CUDA is required for fullgraph coverage.")
+    positions = torch.zeros((3, 3), device=device)
+
+    @torch.compile(fullgraph=True)
+    def run(targets):
+        return naive_neighbor_list(
+            positions, 1.0, max_neighbors=2, target_indices=targets, strategy="scalar"
+        )
+
+    matrix, counts = run(torch.tensor([-1, 3], dtype=torch.int32, device=device))
+    assert torch.equal(counts, torch.zeros_like(counts))
+    assert torch.equal(matrix, torch.full_like(matrix, 3))
+
+
+@pytest.mark.parametrize("cutoff", [0.0, -1.0])
+def test_partial_geometry_nonpositive_cutoff_is_empty(cutoff):
+    """Compact geometry outputs stay empty for nonpositive cutoffs."""
+    matrix, counts, distances = naive_neighbor_list(
+        torch.zeros((3, 3)),
+        cutoff,
+        max_neighbors=2,
+        target_indices=torch.tensor([0], dtype=torch.int32),
+        return_distances=True,
+    )
+    assert torch.equal(counts, torch.zeros_like(counts))
+    assert torch.equal(matrix, torch.full_like(matrix, 3))
+    assert torch.equal(distances, torch.zeros_like(distances))

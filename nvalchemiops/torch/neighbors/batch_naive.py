@@ -1746,6 +1746,39 @@ def batch_naive_neighbor_list(
                 dtype=positions.dtype,
                 device=positions.device,
             )
+        if cutoff <= 0:
+            neighbor_distances.zero_()
+            neighbor_vectors.zero_()
+            if pair_energies is not None:
+                pair_energies.zero_()
+            if pair_forces is not None:
+                pair_forces.zero_()
+            if return_neighbor_list:
+                if pbc is None:
+                    base = get_neighbor_list_from_neighbor_matrix(
+                        neighbor_matrix,
+                        num_neighbors=num_neighbors,
+                        fill_value=fill_value,
+                    )
+                else:
+                    base = get_neighbor_list_from_neighbor_matrix(
+                        neighbor_matrix,
+                        num_neighbors=num_neighbors,
+                        neighbor_shift_matrix=neighbor_matrix_shifts,
+                        fill_value=fill_value,
+                    )
+            elif pbc is None:
+                base = (neighbor_matrix, num_neighbors)
+            else:
+                base = (neighbor_matrix, num_neighbors, neighbor_matrix_shifts)
+            tail = []
+            if return_distances:
+                tail.append(neighbor_distances)
+            if return_vectors:
+                tail.append(neighbor_vectors)
+            if pair_fn is not None:
+                tail.extend((pair_energies, pair_forces))
+            return (*base, *tail)
         if pbc is not None and max_atoms_per_system is None:
             # ``.item()`` is a CPU sync; it works in eager but triggers a
             # graph break under ``torch.compile``.  Pass max_atoms_per_system

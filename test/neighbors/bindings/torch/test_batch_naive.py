@@ -2071,3 +2071,75 @@ class TestBatchNaiveCompile:
                 eager_counts,
                 atom_index,
             )
+
+
+@pytest.mark.parametrize(
+    "targets",
+    [torch.tensor([-1], dtype=torch.int32), torch.tensor([4], dtype=torch.int32)],
+)
+def test_partial_targets_eager_bounds_are_rejected(targets):
+    """Concrete batched compact targets must be in bounds."""
+    with pytest.raises(ValueError, match="in-bounds atom indices"):
+        batch_naive_neighbor_list(
+            torch.zeros((4, 3)),
+            1.0,
+            batch_ptr=torch.tensor([0, 2, 4], dtype=torch.int32),
+            target_indices=targets,
+        )
+
+
+@pytest.mark.gpu
+def test_partial_targets_compiled_invalid_rows_are_empty(device):
+    """Compiled invalid batched rows rely on native zero-write guards."""
+    if not str(device).startswith("cuda"):
+        pytest.skip("CUDA is required for fullgraph coverage.")
+    positions = torch.zeros((4, 3), device=device)
+    batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device=device)
+
+    @torch.compile(fullgraph=True)
+    def run(targets):
+        return batch_naive_neighbor_list(
+            positions,
+            1.0,
+            batch_ptr=batch_ptr,
+            max_neighbors=2,
+            target_indices=targets,
+            strategy="scalar",
+        )
+
+    matrix, counts = run(torch.tensor([-1, 4], dtype=torch.int32, device=device))
+    assert torch.equal(counts, torch.zeros_like(counts))
+    assert torch.equal(matrix, torch.full_like(matrix, 4))
+
+
+@pytest.mark.parametrize("cutoff", [0.0, -1.0])
+def test_partial_geometry_nonpositive_cutoff_is_empty(cutoff):
+    """Compact batched geometry outputs stay empty for nonpositive cutoffs."""
+    matrix, counts, distances = batch_naive_neighbor_list(
+        torch.zeros((4, 3)),
+        cutoff,
+        batch_ptr=torch.tensor([0, 2, 4], dtype=torch.int32),
+        max_neighbors=2,
+        target_indices=torch.tensor([0], dtype=torch.int32),
+        return_distances=True,
+    )
+    assert torch.equal(counts, torch.zeros_like(counts))
+    assert torch.equal(matrix, torch.full_like(matrix, 4))
+    assert torch.equal(distances, torch.zeros_like(distances))
+
+
+def test_partial_supplied_matrix_avoids_estimator(monkeypatch):
+    """A compact caller matrix defines capacity without estimation."""
+    monkeypatch.setattr(
+        "nvalchemiops.torch.neighbors._naive_partial.estimate_max_neighbors",
+        lambda cutoff: pytest.fail("estimator must not be called"),
+    )
+    matrix, _ = batch_naive_neighbor_list(
+        torch.zeros((4, 3)),
+        1.0,
+        batch_ptr=torch.tensor([0, 2, 4], dtype=torch.int32),
+        neighbor_matrix=torch.full((1, 3), 4, dtype=torch.int32),
+        num_neighbors=torch.zeros(1, dtype=torch.int32),
+        target_indices=torch.tensor([0], dtype=torch.int32),
+    )
+    assert matrix.shape == (1, 3)
