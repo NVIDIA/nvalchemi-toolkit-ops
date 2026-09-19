@@ -87,12 +87,16 @@
 
 - JAX and Torch naive neighbor APIs support CUDA-only tiled topology-only
   `target_indices` rows. Matrix and COO central rows are compact: row `r`
-  corresponds to `target_indices[r]`. Single-system CUDA `auto` selects tile at
-  float64 `N >= 256` and float16/float32 `N >= 1024`; CPU auto and batched
-  partial auto remain scalar. Explicit tile supports single and batched partial
-  topology-only calls, but rejects CPU and geometry, distance, vector, and
-  pair-function outputs. Scalar and tiled stored `(neighbor, shift)` multisets
-  agree when neither overflows capacity, although their ordering can differ.
+  corresponds to `target_indices[r]`. For concrete-placement single-system
+  CUDA calls, `auto` selects tile at float64 `N >= 256` and float16/float32
+  `N >= 1024`; under `jax.jit`, tracer placement may be unavailable during
+  Python tracing, so `auto` may conservatively remain scalar above those
+  thresholds. Pass `strategy="tile"` for deterministic tiled execution.
+  CPU auto and batched partial auto remain scalar. Explicit tile supports single
+  and batched partial topology-only calls, but rejects CPU and geometry,
+  distance, vector, and pair-function outputs. Scalar and tiled stored
+  `(neighbor, shift)` multisets agree when neither overflows capacity, although
+  their ordering can differ.
   Eager calls reject out-of-bounds targets; compiled JAX and Torch calls require
   prevalidated indices and safely leave invalid rows empty.
 - Monopole Torch and JAX Ewald, PME, and slab entry points accept keyword-only

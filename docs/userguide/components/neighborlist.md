@@ -1734,13 +1734,17 @@ identical results are available via `atom_centric`).
 
 For topology-only partial `naive` lists, `strategy="tile"` is CUDA-only and is
 available in both PyTorch and JAX for no-PBC, wrapped PBC, and prewrapped PBC.
-For single-system CUDA calls, `strategy="auto"` selects tile at float64
-`N >= 256` and float16/float32 `N >= 1024`; otherwise it selects scalar. CPU
-auto is scalar and explicit tile rejects CPU. Batched partial auto is always
-scalar, while explicit tile supports batched compact rows. Geometry buffers,
-distances, vectors, and pair-function outputs remain scalar-only, and explicit
-tile rejects those requests. `target_indices` with `graph_mode="warp"` is
-rejected; supported full-row and cell-list graph modes are unchanged.
+For single-system CUDA calls with concrete placement, `strategy="auto"` selects
+tile at float64 `N >= 256` and float16/float32 `N >= 1024`; otherwise it selects
+scalar. Under `jax.jit`, `positions` may be a tracer whose device placement is
+unavailable during Python tracing, so `strategy="auto"` may conservatively
+remain scalar even above these thresholds; pass `strategy="tile"` for
+deterministic tiled execution. CPU auto is scalar and explicit tile rejects CPU.
+Batched partial auto is always scalar, while explicit tile supports batched
+compact rows. Geometry buffers, distances, vectors, and pair-function outputs
+remain scalar-only, and explicit tile rejects those requests. `target_indices`
+with `graph_mode="warp"` is rejected; supported full-row and cell-list graph
+modes are unchanged.
 
 Scalar and tiled rows can differ in order. When neither result overflows its
 output capacity, their stored `(neighbor, periodic_shift)` multisets agree for

@@ -1653,10 +1653,14 @@ def naive_neighbor_list(
         ``wp.launch_tiled`` kernel and is **CUDA-only**: requesting it on a
         CPU device raises ``ValueError``. Tile supports topology-only compact
         ``target_indices`` rows; geometry and pair outputs use the scalar path.
-        For concrete-shape single-system CUDA arrays, topology-only partial
+        For concrete-placement single-system CUDA arrays, topology-only partial
         ``"auto"`` selects tile at float64 ``N >= 256`` and float16/float32
-        ``N >= 1024``; batched partial auto remains scalar. Explicit tile
-        rejects geometry and pair outputs. ``target_indices`` with
+        ``N >= 1024``. Under ``jax.jit``, ``positions`` may be a tracer whose
+        device placement is unavailable during Python tracing, so ``"auto"``
+        may conservatively remain scalar even above these thresholds; pass
+        ``strategy="tile"`` for deterministic tiled execution. Batched partial
+        auto remains scalar. Explicit tile rejects geometry and pair outputs.
+        ``target_indices`` with
         ``graph_mode="warp"`` is rejected. Partial neighbor lists do not
         support ``rebuild_flags``. When neither result overflows capacity, tile
         and scalar paths produce identical stored pair *multisets* (per-row
