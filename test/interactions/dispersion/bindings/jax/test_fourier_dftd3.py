@@ -719,6 +719,84 @@ class TestJit:
 
 
 @pytest.mark.gpu
+class TestNeighbourArgumentValidation:
+    """Each format needs its companion arrays, and says so at the API boundary.
+
+    Without these the missing argument reaches ``jnp.asarray`` and surfaces as
+    ``None is not a valid value for jnp.array``, which names neither the argument nor the
+    format the caller chose.
+    """
+
+    @staticmethod
+    def _csr(parts):
+        """The dense list re-expressed as a directed CSR list."""
+        matrix = np.asarray(parts["matrix"])
+        shifts = np.asarray(parts["matrix_shifts"])
+        n_atoms = parts["n_atoms"]
+        sources, targets, images = [], [], []
+        for i in range(n_atoms):
+            for slot in range(matrix.shape[1]):
+                j = int(matrix[i, slot])
+                if j < n_atoms:
+                    sources.append(i)
+                    targets.append(j)
+                    images.append(shifts[i, slot])
+        pointer = np.zeros(n_atoms + 1, dtype=np.int32)
+        for source in sources:
+            pointer[source + 1] += 1
+        return (
+            jnp.asarray(np.stack([sources, targets]), dtype=jnp.int32),
+            jnp.asarray(np.cumsum(pointer), dtype=jnp.int32),
+            jnp.asarray(np.stack(images), dtype=jnp.int32),
+        )
+
+    @staticmethod
+    def _call(parts, **neighbours):
+        return fourier_dftd3(
+            jnp.asarray(parts["positions"]),
+            jnp.asarray(parts["numbers"], dtype=jnp.int32),
+            **DAMPING,
+            fd3_params=parts["params"],
+            cell=jnp.asarray(parts["cell"]),
+            r_cut=R_CUT,
+            mesh_dimensions=MESH,
+            **neighbours,
+        )
+
+    def test_dense_format_requires_its_shifts(self):
+        """FourierD3 is periodic, so every neighbour needs a lattice image."""
+        parts = _single(5.0, 0)
+        with pytest.raises(ValueError, match="neighbor_matrix_shifts is required"):
+            self._call(
+                parts, neighbor_matrix=jnp.asarray(parts["matrix"], dtype=jnp.int32)
+            )
+
+    def test_csr_format_requires_its_pointer(self):
+        """The row offsets are how each atom's slice is found."""
+        parts = _single(5.0, 0)
+        targets, _pointer, images = self._csr(parts)
+        with pytest.raises(ValueError, match="neighbor_ptr is required"):
+            self._call(parts, neighbor_list=targets, unit_shifts=images)
+
+    def test_csr_format_requires_its_shifts(self):
+        """Same periodicity requirement as the dense path."""
+        parts = _single(5.0, 0)
+        targets, pointer, _images = self._csr(parts)
+        with pytest.raises(ValueError, match="unit_shifts is required"):
+            self._call(parts, neighbor_list=targets, neighbor_ptr=pointer)
+
+    def test_a_complete_dense_call_still_works(self):
+        """The checks must not reject a valid call."""
+        parts = _single(5.0, 0)
+        energy = self._call(
+            parts,
+            neighbor_matrix=jnp.asarray(parts["matrix"], dtype=jnp.int32),
+            neighbor_matrix_shifts=jnp.asarray(parts["matrix_shifts"], dtype=jnp.int32),
+        )[0]
+        assert np.isfinite(np.asarray(energy)).all()
+
+
+@pytest.mark.gpu
 class TestUncoveredSpecies:
     """An element missing from ``fd3_params`` must not be dropped in silence.
 

@@ -544,16 +544,30 @@ def fourier_dftd3(
         )
     if not matrix_given and not list_given:
         raise ValueError("Must provide either neighbor_matrix or neighbor_list.")
-    if matrix_given and unit_shifts is not None:
-        raise ValueError(
-            "unit_shifts is for neighbor_list format. "
-            "Use neighbor_matrix_shifts for neighbor_matrix format."
-        )
-    if list_given and neighbor_matrix_shifts is not None:
-        raise ValueError(
-            "neighbor_matrix_shifts is for neighbor_matrix format. "
-            "Use unit_shifts for neighbor_list format."
-        )
+    if matrix_given:
+        if unit_shifts is not None:
+            raise ValueError(
+                "unit_shifts is for neighbor_list format. "
+                "Use neighbor_matrix_shifts for neighbor_matrix format."
+            )
+        if neighbor_matrix_shifts is None:
+            raise ValueError(
+                "neighbor_matrix_shifts is required: FourierD3 is periodic, so every "
+                "neighbour needs its lattice image."
+            )
+    else:
+        if neighbor_matrix_shifts is not None:
+            raise ValueError(
+                "neighbor_matrix_shifts is for neighbor_matrix format. "
+                "Use unit_shifts for neighbor_list format."
+            )
+        if neighbor_ptr is None:
+            raise ValueError("neighbor_ptr is required alongside neighbor_list.")
+        if unit_shifts is None:
+            raise ValueError(
+                "unit_shifts is required: FourierD3 is periodic, so every neighbour needs "
+                "its lattice image."
+            )
     if cell is None:
         raise ValueError("cell is required: FourierD3 evaluates a periodic sum.")
     if spline_order < 2 or spline_order > 6:
