@@ -2790,10 +2790,9 @@ def batch_cluster_tile_neighbor_list(
     neighbor_vectors, neighbor_distances, pair_energies, pair_forces : torch.Tensor, optional
         OUTPUT buffers, written only when the corresponding enable flag
         / ``pair_fn`` is active. Geometry buffers must not require gradients.
-        When matrix geometry is reconstructed for autograd, supplied buffers
-        receive detached value snapshots while omitted buffers are not
-        allocated and the returned geometry uses separate differentiable
-        tensors.
+        When geometry is reconstructed for autograd, supplied buffers receive
+        detached value snapshots while the returned geometry uses separate
+        differentiable tensors. Omitted matrix buffers are not allocated.
     max_tiles_per_group : int, optional
         Capacity factor for an internally allocated intermediate tile-pair
         buffer. A system with ``g_i`` row groups contributes
@@ -3504,10 +3503,12 @@ def batch_cluster_tile_neighbor_list(
                         positions, cell_batch, nl, nls, batch_idx_atom
                     )
                     if return_vectors:
-                        neighbor_vectors[: exact_vectors.shape[0]].copy_(exact_vectors)
+                        neighbor_vectors[: exact_vectors.shape[0]].copy_(
+                            exact_vectors.detach()
+                        )
                     if return_distances:
                         neighbor_distances[: exact_distances.shape[0]].copy_(
-                            exact_distances
+                            exact_distances.detach()
                         )
                 outputs = (nl, neighbor_ptr, nls)
                 if return_distances:

@@ -677,8 +677,10 @@ distances before vectors: requesting distances returns
 `(pairs, ptr, shifts, vectors)`, and requesting both returns
 `(pairs, ptr, shifts, distances, vectors)`. Optional caller-owned geometry
 buffers hold the active prefix and may be reused; their inactive tails are
-unspecified. Pair callbacks keep their existing topology-only return and write
-aligned callback outputs into caller-owned buffers.
+unspecified. These buffers are non-differentiable value snapshots and must not
+require gradients; build losses from the returned exact geometry. Pair
+callbacks keep their existing topology-only return and write aligned callback
+outputs into caller-owned buffers.
 
 A compiled single-system call may allocate its scratch internally when
 `max_tiles_per_group` is a positive static integer. Batched compiled calls

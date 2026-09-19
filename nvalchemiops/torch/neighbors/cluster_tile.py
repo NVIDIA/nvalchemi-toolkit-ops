@@ -2557,10 +2557,9 @@ def cluster_tile_neighbor_list(
         when omitted. Compact COO accepts flat capacity buffers, leaves their
         inactive tails unspecified, and returns newly allocated exact geometry
         that does not alias them. Geometry buffers must not require gradients.
-        When matrix geometry is reconstructed for autograd, supplied buffers
-        receive detached value snapshots while omitted buffers are not
-        allocated and the returned geometry uses separate differentiable
-        tensors.
+        When geometry is reconstructed for autograd, supplied buffers receive
+        detached value snapshots while the returned geometry uses separate
+        differentiable tensors. Omitted matrix buffers are not allocated.
     pair_energies, pair_forces : torch.Tensor, optional
         OUTPUT buffers for per-pair energies / forces. Matrix format
         allocates them when omitted; COO format requires caller-owned flat
@@ -3150,10 +3149,12 @@ def cluster_tile_neighbor_list(
                         positions, cell, nl, nls
                     )
                     if return_vectors:
-                        neighbor_vectors[: exact_vectors.shape[0]].copy_(exact_vectors)
+                        neighbor_vectors[: exact_vectors.shape[0]].copy_(
+                            exact_vectors.detach()
+                        )
                     if return_distances:
                         neighbor_distances[: exact_distances.shape[0]].copy_(
-                            exact_distances
+                            exact_distances.detach()
                         )
                 outputs = (nl, neighbor_ptr, nls)
                 if return_distances:

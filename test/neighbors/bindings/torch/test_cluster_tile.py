@@ -2203,8 +2203,16 @@ class TestClusterTileAutograd:
         assert not distance_buffer.requires_grad and distance_buffer.grad_fn is None
 
     @pytest.mark.slow
-    def test_compact_coo_geometry_fullgraph_alignment_and_gradients(self, device):
-        """Exact COO geometry stays aligned and differentiable after CSR fill."""
+    @pytest.mark.parametrize("compiled", [False, True])
+    @pytest.mark.parametrize(
+        ("return_distances", "return_vectors"),
+        [(True, False), (False, True), (True, True)],
+        ids=["distances", "vectors", "both"],
+    )
+    def test_compact_coo_geometry_buffer_lifecycle(
+        self, device, compiled, return_distances, return_vectors
+    ):
+        """Exact COO buffers stay detached across changing grad modes."""
         cell = _orthorhombic_cell(20.0, device)
         positions = torch.tensor(
             [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [4.0, 0.0, 0.0]],
@@ -2212,8 +2220,7 @@ class TestClusterTileAutograd:
             device=device,
         )
 
-        @torch.compile(fullgraph=True)
-        def run(runtime_positions, runtime_cell, vectors, distances):
+        def call(runtime_positions, runtime_cell, vectors, distances):
             return cluster_tile_neighbor_list(
                 runtime_positions,
                 1.0,
@@ -2222,22 +2229,24 @@ class TestClusterTileAutograd:
                 max_neighbors=8,
                 max_pairs=16,
                 max_tiles_per_group=1,
-                return_vectors=True,
-                return_distances=True,
+                return_vectors=return_vectors,
+                return_distances=return_distances,
                 neighbor_vectors=vectors,
                 neighbor_distances=distances,
             )
 
+        run = torch.compile(call, fullgraph=True) if compiled else call
         vectors = torch.full((16, 3), float("nan"), device=device)
         distances = torch.full((16,), float("nan"), device=device)
         grad_positions = positions.clone().requires_grad_(True)
         grad_cell = cell.clone().requires_grad_(True)
-        pairs, pointer, shifts, exact_distances, exact_vectors = run(
+        output = run(
             grad_positions,
             grad_cell,
             vectors,
             distances,
         )
+        pairs, pointer, shifts = output[:3]
         _compact_coo_pair_sets(pairs, pointer, shifts)
         count = pairs.shape[1]
         expected_vectors = (
@@ -2245,18 +2254,84 @@ class TestClusterTileAutograd:
             - grad_positions[pairs[0].long()]
             + shifts.to(grad_positions.dtype) @ grad_cell[0]
         )
-        torch.testing.assert_close(vectors[:count], expected_vectors)
-        torch.testing.assert_close(distances[:count], expected_vectors.norm(dim=-1))
-        torch.testing.assert_close(exact_vectors, expected_vectors)
-        torch.testing.assert_close(exact_distances, expected_vectors.norm(dim=-1))
-        assert exact_vectors.data_ptr() != vectors.data_ptr()
-        assert exact_distances.data_ptr() != distances.data_ptr()
+        output_index = 3
+        if return_distances:
+            exact_distances = output[output_index]
+            output_index += 1
+            torch.testing.assert_close(distances[:count], expected_vectors.norm(dim=-1))
+            torch.testing.assert_close(exact_distances, expected_vectors.norm(dim=-1))
+            assert exact_distances.data_ptr() != distances.data_ptr()
+        if return_vectors:
+            exact_vectors = output[output_index]
+            torch.testing.assert_close(vectors[:count], expected_vectors)
+            torch.testing.assert_close(exact_vectors, expected_vectors)
+            assert exact_vectors.data_ptr() != vectors.data_ptr()
         gradients = torch.autograd.grad(
-            exact_distances.sum(),
+            sum(tensor.square().sum() for tensor in output[3:]),
             (grad_positions, grad_cell),
         )
         assert all(torch.isfinite(gradient).all() for gradient in gradients)
         assert all(not tensor.requires_grad for tensor in (pairs, pointer, shifts))
+        assert not vectors.requires_grad and vectors.grad_fn is None
+        assert not distances.requires_grad and distances.grad_fn is None
+
+        with torch.no_grad():
+            no_grad_output = run(positions + 0.05, cell, vectors, distances)
+        assert all(not tensor.requires_grad for tensor in no_grad_output[3:])
+        assert not vectors.requires_grad and vectors.grad_fn is None
+        assert not distances.requires_grad and distances.grad_fn is None
+
+        final_positions = (positions + 0.1).requires_grad_(True)
+        final_cell = cell.clone().requires_grad_(True)
+        final_output = run(final_positions, final_cell, vectors, distances)
+        final_gradients = torch.autograd.grad(
+            sum(tensor.square().sum() for tensor in final_output[3:]),
+            (final_positions, final_cell),
+        )
+        assert all(torch.isfinite(gradient).all() for gradient in final_gradients)
+        assert not vectors.requires_grad and vectors.grad_fn is None
+        assert not distances.requires_grad and distances.grad_fn is None
+
+    @pytest.mark.parametrize(
+        ("buffer_name", "shape"),
+        [
+            ("neighbor_distances", (16,)),
+            ("neighbor_vectors", (16, 3)),
+        ],
+    )
+    def test_compact_coo_rejects_grad_tracked_geometry_buffers(
+        self, device, buffer_name, shape
+    ):
+        """Exact COO rejects grad-tracked capacity buffers before mutation."""
+        cell = _orthorhombic_cell(20.0, device)
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [4.0, 0.0, 0.0]],
+            dtype=torch.float32,
+            device=device,
+        )
+        buffer = torch.full(shape, -7.0, device=device, requires_grad=True)
+        before = buffer.detach().clone()
+        kwargs = {
+            "return_distances": buffer_name == "neighbor_distances",
+            "return_vectors": buffer_name == "neighbor_vectors",
+            buffer_name: buffer,
+        }
+
+        with pytest.raises(
+            ValueError,
+            match=rf"{buffer_name} must not require gradients",
+        ):
+            cluster_tile_neighbor_list(
+                positions,
+                1.0,
+                cell,
+                format="coo",
+                max_neighbors=8,
+                max_pairs=16,
+                max_tiles_per_group=1,
+                **kwargs,
+            )
+        torch.testing.assert_close(buffer.detach(), before)
 
     @pytest.mark.slow
     def test_compact_coo_geometry_compiled_coincident_hvp(self, device):

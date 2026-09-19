@@ -172,6 +172,11 @@ def _prepare_compact_coo_geometry_buffers(
                 "neighbor_vectors must have shape (capacity, 3), matching "
                 "positions dtype and device, with capacity at least max_pairs"
             )
+        if neighbor_vectors.requires_grad:
+            raise ValueError(
+                "neighbor_vectors must not require gradients; differentiate the "
+                "returned geometry instead"
+            )
     else:
         neighbor_vectors = torch.empty((1, 3), dtype=dtype, device=device)
 
@@ -187,6 +192,11 @@ def _prepare_compact_coo_geometry_buffers(
             raise ValueError(
                 "neighbor_distances must have shape (capacity,), matching "
                 "positions dtype and device, with capacity at least max_pairs"
+            )
+        if neighbor_distances.requires_grad:
+            raise ValueError(
+                "neighbor_distances must not require gradients; differentiate the "
+                "returned geometry instead"
             )
     else:
         neighbor_distances = torch.empty(1, dtype=dtype, device=device)
