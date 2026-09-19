@@ -16,22 +16,19 @@
 r"""
 PyTorch binding for FourierD3.
 
-Evaluates the periodic DFT-D3(BJ) dispersion correction by particle-mesh summation, with no
-real-space cutoff on the dispersion sum itself. See
-:mod:`nvalchemiops.interactions.dispersion._fourier_dftd3` for the method and the pass
-structure.
+Particle-mesh DFT-D3(BJ) with no real-space cutoff on the dispersion sum. See
+:mod:`nvalchemiops.interactions.dispersion._fourier_dftd3` for the method and pass structure.
 
 This layer supplies the two Fourier transforms, which Warp cannot perform on a full mesh, and
-drives the Warp launchers around them. That division follows the electrostatics PME path in
-this package rather than the real-space :func:`~nvalchemiops.torch.interactions.dispersion.dftd3`,
-which never leaves Warp.
+drives the Warp launchers around them -- the same division as the electrostatics PME path,
+rather than the all-Warp real-space
+:func:`~nvalchemiops.torch.interactions.dispersion.dftd3`.
 
 Units
 -----
-Every length must share one system: ``positions``, ``cell``, ``rcov``, ``r_cut`` and
-``mesh_spacing``. The DFT-D3 reference parameters are conventionally atomic units, so a cutoff
-quoted in Angstrom has to be converted before it is passed in. ``r_cut`` has no default for
-that reason.
+``positions``, ``cell``, ``rcov``, ``r_cut`` and ``mesh_spacing`` must share one length unit.
+D3 parameters are conventionally atomic units, so a cutoff quoted in Angstrom must be
+converted; ``r_cut`` has no default for that reason.
 """
 
 from __future__ import annotations
@@ -758,14 +755,18 @@ class FourierD3Setup:
         -------
         FourierD3Setup
         """
-        cells = cell.reshape(-1, 3, 3)
+        # Detached up front: nothing derived below is ever differentiated -- the kernels run
+        # with ``enable_backward=False`` and forces are explicit outputs -- so keeping the
+        # graph would pin it for the lifetime of a setup that is deliberately long-lived.
+        cells = cell.detach().reshape(-1, 3, 3)
         dtype, device = cells.dtype, cells.device
         mesh_nx, mesh_ny, mesh_nz = _check_mesh_supports_stencil(
             tuple(int(n) for n in mesh_dimensions),
             spline_order,
             "FourierD3Setup.build",
         )
-        cell_inv_t = torch.linalg.inv(cells).transpose(-1, -2).contiguous()
+        cell_inv = torch.linalg.inv(cells)
+        cell_inv_t = cell_inv.transpose(-1, -2).contiguous()
         millers = (
             torch.fft.fftfreq(mesh_nx, d=1.0 / mesh_nx, dtype=dtype, device=device),
             torch.fft.fftfreq(mesh_ny, d=1.0 / mesh_ny, dtype=dtype, device=device),
@@ -780,19 +781,16 @@ class FourierD3Setup:
                 n_species, dim=0
             ).contiguous(),
             volumes=torch.abs(torch.linalg.det(cells)).contiguous(),
-            k_matrix=(2.0 * torch.pi * torch.linalg.inv(cells)).contiguous(),
+            k_matrix=(2.0 * torch.pi * cell_inv).contiguous(),
             moduli_x=moduli[0],
             moduli_y=moduli[1],
             moduli_z=moduli[2],
             mesh_dimensions=(mesh_nx, mesh_ny, mesh_nz),
             spline_order=spline_order,
-            # An independent snapshot, not a view. ``contiguous()`` returns the input
-            # unchanged when it already is, so the record would alias the caller's tensor:
-            # an in-place cell update would then move the snapshot along with it while the
-            # derived quantities stayed stale, and the comparison in ``validate_for`` would
-            # be against itself. ``detach`` keeps a cached object from holding an autograd
-            # graph alive.
-            cell=cells.detach().clone(),
+            # An independent snapshot, not a view: ``contiguous()`` returns the input
+            # unchanged when it already is, so the record would alias the caller's tensor and
+            # ``validate_for`` would compare it against itself.
+            cell=cells.clone(),
             exact_moduli=exact_moduli,
         )
 
@@ -1194,11 +1192,9 @@ def fourier_dftd3(
 
     params = fd3_params.to(device=positions.device, dtype=positions.dtype)
     species_index = params.species_map[numbers.long()].to(torch.int32)
-    # Whether the parameters cover the system is a property of the setup, not of the step.
-    # Reading the answer back forces a device synchronisation, which breaks a compile graph
-    # and is illegal outright during CUDA graph capture, so the check is skipped in both.
-    # Atomic number zero marks a padding atom, which the kernels are built to skip; only a
-    # real element that the decomposition does not cover is an error.
+    # Reading the answer back synchronises, which breaks a compile graph and is illegal
+    # under capture, so this is skipped in both. Z=0 is padding; only a real uncovered
+    # element is an error.
     uncovered = (species_index < 0) & (numbers != 0)
     if not torch.compiler.is_compiling() and not _capturing() and bool(uncovered.any()):
         missing = torch.unique(numbers[uncovered]).tolist()
@@ -1207,9 +1203,8 @@ def fourier_dftd3(
             f"decomposition with every species present in the system."
         )
 
-    # A half-filled neighbour list gives silently wrong coordination numbers, and so wrong
-    # energies and non-conservative forces. Reading the residual back synchronises, so this
-    # is skipped while compiling and during graph capture, exactly as the species check is.
+    # A half-filled list gives silently wrong coordination numbers, so wrong energies and
+    # non-conservative forces. Skipped under compile and capture, as the species check is.
     if not torch.compiler.is_compiling() and not _capturing():
         if neighbor_matrix is not None:
             limit = n_atoms if fill_value is None else fill_value
@@ -1245,12 +1240,9 @@ def fourier_dftd3(
     n_species, rank = params.n_species, params.rank
 
     if n_atoms == 0:
-        # Nothing to spread, so the mesh, its transforms and the reciprocal sum would all be
-        # zero. This sits after every argument check rather than before: an empty batch has
-        # to reject a bad mesh or a missing parameter exactly as a populated one does, or the
-        # mistake stays hidden until a later batch happens to contain an atom. What it does
-        # skip is the work -- a mesh of num_systems * n_species * rank * nx * ny * nz, the
-        # transforms over it, and handing Warp zero-length arrays, which it cannot wrap.
+        # Nothing to spread, so mesh, transforms and reciprocal sum are all zero. Placed
+        # after every argument check, not before: an empty batch must reject a bad mesh just
+        # as a populated one does, or the mistake hides until a batch has atoms.
         empty = dict(dtype=positions.dtype, device=positions.device)
         energy = torch.zeros(num_systems, **empty)
         forces = torch.zeros(0, 3, **empty)
@@ -1258,11 +1250,9 @@ def fourier_dftd3(
             return energy, forces, torch.zeros(num_systems, 3, 3, **empty)
         return energy, forces
 
-    # One mesh slab per (system, species, rank); the composite index routes each atom to its
-    # own slab so the spread cost scales with the rank rather than the slab count.
-    # Padding atoms keep a negative group so that every kernel's guard fires. Folding the
-    # system index in first would make a padding atom in system 1 or later land on a valid
-    # slab belonging to an earlier system, where the guard cannot see it.
+    # One mesh slab per (system, species, rank), so spread cost scales with rank, not slab
+    # count. Padding keeps a negative group so every guard fires; folding the system index in
+    # first would land padding on an earlier system's valid slab.
     group_idx = torch.where(
         species_index < 0,
         torch.full_like(species_index, -1, dtype=torch.long),
@@ -1279,17 +1269,14 @@ def fourier_dftd3(
         if cells.shape[0] == 1:
             cartesian_shifts = (shifts @ cells[0]).contiguous()
         else:
-            # A row of the matrix holds one atom's neighbours, so the whole row shifts by
-            # that atom's own lattice. Using a single cell here would place the periodic
-            # images of every system after the first on the wrong lattice.
+            # A row holds one atom's neighbours, so it shifts by that atom's own lattice.
+            # One shared cell would misplace images for every system after the first.
             cartesian_shifts = (shifts @ cells[batch_idx.long()]).contiguous()
     else:
         shifts = unit_shifts.to(positions.dtype)
         if cells.shape[0] == 1:
-            # Every edge shares one cell, so this is a single small matmul. Taking the
-            # general path here would gather a 3x3 cell per edge, which for a large
-            # neighbour list is both a batched matrix-vector product and tens of megabytes
-            # of materialised copies.
+            # One cell for every edge, so a single small matmul. The general path would
+            # gather a 3x3 per edge -- tens of megabytes on a large list.
             cartesian_shifts = (shifts @ cells[0]).contiguous()
         else:
             edge_system = batch_idx[neighbor_list[0].long()].long()
@@ -1334,23 +1321,18 @@ def fourier_dftd3(
     volumes = setup.volumes
     k_matrix = setup.k_matrix
 
-    # Every stage after the coordination number is a sum over rank slots with no coupling
-    # between them, so a chunk of slots can be carried through spread, transform, contraction
-    # and gather on its own and its contribution added in. The mesh and its transforms are the
-    # dominant allocation, and they scale with the number of slots resident at once, so this
-    # trades passes over the atoms for peak memory.
-    # The coefficient derivative is kept at full width across the chunks: the chain rule
-    # below contracts it against every slot at once, so each chunk fills its own columns and
-    # nothing is reduced until the loop is done. It is per-atom, not per-mesh-point, so it is
-    # a negligible part of the footprint the chunking exists to bound.
+    # Slots do not couple, so a chunk can go through spread, transform, contraction and
+    # gather alone and be added in. The mesh dominates allocation and scales with resident
+    # slots: this trades extra passes for peak memory.
+    # ``d_energy_d_c6`` stays full width -- the chain rule below needs every slot at once.
+    # It is per-atom, not per-mesh-point, so it does not undermine the bound.
     d_energy_d_c6 = torch.zeros(n_atoms, rank, **empty)
     d_energy_d_cn = torch.zeros(n_atoms, **empty)
 
     chunks = _rank_chunks(rank, rank_chunk_size)
     for slot_start, slot_count in chunks:
-        # The k-space op clears energy and virial rather than accumulating, so with more than
-        # one chunk each reduces into its own scratch and is added in below. The gather does
-        # accumulate, so the running forces are passed to it directly.
+        # The k-space op clears energy and virial rather than accumulating, so multiple
+        # chunks reduce into scratch. The gather accumulates, so forces pass through.
         if len(chunks) == 1:
             chunk_energy, chunk_virial = energy, virial
         else:
@@ -1415,9 +1397,8 @@ def fourier_dftd3(
         ).contiguous()
         del cotangent
 
-        # The gather is the only stage that reads the mesh, so it is the only one inside the
-        # loop. Its coefficient derivative lands in this chunk's columns; the force it
-        # accumulates goes straight into the running total.
+        # The only stage that reads the mesh, hence the only one in the loop. Its derivative
+        # fills this chunk's columns; its force goes straight into the running total.
         d_energy_d_c6_chunk = torch.zeros(n_atoms, slot_count, **empty)
         _fd3_gather_op(
             potential,
@@ -1438,9 +1419,8 @@ def fourier_dftd3(
             energy += chunk_energy
             virial += chunk_virial
 
-    # The self-energy and the coordination chain rule need every slot at once and never touch
-    # the mesh, so they run once here. The chain rule walks the whole neighbour list, which is
-    # what makes running it per chunk the expensive mistake.
+    # Both need every slot at once and never touch the mesh, so they run once. The chain
+    # rule walks the whole neighbour list -- per chunk, that is the expensive mistake.
     _fd3_finalise_op(
         positions,
         numbers.to(torch.int32),

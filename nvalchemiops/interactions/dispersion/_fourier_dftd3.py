@@ -17,36 +17,26 @@ r"""
 FourierD3: Particle-Mesh Evaluation of the DFT-D3 Dispersion Correction
 ======================================================================
 
-Evaluates the periodic DFT-D3(BJ) dispersion energy by particle-mesh summation, in
-:math:`O(N \log N)` and **without a real-space cutoff on the dispersion sum**. The only
-real-space cutoff that remains is the short coordination-number list, which a machine-learned
-force field already builds for its own descriptors.
+Periodic DFT-D3(BJ) dispersion in :math:`O(N \log N)` with **no real-space cutoff on the
+dispersion sum**; only the short coordination-number list remains.
 
-Why a mesh method is possible here
-----------------------------------
-
-Mesh summation needs the pairwise coefficient to separate into atom-centred factors. D3's
-:math:`C_6` coefficients do not separate: they couple the coordination numbers of both atoms.
-A low-rank decomposition of the reference tensor, computed once on the host by
-:mod:`nvalchemiops.interactions.dispersion._c6_decomposition`, restores separability:
+Mesh summation needs the pairwise coefficient to separate into atom-centred factors, and D3's
+:math:`C_6` does not -- it couples both atoms' coordination numbers. A host-side low-rank
+decomposition (:mod:`nvalchemiops.interactions.dispersion._c6_decomposition`) restores it:
 
 .. math::
 
     C_6^{ij} = \sum_{\ell} \lambda_{\ell}\, c_6[i, \ell]\, c_6[j, \ell]
 
-Each rank slot then spreads onto its own mesh channel and is summed independently.
-
-Becke-Johnson damping supplies the second ingredient. It makes the pair potential bounded and
-absolutely integrable, so Poisson summation applies directly and the transform is available in
-closed form with an exponentially decaying envelope. **There is no Ewald splitting parameter
-and no real-space dispersion sum**: the mesh Nyquist frequency is the only truncation. This is
-the main structural difference from the electrostatics PME path in this package.
+Becke-Johnson damping makes the pair potential absolutely integrable, so its transform is
+closed-form with an exponentially decaying envelope. **No Ewald splitting parameter and no
+real-space dispersion sum**: the mesh Nyquist frequency is the only truncation, unlike the
+electrostatics PME path here.
 
 Pass structure
 --------------
 
-Warp has no full-mesh FFT, so as with PME the transforms are performed by the calling
-framework and this module supplies the surrounding kernels. Bindings drive the sequence:
+Warp has no full-mesh FFT, so the transforms belong to the calling framework:
 
 ===== =========================================================== ==============
 Pass  Operation                                                   Performed by
@@ -62,16 +52,14 @@ Pass  Operation                                                   Performed by
 9     Contract to ``dE/dCN`` and apply the chain rule to forces   this module
 ===== =========================================================== ==============
 
-Pass 8 must run before pass 9: the self-energy is quadratic in the coefficients, which depend
-on coordination number, so applying it as a final scalar correction would drop its
-contribution from every force and from the virial.
+Pass 8 must precede pass 9: the self-energy is quadratic in coefficients that depend on
+coordination number, so applying it as a final scalar would drop its force and virial terms.
 
 Units
 -----
-Unit-agnostic, but every length must share one system: ``positions``, ``cell``, ``rcov``,
-``r_cut`` and the mesh spacing. The DFT-D3 reference parameters are conventionally in atomic
-units. ``r_cut`` must equal the cutoff the neighbour list was built with, because the
-coordination-number function is constructed to reach zero exactly there.
+Unit-agnostic, but ``positions``, ``cell``, ``rcov``, ``r_cut`` and the mesh spacing must
+share one system (D3 parameters are conventionally atomic units). ``r_cut`` must equal the
+neighbour-list cutoff, because the counting function reaches zero exactly there.
 
 References
 ----------
@@ -111,9 +99,8 @@ PI = math.pi
 # Base steepness of the D3 counting function, retained out to the transition radius.
 CN_STEEPNESS = 16.0
 
-# The shipped covalent-radius table already folds in Grimme's 4/3 factor, which is the scale
-# the counting function's ratio is defined on. The transition radius of the modified counting
-# function is defined on the bare covalent radius instead, so it divides that factor back out.
+# The shipped rcov table already folds in Grimme's 4/3, which the counting ratio is defined
+# on. The transition radius uses the bare covalent radius, so it divides that back out.
 CN_UNSCALE = 3.0 / 4.0
 
 # Keeps the steepness finite exactly at the cutoff, where the gap term vanishes.
@@ -734,17 +721,14 @@ def _fd3_kspace_kernel(
     cotangent_scale = type(s6)(2.0) * prefactor * inverse_modulus
     first_channel = (system * n_species) * rank
 
-    # Each pair below contributes to two channels, so the field is accumulated rather than
-    # assigned and has to start from zero. Every bin belongs to exactly one thread, so these
-    # are private locations and need no atomics.
+    # Each pair feeds two channels, so this accumulates and must start at zero. One thread
+    # per bin makes these private locations -- no atomics needed.
     if active:
         for channel in range(n_species * rank):
             cotangent[first_channel + channel, ix, iy, iz] = wp.vector(zero, zero)
 
-    # The kernel depends on the wave vector and the species pair but not on the slot, and it
-    # is symmetric under exchanging the pair. Both loops are therefore outside the slot loop
-    # and the pair loop is upper-triangular, which cuts the transcendental evaluations from
-    # ``rank * n_species^2`` per bin to ``n_species * (n_species + 1) / 2``.
+    # The kernel depends on (k, pair) but not slot, and is pair-symmetric. Hoisting both
+    # loops and going upper-triangular cuts evaluations from rank*n^2 to n*(n+1)/2 per bin.
     for species_a in range(n_species):
         offset_a = first_channel + species_a * rank
         for species_b in range(species_a, n_species):
@@ -788,9 +772,8 @@ def _fd3_kspace_kernel(
         wp.atomic_add(energy, system, block_energy)
 
     if compute_virial:
-        # Straining the cell scales the volume and shrinks the reciprocal lattice:
-        # d(1/volume) contributes the isotropic term, and d|k|/d(strain) = -k_a k_b / |k|
-        # the anisotropic one.
+        # Strain scales the volume and shrinks the reciprocal lattice: d(1/V) gives the
+        # isotropic term, d|k|/d(strain) = -k_a k_b / |k| the anisotropic one.
         radial = zero
         if k_norm > type(s6)(1.0e-12):
             radial = wp.where(active, prefactor * accumulated_slope / k_norm, zero)
@@ -808,9 +791,7 @@ def _fd3_kspace_kernel(
         sum_xz = wp.tile_sum(wp.tile(-radial * k_vector[0] * k_vector[2]))[0]
         sum_yz = wp.tile_sum(wp.tile(-radial * k_vector[1] * k_vector[2]))[0]
         if thread_in_block == 0:
-            # The sums above are dE/du. The convention in
-            # docs/userguide/about/conventions.md returns its negative, which is
-            # also what dftd3 returns.
+            # Negate: conventions.md (and dftd3) define the virial as -dE/du.
             wp.atomic_add(
                 virial,
                 system,
@@ -977,10 +958,8 @@ def _fd3_cn_forces_kernel(
                 force_z += pair_force[2]
 
                 if compute_virial:
-                    # dE/d(strain) for a pair term is F outer delta, which is symmetric
-                    # because the force lies along the separation. The half is because the
-                    # reverse edge, walked by the other atom's block, contributes the same
-                    # amount again.
+                    # F outer delta, symmetric because the force lies along the separation.
+                    # Halved because the reverse edge contributes the same again.
                     virial_xx += half * pair_force[0] * delta[0]
                     virial_yy += half * pair_force[1] * delta[1]
                     virial_zz += half * pair_force[2] * delta[2]
@@ -1004,9 +983,7 @@ def _fd3_cn_forces_kernel(
         sum_xz = wp.tile_sum(wp.tile(virial_xz))[0]
         sum_yz = wp.tile_sum(wp.tile(virial_yz))[0]
         if thread_in_block == 0:
-            # The sums above are dE/du. The convention in
-            # docs/userguide/about/conventions.md returns its negative, which is
-            # also what dftd3 returns.
+            # Negate: conventions.md (and dftd3) define the virial as -dE/du.
             wp.atomic_add(
                 virial,
                 batch_idx[atom_i],
@@ -1409,10 +1386,9 @@ def _fd3_gather_and_force_kernel(
         gy = wrap_grid_index(base_grid[1] + offset[1], mesh_dims[1])
         gz = wrap_grid_index(base_grid[2] + offset[2], mesh_dims[2])
 
-        # Fractional-space gradients become Cartesian through the inverse cell. The forward
-        # map takes a position to fractional coordinates with the transpose, so its adjoint
-        # takes the transpose back off again. The two coincide only when the cell is
-        # diagonal, which is why a cubic cell cannot detect the difference.
+        # Fractional gradients become Cartesian through the inverse cell. The forward map
+        # applies the transpose, so the adjoint takes it back off -- identical only for a
+        # diagonal cell, which is why a cubic box cannot detect the difference.
         cartesian = wp.transpose(cell_inv_t[group]) * gradient
 
         for slot in range(rank):
@@ -1619,8 +1595,7 @@ def _fd3_cn_forces_matrix_kernel(
 
                 if compute_virial:
                     # F outer delta, symmetric because the force lies along the separation.
-                    # The half is because the reverse edge, walked by the other atom's
-                    # block, contributes the same amount again.
+                    # Halved because the reverse edge contributes the same again.
                     virial_xx += half * pair_force[0] * delta[0]
                     virial_yy += half * pair_force[1] * delta[1]
                     virial_zz += half * pair_force[2] * delta[2]
@@ -1643,11 +1618,8 @@ def _fd3_cn_forces_matrix_kernel(
         sum_xz = wp.tile_sum(wp.tile(virial_xz))[0]
         sum_yz = wp.tile_sum(wp.tile(virial_yz))[0]
         if thread_in_block == 0:
-            # One atomic per atom rather than one per neighbour; every atom in a system
-            # targets the same accumulator.
-            # The sums above are dE/du. The convention in
-            # docs/userguide/about/conventions.md returns its negative, which is
-            # also what dftd3 returns.
+            # One atomic per atom, not per neighbour: a system shares one accumulator.
+            # Negate: conventions.md (and dftd3) define the virial as -dE/du.
             wp.atomic_add(
                 virial,
                 batch_idx[atom_i],

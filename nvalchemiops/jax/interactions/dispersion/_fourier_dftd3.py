@@ -16,22 +16,18 @@
 r"""
 JAX binding for FourierD3.
 
-Evaluates the periodic DFT-D3(BJ) dispersion correction by particle-mesh summation, with no
-real-space cutoff on the dispersion sum itself. See
+Particle-mesh DFT-D3(BJ) with no real-space cutoff on the dispersion sum. See
 :mod:`nvalchemiops.interactions.dispersion._fourier_dftd3` for the method.
 
 This layer supplies the two Fourier transforms, which Warp cannot perform on a full mesh, and
-drives the Warp launchers around them through ``warp.jax_experimental.jax_kernel``.
-
-The kernels are launched with ``enable_backward=False``, matching the real-space
-:func:`~nvalchemiops.jax.interactions.dispersion.dftd3`: forces and the virial are explicit
-outputs rather than quantities recovered by differentiating the energy.
+drives the Warp launchers through ``warp.jax_experimental.jax_kernel``. Kernels run with
+``enable_backward=False``, matching :func:`~nvalchemiops.jax.interactions.dispersion.dftd3`:
+forces and the virial are explicit outputs, not derivatives of the energy.
 
 Units
 -----
-Every length must share one system: ``positions``, ``cell``, ``rcov``, ``r_cut`` and
-``mesh_spacing``. The DFT-D3 reference parameters are conventionally atomic units, so
-``r_cut`` has no default.
+``positions``, ``cell``, ``rcov``, ``r_cut`` and ``mesh_spacing`` must share one length unit.
+D3 parameters are conventionally atomic units, so ``r_cut`` has no default.
 """
 
 from __future__ import annotations
@@ -536,13 +532,9 @@ def fourier_dftd3(
     n_species, rank = params.n_species, params.rank
 
     if n_atoms == 0:
-        # Nothing to spread, so the mesh, its transforms and the reciprocal sum would all be
-        # zero. This sits after every argument check rather than before: an empty batch has
-        # to reject a bad mesh or a missing parameter exactly as a populated one does, or the
-        # mistake stays hidden until a later batch happens to contain an atom. What it does
-        # skip is the work -- a mesh of num_systems * n_species * rank * nx * ny * nz, the
-        # transforms over it, and handing Warp zero-length arrays, which it cannot wrap.
-        # ``n_atoms`` is a shape, so the branch is taken at trace time and is safe under jit.
+        # Nothing to spread, so mesh, transforms and reciprocal sum are all zero. Placed
+        # after every argument check, not before: an empty batch must reject a bad mesh just
+        # as a populated one does. ``n_atoms`` is a shape, so this branches at trace time.
         energy = jnp.zeros(num_systems, dtype=dtype)
         forces = jnp.zeros((0, 3), dtype=dtype)
         if compute_virial:
@@ -550,9 +542,8 @@ def fourier_dftd3(
         return energy, forces
     n_groups = num_systems * n_species
 
-    # Padding atoms, and any species the decomposition does not cover, keep a negative group
-    # so that every kernel's guard fires. Folding the system index in first would make a
-    # padding atom in system 1 or later land on a valid slab belonging to an earlier system.
+    # Padding, and species the decomposition misses, keep a negative group so every guard
+    # fires. Folding the system index in first would land them on an earlier system's slab.
     group_idx = jnp.where(
         species_index < 0, -1, batch_idx * n_species + species_index
     ).astype(jnp.int32)
@@ -625,11 +616,9 @@ def fourier_dftd3(
     volumes = jnp.abs(jnp.linalg.det(cells)).astype(dtype)
     k_matrix = (2.0 * jnp.pi * jnp.linalg.inv(cells)).astype(dtype)
 
-    # Every stage after the coordination number is a sum over rank slots with no coupling
-    # between them, so a chunk of slots can be carried through spread, transform, contraction
-    # and gather on its own and its contribution added in. The mesh and its transforms are the
-    # dominant allocation and scale with the number of slots resident at once, so this trades
-    # passes over the atoms for peak memory.
+    # Slots do not couple, so a chunk can go through spread, transform, contraction and
+    # gather alone and be added in. The mesh dominates allocation and scales with resident
+    # slots: this trades extra passes for peak memory.
     energy_total = jnp.zeros(num_systems, dtype=dtype)
     forces_total = jnp.zeros((n_atoms, 3), dtype=dtype)
     virial_total = jnp.zeros((num_systems, 3, 3), dtype=dtype)
@@ -721,9 +710,8 @@ def fourier_dftd3(
         virial_total = virial_total + virial
         d_energy_d_c6_chunks.append(d_energy_d_c6_chunk)
 
-    # The coefficient derivative is reassembled at full width: the chain rule below contracts
-    # it against every slot at once. It is per-atom, not per-mesh-point, so keeping all of it
-    # is a negligible part of the footprint the chunking exists to bound.
+    # Reassembled at full width -- the chain rule below needs every slot at once. Per-atom,
+    # not per-mesh-point, so it does not undermine the bound.
     d_energy_d_c6 = (
         d_energy_d_c6_chunks[0]
         if len(d_energy_d_c6_chunks) == 1

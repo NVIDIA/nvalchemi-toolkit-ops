@@ -1220,6 +1220,20 @@ class TestPrecomputedSetup:
             result[0].cpu().numpy(), coarse[0].cpu().numpy(), rtol=1e-12
         )
 
+    def test_it_holds_no_autograd_graph(self):
+        """A setup outlives the step that built it, so it must not pin the cell's graph.
+
+        The derived tensors are never differentiated -- the kernels run with
+        ``enable_backward=False`` -- so retaining the graph only keeps memory alive.
+        """
+        system = _system("cuda:0")
+        cell = system["cell"].clone().requires_grad_(True)
+        setup = FourierD3Setup.build(cell, system["params"].n_species, MESH)
+        for field in ("cell_inv_grouped", "volumes", "k_matrix", "cell"):
+            tensor = getattr(setup, field)
+            assert not tensor.requires_grad, f"{field} retains the graph"
+            assert tensor.grad_fn is None, f"{field} retains the graph"
+
     def test_a_conflicting_mesh_is_an_error(self):
         """Asking for one mesh while handing over a setup built for another is ambiguous.
 
