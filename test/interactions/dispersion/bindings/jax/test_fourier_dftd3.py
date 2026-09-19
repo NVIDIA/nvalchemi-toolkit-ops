@@ -1083,3 +1083,61 @@ class TestRankChunking:
                 ),
                 rank_chunk_size=0,
             )
+
+
+class TestParameterValidation:
+    """Same contract as the Torch container, and it must survive being a pytree.
+
+    ``__post_init__`` runs again when the dataclass is rebuilt inside ``jax.jit``, where the
+    fields are tracers, so it may only read attributes a tracer carries.
+    """
+
+    @staticmethod
+    def _fields():
+        return dict(
+            rcov=jnp.zeros(5),
+            sqrt_q=jnp.zeros(2),
+            cnref=jnp.zeros((2, 3)),
+            v_q=jnp.zeros((2, 3, 4)),
+            eigs=jnp.zeros(4),
+            species_map=jnp.zeros(5, dtype=jnp.int32),
+            max_relative_error=0.0,
+        )
+
+    def test_a_well_formed_bundle_is_accepted(self):
+        """The guard must not reject the shape it is built around."""
+        params = FourierD3Parameters(**self._fields())
+        assert params.rank == 4
+        assert params.n_species == 2
+
+    def test_it_still_round_trips_through_jit(self):
+        """Validation on a pytree node must tolerate tracers as leaves."""
+        params = FourierD3Parameters(**self._fields())
+        total = jax.jit(lambda bundle: bundle.eigs.sum())(params)
+        assert float(total) == 0.0
+
+    @pytest.mark.parametrize("name", ["rcov", "sqrt_q", "cnref", "v_q", "eigs"])
+    def test_numeric_fields_must_be_floating(self, name):
+        """An integral eigs silently truncates the decomposition."""
+        fields = self._fields()
+        fields[name] = fields[name].astype(jnp.int32)
+        with pytest.raises(TypeError, match="must be float32 or float64"):
+            FourierD3Parameters(**fields)
+
+    def test_species_map_must_be_integral(self):
+        """It indexes the reference tables, so a float is not merely imprecise."""
+        fields = self._fields()
+        fields["species_map"] = fields["species_map"].astype(jnp.float32)
+        with pytest.raises(TypeError, match="must be int32 or int64"):
+            FourierD3Parameters(**fields)
+
+    @pytest.mark.parametrize(
+        ("name", "shape"),
+        [("rcov", (1, 5)), ("sqrt_q", (1, 2)), ("eigs", (1, 4)), ("cnref", (2, 3, 1))],
+    )
+    def test_ranks_are_enforced(self, name, shape):
+        """A stray axis passes the pairwise shape checks but not the kernels."""
+        fields = self._fields()
+        fields[name] = fields[name].reshape(shape)
+        with pytest.raises(ValueError, match="must be .D"):
+            FourierD3Parameters(**fields)

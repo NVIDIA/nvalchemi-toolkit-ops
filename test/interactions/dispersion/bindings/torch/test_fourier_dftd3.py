@@ -1504,3 +1504,54 @@ class TestBatchArgumentValidation:
         np.testing.assert_allclose(
             with_batch.cpu().numpy(), default.cpu().numpy(), rtol=1e-12
         )
+
+
+class TestParameterValidation:
+    """The container is public, so a malformed bundle must be refused at construction.
+
+    Before these checks an integral ``eigs`` truncated the decomposition to whole numbers, a
+    floating ``species_map`` indexed as something else, and a stray leading axis on ``rcov``
+    all returned a plausible energy. A two-dimensional ``sqrt_q`` was worse: it reached the
+    device and triggered a CUDA assert, which takes the process with it.
+    """
+
+    @staticmethod
+    def _fields():
+        return dict(
+            rcov=torch.zeros(5),
+            sqrt_q=torch.zeros(2),
+            cnref=torch.zeros(2, 3),
+            v_q=torch.zeros(2, 3, 4),
+            eigs=torch.zeros(4),
+            species_map=torch.zeros(5, dtype=torch.int32),
+            max_relative_error=0.0,
+        )
+
+    def test_a_well_formed_bundle_is_accepted(self):
+        """The guard must not reject the shape it is built around."""
+        params = FourierD3Parameters(**self._fields())
+        assert params.rank == 4
+        assert params.n_species == 2
+
+    @pytest.mark.parametrize("name", ["rcov", "sqrt_q", "cnref", "v_q", "eigs"])
+    def test_numeric_fields_must_be_floating(self, name):
+        """An integral eigs silently truncates the decomposition."""
+        fields = self._fields()
+        fields[name] = fields[name].to(torch.int64)
+        with pytest.raises(TypeError, match="must be float32 or float64"):
+            FourierD3Parameters(**fields)
+
+    def test_species_map_must_be_integral(self):
+        """It indexes the reference tables, so a float is not merely imprecise."""
+        fields = self._fields()
+        fields["species_map"] = fields["species_map"].to(torch.float32)
+        with pytest.raises(TypeError, match="must be int32 or int64"):
+            FourierD3Parameters(**fields)
+
+    @pytest.mark.parametrize("name", ["rcov", "sqrt_q", "eigs", "species_map"])
+    def test_flat_tables_must_be_one_dimensional(self, name):
+        """A stray leading axis passes the pairwise shape checks but not the kernels."""
+        fields = self._fields()
+        fields[name] = fields[name].reshape(1, -1)
+        with pytest.raises(ValueError, match="must be 1D"):
+            FourierD3Parameters(**fields)

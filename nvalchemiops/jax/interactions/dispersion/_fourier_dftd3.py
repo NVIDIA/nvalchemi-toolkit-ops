@@ -188,6 +188,45 @@ class FourierD3Parameters:
     species_map: jax.Array
     max_relative_error: float
 
+    def __post_init__(self):
+        """Validate dtypes and ranks, matching the Torch container.
+
+        This also runs when the pytree is rebuilt inside ``jax.jit``, where the fields are
+        tracers. Only ``dtype`` and ``ndim`` are read, which tracers carry, so the checks
+        hold while tracing as well as eagerly.
+        """
+        fields = {
+            "rcov": self.rcov,
+            "sqrt_q": self.sqrt_q,
+            "cnref": self.cnref,
+            "v_q": self.v_q,
+            "eigs": self.eigs,
+        }
+        for name, array in fields.items():
+            if array.dtype not in (jnp.float32, jnp.float64):
+                raise TypeError(
+                    f"{name} must be float32 or float64, got {array.dtype}."
+                )
+        if self.species_map.dtype not in (jnp.int32, jnp.int64):
+            raise TypeError(
+                f"species_map must be int32 or int64, got {self.species_map.dtype}."
+            )
+        fields["species_map"] = self.species_map
+        ranks = {
+            "rcov": 1,
+            "sqrt_q": 1,
+            "eigs": 1,
+            "species_map": 1,
+            "cnref": 2,
+            "v_q": 3,
+        }
+        for name, expected in ranks.items():
+            array = fields[name]
+            if array.ndim != expected:
+                raise ValueError(
+                    f"{name} must be {expected}D, got shape {tuple(array.shape)}."
+                )
+
     @property
     def rank(self) -> int:
         """Number of retained rank slots."""

@@ -119,6 +119,24 @@ class FourierD3Parameters:
         for name, tensor in tensors.items():
             if not isinstance(tensor, torch.Tensor):
                 raise TypeError(f"{name} must be a torch.Tensor, got {type(tensor)}.")
+        # An integral eigs truncates the decomposition to whole numbers, and a floating
+        # species_map indexes as something else again; both used to run and return a
+        # plausible energy.
+        for name in ("rcov", "sqrt_q", "cnref", "v_q", "eigs"):
+            dtype = tensors[name].dtype
+            if dtype not in (torch.float32, torch.float64):
+                raise TypeError(f"{name} must be float32 or float64, got {dtype}.")
+        if self.species_map.dtype not in (torch.int32, torch.int64):
+            raise TypeError(
+                f"species_map must be int32 or int64, got {self.species_map.dtype}."
+            )
+        # The kernels read these as flat tables. A stray leading axis is not caught by the
+        # pairwise shape checks below, and reaches the device as an out-of-bounds read.
+        for name in ("rcov", "sqrt_q", "eigs", "species_map"):
+            if tensors[name].ndim != 1:
+                raise ValueError(
+                    f"{name} must be 1D, got shape {tuple(tensors[name].shape)}."
+                )
         devices = {tensor.device for tensor in tensors.values()}
         if len(devices) > 1:
             raise ValueError(
