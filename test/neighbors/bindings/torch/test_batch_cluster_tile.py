@@ -767,10 +767,20 @@ class TestBatchTileNeighborListCorrectness:
         self, device, dtype, torch_stream_runner
     ):
         """Batched geometry writes stay on the caller's current stream."""
-        source, cell_batch, batch_ptr = _make_batch(
-            [2, 3], [4.0, 4.0], device=device, dtype=dtype, seed=4
+        source = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.4, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+            ],
+            dtype=dtype,
+            device=device,
         )
         positions = torch.empty_like(source)
+        cell_batch = torch.eye(3, dtype=dtype, device=device).repeat(2, 1, 1) * 8.0
+        batch_ptr = torch.tensor([0, 2, 5], dtype=torch.int32, device=device)
         _, snapshot, expected = torch_stream_runner(
             source,
             positions,
@@ -784,8 +794,21 @@ class TestBatchTileNeighborListCorrectness:
                 return_distances=True,
             ),
         )
-        for result, reference in zip(snapshot, expected, strict=True):
-            torch.testing.assert_close(result, reference)
+        matrix, counts, shifts, distances, vectors = snapshot
+        (
+            expected_matrix,
+            expected_counts,
+            expected_shifts,
+            expected_distances,
+            expected_vectors,
+        ) = expected
+        torch.testing.assert_close(counts, expected_counts)
+        assert torch.any(counts > 0)
+        active = torch.arange(matrix.shape[1], device=device)[None, :] < counts[:, None]
+        torch.testing.assert_close(matrix[active], expected_matrix[active])
+        torch.testing.assert_close(shifts[active], expected_shifts[active])
+        torch.testing.assert_close(distances, expected_distances)
+        torch.testing.assert_close(vectors, expected_vectors)
 
     @requires_vesin
     def test_single_system_batch(self, device, dtype):

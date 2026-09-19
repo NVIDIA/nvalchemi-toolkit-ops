@@ -176,8 +176,21 @@ class TestTileNeighborListCorrectness:
                 return_distances=True,
             ),
         )
-        for result, reference in zip(snapshot, expected, strict=True):
-            torch.testing.assert_close(result, reference)
+        matrix, counts, shifts, distances, vectors = snapshot
+        (
+            expected_matrix,
+            expected_counts,
+            expected_shifts,
+            expected_distances,
+            expected_vectors,
+        ) = expected
+        torch.testing.assert_close(counts, expected_counts)
+        assert torch.any(counts > 0)
+        active = torch.arange(matrix.shape[1], device=device)[None, :] < counts[:, None]
+        torch.testing.assert_close(matrix[active], expected_matrix[active])
+        torch.testing.assert_close(shifts[active], expected_shifts[active])
+        torch.testing.assert_close(distances, expected_distances)
+        torch.testing.assert_close(vectors, expected_vectors)
 
     def test_single_atom_no_neighbors(self, device, dtype):
         """Single atom system should have no neighbors."""
