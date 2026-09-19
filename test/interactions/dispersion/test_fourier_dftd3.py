@@ -16,9 +16,9 @@
 """Warp-layer tests for FourierD3.
 
 Every kernel is checked against the NumPy reference in
-``test/interactions/dispersion/_fourier_reference.py``, which is itself covered by
-``test_fourier_reference.py``. The scalar device functions are exercised through small probe
-kernels, since Warp functions cannot be called from Python directly.
+``test/interactions/dispersion/_fourier_reference.py``. The scalar device functions are
+exercised through small probe kernels, since Warp functions cannot be called from Python
+directly.
 """
 
 from __future__ import annotations
@@ -1296,3 +1296,52 @@ class TestNeighbourMatrixFormat:
             )
             results.append(out.numpy())
         np.testing.assert_array_equal(results[0], results[1])
+
+
+class TestMeshSelection:
+    """The shared mesh helpers, which both bindings call rather than reimplement."""
+
+    def test_explicit_dimensions_are_used_exactly(self):
+        """A number the caller chose is not second-guessed, even when it transforms badly."""
+        assert fd3._resolve_mesh((127, 127, 127), None, None, 4) == (127, 127, 127)
+
+    @pytest.mark.parametrize(
+        "spacing", [0.07, 0.0709, 0.0711, 0.073, 0.11, 0.37, 0.5, 1.3]
+    )
+    def test_a_spacing_derived_mesh_transforms_well(self, spacing):
+        """cuFFT falls back to Bluestein otherwise.
+
+        A prime edge measured 6.7x slower than a nearby smooth one on the same transform.
+        """
+        mesh = fd3._resolve_mesh(None, spacing, [9.0, 9.0, 9.0], 4)
+        for size in mesh:
+            remainder = size
+            for prime in (2, 3, 5, 7):
+                while remainder % prime == 0:
+                    remainder //= prime
+            assert remainder == 1, f"spacing {spacing} gave {mesh}"
+
+    @pytest.mark.parametrize("spacing", [0.05, 0.0707, 0.09, 0.13, 0.5])
+    def test_rounding_never_coarsens(self, spacing):
+        """Rounding goes up, so the mesh is never sparser than the spacing asked for."""
+        for size in fd3._resolve_mesh(None, spacing, [9.0, 9.0, 9.0], 4):
+            assert size >= int(np.ceil(9.0 / spacing))
+
+    @pytest.mark.parametrize("mesh_size", [1, 2, 3])
+    def test_a_mesh_shorter_than_the_stencil_is_refused(self, mesh_size):
+        """The order-4 stencil wraps onto a shorter axis and visits a node twice.
+
+        Positive is not sufficient: the interpolation stops being the B-spline that the
+        gather differentiates.
+        """
+        with pytest.raises(ValueError, match="at least"):
+            fd3._check_mesh_supports_stencil((mesh_size,) * 3, 4, "test")
+
+    def test_a_mesh_equal_to_the_stencil_is_allowed(self):
+        """At equality every stencil point still lands on its own node."""
+        assert fd3._check_mesh_supports_stencil((4, 4, 4), 4, "test") == (4, 4, 4)
+
+    def test_a_spacing_too_coarse_for_the_stencil_is_refused(self):
+        """The spacing route is held to the same minimum as explicit dimensions."""
+        with pytest.raises(ValueError, match="mesh_spacing"):
+            fd3._resolve_mesh(None, 100.0, [9.0, 9.0, 9.0], 4)

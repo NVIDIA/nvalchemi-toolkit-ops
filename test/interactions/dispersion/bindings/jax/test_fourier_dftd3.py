@@ -28,9 +28,6 @@ import pytest
 jax = pytest.importorskip("jax", reason="No JAX installed.")
 jnp = jax.numpy
 
-from nvalchemiops.interactions.dispersion._fourier_dftd3 import (  # noqa: E402
-    _resolve_mesh,
-)
 from nvalchemiops.jax.interactions.dispersion import (  # noqa: E402
     FourierD3Parameters,
     fourier_dftd3,
@@ -40,13 +37,6 @@ from test.interactions.dispersion.test_fourier_dftd3 import (  # noqa: E402
     _reference_tables,
     _to_dense,
 )
-
-
-def _cell_lengths(cell):
-    """Longest lattice-vector length per axis, the input `_resolve_mesh` expects."""
-    cells = np.asarray(cell).reshape(-1, 3, 3)
-    return np.linalg.norm(cells, axis=-1).max(axis=0).tolist()
-
 
 DAMPING = dict(a1=0.4289, a2=4.4407, s8=0.7875, s6=1.0)
 R_CUT = 4.0
@@ -317,31 +307,6 @@ class TestNeighbourFormats:
             np.asarray(dense[1]),
             atol=1e-11 * float(jnp.abs(csr[1]).max()),
         )
-
-    def test_a_spacing_derived_mesh_transforms_well(self, device, system):
-        """An automatic mesh is rounded up to factors of 2, 3, 5 and 7, as in Torch."""
-        for spacing in (0.07, 0.0709, 0.0711, 0.073, 0.11, 0.37):
-            mesh = _resolve_mesh(None, spacing, _cell_lengths(system["cell"]), 4)
-            for size in mesh:
-                remainder = size
-                for prime in (2, 3, 5, 7):
-                    while remainder % prime == 0:
-                        remainder //= prime
-                assert remainder == 1, f"spacing {spacing} gave {mesh}"
-
-    def test_explicit_dimensions_are_used_exactly(self, device, system):
-        """A number the caller chose is passed through untouched."""
-        assert _resolve_mesh((127, 127, 127), None, None, 4) == (127, 127, 127)
-
-    def test_a_mesh_shorter_than_the_stencil_is_refused(self, device, system):
-        """The order-4 stencil would wrap onto a shorter axis and revisit a node."""
-        with pytest.raises(ValueError, match="at least"):
-            _evaluate(system, mesh_dimensions=(2, 2, 2), spline_order=4)
-
-    def test_a_spacing_too_coarse_for_the_stencil_is_refused(self, device, system):
-        """The spacing route is held to the same minimum as explicit dimensions."""
-        with pytest.raises(ValueError, match="mesh_spacing"):
-            _evaluate(system, mesh_dimensions=None, mesh_spacing=100.0, spline_order=4)
 
     def test_rejects_both_formats(self, device, system):
         """Supplying both neighbour formats is an error."""

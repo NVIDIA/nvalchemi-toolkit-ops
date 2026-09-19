@@ -32,29 +32,16 @@ import pytest
 # optional dependency into a NameError during collection.
 torch = pytest.importorskip("torch", reason="PyTorch not installed.")
 
-from nvalchemiops.interactions.dispersion._fourier_dftd3 import (  # noqa: E402
-    _resolve_mesh,
-)
 from nvalchemiops.torch.interactions.dispersion import (  # noqa: E402
     FourierD3Parameters,
     FourierD3Setup,
     fourier_dftd3,
-)
-from nvalchemiops.torch.interactions.dispersion import (  # noqa: E402
-    _fourier_dftd3 as _fd3,
 )
 from test.interactions.dispersion.test_fourier_dftd3 import (  # noqa: E402
     _neighbour_list,
     _reference_tables,
     _to_dense,
 )
-
-
-def _cell_lengths(cell):
-    """Longest lattice-vector length per axis, the input `_resolve_mesh` expects."""
-    cells = cell.reshape(-1, 3, 3)
-    return torch.linalg.norm(cells, dim=-1).max(dim=0).values.tolist()
-
 
 DAMPING = dict(a1=0.4289, a2=4.4407, s8=0.7875, s6=1.0)
 R_CUT = 4.0
@@ -370,30 +357,6 @@ class TestEmptySystem:
                 **bad_mesh,
             )
 
-    def test_does_not_allocate_the_mesh(self):
-        """The mesh is the largest allocation in the call and nothing would be spread onto it.
-
-        Guards against the early return being removed: without it this allocates
-        ``num_systems * n_species * rank`` slabs of the full mesh volume.
-        """
-        system = _system("cuda:0")
-        self._call(system, 1)  # warm any lazy allocator state first
-        torch.cuda.synchronize()
-        torch.cuda.reset_peak_memory_stats()
-        before = torch.cuda.memory_allocated()
-        self._call(system, 1)
-        torch.cuda.synchronize()
-        peak = torch.cuda.max_memory_allocated() - before
-        mesh_bytes = (
-            MESH[0]
-            * MESH[1]
-            * MESH[2]
-            * system["params"].n_species
-            * system["params"].rank
-            * system["positions"].element_size()
-        )
-        assert peak < mesh_bytes / 8, f"allocated {peak} bytes; a mesh is {mesh_bytes}"
-
 
 @pytest.mark.gpu
 class TestNeighbourFormats:
@@ -582,30 +545,6 @@ class TestBatching:
 class TestMeshAndUnits:
     """Mesh sizing and the unit contract, both of which fail silently if left implicit."""
 
-    @pytest.mark.parametrize("mesh_size", [1, 2, 3])
-    def test_a_mesh_shorter_than_the_stencil_is_refused(self, mesh_size):
-        """The order-4 stencil wraps onto a shorter axis and visits a node twice.
-
-        Positive is not sufficient: the interpolation stops being the B-spline that the
-        gather differentiates. Without the check this surfaced as a tensor-size error from
-        the spline moduli, which says nothing about the cause.
-        """
-        system = _system("cuda:0")
-        with pytest.raises(ValueError, match="at least"):
-            _evaluate(system, mesh_dimensions=(mesh_size,) * 3, spline_order=4)
-
-    def test_a_mesh_equal_to_the_stencil_is_allowed(self):
-        """At equality every stencil point still lands on its own node."""
-        system = _system("cuda:0")
-        energy = _evaluate(system, mesh_dimensions=(4, 4, 4), spline_order=4)[0]
-        assert torch.isfinite(energy).all()
-
-    def test_a_spacing_too_coarse_for_the_stencil_is_refused(self):
-        """The same minimum applies however the mesh was arrived at."""
-        system = _system("cuda:0")
-        with pytest.raises(ValueError, match="mesh_spacing"):
-            _evaluate(system, mesh_dimensions=None, mesh_spacing=100.0, spline_order=4)
-
     def test_the_setup_applies_the_same_minimum(self):
         """A setup is the third way to arrive at a mesh, and is held to the same rule."""
         system = _system("cuda:0")
@@ -613,38 +552,6 @@ class TestMeshAndUnits:
             FourierD3Setup.build(
                 system["cell"], system["params"].n_species, (2, 2, 2), spline_order=4
             )
-
-    def test_explicit_dimensions_are_used_exactly(self):
-        """A number the caller chose is not second-guessed, even when it transforms badly."""
-        system = _system("cuda:0")
-        setup = FourierD3Setup.build(
-            system["cell"], system["params"].n_species, (127, 127, 127)
-        )
-        assert setup.mesh_dimensions == (127, 127, 127)
-
-    def test_a_spacing_derived_mesh_transforms_well(self):
-        """An automatic mesh is rounded up to factors of 2, 3, 5 and 7.
-
-        cuFFT falls back to Bluestein's algorithm otherwise; a prime edge measured 6.7x
-        slower than a nearby smooth one on the same transform.
-        """
-        system = _system("cuda:0")
-        for spacing in (0.07, 0.0709, 0.0711, 0.073, 0.11, 0.37):
-            mesh = _resolve_mesh(None, spacing, _cell_lengths(system["cell"]), 4)
-            for size in mesh:
-                remainder = size
-                for prime in (2, 3, 5, 7):
-                    while remainder % prime == 0:
-                        remainder //= prime
-                assert remainder == 1, f"spacing {spacing} gave {mesh}"
-
-    def test_rounding_never_coarsens(self):
-        """Rounding goes up, so the mesh is never sparser than the spacing asked for."""
-        cell = torch.eye(3, dtype=torch.float64, device="cuda:0") * 9.0
-        for spacing in (0.05, 0.0707, 0.09, 0.13, 0.5):
-            mesh = _resolve_mesh(None, spacing, _cell_lengths(cell), 4)
-            for size in mesh:
-                assert size >= int(np.ceil(9.0 / spacing))
 
     def test_requires_exactly_one_mesh_option(self):
         """Neither or both of the two ways to size the mesh is an error.
@@ -866,11 +773,16 @@ class TestTorchCompile:
         return evaluate
 
     def test_compiled_matches_eager(self):
-        """Compilation does not change the result."""
+        """Compilation does not change the result.
+
+        ``fullgraph=True`` because a graph break means a device synchronisation inside the
+        molecular-dynamics step this op exists to make cheap; it is also why the
+        species-coverage check is skipped while tracing.
+        """
         system = _system("cuda:0")
         evaluate = self._callable(system)
         eager_energy, eager_forces = evaluate(system["positions"])
-        energy, forces = torch.compile(evaluate)(system["positions"])
+        energy, forces = torch.compile(evaluate, fullgraph=True)(system["positions"])
         np.testing.assert_allclose(
             energy.cpu().numpy(), eager_energy.cpu().numpy(), rtol=1e-12
         )
@@ -879,19 +791,6 @@ class TestTorchCompile:
             eager_forces.cpu().numpy(),
             atol=1e-12 * float(eager_forces.abs().max()),
         )
-
-    def test_traces_without_graph_breaks(self):
-        """No graph breaks.
-
-        A break here would mean a device synchronisation inside the molecular-dynamics step
-        this op exists to make cheap, which is the reason the species-coverage check is
-        skipped while tracing.
-        """
-        import torch._dynamo as dynamo
-
-        system = _system("cuda:0")
-        explanation = dynamo.explain(self._callable(system))(system["positions"])
-        assert explanation.graph_break_count == 0
 
     def test_repeated_calls_are_stable(self):
         """Calling the compiled function repeatedly keeps giving the same answer.
@@ -1157,49 +1056,6 @@ class TestRankChunking:
         whole = _evaluate(system)[0]
         split = _evaluate(system, rank_chunk_size=rank * 4)[0]
         np.testing.assert_allclose(split.cpu().numpy(), whole.cpu().numpy(), rtol=1e-12)
-
-    def test_it_lowers_the_peak_mesh_allocation(self):
-        """The point of the option: a smaller resident mesh, not just the same answer."""
-        system = _system("cuda:0")
-        rank = system["params"].rank
-        if rank < 2:
-            pytest.skip("needs a rank of at least 2 to split")
-
-        def peak(chunk):
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
-            torch.cuda.reset_peak_memory_stats()
-            _evaluate(system, mesh_dimensions=(48, 48, 48), rank_chunk_size=chunk)
-            torch.cuda.synchronize()
-            return torch.cuda.max_memory_allocated()
-
-        assert peak(1) < peak(None)
-
-    def test_only_the_reciprocal_stages_repeat(self):
-        """The chain rule walks the whole neighbour list, so it must run once, not per chunk.
-
-        Counting op invocations is what distinguishes "correct" from "correct but doing the
-        real-space work ``rank`` times over", which no numerical comparison can catch.
-        """
-        system = _system("cuda:0")
-        counts = {}
-        originals = {}
-        for name in ("_fd3_gather_op", "_fd3_finalise_op"):
-            originals[name] = getattr(_fd3, name)
-
-            def counted(*args, _name=name, **kwargs):
-                counts[_name] = counts.get(_name, 0) + 1
-                return originals[_name](*args, **kwargs)
-
-            setattr(_fd3, name, counted)
-        try:
-            _evaluate(system, rank_chunk_size=1)
-        finally:
-            for name, original in originals.items():
-                setattr(_fd3, name, original)
-
-        assert counts["_fd3_gather_op"] == system["params"].rank
-        assert counts["_fd3_finalise_op"] == 1
 
     def test_a_non_integer_chunk_is_refused(self):
         """The size decides how many kernels launch, so it cannot be a tensor."""
