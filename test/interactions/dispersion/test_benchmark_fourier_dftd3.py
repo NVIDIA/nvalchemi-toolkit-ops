@@ -175,3 +175,29 @@ class TestBackendGuard:
             row["backend"] == "torch"
             for row in benchmark_module.dry_run_from_config(CONFIG)
         )
+
+
+@pytest.mark.gpu
+class TestSystemSizeIsTheRealisedOne:
+    """The CsCl builder rounds up to whole unit cells, so the request is not the size."""
+
+    def test_the_mesh_follows_the_realised_count(self):
+        """A request on a schedule boundary must not be timed on the mesh below it.
+
+        20000 realises as 21296, which crosses the 20000 threshold, so selecting from the
+        request gives a 64-cubed mesh where the built system calls for 128-cubed. Checked
+        through the returned row rather than the source, so it holds however it is wired.
+        """
+        measured = benchmark_module.benchmark_fourier_d3(
+            20000, "cuda", num_runs=1, warmup_runs=0
+        )
+        assert measured["atoms"] > 20000
+        assert measured["mesh"] == benchmark_module.mesh_for(measured["atoms"])
+
+    def test_the_dry_run_reports_what_would_be_built(self):
+        """A dry run's atom counts must match the rows a real sweep would emit."""
+        from suite_systems import cscl_actual_atoms
+
+        rows = benchmark_module.dry_run_from_config(CONFIG, backend="torch")
+        expected = cscl_actual_atoms(CONFIG["parameters"]["atom_counts"][0])
+        assert {row["atoms_per_system"] for row in rows} == {expected}

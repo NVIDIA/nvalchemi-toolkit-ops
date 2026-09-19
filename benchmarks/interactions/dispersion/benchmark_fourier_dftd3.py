@@ -210,7 +210,10 @@ def benchmark_fourier_d3(
         dtype=dtype,
     )
     pbc = torch.tensor([True, True, True], device=device)
-    mesh = mesh_for(num_atoms)
+    # From the realised count, not the request: the builder rounds up to whole unit
+    # cells, and a request landing on a schedule threshold would otherwise be timed on
+    # the mesh below the one its actual size calls for.
+    mesh = mesh_for(int(positions.shape[0]))
 
     def build_list():
         return neighbor_list(
@@ -449,7 +452,11 @@ def dry_run_from_config(config: dict, backend: str | None = None) -> list[dict]:
     atom_counts = parameters.get("atom_counts", [500, 2000, 8000, 20000])
     cutoffs = parameters.get("real_space_cutoffs", [6.0, 15.0, 20.0])
     return [
-        {"method": method, "atoms_per_system": num_atoms, "backend": backend}
+        {
+            "method": method,
+            "atoms_per_system": cscl_actual_atoms(num_atoms),
+            "backend": backend,
+        }
         for num_atoms in atom_counts
         for method in ["fourier_dftd3", "fourier_dftd3_setup"]
         + [f"dftd3_cutoff_{c:g}" for c in cutoffs]
