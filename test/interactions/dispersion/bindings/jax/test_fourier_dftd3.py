@@ -773,11 +773,12 @@ class TestUncoveredSpecies:
         )[0]
         assert np.isfinite(np.asarray(energy)).all()
 
-    def test_under_jit_the_check_is_skipped_rather_than_failing(self):
-        """``numbers`` is a tracer, so the mask cannot be read back.
+    def test_under_jit_the_result_is_poisoned_rather_than_wrong(self):
+        """``numbers`` is a tracer, so the mask cannot be read back to raise.
 
-        Pinned deliberately: the limitation is documented, and a caller who sees no error
-        under ``jax.jit`` should be able to find this test rather than assume it is covered.
+        Returning a finite energy here would be the damaging outcome, because ``jax.jit`` is
+        the documented execution path: the caller would get a plausible number quietly
+        missing an atom. NaN is unmissable and needs no host synchronisation.
         """
         parts = _single(5.0, 0)
         params, missing = self._partial_params()
@@ -785,8 +786,18 @@ class TestUncoveredSpecies:
         numbers[0] = missing
 
         traced = jax.jit(lambda n: self._call(parts, params, n))
-        energy = traced(jnp.asarray(numbers, dtype=jnp.int32))[0]
-        assert np.isfinite(np.asarray(energy)).all()
+        energy, forces = traced(jnp.asarray(numbers, dtype=jnp.int32))[:2]
+        assert np.isnan(np.asarray(energy)).all()
+        assert np.isnan(np.asarray(forces)).all()
+
+    def test_a_covered_system_is_untouched_under_jit(self):
+        """The guard must cost nothing when every element is present."""
+        parts = _single(5.0, 0)
+        numbers = jnp.asarray(parts["numbers"], dtype=jnp.int32)
+        traced = jax.jit(lambda n: self._call(parts, parts["params"], n))
+        energy = traced(numbers)[0]
+        eager = self._call(parts, parts["params"], numbers)[0]
+        np.testing.assert_allclose(np.asarray(energy), np.asarray(eager), rtol=1e-12)
 
 
 @pytest.mark.gpu

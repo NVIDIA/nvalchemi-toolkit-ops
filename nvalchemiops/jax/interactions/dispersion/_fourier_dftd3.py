@@ -319,9 +319,15 @@ def _reject_uncovered_species(species_index, numbers):
     the worst kind of wrong: a plausible energy that is quietly missing atoms.
 
     Atomic number zero is padding and is skipped by design; only a real element that the
-    decomposition misses is an error. Reading the mask is impossible while tracing, so under
-    ``jax.jit`` the check is skipped rather than failing, exactly as in
-    :func:`_reject_half_filled`.
+    decomposition misses is an error.
+
+    Returns a multiplier for the results: ``1.0`` normally, NaN when tracing found an
+    uncovered element. Eagerly the mask can be read, so this raises instead and names the
+    elements. Under ``jax.jit`` it cannot, and merely skipping would leave the documented
+    execution path returning a finite, plausible energy quietly missing atoms. Poisoning the
+    result keeps that visible without the host synchronisation tracing forbids. This is the
+    one check here that cannot simply be skipped, because its failure is silent corruption
+    rather than an exception.
     """
     uncovered = (species_index < 0) & (numbers != 0)
     try:
@@ -330,12 +336,13 @@ def _reject_uncovered_species(species_index, numbers):
         jax.errors.ConcretizationTypeError,
         jax.errors.TracerArrayConversionError,
     ):
-        return
+        return jnp.where(jnp.any(uncovered), jnp.nan, 1.0)
     if missing:
         raise ValueError(
             f"Atomic numbers {missing} are not covered by fd3_params. Rebuild the "
             f"decomposition with every species present in the system."
         )
+    return 1.0
 
 
 def _reject_half_filled(
@@ -498,6 +505,10 @@ def fourier_dftd3(
 
     Notes
     -----
+    ``fd3_params`` must cover every element present. Eagerly this raises and names the
+    missing elements; under ``jax.jit`` the mask cannot be read back, so the energy, forces
+    and virial come back NaN rather than silently omitting those atoms.
+
     The returned ``energy`` is **not differentiable**. The kernels are launched with
     ``enable_backward=False`` and no VJP or JVP rule is registered on top of them, so
     ``jax.grad`` of the energy raises ``ValueError: ... cannot be differentiated`` rather than
@@ -551,7 +562,7 @@ def fourier_dftd3(
     sqrt_q = jnp.asarray(params.sqrt_q, dtype=dtype)
     species_index = params.species_map[numbers].astype(jnp.int32)
 
-    _reject_uncovered_species(species_index, numbers)
+    covered = _reject_uncovered_species(species_index, numbers)
 
     _reject_half_filled(
         neighbor_list,
@@ -814,8 +825,12 @@ def fourier_dftd3(
             launch_dims=(n_atoms, FD3_CN_BLOCK_SIZE),
         )
 
+    # 1.0 unless tracing found an element the decomposition misses; see
+    # :func:`_reject_uncovered_species`.
+    energy_total = energy_total * covered
+    forces_total = forces_total * covered
     if compute_virial:
-        return energy_total, forces_total, virial_total
+        return energy_total, forces_total, virial_total * covered
     return energy_total, forces_total
 
 

@@ -1181,6 +1181,18 @@ It reports `fourier_dftd3` and `fourier_dftd3_setup` rows across system sizes, t
 evaluation only --- the neighbour list is built outside the timed region, per the
 [kernel style guide](../about/kernel-style-guide.md).
 
+```{warning}
+`fd3_params` must cover every element in the system. `species_map` marks both padding
+(atomic number 0) and uncovered elements with `-1`, and the mesh grouping treats `-1` as
+padding, so an uncovered element would otherwise be dropped from the sum and the energy would
+come back plausible but wrong.
+
+Eagerly, both bindings raise and name the missing elements. Under `jax.jit` the mask is a
+tracer and cannot be read back to raise, so the JAX binding returns **NaN** energy, forces and
+virial instead. A NaN result from `fourier_dftd3` almost always means the parameters do not
+cover the system; rebuild the decomposition with every species present.
+```
+
 ```{important}
 For the JAX binding, `jax.jit` is not optional. Unjitted, every operation dispatches
 separately and the cost is dominated by that dispatch overhead rather than by the system
