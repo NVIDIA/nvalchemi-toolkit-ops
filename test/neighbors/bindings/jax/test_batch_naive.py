@@ -343,6 +343,46 @@ class TestBatchNaiveNeighborList:
                 np.sort(np.asarray(full_nm[atom, : int(full_nn[atom])])),
             )
 
+    @pytest.mark.parametrize(
+        "targets", [jnp.array([-1], dtype=jnp.int32), jnp.array([4], dtype=jnp.int32)]
+    )
+    def test_target_indices_eager_bounds_are_rejected(self, targets):
+        """Concrete batched compact targets must name atoms in the input array."""
+        positions = jnp.zeros((4, 3), dtype=jnp.float32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+        with pytest.raises(ValueError, match="in-bounds atom indices"):
+            batch_naive_neighbor_list(
+                positions,
+                1.0,
+                batch_ptr=batch_ptr,
+                target_indices=targets,
+            )
+
+    def test_target_indices_jit_invalid_rows_are_memory_safe(self):
+        """Traced invalid batched targets are empty rows rather than invalid reads."""
+        positions = jnp.zeros((4, 3), dtype=jnp.float32)
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+
+        @jax.jit
+        def _run(targets):
+            return batch_naive_neighbor_list(
+                positions,
+                1.0,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=2,
+                target_indices=targets,
+                strategy="scalar",
+            )
+
+        _, valid_counts = _run(jnp.array([0, 2], dtype=jnp.int32))
+        np.testing.assert_array_equal(np.asarray(valid_counts), [1, 1])
+
+        matrix, counts = _run(jnp.array([-1, 4], dtype=jnp.int32))
+        np.testing.assert_array_equal(np.asarray(counts), [0, 0])
+        np.testing.assert_array_equal(np.asarray(matrix), 4)
+
     def test_target_indices_jit_pbc_uses_precomputed_shift_metadata(self):
         """PBC batched target_indices JIT path uses caller shift metadata."""
         positions = jnp.array(

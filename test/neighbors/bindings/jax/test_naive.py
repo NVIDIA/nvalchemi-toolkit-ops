@@ -512,6 +512,36 @@ class TestNaiveNeighborList:
                 np.sort(np.asarray(full_nm[atom, : int(full_nn[atom])])),
             )
 
+    @pytest.mark.parametrize(
+        "targets", [jnp.array([-1], dtype=jnp.int32), jnp.array([3], dtype=jnp.int32)]
+    )
+    def test_target_indices_eager_bounds_are_rejected(self, targets):
+        """Concrete compact targets must name atoms in the input array."""
+        positions = jnp.zeros((3, 3), dtype=jnp.float32)
+        with pytest.raises(ValueError, match="in-bounds atom indices"):
+            naive_neighbor_list(positions, 1.0, target_indices=targets)
+
+    def test_target_indices_jit_invalid_rows_are_memory_safe(self):
+        """Traced invalid compact targets return empty rows through native guards."""
+        positions = jnp.zeros((3, 3), dtype=jnp.float32)
+
+        @jax.jit
+        def _run(targets):
+            return naive_neighbor_list(
+                positions,
+                1.0,
+                max_neighbors=2,
+                target_indices=targets,
+                strategy="scalar",
+            )
+
+        _, valid_counts = _run(jnp.array([0, 2], dtype=jnp.int32))
+        np.testing.assert_array_equal(np.asarray(valid_counts), [2, 2])
+
+        matrix, counts = _run(jnp.array([-1, 3], dtype=jnp.int32))
+        np.testing.assert_array_equal(np.asarray(counts), [0, 0])
+        np.testing.assert_array_equal(np.asarray(matrix), 3)
+
     def test_target_indices_jit_pbc_uses_precomputed_shift_metadata(self):
         """PBC target_indices JIT path uses caller-provided shift metadata."""
         positions = jnp.array(
@@ -1429,8 +1459,8 @@ def _make_naive_stale_inputs(
 class TestNaiveGraphMode:
     """Graph-mode coverage for JAX naive neighbor lists."""
 
-    def test_partial_graph_scalar_is_rejected(self):
-        """Partial Warp graph mode rejects the scalar strategy explicitly."""
+    def test_partial_graph_mode_is_rejected(self):
+        """Partial rows are not supported by Warp graph mode."""
         positions, cutoff, _, _, max_neighbors = _make_naive_inputs(
             jnp.float32,
             pbc_enabled=False,
@@ -1439,8 +1469,7 @@ class TestNaiveGraphMode:
         targets = jnp.array([0, 2], dtype=jnp.int32)
         with pytest.raises(
             ValueError,
-            match="Partial graph_mode='warp' requires strategy='auto' or "
-            "strategy='tile'",
+            match="graph_mode='warp' does not support target_indices",
         ):
             naive_neighbor_list(
                 positions,
@@ -1453,230 +1482,6 @@ class TestNaiveGraphMode:
                 ),
                 num_neighbors=jnp.zeros((2,), dtype=jnp.int32),
                 strategy="scalar",
-                graph_mode="warp",
-            )
-
-    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
-    @pytest.mark.parametrize("strategy", ["tile", "auto"])
-    @pytest.mark.parametrize(
-        ("pbc_enabled", "wrap_positions"),
-        [
-            (False, True),
-            (True, True),
-            (True, False),
-        ],
-    )
-    def test_partial_tile_warp_matches_none_and_replays(
-        self,
-        dtype,
-        strategy: str,
-        pbc_enabled: bool,
-        wrap_positions: bool,
-    ):
-        """Partial tile graphs reset compact outputs and replay correctly."""
-        positions, cutoff, cell, pbc, max_neighbors = _make_naive_inputs(
-            dtype,
-            pbc_enabled=pbc_enabled,
-            wrap_positions=wrap_positions,
-        )
-        target_indices = jnp.array([0, 2], dtype=jnp.int32)
-        num_targets = int(target_indices.shape[0])
-        neighbor_matrix = jnp.full(
-            (num_targets, max_neighbors),
-            77,
-            dtype=jnp.int32,
-        )
-        num_neighbors = jnp.full((num_targets,), 33, dtype=jnp.int32)
-
-        if pbc_enabled:
-            neighbor_matrix_shifts = jnp.full(
-                (num_targets, max_neighbors, 3),
-                -5,
-                dtype=jnp.int32,
-            )
-            shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
-                cell,
-                cutoff,
-                pbc,
-            )
-            scratch_kwargs = {}
-            if wrap_positions:
-                scratch_kwargs = {
-                    "inv_cell_buffer": jnp.linalg.inv(cell),
-                    "positions_wrapped_buffer": jnp.zeros_like(positions),
-                    "per_atom_cell_offsets_buffer": jnp.zeros(
-                        positions.shape,
-                        dtype=jnp.int32,
-                    ),
-                }
-
-            @functools.partial(jax.jit, donate_argnums=(1, 2, 3))
-            def graph_step(pos, nm, nn, nms):
-                return naive_neighbor_list(
-                    pos,
-                    cutoff,
-                    cell=cell,
-                    pbc=pbc,
-                    target_indices=target_indices,
-                    neighbor_matrix=nm,
-                    num_neighbors=nn,
-                    neighbor_matrix_shifts=nms,
-                    shift_range_per_dimension=shift_range,
-                    num_shifts_per_system=num_shifts,
-                    max_shifts_per_system=max_shifts,
-                    wrap_positions=wrap_positions,
-                    strategy=strategy,
-                    graph_mode="warp",
-                    **scratch_kwargs,
-                )
-
-            graph_result = graph_step(
-                positions,
-                neighbor_matrix,
-                num_neighbors,
-                neighbor_matrix_shifts,
-            )
-        else:
-
-            @functools.partial(jax.jit, donate_argnums=(1, 2))
-            def graph_step(pos, nm, nn):
-                return naive_neighbor_list(
-                    pos,
-                    cutoff,
-                    target_indices=target_indices,
-                    neighbor_matrix=nm,
-                    num_neighbors=nn,
-                    strategy=strategy,
-                    graph_mode="warp",
-                )
-
-            graph_result = graph_step(positions, neighbor_matrix, num_neighbors)
-
-        jax.block_until_ready(graph_result)
-        first_result = tuple(np.asarray(array) for array in graph_result)
-        graph_result = graph_step(positions, *graph_result)
-        jax.block_until_ready(graph_result)
-
-        reference = naive_neighbor_list(
-            positions,
-            cutoff,
-            cell=cell,
-            pbc=pbc,
-            max_neighbors=max_neighbors,
-            target_indices=target_indices,
-            wrap_positions=wrap_positions,
-            strategy="tile",
-            graph_mode="none",
-        )
-        _assert_partial_topology_equal(first_result, reference)
-        _assert_partial_topology_equal(graph_result, reference)
-
-    @pytest.mark.parametrize("half_fill", [False, True])
-    def test_partial_tile_warp_pbc_shift_extent(self, half_fill: bool):
-        """Partial graph capture covers full and half periodic shift spaces."""
-        dtype = jnp.float32
-        positions = jnp.array(
-            [
-                [0.2, 0.2, 0.2],
-                [2.5, 1.0, 0.5],
-                [4.8, 4.7, 4.6],
-            ],
-            dtype=dtype,
-        )
-        cell = (jnp.eye(3, dtype=dtype) * 5.0).reshape(1, 3, 3)
-        pbc = jnp.ones((1, 3), dtype=jnp.bool_)
-        cutoff = 6.0
-        max_neighbors = 512
-        target_indices = jnp.array([0, 2], dtype=jnp.int32)
-        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
-            cell,
-            cutoff,
-            pbc,
-        )
-
-        graph_result = jax.jit(
-            lambda pos, nm, nn, nms: naive_neighbor_list(
-                pos,
-                cutoff,
-                cell=cell,
-                pbc=pbc,
-                target_indices=target_indices,
-                neighbor_matrix=nm,
-                num_neighbors=nn,
-                neighbor_matrix_shifts=nms,
-                shift_range_per_dimension=shift_range,
-                num_shifts_per_system=num_shifts,
-                max_shifts_per_system=max_shifts,
-                wrap_positions=False,
-                half_fill=half_fill,
-                strategy="tile",
-                graph_mode="warp",
-            )
-        )(
-            positions,
-            jnp.full((2, max_neighbors), positions.shape[0], dtype=jnp.int32),
-            jnp.zeros((2,), dtype=jnp.int32),
-            jnp.zeros((2, max_neighbors, 3), dtype=jnp.int32),
-        )
-        reference = naive_neighbor_list(
-            positions,
-            cutoff,
-            cell=cell,
-            pbc=pbc,
-            max_neighbors=max_neighbors,
-            target_indices=target_indices,
-            shift_range_per_dimension=shift_range,
-            num_shifts_per_system=num_shifts,
-            max_shifts_per_system=max_shifts,
-            wrap_positions=False,
-            half_fill=half_fill,
-            strategy="scalar",
-            graph_mode="none",
-        )
-        _assert_partial_topology_equal(graph_result, reference)
-
-    def test_partial_tile_warp_requires_persistent_compact_buffers(self):
-        """Partial graph mode rejects calls that cannot provide stable outputs."""
-        positions = jnp.zeros((4, 3), dtype=jnp.float32)
-        target_indices = jnp.array([0, 2], dtype=jnp.int32)
-        with pytest.raises(ValueError, match="caller-provided compact"):
-            naive_neighbor_list(
-                positions,
-                1.0,
-                max_neighbors=4,
-                target_indices=target_indices,
-                strategy="tile",
-                graph_mode="warp",
-            )
-
-    def test_partial_tile_warp_rejects_dynamic_coo_output(self):
-        """Partial graph mode rejects data-dependent COO output under JIT."""
-        positions = jnp.zeros((4, 3), dtype=jnp.float32)
-        target_indices = jnp.array([0, 2], dtype=jnp.int32)
-        with pytest.raises(ValueError, match="return_neighbor_list=False"):
-            naive_neighbor_list(
-                positions,
-                1.0,
-                max_neighbors=4,
-                target_indices=target_indices,
-                neighbor_matrix=jnp.full((2, 4), 4, dtype=jnp.int32),
-                num_neighbors=jnp.zeros((2,), dtype=jnp.int32),
-                strategy="tile",
-                graph_mode="warp",
-                return_neighbor_list=True,
-            )
-
-    def test_partial_tile_warp_rejects_implicit_target_cast(self):
-        """Graph capture does not hide an unstable target dtype conversion."""
-        positions = jnp.zeros((4, 3), dtype=jnp.float32)
-        with pytest.raises(ValueError, match="rank-one int32"):
-            naive_neighbor_list(
-                positions,
-                1.0,
-                target_indices=jnp.array([0, 2], dtype=jnp.int64),
-                neighbor_matrix=jnp.full((2, 4), 4, dtype=jnp.int32),
-                num_neighbors=jnp.zeros((2,), dtype=jnp.int32),
-                strategy="tile",
                 graph_mode="warp",
             )
 

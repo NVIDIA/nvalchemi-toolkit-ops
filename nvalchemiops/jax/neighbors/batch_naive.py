@@ -845,7 +845,7 @@ def batch_naive_neighbor_list(
         Indices of the central atoms for compact partial rows. Output row ``r``
         maps to atom ``target_indices[r]``. In COO output, the first row holds
         compact row ids. User buffers must be compact-row shaped, not full
-        atom-row shaped. Values must be unique and in bounds.
+        atom-row shaped. Values must be in bounds; repeated rows are allowed.
 
     Returns
     -------
@@ -912,6 +912,11 @@ def batch_naive_neighbor_list(
         target_indices.ndim != 1 or target_indices.dtype != jnp.int32
     ):
         raise ValueError("target_indices must be a rank-one int32 array.")
+    if target_indices is not None and not isinstance(target_indices, jax.core.Tracer):
+        if bool(jnp.any(target_indices < 0)) or bool(
+            jnp.any(target_indices >= positions.shape[0])
+        ):
+            raise ValueError("target_indices must contain in-bounds atom indices.")
     if target_indices is not None and rebuild_flags is not None:
         raise NotImplementedError(
             "Partial neighbor lists do not support rebuild_flags",
@@ -1202,7 +1207,8 @@ def batch_naive_neighbor_list(
             distances_out, vectors_out, nm_out, nn_out, shifts_out = route_out
             pe_out = pf_out = None
         if return_neighbor_list:
-            if pbc is not None:
+            active = nm_out != int(fill_value)
+            if coo_capacity is None and pbc is not None:
                 nl, nptr, nl_shifts = get_neighbor_list_from_neighbor_matrix(
                     nm_out,
                     num_neighbors=nn_out,
@@ -1210,21 +1216,37 @@ def batch_naive_neighbor_list(
                     fill_value=int(fill_value),
                 )
                 base = (nl, nptr, nl_shifts)
-            else:
+                plan = None
+            elif coo_capacity is None:
                 nl, nptr = get_neighbor_list_from_neighbor_matrix(
                     nm_out,
                     num_neighbors=nn_out,
                     fill_value=int(fill_value),
                 )
                 base = (nl, nptr)
+                plan = None
+            else:
+                base, plan = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                    nm_out,
+                    nn_out,
+                    capacity=coo_capacity,
+                    neighbor_shift_matrix=shifts_out if pbc is not None else None,
+                    fill_value=int(fill_value),
+                    metadata_valid=jnp.ones((), dtype=jnp.bool_),
+                )
             # Repack per-pair geometry (and pair_fn outputs) into the same COO order
             # as ``nl``.  Eager-only, like the index conversion.
-            active = nm_out != int(fill_value)
             distances_out, vectors_out = coo_pack_pair_geometry(
-                active, distances_out, vectors_out
+                active,
+                distances_out,
+                vectors_out,
+                capacity=coo_capacity,
+                plan=plan,
             )
             if pair_fn is not None:
-                pe_out, pf_out = coo_pack_pair_geometry(active, pe_out, pf_out)
+                pe_out, pf_out = coo_pack_pair_geometry(
+                    active, pe_out, pf_out, capacity=coo_capacity, plan=plan
+                )
         elif pbc is not None:
             base = (nm_out, nn_out, shifts_out)
         else:
