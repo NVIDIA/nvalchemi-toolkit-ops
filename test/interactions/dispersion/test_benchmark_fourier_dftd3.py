@@ -146,3 +146,34 @@ class TestConfiguration:
         benchmark_module.run_from_config(config, None)
 
         assert list(tmp_path.glob("fd3_*/fd3-random-system-size-scaling.csv"))
+
+
+class TestBackendGuard:
+    """Only torch is measurable here, so anything else must fail rather than mislabel.
+
+    ``backend`` reached the row labels only -- the measurement functions import torch
+    unconditionally -- so an unsupported value would have produced a CSV claiming torch
+    numbers were something else.
+    """
+
+    @pytest.mark.parametrize("backend", ["jax", "warp", "numpy"])
+    def test_an_unsupported_backend_is_refused(self, backend):
+        """Both the sweep and the plan expansion have to refuse it."""
+        with pytest.raises(ValueError, match="only the torch backend"):
+            benchmark_module.run_from_config(CONFIG, None, backend)
+        with pytest.raises(ValueError, match="only the torch backend"):
+            benchmark_module.dry_run_from_config(CONFIG, backend)
+
+    def test_an_unsupported_backend_in_the_config_is_refused(self):
+        """``runtime.backend`` is the other way in, and is resolved the same way."""
+        config = dict(CONFIG)
+        config["runtime"] = {"backend": "jax"}
+        with pytest.raises(ValueError, match="only the torch backend"):
+            benchmark_module.dry_run_from_config(config)
+
+    def test_torch_is_the_default_and_is_labelled(self):
+        """An unset backend resolves to torch rather than to None."""
+        assert all(
+            row["backend"] == "torch"
+            for row in benchmark_module.dry_run_from_config(CONFIG)
+        )

@@ -301,8 +301,27 @@ def benchmark_real_space_d3(
     }
 
 
-def run_from_config(config: dict, output_dir, backend: str = "torch") -> list[dict]:
+def _resolve_backend(config: dict, backend: str | None) -> str:
+    """Resolve the backend and refuse any this benchmark cannot actually run.
+
+    ``backend`` only ever reached the row labels: the measurement functions import torch
+    unconditionally. Passing ``"jax"`` would therefore have run the torch kernels and written
+    a CSV claiming they were JAX, which is worse than failing -- a backend comparison would
+    show identical numbers and look like a finding.
+    """
+    if backend is None:
+        backend = config.get("runtime", {}).get("backend", "torch")
+    if backend != "torch":
+        raise ValueError(
+            f"FourierD3 benchmark supports only the torch backend, got {backend!r}. "
+            "There is no JAX measurement path here, so the rows would be mislabelled."
+        )
+    return backend
+
+
+def run_from_config(config: dict, output_dir, backend: str | None = None) -> list[dict]:
     """Sweep system size for FourierD3 and for ``dftd3`` at several cutoffs."""
+    backend = _resolve_backend(config, backend)
     parameters = config.get("parameters", {})
     atom_counts = parameters.get("atom_counts", [500, 2000, 8000, 20000])
     density = parameters.get("density", 0.1)
@@ -397,11 +416,12 @@ def run_from_config(config: dict, output_dir, backend: str = "torch") -> list[di
 
 def dry_run_from_config(config: dict, backend: str | None = None) -> list[dict]:
     """Expand the case matrix without allocating or timing anything."""
+    backend = _resolve_backend(config, backend)
     parameters = config.get("parameters", {})
     atom_counts = parameters.get("atom_counts", [500, 2000, 8000, 20000])
     cutoffs = parameters.get("real_space_cutoffs", [6.0, 15.0, 20.0])
     return [
-        {"method": method, "atoms_per_system": num_atoms, "backend": backend or "torch"}
+        {"method": method, "atoms_per_system": num_atoms, "backend": backend}
         for num_atoms in atom_counts
         for method in ["fourier_dftd3", "fourier_dftd3_setup"]
         + [f"dftd3_cutoff_{c:g}" for c in cutoffs]
