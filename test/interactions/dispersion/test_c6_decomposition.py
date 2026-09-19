@@ -24,6 +24,8 @@ import pytest
 from nvalchemiops.interactions.dispersion._c6_decomposition import (
     CNREF_INVALID,
     K3_WEIGHT,
+    _select_rank,
+    _truncation_error,
     clear_decomposition_cache,
     decompose_c6_reference,
     extract_species_reference_cn,
@@ -212,6 +214,58 @@ class TestDecomposition:
         for channel in range(decomposition.n_species):
             unused = ~decomposition.valid[channel]
             np.testing.assert_allclose(decomposition.v_q[channel][unused], 0.0)
+
+
+class TestRankSelection:
+    """Choosing the smallest rank that meets the tolerance.
+
+    The spectrum is signed and ordered by magnitude, so adding a term can cancel against
+    earlier ones and make the reconstruction worse. Any search that assumes the error falls
+    monotonically with rank can step over a qualifying smaller rank.
+    """
+
+    @staticmethod
+    def _non_monotonic_block():
+        """A block whose truncation error rises from rank 2 to rank 3.
+
+        Built from a fixed rotation and a signed spectrum, so the curve is deterministic.
+        """
+        rng = np.random.default_rng(3)
+        rotation, _ = np.linalg.qr(rng.standard_normal((6, 6)))
+        spectrum = np.array([5.0, -3.0, 2.0, -1.0, 0.5, -0.2])
+        block = (rotation * spectrum) @ rotation.T
+        block = (block + block.T) / 2.0
+        eigvals, eigvecs = np.linalg.eigh(block)
+        order = np.argsort(np.abs(eigvals))[::-1]
+        return block, eigvals[order], eigvecs[:, order]
+
+    def test_the_error_is_not_monotonic_in_rank(self):
+        """Guards the premise: without this the test below proves nothing."""
+        block, eigvals, eigvecs = self._non_monotonic_block()
+        nonzero = block != 0.0
+        errors = [
+            _truncation_error(block, eigvals, eigvecs, rank, nonzero)
+            for rank in range(1, 7)
+        ]
+        assert errors[2] > errors[1]
+
+    def test_it_returns_the_smallest_qualifying_rank(self):
+        """A bisection over this curve would return rank 4 instead of rank 2."""
+        block, eigvals, eigvecs = self._non_monotonic_block()
+        nonzero = block != 0.0
+        tol = _truncation_error(block, eigvals, eigvecs, 2, nonzero)
+
+        rank, error = _select_rank(block, eigvals, eigvecs, tol, None)
+
+        assert rank == 2
+        assert error <= tol
+
+    def test_an_unreachable_tolerance_reports_the_best_effort(self):
+        """No rank meets the tolerance, so the cap and its true error come back."""
+        block, eigvals, eigvecs = self._non_monotonic_block()
+        rank, error = _select_rank(block, eigvals, eigvecs, 1e-30, 4)
+        assert rank == 4
+        assert error > 1e-30
 
 
 class TestCaching:

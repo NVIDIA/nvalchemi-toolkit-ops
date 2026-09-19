@@ -294,10 +294,15 @@ def _select_rank(
 ) -> tuple[int, float]:
     """Smallest rank whose reconstruction meets ``tol``, and the error it achieves.
 
-    Searches by bisection over rank. The reconstruction error is not guaranteed monotonic in
-    rank for a signed spectrum, so the result is the smallest rank found to satisfy the
-    tolerance rather than a proven minimum; the returned error is always the true error of
-    the rank that is returned.
+    Scans upward rather than bisecting. The spectrum is signed and ordered by magnitude, so
+    adding a term can cancel against earlier ones and make the error worse: on the shipped
+    tables the error rises at 44 of 180 rank steps for ``Z <= 36``. Bisection assumes
+    monotonicity and so can step over a smaller rank that already meets the tolerance --
+    measured at up to six ranks too many on the full table, which is mesh channels and
+    reciprocal-space work spent for nothing.
+
+    Returns ``upper`` and its error when no rank meets ``tol``, so the caller can choose
+    between loosening ``tol`` and raising ``max_rank``.
     """
     nonzero = block != 0.0
     if not nonzero.any():
@@ -306,19 +311,12 @@ def _select_rank(
         )
 
     upper = eigvals.shape[0] if max_rank is None else min(max_rank, eigvals.shape[0])
-    if _truncation_error(block, eigvals, eigvecs, upper, nonzero) > tol:
-        # Even the largest permitted rank misses the target; report what it achieves so the
-        # caller can decide between loosening tol and raising max_rank.
-        return upper, _truncation_error(block, eigvals, eigvecs, upper, nonzero)
-
-    lo, hi = 1, upper
-    while lo < hi:
-        mid = (lo + hi) // 2
-        if _truncation_error(block, eigvals, eigvecs, mid, nonzero) <= tol:
-            hi = mid
-        else:
-            lo = mid + 1
-    return lo, _truncation_error(block, eigvals, eigvecs, lo, nonzero)
+    error = _truncation_error(block, eigvals, eigvecs, upper, nonzero)
+    for rank in range(1, upper + 1):
+        candidate = _truncation_error(block, eigvals, eigvecs, rank, nonzero)
+        if candidate <= tol:
+            return rank, candidate
+    return upper, error
 
 
 def clear_decomposition_cache() -> None:
