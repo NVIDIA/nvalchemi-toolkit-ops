@@ -2312,7 +2312,10 @@ def cluster_tile_neighbor_list(
     neighbor_vectors, neighbor_distances : torch.Tensor, optional
         OUTPUT buffers for per-pair displacements / distances. Matrix
         format allocates them when omitted; COO format requires caller-owned
-        flat buffers.
+        flat buffers. These buffers must not require gradients. When matrix
+        geometry is reconstructed for autograd, they receive detached value
+        snapshots while the returned geometry uses separate differentiable
+        tensors.
     pair_energies, pair_forces : torch.Tensor, optional
         OUTPUT buffers for per-pair energies / forces. Matrix format
         allocates them when omitted; COO format requires caller-owned flat
@@ -2331,7 +2334,9 @@ def cluster_tile_neighbor_list(
           the primary group followed by the secondary cutoff group. Selective
           calls with ``return_state=True`` append ``(num_tiles,
           tile_row_group, tile_col_group)``, yielding six tensors for one
-          cutoff or nine for two cutoffs.
+          cutoff or nine for two cutoffs. Differentiable reconstructed
+          geometry does not alias supplied output buffers; otherwise returned
+          geometry is the supplied or internally allocated buffer.
         - ``"coo"``: compact calls return ``(neighbor_list, neighbor_ptr,
           neighbor_list_shifts)``. Selective calls return fixed-capacity
           ``(neighbor_list, pair_offsets, pair_counts,
@@ -2351,6 +2356,9 @@ def cluster_tile_neighbor_list(
       positive static ``max_tiles_per_group``; complete caller-owned scratch
       may be supplied instead. Compiled capacity failures use asynchronous
       device assertions. Exact COO output and pair callbacks remain eager-only.
+    - Build differentiable losses from returned geometry, not from supplied
+      output buffers, which are non-differentiable value snapshots when
+      reconstruction is required.
     - The unified
       :func:`nvalchemiops.torch.neighbors.neighbor_list` entry point may
       select this binding automatically when the selector guards and cost
@@ -2959,9 +2967,9 @@ def cluster_tile_neighbor_list(
             neighbor_matrix_shifts,
         )
         if return_vectors:
-            neighbor_vectors.copy_(vectors)
+            neighbor_vectors.copy_(vectors.detach())
         if return_distances:
-            neighbor_distances.copy_(distances)
+            neighbor_distances.copy_(distances.detach())
 
     if dual_cutoff:
         outputs = (
@@ -2976,9 +2984,15 @@ def cluster_tile_neighbor_list(
         outputs = (neighbor_matrix, num_neighbors, neighbor_matrix_shifts)
     if geometry_requested:
         if return_distances:
-            outputs = (*outputs, neighbor_distances)
+            outputs = (
+                *outputs,
+                distances if requires_reconstruction else neighbor_distances,
+            )
         if return_vectors:
-            outputs = (*outputs, neighbor_vectors)
+            outputs = (
+                *outputs,
+                vectors if requires_reconstruction else neighbor_vectors,
+            )
     if return_state:
         return (*outputs, num_tiles, tile_row_group, tile_col_group)
     return outputs

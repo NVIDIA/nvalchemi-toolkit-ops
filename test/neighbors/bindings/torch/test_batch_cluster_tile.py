@@ -2827,6 +2827,91 @@ class TestBatchClusterTileAutograd:
         torch.testing.assert_close(vectors[active], expected[active])
         torch.testing.assert_close(distances[active], expected.norm(dim=-1)[active])
 
+    def test_matrix_geometry_buffers_are_detached_snapshots(self, device):
+        """Differentiable batched returns leave reusable buffers graph-free."""
+        pos, cell_batch, batch_ptr = self._make_batch(device)
+        pos.requires_grad_(True)
+        cell_batch.requires_grad_(True)
+        vectors = torch.full((pos.shape[0], 64, 3), -3.0, device=device)
+        distances = torch.full((pos.shape[0], 64), -3.0, device=device)
+
+        output = batch_cluster_tile_neighbor_list(
+            pos,
+            1.5,
+            cell_batch,
+            batch_ptr,
+            max_neighbors=64,
+            return_distances=True,
+            return_vectors=True,
+            neighbor_vectors=vectors,
+            neighbor_distances=distances,
+        )
+        returned_distances, returned_vectors = output[3:]
+        assert returned_distances is not distances
+        assert returned_vectors is not vectors
+        assert returned_distances.data_ptr() != distances.data_ptr()
+        assert returned_vectors.data_ptr() != vectors.data_ptr()
+        torch.testing.assert_close(distances, returned_distances.detach())
+        torch.testing.assert_close(vectors, returned_vectors.detach())
+        assert not distances.requires_grad and distances.grad_fn is None
+        assert not vectors.requires_grad and vectors.grad_fn is None
+        gradients = torch.autograd.grad(
+            returned_distances.sum() + returned_vectors.square().sum(),
+            (pos, cell_batch),
+        )
+        assert all(torch.isfinite(value).all() for value in gradients)
+
+        with torch.no_grad():
+            no_grad_output = batch_cluster_tile_neighbor_list(
+                pos,
+                1.5,
+                cell_batch,
+                batch_ptr,
+                max_neighbors=64,
+                return_distances=True,
+                return_vectors=True,
+                neighbor_vectors=vectors,
+                neighbor_distances=distances,
+            )
+        assert no_grad_output[3] is distances
+        assert no_grad_output[4] is vectors
+        assert not distances.requires_grad and distances.grad_fn is None
+        assert not vectors.requires_grad and vectors.grad_fn is None
+
+    @pytest.mark.parametrize(
+        ("buffer_name", "shape"),
+        [
+            ("neighbor_distances", (64, 64)),
+            ("neighbor_vectors", (64, 64, 3)),
+        ],
+    )
+    def test_matrix_geometry_rejects_grad_tracked_buffers(
+        self, device, buffer_name, shape
+    ):
+        """Batched geometry buffers reject autograd metadata before mutation."""
+        pos, cell_batch, batch_ptr = self._make_batch(device)
+        buffer = torch.full(shape, -7.0, device=device, requires_grad=True)
+        before = buffer.detach().clone()
+        kwargs = {
+            "return_distances": buffer_name == "neighbor_distances",
+            "return_vectors": buffer_name == "neighbor_vectors",
+            buffer_name: buffer,
+        }
+
+        with pytest.raises(
+            ValueError,
+            match=rf"{buffer_name} must not require gradients",
+        ):
+            batch_cluster_tile_neighbor_list(
+                pos,
+                1.5,
+                cell_batch,
+                batch_ptr,
+                max_neighbors=64,
+                **kwargs,
+            )
+        torch.testing.assert_close(buffer.detach(), before)
+
     def test_grad_matches_fd_spot_check(self, device):
         """fp32 spot-check on a tight per-system cluster.  See the
         single-system class for the rationale on why we don't use
@@ -2943,6 +3028,7 @@ class TestBatchClusterTileAutograd:
     def test_matrix_geometry_compiled_position_and_cell_gradients(self, device):
         """Compiled batched matrix geometry preserves position and cell gradients."""
         pos, cell_batch, batch_ptr = self._make_batch(device)
+        distance_buffer = torch.empty((pos.shape[0], 64), device=device)
         scratch = _scratch_kwargs(
             allocate_batch_cluster_tile_list(
                 batch_ptr, torch.device(device), dtype=pos.dtype, max_tiles_per_group=4
@@ -2961,7 +3047,7 @@ class TestBatchClusterTileAutograd:
             )[3].sum()
 
         @torch.compile(fullgraph=True)
-        def compiled_loss(runtime_positions, runtime_cell):
+        def compiled_geometry(runtime_positions, runtime_cell):
             return batch_cluster_tile_neighbor_list(
                 runtime_positions,
                 1.5,
@@ -2969,8 +3055,9 @@ class TestBatchClusterTileAutograd:
                 batch_ptr,
                 max_neighbors=64,
                 return_distances=True,
+                neighbor_distances=distance_buffer,
                 **scratch,
-            )[3].sum()
+            )[3]
 
         eager_pos = pos.clone().requires_grad_(True)
         eager_cell = cell_batch.clone().requires_grad_(True)
@@ -2979,7 +3066,11 @@ class TestBatchClusterTileAutograd:
         )
         compiled_pos = pos.clone().requires_grad_(True)
         compiled_cell = cell_batch.clone().requires_grad_(True)
+        actual_distances = compiled_geometry(compiled_pos, compiled_cell)
         actual = torch.autograd.grad(
-            compiled_loss(compiled_pos, compiled_cell), (compiled_pos, compiled_cell)
+            actual_distances.sum(), (compiled_pos, compiled_cell)
         )
         torch.testing.assert_close(actual, expected)
+        assert actual_distances.data_ptr() != distance_buffer.data_ptr()
+        torch.testing.assert_close(distance_buffer, actual_distances.detach())
+        assert not distance_buffer.requires_grad and distance_buffer.grad_fn is None

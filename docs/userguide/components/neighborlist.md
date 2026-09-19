@@ -1845,6 +1845,14 @@ on both the PyTorch and JAX paths (each emitted pair's geometry is reconstructed
 live from its indices and shift), so they can flow straight into a loss without
 re-deriving geometry.
 
+PyTorch geometry output buffers are non-differentiable write targets and must
+not require gradients. When matrix geometry must be reconstructed for autograd,
+the returned distances and vectors are fresh differentiable tensors; any
+supplied buffers receive detached snapshots of the same values. Without
+reconstruction, the returned geometry continues to be the supplied or
+internally allocated buffers. Build losses from the returned tensors rather
+than from reusable output buffers.
+
 ### Inline Pair Potentials with `pair_fn`
 
 Supply a Warp `pair_fn` to evaluate a pairwise potential *as neighbors are enumerated*,

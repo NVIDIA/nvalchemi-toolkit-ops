@@ -2548,7 +2548,10 @@ def batch_cluster_tile_neighbor_list(
         Per-atom pair-function parameters; required with ``pair_fn``.
     neighbor_vectors, neighbor_distances, pair_energies, pair_forces : torch.Tensor, optional
         OUTPUT buffers, written only when the corresponding enable flag
-        / ``pair_fn`` is active.
+        / ``pair_fn`` is active. Geometry buffers must not require gradients.
+        When matrix geometry is reconstructed for autograd, they receive
+        detached value snapshots while the returned geometry uses separate
+        differentiable tensors.
     max_tiles_per_group : int, optional
         Capacity factor for an internally allocated intermediate tile-pair
         buffer. A system with ``g_i`` row groups contributes
@@ -2574,6 +2577,9 @@ def batch_cluster_tile_neighbor_list(
           ``return_state=True`` append ``(tile_offsets, tile_counts,
           num_tiles, tile_row_group, tile_col_group, tile_system)``, yielding
           nine tensors for one cutoff or twelve for two cutoffs.
+          Differentiable reconstructed geometry does not alias supplied output
+          buffers; otherwise returned geometry is the supplied or internally
+          allocated buffer.
         - ``"coo"``: ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)``
           via the direct ``batch_query_cluster_tile_coo`` path (no
           matrix intermediate). ``neighbor_ptr`` is reconstructed from
@@ -2600,6 +2606,9 @@ def batch_cluster_tile_neighbor_list(
       fixed tile offsets, counters, and output buffers. Compiled capacity
       failures use asynchronous device assertions. Exact COO output and pair
       callbacks remain eager-only.
+    - Build differentiable losses from returned geometry, not from supplied
+      output buffers, which are non-differentiable value snapshots when
+      reconstruction is required.
     - The unified
       :func:`nvalchemiops.torch.neighbors.neighbor_list` entry point may
       select this binding automatically when the selector guards and cost
@@ -3315,11 +3324,19 @@ def batch_cluster_tile_neighbor_list(
         )
         if return_vectors:
             neighbor_vectors.copy_(
-                torch.where(row_update[:, None, None], vectors, neighbor_vectors)
+                torch.where(
+                    row_update[:, None, None],
+                    vectors.detach(),
+                    neighbor_vectors.detach(),
+                )
             )
         if return_distances:
             neighbor_distances.copy_(
-                torch.where(row_update[:, None], distances, neighbor_distances)
+                torch.where(
+                    row_update[:, None],
+                    distances.detach(),
+                    neighbor_distances.detach(),
+                )
             )
 
     if cutoff2 is not None:
@@ -3335,9 +3352,15 @@ def batch_cluster_tile_neighbor_list(
         outputs = (neighbor_matrix, num_neighbors, neighbor_matrix_shifts)
     if geometry_requested and rebuild_flags is None:
         if return_distances:
-            outputs = (*outputs, neighbor_distances)
+            outputs = (
+                *outputs,
+                distances if requires_reconstruction else neighbor_distances,
+            )
         if return_vectors:
-            outputs = (*outputs, neighbor_vectors)
+            outputs = (
+                *outputs,
+                vectors if requires_reconstruction else neighbor_vectors,
+            )
     if return_state:
         return (
             *outputs,

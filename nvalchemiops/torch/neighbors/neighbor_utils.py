@@ -244,6 +244,11 @@ def _validate_cluster_tile_matrix_outputs(
                 continue
             raise ValueError(f"{name} is required when its output is enabled")
         validate(name, tensor, expected_shape, dtype)
+        if tensor.requires_grad:
+            raise ValueError(
+                f"{name} must not require gradients; differentiate the returned "
+                "geometry instead"
+            )
 
 
 def _validate_segmented_coo_structure(
