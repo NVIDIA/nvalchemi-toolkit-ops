@@ -16,30 +16,13 @@
 """PyTorch bindings for the batched L-BFGS geometry optimizer.
 
 L-BFGS reaches a given force tolerance in far fewer force evaluations than the
-FIRE optimizers, which is the cost that dominates relaxation with a
-machine-learned potential.
-
-State
------
-:func:`lbfgs_prepare_state` allocates, initializes and validates the whole
-state in one call; calling it again is how you reset. Nothing is allocated per
-step, which keeps it capturable in a CUDA graph.
-
-The tensors stay yours.
-:class:`~nvalchemiops.dynamics.optimizers.lbfgs.LBFGSState` is a plain
-dataclass, so every field is reachable by name and you can build one from
-tensors you already own -- see
-:mod:`nvalchemiops.dynamics.optimizers.lbfgs` for the shapes and the required
-initial contents.
-
-Every per-system scalar follows the coordinate dtype, so ``torch.float32``
-gives an end-to-end fp32 state and ``torch.float64`` an end-to-end fp64 one.
-See the Warp module on why fp32 coordinates do not need float64 scalars.
+FIRE optimizers -- the cost that dominates relaxation with a machine-learned
+potential.
 
 Usage
 -----
-You own the loop. Each call consumes exactly one force evaluation and mutates
-``positions`` and the state in place::
+You own the loop and the stopping rule. Each call consumes exactly one force
+evaluation and mutates ``positions`` and the state in place::
 
     from nvalchemiops.torch.lbfgs import lbfgs_prepare_state, lbfgs_step_coord
 
@@ -50,34 +33,39 @@ You own the loop. Each call consumes exactly one force evaluation and mutates
             break
         lbfgs_step_coord(positions, forces, state, batch_idx, maxstep=0.2)
 
-**Convergence is yours.** The optimizer owns no tolerance and has no terminal
-status: each call updates the history, restarts if the direction stops
-descending, and takes one bounded step. This matches FIRE2. Test before
-stepping, as above -- the forces you were handed describe the positions you
-have, and after the step they describe the previous point.
-
-No energy is read either: the step length comes from a ``maxstep`` trust
-region, so a model whose forces are not the gradient of its energy relaxes
-just as well.
+Test before stepping, as above: after the step the forces you passed describe
+the previous point. The optimizer owns no tolerance and has no terminal
+status, matching FIRE2, and reads no energy -- so a model whose forces are not
+the gradient of its energy relaxes just as well.
 
 These operations mutate their inputs and are not differentiable; they are
-registered as PyTorch custom operators so they trace under ``torch.compile``.
+registered as PyTorch custom operators, so they trace under ``torch.compile``.
+
+State
+-----
+:func:`lbfgs_prepare_state` allocates, initializes and validates the whole
+state in one call; calling it again is how you reset. Nothing is allocated per
+step. The tensors stay yours --
+:class:`~nvalchemiops.dynamics.optimizers.lbfgs.LBFGSState` is a plain
+dataclass, so you can build one from tensors you already own; see
+:mod:`nvalchemiops.dynamics.optimizers.lbfgs` for shapes and required initial
+contents.
+
+Every array follows the coordinate dtype, so ``torch.float32`` gives an
+end-to-end fp32 state and ``torch.float64`` an fp64 one.
 
 CUDA graphs
 -----------
-A step captures in a CUDA graph, worth doing for a loop that runs thousands of
-times. Nothing special is required of the caller::
+A step captures with nothing special required of the caller::
 
     with torch.cuda.graph(graph):
         lbfgs_step_coord(positions, forces, state, batch_idx, maxstep=0.2)
 
 The registered operators bind Warp to PyTorch's current stream themselves, and
 during capture that *is* the capture stream, so an outer
-``wp.ScopedStream(wp.stream_from_torch(...))`` is redundant here. It is
-harmless if you have one, but it is not what makes capture work.
-
-That does not generalise: a raw Warp launch of your own, in the same captured
-region, still needs the caller to bind the stream, because nothing else will.
+``wp.ScopedStream(wp.stream_from_torch(...))`` is redundant -- harmless, but
+not what makes capture work. A raw Warp launch of your own in the same
+captured region still needs the caller to bind the stream.
 
 See Also
 --------

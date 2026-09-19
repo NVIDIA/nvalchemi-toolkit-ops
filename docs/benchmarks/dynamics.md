@@ -169,20 +169,17 @@ Total throughput (atom-steps/s) for batched optimization.
 
 ### L-BFGS
 
-L-BFGS is a quasi-Newton method: it approximates the inverse Hessian from recent
-position and force differences to choose a search direction, then takes a step
-along it bounded by a `maxstep` trust region. There is no line search and no
-energy input, so the step costs exactly one force evaluation. As with FIRE2,
-convergence is the caller's, so the figures below are optimizer time only.
+A quasi-Newton method: it approximates the inverse Hessian from recent position
+and force differences to choose a direction, then steps along it bounded by a
+`maxstep` trust region. No line search and no energy input, so a step costs
+exactly one force evaluation. As with FIRE2, convergence is the caller's, so
+the figures below are optimizer time only.
 
-**Evaluations to convergence.** The metric that matters when a machine-learned
-potential dominates the optimizer's own kernel time. Argon clusters of 13, 32
-and 55 atoms, relaxed through the package's own LJ kernels with the shared
-`potential` parameters, `fmax <= 1e-4 eV/Å`, five starting geometries per size,
-with FIRE2's timestep swept over 8 settings per case and its *best* converged
-result used as the baseline. Run in both coordinate precisions, and reported
-separately — every optimizer array follows the coordinate dtype, and both arms
-run at whichever is selected, so an fp32 row compares fp32 against fp32:
+**Evaluations to convergence** — the metric that matters when a machine-learned
+potential dominates kernel time. Argon clusters of 13, 32 and 55 atoms through
+the package's own LJ kernels, `fmax <= 1e-4 eV/Å`, five starting geometries per
+size, FIRE2's timestep swept over 8 settings per case with its *best* converged
+result as the baseline. Both arms run at the stated precision:
 
 | Metric | float32 | float64 |
 | --- | --- | --- |
@@ -190,54 +187,37 @@ run at whichever is selected, so an fp32 row compares fp32 against fp32:
 | Worst individual case | **1.01** | **1.12** |
 | Cases where both converged | 15 / 15 | 15 / 15 |
 
-**L-BFGS needs about 1.7x fewer force evaluations on average, and it loses
-outright in the worst case.** The worst ratio exceeded 1.0 in every run
-measured, so on this workload L-BFGS is not uniformly better — it is better on
-average.
+**L-BFGS needs about 1.7x fewer force evaluations on average, and loses
+outright in the worst case** — the worst ratio exceeded 1.0 in every run
+measured, so it is better on average, not uniformly. fp32 costs nothing in
+evaluation count: both precisions reach the same tolerance in
+indistinguishable counts. Counts vary by roughly 20% run to run, since
+neighbor-list rebuild ordering perturbs the forces in their last bits, so read
+the aggregate rather than a single cell.
 
-**fp32 costs nothing in evaluation count here.** Both precisions reach the same
-`1e-4` tolerance in statistically indistinguishable counts, which is the point
-of letting every scalar follow the coordinate dtype: the fp32 path is a
-complete path, not a degraded one.
-
-Evaluation counts vary by roughly 20% run to run. Neighbor-list rebuild
-ordering perturbs the forces in their last bits, and both optimizers amplify
-that into a different trajectory, so read the aggregate rather than a single
-cell.
-
-**What this workload is, and what it is not.** Argon clusters under a
-Lennard-Jones potential are a *reproducible* benchmark: everything it needs is
-in this repository, it runs in minutes on one GPU, and anyone can regenerate
-the table above. It is not a stand-in for a periodic inorganic solid under a
-machine-learned potential, which is the setting L-BFGS is actually meant for
-here, and the two can disagree — a smooth pair potential on a 55-atom cluster
-exercises neither the stiff, strongly anisotropic curvature of a relaxing
-crystal nor a force field that is not the gradient of its own energy.
-
-The comparison that would settle that is a relaxation over OMat24 structures
-with an OMat24-trained potential. It is not reproduced here: both the
-structures and the trained models are distributed under a gated third-party
-licence and would add a large optional dependency to this benchmark suite, so
-running them is a deliberate choice for whoever needs that evidence rather
-than something this suite does by default. The OMat24 figures quoted in review
-remain that reviewer's own measurement, cited rather than reproduced. Read the
-table above as what it is: the in-repo, regenerable result.
+**Scope.** This is the *reproducible* benchmark — everything it needs is in
+this repository and it runs in minutes on one GPU. It is not a stand-in for a
+periodic solid under a machine-learned potential, which is what L-BFGS is
+meant for here: a smooth pair potential on a 55-atom cluster exercises neither
+stiff crystalline curvature nor a force field that is not the gradient of its
+own energy. The comparison that would settle that is a relaxation over OMat24
+structures with an OMat24-trained potential, which is not reproduced here —
+both are behind a gated third-party licence and would add a large optional
+dependency. Those figures remain the reviewer's own measurement, cited rather
+than reproduced.
 
 These numbers are much less favourable than the `0.129` this table carried
-previously. That figure came from a NumPy all-pairs potential in reduced units
-rather than the configured workload, evaluated with a FIRE2 timestep grid tuned
-for those units — which handicapped the baseline once the units changed. Both
-are fixed: the forces now come from the package kernels, and the grid runs to
-3.0 fs because FIRE2 keeps improving well past the value the MD blocks use.
+previously, which came from a NumPy all-pairs potential in reduced units with
+a FIRE2 grid tuned for those units. Both are fixed: forces now come from the
+package kernels, and the grid runs to 3.0 fs because FIRE2 keeps improving
+past the value the MD blocks use.
 
 **Per-step optimizer cost.** Optimizer time only, single system, harmonic
-potential, measured with `--gates`. Both arms run at the stated precision:
-
-The ratio varies by roughly +/- 0.7 between runs — measured across four repeats
-at ten thousand atoms in fp32 it ranged 7.9x to 8.6x — so read the magnitude,
-not the digit. Each run writes `lbfgs_gate_timings.csv` alongside the other
-benchmark results, and the table below is one such file rather than a hand
-transcription, so it has a regenerable record behind it.
+potential, `--gates`. The table is a transcription of the
+`lbfgs_gate_timings.csv` each run writes, so it has a regenerable record
+behind it. The ratio varies by about ±0.7 between runs (four repeats at ten
+thousand atoms in fp32 ranged 7.9x to 8.6x), so read the magnitude, not the
+digit.
 
 | Atoms | Precision | Eager (ms) | CUDA graph (ms) | FIRE2 (ms) | vs FIRE2 |
 | --- | --- | --- | --- | --- | --- |
@@ -247,31 +227,22 @@ transcription, so it has a regenerable record behind it.
 | 100,000 | float64 | 1.09 | 1.05 | 0.114 | 9.5x |
 | 1,000,000 | float64 | 3.12 | 3.11 | 0.319 | 9.8x |
 
-The million-atom row predates the precision split and has not been regenerated;
-it is float64 only. Re-run `--gates` without `--gate-sizes` to refresh it.
-
-**Precision moves this less than the halved byte count suggests**, because
-FIRE2 halves too: at a hundred thousand atoms the step goes 1.09 ms to 0.98 ms,
-a 10% saving rather than a halving. The ratio difference between the two rows
-is inside the run-to-run spread above, so treat the precisions as comparable in
-per-step cost rather than reading a trend into it. It is reported per precision
-because it is a measurement, not something to infer from one run and a factor.
+The million-atom row predates the precision split and is float64 only; re-run
+`--gates` without `--gate-sizes` to refresh it. Precision moves per-step cost
+less than the halved byte count suggests, because FIRE2 halves too — 1.09 ms
+to 0.98 ms at a hundred thousand atoms, and the ratio difference between the
+two rows is inside the run-to-run spread.
 
 **A single L-BFGS step is roughly ten times more expensive than a FIRE2 step.**
-It runs `2m + O(1)` passes over the degrees of freedom against FIRE2's handful.
-At ten thousand atoms the step is launch-bound and CUDA-graph replay recovers
-about 2.9x; from one hundred thousand upwards the device work dominates and
+It runs `2m + O(1)` passes over the degrees of freedom against FIRE2's
+handful. At ten thousand atoms the step is launch-bound and CUDA-graph replay
+recovers about 2.9x; from a hundred thousand upwards device work dominates and
 replay recovers nothing.
 
 **Break-even is no longer comfortable.** The model must cost more than roughly
-0.5, 1.1 and 3.7 milliseconds per evaluation at these three sizes for L-BFGS to
-win end to end (fp32: 0.55 and 1.10 ms at the two regenerated sizes). A machine-learned potential is milliseconds per evaluation, so
-at ten thousand atoms L-BFGS wins clearly, at a hundred thousand it is close,
-and at a million it needs a genuinely expensive model.
-
-That follows arithmetically from the evaluation ratio: at `0.129` L-BFGS saved
-almost 8x the evaluations and could absorb a 10x step cost easily; at `0.59` it
-saves 1.7x, so the model has to be far more expensive to pay for the same step.
+0.5, 1.1 and 3.7 ms per evaluation at these three sizes for L-BFGS to win end
+to end. That follows from the evaluation ratio: at `0.129` it saved almost 8x
+the evaluations and could absorb a 10x step cost; at `0.59` it saves 1.7x.
 Prefer FIRE2 when the force evaluation is cheap, when the system is large, or
 when worst-case behaviour matters more than the average.
 
@@ -282,16 +253,12 @@ bytes = (2m + 3) * 3 * sizeof(dof) * P + (4m + 6) * sizeof(dof) * M
         + 4 * 4 * M
 ```
 
-At `m = 6` that is 180 bytes per degree of freedom with float32 coordinates and
-360 with float64. The two history buffers dominate; reduce `m` if memory is
-tight, with 3 to 7 the usual range.
-
-Every scalar follows the coordinate dtype, so `sizeof(dof)` appears in both
-array terms. For one large system that changes nothing — the `O(M)` scalars are
-lost next to the `O(P)` history — but for a batch of many small systems it is
-worth having: at 10<sup>6</sup> two-atom systems an fp32 state is 496 MB against
-616 MB when the scalars were pinned to float64, a 20% saving. Per-step time is
-unchanged either way (measured within ±5%).
+At `m = 6` that is 180 bytes per degree of freedom with float32 coordinates,
+360 with float64; the histories dominate, and 3 to 7 is the usual range for
+`m`. Every scalar follows the coordinate dtype, so `sizeof(dof)` appears in
+both terms. That changes nothing for one large system, but for 10<sup>6</sup>
+two-atom systems an fp32 state is 496 MB against 616 MB when the scalars were
+pinned to float64 — a 20% saving, with per-step time unchanged within ±5%.
 
 ## Hardware Information
 

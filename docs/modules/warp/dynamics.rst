@@ -124,22 +124,18 @@ L-BFGS
 ~~~~~~
 
 Limited-memory quasi-Newton optimizer with a ``maxstep`` trust region. Each
-:func:`~nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_step` call consumes exactly
-one force evaluation: it updates the curvature history, restarts if the
-direction stops descending, and takes one bounded step. A whole batch relaxes
-in one stream of kernel launches.
+:func:`~nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_step` call consumes
+exactly one force evaluation: it updates the curvature history, restarts if
+the direction stops descending, and takes one bounded step. A whole batch
+relaxes in one stream of kernel launches.
 
 Like FIRE2, it owns no tolerance and has no terminal status -- testing
-convergence and ending the loop are the caller's, which keeps the stopping
-rule where the physics is. There is no line search and no energy input either:
-the step length is bounded by ``maxstep`` rather than chosen by comparing
-energies, so a model whose forces are not the gradient of its energy relaxes
-just as well.
+convergence and ending the loop are the caller's. It reads no energy either,
+so a model whose forces are not the gradient of its energy relaxes just as
+well.
 
 The public surface is the two states, the preparation helpers, one step per
-call, and the variable-cell setup below. The phases a step is built from are
-internal decomposition points rather than operations in their own right, so
-they are not documented here.
+call, and the variable-cell setup below.
 
 .. autoclass:: nvalchemiops.dynamics.optimizers.lbfgs.LBFGSState
    :members:
@@ -147,11 +143,11 @@ they are not documented here.
 .. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_step
 
 .. note::
-   Call :func:`~nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_prepare_state`
-   once to allocate, initialize and validate the whole state; calling it again
-   is how you reset. The arrays remain yours -- :class:`LBFGSState` is a plain
-   dataclass, so you can build one from buffers you already own and check it
-   with :meth:`LBFGSState.validate`.
+   :func:`~nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_prepare_state`
+   allocates, initializes and validates the whole state in one call; calling
+   it again is how you reset. The arrays remain yours -- :class:`LBFGSState`
+   is a plain dataclass, so you can build one from buffers you already own and
+   check it with :meth:`LBFGSState.validate`.
 
 Variable-cell relaxation maps positions and cell into a single packed
 coordinate vector, so the two-loop recursion couples them automatically. Build

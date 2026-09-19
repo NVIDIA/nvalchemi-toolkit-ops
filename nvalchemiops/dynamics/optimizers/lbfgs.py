@@ -24,28 +24,11 @@ trust region allows. It reaches a given force tolerance in far fewer force
 evaluations than FIRE -- the cost that dominates relaxation with a
 machine-learned potential.
 
-Forces only: there is no line search
-------------------------------------
-**Nothing here reads an energy.** An Armijo test compares *total energies*
-while the direction comes from *forces* -- the same surface only for a
-conservative model, so a direct force head makes it reject good steps, and no
-tuning repairs that. Bounding by ``maxstep`` instead makes the cadence uniform:
-**every call is an accepted step** forming one curvature pair. The cost is that
-nothing forces the energy down, so it may rise on a step; the force still
-converges.
-
-Convergence is the caller's
----------------------------
-The optimizer owns no tolerance and has no terminal state. Each call updates
-the history, restarts if the direction stops descending, and takes one bounded
-step -- nothing more. This mirrors FIRE2, and it means the stopping rule stays
-where the physics is: you may want a force threshold, a stress threshold, an
-evaluation budget, or all three, and none of that belongs in a kernel.
-
 Calling convention
 ------------------
-You own the loop. Each :func:`lbfgs_step` call consumes **exactly one** force
-evaluation::
+You own the loop and the stopping rule. Each :func:`lbfgs_step` consumes
+**exactly one** force evaluation, and every call is an accepted step forming
+one curvature pair::
 
     for _ in range(max_steps):
         forces = my_model(positions)
@@ -53,18 +36,35 @@ evaluation::
             break
         lbfgs_step(positions, forces, state, batch_idx, maxstep=0.2)
 
-Test *before* stepping, as above: the forces you were handed describe the
-positions you have, and once you step they describe the previous point.
+Test *before* stepping, as above. After a step ``positions`` hold a new,
+unevaluated point and the ``forces`` you passed describe the point before it;
+the optimizer keeps that pair in ``x_base``/``force_base``. Positions only
+move forward, so a point you have left is never revisited.
+
+The optimizer owns no tolerance and has no terminal state, mirroring FIRE2.
+Two things *are* algorithmic and stay inside: a pair with ``s . y`` too small
+is discarded, and a direction with ``d0 >= 0`` is replaced by steepest
+descent. Neither stops anything.
+
+Nothing here reads an energy, so there is no line search. ``maxstep`` shrinks
+``alpha`` rather than clamping each displacement, because the stored pair
+``s = alpha * d`` is defined through that relation. Nothing forces the energy
+down -- it may rise on a step -- but the force still converges.
 
 Systems stay in lock step in *evaluations* while diverging in *iterations*, so
 a batch relaxes in one stream of launches with no per-system host control
-flow. A batch converges when its slowest system does; to retire finished
-systems earlier, compact the batch on the host.
+flow. A batch converges when its slowest system does; compact the batch on the
+host to retire finished systems earlier.
+
+The API is in **forces**, the algorithm in gradients, with ``g = -F`` folded
+into each kernel: ``y_history`` holds ``force_base - F``, and a descent
+direction satisfies ``force_base . d > 0``.
 
 Relation to FIRE2
 -----------------
-The decomposition mirrors FIRE2's, so both are driven the same way and a caller
-can interpose logic at the same points:
+The decomposition mirrors FIRE2's, so a caller can interpose logic at the same
+points. The extra phase exists because the step length must be settled before
+the atoms move.
 
 ========================  ==========================  ========================
 Phase                     FIRE2                       L-BFGS
@@ -76,97 +76,35 @@ move the atoms            ``fire2_apply_step``        :func:`lbfgs_apply_step`
 all of the above          ``fire2_step``              :func:`lbfgs_step`
 ========================  ==========================  ========================
 
-Cadence matches too: one state update and one step per call, and neither owns
-a tolerance or a terminal status. The extra phase exists because the step
-length must be settled *before* the atoms move. ``maxstep`` shrinks ``alpha``
-rather than clamping each displacement, since the stored pair ``s = alpha * d``
-is defined through that relation.
-
-That table is the internal structure, not the public surface. Like FIRE2, what
-is exported is the state, the preparation helpers and one step per call; the
-phases are importable from this module by name for anyone who needs to
-interpose logic between them, but they are decomposition points rather than
-operations in their own right.
-
-Restarts, which *are* the optimizer's
--------------------------------------
-Two things are algorithmic rather than terminal, so they stay inside. A
-curvature pair with ``s . y`` too small is discarded, and a two-loop direction
-with ``d0 >= 0`` is replaced by steepest descent. Neither stops anything: they
-keep the model well posed, so a run cannot stall.
-
-After a step, ``positions`` hold a **new** point that has not been evaluated,
-and the ``forces`` you passed in describe the point *before* it. The optimizer
-keeps that point in ``x_base``, with its forces in ``force_base``, so the pair
-always describes the same geometry. Positions only ever move forward -- nothing
-is rolled back -- so a point you have left is never revisited.
-
-This is why convergence is tested *before* stepping: after the call, the forces
-in hand belong to the previous geometry.
-
-Forces, not gradients
----------------------
-The API is in **forces**, the algorithm in gradients, with ``g = -F`` folded
-into each kernel. So ``y_history`` holds *gradient* differences
-(``force_base - F``), and a descent direction satisfies ``force_base . d > 0``.
+That is internal structure. The public surface is the state, the preparation
+helpers and one step per call; the phases are importable by name but are
+decomposition points, not operations in their own right.
 
 Precision
 ---------
 **Every array follows the coordinate dtype.** ``wp.vec3f`` gives an fp32 state
-end to end, ``wp.vec3d`` an fp64 one. There is no mixed configuration: the
+end to end, ``wp.vec3d`` an fp64 one. There is no mixed configuration -- the
 overloads are keyed so a mismatched state is rejected rather than silently
-half-converted.
+half-converted. Widening a reduction on its own buys nothing measurable here,
+since ``y = force_base - F`` is already formed at the coordinate precision.
 
-An earlier version pinned the per-system scalars to float64 whatever the
-coordinates, on the grounds that ``y = force_base - F`` cancels near
-convergence. That reasoning does not survive contact with the code. ``y`` is
-formed *at the coordinate precision*, and so is each ``wp.dot``; the float64
-only ever saw an already-rounded product::
-
-    yvec = force_base[i] - fi                  # fp32 subtraction: the loss is here
-    acc += wp.float64(wp.dot(svec, yvec))      # widened only after the fact
-
-A wider accumulator cannot recover what that subtraction discarded. What it
-did change is the summation across degrees of freedom -- a different and much
-smaller effect. Measured on fp32 inputs: the cancellation in ``y`` costs about
-``3e-2`` relative error once ``|dF|/|F|`` reaches ``1e-6``, while fp32
-accumulation of the dot product costs about ``1e-5`` at a million degrees of
-freedom. The accumulator was refining a quantity already swamped by three
-orders of magnitude.
-
-End to end the difference is not measurable. Over twelve Lennard-Jones
-relaxations (13 to 55 atoms, four seeds each) both policies converged 12/12,
-with a geometric-mean evaluation ratio of 0.96 and a best-reachable-force
-ratio of 1.02 -- both inside the scatter you get from any one-ULP perturbation,
-since the trajectory is a discontinuous function of reduction order.
-
-So the float64 bought nothing and cost something: fp32 users paid for float64
-arithmetic, and in JAX they were forced to enable ``JAX_ENABLE_X64`` for an
-fp32 run. If some future reduction genuinely needs a wider accumulator, widen
-*that* reduction and bring the measurement with it.
-
-One threshold does follow from this and is not a free parameter.
-``curvature_eps`` gates the history on ``ys > eps * sqrt(ss * yy)`` -- a floor
-on the cosine between ``s`` and ``y`` -- and ``ys`` is accumulated at the
-coordinate precision. The floor therefore has to sit above the level at which
-that sum is still signal, which is about ``1e-8`` in float32 and ``1e-17`` in
-float64. It defaults to ``1e-6`` and ``1e-10`` respectively; see
-:data:`_CURVATURE_EPS`. Pass a value to override, per system precision as you
-see fit.
+``curvature_eps`` follows from this. It gates the history on
+``ys > eps * sqrt(ss * yy)`` -- a floor on the cosine between ``s`` and ``y``
+-- and ``ys`` accumulates at the coordinate precision, so the floor must sit
+above the level at which that sum is still signal. Defaults: ``1e-6`` for
+float32, ``1e-10`` for float64 (:data:`_CURVATURE_EPS`). Pass a value to
+override.
 
 State
 -----
 :func:`lbfgs_prepare_state` allocates, initializes and validates everything in
-one call and hands it back as an :class:`LBFGSState`; calling it again is how
-you reset. Nothing is allocated per step, so the step stays capturable in a
-CUDA graph.
+one call; calling it again is how you reset. Nothing is allocated per step, so
+the step stays capturable in a CUDA graph.
 
-The arrays stay yours. :class:`LBFGSState` is a plain dataclass whose fields
-are reachable by name -- ``state.iteration``, ``state.history_count`` -- so
-you can also build one from buffers you already own and check it with
-:meth:`LBFGSState.validate`, which compares shapes, dtypes and device without
-touching the GPU. For ``P`` degrees of freedom, ``M`` systems and history
-depth ``m``:
+:class:`LBFGSState` is a plain dataclass, so you can also build one from
+buffers you already own and check it with :meth:`LBFGSState.validate`, which
+compares shapes, dtypes and device without touching the GPU. For ``P`` degrees
+of freedom, ``M`` systems and history depth ``m``:
 
 =============================================  ==========  ===========
 Buffer                                         Shape       dtype
@@ -180,79 +118,67 @@ Buffer                                         Shape       dtype
 ``n_loop``, ``history_count``                  ``(M,)``    int32
 =============================================  ==========  ===========
 
-Building one by hand means matching the initial contents
-:func:`lbfgs_prepare_state` produces: **zero everything**, then ``alpha_step``
-to **one** and ``iteration`` to **minus one** (the "never evaluated" marker).
+Building one by hand means matching the initial contents: **zero everything**,
+then ``alpha_step`` to **one** and ``iteration`` to **minus one** (the "never
+evaluated" marker).
 
 Variable-cell relaxation adds an :class:`LBFGSCellState` from
 :func:`lbfgs_prepare_cell_state`, for the packed path with
 ``P = num_atoms + 2 * M``:
 
-=====================================================  ====================  ==========
-Buffer                                                 Shape                 dtype
-=====================================================  ====================  ==========
-``ref_cell``, ``ref_cell_inv``, ``phi``, ``phi_inv``   ``(M,)``              mat33f/mat33d
-``d_phi``                                              ``(M,)``              mat33f/mat33d
-``kappa``                                              ``(M,)``              float32/float64
-``cell_dof_a/b``, ``cell_force_a/b``                   ``(M,)``              vec3f/vec3d
-``ext_positions``, ``ext_forces``                      ``(P,)``              vec3f/vec3d
-``ext_batch_idx``                                      ``(P,)``              int32
-``ext_atom_ptr``                                       ``(M + 1,)``          int32
-=====================================================  ====================  ==========
+=====================================================  ==============  =============
+Buffer                                                 Shape           dtype
+=====================================================  ==============  =============
+``ref_cell``, ``ref_cell_inv``, ``phi``, ``phi_inv``   ``(M,)``        mat33f/mat33d
+``d_phi``                                              ``(M,)``        mat33f/mat33d
+``kappa``                                              ``(M,)``        float32/float64
+``cell_dof_a/b``, ``cell_force_a/b``                   ``(M,)``        vec3f/vec3d
+``ext_positions``, ``ext_forces``                      ``(P,)``        vec3f/vec3d
+``ext_batch_idx``                                      ``(P,)``        int32
+``ext_atom_ptr``                                       ``(M + 1,)``    int32
+=====================================================  ==============  =============
 
-``kappa`` matches the *coordinate* precision, not float64, because it scales
-matrices. ``ref_cell``, ``ref_cell_inv`` and ``kappa`` are the chart; the rest
-is scratch.
+``kappa`` follows the *coordinate* precision because it scales matrices.
+``ref_cell``, ``ref_cell_inv`` and ``kappa`` are the chart; the rest is
+scratch.
 
 .. _lbfgs-cell-contract:
 
 The variable-cell contract
 --------------------------
-**This is the one authoritative statement of these rules.** The PyTorch and
-JAX bindings and the user guide all defer here rather than restating them.
+**The one authoritative statement of these rules**; the bindings and the user
+guide defer here.
 
 *1. Align the cell first, exactly as FIRE2 requires.*
-   Call :func:`~nvalchemiops.dynamics.utils.cell_filter.align_cell` once,
-   before the first step, and pass the aligned cell and rotated positions in.
-   This is the same requirement and the same helper that
-   ``fire2_step_coord_cell`` documents -- not a second convention.
-
-   The package calls the result **upper-triangular**, in the lattice-vector
-   reading: ``a`` along x, ``b`` in the xy-plane, ``c`` general. As a *matrix*
-   with lattice vectors in columns that is zeros strictly **above** the
-   diagonal, which is why the same object gets described both ways in the
-   wild. Only one wording is used here, the package's.
-
-   :func:`lbfgs_prepare_cell_state` checks this for you when you hand it a
-   ``cell``, because it is a one-time setup cost rather than a per-step one.
+   Call :func:`~nvalchemiops.dynamics.utils.cell_filter.align_cell` once
+   before the first step and pass the aligned cell and rotated positions in --
+   the same helper ``fire2_step_coord_cell`` documents, not a second
+   convention. The package calls the result **upper-triangular** in the
+   lattice-vector reading (``a`` along x, ``b`` in the xy-plane, ``c``
+   general); as a matrix with lattice vectors in columns that is zeros
+   strictly above the diagonal. :func:`lbfgs_prepare_cell_state` checks it for
+   you when handed a ``cell``.
 
 *2. Six components, the same six FIRE2 packs.*
    ``(0,0), (1,0), (2,0) | (1,1), (2,1), (2,2)`` -- two ``vec3`` entries per
    system, in that order, matching
    :func:`~nvalchemiops.dynamics.utils.cell_filter.pack_positions_with_cell`.
-   The three strictly-upper entries are not represented at all, so the cell
-   cannot drift into a rotation. This is why step 1 is required rather than
-   advisory: in an unaligned frame those three entries are *not* the redundant
-   ones, and constraining them constrains the wrong thing.
+   The strictly-upper entries are not represented, so the cell cannot drift
+   into a rotation. This is why rule 1 is required rather than advisory: in an
+   unaligned frame those three entries are not the redundant ones.
 
-*3. What L-BFGS does differently, and why.*
-   FIRE2 packs the cell itself. L-BFGS packs the deformation gradient
-   ``Phi = H H_ref^-1`` against a **fixed** reference cell, scaled by
-   ``kappa`` (ASE's ``UnitCellFilter`` chart). The stored ``(s, y)`` pairs
-   compare cell coordinates *across steps*, so those coordinates must mean the
-   same thing at every step -- which they do only if the reference is held
-   fixed for the whole relaxation.
-
-   **Re-referencing invalidates every stored pair.** Calling
-   :func:`lbfgs_set_reference_cell` again, or rebuilding the chart mid-run,
-   silently makes the history describe a frame that no longer exists. If you
-   must re-reference, reset the state with :func:`lbfgs_prepare_state` in the
-   same breath. FIRE2 carries no such history and so has no such rule; this is
-   the one place the two genuinely differ.
+*3. The reference cell is fixed for the whole relaxation.*
+   FIRE2 packs the cell itself; L-BFGS packs the deformation gradient
+   ``Phi = H H_ref^-1`` against a fixed reference, scaled by ``kappa`` (ASE's
+   ``UnitCellFilter`` chart). Stored pairs compare cell coordinates *across*
+   steps, so those coordinates must mean the same thing at every step.
+   **Re-referencing invalidates every stored pair**: if you call
+   :func:`lbfgs_set_reference_cell` again or rebuild the chart mid-run, reset
+   the state with :func:`lbfgs_prepare_state` in the same breath.
 
 *4. Topology is yours, which is what makes ragged batches work.*
    ``ext_batch_idx`` and ``ext_atom_ptr`` are required rather than derived,
-   because deriving them would mean assuming an even split::
+   because deriving them would assume an even split::
 
        from nvalchemiops.batch_utils import atom_ptr_to_batch_idx
        from nvalchemiops.dynamics.utils.cell_filter import extend_atom_ptr
@@ -260,21 +186,17 @@ JAX bindings and the user guide all defer here rather than restating them.
        extend_atom_ptr(atom_ptr, ext_atom_ptr)   # ext_atom_ptr[s] = atom_ptr[s] + 2s
        atom_ptr_to_batch_idx(ext_atom_ptr, ext_batch_idx)
 
-   Systems may have different atom counts. Each contributes exactly two packed
-   entries regardless, so ``P = num_atoms + 2 * M`` holds for any split, and
-   :meth:`LBFGSCellState.validate` checks that relationship.
+   Atom counts may differ per system; each contributes exactly two packed
+   entries regardless, so ``P = num_atoms + 2 * M`` holds for any split and
+   :meth:`LBFGSCellState.validate` checks it.
 
 *5. Empty systems are rejected here, and supported on the coordinate path.*
    ``kappa`` scales the cell coordinate against the atomic ones and is divided
    into the cell force, so a system with no atoms has no scale to give it.
-   Rather than substitute one -- which would invent a number with no physical
-   basis and make an unsupported configuration look valid -- both
    :func:`lbfgs_cell_kappa` and :func:`lbfgs_prepare_cell_state` reject the
-   batch, naming the offending systems. All three layers agree.
-
-   The coordinate-only path is a different case and stays supported: zero
-   degrees of freedom is simply a no-op there, because there is no cell to
-   scale against.
+   batch, naming the offending systems, in all three layers. The
+   coordinate-only path is a different case and stays supported: with no cell
+   to scale against, zero degrees of freedom is a no-op.
 
 Memory
 ------
@@ -283,9 +205,8 @@ For ``P`` degrees of freedom, ``M`` systems and history ``m``::
     bytes = (2m + 3) * 3 * sizeof(dof) * P + (4m + 6) * sizeof(dof) * M
             + 4 * 4 * M
 
-``sizeof(dof)`` appears in both array terms because every scalar follows the
-coordinate dtype. At ``m = 6`` that is 180 bytes per degree of freedom with
-float32 coordinates, 360 with float64. The two histories dominate; 3 to 7 is the usual range for
+At ``m = 6`` that is 180 bytes per degree of freedom with float32 coordinates,
+360 with float64. The two histories dominate; 3 to 7 is the usual range for
 ``m``.
 
 References

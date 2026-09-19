@@ -16,11 +16,11 @@
 """JAX bindings for the batched L-BFGS geometry optimizer.
 
 L-BFGS reaches a given force tolerance in far fewer force evaluations than the
-FIRE optimizers, which is the cost that dominates relaxation with a
-machine-learned potential.
+FIRE optimizers -- the cost that dominates relaxation with a machine-learned
+potential.
 
 JAX arrays are immutable, so unlike the PyTorch binding these entry points
-**return** a new state rather than writing in place. Both
+**return** a new state. Both
 :class:`~nvalchemiops.dynamics.optimizers.lbfgs.LBFGSState` and
 :class:`~nvalchemiops.dynamics.optimizers.lbfgs.LBFGSCellState` are registered
 pytrees, so a state crosses ``jax.jit`` as one argument and one
@@ -30,9 +30,7 @@ pytrees, so a state crosses ``jax.jit`` as one argument and one
 
     @functools.partial(jax.jit, donate_argnums=(0, 1))
     def relax_step(positions, state, forces):
-        return lbfgs_step_coord(
-            positions, forces, state, batch_idx
-        )
+        return lbfgs_step_coord(positions, forces, state, batch_idx)
 
     for _ in range(max_steps):
         forces = model(positions)
@@ -40,41 +38,31 @@ pytrees, so a state crosses ``jax.jit`` as one argument and one
             break
         positions, state = relax_step(positions, state, forces)
 
-**Convergence is yours.** The optimizer owns no tolerance and has no terminal
-status: each call updates the history, restarts if the direction stops
-descending, and takes one bounded step. This matches FIRE2. Test before
-stepping, as above -- the forces you were handed describe the positions you
-have, and after the step they describe the previous point. Reading a norm back
-costs a host synchronization, so a caller that wants to amortize it can test
-every few steps instead of every step.
+Test before stepping, as above: the returned ``positions`` are a new,
+unevaluated point, and the forces you passed describe the point before it
+(kept in ``x_base``/``force_base``). The optimizer owns no tolerance and has
+no terminal status, matching FIRE2. Reading a norm back costs a host
+synchronization, so test every few steps if that matters.
+
+These operations are **not differentiable**: ``jax.grad`` through a step fails
+rather than returning a silently wrong answer.
 
 State
 -----
 :func:`lbfgs_prepare_state` allocates, initializes and validates the whole
-state; in a functional setting resetting and allocating are the same
-operation, so calling it again is how you restart. The arrays stay yours: the
-state is a plain dataclass, so you can build one from arrays you already own
-and check it with ``state.validate()``. See
-:mod:`nvalchemiops.dynamics.optimizers.lbfgs` for the shape table and the
-required initial contents.
+state; in a functional setting resetting and allocating are the same thing, so
+calling it again is how you restart. The arrays stay yours -- the state is a
+plain dataclass with a ``validate()`` method; see
+:mod:`nvalchemiops.dynamics.optimizers.lbfgs` for shapes and required initial
+contents.
 
-Every per-system scalar follows the coordinate dtype, so an fp32 state is
-fp32 end to end and **needs no** ``JAX_ENABLE_X64``. See the Warp module on why
-fp32 coordinates do not need float64 scalars.
-
-After a step, ``positions`` hold a **new** point that has not been evaluated,
-and the ``forces`` you passed in describe the point *before* it. The optimizer
-keeps that point in ``x_base``, with its forces in ``force_base``, so the pair
-always describes the same geometry. Positions only ever move forward -- nothing
-is rolled back -- so a point you have left is never revisited.
-
-This is why convergence is tested *before* stepping: after the call, the forces
-in hand belong to the previous geometry.
+Every array follows the coordinate dtype, so an fp32 state is fp32 end to end
+and **needs no** ``JAX_ENABLE_X64``.
 
 Donation and pointer stability
 ------------------------------
 Every mutable array is an input-output alias, so XLA may reuse each input
-buffer for the matching output. Two consequences, both about performance:
+buffer for the matching output. Both consequences are about performance:
 
 - **Donate the state.** Without donation JAX copies, doubling peak memory and
   moving the pointers. On the variable-cell path donate ``state`` but not
@@ -85,15 +73,13 @@ buffer for the matching output. Two consequences, both about performance:
 
 Under ``JaxCallableGraphMode.WARP`` the step replays as a CUDA graph. The
 capture is keyed on input addresses, so a fresh ``forces`` array each step
-gives a small working set rather than one graph; measurements settle at four or
-five. If the count grows without bound, pass ``graph_mode="warp_staged"``,
-which keys on the call instead at the cost of one copy per staged array.
+gives a small working set rather than one graph per call; measurements settle
+at four or five. If the count grows without bound, pass
+``graph_mode="warp_staged"``, which keys on the call instead at the cost of
+one copy per staged array.
 
 Scalars are baked into the compiled call, so changing ``maxstep`` between
 steps triggers a recompilation.
-
-These operations are **not differentiable**. ``jax.grad`` through a step fails
-rather than returning a silently wrong answer.
 
 See Also
 --------
