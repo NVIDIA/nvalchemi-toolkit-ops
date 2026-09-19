@@ -556,6 +556,9 @@ def _make_scalar_kernel(
             atom_i = row
             if PARTIAL:
                 atom_i = target_indices[row]
+                if atom_i < 0 or atom_i >= positions.shape[0]:
+                    num_neighbors1[row] = 0
+                    return
 
             isys = wp.int32(0)
             j_start = wp.int32(0)
@@ -1015,6 +1018,9 @@ def _make_tile_kernel(
         atom_i = row
         if PARTIAL:
             atom_i = target_indices[row]
+            if atom_i < 0 or atom_i >= positions.shape[0]:
+                num_neighbors[row] = 0
+                return
         isys = wp.int32(0)
         j_start = wp.int32(0)
         j_end = positions.shape[0]

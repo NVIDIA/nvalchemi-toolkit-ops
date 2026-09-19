@@ -1014,3 +1014,72 @@ class TestBatchNaiveSelectiveRebuildFlags:
         assert torch.equal(nn_sel, nn_ref), (
             "num_neighbors should match full rebuild when all flags=True"
         )
+
+    @pytest.mark.parametrize(
+        ("device", "strategy"),
+        [("cpu", "scalar"), ("cuda:0", "scalar"), ("cuda:0", "tile")],
+    )
+    def test_partial_targets_guard_invalid_rows_and_preserve_duplicates(
+        self, device, strategy
+    ):
+        """Invalid compact rows are empty without affecting valid repeated rows."""
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [1.0, 0.0, 0.0]],
+            dtype=torch.float32,
+            device=device,
+        )
+        batch_idx, batch_ptr = create_batch_idx_and_ptr([3], device)
+        targets = torch.tensor([0, -1, 3, 0], dtype=torch.int32, device=device)
+        neighbor_matrix = torch.full(
+            (targets.shape[0], 3), -7, dtype=torch.int32, device=device
+        )
+        num_neighbors = torch.zeros(targets.shape[0], dtype=torch.int32, device=device)
+
+        batch_naive_neighbor_matrix(
+            wp.from_torch(positions, dtype=wp.vec3f),
+            1.1,
+            wp.from_torch(batch_idx, dtype=wp.int32),
+            wp.from_torch(batch_ptr, dtype=wp.int32),
+            wp.from_torch(neighbor_matrix, dtype=wp.int32),
+            wp.from_torch(num_neighbors, dtype=wp.int32),
+            wp.float32,
+            device,
+            target_indices=wp.from_torch(targets, dtype=wp.int32),
+            strategy=strategy,
+        )
+
+        assert torch.equal(
+            num_neighbors.cpu(), torch.tensor([2, 0, 0, 2], dtype=torch.int32)
+        )
+        assert torch.equal(neighbor_matrix[0], neighbor_matrix[3])
+        assert torch.equal(
+            neighbor_matrix[1:].cpu(),
+            torch.tensor(
+                [[-7, -7, -7], [-7, -7, -7], [1, 2, -7]],
+                dtype=torch.int32,
+            ),
+        )
+
+    def test_empty_partial_targets_leave_empty_outputs(self):
+        """An empty compact target list is a valid no-op native launch."""
+        device = "cpu"
+        positions = torch.zeros((2, 3), dtype=torch.float32, device=device)
+        batch_idx, batch_ptr = create_batch_idx_and_ptr([2], device)
+        targets = torch.empty(0, dtype=torch.int32, device=device)
+        neighbor_matrix = torch.empty((0, 2), dtype=torch.int32, device=device)
+        num_neighbors = torch.empty(0, dtype=torch.int32, device=device)
+
+        batch_naive_neighbor_matrix(
+            wp.from_torch(positions, dtype=wp.vec3f),
+            1.0,
+            wp.from_torch(batch_idx, dtype=wp.int32),
+            wp.from_torch(batch_ptr, dtype=wp.int32),
+            wp.from_torch(neighbor_matrix, dtype=wp.int32),
+            wp.from_torch(num_neighbors, dtype=wp.int32),
+            wp.float32,
+            device,
+            target_indices=wp.from_torch(targets, dtype=wp.int32),
+        )
+
+        assert neighbor_matrix.shape == (0, 2)
+        assert num_neighbors.numel() == 0

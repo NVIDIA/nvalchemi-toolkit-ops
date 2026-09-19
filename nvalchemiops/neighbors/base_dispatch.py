@@ -471,9 +471,7 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
         wrap_positions_false = (
             option_mask & wp.int32(_OPTION_WRAP_POSITIONS_FALSE)
         ) != wp.int32(0)
-        has_pair_outputs = (
-            has_target_indices or has_vectors or has_distances or use_pair_fn
-        )
+        has_pair_outputs = has_vectors or has_distances or use_pair_fn
 
         total_atoms = batch_ptr[num_systems]
         if tid == 0:
