@@ -624,6 +624,102 @@ def test_prepared_exact_coo_geometry_is_aligned() -> None:
 
 
 @pytest.mark.gpu
+@pytest.mark.slow
+def test_prepared_batch_exact_coo_geometry_uses_cached_partition() -> None:
+    """Prepared batch COO geometry stays current with cached atom ownership."""
+    positions, cell, batch_ptr = _inputs(True)
+    assert batch_ptr is not None
+    state = prepare_cluster_tile(
+        positions,
+        1.5,
+        cell,
+        format="coo",
+        batch_ptr=batch_ptr,
+        max_neighbors=32,
+        max_pairs=2048,
+        return_vectors=True,
+        return_distances=True,
+        max_tiles_per_group=4,
+    )
+    metadata = state._partition_metadata
+    assert metadata is not None
+    metadata_values = tuple(value.clone() for value in metadata)
+    metadata_pointers = tuple(value.data_ptr() for value in metadata)
+
+    def call(values: torch.Tensor, box: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        return cluster_tile_neighbor_list_prepared(values, box, state)
+
+    torch.compiler.reset()
+    run = torch.compile(call, fullgraph=True)
+
+    def assert_current_geometry(
+        output: tuple[torch.Tensor, ...],
+        values: torch.Tensor,
+        box: torch.Tensor,
+    ) -> None:
+        """Check exact geometry against current batched inputs."""
+        pairs, pointer, shifts, distances, vectors = output
+        _coo_records((pairs, pointer, shifts))
+        pair_system = metadata.atom_system[pairs[0].long()].long()
+        expected_vectors = values[pairs[1].long()] - values[pairs[0].long()]
+        expected_vectors = expected_vectors + torch.einsum(
+            "pa,pab->pb", shifts.to(values.dtype), box[pair_system]
+        )
+        torch.testing.assert_close(vectors, expected_vectors)
+        torch.testing.assert_close(distances, expected_vectors.norm(dim=-1))
+        count = pairs.shape[1]
+        assert state.neighbor_vectors is not None
+        assert state.neighbor_distances is not None
+        torch.testing.assert_close(state.neighbor_vectors[:count], vectors.detach())
+        torch.testing.assert_close(state.neighbor_distances[:count], distances.detach())
+        assert vectors.data_ptr() != state.neighbor_vectors.data_ptr()
+        assert distances.data_ptr() != state.neighbor_distances.data_ptr()
+
+    grad_positions = positions.clone().requires_grad_(True)
+    grad_cell = cell.clone().requires_grad_(True)
+    output = run(grad_positions, grad_cell)
+    assert_current_geometry(output, grad_positions, grad_cell)
+    gradients = torch.autograd.grad(
+        output[3].sum() + output[4].square().sum(),
+        (grad_positions, grad_cell),
+    )
+
+    reference_positions = positions.clone().requires_grad_(True)
+    reference_cell = cell.clone().requires_grad_(True)
+    reference = batch_cluster_tile_neighbor_list(
+        reference_positions,
+        1.5,
+        reference_cell,
+        batch_ptr,
+        format="coo",
+        max_neighbors=32,
+        max_pairs=2048,
+        max_tiles_per_group=4,
+        return_vectors=True,
+        return_distances=True,
+    )
+    reference_gradients = torch.autograd.grad(
+        reference[3].sum() + reference[4].square().sum(),
+        (reference_positions, reference_cell),
+    )
+    assert _coo_records(output[:3]) == _coo_records(reference[:3])
+    torch.testing.assert_close(gradients, reference_gradients)
+
+    changed_positions = (positions * 0.97).requires_grad_(True)
+    changed_cell = (cell * 1.03).requires_grad_(True)
+    changed_output = run(changed_positions, changed_cell)
+    assert_current_geometry(changed_output, changed_positions, changed_cell)
+    changed_gradients = torch.autograd.grad(
+        changed_output[3].sum() + changed_output[4].square().sum(),
+        (changed_positions, changed_cell),
+    )
+    assert all(torch.isfinite(value).all() for value in changed_gradients)
+    assert tuple(value.data_ptr() for value in metadata) == metadata_pointers
+    for value, expected_value in zip(metadata, metadata_values):
+        assert torch.equal(value, expected_value)
+
+
+@pytest.mark.gpu
 @pytest.mark.parametrize(
     ("return_vectors", "return_distances"),
     [(True, False), (False, True), (True, True)],

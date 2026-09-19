@@ -3601,10 +3601,14 @@ def _batch_cluster_tile_neighbor_list_normalized(
             )
             if geometry_requested:
                 if requires_reconstruction:
-                    batch_idx_atom = torch.repeat_interleave(
-                        torch.arange(num_systems, dtype=torch.int32, device=device),
-                        (batch_ptr[1:] - batch_ptr[:-1]).to(torch.int64),
-                        output_size=N,
+                    batch_idx_atom = (
+                        partition_metadata.atom_system
+                        if partition_metadata is not None
+                        else torch.repeat_interleave(
+                            torch.arange(num_systems, dtype=torch.int32, device=device),
+                            (batch_ptr[1:] - batch_ptr[:-1]).to(torch.int64),
+                            output_size=N,
+                        )
                     )
                     exact_distances, exact_vectors = _reconstruct_coo_geometry(
                         positions, cell_batch, nl, nls, batch_idx_atom
@@ -3742,11 +3746,14 @@ def _batch_cluster_tile_neighbor_list_normalized(
 
     batch_idx_atom = None
     if rebuild_flags is not None or requires_reconstruction:
-        per_sys_counts = batch_ptr[1:] - batch_ptr[:-1]
-        batch_idx_atom = torch.repeat_interleave(
-            torch.arange(num_systems, dtype=torch.int32, device=device),
-            per_sys_counts.to(torch.int64),
-            output_size=N,
+        batch_idx_atom = (
+            partition_metadata.atom_system
+            if partition_metadata is not None
+            else torch.repeat_interleave(
+                torch.arange(num_systems, dtype=torch.int32, device=device),
+                (batch_ptr[1:] - batch_ptr[:-1]).to(torch.int64),
+                output_size=N,
+            )
         )
     batch_query_cluster_tile(
         sorted_atom_index,
