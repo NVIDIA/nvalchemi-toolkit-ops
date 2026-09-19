@@ -426,9 +426,11 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50, device=DEFAULT_DEVICE):
         torch.cuda.synchronize()
         wp.synchronize()
         graph = torch.cuda.CUDAGraph()
-        with wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream())):
-            with torch.cuda.graph(graph):
-                step()
+        # No wp.ScopedStream here: step() is the PyTorch model plus the
+        # registered L-BFGS op, and that op binds Warp to the current stream
+        # itself, which during capture is the capture stream.
+        with torch.cuda.graph(graph):
+            step()
         torch.cuda.synchronize()
         graphed = _time_ms(graph.replay, warmup, runs) - model_ms
         check("graph")
