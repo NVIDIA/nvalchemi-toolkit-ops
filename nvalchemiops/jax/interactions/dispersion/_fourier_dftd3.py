@@ -52,7 +52,6 @@ from nvalchemiops.interactions.dispersion._c6_decomposition import (
 from nvalchemiops.interactions.dispersion._fourier_dftd3 import (
     FD3_CN_BLOCK_SIZE,
     FD3_KSPACE_BLOCK_SIZE,
-    _check_mesh_supports_stencil,
     _fd3_cn_forces_kernel_overload,
     _fd3_cn_forces_matrix_kernel_overload,
     _fd3_cn_kernel_overload,
@@ -63,7 +62,7 @@ from nvalchemiops.interactions.dispersion._fourier_dftd3 import (
     _fd3_kspace_kernel_overload,
     _fd3_self_energy_kernel_overload,
     _fd3_spread_kernel_overload,
-    _next_fft_friendly,
+    _resolve_mesh,
 )
 from nvalchemiops.jax.types import normalize_float_dtype
 
@@ -271,40 +270,6 @@ class FourierD3Parameters:
             species_map=jnp.asarray(decomposition.species_map, dtype=jnp.int32),
             max_relative_error=decomposition.max_relative_error,
         )
-
-
-def _resolve_mesh(mesh_dimensions, mesh_spacing, cells, spline_order):
-    """Settle the mesh size, requiring exactly one of the two ways of asking for it.
-
-    Either route is held to the same minimum, ``spline_order`` nodes per axis.
-    """
-    if (mesh_dimensions is None) == (mesh_spacing is None):
-        raise ValueError(
-            "Provide exactly one of mesh_dimensions or mesh_spacing. There is no "
-            "accuracy-based default for FourierD3."
-        )
-    if mesh_dimensions is not None:
-        if len(mesh_dimensions) != 3 or any(int(n) < 1 for n in mesh_dimensions):
-            raise ValueError(
-                f"mesh_dimensions must be three positive integers, got {mesh_dimensions}."
-            )
-        return _check_mesh_supports_stencil(
-            tuple(int(n) for n in mesh_dimensions), spline_order, "mesh_dimensions"
-        )
-    if mesh_spacing <= 0.0:
-        raise ValueError(f"mesh_spacing must be positive, got {mesh_spacing}.")
-    try:
-        lengths = np.linalg.norm(np.asarray(cells), axis=-1).max(axis=0)
-    except (jax.errors.ConcretizationTypeError, jax.errors.TracerArrayConversionError):
-        raise ValueError(
-            "mesh_spacing reads the cell lengths, which is not possible inside jax.jit. "
-            "Pass mesh_dimensions explicitly when tracing."
-        ) from None
-    return _check_mesh_supports_stencil(
-        tuple(_next_fft_friendly(np.ceil(length / mesh_spacing)) for length in lengths),
-        spline_order,
-        f"mesh_spacing = {mesh_spacing}",
-    )
 
 
 def _blocked(call, gpu_block, reference):
@@ -604,8 +569,22 @@ def fourier_dftd3(
 
     covered = _reject_uncovered_species(species_index, numbers)
 
+    # Reading the lengths is framework-specific, and impossible while tracing, so it is
+    # done here and only on the route that needs them.
+    lengths = None
+    if mesh_spacing is not None:
+        try:
+            lengths = np.linalg.norm(np.asarray(cells), axis=-1).max(axis=0)
+        except (
+            jax.errors.ConcretizationTypeError,
+            jax.errors.TracerArrayConversionError,
+        ):
+            raise ValueError(
+                "mesh_spacing reads the cell lengths, which is not possible inside "
+                "jax.jit. Pass mesh_dimensions explicitly when tracing."
+            ) from None
     mesh_nx, mesh_ny, mesh_nz = _resolve_mesh(
-        mesh_dimensions, mesh_spacing, cells, spline_order
+        mesh_dimensions, mesh_spacing, lengths, spline_order
     )
     n_species, rank = params.n_species, params.rank
 

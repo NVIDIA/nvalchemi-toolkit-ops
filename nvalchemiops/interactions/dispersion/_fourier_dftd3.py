@@ -238,6 +238,57 @@ def _next_fft_friendly(size):
         candidate += 1
 
 
+def _resolve_mesh(mesh_dimensions, mesh_spacing, cell_lengths, spline_order):
+    """Settle the mesh size, requiring exactly one of the two ways of asking for it.
+
+    Unlike PME there is no accuracy-based estimator to fall back on, so leaving both unset is
+    an error rather than a guess. Either route is held to the same minimum, ``spline_order``
+    nodes per axis.
+
+    Parameters
+    ----------
+    mesh_dimensions : tuple or None
+        Explicit mesh, used exactly as given.
+    mesh_spacing : float or None
+        Target spacing. Exactly one of this and ``mesh_dimensions``.
+    cell_lengths : sequence of float or None
+        Longest cell vector per axis across the batch, needed only for the spacing route.
+        One mesh serves every system, so sizing from the first would under-resolve the rest.
+        The caller reads these, because getting them from a cell is framework-specific and
+        impossible while tracing.
+    spline_order : int
+        Interpolation order the mesh has to support.
+
+    Returns
+    -------
+    tuple[int, int, int]
+        The resolved mesh.
+    """
+    if (mesh_dimensions is None) == (mesh_spacing is None):
+        raise ValueError(
+            "Provide exactly one of mesh_dimensions or mesh_spacing. There is no "
+            "accuracy-based default for FourierD3."
+        )
+    if mesh_dimensions is not None:
+        if len(mesh_dimensions) != 3 or any(int(n) < 1 for n in mesh_dimensions):
+            raise ValueError(
+                f"mesh_dimensions must be three positive integers, got {mesh_dimensions}."
+            )
+        return _check_mesh_supports_stencil(
+            tuple(int(n) for n in mesh_dimensions), spline_order, "mesh_dimensions"
+        )
+    if mesh_spacing <= 0.0:
+        raise ValueError(f"mesh_spacing must be positive, got {mesh_spacing}.")
+    return _check_mesh_supports_stencil(
+        tuple(
+            _next_fft_friendly(math.ceil(float(length) / mesh_spacing))
+            for length in cell_lengths
+        ),
+        spline_order,
+        f"mesh_spacing = {mesh_spacing}",
+    )
+
+
 def _check_mesh_supports_stencil(mesh, spline_order, origin):
     """Refuse a mesh too short to hold the interpolation stencil.
 

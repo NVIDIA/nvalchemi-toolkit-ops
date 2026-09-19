@@ -47,7 +47,7 @@ from nvalchemiops.interactions.dispersion._c6_decomposition import (
 )
 from nvalchemiops.interactions.dispersion._fourier_dftd3 import (
     _check_mesh_supports_stencil,
-    _next_fft_friendly,
+    _resolve_mesh,
     fd3_cn_chain,
     fd3_cn_chain_matrix,
     fd3_coefficients,
@@ -876,42 +876,6 @@ def _check_spline_order(spline_order, origin):
         )
 
 
-def _resolve_mesh(mesh_dimensions, mesh_spacing, cells, spline_order):
-    """Settle the mesh size, requiring exactly one of the two ways of asking for it.
-
-    Unlike PME there is no accuracy-based estimator to fall back on, so leaving both unset is
-    an error rather than a guess. When a spacing is given the largest cell in the batch sets
-    the size, since one mesh serves every system and sizing from the first would under-resolve
-    the rest.
-
-    Either route is held to the same minimum, ``spline_order`` nodes per axis.
-    """
-    if (mesh_dimensions is None) == (mesh_spacing is None):
-        raise ValueError(
-            "Provide exactly one of mesh_dimensions or mesh_spacing. There is no "
-            "accuracy-based default for FourierD3."
-        )
-    if mesh_dimensions is not None:
-        if len(mesh_dimensions) != 3 or any(int(n) < 1 for n in mesh_dimensions):
-            raise ValueError(
-                f"mesh_dimensions must be three positive integers, got {mesh_dimensions}."
-            )
-        return _check_mesh_supports_stencil(
-            tuple(int(n) for n in mesh_dimensions), spline_order, "mesh_dimensions"
-        )
-    if mesh_spacing <= 0.0:
-        raise ValueError(f"mesh_spacing must be positive, got {mesh_spacing}.")
-    lengths = torch.linalg.norm(cells, dim=-1).max(dim=0).values
-    return _check_mesh_supports_stencil(
-        tuple(
-            _next_fft_friendly(torch.ceil(length / mesh_spacing).item())
-            for length in lengths
-        ),
-        spline_order,
-        f"mesh_spacing = {mesh_spacing}",
-    )
-
-
 def _validate_neighbours(
     neighbor_matrix, neighbor_matrix_shifts, neighbor_list, neighbor_ptr, unit_shifts
 ):
@@ -1188,8 +1152,15 @@ def fourier_dftd3(
         mesh_nx, mesh_ny, mesh_nz = setup.mesh_dimensions
         spline_order = setup.spline_order
     else:
+        # Reading the lengths is framework-specific and synchronises, so it is done here
+        # and only on the route that needs them.
+        lengths = (
+            None
+            if mesh_spacing is None
+            else torch.linalg.norm(cells, dim=-1).max(dim=0).values.tolist()
+        )
         mesh_nx, mesh_ny, mesh_nz = _resolve_mesh(
-            mesh_dimensions, mesh_spacing, cells, spline_order
+            mesh_dimensions, mesh_spacing, lengths, spline_order
         )
     n_species, rank = params.n_species, params.rank
 

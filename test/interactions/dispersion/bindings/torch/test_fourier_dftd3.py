@@ -32,6 +32,9 @@ import pytest
 # optional dependency into a NameError during collection.
 torch = pytest.importorskip("torch", reason="PyTorch not installed.")
 
+from nvalchemiops.interactions.dispersion._fourier_dftd3 import (  # noqa: E402
+    _resolve_mesh,
+)
 from nvalchemiops.torch.interactions.dispersion import (  # noqa: E402
     FourierD3Parameters,
     FourierD3Setup,
@@ -40,14 +43,18 @@ from nvalchemiops.torch.interactions.dispersion import (  # noqa: E402
 from nvalchemiops.torch.interactions.dispersion import (  # noqa: E402
     _fourier_dftd3 as _fd3,
 )
-from nvalchemiops.torch.interactions.dispersion._fourier_dftd3 import (  # noqa: E402
-    _resolve_mesh,
-)
 from test.interactions.dispersion.test_fourier_dftd3 import (  # noqa: E402
     _neighbour_list,
     _reference_tables,
     _to_dense,
 )
+
+
+def _cell_lengths(cell):
+    """Longest lattice-vector length per axis, the input `_resolve_mesh` expects."""
+    cells = cell.reshape(-1, 3, 3)
+    return torch.linalg.norm(cells, dim=-1).max(dim=0).values.tolist()
+
 
 DAMPING = dict(a1=0.4289, a2=4.4407, s8=0.7875, s6=1.0)
 R_CUT = 4.0
@@ -834,7 +841,7 @@ class TestMeshAndUnits:
         """
         system = _system("cuda:0")
         for spacing in (0.07, 0.0709, 0.0711, 0.073, 0.11, 0.37):
-            mesh = _resolve_mesh(None, spacing, system["cell"].reshape(-1, 3, 3), 4)
+            mesh = _resolve_mesh(None, spacing, _cell_lengths(system["cell"]), 4)
             for size in mesh:
                 remainder = size
                 for prime in (2, 3, 5, 7):
@@ -846,7 +853,7 @@ class TestMeshAndUnits:
         """Rounding goes up, so the mesh is never sparser than the spacing asked for."""
         cell = torch.eye(3, dtype=torch.float64, device="cuda:0") * 9.0
         for spacing in (0.05, 0.0707, 0.09, 0.13, 0.5):
-            mesh = _resolve_mesh(None, spacing, cell.reshape(-1, 3, 3), 4)
+            mesh = _resolve_mesh(None, spacing, _cell_lengths(cell), 4)
             for size in mesh:
                 assert size >= int(np.ceil(9.0 / spacing))
 

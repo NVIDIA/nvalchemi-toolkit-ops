@@ -28,18 +28,25 @@ import pytest
 jax = pytest.importorskip("jax", reason="No JAX installed.")
 jnp = jax.numpy
 
+from nvalchemiops.interactions.dispersion._fourier_dftd3 import (  # noqa: E402
+    _resolve_mesh,
+)
 from nvalchemiops.jax.interactions.dispersion import (  # noqa: E402
     FourierD3Parameters,
     fourier_dftd3,
-)
-from nvalchemiops.jax.interactions.dispersion._fourier_dftd3 import (  # noqa: E402
-    _resolve_mesh,
 )
 from test.interactions.dispersion.test_fourier_dftd3 import (  # noqa: E402
     _neighbour_list,
     _reference_tables,
     _to_dense,
 )
+
+
+def _cell_lengths(cell):
+    """Longest lattice-vector length per axis, the input `_resolve_mesh` expects."""
+    cells = np.asarray(cell).reshape(-1, 3, 3)
+    return np.linalg.norm(cells, axis=-1).max(axis=0).tolist()
+
 
 DAMPING = dict(a1=0.4289, a2=4.4407, s8=0.7875, s6=1.0)
 R_CUT = 4.0
@@ -330,7 +337,7 @@ class TestNeighbourFormats:
     def test_a_spacing_derived_mesh_transforms_well(self, device, system):
         """An automatic mesh is rounded up to factors of 2, 3, 5 and 7, as in Torch."""
         for spacing in (0.07, 0.0709, 0.0711, 0.073, 0.11, 0.37):
-            mesh = _resolve_mesh(None, spacing, np.asarray(system["cell"])[None], 4)
+            mesh = _resolve_mesh(None, spacing, _cell_lengths(system["cell"]), 4)
             for size in mesh:
                 remainder = size
                 for prime in (2, 3, 5, 7):
