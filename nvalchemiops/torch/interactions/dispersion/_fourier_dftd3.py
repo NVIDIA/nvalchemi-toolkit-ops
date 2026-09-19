@@ -48,7 +48,6 @@ from nvalchemiops.interactions.dispersion._c6_decomposition import (
 from nvalchemiops.interactions.dispersion._fourier_dftd3 import (
     _check_mesh_supports_stencil,
     _next_fft_friendly,
-    _rank_chunks,
     fd3_cn_chain,
     fd3_cn_chain_matrix,
     fd3_coefficients,
@@ -1286,11 +1285,25 @@ def fourier_dftd3(
     d_energy_d_c6 = torch.zeros(n_atoms, rank, **empty)
     d_energy_d_cn = torch.empty(n_atoms, **empty)
 
-    chunks = _rank_chunks(rank, rank_chunk_size)
-    for slot_start, slot_count in chunks:
+    # A non-positive size yields no chunks at all, so the loop below never runs and the
+    # result stays at its zero initialisation. Checked rather than left to ``range``, which
+    # rejects a step of zero but silently produces nothing for a negative one.
+    slots = rank if rank_chunk_size is None else rank_chunk_size
+    if not isinstance(slots, int) or isinstance(slots, bool):
+        raise TypeError(
+            f"rank_chunk_size must be an int or None, got {type(rank_chunk_size).__name__}."
+            " It sets the number of kernel launches, so it cannot be an array or a traced"
+            " value."
+        )
+    if slots < 1:
+        raise ValueError(f"rank_chunk_size must be at least 1, got {rank_chunk_size}.")
+    slots = min(slots, rank)
+    single_pass = slots >= rank
+    for slot_start in range(0, rank, slots):
+        slot_count = min(slots, rank - slot_start)
         # The k-space op clears energy and virial rather than accumulating, so multiple
         # chunks reduce into scratch. The gather accumulates, so forces pass through.
-        if len(chunks) == 1:
+        if single_pass:
             chunk_energy, chunk_virial = energy, virial
         else:
             chunk_energy = torch.empty(num_systems, **empty)
@@ -1372,7 +1385,7 @@ def fourier_dftd3(
         del potential
         d_energy_d_c6[:, slot_start : slot_start + slot_count] = d_energy_d_c6_chunk
 
-        if len(chunks) > 1:
+        if not single_pass:
             energy += chunk_energy
             virial += chunk_virial
 

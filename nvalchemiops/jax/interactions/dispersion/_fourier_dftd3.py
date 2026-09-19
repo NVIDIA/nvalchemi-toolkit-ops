@@ -64,7 +64,6 @@ from nvalchemiops.interactions.dispersion._fourier_dftd3 import (
     _fd3_self_energy_kernel_overload,
     _fd3_spread_kernel_overload,
     _next_fft_friendly,
-    _rank_chunks,
 )
 
 __all__ = [
@@ -715,7 +714,21 @@ def fourier_dftd3(
     virial_total = jnp.zeros((num_systems, 3, 3), dtype=dtype)
     d_energy_d_c6_chunks = []
 
-    for slot_start, slot_count in _rank_chunks(rank, rank_chunk_size):
+    # A non-positive size yields no chunks at all, so the loop below never runs and the
+    # result stays at its zero initialisation. Checked rather than left to ``range``, which
+    # rejects a step of zero but silently produces nothing for a negative one.
+    slots = rank if rank_chunk_size is None else rank_chunk_size
+    if not isinstance(slots, int) or isinstance(slots, bool):
+        raise TypeError(
+            f"rank_chunk_size must be an int or None, got {type(rank_chunk_size).__name__}."
+            " It sets the number of kernel launches, so it cannot be an array or a traced"
+            " value."
+        )
+    if slots < 1:
+        raise ValueError(f"rank_chunk_size must be at least 1, got {rank_chunk_size}.")
+    slots = min(slots, rank)
+    for slot_start in range(0, rank, slots):
+        slot_count = min(slots, rank - slot_start)
         c6_chunk = c6[:, slot_start : slot_start + slot_count]
         eigs_chunk = eigs[slot_start : slot_start + slot_count]
 

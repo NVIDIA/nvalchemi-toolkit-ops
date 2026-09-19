@@ -255,30 +255,6 @@ def _check_mesh_supports_stencil(mesh, spline_order, origin):
     return mesh
 
 
-def _rank_chunks(rank, rank_chunk_size):
-    """Split the retained rank into consecutive groups of slots.
-
-    ``None`` keeps every slot in one group, which is the original single-pass behaviour and
-    the fastest option when the mesh fits. A smaller size lowers the peak mesh allocation in
-    proportion, at the cost of one extra spread, transform pair and gather per group.
-
-    The size is a host-side Python integer, never a tensor: it decides how many kernel
-    launches happen, so it has to be known before any of them are issued.
-    """
-    if rank_chunk_size is None:
-        return [(0, rank)]
-    if not isinstance(rank_chunk_size, int) or isinstance(rank_chunk_size, bool):
-        raise TypeError(
-            f"rank_chunk_size must be an int or None, got {type(rank_chunk_size).__name__}. "
-            "It sets the number of kernel launches, so it cannot be a tensor or a traced "
-            "value."
-        )
-    if rank_chunk_size < 1:
-        raise ValueError(f"rank_chunk_size must be at least 1, got {rank_chunk_size}.")
-    size = min(rank_chunk_size, rank)
-    return [(start, min(size, rank - start)) for start in range(0, rank, size)]
-
-
 @wp.func
 def _shape_r6(x: Any) -> tuple[Any, Any]:
     """``N6(x)/x`` and its derivative, on whichever branch is stable at ``x``.
