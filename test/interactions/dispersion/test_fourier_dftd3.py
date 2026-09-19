@@ -639,6 +639,69 @@ class TestMeshEnergy:
         assert errors[0] > errors[1] > errors[2]
         assert errors[2] < 1e-6
 
+    def test_forces_match_the_mesh_free_lattice_sum(self, small_system):
+        """Mesh forces against a reference that never touches a mesh.
+
+        The energy tests above cannot see the deconvolution: whether the attenuation divided
+        out in reciprocal space really is the one the B-spline spread applies shows up in the
+        gradient first. Refining the mesh cannot show it either, since a coarse and a fine
+        mesh share the same modulus. So the reference here is central differences of
+        ``direct_lattice_energy`` -- a brute-force real-space sum with no spline, no
+        transform and no deconvolution anywhere in it.
+        """
+        step = 1e-5
+
+        def lattice_energy(positions):
+            targets, pointer, shifts, edges = _neighbour_list(
+                positions, small_system["cell"], R_CUT
+            )
+            coordination = reference.modified_coordination_number(
+                positions,
+                small_system["numbers"],
+                small_system["rcov"],
+                edges,
+                shifts,
+                small_system["cell"],
+                R_CUT,
+            )
+            coefficients, _ = reference.low_rank_coefficients(
+                coordination, small_system["channels"], small_system["decomposition"]
+            )
+            return reference.direct_lattice_energy(
+                positions,
+                small_system["channels"],
+                coefficients,
+                small_system["decomposition"],
+                small_system["sqrt_q"],
+                small_system["cell"],
+                *DAMPING,
+                cutoff=80.0,
+            )
+
+        expected = np.zeros_like(small_system["positions"])
+        for atom in range(len(expected)):
+            for axis in range(3):
+                shifted = []
+                for sign in (1.0, -1.0):
+                    moved = small_system["positions"].copy()
+                    moved[atom, axis] += sign * step
+                    shifted.append(lattice_energy(moved))
+                expected[atom, axis] = -(shifted[0] - shifted[1]) / (2.0 * step)
+
+        scale = np.abs(expected).max()
+        errors = [
+            np.abs(
+                _mesh_evaluate(small_system, (size, size, size), "cuda:0")["forces"]
+                - expected
+            ).max()
+            / scale
+            for size in (32, 64)
+        ]
+        # Measured 2.9e-05 and 7.5e-06; refining has to help, and the fine mesh has to be
+        # close, or the deconvolution does not match the spread.
+        assert errors[1] < errors[0], errors
+        assert errors[0] < 1e-4 and errors[1] < 2e-5, errors
+
     def test_energy_is_attractive(self, small_system):
         """Dispersion lowers the energy."""
         result = _mesh_evaluate(
