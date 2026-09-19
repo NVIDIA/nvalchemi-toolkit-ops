@@ -156,6 +156,96 @@ def _validate_pair_params_present(
         raise ValueError("pair_params is required when pair_fn is provided")
 
 
+def _validate_cluster_tile_matrix_outputs(
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+    natom: int,
+    max_neighbors: int,
+    cutoff2: float | None,
+    neighbor_matrix2: torch.Tensor | None,
+    num_neighbors2: torch.Tensor | None,
+    neighbor_matrix_shifts2: torch.Tensor | None,
+    return_vectors: bool,
+    return_distances: bool,
+    neighbor_vectors: torch.Tensor | None,
+    neighbor_distances: torch.Tensor | None,
+    allocate_missing: bool,
+) -> None:
+    """Validate optional cluster-tile matrix outputs before mutation."""
+
+    def validate(
+        name: str,
+        tensor: torch.Tensor,
+        expected_shape: tuple[int, ...],
+        expected_dtype: torch.dtype,
+    ) -> None:
+        if tensor.device != device:
+            raise ValueError(f"{name} must be on the query device")
+        if tensor.dtype != expected_dtype or tuple(tensor.shape) != expected_shape:
+            raise ValueError(
+                f"{name} must have shape {expected_shape} and dtype "
+                f"{expected_dtype}; got shape {tuple(tensor.shape)} and "
+                f"dtype {tensor.dtype}."
+            )
+
+    secondary = (neighbor_matrix2, num_neighbors2, neighbor_matrix_shifts2)
+    num_secondary = sum(value is not None for value in secondary)
+    if 0 < num_secondary < len(secondary):
+        raise ValueError(
+            "neighbor_matrix2, num_neighbors2, and neighbor_matrix_shifts2 "
+            "must be supplied together"
+        )
+    if cutoff2 is None:
+        if num_secondary:
+            raise ValueError("secondary matrix outputs require cutoff2")
+    elif num_secondary == 0:
+        if not allocate_missing:
+            raise ValueError(
+                "cutoff2 requires neighbor_matrix2, num_neighbors2, and "
+                "neighbor_matrix_shifts2"
+            )
+    else:
+        validate(
+            "neighbor_matrix2",
+            neighbor_matrix2,
+            (natom, max_neighbors),
+            torch.int32,
+        )
+        validate("num_neighbors2", num_neighbors2, (natom,), torch.int32)
+        validate(
+            "neighbor_matrix_shifts2",
+            neighbor_matrix_shifts2,
+            (natom, max_neighbors, 3),
+            torch.int32,
+        )
+
+    geometry = (
+        (
+            "neighbor_vectors",
+            return_vectors,
+            neighbor_vectors,
+            (natom, max_neighbors, 3),
+        ),
+        (
+            "neighbor_distances",
+            return_distances,
+            neighbor_distances,
+            (natom, max_neighbors),
+        ),
+    )
+    for name, enabled, tensor, expected_shape in geometry:
+        if not enabled:
+            if tensor is not None:
+                raise ValueError(f"{name} is only valid when its output is enabled")
+            continue
+        if tensor is None:
+            if allocate_missing:
+                continue
+            raise ValueError(f"{name} is required when its output is enabled")
+        validate(name, tensor, expected_shape, dtype)
+
+
 def _validate_segmented_coo_structure(
     *,
     device: torch.device,

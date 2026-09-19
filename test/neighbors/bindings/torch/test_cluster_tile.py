@@ -513,6 +513,91 @@ class TestTileNeighborListEdgeCases:
 # Errors
 # =============================================================================
 class TestTileNeighborListErrors:
+    @staticmethod
+    def _empty_query_args() -> tuple[tuple[torch.Tensor | object, ...], dict]:
+        """Return CPU component inputs suitable for pre-launch validation."""
+        natom, max_neighbors = 2, 4
+        args = (
+            torch.empty(0, dtype=torch.int32),
+            torch.empty(0, dtype=torch.float32),
+            torch.empty(0, dtype=torch.float32),
+            torch.empty(0, dtype=torch.float32),
+            torch.zeros(1, dtype=torch.int32),
+            torch.empty(0, dtype=torch.int32),
+            torch.empty(0, dtype=torch.int32),
+            torch.eye(3, dtype=torch.float32),
+            2.0,
+            natom,
+            torch.empty((natom, max_neighbors), dtype=torch.int32),
+            torch.zeros(natom, dtype=torch.int32),
+            torch.empty((natom, max_neighbors, 3), dtype=torch.int32),
+        )
+        return args, {"natom": natom, "max_neighbors": max_neighbors}
+
+    def test_query_requires_complete_secondary_outputs(self):
+        """A dual-cutoff component query requires its complete output triple."""
+        args, sizes = self._empty_query_args()
+        secondary = torch.empty(
+            (sizes["natom"], sizes["max_neighbors"]), dtype=torch.int32
+        )
+
+        with pytest.raises(ValueError, match="cutoff2 requires"):
+            query_cluster_tile(*args, cutoff2=3.0)
+        with pytest.raises(ValueError, match="must be supplied together"):
+            query_cluster_tile(
+                *args,
+                cutoff2=3.0,
+                neighbor_matrix2=secondary,
+            )
+        with pytest.raises(ValueError, match="neighbor_matrix_shifts2"):
+            query_cluster_tile(
+                *args,
+                cutoff2=3.0,
+                neighbor_matrix2=secondary,
+                num_neighbors2=torch.zeros(sizes["natom"], dtype=torch.int32),
+                neighbor_matrix_shifts2=torch.empty(
+                    (sizes["natom"], sizes["max_neighbors"], 2),
+                    dtype=torch.int32,
+                ),
+            )
+
+    @pytest.mark.parametrize(
+        ("flag", "buffer_name", "bad_shape"),
+        [
+            ("return_vectors", "neighbor_vectors", (2, 4, 2)),
+            ("return_distances", "neighbor_distances", (2, 3)),
+        ],
+    )
+    def test_query_requires_shaped_geometry_outputs(self, flag, buffer_name, bad_shape):
+        """Enabled component geometry requires a correctly shaped buffer."""
+        args, _ = self._empty_query_args()
+
+        with pytest.raises(ValueError, match=f"{buffer_name} is required"):
+            query_cluster_tile(*args, **{flag: True})
+        with pytest.raises(ValueError, match=buffer_name):
+            query_cluster_tile(
+                *args,
+                **{
+                    flag: True,
+                    buffer_name: torch.empty(bad_shape, dtype=torch.float32),
+                },
+            )
+
+    def test_wrapper_rejects_partial_secondary_outputs_before_build(self):
+        """The allocating wrapper rejects partially caller-owned cutoff2 state."""
+        positions = torch.zeros((2, 3), dtype=torch.float32)
+        cell = torch.eye(3, dtype=torch.float32)
+
+        with pytest.raises(ValueError, match="must be supplied together"):
+            cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell,
+                max_neighbors=4,
+                cutoff2=3.0,
+                neighbor_matrix2=torch.empty((2, 4), dtype=torch.int32),
+            )
+
     def test_wrong_dtype(self, device):
         positions = torch.rand(32, 3, dtype=torch.float64, device=device) * 10.0
         cell = _orthorhombic_cell(10.0, device)

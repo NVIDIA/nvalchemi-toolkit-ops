@@ -37,7 +37,10 @@ from nvalchemiops.jax.neighbors.batch_cluster_tile import (
     estimate_batch_max_tiles_per_group,
 )
 from nvalchemiops.neighbors.cluster_tile import estimate_max_tiles_per_group
-from nvalchemiops.neighbors.neighbor_utils import TileBufferOverflow
+from nvalchemiops.neighbors.neighbor_utils import (
+    NeighborOverflowError,
+    TileBufferOverflow,
+)
 
 from .conftest import requires_gpu
 
@@ -302,6 +305,51 @@ class TestBatchTileNeighborListFormats:
         )
         assert int(nn.sum()) == int(nl.shape[1])
         assert int(ptr[-1]) == int(nl.shape[1])
+
+    def test_compact_coo_one_short_capacity_raises(self):
+        """Eager batched compact COO reports the full required pair count."""
+        positions = jnp.zeros((8, 3), dtype=jnp.float32)
+        cell_batch = jnp.repeat(jnp.eye(3, dtype=jnp.float32)[None], 2, axis=0) * 8.0
+        batch_ptr = jnp.array([0, 4, 8], dtype=jnp.int32)
+        kwargs = {
+            "max_neighbors": 8,
+            "format": "coo",
+        }
+        adequate = batch_cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell_batch,
+            batch_ptr,
+            max_pairs=64,
+            **kwargs,
+        )
+        required_pairs = int(adequate[0].shape[1])
+        assert required_pairs > 0
+
+        exact = batch_cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell_batch,
+            batch_ptr,
+            max_pairs=required_pairs,
+            **kwargs,
+        )
+        assert exact[0].shape == (2, required_pairs)
+        assert exact[2].shape == (required_pairs, 3)
+
+        with pytest.raises(NeighborOverflowError) as caught:
+            batch_cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell_batch,
+                batch_ptr,
+                max_pairs=required_pairs - 1,
+                **kwargs,
+            )
+
+        assert caught.value.max_neighbors == required_pairs - 1
+        assert caught.value.num_neighbors == required_pairs
+        assert caught.value.system_index is None
 
     def test_tile_format_returns_state(self):
         positions, cell_batch, batch_ptr = _make_batch([32, 64], [8.0, 8.0], seed=9)

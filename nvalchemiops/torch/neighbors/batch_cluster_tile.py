@@ -63,6 +63,7 @@ from nvalchemiops.torch.neighbors._autograd import _reconstruct_matrix_geometry
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     _check_neighbor_capacity,
     _check_tile_buffer_capacity,
+    _validate_cluster_tile_matrix_outputs,
     _validate_segmented_coo_state,
 )
 from nvalchemiops.torch.types import get_wp_dtype
@@ -1468,6 +1469,22 @@ def batch_query_cluster_tile(
         Output pair forces; modified in-place when ``pair_fn`` is set.
     """
 
+    _validate_cluster_tile_matrix_outputs(
+        device=sorted_pos_x.device,
+        dtype=sorted_pos_x.dtype,
+        natom=int(natom),
+        max_neighbors=int(neighbor_matrix.shape[1]),
+        cutoff2=cutoff2,
+        neighbor_matrix2=neighbor_matrix2,
+        num_neighbors2=num_neighbors2,
+        neighbor_matrix_shifts2=neighbor_matrix_shifts2,
+        return_vectors=return_vectors,
+        return_distances=return_distances,
+        neighbor_vectors=neighbor_vectors,
+        neighbor_distances=neighbor_distances,
+        allocate_missing=False,
+    )
+
     if inv_cell_batch is None:
         inv_cell_batch = torch.linalg.inv(cell_batch).contiguous()
 
@@ -2741,6 +2758,22 @@ def batch_cluster_tile_neighbor_list(
         )
     if fill_value is None:
         fill_value = N
+    if format == "matrix":
+        _validate_cluster_tile_matrix_outputs(
+            device=device,
+            dtype=positions.dtype,
+            natom=N,
+            max_neighbors=int(max_neighbors),
+            cutoff2=cutoff2,
+            neighbor_matrix2=neighbor_matrix2,
+            num_neighbors2=num_neighbors2,
+            neighbor_matrix_shifts2=neighbor_matrix_shifts2,
+            return_vectors=return_vectors,
+            return_distances=return_distances,
+            neighbor_vectors=neighbor_vectors,
+            neighbor_distances=neighbor_distances,
+            allocate_missing=True,
+        )
     build_cutoff = cutoff if cutoff2 is None else max(float(cutoff), float(cutoff2))
     needs_segmented_tiles = rebuild_flags is not None or pair_offsets is not None
     if max_tiles_per_group is None:

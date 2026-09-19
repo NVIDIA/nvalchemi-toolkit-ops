@@ -60,6 +60,7 @@ from nvalchemiops.torch.neighbors.neighbor_utils import (
     _check_neighbor_capacity,
     _check_tile_buffer_capacity,
     _normalize_compiled_single_segment_coo_count,
+    _validate_cluster_tile_matrix_outputs,
     _validate_segmented_coo_state,
 )
 from nvalchemiops.torch.types import get_wp_dtype
@@ -955,6 +956,22 @@ def query_cluster_tile(
     :func:`nvalchemiops.torch.neighbors.cluster_tile.query_cluster_tile_coo` :
         COO-format alternative that emits a flat pair list instead.
     """
+
+    _validate_cluster_tile_matrix_outputs(
+        device=sorted_pos_x.device,
+        dtype=sorted_pos_x.dtype,
+        natom=int(natom),
+        max_neighbors=int(neighbor_matrix.shape[1]),
+        cutoff2=cutoff2,
+        neighbor_matrix2=neighbor_matrix2,
+        num_neighbors2=num_neighbors2,
+        neighbor_matrix_shifts2=neighbor_matrix_shifts2,
+        return_vectors=return_vectors,
+        return_distances=return_distances,
+        neighbor_vectors=neighbor_vectors,
+        neighbor_distances=neighbor_distances,
+        allocate_missing=False,
+    )
 
     cell_mat, inv_cell_mat = _cell_invcell_from_cell(cell)
     cell_mat = cell_mat.to(sorted_pos_x.dtype)
@@ -2432,6 +2449,22 @@ def cluster_tile_neighbor_list(
         and (neighbor_matrix.shape != (N, int(max_neighbors)))
     ):
         raise ValueError("neighbor_matrix must have shape (N, max_neighbors)")
+    if format == "matrix":
+        _validate_cluster_tile_matrix_outputs(
+            device=device,
+            dtype=positions.dtype,
+            natom=N,
+            max_neighbors=int(max_neighbors),
+            cutoff2=cutoff2,
+            neighbor_matrix2=neighbor_matrix2,
+            num_neighbors2=num_neighbors2,
+            neighbor_matrix_shifts2=neighbor_matrix_shifts2,
+            return_vectors=return_vectors,
+            return_distances=return_distances,
+            neighbor_vectors=neighbor_vectors,
+            neighbor_distances=neighbor_distances,
+            allocate_missing=True,
+        )
     if fill_value is None:
         fill_value = N
     if selective and format == "matrix":

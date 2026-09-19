@@ -58,6 +58,7 @@ from nvalchemiops.neighbors.cluster_tile import (
     estimate_batch_max_tiles_per_group as _estimate_batch_max_tiles_per_group,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
+    NeighborOverflowError,
     TileBufferOverflow,
     estimate_max_neighbors,
 )
@@ -1988,6 +1989,8 @@ def batch_query_cluster_tile_coo(
     )
 
     npairs = int(pair_counter[0])
+    if npairs > max_pairs:
+        raise NeighborOverflowError(int(max_pairs), npairs)
     coo_list_trim = coo_list[:npairs]
     coo_shifts_trim = coo_shifts[:npairs]
     neighbor_list = coo_list_trim.T
