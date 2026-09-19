@@ -1006,6 +1006,46 @@ def _lbfgs_loop2_kernel(
 
 
 @wp.kernel(enable_backward=False)
+def _lbfgs_restart_check_kernel(
+    gg: wp.array(dtype=wp.float64),
+    d0: wp.array(dtype=wp.float64),
+    status: wp.array(dtype=wp.int32),
+    end: wp.array(dtype=wp.int32),
+    n_loop: wp.array(dtype=wp.int32),
+    history_count: wp.array(dtype=wp.int32),
+):
+    """Demote a two-loop direction that does not descend, before it is used.
+
+    ``d0 >= 0`` means the curvature model has gone bad and the recursion
+    returned an ascent direction. This must run *after* the two-loop that
+    produces ``d0`` and *before* the seed kernel that rebuilds ``direction``:
+    demoting later would leave the rejected direction in place and the atoms
+    would be moved along it, uphill, which is the opposite of the intent.
+
+    Thread launch
+    -------------
+    One thread per system; ``dim = num_systems``.
+
+    Modifies
+    --------
+    d0, end, n_loop, history_count
+        Per-system control state.
+    """
+    tid = wp.tid()
+    if status[tid] != LBFGS_NEED_EVAL:
+        return
+
+    if n_loop[tid] > 0 and d0[tid] >= wp.float64(0.0):
+        n_loop[tid] = _NLOOP_RESTART
+        history_count[tid] = 0
+        end[tid] = 0
+
+    if n_loop[tid] == _NLOOP_RESTART:
+        # For a normalized steepest-descent direction the slope is exact.
+        d0[tid] = -wp.sqrt(gg[tid])
+
+
+@wp.kernel(enable_backward=False)
 def _lbfgs_seed_direction_kernel(
     forces: wp.array(dtype=Any),
     positions: wp.array(dtype=Any),
@@ -1155,16 +1195,6 @@ def _lbfgs_prepare_step_kernel(
     # The step length is never carried between calls: the trust region below
     # determines it outright, starting from the full quasi-Newton step.
     alpha_step[tid] = wp.float64(1.0)
-
-    # An ascent direction means the history has gone bad; drop it and restart.
-    if n_loop[tid] > 0 and d0[tid] >= wp.float64(0.0):
-        n_loop[tid] = _NLOOP_RESTART
-
-    if n_loop[tid] == _NLOOP_RESTART:
-        # For a normalized steepest-descent direction the slope is exact.
-        d0[tid] = -wp.sqrt(gg[tid])
-        history_count[tid] = 0
-        end[tid] = 0
 
     cap = _alpha_cap(dmax[tid], dquad[tid], maxstep)
     alpha_step[tid] = wp.min(alpha_step[tid], cap)
@@ -1703,22 +1733,6 @@ def lbfgs_update(
 
     # A restarting system needs its direction before the trust region can be
     # measured, so seed it here rather than in the apply kernel.
-    wp.launch(
-        _seed_direction_overloads[vec_dtype],
-        dim=n_dofs,
-        inputs=[
-            forces,
-            positions,
-            x_base,
-            force_base,
-            direction,
-            batch_idx,
-            status,
-            n_loop,
-            gg,
-        ],
-        device=device,
-    )
 
     # The two-loop coefficients are accumulated, so they start from zero.
     alpha_hist.zero_()
@@ -1777,6 +1791,33 @@ def lbfgs_update(
             ],
             device=device,
         )
+
+    # An ascent direction is demoted here -- after the two-loop that produces
+    # `d0`, and before the seed kernel rebuilds `direction`. Demoting any later
+    # would leave the rejected direction in place for the apply kernel.
+    wp.launch(
+        _lbfgs_restart_check_kernel,
+        dim=num_systems,
+        inputs=[gg, d0, status, end, n_loop, history_count],
+        device=device,
+    )
+
+    wp.launch(
+        _seed_direction_overloads[vec_dtype],
+        dim=n_dofs,
+        inputs=[
+            forces,
+            positions,
+            x_base,
+            force_base,
+            direction,
+            batch_idx,
+            status,
+            n_loop,
+            gg,
+        ],
+        device=device,
+    )
 
     if measure_trust_region:
         dmax.zero_()

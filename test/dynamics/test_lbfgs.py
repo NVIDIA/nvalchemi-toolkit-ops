@@ -513,41 +513,79 @@ class TestLBFGSTrustRegion:
         np.testing.assert_allclose(st["alpha_step"].numpy()[0], 1.0)
 
     @pytest.mark.parametrize("device", DEVICES)
-    def test_ascent_direction_falls_back_to_steepest_descent(self, device):
-        """A direction that points uphill is replaced, not followed.
+    def test_ascent_direction_is_replaced_before_the_atoms_move(self, device):
+        """A rejected direction must not still be the one that gets applied.
 
-        With no line search to reject the resulting step, this guard is the
-        only thing between a corrupted curvature model and a step that raises
-        the force. Driven through ``lbfgs_prepare_step`` directly, because the
-        condition is by construction hard to reach from a healthy run.
+        ``d0 >= 0`` means the curvature model produced an ascent direction. It
+        is detected only after the two-loop that computes ``d0``, so the
+        demotion has to happen *before* the kernel that rebuilds ``direction``
+        -- otherwise the bookkeeping says "restarted" while the apply kernel
+        still walks the atoms along the rejected direction, uphill.
+
+        Mirrors the tail of :func:`lbfgs_update` (restart check, seed, trust
+        region) so the ordering itself is pinned; a regression here moves atoms
+        the wrong way while every scalar still looks right.
         """
-        st = make_lbfgs_state(4, 1, HISTORY_SIZE, wp.vec3d, device)
-        st["gg"].assign(np.array([4.0]))
-        st["d0"].assign(np.array([+1.5]))  # uphill
-        st["n_loop"].assign(np.array([3], np.int32))  # a two-loop direction
-        st["history_count"].assign(np.array([3], np.int32))
-        st["end"].assign(np.array([2], np.int32))
+        from nvalchemiops.dynamics.optimizers.lbfgs import (
+            _lbfgs_restart_check_kernel,
+            _seed_direction_overloads,
+        )
+
+        n = 4
+        st = make_lbfgs_state(n, 1, HISTORY_SIZE, wp.vec3d, device)
+        force = np.tile(np.array([1.0, 0.0, 0.0]), (n, 1))  # points along +x
+        start = np.zeros((n, 3))
+
+        positions = wp.array(start.copy(), dtype=wp.vec3d, device=device)
+        forces = wp.array(force, dtype=wp.vec3d, device=device)
+        batch_idx = wp.zeros(n, dtype=wp.int32, device=device)
+
+        st["x_base"].assign(start)
+        st["force_base"].assign(force)
+        st["direction"].assign(-force)  # uphill: opposes the force
+        gg = float((force * force).sum())
+        st["gg"].assign(np.array([gg]))
+        st["d0"].assign(np.array([gg]))  # d0 = -(force_base . d) > 0
+        st["n_loop"].assign(np.array([2], np.int32))  # a two-loop direction
+        st["history_count"].assign(np.array([2], np.int32))
         st["dmax"].assign(np.array([1.0]))
 
+        wp.launch(
+            _lbfgs_restart_check_kernel,
+            dim=1,
+            inputs=[st["gg"], st["d0"], st["status"], st["end"], st["n_loop"],
+                    st["history_count"]],
+            device=device,
+        )  # fmt: skip
+        wp.launch(
+            _seed_direction_overloads[wp.vec3d],
+            dim=n,
+            inputs=[forces, positions, st["x_base"], st["force_base"],
+                    st["direction"], batch_idx, st["status"], st["n_loop"],
+                    st["gg"]],
+            device=device,
+        )  # fmt: skip
         lbfgs_prepare_step(
-            gg=st["gg"],
-            d0=st["d0"],
-            dmax=st["dmax"],
-            dquad=st["dquad"],
-            alpha_step=st["alpha_step"],
-            status=st["status"],
-            end=st["end"],
-            n_loop=st["n_loop"],
-            history_count=st["history_count"],
-            maxstep=0.0,
-        )
+            gg=st["gg"], d0=st["d0"], dmax=st["dmax"], dquad=st["dquad"],
+            alpha_step=st["alpha_step"], status=st["status"], end=st["end"],
+            n_loop=st["n_loop"], history_count=st["history_count"], maxstep=0.2,
+        )  # fmt: skip
+        lbfgs_apply_step(positions, forces, st["x_base"], st["force_base"],
+                         st["direction"], batch_idx, st["status"],
+                         st["n_loop"], st["gg"], st["alpha_step"])  # fmt: skip
         wp.synchronize()
 
         assert int(st["n_loop"].numpy()[0]) == -1, "did not restart"
-        assert int(st["history_count"].numpy()[0]) == 0, "history was not discarded"
-        assert int(st["end"].numpy()[0]) == 0
-        # The slope of a normalized steepest-descent direction is exact.
-        np.testing.assert_allclose(st["d0"].numpy()[0], -2.0, rtol=1e-14)
+        assert int(st["history_count"].numpy()[0]) == 0, "history not discarded"
+        # The direction must have been rebuilt from the force, not left as-is.
+        np.testing.assert_allclose(
+            st["direction"].numpy(), force / np.sqrt(gg), rtol=1e-12
+        )
+        # The load-bearing assertion: the atoms moved DOWNHILL.
+        displacement = positions.numpy() - start
+        assert float((displacement * force).sum()) > 0.0, (
+            "atoms were moved along the rejected ascent direction"
+        )
 
 
 class TestLBFGSConvergence:
