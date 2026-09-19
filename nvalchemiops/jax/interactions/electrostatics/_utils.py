@@ -22,25 +22,16 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 
+from nvalchemiops.jax.types import normalize_float_dtype
+
 
 def _normalize_dtype(dtype):
-    """Normalize dtype for kernel dictionary lookup.
+    """Resolve a floating dtype to the kernel-dispatch key.
 
-    Parameters
-    ----------
-    dtype : dtype-like
-        Input dtype from a JAX array.
-
-    Returns
-    -------
-    jnp.float32 or jnp.float64
-        Normalized JAX dtype for kernel lookup.
+    Thin alias for :func:`nvalchemiops.jax.types.normalize_float_dtype`, shared by the
+    JAX bindings; only the error wording differs here.
     """
-    if dtype == jnp.float32 or str(dtype) == "float32":
-        return jnp.float32
-    if dtype == jnp.float64 or str(dtype) == "float64":
-        return jnp.float64
-    raise ValueError(f"Unsupported dtype: {dtype}")
+    return normalize_float_dtype(dtype, "input")
 
 
 def _prepare_cell(cell: jax.Array) -> tuple[jax.Array, int]:

@@ -43,8 +43,6 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 import numpy as np
-import warp as wp
-from warp import jax_kernel
 
 from nvalchemiops.interactions.dispersion._c6_decomposition import (
     decompose_c6_reference,
@@ -63,7 +61,10 @@ from nvalchemiops.interactions.dispersion._fourier_dftd3 import (
     _fd3_self_energy_kernel_overload,
     _fd3_spread_kernel_overload,
     _resolve_mesh,
+    check_neighbour_format,
+    resolve_rank_slots,
 )
+from nvalchemiops.jax._lazy_jax_kernels import make_jax_kernels
 from nvalchemiops.jax.interactions.electrostatics.pme import (
     compute_bspline_moduli_1d,
 )
@@ -77,74 +78,51 @@ __all__ = [
 _ELEMENTWISE_BLOCK_DIM = 256
 """Threads per block for the passes with no block-level cooperation.
 
-These kernels are one thread per atom, or per atom and stencil point, with no reduction
-across the block, so the size only has to keep the machine busy. Stated explicitly rather
-than left to ``jax_kernel``'s default, which is this same value but not part of its
-contract. The coordination-number and reciprocal-space passes reduce within a block and set
-their own sizes.
+Stated rather than left to ``jax_kernel``'s default, which is the same value but not part
+of its contract.
 """
 
 
-def _make_jax_kernels(overloads, num_outputs, in_out_argnames=None, block_dim=None):
-    """Wrap a dtype-keyed set of Warp overloads as JAX kernels.
-
-    ``jax_kernel`` takes ``None`` for both optional arguments, so they pass straight through.
-    """
-    return {
-        jax_dtype: jax_kernel(
-            overloads[wp_dtype],
-            num_outputs=num_outputs,
-            enable_backward=False,
-            in_out_argnames=in_out_argnames,
-            block_dim=block_dim,
-        )
-        for jax_dtype, wp_dtype in (
-            (jnp.float32, wp.float32),
-            (jnp.float64, wp.float64),
-        )
-    }
-
-
-_coordination_kernels = _make_jax_kernels(
+_coordination_kernels = make_jax_kernels(
     _fd3_cn_kernel_overload, 1, block_dim=FD3_CN_BLOCK_SIZE
 )
-_coordination_matrix_kernels = _make_jax_kernels(
+_coordination_matrix_kernels = make_jax_kernels(
     _fd3_cn_matrix_kernel_overload, 1, block_dim=FD3_CN_BLOCK_SIZE
 )
-_coefficient_kernels = _make_jax_kernels(
+_coefficient_kernels = make_jax_kernels(
     _fd3_coefficients_kernel_overload, 2, block_dim=_ELEMENTWISE_BLOCK_DIM
 )
-_spread_kernels = _make_jax_kernels(
+_spread_kernels = make_jax_kernels(
     _fd3_spread_kernel_overload, 1, ["mesh"], block_dim=_ELEMENTWISE_BLOCK_DIM
 )
-_kspace_kernels = _make_jax_kernels(
+_kspace_kernels = make_jax_kernels(
     _fd3_kspace_kernel_overload,
     3,
     ["energy", "cotangent", "virial"],
     block_dim=FD3_KSPACE_BLOCK_SIZE,
 )
-_gather_kernels = _make_jax_kernels(
+_gather_kernels = make_jax_kernels(
     _fd3_gather_and_force_kernel_overload,
     2,
     ["d_energy_d_c6", "forces"],
     block_dim=_ELEMENTWISE_BLOCK_DIM,
 )
-_self_energy_kernels = _make_jax_kernels(
+_self_energy_kernels = make_jax_kernels(
     _fd3_self_energy_kernel_overload,
     2,
     ["energy", "d_energy_d_c6"],
     block_dim=_ELEMENTWISE_BLOCK_DIM,
 )
-_sensitivity_kernels = _make_jax_kernels(
+_sensitivity_kernels = make_jax_kernels(
     _fd3_cn_sensitivity_kernel_overload, 1, block_dim=_ELEMENTWISE_BLOCK_DIM
 )
-_cn_forces_kernels = _make_jax_kernels(
+_cn_forces_kernels = make_jax_kernels(
     _fd3_cn_forces_kernel_overload,
     2,
     ["forces", "virial"],
     block_dim=FD3_CN_BLOCK_SIZE,
 )
-_cn_forces_matrix_kernels = _make_jax_kernels(
+_cn_forces_matrix_kernels = make_jax_kernels(
     _fd3_cn_forces_matrix_kernel_overload,
     2,
     ["forces", "virial"],
@@ -293,17 +271,13 @@ class FourierD3Parameters:
 def _blocked(call, gpu_block, reference):
     """Run a block-per-item kernel with the block width its backend can actually provide.
 
-    These passes launch one block per atom or per bin, stride the block's threads through
-    that item's work and reduce at the end. Warp's CPU backend has no block launches, so a
-    wide launch there leaves every partial sum but the first unwritten and the result is
-    silently wrong. One thread per item, striding by one, is correct on CPU and is what the
-    Warp launchers behind the Torch binding already do.
+    Warp's CPU backend has no block launches, so a wide launch there leaves every partial
+    sum but the first unwritten and returns a silently wrong answer; the width must fall to
+    1 on CPU.
 
-    Two paths, because neither alone covers both. Eagerly ``reference`` carries a concrete
-    device and the width follows it directly, which is the only thing that respects an
-    explicit ``jax.device_put``. While tracing it carries nothing, so both widths are staged
-    and :func:`jax.lax.platform_dependent` resolves the choice at lowering, where the
-    compilation target is known.
+    Both paths are needed. Eagerly ``reference`` carries a concrete device, which is the
+    only thing that respects an explicit ``jax.device_put``; while tracing it carries none,
+    so :func:`jax.lax.platform_dependent` defers the choice to lowering.
 
     ``call`` takes a block width and returns the kernel's outputs.
     """
@@ -507,39 +481,14 @@ def fourier_dftd3(
     :func:`~nvalchemiops.jax.interactions.dispersion.dftd3`, and it is what keeps the call
     traceable under :func:`jax.jit`.
     """
+    check_neighbour_format(
+        neighbor_matrix,
+        neighbor_matrix_shifts,
+        neighbor_list,
+        neighbor_ptr,
+        unit_shifts,
+    )
     matrix_given = neighbor_matrix is not None
-    list_given = neighbor_list is not None
-    if matrix_given and list_given:
-        raise ValueError(
-            "Cannot provide both neighbor_matrix and neighbor_list. "
-            "Please provide only one neighbor representation format."
-        )
-    if not matrix_given and not list_given:
-        raise ValueError("Must provide either neighbor_matrix or neighbor_list.")
-    if matrix_given:
-        if unit_shifts is not None:
-            raise ValueError(
-                "unit_shifts is for neighbor_list format. "
-                "Use neighbor_matrix_shifts for neighbor_matrix format."
-            )
-        if neighbor_matrix_shifts is None:
-            raise ValueError(
-                "neighbor_matrix_shifts is required: FourierD3 is periodic, so every "
-                "neighbour needs its lattice image."
-            )
-    else:
-        if neighbor_matrix_shifts is not None:
-            raise ValueError(
-                "neighbor_matrix_shifts is for neighbor_matrix format. "
-                "Use unit_shifts for neighbor_list format."
-            )
-        if neighbor_ptr is None:
-            raise ValueError("neighbor_ptr is required alongside neighbor_list.")
-        if unit_shifts is None:
-            raise ValueError(
-                "unit_shifts is required: FourierD3 is periodic, so every neighbour needs "
-                "its lattice image."
-            )
     if cell is None:
         raise ValueError("cell is required: FourierD3 evaluates a periodic sum.")
     if spline_order < 2 or spline_order > 6:
@@ -701,16 +650,7 @@ def fourier_dftd3(
     # A non-positive size yields no chunks at all, so the loop below never runs and the
     # result stays at its zero initialisation. Checked rather than left to ``range``, which
     # rejects a step of zero but silently produces nothing for a negative one.
-    slots = rank if rank_chunk_size is None else rank_chunk_size
-    if not isinstance(slots, int) or isinstance(slots, bool):
-        raise TypeError(
-            f"rank_chunk_size must be an int or None, got {type(rank_chunk_size).__name__}."
-            " It sets the number of kernel launches, so it cannot be an array or a traced"
-            " value."
-        )
-    if slots < 1:
-        raise ValueError(f"rank_chunk_size must be at least 1, got {rank_chunk_size}.")
-    slots = min(slots, rank)
+    slots = resolve_rank_slots(rank_chunk_size, rank)
     for slot_start in range(0, rank, slots):
         slot_count = min(slots, rank - slot_start)
         c6_chunk = c6[:, slot_start : slot_start + slot_count]

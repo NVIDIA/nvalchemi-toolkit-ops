@@ -96,20 +96,15 @@ _CN_GAUSSIAN = 4.0
 FD3_CN_BLOCK_SIZE = 32
 """Threads per block in the coordination-number force pass.
 
-One warp per atom, with the warp's threads striding over that atom's neighbours. An atom
-carries on the order of a hundred neighbours, so a thread per atom leaves the machine idle
-and reads the neighbour list in a scattered order; a warp per atom fixes both. A warp is
-also the largest block whose reduction is pure shuffles, needing no shared memory, and
-measured faster here than 64 or 128.
+One warp per atom, striding over that atom's neighbours. Warp-sized so the reduction is
+pure shuffles with no shared memory.
 """
 
 FD3_KSPACE_BLOCK_SIZE = 256
 """Threads per block in the reciprocal-space pass.
 
-Every thread in a system contributes to the same energy and virial accumulators, so the
-pass reduces within a block and issues one atomic per block instead of one per bin. The
-launch pads each system's bin count up to a multiple of this so that no block straddles
-two systems.
+The pass reduces within a block, so the launch pads each system's bin count up to a
+multiple of this and no block straddles two systems.
 """
 
 # Below this dimensionless argument the closed-form transforms lose precision to
@@ -155,21 +150,18 @@ def _cn_counting(
 ) -> tuple[Any, Any]:
     """Contribution of one neighbour to a coordination number, and its radial derivative.
 
-    FourierD3 replaces the fixed-steepness D3 counting function with one whose steepness grows
-    without bound as the separation approaches ``cutoff``. The standard form tends to a non-zero
-    constant at large separation, so truncating it leaves a step and the energy never converges
-    as the list grows. This form reaches exactly zero at the cutoff, which is what makes the
-    coordination numbers independent of the list used to build them.
+    Steepness grows without bound as the separation approaches ``cutoff``, so the value
+    reaches exactly zero there. That is what makes the coordination numbers independent of
+    the list used to build them; the fixed-steepness D3 form leaves a step at truncation.
 
     Parameters
     ----------
     distance : Any
         Interatomic separation.
     covalent_distance : Any
-        Sum of the two covalent radii, on the same scale ``dftd3`` uses: the shipped table
-        already folds in Grimme's 4/3 factor, so the counting function crosses one half at
-        ``distance == covalent_distance``. See ``_CN_UNSCALE`` for where that factor is
-        divided back out.
+        Sum of the two covalent radii, on the scale ``dftd3`` uses: the shipped table folds
+        in Grimme's 4/3 factor, so the value crosses one half at
+        ``distance == covalent_distance``.
     cutoff : Any
         Neighbour-list cutoff. The counting function reaches zero here, so this must be the
         radius the list was actually built with.
@@ -287,6 +279,92 @@ def _resolve_mesh(mesh_dimensions, mesh_spacing, cell_lengths, spline_order):
         spline_order,
         f"mesh_spacing = {mesh_spacing}",
     )
+
+
+def check_neighbour_format(
+    neighbor_matrix, neighbor_matrix_shifts, neighbor_list, neighbor_ptr, unit_shifts
+):
+    """Check that exactly one neighbour format arrived, with its matching shifts.
+
+    Shared by the Torch and JAX bindings so the two accept and reject the same calls with
+    the same wording. Inspects presence only, never array contents, so it is trace-safe.
+
+    Raises
+    ------
+    ValueError
+        If neither or both formats are given, or the shifts do not match the format.
+    """
+    matrix_given = neighbor_matrix is not None
+    list_given = neighbor_list is not None
+    if matrix_given and list_given:
+        raise ValueError(
+            "Cannot provide both neighbor_matrix and neighbor_list. "
+            "Please provide only one neighbor representation format."
+        )
+    if not matrix_given and not list_given:
+        raise ValueError("Must provide either neighbor_matrix or neighbor_list.")
+    if matrix_given:
+        if unit_shifts is not None:
+            raise ValueError(
+                "unit_shifts is for neighbor_list format. "
+                "Use neighbor_matrix_shifts for neighbor_matrix format."
+            )
+        if neighbor_matrix_shifts is None:
+            raise ValueError(
+                "neighbor_matrix_shifts is required: FourierD3 is periodic, so every "
+                "neighbour needs its lattice image."
+            )
+        return
+    if neighbor_matrix_shifts is not None:
+        raise ValueError(
+            "neighbor_matrix_shifts is for neighbor_matrix format. "
+            "Use unit_shifts for neighbor_list format."
+        )
+    if neighbor_ptr is None:
+        raise ValueError("neighbor_ptr is required alongside neighbor_list.")
+    if unit_shifts is None:
+        raise ValueError(
+            "unit_shifts is required: FourierD3 is periodic, so every neighbour needs "
+            "its lattice image."
+        )
+
+
+def resolve_rank_slots(rank_chunk_size, rank):
+    """Validate ``rank_chunk_size`` and clamp it to the available rank.
+
+    Shared by the Torch and JAX bindings, which then iterate
+    ``range(0, rank, slots)`` themselves.
+
+    Parameters
+    ----------
+    rank_chunk_size : int or None
+        Requested slots per pass. ``None`` means all of them.
+    rank : int
+        Retained rank of the decomposition.
+
+    Returns
+    -------
+    int
+        Slots per pass, at least 1 and at most ``rank``.
+
+    Raises
+    ------
+    TypeError
+        If it is not an ``int``. The value sets the number of kernel launches, so it
+        cannot be an array or a traced value.
+    ValueError
+        If it is less than 1.
+    """
+    slots = rank if rank_chunk_size is None else rank_chunk_size
+    if not isinstance(slots, int) or isinstance(slots, bool):
+        raise TypeError(
+            f"rank_chunk_size must be an int or None, got {type(rank_chunk_size).__name__}."
+            " It sets the number of kernel launches, so it cannot be an array or a traced"
+            " value."
+        )
+    if slots < 1:
+        raise ValueError(f"rank_chunk_size must be at least 1, got {rank_chunk_size}.")
+    return min(slots, rank)
 
 
 def _check_mesh_supports_stencil(mesh, spline_order, origin):

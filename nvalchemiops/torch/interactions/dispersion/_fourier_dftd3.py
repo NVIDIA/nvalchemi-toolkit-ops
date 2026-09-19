@@ -48,6 +48,7 @@ from nvalchemiops.interactions.dispersion._c6_decomposition import (
 from nvalchemiops.interactions.dispersion._fourier_dftd3 import (
     _check_mesh_supports_stencil,
     _resolve_mesh,
+    check_neighbour_format,
     fd3_cn_chain,
     fd3_cn_chain_matrix,
     fd3_coefficients,
@@ -57,6 +58,7 @@ from nvalchemiops.interactions.dispersion._fourier_dftd3 import (
     fd3_kspace,
     fd3_self_energy,
     fd3_spread,
+    resolve_rank_slots,
 )
 from nvalchemiops.torch import torch_custom_op
 from nvalchemiops.torch.autograd import warp_from_torch, warp_stream_from_torch
@@ -635,22 +637,15 @@ def _fd3_finalise_op(
 class FourierD3Setup:
     """Cell- and mesh-derived quantities that do not change from step to step.
 
-    Building these costs a matrix inversion per system, which is negligible once but wasteful
-    every step, and `torch.linalg.inv` cannot be recorded into a CUDA graph. Precomputing them
-    is therefore both an optimisation and what makes
-    ``torch.compile(mode="reduce-overhead")`` usable.
+    The cell inverse cannot be recorded into a CUDA graph, so precomputing it is what makes
+    ``torch.compile(mode="reduce-overhead")`` usable, not only an optimisation.
 
-    Reuse is only valid while the cell and the mesh are unchanged. Under constant-volume
-    dynamics that is the whole trajectory; under variable-cell dynamics it is one step, so
-    rebuild or omit it there.
-
-    :meth:`validate_for` enforces that on every ordinary call. Under
-    ``torch.compile`` or CUDA graph capture the cell comparison is skipped, because reading
-    a tensor back would synchronise and graph capture forbids it outright. **There the
-    contract is the caller's:** the setup and the cell must both hold the same values for
-    every replay of the captured graph. Changing either after capture produces an answer
-    that mixes the two, with nothing raised. The shape, dtype and device checks still run,
-    since those read metadata rather than device memory.
+    Reuse is valid only while the cell and the mesh are unchanged: a whole trajectory under
+    constant volume, one step under variable cell. :meth:`validate_for` enforces this, but
+    under ``torch.compile`` or graph capture it cannot compare cell *values* -- reading a
+    tensor back would synchronise, which capture forbids. **There the contract is the
+    caller's:** a mismatch then yields an answer mixing two cells with nothing raised.
+    Shape, dtype and device checks still run, being metadata only.
 
     Attributes
     ----------
@@ -714,7 +709,10 @@ class FourierD3Setup:
             spline_order,
             "FourierD3Setup.build",
         )
-        cell_inv = torch.linalg.inv(cells)
+        # ``inv_ex`` over ``inv``: it reports singularity in a status code rather than
+        # raising, so it does not read the result back and does not synchronise. Same
+        # choice as the spline and PME paths.
+        cell_inv = torch.linalg.inv_ex(cells)[0]
         cell_inv_t = cell_inv.transpose(-1, -2).contiguous()
         millers = (
             torch.fft.fftfreq(mesh_nx, d=1.0 / mesh_nx, dtype=dtype, device=device),
@@ -817,45 +815,6 @@ def _check_spline_order(spline_order, origin):
         )
 
 
-def _validate_neighbours(
-    neighbor_matrix, neighbor_matrix_shifts, neighbor_list, neighbor_ptr, unit_shifts
-):
-    """Check that exactly one neighbour format arrived, with its matching shifts."""
-    matrix_given = neighbor_matrix is not None
-    list_given = neighbor_list is not None
-    if matrix_given and list_given:
-        raise ValueError(
-            "Cannot provide both neighbor_matrix and neighbor_list. "
-            "Please provide only one neighbor representation format."
-        )
-    if not matrix_given and not list_given:
-        raise ValueError("Must provide either neighbor_matrix or neighbor_list.")
-    if matrix_given:
-        if unit_shifts is not None:
-            raise ValueError(
-                "unit_shifts is for neighbor_list format. "
-                "Use neighbor_matrix_shifts for neighbor_matrix format."
-            )
-        if neighbor_matrix_shifts is None:
-            raise ValueError(
-                "neighbor_matrix_shifts is required: FourierD3 is periodic, so every "
-                "neighbour needs its lattice image."
-            )
-        return
-    if neighbor_matrix_shifts is not None:
-        raise ValueError(
-            "neighbor_matrix_shifts is for neighbor_matrix format. "
-            "Use unit_shifts for neighbor_list format."
-        )
-    if neighbor_ptr is None:
-        raise ValueError("neighbor_ptr is required alongside neighbor_list.")
-    if unit_shifts is None:
-        raise ValueError(
-            "unit_shifts is required: FourierD3 is periodic, so every neighbour needs "
-            "its lattice image."
-        )
-
-
 def fourier_dftd3(
     positions: torch.Tensor,
     numbers: torch.Tensor,
@@ -945,7 +904,7 @@ def fourier_dftd3(
     setup : FourierD3Setup, optional
         Cell- and mesh-derived quantities from :meth:`FourierD3Setup.build`, reused across
         steps. Saves a matrix inversion and a set of spline moduli per call, and is required
-        for ``torch.compile(mode="reduce-overhead")`` because ``torch.linalg.inv`` cannot be
+        for ``torch.compile(mode="reduce-overhead")`` because the cell inverse cannot be
         recorded into a CUDA graph. It must have been built for this cell, batch size,
         species count, precision and device; a mismatch raises. It also supplies the mesh
         and the spline order, so ``mesh_dimensions`` and ``mesh_spacing`` may be omitted and
@@ -1008,7 +967,7 @@ def fourier_dftd3(
     ...     neighbor_list=pairs, neighbor_ptr=pointer, unit_shifts=shifts,
     ... )
     """
-    _validate_neighbours(
+    check_neighbour_format(
         neighbor_matrix,
         neighbor_matrix_shifts,
         neighbor_list,
@@ -1192,16 +1151,7 @@ def fourier_dftd3(
     # A non-positive size yields no chunks at all, so the loop below never runs and the
     # result stays at its zero initialisation. Checked rather than left to ``range``, which
     # rejects a step of zero but silently produces nothing for a negative one.
-    slots = rank if rank_chunk_size is None else rank_chunk_size
-    if not isinstance(slots, int) or isinstance(slots, bool):
-        raise TypeError(
-            f"rank_chunk_size must be an int or None, got {type(rank_chunk_size).__name__}."
-            " It sets the number of kernel launches, so it cannot be an array or a traced"
-            " value."
-        )
-    if slots < 1:
-        raise ValueError(f"rank_chunk_size must be at least 1, got {rank_chunk_size}.")
-    slots = min(slots, rank)
+    slots = resolve_rank_slots(rank_chunk_size, rank)
     single_pass = slots >= rank
     for slot_start in range(0, rank, slots):
         slot_count = min(slots, rank - slot_start)

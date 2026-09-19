@@ -13,136 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Lazy dtype-indexed ``jax_kernel`` wrapper mapping.
+"""Electrostatics aliases for the shared lazy ``jax_kernel`` wrappers.
 
-Importing this module does not construct Warp/JAX FFI wrappers. The wrapper for
-a dtype is created on first lookup, and the underlying Warp kernel still compiles
-on first launch.
+The implementation lives in :mod:`nvalchemiops.jax._lazy_jax_kernels`, which the dispersion
+bindings share. Kept as a module so the existing import sites here stay unchanged.
 """
 
 from __future__ import annotations
 
-import jax.numpy as jnp
-import warp as wp
-from warp import jax_kernel
+from nvalchemiops.jax._lazy_jax_kernels import (
+    make_jax_kernel_factory as _make_jax_kernel_factory,
+)
+from nvalchemiops.jax._lazy_jax_kernels import (
+    make_jax_kernels as _make_jax_kernels,
+)
 
-__all__: list[str] = []
-
-
-class _LazyJaxKernels:
-    """Lazy ``{jnp.float32 | jnp.float64 -> jax_kernel}`` mapping.
-
-    Provides the ``_jax_kernel_by_dtype[dtype]`` lookup shape used by the
-    electrostatics wrappers.
-    """
-
-    _JAX_TO_WP = {jnp.float32: wp.float32, jnp.float64: wp.float64}
-
-    def __init__(
-        self,
-        wp_overload_dict: dict,
-        num_outputs: int,
-        in_out_argnames: list[str],
-    ) -> None:
-        self._wp_overload_dict = wp_overload_dict
-        self._num_outputs = num_outputs
-        self._in_out_argnames = in_out_argnames
-        self._cache: dict = {}
-
-    def __getitem__(self, jax_dtype):
-        if jax_dtype not in self._cache:
-            wp_dtype = self._JAX_TO_WP[jax_dtype]
-            self._cache[jax_dtype] = jax_kernel(
-                self._wp_overload_dict[wp_dtype],
-                num_outputs=self._num_outputs,
-                in_out_argnames=self._in_out_argnames,
-                enable_backward=False,
-            )
-        return self._cache[jax_dtype]
-
-    def __contains__(self, jax_dtype) -> bool:
-        return jax_dtype in self._JAX_TO_WP
-
-
-def _make_jax_kernels(
-    wp_overload_dict: dict,
-    num_outputs: int,
-    in_out_argnames: list[str],
-) -> _LazyJaxKernels:
-    """Return a lazy ``{jax_dtype -> jax_kernel}`` mapping.
-
-    Parameters
-    ----------
-    wp_overload_dict : dict
-        Warp kernel overload dictionary keyed by ``wp.float32`` /
-        ``wp.float64``.
-    num_outputs : int
-        Number of output arrays the kernel returns.
-    in_out_argnames : list of str
-        Names of in-place output arguments.
-
-    Returns
-    -------
-    _LazyJaxKernels
-        Subscript with ``jnp.float32`` / ``jnp.float64`` to obtain a
-        :func:`warp.jax_kernel` instance. The wrapper
-        for each dtype is built lazily on first access.
-    """
-    return _LazyJaxKernels(wp_overload_dict, num_outputs, in_out_argnames)
-
-
-class _LazyJaxKernelFactory:
-    """Lazy ``{jnp.float32 | jnp.float64 -> jax_kernel}`` mapping from a factory."""
-
-    _JAX_TO_WP = _LazyJaxKernels._JAX_TO_WP
-
-    def __init__(
-        self,
-        wp_kernel_factory,
-        num_outputs: int,
-        in_out_argnames: list[str],
-    ) -> None:
-        self._wp_kernel_factory = wp_kernel_factory
-        self._num_outputs = num_outputs
-        self._in_out_argnames = in_out_argnames
-        self._cache: dict = {}
-
-    def __getitem__(self, jax_dtype):
-        if jax_dtype not in self._cache:
-            wp_dtype = self._JAX_TO_WP[jax_dtype]
-            self._cache[jax_dtype] = jax_kernel(
-                self._wp_kernel_factory(wp_dtype),
-                num_outputs=self._num_outputs,
-                in_out_argnames=self._in_out_argnames,
-                enable_backward=False,
-            )
-        return self._cache[jax_dtype]
-
-    def __contains__(self, jax_dtype) -> bool:
-        return jax_dtype in self._JAX_TO_WP
-
-
-def _make_jax_kernel_factory(
-    wp_kernel_factory,
-    num_outputs: int,
-    in_out_argnames: list[str],
-) -> _LazyJaxKernelFactory:
-    """Return a lazy dtype mapping for kernels produced by ``wp_kernel_factory``.
-
-    Parameters
-    ----------
-    wp_kernel_factory : Callable
-        Function accepting a Warp scalar dtype and returning one specialized
-        :class:`warp.Kernel`.
-    num_outputs : int
-        Number of output arrays the kernel returns.
-    in_out_argnames : list of str
-        Names of in-place output arguments.
-
-    Returns
-    -------
-    _LazyJaxKernelFactory
-        Subscript with ``jnp.float32`` / ``jnp.float64`` to obtain a lazy
-        :func:`warp.jax_kernel` wrapper.
-    """
-    return _LazyJaxKernelFactory(wp_kernel_factory, num_outputs, in_out_argnames)
+__all__ = ["_make_jax_kernel_factory", "_make_jax_kernels"]

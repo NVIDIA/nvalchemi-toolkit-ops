@@ -31,6 +31,7 @@ Examples
 Using D3Parameters dataclass:
 
 >>> import jax.numpy as jnp
+
 >>> from nvalchemiops.jax.interactions.dispersion import dftd3, D3Parameters
 >>>
 >>> # Create parameters
@@ -65,8 +66,6 @@ from functools import partial
 
 import jax
 import jax.numpy as jnp
-import warp as wp
-from warp import jax_kernel
 
 from nvalchemiops.interactions.dispersion._dftd3 import (
     _cn_forces_contrib_kernel_matrix_overload as wp_cn_forces_contrib_nm,
@@ -104,6 +103,8 @@ from nvalchemiops.interactions.dispersion._dftd3 import (
 from nvalchemiops.interactions.dispersion._dftd3 import (
     _direct_forces_and_dE_dCN_kernel_virial_overload as wp_direct_forces_kernel_nl_virial,
 )
+from nvalchemiops.jax._lazy_jax_kernels import make_jax_kernels
+from nvalchemiops.jax.types import normalize_float_dtype
 
 # block_dim is hardcoded to 256 in Warp's JAX FFI, so block_stride
 # and the second launch_dims component must both be 256.
@@ -115,32 +116,12 @@ JAX_DFTD3_BLOCK_DIM = 256
 
 
 def _normalize_dtype(dtype):
-    """Normalize dtype for JAX kernel dictionary lookup."""
-    if dtype == jnp.float32 or str(dtype) == "float32":
-        return jnp.float32
-    elif dtype == jnp.float64 or str(dtype) == "float64":
-        return jnp.float64
-    else:
-        raise ValueError(f"Unsupported dtype for DFT-D3 positions: {dtype}")
+    """Resolve a floating dtype to the kernel-dispatch key.
 
-
-def _make_jax_kernels(
-    wp_overload_dict: dict,
-    num_outputs: int,
-    in_out_argnames: list[str] | None = None,
-) -> dict:
-    """Create dtype-dispatched JAX kernel wrappers from Warp overloads."""
-    jax_to_wp = {jnp.float32: wp.float32, jnp.float64: wp.float64}
-    kwargs = {} if in_out_argnames is None else {"in_out_argnames": in_out_argnames}
-    return {
-        jax_dtype: jax_kernel(
-            wp_overload_dict[wp_dtype],
-            num_outputs=num_outputs,
-            enable_backward=False,
-            **kwargs,
-        )
-        for jax_dtype, wp_dtype in jax_to_wp.items()
-    }
+    Thin alias for :func:`nvalchemiops.jax.types.normalize_float_dtype`, which every
+    JAX binding shares; only the error wording differs here.
+    """
+    return normalize_float_dtype(dtype, "DFT-D3 positions")
 
 
 def _launch_kwargs_for_positions(
@@ -167,10 +148,10 @@ def _restore_nonfinite_to_init(value: jax.Array, init: jax.Array) -> jax.Array:
 
 # --- Pass 0: Cartesian Shift Computation ---
 
-_compute_cartesian_shifts_nm = _make_jax_kernels(
+_compute_cartesian_shifts_nm = make_jax_kernels(
     wp_compute_cartesian_shifts_nm, num_outputs=1
 )
-_compute_cartesian_shifts_nl = _make_jax_kernels(
+_compute_cartesian_shifts_nl = make_jax_kernels(
     wp_compute_cartesian_shifts_nl, num_outputs=1
 )
 compute_cartesian_shifts_nm = _compute_cartesian_shifts_nm[jnp.float32]
@@ -178,29 +159,29 @@ compute_cartesian_shifts_nl = _compute_cartesian_shifts_nl[jnp.float32]
 
 # --- Pass 1: Coordination Number Computation ---
 
-_cn_kernel_nm = _make_jax_kernels(wp_cn_kernel_nm, num_outputs=1)
-_cn_kernel_nl = _make_jax_kernels(wp_cn_kernel_nl, num_outputs=1)
+_cn_kernel_nm = make_jax_kernels(wp_cn_kernel_nm, num_outputs=1)
+_cn_kernel_nl = make_jax_kernels(wp_cn_kernel_nl, num_outputs=1)
 cn_kernel_nm = _cn_kernel_nm[jnp.float32]
 cn_kernel_nl = _cn_kernel_nl[jnp.float32]
 
 # --- Pass 2: Direct Forces and dE/dCN Computation ---
 
-_direct_forces_kernel_nm = _make_jax_kernels(
+_direct_forces_kernel_nm = make_jax_kernels(
     wp_direct_forces_kernel_nm,
     num_outputs=3,
     in_out_argnames=["dE_dCN", "forces", "energy"],
 )
-_direct_forces_kernel_nm_virial = _make_jax_kernels(
+_direct_forces_kernel_nm_virial = make_jax_kernels(
     wp_direct_forces_kernel_nm_virial,
     num_outputs=4,
     in_out_argnames=["dE_dCN", "forces", "energy", "virial"],
 )
-_direct_forces_kernel_nl = _make_jax_kernels(
+_direct_forces_kernel_nl = make_jax_kernels(
     wp_direct_forces_kernel_nl,
     num_outputs=3,
     in_out_argnames=["dE_dCN", "forces", "energy"],
 )
-_direct_forces_kernel_nl_virial = _make_jax_kernels(
+_direct_forces_kernel_nl_virial = make_jax_kernels(
     wp_direct_forces_kernel_nl_virial,
     num_outputs=4,
     in_out_argnames=["dE_dCN", "forces", "energy", "virial"],
@@ -637,22 +618,22 @@ def direct_forces_kernel_nl(
 
 # --- Pass 3: CN-Dependent Force Contribution ---
 
-_cn_forces_contrib_nm = _make_jax_kernels(
+_cn_forces_contrib_nm = make_jax_kernels(
     wp_cn_forces_contrib_nm,
     num_outputs=1,
     in_out_argnames=["forces"],
 )
-_cn_forces_contrib_nm_virial = _make_jax_kernels(
+_cn_forces_contrib_nm_virial = make_jax_kernels(
     wp_cn_forces_contrib_nm_virial,
     num_outputs=2,
     in_out_argnames=["forces", "virial"],
 )
-_cn_forces_contrib_nl = _make_jax_kernels(
+_cn_forces_contrib_nl = make_jax_kernels(
     wp_cn_forces_contrib_nl,
     num_outputs=1,
     in_out_argnames=["forces"],
 )
-_cn_forces_contrib_nl_virial = _make_jax_kernels(
+_cn_forces_contrib_nl_virial = make_jax_kernels(
     wp_cn_forces_contrib_nl_virial,
     num_outputs=2,
     in_out_argnames=["forces", "virial"],
