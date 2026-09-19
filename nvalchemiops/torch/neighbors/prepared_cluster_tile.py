@@ -389,7 +389,8 @@ def cluster_tile_neighbor_list_prepared(
     detached snapshots. Without reconstruction, returned matrix geometry
     aliases those buffers. Build losses from the returned geometry, not from
     the snapshot buffers. Exact COO tensors are exact-sized per call. Finish
-    backward or copy any values that must survive before reusing ``state``.
+    backward before reusing ``state``, and copy every borrowed result that must
+    survive that reuse.
     """
     if not isinstance(state, ClusterTileState):
         raise TypeError("state must be a ClusterTileState")
