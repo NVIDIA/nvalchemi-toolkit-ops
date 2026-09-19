@@ -580,6 +580,13 @@ On this path convergence has two parts, and both stay with you: apply your
 thresholds to the **Cartesian** forces and the stress, never to the packed
 norms, so they keep their physical meaning however far the cell deforms.
 
+A system with **no atoms is rejected** on this path, by all three layers.
+`kappa` scales the cell against the atoms, so there is no scale such a system
+could be given, and substituting one would make an unsupported configuration
+look valid. Drop empty systems from the batch. Empty input on the
+coordinate-only path is a different case and stays supported — with no cell to
+scale against, zero degrees of freedom is simply a no-op.
+
 **Memory.** The history dominates: `2 * m` vectors of `num_dofs` each. At
 `m = 6` and float32 coordinates that is roughly `192` bytes per degree of
 freedom. Reduce `m` if memory is tight; `m` between 3 and 7 is typical.

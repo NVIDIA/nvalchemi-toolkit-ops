@@ -258,12 +258,17 @@ JAX bindings and the user guide all defer here rather than restating them.
    entries regardless, so ``P = num_atoms + 2 * M`` holds for any split, and
    :meth:`LBFGSCellState.validate` checks that relationship.
 
-*5. Empty systems.*
-   A system with no atoms still owns its two cell degrees of freedom. Its
-   ``kappa`` would be zero on the atom count alone, and ``kappa`` divides the
-   cell force, so :func:`lbfgs_cell_kappa` clamps the count to one. The scale
-   is arbitrary there anyway -- there is nothing to balance the cell against.
-   The JAX helper follows the same contract.
+*5. Empty systems are rejected here, and supported on the coordinate path.*
+   ``kappa`` scales the cell coordinate against the atomic ones and is divided
+   into the cell force, so a system with no atoms has no scale to give it.
+   Rather than substitute one -- which would invent a number with no physical
+   basis and make an unsupported configuration look valid -- both
+   :func:`lbfgs_cell_kappa` and :func:`lbfgs_prepare_cell_state` reject the
+   batch, naming the offending systems. All three layers agree.
+
+   The coordinate-only path is a different case and stays supported: zero
+   degrees of freedom is simply a no-op there, because there is no cell to
+   scale against.
 
 Memory
 ------
@@ -312,6 +317,7 @@ __all__ = [
     "check_against_state",
     "check_packed_topology",
     "check_cell_is_aligned",
+    "check_no_empty_cell_systems",
     "lbfgs_cell_kappa",
     "lbfgs_prepare_cell_state",
     "lbfgs_prepare_state",
@@ -2482,12 +2488,10 @@ def _lbfgs_cell_kappa_kernel(
     """
     tid = wp.tid()
     slot = kappa[tid]
-    # A system with no atoms still owns two cell degrees of freedom, and kappa
-    # is divided into the cell force and the unpacked cell, so it must stay
-    # strictly positive or those become infinite. With no atoms there is
-    # nothing to balance the cell against, which makes the scale free; clamping
-    # the count to one keeps it continuous with a single-atom system.
-    count = wp.max(n_atoms_per_system[tid], wp.int32(1))
+    # No clamp: a system with no atoms has no cell scale, and inventing one
+    # would make an unsupported configuration look valid. Empty systems are
+    # rejected by :func:`lbfgs_cell_kappa` before this ever runs.
+    count = n_atoms_per_system[tid]
     kappa[tid] = type(slot)(cell_force_scale) * type(slot)(count)
 
 
@@ -2949,13 +2953,14 @@ def lbfgs_cell_kappa(
     Notes
     -----
     ``kappa`` is divided into the cell force, so it must never be zero. A
-    system with no atoms is treated as having one, since with nothing to
-    balance the cell against the scale is arbitrary anyway. If you fill
+    batch containing a system with no atoms is rejected rather than given an
+    invented scale; see :func:`check_no_empty_cell_systems`. If you fill
     ``kappa`` yourself rather than calling this, keep every entry strictly
     positive.
     """
     if cell_force_scale <= 0.0:
         raise ValueError(f"cell_force_scale must be positive; got {cell_force_scale}")
+    check_no_empty_cell_systems(n_atoms_per_system)
     vec = wp.vec3f if kappa.dtype == wp.float32 else wp.vec3d
     wp.launch(
         _cell_kappa_overloads[vec],
@@ -3365,6 +3370,40 @@ def _arrays(state) -> dict:
     return {f.name: getattr(state, f.name) for f in dataclasses.fields(state)}
 
 
+def check_no_empty_cell_systems(n_atoms_per_system) -> None:
+    """Reject variable-cell systems that contain no atoms.
+
+    ``kappa`` scales the cell coordinate against the atomic ones and is divided
+    into the cell force, so a system with no atoms has no scale to give it.
+    Substituting one would invent a number with no physical basis and make an
+    unsupported configuration look valid, so this rejects instead.
+
+    The coordinate-only path is different and remains supported: zero degrees
+    of freedom there is simply a no-op, with no cell to scale against. See
+    :ref:`the variable-cell contract <lbfgs-cell-contract>`.
+
+    Reads the counts back to the host, so this is a setup-time check. It runs
+    from :func:`lbfgs_cell_kappa`, which is called once.
+
+    Raises
+    ------
+    ValueError
+        If any system has no atoms.
+    """
+    import numpy as _np
+
+    counts = _np.asarray(n_atoms_per_system.numpy())
+    empty = _np.flatnonzero(counts <= 0)
+    if empty.size:
+        raise ValueError(
+            f"system(s) {empty.tolist()} have no atoms, which the variable-cell "
+            "path does not support: kappa scales the cell against the atoms, so "
+            "there is no scale to give them. Drop the empty systems from the "
+            "batch. (Empty input on the coordinate-only path is fine and is a "
+            "no-op.)"
+        )
+
+
 def check_packed_topology(ext_atom_ptr, ext_batch_idx, num_systems, num_packed) -> None:
     """Confirm the packed topology's *values*, not just its shapes.
 
@@ -3400,7 +3439,16 @@ def check_packed_topology(ext_atom_ptr, ext_batch_idx, num_systems, num_packed) 
     if short.size:
         raise ValueError(
             f"system(s) {short.tolist()} span fewer than 2 packed entries, but "
-            "every system owns two cell rows however few atoms it has"
+            "every system owns two cell rows besides its atoms"
+        )
+    # Exactly two entries means the two cell rows and no atoms.
+    atomless = _np.flatnonzero(spans == 2)
+    if atomless.size:
+        raise ValueError(
+            f"system(s) {atomless.tolist()} contain no atoms, which the "
+            "variable-cell path does not support: kappa scales the cell "
+            "against the atoms, so there is no scale to give them. Drop them "
+            "from the batch."
         )
     expected = _np.repeat(_np.arange(num_systems, dtype=_np.int64), spans)
     if not _np.array_equal(idx, expected):

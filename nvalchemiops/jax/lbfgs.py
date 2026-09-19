@@ -103,6 +103,7 @@ import inspect
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import warp as wp
 from warp import JaxCallableGraphMode, jax_callable
 
@@ -778,18 +779,29 @@ def lbfgs_cell_kappa(
     Notes
     -----
     ``kappa`` is divided into the cell force, so it must never be zero. A
-    system with no atoms is treated as having one, since with nothing to
-    balance the cell against the scale is arbitrary anyway.
+    batch containing a system with no atoms is rejected rather than given an
+    invented scale, matching the Warp and PyTorch layers; see the variable-cell
+    contract in :mod:`nvalchemiops.dynamics.optimizers.lbfgs`.
     """
     if cell_force_scale <= 0.0:
         raise ValueError(f"cell_force_scale must be positive; got {cell_force_scale}")
     dtype = jnp.dtype(dtype).type
     if dtype not in _CELL_BODIES:
         raise ValueError(f"dtype must be float32 or float64; got {dtype}")
-    # Clamp an empty system to one atom, matching the Warp kernel: kappa is
-    # divided into the cell force and the unpacked cell, so a zero makes both
-    # infinite. A system with no atoms still owns two cell degrees of freedom.
-    counts = jnp.maximum(jnp.asarray(n_particles), 1)
+    counts = jnp.asarray(n_particles)
+    # A setup-time check, so concretizing is fine. Under ``jit`` the counts are
+    # a tracer with no value to inspect; skip rather than fail, as the device
+    # checks in ``validate`` do.
+    if not isinstance(counts, jax.core.Tracer):
+        empty = np.flatnonzero(np.asarray(counts) <= 0)
+        if empty.size:
+            raise ValueError(
+                f"system(s) {empty.tolist()} have no atoms, which the "
+                "variable-cell path does not support: kappa scales the cell "
+                "against the atoms, so there is no scale to give them. Drop "
+                "the empty systems from the batch. (Empty input on the "
+                "coordinate-only path is fine and is a no-op.)"
+            )
     return counts.astype(dtype) * dtype(cell_force_scale)
 
 

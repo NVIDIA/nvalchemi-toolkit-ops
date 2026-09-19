@@ -1477,30 +1477,60 @@ class TestLBFGSCellKappa:
     """The cell coordinate scaling, which is divided into the cell force."""
 
     @pytest.mark.parametrize("device", DEVICES)
-    def test_zero_atom_system_gets_a_positive_kappa(self, device):
-        """An empty system must not produce ``kappa = 0``.
+    def test_an_empty_system_is_rejected(self, device):
+        """The variable-cell path has no scale to give a system with no atoms.
 
-        ``kappa`` is divided into the cell force and into the unpacked cell, so
-        a zero would turn both infinite. A system with no atoms still owns two
-        cell degrees of freedom, so it is a reachable configuration in a ragged
-        or padded batch rather than a degenerate one.
+        ``kappa`` scales the cell coordinate against the atomic ones and is
+        divided into the cell force, so an empty system has no value it could
+        take. Substituting one would invent a number with no physical basis and
+        make an unsupported configuration look valid, so the batch is rejected
+        and the offending systems are named.
         """
-        counts = np.array([4, 0, 3], np.int32)
-        n_atoms = wp.array(counts, dtype=wp.int32, device=device)
-        kappa = wp.zeros(len(counts), dtype=wp.float64, device=device)
+        counts = wp.array(np.array([4, 0, 3], np.int32), dtype=wp.int32, device=device)
+        kappa = wp.zeros(3, dtype=wp.float64, device=device)
+        with pytest.raises(ValueError, match=r"system\(s\) \[1\] have no atoms"):
+            lbfgs_cell_kappa(counts, kappa, cell_force_scale=0.25)
 
-        lbfgs_cell_kappa(n_atoms, kappa, cell_force_scale=0.25)
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_populated_systems_keep_the_documented_scale(self, device):
+        """Rejecting the empty case must not disturb the ordinary one."""
+        counts = wp.array(np.array([4, 2, 3], np.int32), dtype=wp.int32, device=device)
+        kappa = wp.zeros(3, dtype=wp.float64, device=device)
+        lbfgs_cell_kappa(counts, kappa, cell_force_scale=0.25)
         wp.synchronize()
+        np.testing.assert_allclose(kappa.numpy(), 0.25 * np.array([4, 2, 3]))
 
-        k = kappa.numpy()
-        assert (k > 0.0).all(), f"non-positive kappa: {k}"
-        assert np.isfinite(1.0 / k).all(), "dividing by kappa is not finite"
-        # Populated systems keep the documented scale * count.
-        np.testing.assert_allclose(k[0], 0.25 * 4)
-        np.testing.assert_allclose(k[2], 0.25 * 3)
-        # The empty one is treated as a single atom: the scale is free there,
-        # it only has to be positive.
-        np.testing.assert_allclose(k[1], 0.25)
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_an_atomless_system_is_rejected_by_the_topology_too(self, device):
+        """Rejected even when ``kappa`` is filled separately.
+
+        A system spanning exactly two packed entries has its two cell rows and
+        no atoms, so preparation rejects it from the topology alone.
+        """
+        n, m = 4, 2
+        # System 0 gets all four atoms; system 1 gets none.
+        ptr = wp.array(np.array([0, 6, 8], np.int32), dtype=wp.int32, device=device)
+        idx = wp.array(
+            np.array([0, 0, 0, 0, 0, 0, 1, 1], np.int32), dtype=wp.int32, device=device
+        )
+        with pytest.raises(ValueError, match="contain no atoms"):
+            lbfgs_prepare_cell_state(n, m, idx, ptr, device=device)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_coordinate_only_empty_input_is_still_supported(self, device):
+        """The separate, explicitly documented case: a no-op, not an error.
+
+        There is no cell to scale against on the coordinate path, so zero
+        degrees of freedom is simply nothing to do.
+        """
+        state = lbfgs_prepare_state(0, 1, device=device)
+        lbfgs_step(
+            positions=wp.zeros(0, dtype=wp.vec3d, device=device),
+            forces=wp.zeros(0, dtype=wp.vec3d, device=device),
+            state=state,
+            batch_idx=wp.zeros(0, dtype=wp.int32, device=device),
+        )
+        wp.synchronize()
 
 
 class TestLBFGSCellPrecision:
