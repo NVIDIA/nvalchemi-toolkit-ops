@@ -41,7 +41,7 @@ Two differences from :func:`dftd3` are worth noting before use:
 
 - ``cell`` is **required**. FourierD3 evaluates a periodic sum; there is no open-boundary
   path. Molecules in vacuum should continue to use :func:`dftd3`.
-- ``r_cut`` has **no default**, and must equal the radius the neighbour list was built
+- ``cutoff`` has **no default**, and must equal the radius the neighbour list was built
   with. The coordination-number function is constructed to reach zero exactly there.
 
 .. autofunction:: nvalchemiops.torch.interactions.dispersion.fourier_dftd3

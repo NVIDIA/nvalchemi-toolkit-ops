@@ -235,7 +235,7 @@ def benchmark_fourier_d3(
             numbers,
             fourier_d3_params=parameters,
             cell=cell,
-            r_cut=CN_CUTOFF,
+            cutoff=CN_CUTOFF,
             mesh_dimensions=(mesh, mesh, mesh),
             neighbor_list=neighbors,
             neighbor_ptr=pointer,

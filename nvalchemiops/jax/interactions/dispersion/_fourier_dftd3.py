@@ -31,8 +31,8 @@ forces and the virial are explicit outputs, not derivatives of the energy.
 
 Units
 -----
-``positions``, ``cell``, ``rcov``, ``r_cut`` and ``mesh_spacing`` must share one length unit.
-D3 parameters are conventionally atomic units, so ``r_cut`` has no default.
+``positions``, ``cell``, ``rcov``, ``cutoff`` and ``mesh_spacing`` must share one length unit.
+D3 parameters are conventionally atomic units, so ``cutoff`` has no default.
 """
 
 from __future__ import annotations
@@ -382,7 +382,7 @@ def fourier_dftd3(
     *,
     fourier_d3_params: FourierD3Parameters,
     cell,
-    r_cut: float,
+    cutoff: float,
     mesh_dimensions: tuple[int, int, int] | None = None,
     mesh_spacing: float | None = None,
     neighbor_matrix=None,
@@ -418,7 +418,7 @@ def fourier_dftd3(
         Separable coefficients covering every species present.
     cell : jax.Array, shape (3, 3), (1, 3, 3) or (B, 3, 3)
         Lattice vectors as rows. Required: FourierD3 is periodic.
-    r_cut : float
+    cutoff : float
         Coordination-number cutoff, in the same length unit as ``positions``. Must equal the
         radius the neighbour list was built with.
     mesh_dimensions, mesh_spacing
@@ -630,7 +630,7 @@ def fourier_dftd3(
                 neighbours,
                 cartesian_shifts,
                 covalent_radii,
-                float(r_cut),
+                float(cutoff),
                 int(fill_value),
                 int(block),
                 launch_dims=(n_atoms, block),
@@ -647,7 +647,7 @@ def fourier_dftd3(
                 jnp.asarray(neighbor_ptr, dtype=jnp.int32),
                 cartesian_shifts,
                 covalent_radii,
-                float(r_cut),
+                float(cutoff),
                 int(block),
                 launch_dims=(n_atoms, block),
                 output_dims={"coord_num": (n_atoms,)},
@@ -834,7 +834,7 @@ def fourier_dftd3(
                 neighbours,
                 cartesian_shifts,
                 covalent_radii,
-                float(r_cut),
+                float(cutoff),
                 int(fill_value),
                 batch_idx,
                 int(block),
@@ -855,7 +855,7 @@ def fourier_dftd3(
                 jnp.asarray(neighbor_ptr, dtype=jnp.int32),
                 cartesian_shifts,
                 covalent_radii,
-                float(r_cut),
+                float(cutoff),
                 batch_idx,
                 int(block),
                 bool(compute_virial),

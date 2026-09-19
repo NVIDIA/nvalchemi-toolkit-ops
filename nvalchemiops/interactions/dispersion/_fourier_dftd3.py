@@ -40,8 +40,8 @@ contribution.
 
 Units
 -----
-Unit-agnostic, but ``positions``, ``cell``, ``covalent_radii``, ``r_cut`` and the mesh spacing
-must share one system (D3 parameters are conventionally atomic units). ``r_cut`` must equal the
+Unit-agnostic, but ``positions``, ``cell``, ``covalent_radii``, ``cutoff`` and the mesh spacing
+must share one system (D3 parameters are conventionally atomic units). ``cutoff`` must equal the
 neighbour-list cutoff, because the counting function reaches zero exactly there.
 
 References
@@ -150,13 +150,13 @@ _PI_SQ = _PI * _PI
 def _cn_counting(
     distance: Any,
     covalent_distance: Any,
-    r_cut: Any,
+    cutoff: Any,
     compute_derivative: bool,
 ) -> tuple[Any, Any]:
     """Contribution of one neighbour to a coordination number, and its radial derivative.
 
     FourierD3 replaces the fixed-steepness D3 counting function with one whose steepness grows
-    without bound as the separation approaches ``r_cut``. The standard form tends to a non-zero
+    without bound as the separation approaches ``cutoff``. The standard form tends to a non-zero
     constant at large separation, so truncating it leaves a step and the energy never converges
     as the list grows. This form reaches exactly zero at the cutoff, which is what makes the
     coordination numbers independent of the list used to build them.
@@ -170,7 +170,7 @@ def _cn_counting(
         already folds in Grimme's 4/3 factor, so the counting function crosses one half at
         ``distance == covalent_distance``. See ``_CN_UNSCALE`` for where that factor is
         divided back out.
-    r_cut : Any
+    cutoff : Any
         Neighbour-list cutoff. The counting function reaches zero here, so this must be the
         radius the list was actually built with.
     compute_derivative : bool
@@ -185,10 +185,10 @@ def _cn_counting(
     """
     one = type(distance)(1.0)
     transition = type(distance)(0.5) * (
-        type(distance)(_CN_UNSCALE) * covalent_distance + r_cut
+        type(distance)(_CN_UNSCALE) * covalent_distance + cutoff
     )
     stabilised = wp.max(distance, transition)
-    gap = r_cut - stabilised
+    gap = cutoff - stabilised
     denominator = gap * gap + type(distance)(_CN_EPSILON)
     offset = stabilised - transition
     steepness = type(distance)(_CN_STEEPNESS) + offset * offset / denominator
@@ -405,7 +405,7 @@ def _fd3_cn_kernel(
     neighbor_ptr: wp.array(dtype=wp.int32),
     cartesian_shifts: wp.array(dtype=Any),
     covalent_radii: wp.array(dtype=Any),
-    r_cut: Any,
+    cutoff: Any,
     block_stride: wp.int32,
     coord_num: wp.array(dtype=Any),
 ):
@@ -426,7 +426,7 @@ def _fd3_cn_kernel(
     if numbers[atom_i] == 0:
         return
 
-    zero = type(r_cut)(0.0)
+    zero = type(cutoff)(0.0)
     total = zero
     rcov_i = covalent_radii[numbers[atom_i]]
     position_i = positions[atom_i]
@@ -438,9 +438,9 @@ def _fd3_cn_kernel(
         if numbers[atom_j] != 0:
             delta = positions[atom_j] + cartesian_shifts[edge] - position_i
             distance = wp.length(delta)
-            if distance < r_cut and distance != zero:
+            if distance < cutoff and distance != zero:
                 value, _unused = _cn_counting(
-                    distance, rcov_i + covalent_radii[numbers[atom_j]], r_cut, False
+                    distance, rcov_i + covalent_radii[numbers[atom_j]], cutoff, False
                 )
                 total += value
         edge += block_stride
@@ -569,7 +569,7 @@ def fd3_coordination_numbers(
     neighbor_ptr: wp.array,
     cartesian_shifts: wp.array,
     covalent_radii: wp.array,
-    r_cut: float,
+    cutoff: float,
     coord_num: wp.array,
     wp_dtype: type,
     device: str | None = None,
@@ -590,7 +590,7 @@ def fd3_coordination_numbers(
         Periodic image offset for each edge, already in Cartesian units.
     covalent_radii : wp.array, shape (max_z + 1,)
         Covalent radii indexed by atomic number, in the same length unit as ``positions``.
-    r_cut : float
+    cutoff : float
         Neighbour-list cutoff. Must equal the radius the list was built with: the counting
         function is constructed to reach zero exactly here, and a mismatch reintroduces the
         truncation discontinuity the modified form exists to remove.
@@ -617,7 +617,7 @@ def fd3_coordination_numbers(
             neighbor_ptr,
             cartesian_shifts,
             covalent_radii,
-            wp_dtype(r_cut),
+            wp_dtype(cutoff),
             wp.int32(block),
         ],
         outputs=[coord_num],
@@ -955,7 +955,7 @@ def _fd3_cn_forces_kernel(
     neighbor_ptr: wp.array(dtype=wp.int32),
     cartesian_shifts: wp.array(dtype=Any),
     covalent_radii: wp.array(dtype=Any),
-    r_cut: Any,
+    cutoff: Any,
     batch_idx: wp.array(dtype=wp.int32),
     block_stride: wp.int32,
     compute_virial: bool,
@@ -986,8 +986,8 @@ def _fd3_cn_forces_kernel(
     position_i = positions[atom_i]
     sensitivity_i = d_energy_d_cn[atom_i]
 
-    zero = type(r_cut)(0.0)
-    half = type(r_cut)(0.5)
+    zero = type(cutoff)(0.0)
+    half = type(cutoff)(0.5)
     force_x = zero
     force_y = zero
     force_z = zero
@@ -1005,9 +1005,9 @@ def _fd3_cn_forces_kernel(
         if numbers[atom_j] != 0:
             delta = positions[atom_j] + cartesian_shifts[edge] - position_i
             distance = wp.length(delta)
-            if distance < r_cut and distance != zero:
+            if distance < cutoff and distance != zero:
                 _value, slope = _cn_counting(
-                    distance, rcov_i + covalent_radii[numbers[atom_j]], r_cut, True
+                    distance, rcov_i + covalent_radii[numbers[atom_j]], cutoff, True
                 )
                 magnitude = (sensitivity_i + d_energy_d_cn[atom_j]) * slope
                 pair_force = (magnitude / distance) * delta
@@ -1045,7 +1045,7 @@ def _fd3_cn_forces_kernel(
             wp.atomic_add(
                 virial,
                 batch_idx[atom_i],
-                type(r_cut)(-1.0)
+                type(cutoff)(-1.0)
                 * wp.matrix_from_rows(
                     wp.vector(sum_xx, sum_xy, sum_xz),
                     wp.vector(sum_xy, sum_yy, sum_yz),
@@ -1321,7 +1321,7 @@ def fd3_cn_chain(
     neighbor_ptr: wp.array,
     cartesian_shifts: wp.array,
     covalent_radii: wp.array,
-    r_cut: float,
+    cutoff: float,
     batch_idx: wp.array,
     d_energy_d_cn: wp.array,
     forces: wp.array,
@@ -1340,7 +1340,7 @@ def fd3_cn_chain(
     dc6_dcn : wp.array2d, shape (N, rank)
         Derivative of the coefficients with respect to coordination number, from
         :func:`fd3_coefficients`.
-    positions, numbers, idx_j, neighbor_ptr, cartesian_shifts, covalent_radii, r_cut
+    positions, numbers, idx_j, neighbor_ptr, cartesian_shifts, covalent_radii, cutoff
         The same neighbour-list description passed to :func:`fd3_coordination_numbers`.
     batch_idx : wp.array, shape (N,), dtype=wp.int32
         System index per atom.
@@ -1381,7 +1381,7 @@ def fd3_cn_chain(
             neighbor_ptr,
             cartesian_shifts,
             covalent_radii,
-            wp_dtype(r_cut),
+            wp_dtype(cutoff),
             batch_idx,
             wp.int32(block),
             compute_virial,
@@ -1546,7 +1546,7 @@ def _fd3_cn_matrix_kernel(
     neighbor_matrix: wp.array2d(dtype=wp.int32),
     cartesian_shifts: wp.array2d(dtype=Any),
     covalent_radii: wp.array(dtype=Any),
-    r_cut: Any,
+    cutoff: Any,
     fill_value: wp.int32,
     block_stride: wp.int32,
     coord_num: wp.array(dtype=Any),
@@ -1567,7 +1567,7 @@ def _fd3_cn_matrix_kernel(
     if numbers[atom_i] == 0:
         return
 
-    zero = type(r_cut)(0.0)
+    zero = type(cutoff)(0.0)
     total = zero
     rcov_i = covalent_radii[numbers[atom_i]]
     position_i = positions[atom_i]
@@ -1577,9 +1577,9 @@ def _fd3_cn_matrix_kernel(
         if atom_j < fill_value and numbers[atom_j] != 0:
             delta = positions[atom_j] + cartesian_shifts[atom_i, slot] - position_i
             distance = wp.length(delta)
-            if distance < r_cut and distance != zero:
+            if distance < cutoff and distance != zero:
                 value, _unused = _cn_counting(
-                    distance, rcov_i + covalent_radii[numbers[atom_j]], r_cut, False
+                    distance, rcov_i + covalent_radii[numbers[atom_j]], cutoff, False
                 )
                 total += value
 
@@ -1596,7 +1596,7 @@ def _fd3_cn_forces_matrix_kernel(
     neighbor_matrix: wp.array2d(dtype=wp.int32),
     cartesian_shifts: wp.array2d(dtype=Any),
     covalent_radii: wp.array(dtype=Any),
-    r_cut: Any,
+    cutoff: Any,
     fill_value: wp.int32,
     batch_idx: wp.array(dtype=wp.int32),
     block_stride: wp.int32,
@@ -1624,8 +1624,8 @@ def _fd3_cn_forces_matrix_kernel(
     position_i = positions[atom_i]
     sensitivity_i = d_energy_d_cn[atom_i]
 
-    zero = type(r_cut)(0.0)
-    half = type(r_cut)(0.5)
+    zero = type(cutoff)(0.0)
+    half = type(cutoff)(0.5)
     force_x = zero
     force_y = zero
     force_z = zero
@@ -1641,9 +1641,9 @@ def _fd3_cn_forces_matrix_kernel(
         if atom_j < fill_value and numbers[atom_j] != 0:
             delta = positions[atom_j] + cartesian_shifts[atom_i, slot] - position_i
             distance = wp.length(delta)
-            if distance < r_cut and distance != zero:
+            if distance < cutoff and distance != zero:
                 _value, slope = _cn_counting(
-                    distance, rcov_i + covalent_radii[numbers[atom_j]], r_cut, True
+                    distance, rcov_i + covalent_radii[numbers[atom_j]], cutoff, True
                 )
                 magnitude = (sensitivity_i + d_energy_d_cn[atom_j]) * slope
                 pair_force = (magnitude / distance) * delta
@@ -1681,7 +1681,7 @@ def _fd3_cn_forces_matrix_kernel(
             wp.atomic_add(
                 virial,
                 batch_idx[atom_i],
-                type(r_cut)(-1.0)
+                type(cutoff)(-1.0)
                 * wp.matrix_from_rows(
                     wp.vector(sum_xx, sum_xy, sum_xz),
                     wp.vector(sum_xy, sum_yy, sum_yz),
@@ -1734,7 +1734,7 @@ def fd3_coordination_numbers_matrix(
     neighbor_matrix: wp.array,
     cartesian_shifts: wp.array,
     covalent_radii: wp.array,
-    r_cut: float,
+    cutoff: float,
     coord_num: wp.array,
     wp_dtype: type,
     device: str | None = None,
@@ -1743,7 +1743,7 @@ def fd3_coordination_numbers_matrix(
     """Coordination numbers from a dense neighbour matrix.
 
     The dense counterpart of :func:`fd3_coordination_numbers`; see that function for the
-    shared parameters and for the requirement that ``r_cut`` match the radius the neighbour
+    shared parameters and for the requirement that ``cutoff`` match the radius the neighbour
     list was built with.
 
     Parameters
@@ -1772,7 +1772,7 @@ def fd3_coordination_numbers_matrix(
             neighbor_matrix,
             cartesian_shifts,
             covalent_radii,
-            wp_dtype(r_cut),
+            wp_dtype(cutoff),
             wp.int32(fill_value),
             wp.int32(block),
         ],
@@ -1790,7 +1790,7 @@ def fd3_cn_chain_matrix(
     neighbor_matrix: wp.array,
     cartesian_shifts: wp.array,
     covalent_radii: wp.array,
-    r_cut: float,
+    cutoff: float,
     batch_idx: wp.array,
     d_energy_d_cn: wp.array,
     forces: wp.array,
@@ -1839,7 +1839,7 @@ def fd3_cn_chain_matrix(
             neighbor_matrix,
             cartesian_shifts,
             covalent_radii,
-            wp_dtype(r_cut),
+            wp_dtype(cutoff),
             wp.int32(fill_value),
             batch_idx,
             wp.int32(block),

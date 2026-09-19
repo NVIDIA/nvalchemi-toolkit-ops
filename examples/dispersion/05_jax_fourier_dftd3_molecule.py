@@ -125,21 +125,21 @@ print(f"mesh channels needed : {params.n_species * params.rank}")
 # ----------------------------
 #
 # Only the coordination numbers need a neighbour list, so its cutoff is short. It must equal
-# ``r_cut``: the counting function is built to reach zero exactly there, and a list built to a
+# ``cutoff``: the counting function is built to reach zero exactly there, and a list built to a
 # different radius would silently truncate it.
 
-r_cut = 6.0 / BOHR_TO_ANGSTROM  # 6 Angstrom, the usual MLFF cutoff, in Bohr
+cutoff = 6.0 / BOHR_TO_ANGSTROM  # 6 Angstrom, the usual MLFF cutoff, in Bohr
 
 pbc = jnp.array([True, True, True])
 neighbor_list, neighbor_ptr, unit_shifts = neighbors.neighbor_list(
     positions,
-    cutoff=r_cut,
+    cutoff=cutoff,
     cell=cell,
     pbc=pbc,
     return_neighbor_list=True,
 )
 print(
-    f"\nneighbour cutoff : {r_cut:.3f} Bohr ({r_cut * BOHR_TO_ANGSTROM:.1f} Angstrom)"
+    f"\nneighbour cutoff : {cutoff:.3f} Bohr ({cutoff * BOHR_TO_ANGSTROM:.1f} Angstrom)"
 )
 print(f"directed edges   : {neighbor_list.shape[1]}")
 
@@ -147,7 +147,7 @@ print(f"directed edges   : {neighbor_list.shape[1]}")
 # Evaluating the correction
 # -------------------------
 #
-# ``cell`` and ``r_cut`` are both required, and exactly one of ``mesh_dimensions`` and
+# ``cell`` and ``cutoff`` are both required, and exactly one of ``mesh_dimensions`` and
 # ``mesh_spacing`` must be given --- there is no accuracy-based default, because the right
 # mesh depends on the cell and on how much error you are willing to accept.
 #
@@ -159,7 +159,7 @@ damping = dict(a1=0.4289, a2=4.4407, s8=0.7875)  # PBE-D3(BJ)
 common = dict(
     fourier_d3_params=params,
     cell=cell,
-    r_cut=r_cut,
+    cutoff=cutoff,
     mesh_dimensions=(32, 32, 32),
     neighbor_list=neighbor_list,
     neighbor_ptr=neighbor_ptr,
@@ -179,7 +179,7 @@ print(f"virial trace : {float(jnp.trace(virial[0])):.6e} Hartree")
 # Compiling the call
 # ------------------
 #
-# Everything that changes the shape of the work --- the damping constants, ``r_cut``, the mesh
+# Everything that changes the shape of the work --- the damping constants, ``cutoff``, the mesh
 # and the spline order --- has to be static, because the Warp kernels are specialised on them.
 # The arrays stay traced, so a compiled step can be reused across a trajectory as long as the
 # neighbour list keeps its length.
@@ -191,7 +191,7 @@ jitted = jax.jit(
         **damping,
         fourier_d3_params=params,
         cell=cell,
-        r_cut=r_cut,
+        cutoff=cutoff,
         mesh_dimensions=(32, 32, 32),
         neighbor_list=nl,
         neighbor_ptr=ptr,
@@ -225,7 +225,7 @@ for size in (16, 24, 32, 48):
             **damping,
             fourier_d3_params=params,
             cell=cell,
-            r_cut=r_cut,
+            cutoff=cutoff,
             mesh_dimensions=(size, size, size),
             neighbor_list=neighbor_list,
             neighbor_ptr=neighbor_ptr,
@@ -243,7 +243,7 @@ for size in (16, 24, 32, 48):
 # - ``FourierD3Parameters.from_tables`` decomposes the reference tensor once per species set,
 #   on the host, independently of the functional.
 # - ``fourier_dftd3`` is periodic only, needs a coordination-number list whose cutoff equals
-#   ``r_cut``, and takes exactly one of ``mesh_dimensions`` or ``mesh_spacing``.
+#   ``cutoff``, and takes exactly one of ``mesh_dimensions`` or ``mesh_spacing``.
 # - Under ``jax.jit`` the shape-determining arguments must be static; the arrays stay traced,
 #   so one compiled step serves a whole trajectory at fixed neighbour-list length.
 # - Forces and the virial are returned directly rather than obtained by differentiation.

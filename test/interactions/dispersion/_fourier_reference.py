@@ -83,14 +83,14 @@ _SERIES_R8 = (
 )
 
 
-def coordination_pair_term(distance, covalent_distance, r_cut):
+def coordination_pair_term(distance, covalent_distance, cutoff):
     """Contribution of one neighbour to a coordination number.
 
     FourierD3 replaces D3's fixed-steepness counting function with one whose steepness grows
     without bound as the separation approaches the neighbour-list cutoff. The standard form
     has a non-zero limit at large separation, so truncating it leaves a discontinuity and the
     total energy never converges as the cutoff grows. This form reaches exactly zero at
-    ``r_cut``, which is what makes the coordination numbers well defined independently of the
+    ``cutoff``, which is what makes the coordination numbers well defined independently of the
     list.
 
     Parameters
@@ -99,7 +99,7 @@ def coordination_pair_term(distance, covalent_distance, r_cut):
         Interatomic separation.
     covalent_distance : float or np.ndarray
         Sum of the two covalent radii.
-    r_cut : float
+    cutoff : float
         Neighbour-list cutoff. Must match the radius the list was actually built with:
         the counting function reaches zero here, not at some radius of its own.
 
@@ -108,9 +108,9 @@ def coordination_pair_term(distance, covalent_distance, r_cut):
     float or np.ndarray
         Counting-function value in ``[0, 1]``.
     """
-    transition = 0.5 * (COORDINATION_UNSCALE * covalent_distance + r_cut)
+    transition = 0.5 * (COORDINATION_UNSCALE * covalent_distance + cutoff)
     stabilised = np.maximum(distance, transition)
-    gap = r_cut - stabilised
+    gap = cutoff - stabilised
     steepness = COORDINATION_STEEPNESS + (stabilised - transition) ** 2 / (
         gap * gap + COORDINATION_EPSILON
     )
@@ -123,7 +123,7 @@ def coordination_pair_term(distance, covalent_distance, r_cut):
     )
 
 
-def modified_coordination_number(positions, numbers, rcov, edges, shifts, cell, r_cut):
+def modified_coordination_number(positions, numbers, rcov, edges, shifts, cell, cutoff):
     """Coordination numbers from a directed edge list.
 
     Parameters
@@ -141,7 +141,7 @@ def modified_coordination_number(positions, numbers, rcov, edges, shifts, cell, 
         Periodic image of the target, in lattice-vector units.
     cell : np.ndarray, shape (3, 3)
         Lattice vectors as rows.
-    r_cut : float
+    cutoff : float
         Neighbour-list cutoff.
 
     Returns
@@ -153,7 +153,7 @@ def modified_coordination_number(positions, numbers, rcov, edges, shifts, cell, 
     delta = positions[target] - positions[source] + shifts @ cell
     distance = np.linalg.norm(delta, axis=1)
     covalent = rcov[numbers[source]] + rcov[numbers[target]]
-    contribution = coordination_pair_term(distance, covalent, r_cut)
+    contribution = coordination_pair_term(distance, covalent, cutoff)
     coordination = np.zeros(positions.shape[0])
     np.add.at(coordination, source, contribution)
     return coordination

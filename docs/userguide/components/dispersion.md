@@ -985,26 +985,26 @@ params = FourierD3Parameters.from_tables(
     rcov, r4r2, c6ab, cn_ref, species=[1, 6, 8], device="cuda",
 )
 
-r_cut = 11.34  # 6 Angstrom in Bohr; see Units below
+cutoff = 11.34  # 6 Angstrom in Bohr; see Units below
 neighbors, pointer, shifts = neighbor_list(
-    positions, cutoff=r_cut, cell=cell, pbc=pbc,
+    positions, cutoff=cutoff, cell=cell, pbc=pbc,
     return_neighbor_list=True, method="cell_list",
 )
 
 energy, forces = fourier_dftd3(
     positions, numbers,
     a1=0.4289, a2=4.4407, s8=0.7875,      # PBE-D3(BJ)
-    fourier_d3_params=params, cell=cell, r_cut=r_cut,
+    fourier_d3_params=params, cell=cell, cutoff=cutoff,
     mesh_dimensions=(32, 32, 32),
     neighbor_list=neighbors, neighbor_ptr=pointer, unit_shifts=shifts,
 )
 ```
 
-### `r_cut` Must Match the Neighbour List
+### `cutoff` Must Match the Neighbour List
 
 ```{warning}
-`r_cut` has no default, and must equal the cutoff the neighbour list was built with. The
-modified coordination-number function is constructed to reach zero exactly at `r_cut`; if the
+`cutoff` has no default, and must equal the cutoff the neighbour list was built with. The
+modified coordination-number function is constructed to reach zero exactly at `cutoff`; if the
 list was truncated somewhere else, the discontinuity the modification exists to remove comes
 straight back.
 

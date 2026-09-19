@@ -8,7 +8,7 @@
 
 - Added periodic `fourier_dftd3` APIs for Torch and JAX, returning energy, forces and optional
   virial for batched CSR or dense neighbor lists in float32 and float64. `cell` is required,
-  and `r_cut` has no default and must equal the radius the neighbor list was built with.
+  and `cutoff` has no default and must equal the radius the neighbor list was built with.
 - Added `FourierD3Parameters` for reusable C6 decomposition and Torch `FourierD3Setup` for
   reusable cell and mesh preprocessing. A setup is required for
   `torch.compile(mode="reduce-overhead")`.

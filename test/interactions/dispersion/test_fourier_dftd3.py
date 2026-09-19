@@ -47,7 +47,7 @@ def _warp_types(np_dtype):
 def _probe_counting_kernel(
     distance: wp.array(dtype=wp.float64),
     covalent_distance: wp.float64,
-    r_cut: wp.float64,
+    cutoff: wp.float64,
     value: wp.array(dtype=wp.float64),
     derivative: wp.array(dtype=wp.float64),
 ):
@@ -62,7 +62,7 @@ def _probe_counting_kernel(
     ``value`` and ``derivative`` at each sample.
     """
     i = wp.tid()
-    v, d = fd3._cn_counting(distance[i], covalent_distance, r_cut, True)
+    v, d = fd3._cn_counting(distance[i], covalent_distance, cutoff, True)
     value[i] = v
     derivative[i] = d
 
@@ -112,10 +112,10 @@ def _reference_tables(seed=0):
     return c6ab, cn_ref, list(used)
 
 
-def _neighbour_list(positions, cell, r_cut):
+def _neighbour_list(positions, cell, cutoff):
     """Directed neighbour list in CSR form, with both orientations of every pair."""
     n_atoms = len(positions)
-    reach = int(np.ceil(r_cut / cell.diagonal().min())) + 1
+    reach = int(np.ceil(cutoff / cell.diagonal().min())) + 1
     offsets = np.arange(-reach, reach + 1)
     lattice = np.stack(
         np.meshgrid(offsets, offsets, offsets, indexing="ij"), axis=-1
@@ -129,7 +129,7 @@ def _neighbour_list(positions, cell, r_cut):
             for j in range(n_atoms):
                 if i == j and not translation.any():
                     continue
-                if distance[i, j] >= r_cut:
+                if distance[i, j] >= cutoff:
                     continue
                 sources.append(i)
                 targets.append(j)

@@ -26,9 +26,9 @@ rather than the all-Warp real-space
 
 Units
 -----
-``positions``, ``cell``, ``rcov``, ``r_cut`` and ``mesh_spacing`` must share one length unit.
+``positions``, ``cell``, ``rcov``, ``cutoff`` and ``mesh_spacing`` must share one length unit.
 D3 parameters are conventionally atomic units, so a cutoff quoted in Angstrom must be
-converted; ``r_cut`` has no default for that reason.
+converted; ``cutoff`` has no default for that reason.
 """
 
 from __future__ import annotations
@@ -333,7 +333,7 @@ def _fd3_prologue_op(
     covalent_radii: torch.Tensor,
     cnref: torch.Tensor,
     v_q: torch.Tensor,
-    r_cut: float,
+    cutoff: float,
     coord_num: torch.Tensor,
     c6: torch.Tensor,
     dc6_dcn: torch.Tensor,
@@ -360,7 +360,7 @@ def _fd3_prologue_op(
             _warp_view(neighbor_matrix, wp.int32),
             _warp_view(cartesian_shifts, vec_dtype),
             _warp_view(covalent_radii, wp_dtype),
-            r_cut,
+            cutoff,
             _warp_view(coord_num, wp_dtype),
             wp_dtype,
             device,
@@ -374,7 +374,7 @@ def _fd3_prologue_op(
             _warp_view(neighbor_ptr, wp.int32),
             _warp_view(cartesian_shifts, vec_dtype),
             _warp_view(covalent_radii, wp_dtype),
-            r_cut,
+            cutoff,
             _warp_view(coord_num, wp_dtype),
             wp_dtype,
             device,
@@ -550,7 +550,7 @@ def _fd3_finalise_op(
     s8: float,
     a1: float,
     a2: float,
-    r_cut: float,
+    cutoff: float,
     d_energy_d_c6: torch.Tensor,
     d_energy_d_cn: torch.Tensor,
     energy: torch.Tensor,
@@ -604,7 +604,7 @@ def _fd3_finalise_op(
     )
     tail = (
         _warp_view(covalent_radii, wp_dtype),
-        r_cut,
+        cutoff,
         _warp_view(batch_idx, wp.int32),
         _warp_view(d_energy_d_cn, wp_dtype),
         _warp_view(forces, vec_dtype),
@@ -865,7 +865,7 @@ def fourier_dftd3(
     *,
     fourier_d3_params: FourierD3Parameters,
     cell: torch.Tensor,
-    r_cut: float,
+    cutoff: float,
     mesh_dimensions: tuple[int, int, int] | None = None,
     mesh_spacing: float | None = None,
     neighbor_matrix: torch.Tensor | None = None,
@@ -885,8 +885,8 @@ def fourier_dftd3(
 ) -> tuple[torch.Tensor, ...]:
     r"""Evaluate the DFT-D3(BJ) dispersion correction by particle-mesh summation.
 
-    The dispersion sum itself carries no real-space cutoff. The only cutoff is ``r_cut``, on
-    the coordination-number neighbour list, which a machine-learned force field already builds
+    The dispersion sum itself is untruncated. ``cutoff`` applies only to the
+    coordination-number neighbour list, which a machine-learned force field already builds
     for its own descriptors.
 
     Parameters
@@ -901,7 +901,7 @@ def fourier_dftd3(
         Separable coefficients covering every species present.
     cell : torch.Tensor, shape (3, 3), (1, 3, 3) or (B, 3, 3)
         Lattice vectors as rows. Required: FourierD3 is periodic.
-    r_cut : float
+    cutoff : float
         Coordination-number cutoff, in the same length unit as ``positions``. **No default**,
         because the DFT-D3 tables are conventionally atomic units and a value meant as 6
         Angstrom would silently act as 6 Bohr. This must equal the radius the neighbour list
@@ -1003,7 +1003,7 @@ def fourier_dftd3(
     --------
     >>> energy, forces = fourier_dftd3(
     ...     positions, numbers, a1=0.4289, a2=4.4407, s8=0.7875,
-    ...     fourier_d3_params=params, cell=cell, r_cut=11.34,
+    ...     fourier_d3_params=params, cell=cell, cutoff=11.34,
     ...     mesh_dimensions=(32, 32, 32),
     ...     neighbor_list=pairs, neighbor_ptr=pointer, unit_shifts=shifts,
     ... )
@@ -1162,7 +1162,7 @@ def fourier_dftd3(
         params.rcov,
         params.cn_ref,
         params.v_q,
-        r_cut,
+        cutoff,
         coord_num,
         c6,
         dc6_dcn,
@@ -1310,7 +1310,7 @@ def fourier_dftd3(
         s8,
         a1,
         a2,
-        r_cut,
+        cutoff,
         d_energy_d_c6,
         d_energy_d_cn,
         energy,

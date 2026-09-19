@@ -244,7 +244,7 @@ def _evaluate(system, **kwargs):
     arguments = dict(
         fourier_d3_params=system["params"],
         cell=system["cell"],
-        r_cut=R_CUT,
+        cutoff=R_CUT,
         mesh_dimensions=MESH,
         neighbor_list=system["neighbor_list"],
         neighbor_ptr=system["neighbor_ptr"],
@@ -463,7 +463,7 @@ class TestEmptySystem:
             **DAMPING,
             fourier_d3_params=system["params"],
             cell=system["cell"].expand(num_systems, 3, 3),
-            r_cut=R_CUT,
+            cutoff=R_CUT,
             mesh_dimensions=MESH,
             num_systems=num_systems,
             neighbor_list=torch.zeros(2, 0, dtype=torch.int32, device=device),
@@ -506,7 +506,7 @@ class TestEmptySystem:
                 **DAMPING,
                 fourier_d3_params=system["params"],
                 cell=system["cell"],
-                r_cut=R_CUT,
+                cutoff=R_CUT,
                 neighbor_list=torch.zeros(2, 0, dtype=torch.int32, device=device),
                 neighbor_ptr=torch.zeros(1, dtype=torch.int32, device=device),
                 unit_shifts=torch.zeros(0, 3, dtype=torch.int32, device=device),
@@ -894,7 +894,7 @@ class TestMeshAndUnits:
         This is the check that a unit mistake would fail. Every dimensioned quantity has to
         move together: with ``[C6] = energy * length**6`` and
         ``R0 = a1 * sqrt(3 * sqrt_q_A * sqrt_q_B) + a2``, the length-carrying quantities are
-        ``positions``, ``cell``, ``rcov``, ``r_cut``, ``sqrt_q`` and ``a2``, while ``eigs``
+        ``positions``, ``cell``, ``rcov``, ``cutoff``, ``sqrt_q`` and ``a2``, while ``eigs``
         carries ``length**6`` and ``s6``, ``s8`` and ``a1`` are dimensionless.
 
         Agreement is close but not exact because the counting function carries one absolute
@@ -920,7 +920,7 @@ class TestMeshAndUnits:
         actual = float(
             _evaluate(
                 rescaled,
-                r_cut=R_CUT * scale,
+                cutoff=R_CUT * scale,
                 a1=DAMPING["a1"],
                 a2=DAMPING["a2"] * scale,
                 s8=DAMPING["s8"],
@@ -1076,7 +1076,7 @@ class TestTorchCompile:
                 system["numbers"],
                 fourier_d3_params=system["params"],
                 cell=system["cell"],
-                r_cut=R_CUT,
+                cutoff=R_CUT,
                 mesh_dimensions=MESH,
                 neighbor_list=system["neighbor_list"],
                 neighbor_ptr=system["neighbor_ptr"],
@@ -1165,7 +1165,7 @@ class TestPrecomputedSetup:
                 system["numbers"],
                 fourier_d3_params=system["params"],
                 cell=system["cell"],
-                r_cut=R_CUT,
+                cutoff=R_CUT,
                 mesh_dimensions=MESH,
                 neighbor_list=system["neighbor_list"],
                 neighbor_ptr=system["neighbor_ptr"],
