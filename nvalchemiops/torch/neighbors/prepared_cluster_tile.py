@@ -25,7 +25,7 @@ from nvalchemiops.neighbors.cluster_tile import estimate_max_tiles_per_group
 from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
 from nvalchemiops.torch.neighbors.batch_cluster_tile import (
     TILE_GROUP_SIZE,
-    _batch_cluster_tile_neighbor_list_normalized,
+    _batch_cluster_tile_neighbor_list_impl,
     _BatchPartitionMetadata,
     _prepare_batch_partition_metadata,
     allocate_batch_cluster_tile_list,
@@ -451,7 +451,7 @@ def cluster_tile_neighbor_list_prepared(
             tile_col_group,
             tile_system,
         ) = state._scratch
-        return _batch_cluster_tile_neighbor_list_normalized(
+        return _batch_cluster_tile_neighbor_list_impl(
             state._partition_metadata,
             positions,
             state.cutoff,

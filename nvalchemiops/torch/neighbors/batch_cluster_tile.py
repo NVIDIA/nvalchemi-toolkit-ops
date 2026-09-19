@@ -2705,7 +2705,7 @@ def _validate_batch_matrix_state(
                 raise ValueError(f"{name} matrix state has an invalid shape or dtype")
 
 
-def _batch_cluster_tile_neighbor_list_normalized(
+def _batch_cluster_tile_neighbor_list_impl(
     partition_metadata: _BatchPartitionMetadata | None,
     positions: torch.Tensor,
     cutoff: float,
@@ -3959,7 +3959,7 @@ def batch_cluster_tile_neighbor_list(
     max_tiles_per_group: int | None = None,
 ) -> tuple[torch.Tensor, ...]:
     """Build and query a batched cluster-pair tile neighbor list in one call."""
-    return _batch_cluster_tile_neighbor_list_normalized(
+    return _batch_cluster_tile_neighbor_list_impl(
         None,
         positions,
         cutoff,
@@ -4018,5 +4018,5 @@ def batch_cluster_tile_neighbor_list(
 
 
 batch_cluster_tile_neighbor_list.__doc__ = (
-    _batch_cluster_tile_neighbor_list_normalized.__doc__
+    _batch_cluster_tile_neighbor_list_impl.__doc__
 )
