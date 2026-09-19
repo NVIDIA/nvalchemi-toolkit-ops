@@ -43,6 +43,11 @@
 - Differentiable Torch cluster-tile matrix geometry is returned independently
   from reusable output buffers. Supplied buffers receive detached value
   snapshots and remain non-differentiable storage.
+- Torch cluster-tile compact COO outputs are now trimmed to the actual pair
+  count. Requested distances and vectors are returned with the topology, so
+  callers no longer need to provide geometry buffers. If reusable buffers are
+  supplied, their active portions are still updated, while the returned tensors
+  use separate storage.
 - Compact batched Torch cluster-tile scratch now sums the capacity required by
   each system instead of sizing every group against the total batch group count.
   The resulting tile storage remains pooled across the batch.

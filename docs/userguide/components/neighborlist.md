@@ -670,6 +670,15 @@ matrix intermediate. For source atom `i`, entries
 `neighbor_ptr[i]:neighbor_ptr[i + 1]` in `neighbor_list` all belong to `i`.
 Atomic writes leave pair order within each row unspecified. Shifts and any
 requested vectors, distances, energies, or forces use the same pair order.
+Topology, shifts, and requested geometry are returned with the exact active
+pair length and do not alias reusable capacity buffers. Compact calls append
+distances before vectors: requesting distances returns
+`(pairs, ptr, shifts, distances)`, requesting vectors returns
+`(pairs, ptr, shifts, vectors)`, and requesting both returns
+`(pairs, ptr, shifts, distances, vectors)`. Optional caller-owned geometry
+buffers hold the active prefix and may be reused; their inactive tails are
+unspecified. Pair callbacks keep their existing topology-only return and write
+aligned callback outputs into caller-owned buffers.
 
 A compiled single-system call may allocate its scratch internally when
 `max_tiles_per_group` is a positive static integer. Batched compiled calls

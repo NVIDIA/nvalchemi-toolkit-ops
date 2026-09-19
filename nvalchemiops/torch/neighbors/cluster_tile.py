@@ -69,7 +69,9 @@ from nvalchemiops.torch.neighbors._autograd import (
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     _check_neighbor_capacity,
     _check_tile_buffer_capacity,
+    _compact_coo_prefix,
     _normalize_compiled_single_segment_coo_count,
+    _prepare_compact_coo_geometry_buffers,
     _validate_cluster_tile_matrix_outputs,
     _validate_segmented_coo_state,
 )
@@ -141,7 +143,13 @@ def _(*args, **kwargs) -> None:
 
 @torch.library.custom_op(
     "nvalchemiops::_cluster_tile_direct_csr_fill",
-    mutates_args=("cursors", "coo_list", "coo_shifts"),
+    mutates_args=(
+        "cursors",
+        "coo_list",
+        "coo_shifts",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ),
 )
 @scoped_torch_warp_stream
 def _cluster_tile_direct_csr_fill_op(
@@ -159,11 +167,19 @@ def _cluster_tile_direct_csr_fill_op(
     cursors: torch.Tensor,
     coo_list: torch.Tensor,
     coo_shifts: torch.Tensor,
+    neighbor_vectors: torch.Tensor,
+    neighbor_distances: torch.Tensor,
+    return_vectors: bool,
+    return_distances: bool,
     max_pairs: int,
     launch_tiles: int,
 ) -> None:
     wp.launch_tiled(
-        _get_query_cluster_tile_direct_csr_fill_kernel(batched=False),
+        _get_query_cluster_tile_direct_csr_fill_kernel(
+            batched=False,
+            return_vectors=return_vectors,
+            return_distances=return_distances,
+        ),
         dim=[launch_tiles],
         inputs=[
             wp.from_torch(x, dtype=d, return_ctype=True)
@@ -187,8 +203,8 @@ def _cluster_tile_direct_csr_fill_op(
             wp.from_torch(cursors, dtype=wp.int32, return_ctype=True),
             wp.from_torch(coo_list, dtype=wp.int32, return_ctype=True),
             wp.from_torch(coo_shifts, dtype=wp.int32, return_ctype=True),
-            wp.empty(1, dtype=wp.vec3f, device=str(sorted_pos_x.device)),
-            wp.empty(1, dtype=wp.float32, device=str(sorted_pos_x.device)),
+            wp.from_torch(neighbor_vectors, dtype=wp.vec3f, return_ctype=True),
+            wp.from_torch(neighbor_distances, dtype=wp.float32, return_ctype=True),
             wp.empty((1, 1), dtype=wp.float32, device=str(sorted_pos_x.device)),
             wp.empty(1, dtype=wp.float32, device=str(sorted_pos_x.device)),
             wp.empty(1, dtype=wp.vec3f, device=str(sorted_pos_x.device)),
@@ -2466,9 +2482,11 @@ def cluster_tile_neighbor_list(
           the dense ``(N, max_neighbors)`` row-padded form used by
           ``cell_list`` and ``naive``.
         - ``"coo"``: compact calls return
-          ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)`` — a trimmed
-          flat pair list placed directly into source-owned CSR rows. Pair
-          order within a row is unspecified. With ``rebuild_flags``,
+          ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)`` and append
+          exact distances, vectors, or both when requested. The geometry order
+          is distances followed by vectors. The trimmed flat pair list is
+          placed directly into source-owned CSR rows; pair order within a row
+          is unspecified. With ``rebuild_flags``,
           fixed-capacity segmented COO returns
           ``(neighbor_list, pair_offsets, pair_counts,
           neighbor_list_shifts)`` instead.
@@ -2520,8 +2538,9 @@ def cluster_tile_neighbor_list(
         each call and every other scratch tensor is either fully
         overwritten or only read in regions the kernels just wrote.
     return_vectors, return_distances : bool, default ``False``
-        Write per-pair Cartesian displacements / scalar distances to
-        ``neighbor_vectors`` / ``neighbor_distances``.
+        Return per-pair Cartesian displacements / scalar distances and write
+        their active prefixes to ``neighbor_vectors`` /
+        ``neighbor_distances`` when those buffers are supplied.
         Matrix format uses ``(N, max_neighbors, ...)`` buffers; COO format
         uses flat ``(max_pairs, ...)`` buffers.
     pair_fn : callable, optional
@@ -2534,12 +2553,14 @@ def cluster_tile_neighbor_list(
         Per-atom pair-function parameters; required with ``pair_fn``.
     neighbor_vectors, neighbor_distances : torch.Tensor, optional
         OUTPUT buffers for per-pair displacements / distances. Without
-        autograd reconstruction, matrix format allocates them when omitted;
-        COO format requires caller-owned flat buffers. These buffers must not
-        require gradients. When matrix geometry is reconstructed for autograd,
-        supplied buffers receive detached value snapshots while omitted
-        buffers are not allocated and the returned geometry uses separate
-        differentiable tensors.
+        autograd reconstruction, matrix and compact COO formats allocate them
+        when omitted. Compact COO accepts flat capacity buffers, leaves their
+        inactive tails unspecified, and returns newly allocated exact geometry
+        that does not alias them. Geometry buffers must not require gradients.
+        When matrix geometry is reconstructed for autograd, supplied buffers
+        receive detached value snapshots while omitted buffers are not
+        allocated and the returned geometry uses separate differentiable
+        tensors.
     pair_energies, pair_forces : torch.Tensor, optional
         OUTPUT buffers for per-pair energies / forces. Matrix format
         allocates them when omitted; COO format requires caller-owned flat
@@ -2562,7 +2583,11 @@ def cluster_tile_neighbor_list(
           geometry does not alias supplied output buffers; otherwise returned
           geometry is the supplied or internally allocated buffer.
         - ``"coo"``: compact calls return ``(neighbor_list, neighbor_ptr,
-          neighbor_list_shifts)``. Selective calls return fixed-capacity
+          neighbor_list_shifts)`` and append ``distances`` and/or ``vectors``
+          in that order when requested without a pair callback. Exact outputs
+          do not alias reusable capacity buffers. Pair callbacks keep the
+          topology-only return and write their buffers in place. Selective
+          calls return fixed-capacity
           ``(neighbor_list, pair_offsets, pair_counts,
           neighbor_list_shifts)`` and append tile state when
           ``return_state=True``.
@@ -2994,19 +3019,38 @@ def cluster_tile_neighbor_list(
                 raise ValueError(
                     "neighbor_list_shifts capacity must be at least max_pairs"
                 )
-            if geometry_requested and return_vectors and neighbor_vectors is None:
-                raise ValueError(
-                    "neighbor_vectors is required when return_vectors=True"
+            copy_vectors = bool(
+                geometry_requested and return_vectors and not requires_reconstruction
+            )
+            copy_distances = bool(
+                geometry_requested and return_distances and not requires_reconstruction
+            )
+            if geometry_requested:
+                neighbor_vectors, neighbor_distances = (
+                    _prepare_compact_coo_geometry_buffers(
+                        device=device,
+                        dtype=positions.dtype,
+                        capacity=int(max_pairs),
+                        return_vectors=bool(return_vectors),
+                        return_distances=bool(return_distances),
+                        neighbor_vectors=neighbor_vectors,
+                        neighbor_distances=neighbor_distances,
+                    )
                 )
-            if geometry_requested and return_distances and neighbor_distances is None:
-                raise ValueError(
-                    "neighbor_distances is required when return_distances=True"
+            else:
+                prefix_vectors = torch.empty(
+                    (1, 3), dtype=positions.dtype, device=device
                 )
+                prefix_distances = torch.empty(1, dtype=positions.dtype, device=device)
+            if geometry_requested:
+                prefix_vectors = neighbor_vectors
+                prefix_distances = neighbor_distances
             tile_capacity = int(tile_row_group.shape[0])
             n_tiles = _check_tile_buffer_capacity(num_tiles, tile_capacity)
             launch_tiles = tile_capacity if is_compiling else n_tiles
             row_counts = torch.zeros(N, dtype=torch.int32, device=device)
-            cell_mat, inv_cell_mat = _cell_invcell_from_cell(cell)
+            direct_cell = cell.detach() if requires_reconstruction else cell
+            cell_mat, inv_cell_mat = _cell_invcell_from_cell(direct_cell)
             _cluster_tile_direct_csr_count_op(
                 cutoff,
                 N,
@@ -3029,7 +3073,7 @@ def cluster_tile_neighbor_list(
                 )
             )
             total = neighbor_ptr[-1:]
-            checked_npairs = _check_neighbor_capacity(
+            _check_neighbor_capacity(
                 total,
                 int(max_pairs),
                 kind="coo",
@@ -3052,6 +3096,10 @@ def cluster_tile_neighbor_list(
                     cursors,
                     coo_buf,
                     neighbor_list_shifts,
+                    prefix_vectors,
+                    prefix_distances,
+                    copy_vectors,
+                    copy_distances,
                     int(max_pairs),
                     launch_tiles,
                 )
@@ -3086,21 +3134,33 @@ def cluster_tile_neighbor_list(
                     int(max_pairs),
                     launch_tiles,
                 )
-            if is_compiling:
-                active = (torch.arange(int(max_pairs), device=device) < total).nonzero(
-                    as_tuple=True
-                )[0]
-                nl = coo_buf[active].transpose(0, 1).contiguous()
-                nls = neighbor_list_shifts[active].contiguous()
-            else:
-                nl = coo_buf[:checked_npairs].transpose(0, 1).contiguous()
-                nls = neighbor_list_shifts[:checked_npairs].contiguous()
+            nl, nls, exact_vectors, exact_distances = _compact_coo_prefix(
+                total,
+                coo_buf,
+                neighbor_list_shifts,
+                prefix_vectors,
+                prefix_distances,
+                int(max_pairs),
+                copy_vectors,
+                copy_distances,
+            )
             if geometry_requested:
-                distances, vectors = _reconstruct_coo_geometry(positions, cell, nl, nls)
-                if return_vectors:
-                    neighbor_vectors[: vectors.shape[0]].copy_(vectors)
+                if requires_reconstruction:
+                    exact_distances, exact_vectors = _reconstruct_coo_geometry(
+                        positions, cell, nl, nls
+                    )
+                    if return_vectors:
+                        neighbor_vectors[: exact_vectors.shape[0]].copy_(exact_vectors)
+                    if return_distances:
+                        neighbor_distances[: exact_distances.shape[0]].copy_(
+                            exact_distances
+                        )
+                outputs = (nl, neighbor_ptr, nls)
                 if return_distances:
-                    neighbor_distances[: distances.shape[0]].copy_(distances)
+                    outputs = (*outputs, exact_distances)
+                if return_vectors:
+                    outputs = (*outputs, exact_vectors)
+                return outputs
             return nl, neighbor_ptr, nls
 
         query_cluster_tile_coo(

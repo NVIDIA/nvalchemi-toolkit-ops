@@ -839,6 +839,42 @@ class TestBatchTileNeighborListCorrectness:
         torch.testing.assert_close(distances, expected_distances)
         torch.testing.assert_close(vectors, expected_vectors)
 
+    def test_compact_coo_current_stream_geometry(
+        self, device, dtype, torch_stream_runner
+    ):
+        """Batched exact COO fill and prefix packing use the caller's stream."""
+        source = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.4, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+            ],
+            dtype=dtype,
+            device=device,
+        )
+        positions = torch.empty_like(source)
+        cell_batch = torch.eye(3, dtype=dtype, device=device).repeat(2, 1, 1) * 8.0
+        batch_ptr = torch.tensor([0, 2, 5], dtype=torch.int32, device=device)
+        _, snapshot, expected = torch_stream_runner(
+            source,
+            positions,
+            lambda value: batch_cluster_tile_neighbor_list(
+                value,
+                1.0,
+                cell_batch,
+                batch_ptr,
+                format="coo",
+                max_pairs=16,
+                max_tiles_per_group=1,
+                return_vectors=True,
+                return_distances=True,
+            ),
+        )
+        for result, reference in zip(snapshot, expected, strict=True):
+            torch.testing.assert_close(result, reference)
+
     @requires_vesin
     def test_single_system_batch(self, device, dtype):
         """Batch of size 1 should match brute-force."""
@@ -1823,9 +1859,7 @@ class TestBatchTileNeighborListFormats:
     def test_compact_coo_mixed_dense_batch_rows(self, device, dtype):
         """Empty, singleton, and unequal dense systems keep exact CSR rows."""
         sizes = [0, 1, 33, 65]
-        batch_ptr = torch.tensor(
-            [0, 0, 1, 34, 99], dtype=torch.int32, device=device
-        )
+        batch_ptr = torch.tensor([0, 0, 1, 34, 99], dtype=torch.int32, device=device)
         positions = torch.zeros((batch_ptr[-1].item(), 3), dtype=dtype, device=device)
         cell_batch = torch.eye(3, dtype=dtype, device=device).repeat(4, 1, 1) * 8.0
         expected_counts = torch.cat(
@@ -2226,6 +2260,138 @@ class TestBatchClusterTileCompile:
             counts.append(compiled[0].shape[1])
         assert counts[0] > 0
         assert counts[1] == 0
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize(
+        ("return_distances", "return_vectors"),
+        [(True, False), (False, True), (True, True)],
+    )
+    def test_compact_coo_geometry_fullgraph_return_contract(
+        self, device, dtype, return_distances, return_vectors
+    ):
+        """Batched exact COO returns exact geometry without output buffers."""
+        batch_ptr = torch.tensor([0, 2, 5], dtype=torch.int32, device=device)
+        positions = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [0.4, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+            ],
+            dtype=dtype,
+            device=device,
+        )
+        empty = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+                [6.0, 0.0, 0.0],
+            ],
+            dtype=dtype,
+            device=device,
+        )
+        cell_batch = torch.stack(
+            (
+                torch.eye(3, dtype=dtype, device=device) * 8.0,
+                torch.diag(torch.tensor([9.0, 8.0, 7.0], device=device)),
+            )
+        )
+        scratch = _scratch_kwargs(
+            allocate_batch_cluster_tile_list(
+                batch_ptr,
+                torch.device(device),
+                dtype=dtype,
+                max_tiles_per_group=1,
+            )
+        )
+
+        def call(runtime_positions):
+            return batch_cluster_tile_neighbor_list(
+                runtime_positions,
+                1.0,
+                cell_batch,
+                batch_ptr,
+                format="coo",
+                max_pairs=16,
+                return_distances=return_distances,
+                return_vectors=return_vectors,
+                **scratch,
+            )
+
+        compiled_call = torch.compile(call, fullgraph=True)
+        atom_system = torch.bucketize(
+            torch.arange(positions.shape[0], dtype=torch.int32, device=device),
+            batch_ptr[1:],
+            right=True,
+        )
+        for runtime_positions in (positions, empty):
+            for result in (
+                call(runtime_positions),
+                compiled_call(runtime_positions),
+            ):
+                pairs, pointer, shifts, *geometry = result
+                _compact_coo_pair_sets(pairs, pointer, shifts)
+                pair_system = atom_system[pairs[0].long()]
+                expected_vectors = (
+                    runtime_positions[pairs[1].long()]
+                    - runtime_positions[pairs[0].long()]
+                )
+                expected_vectors = expected_vectors + torch.einsum(
+                    "pa,pab->pb",
+                    shifts.to(dtype),
+                    cell_batch[pair_system.long()],
+                )
+                expected_length = 3 + int(return_distances) + int(return_vectors)
+                assert len(result) == expected_length
+                geometry_index = 0
+                if return_distances:
+                    distances = geometry[geometry_index]
+                    geometry_index += 1
+                    assert distances.shape == (pairs.shape[1],)
+                    torch.testing.assert_close(distances, expected_vectors.norm(dim=-1))
+                if return_vectors:
+                    vectors = geometry[geometry_index]
+                    assert vectors.shape == (pairs.shape[1], 3)
+                    torch.testing.assert_close(vectors, expected_vectors)
+
+    @pytest.mark.slow
+    def test_compact_coo_fullgraph_empty_geometry(self, device, dtype):
+        """Batched fullgraph COO returns exact empty geometry."""
+        positions = torch.zeros((1, 3), dtype=dtype, device=device)
+        cell_batch = torch.eye(3, dtype=dtype, device=device).repeat(2, 1, 1) * 8.0
+        batch_ptr = torch.tensor([0, 0, 1], dtype=torch.int32, device=device)
+        scratch = _scratch_kwargs(
+            allocate_batch_cluster_tile_list(
+                batch_ptr,
+                torch.device(device),
+                dtype=dtype,
+                max_tiles_per_group=1,
+            )
+        )
+
+        @torch.compile(fullgraph=True)
+        def run(runtime_positions):
+            return batch_cluster_tile_neighbor_list(
+                runtime_positions,
+                1.0,
+                cell_batch,
+                batch_ptr,
+                format="coo",
+                max_pairs=8,
+                return_distances=True,
+                return_vectors=True,
+                **scratch,
+            )
+
+        pairs, pointer, shifts, distances, vectors = run(positions)
+        assert pairs.shape == (2, 0)
+        assert pointer.tolist() == [0, 0]
+        assert shifts.shape == (0, 3)
+        assert distances.shape == (0,)
+        assert vectors.shape == (0, 3)
 
     @pytest.mark.slow
     @pytest.mark.parametrize("partial", [False, True])
@@ -3283,7 +3449,7 @@ class TestBatchClusterTileAutograd:
         distances = torch.full((32,), float("nan"), device=device)
         grad_positions = positions.clone().requires_grad_(True)
         grad_cell = cell_batch.clone().requires_grad_(True)
-        pairs, pointer, shifts = run(
+        pairs, pointer, shifts, exact_distances, exact_vectors = run(
             grad_positions,
             grad_cell,
             vectors,
@@ -3305,8 +3471,12 @@ class TestBatchClusterTileAutograd:
         )
         torch.testing.assert_close(vectors[:count], expected_vectors)
         torch.testing.assert_close(distances[:count], expected_vectors.norm(dim=-1))
+        torch.testing.assert_close(exact_vectors, expected_vectors)
+        torch.testing.assert_close(exact_distances, expected_vectors.norm(dim=-1))
+        assert exact_vectors.data_ptr() != vectors.data_ptr()
+        assert exact_distances.data_ptr() != distances.data_ptr()
         gradients = torch.autograd.grad(
-            distances[:count].sum(),
+            exact_distances.sum(),
             (grad_positions, grad_cell),
         )
         assert all(torch.isfinite(gradient).all() for gradient in gradients)
