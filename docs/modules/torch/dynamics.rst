@@ -48,11 +48,12 @@ force evaluation and reports progress through the ``status`` buffer. The step
 length comes from a ``maxstep`` trust region, so no energy is read.
 
 .. note::
-   Every optimizer buffer is caller-owned: nothing here allocates or
-   initializes state on your behalf. Zero the buffers, then set ``alpha_step``
-   to ``1.0``, ``iteration`` to ``-1`` and ``status`` to ``LBFGS_NEED_EVAL``.
-   The module documentation lists the required shapes and dtypes.
+   Call :func:`~nvalchemiops.torch.lbfgs.lbfgs_prepare_state` once to allocate,
+   initialize and validate the whole state; calling it again is how you reset.
+   The tensors remain yours -- :class:`~nvalchemiops.dynamics.optimizers.lbfgs.LBFGSState`
+   is a plain dataclass, so you can build one from tensors you already own.
 
+.. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_prepare_state
 .. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_step_coord
 .. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_step_extended
 
@@ -63,6 +64,7 @@ vector, so the two-loop recursion couples them automatically. Build
 :func:`~nvalchemiops.batch_utils.atom_ptr_to_batch_idx`, which handle ragged
 batches as well as uniform ones.
 
+.. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_prepare_cell_state
 .. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_set_reference_cell
 .. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_cell_kappa
 .. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_step_coord_cell

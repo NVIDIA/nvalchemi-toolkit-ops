@@ -195,20 +195,22 @@ realistic materials workload.
 **Per-step optimizer cost.** Optimizer time only, single system, fp64, harmonic
 potential, measured with `--gates`:
 
+Median of three runs; the ratio varies by roughly +/- 0.3 between runs.
+
 | Atoms | Eager (ms) | CUDA graph (ms) | FIRE2 (ms) | vs FIRE2 |
 | --- | --- | --- | --- | --- |
-| 10,000 | 0.49 | 0.17 | 0.057 | 8.5x |
-| 100,000 | 1.09 | 1.16 | 0.118 | 9.3x |
-| 1,000,000 | 3.30 | 3.38 | 0.337 | 9.8x |
+| 10,000 | 0.50 | 0.17 | 0.056 | 8.9x |
+| 100,000 | 1.09 | 1.07 | 0.115 | 9.5x |
+| 1,000,000 | 3.22 | 3.21 | 0.322 | 10.0x |
 
 **A single L-BFGS step is roughly ten times more expensive than a FIRE2 step.**
 It runs `2m + O(1)` passes over the degrees of freedom against FIRE2's handful.
-At ten thousand atoms the step is Python-launch-bound and CUDA-graph replay
-recovers about 2.8x; from one hundred thousand upwards it is bandwidth-bound
-and replay recovers nothing.
+At ten thousand atoms the step is launch-bound and CUDA-graph replay recovers
+about 2.9x; from one hundred thousand upwards the device work dominates and
+replay recovers nothing.
 
 That cost is not the reason to choose L-BFGS, and it is not usually the cost
-that matters. The model must cost more than roughly 7, 26 and 102 microseconds
+that matters. The model must cost more than roughly 10, 29 and 108 microseconds
 per evaluation at these three sizes for L-BFGS to win end to end — a
 machine-learned potential exceeds that by two to three orders of magnitude, and
 L-BFGS needs several times fewer evaluations. Prefer FIRE2 when the force

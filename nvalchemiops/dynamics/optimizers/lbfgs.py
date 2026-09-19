@@ -90,11 +90,19 @@ float64 regardless**. ``ys / yy`` scales the initial inverse Hessian, and near
 convergence ``y = force_base - F`` is a difference of nearly equal vectors,
 where float32 cancellation destroys it.
 
-Caller-owned buffers
---------------------
-The package allocates and initializes **nothing**, which keeps the step free of
-per-call allocation and capturable in a CUDA graph. For ``P`` degrees of
-freedom, ``M`` systems and history depth ``m``:
+State
+-----
+:func:`lbfgs_prepare_state` allocates, initializes and validates everything in
+one call and hands it back as an :class:`LBFGSState`; calling it again is how
+you reset. Nothing is allocated per step, so the step stays capturable in a
+CUDA graph.
+
+The arrays stay yours. :class:`LBFGSState` is a plain dataclass whose fields
+are reachable by name -- ``state.fmax``, ``state.status`` -- so you can also
+build one from buffers you already own and check it with
+:meth:`LBFGSState.validate`, which compares shapes, dtypes and device without
+touching the GPU. For ``P`` degrees of freedom, ``M`` systems and history
+depth ``m``:
 
 =============================================  ==========  ===========
 Buffer                                         Shape       dtype
@@ -109,12 +117,13 @@ Buffer                                         Shape       dtype
 ``n_loop``, ``history_count``                  ``(M,)``    int32
 =============================================  ==========  ===========
 
-Initial contents: **zero everything**, then ``alpha_step`` to **one** and
-``iteration`` to **minus one** (the "never evaluated" marker). ``status``
-starts at ``LBFGS_NEED_EVAL``, which is zero. Restoring those same values is
-how you reset.
+Building one by hand means matching the initial contents
+:func:`lbfgs_prepare_state` produces: **zero everything**, then ``alpha_step``
+to **one** and ``iteration`` to **minus one** (the "never evaluated" marker).
+``status`` starts at ``LBFGS_NEED_EVAL``, which is zero.
 
-Variable-cell relaxation adds, for the packed path with
+Variable-cell relaxation adds an :class:`LBFGSCellState` from
+:func:`lbfgs_prepare_cell_state`, for the packed path with
 ``P = num_atoms + 2 * M``:
 
 =====================================================  ====================  ==========
@@ -130,9 +139,11 @@ Buffer                                                 Shape                 dty
 =====================================================  ====================  ==========
 
 ``kappa`` matches the *coordinate* precision, not float64, because it scales
-matrices. ``ref_cell``, ``ref_cell_inv`` and ``kappa`` are filled once by
-:func:`lbfgs_set_reference_cell` and :func:`lbfgs_cell_kappa`; the rest is
-scratch. Build the packed topology yourself, so ragged batches work::
+matrices. ``ref_cell``, ``ref_cell_inv`` and ``kappa`` are the chart: pass
+``cell`` and ``n_particles`` to :func:`lbfgs_prepare_cell_state` to have them
+filled there, or fill them yourself with :func:`lbfgs_set_reference_cell` and
+:func:`lbfgs_cell_kappa`. The rest is scratch. Build the packed topology
+yourself, so ragged batches work::
 
     from nvalchemiops.batch_utils import atom_ptr_to_batch_idx
     from nvalchemiops.dynamics.utils.cell_filter import extend_atom_ptr
@@ -163,6 +174,7 @@ and 7."""
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 import warp as wp
@@ -171,12 +183,16 @@ from nvalchemiops.dynamics.utils.cell_utils import compute_cell_inverse
 from nvalchemiops.segment_ops import compute_ept
 
 __all__ = [
+    "LBFGSCellState",
+    "LBFGSState",
     "LBFGS_CONVERGED",
     "LBFGS_NEED_EVAL",
     "lbfgs_apply_step",
     "lbfgs_cell_kappa",
     "lbfgs_cell_trust_region",
     "lbfgs_pack_cell",
+    "lbfgs_prepare_cell_state",
+    "lbfgs_prepare_state",
     "lbfgs_prepare_step",
     "lbfgs_reduce",
     "lbfgs_set_reference_cell",
@@ -200,55 +216,314 @@ __all__ = [
 # their own signatures against it. They deliberately do not hold arrays.
 # =============================================================================
 
-#: Optimizer buffers, in the order every coordinate-path entry point takes them.
-_OPTIMIZER_BUFFERS: tuple[str, ...] = (
-    "x_base",
-    "force_base",
-    "direction",
-    "s_history",
-    "y_history",
-    "ys",
-    "yy",
-    "alpha_hist",
-    "beta_hist",
-    "ss",
-    "gg",
-    "fmax",
-    "frms_sq",
-    "smax",
-    "d0",
-    "dmax",
-    "dquad",
-    "alpha_step",
-    "status",
-    "iteration",
-    "end",
-    "n_loop",
-    "history_count",
+
+@dataclasses.dataclass
+class LBFGSState:
+    """The optimizer's persistent and scratch arrays, one field per array.
+
+    Deliberately transparent: every array a step touches is a named field you
+    can read, plot or checkpoint. Build one with
+    :func:`lbfgs_prepare_state`, which allocates and initializes it, or
+    construct it directly from arrays you already own -- the package never
+    requires you to use its allocation policy.
+
+    Field order is the wire ABI. It is what the PyTorch operator's
+    ``mutates_args`` and the JAX callable's ``in_out_argnames`` are generated
+    from, so reordering these fields reorders those.
+
+    Attributes
+    ----------
+    x_base, force_base : array, shape (P,)
+        Last accepted point and the FORCES there. The gradient is
+        ``-force_base``; see the module docstring on the sign convention.
+    direction : array, shape (P,)
+        Search direction; a descent direction satisfies ``force_base . d > 0``.
+    s_history, y_history : array, shape (m, P)
+        Ring buffers of position and *gradient* differences.
+    ys, yy, alpha_hist, beta_hist : array, shape (m, M), float64
+        Per-slot curvature products and two-loop coefficients.
+    ss, gg : array, shape (M,), float64
+        Squared norms of the newest ``s`` and of the packed force.
+    fmax, frms_sq, smax : array, shape (M,), float64
+        Cartesian convergence quantities; ``smax`` is the stress norm.
+    d0, dmax, dquad : array, shape (M,), float64
+        Directional derivative and the trust region's linear and quadratic
+        displacement coefficients.
+    alpha_step : array, shape (M,), float64
+        Step length, recomputed from the trust region every call.
+    status, iteration, end, n_loop, history_count : array, shape (M,), int32
+        Per-system control state.
+    """
+
+    x_base: Any
+    force_base: Any
+    direction: Any
+    s_history: Any
+    y_history: Any
+    ys: Any
+    yy: Any
+    alpha_hist: Any
+    beta_hist: Any
+    ss: Any
+    gg: Any
+    fmax: Any
+    frms_sq: Any
+    smax: Any
+    d0: Any
+    dmax: Any
+    dquad: Any
+    alpha_step: Any
+    status: Any
+    iteration: Any
+    end: Any
+    n_loop: Any
+    history_count: Any
+
+    @property
+    def num_dofs(self) -> int:
+        """Degrees of freedom the optimizer moves."""
+        return self.x_base.shape[0]
+
+    @property
+    def num_systems(self) -> int:
+        """Independent systems in the batch."""
+        return self.status.shape[0]
+
+    @property
+    def history_size(self) -> int:
+        """Stored curvature pairs, ``m``."""
+        return self.s_history.shape[0]
+
+    def validate(self) -> None:
+        """Check the fields against each other: shapes, dtypes and device.
+
+        Structural only -- no device reads -- so this is sync-free and safe to
+        call anywhere. Run for you by :func:`lbfgs_prepare_state`; call it
+        yourself if you built the state from your own arrays.
+
+        Three checks. Only *leading* dimensions are compared, because the
+        component axis is a framework detail: Warp stores a ``vec3`` array as
+        ``(P,)`` while PyTorch and JAX store it as ``(P, 3)``. Fields that
+        hold the same kind of thing must share a dtype, which is what catches
+        one array left at the wrong precision. And every field must live on
+        one device.
+
+        Sharing a dtype is checked rather than a named one, since the same
+        state is expressed in three frameworks' type vocabularies; that the
+        per-system scalars are specifically float64 is checked by each
+        binding.
+
+        Raises
+        ------
+        ValueError
+            If any field is inconsistent with the rest.
+        """
+        p, m, n = self.num_dofs, self.history_size, self.num_systems
+        if m < 1:
+            raise ValueError(f"history size must be >= 1; got {m}")
+
+        def check(name, want):
+            got = tuple(getattr(self, name).shape)[: len(want)]
+            if got != want:
+                raise ValueError(
+                    f"LBFGSState.{name} starts with dimensions {got}, expected "
+                    f"{want} for {p} degrees of freedom, {n} systems and "
+                    f"history {m}"
+                )
+
+        for name in ("x_base", "force_base", "direction"):
+            check(name, (p,))
+        for name in ("s_history", "y_history"):
+            check(name, (m, p))
+        for name in ("ys", "yy", "alpha_hist", "beta_hist"):
+            check(name, (m, n))
+        for name in _OPTIMIZER_BUFFERS[9:]:
+            check(name, (n,))
+        _check_kinds(self, _STATE_KINDS, "LBFGSState")
+
+
+@dataclasses.dataclass
+class LBFGSCellState:
+    """The variable-cell chart and its scratch space, one field per array.
+
+    The first five fields are configuration and topology, written once before
+    the first step and read-only thereafter; the rest is scratch the step
+    rewrites every call. Build one with :func:`lbfgs_prepare_cell_state` or
+    construct it from your own arrays.
+
+    Attributes
+    ----------
+    ref_cell, ref_cell_inv : array, shape (M,), mat33
+        Reference cell ``H0`` and its inverse, from
+        :func:`lbfgs_set_reference_cell`.
+    kappa : array, shape (M,)
+        Cell coordinate scaling, from :func:`lbfgs_cell_kappa`. Matches the
+        *coordinate* precision, not float64, because it scales matrices.
+    ext_batch_idx : array, shape (P,), int32
+    ext_atom_ptr : array, shape (M + 1,), int32
+        Packed topology. Build these with the generic batch utilities so ragged
+        batches are expressible.
+    phi, phi_inv, d_phi : array, shape (M,), mat33
+        Deformation gradient, its inverse, and its search direction.
+    cell_dof_a, cell_dof_b, cell_force_a, cell_force_b : array, shape (M,)
+        The cell's two packed degrees of freedom and their conjugate forces.
+    ext_positions, ext_forces : array, shape (P,)
+        The packed coordinate vector and its forces.
+    """
+
+    ref_cell: Any
+    ref_cell_inv: Any
+    kappa: Any
+    ext_batch_idx: Any
+    ext_atom_ptr: Any
+    phi: Any
+    phi_inv: Any
+    d_phi: Any
+    cell_dof_a: Any
+    cell_dof_b: Any
+    cell_force_a: Any
+    cell_force_b: Any
+    ext_positions: Any
+    ext_forces: Any
+
+    @property
+    def num_systems(self) -> int:
+        """Independent systems in the batch."""
+        return self.ref_cell.shape[0]
+
+    @property
+    def num_packed_dofs(self) -> int:
+        """Packed degrees of freedom, ``num_atoms + 2 * num_systems``."""
+        return self.ext_positions.shape[0]
+
+    def validate(self, num_atoms: int | None = None) -> None:
+        """Check shapes, dtypes, device and the packed relationship.
+
+        Structural only, so no device reads: this confirms that
+        ``P = num_atoms + 2 * num_systems`` and that every array is sized for
+        it, but not that ``ext_atom_ptr`` holds sensible values -- checking
+        that would need a device-to-host sync. As with
+        :meth:`LBFGSState.validate`, fields of the same kind must share a
+        dtype and the whole state one device. ``kappa`` is exempt from the
+        dtype grouping: it scales matrices, so it follows the *coordinate*
+        precision rather than the float64 of the other scalars.
+
+        Parameters
+        ----------
+        num_atoms : int, optional
+            Atom count. When given, the packed size is checked against it.
+
+        Raises
+        ------
+        ValueError
+            If any field is inconsistent with the rest.
+        """
+        n, p = self.num_systems, self.num_packed_dofs
+
+        def check(name, want):
+            got = tuple(getattr(self, name).shape)[: len(want)]
+            if got != want:
+                raise ValueError(
+                    f"LBFGSCellState.{name} starts with dimensions {got}, "
+                    f"expected {want}"
+                )
+
+        for name in _CELL_BUFFERS:
+            if name in ("ext_positions", "ext_forces", "ext_batch_idx"):
+                check(name, (p,))
+            elif name == "ext_atom_ptr":
+                check(name, (n + 1,))
+            else:
+                check(name, (n,))
+        _check_kinds(self, _CELL_KINDS, "LBFGSCellState")
+        if num_atoms is not None and p != num_atoms + 2 * n:
+            raise ValueError(
+                f"packed arrays hold {p} degrees of freedom, but {num_atoms} "
+                f"atoms in {n} systems needs {num_atoms + 2 * n} "
+                "(num_atoms + 2 * num_systems)"
+            )
+
+
+#: Field order of :class:`LBFGSState`. This *is* the ABI: the PyTorch
+#: operator's ``mutates_args`` and the JAX callable's ``in_out_argnames`` are
+#: both generated from it, and import-time checks pin the hand-written
+#: signatures to it.
+_OPTIMIZER_BUFFERS: tuple[str, ...] = tuple(
+    f.name for f in dataclasses.fields(LBFGSState)
 )
 
-#: Variable-cell buffers, appended after the optimizer buffers on that path.
-#: The first five are read-only configuration and topology; the rest is scratch
-#: the step writes to.
-_CELL_BUFFERS: tuple[str, ...] = (
-    "ref_cell",
-    "ref_cell_inv",
-    "kappa",
-    "ext_batch_idx",
-    "ext_atom_ptr",
-    "phi",
-    "phi_inv",
-    "d_phi",
-    "cell_dof_a",
-    "cell_dof_b",
-    "cell_force_a",
-    "cell_force_b",
-    "ext_positions",
-    "ext_forces",
+#: Field order of :class:`LBFGSCellState`.
+_CELL_BUFFERS: tuple[str, ...] = tuple(
+    f.name for f in dataclasses.fields(LBFGSCellState)
 )
 
-#: The subset of ``_CELL_BUFFERS`` the step mutates.
+#: The cell fields the step writes. The first five are read-only
+#: configuration and topology, so they are inputs rather than in-out aliases.
 _CELL_SCRATCH: tuple[str, ...] = _CELL_BUFFERS[5:]
+
+#: Fields grouped by what they hold, for validation. Every field in a group
+#: must share one dtype -- that is the check, rather than a named dtype,
+#: because the same state is expressed in Warp, PyTorch and JAX types.
+_STATE_KINDS: dict[str, tuple[str, ...]] = {
+    "per-degree-of-freedom vectors": _OPTIMIZER_BUFFERS[:5],
+    "per-system float64 scalars": _OPTIMIZER_BUFFERS[5:18],
+    "per-system integer control fields": _OPTIMIZER_BUFFERS[18:],
+}
+_CELL_KINDS: dict[str, tuple[str, ...]] = {
+    "cell matrices": ("ref_cell", "ref_cell_inv", "phi", "phi_inv", "d_phi"),
+    "packed vectors": (
+        "cell_dof_a",
+        "cell_dof_b",
+        "cell_force_a",
+        "cell_force_b",
+        "ext_positions",
+        "ext_forces",
+    ),  # fmt: skip
+    "topology indices": ("ext_batch_idx", "ext_atom_ptr"),
+}
+
+# The groups are written out by slice and by hand, so pin them to the field
+# order. Inserting a field would otherwise shift a slice silently, and the
+# dtype check would then compare the wrong arrays.
+for _names, _all, _label in (
+    (_STATE_KINDS, _OPTIMIZER_BUFFERS, "_STATE_KINDS"),
+    (_CELL_KINDS, _CELL_BUFFERS, "_CELL_KINDS"),
+):
+    _grouped = [n for g in _names.values() for n in g]
+    _ungrouped = set(_all) - set(_grouped)
+    if len(_grouped) != len(set(_grouped)) or not set(_grouped) <= set(_all):
+        # Raised rather than asserted so the guard survives `python -O`.
+        raise RuntimeError(f"{_label} does not partition its fields: {_grouped}")
+    # ``kappa`` is deliberately ungrouped: it is the only cell field whose
+    # dtype is the scalar counterpart of the coordinate precision.
+    if _ungrouped - {"kappa"}:
+        raise RuntimeError(f"{_label} leaves fields unchecked: {sorted(_ungrouped)}")
+
+
+def _check_kinds(state, kinds: dict[str, tuple[str, ...]], cls_name: str) -> None:
+    """Check that grouped fields share a dtype, and the whole state a device.
+
+    Both are read off the arrays themselves, so this works unchanged for Warp,
+    PyTorch and JAX. A JAX tracer has no device, so the device check is skipped
+    for anything that does not expose one rather than failing under ``jit``.
+    """
+    for label, names in kinds.items():
+        seen = {getattr(state, n).dtype for n in names}
+        if len(seen) > 1:
+            offenders = {n: str(getattr(state, n).dtype) for n in names}
+            raise ValueError(
+                f"{cls_name} {label} must share one dtype, got {len(seen)}: {offenders}"
+            )
+    devices = {}
+    for f in dataclasses.fields(state):
+        device = getattr(getattr(state, f.name), "device", None)
+        if device is not None:
+            devices.setdefault(str(device), []).append(f.name)
+    if len(devices) > 1:
+        raise ValueError(
+            f"{cls_name} fields are spread across devices {sorted(devices)}: "
+            + "; ".join(f"{d}: {sorted(n)}" for d, n in sorted(devices.items()))
+        )
 
 
 # =============================================================================
@@ -1413,7 +1688,185 @@ for _v in _VEC_TYPES:
 # =============================================================================
 
 
-def lbfgs_reduce(
+def lbfgs_prepare_state(
+    num_dofs: int,
+    num_systems: int,
+    *,
+    dtype=wp.vec3d,
+    history_size: int = 6,
+    device=None,
+) -> LBFGSState:
+    """Allocate, initialize and validate a complete optimizer state.
+
+    Call this once, before the first step. The three fields that do not start
+    at zero are set for you -- ``alpha_step`` to one, ``iteration`` to minus
+    one, ``status`` to ``LBFGS_NEED_EVAL`` -- which is the part that is easy to
+    get wrong by hand. Calling it again is how you reset.
+
+    You are not obliged to use it: :class:`LBFGSState` is a plain dataclass, so
+    you can build one from arrays you already own and call
+    :meth:`LBFGSState.validate` yourself.
+
+    Parameters
+    ----------
+    num_dofs : int
+        Degrees of freedom the optimizer moves. On the variable-cell path this
+        is ``num_atoms + 2 * num_systems``, not the atom count.
+    num_systems : int
+        Independent systems in the batch.
+    dtype : optional
+        Coordinate precision, ``wp.vec3f`` or ``wp.vec3d``. Per-system scalars
+        are float64 either way; see the module docstring on precision.
+    history_size : int, optional
+        Stored curvature pairs ``m``; 3 to 7 is the usual range. Memory is
+        dominated by the two ``(m, num_dofs)`` history buffers.
+    device : optional
+        Warp device.
+
+    Returns
+    -------
+    LBFGSState
+    """
+    if dtype not in _VEC_TYPES:
+        raise ValueError(f"dtype must be wp.vec3f or wp.vec3d; got {dtype}")
+    if history_size < 1:
+        raise ValueError(f"history_size must be >= 1; got {history_size}")
+
+    def vec(*shape):
+        return wp.zeros(shape if len(shape) > 1 else shape[0], dtype=dtype,
+                        device=device)  # fmt: skip
+
+    def f64(*shape):
+        return wp.zeros(shape if len(shape) > 1 else shape[0],
+                        dtype=wp.float64, device=device)  # fmt: skip
+
+    def i32(n):
+        return wp.zeros(n, dtype=wp.int32, device=device)
+
+    state = LBFGSState(
+        x_base=vec(num_dofs),
+        force_base=vec(num_dofs),
+        direction=vec(num_dofs),
+        s_history=vec(history_size, num_dofs),
+        y_history=vec(history_size, num_dofs),
+        ys=f64(history_size, num_systems),
+        yy=f64(history_size, num_systems),
+        alpha_hist=f64(history_size, num_systems),
+        beta_hist=f64(history_size, num_systems),
+        ss=f64(num_systems),
+        gg=f64(num_systems),
+        fmax=f64(num_systems),
+        frms_sq=f64(num_systems),
+        smax=f64(num_systems),
+        d0=f64(num_systems),
+        dmax=f64(num_systems),
+        dquad=f64(num_systems),
+        alpha_step=f64(num_systems),
+        status=i32(num_systems),
+        iteration=i32(num_systems),
+        end=i32(num_systems),
+        n_loop=i32(num_systems),
+        history_count=i32(num_systems),
+    )
+    # The only three fields whose initial value is not zero.
+    state.alpha_step.fill_(1.0)
+    state.iteration.fill_(-1)
+    state.status.fill_(LBFGS_NEED_EVAL)
+    state.validate()
+    return state
+
+
+def lbfgs_prepare_cell_state(
+    num_atoms: int,
+    num_systems: int,
+    ext_batch_idx,
+    ext_atom_ptr,
+    *,
+    cell=None,
+    n_particles=None,
+    cell_force_scale: float = 1.0,
+    dtype=wp.vec3d,
+    device=None,
+) -> LBFGSCellState:
+    """Allocate and validate the variable-cell chart and its scratch space.
+
+    The packed topology is *yours*: pass ``ext_batch_idx`` and ``ext_atom_ptr``
+    built with :func:`~nvalchemiops.dynamics.utils.cell_filter.extend_atom_ptr`
+    and :func:`~nvalchemiops.batch_utils.atom_ptr_to_batch_idx`. Requiring them
+    rather than deriving them is deliberate: deriving would mean assuming an
+    even split, which is exactly what makes ragged batches inexpressible.
+
+    Pass ``cell`` and ``n_particles`` to get a state that is ready to step:
+    the chart fields ``ref_cell``, ``ref_cell_inv`` and ``kappa`` are filled
+    for you. Omit them and those three are left zeroed, which a step cannot
+    use -- a zeroed ``ref_cell`` is singular and a zeroed ``kappa`` is divided
+    into the cell force -- so fill them with :func:`lbfgs_set_reference_cell`
+    and :func:`lbfgs_cell_kappa` before the first step.
+
+    Parameters
+    ----------
+    num_atoms : int
+        Total atoms across the batch.
+    num_systems : int
+        Independent systems.
+    ext_batch_idx, ext_atom_ptr : wp.array(dtype=int32)
+        Packed topology, shapes ``(num_atoms + 2 * num_systems,)`` and
+        ``(num_systems + 1,)``.
+    cell : wp.array(dtype=mat33), optional
+        Reference lattice per system. Given together with ``n_particles``, the
+        chart is captured here instead of in a separate call.
+    n_particles : wp.array(dtype=int32), optional
+        Atom count per system, used for ``kappa``.
+    cell_force_scale : float, optional
+        Multiplier on the atom count in ``kappa``; only read when
+        ``n_particles`` is given.
+    dtype : optional
+        Coordinate precision, ``wp.vec3f`` or ``wp.vec3d``.
+    device : optional
+        Warp device.
+
+    Returns
+    -------
+    LBFGSCellState
+    """
+    if dtype not in _VEC_TYPES:
+        raise ValueError(f"dtype must be wp.vec3f or wp.vec3d; got {dtype}")
+    mat = _MAT_TYPES[dtype]
+    scalar = wp.float32 if dtype == wp.vec3f else wp.float64
+    num_packed = num_atoms + 2 * num_systems
+
+    def mats(n):
+        return wp.zeros(n, dtype=mat, device=device)
+
+    def vec(n):
+        return wp.zeros(n, dtype=dtype, device=device)
+
+    state = LBFGSCellState(
+        ref_cell=mats(num_systems),
+        ref_cell_inv=mats(num_systems),
+        kappa=wp.zeros(num_systems, dtype=scalar, device=device),
+        ext_batch_idx=ext_batch_idx,
+        ext_atom_ptr=ext_atom_ptr,
+        phi=mats(num_systems),
+        phi_inv=mats(num_systems),
+        d_phi=mats(num_systems),
+        cell_dof_a=vec(num_systems),
+        cell_dof_b=vec(num_systems),
+        cell_force_a=vec(num_systems),
+        cell_force_b=vec(num_systems),
+        ext_positions=vec(num_packed),
+        ext_forces=vec(num_packed),
+    )
+    state.validate(num_atoms=num_atoms)
+    if (cell is None) != (n_particles is None):
+        raise ValueError("cell and n_particles must be given together")
+    if cell is not None:
+        lbfgs_set_reference_cell(cell, state.ref_cell, state.ref_cell_inv)
+        lbfgs_cell_kappa(n_particles, state.kappa, cell_force_scale=cell_force_scale)
+    return state
+
+
+def _lbfgs_reduce_impl(
     forces: wp.array,
     direction: wp.array,
     batch_idx: wp.array,
@@ -1511,7 +1964,7 @@ def lbfgs_reduce(
         )
 
 
-def lbfgs_update(
+def _lbfgs_update_impl(
     positions: wp.array,
     forces: wp.array,
     x_base: wp.array,
@@ -1654,7 +2107,7 @@ def lbfgs_update(
     grid = (n_dofs + ept - 1) // ept
 
     if compute_reductions:
-        lbfgs_reduce(
+        _lbfgs_reduce_impl(
             forces,
             direction,
             batch_idx,
@@ -1869,7 +2322,7 @@ def _zero_pending_d0(d0, n_loop, num_systems, device) -> None:
     )
 
 
-def lbfgs_prepare_step(
+def _lbfgs_prepare_step_impl(
     gg: wp.array,
     d0: wp.array,
     dmax: wp.array,
@@ -1918,7 +2371,7 @@ def lbfgs_prepare_step(
     )
 
 
-def lbfgs_apply_step(
+def _lbfgs_apply_step_impl(
     positions: wp.array,
     forces: wp.array,
     x_base: wp.array,
@@ -1962,7 +2415,7 @@ def lbfgs_apply_step(
     )
 
 
-def lbfgs_step(
+def _lbfgs_step_impl(
     positions: wp.array,
     forces: wp.array,
     x_base: wp.array,
@@ -2023,7 +2476,7 @@ def lbfgs_step(
     ...         break
 
     """
-    lbfgs_update(
+    _lbfgs_update_impl(
         positions=positions,
         forces=forces,
         x_base=x_base,
@@ -2063,7 +2516,7 @@ def lbfgs_step(
     )
     if positions.shape[0] == 0:
         return
-    lbfgs_prepare_step(
+    _lbfgs_prepare_step_impl(
         gg=gg,
         d0=d0,
         dmax=dmax,
@@ -2075,7 +2528,7 @@ def lbfgs_step(
         history_count=history_count,
         maxstep=maxstep,
     )
-    lbfgs_apply_step(
+    _lbfgs_apply_step_impl(
         positions=positions,
         forces=forces,
         x_base=x_base,
@@ -2767,7 +3220,7 @@ def lbfgs_cell_trust_region(
     )
 
 
-def lbfgs_step_coord_cell(
+def _lbfgs_step_coord_cell_impl(
     positions: wp.array,
     forces: wp.array,
     cell: wp.array,
@@ -2905,7 +3358,7 @@ def lbfgs_step_coord_cell(
         ext_positions,
         ext_forces,
     )
-    lbfgs_update(
+    _lbfgs_update_impl(
         positions=ext_positions,
         forces=ext_forces,
         batch_idx=ext_batch_idx,
@@ -2958,7 +3411,7 @@ def lbfgs_step_coord_cell(
         dmax,
         dquad,
     )
-    lbfgs_prepare_step(
+    _lbfgs_prepare_step_impl(
         gg=gg,
         d0=d0,
         dmax=dmax,
@@ -2970,7 +3423,7 @@ def lbfgs_step_coord_cell(
         history_count=history_count,
         maxstep=maxstep,
     )
-    lbfgs_apply_step(
+    _lbfgs_apply_step_impl(
         positions=ext_positions,
         forces=ext_forces,
         x_base=x_base,
@@ -2992,3 +3445,142 @@ def lbfgs_step_coord_cell(
         positions,
         cell,
     )
+
+
+# =============================================================================
+# Public API: the phases, driven by the state objects
+# =============================================================================
+
+
+def _arrays(state) -> dict:
+    """The dataclass's arrays keyed by field name, without copying anything.
+
+    Passed through by keyword rather than position: the internal launchers
+    interleave the buffers with the topology arrays, so a positional splat
+    would silently misalign them.
+    """
+    return {f.name: getattr(state, f.name) for f in dataclasses.fields(state)}
+
+
+def _check_inputs(positions, forces, batch_idx, state: LBFGSState) -> None:
+    """Confirm this call's inputs match the state that was prepared.
+
+    Shapes only -- no device reads, so this costs nothing next to the launches
+    that follow. The state re-checks itself too: it is a plain dataclass whose
+    fields can be reassigned between steps, and a history buffer that no longer
+    matches would read out of bounds inside a kernel rather than raise.
+    """
+    state.validate()
+    # ``validate`` checks that the per-system scalars agree with each other;
+    # only this layer knows they must specifically be float64.
+    if state.ys.dtype != wp.float64:
+        raise ValueError(
+            f"per-system scalars must be float64, got {state.ys.dtype}; "
+            "ys / yy scales the initial inverse Hessian and cancels in fp32"
+        )
+    if positions.shape[0] != state.num_dofs:
+        raise ValueError(
+            f"positions has {positions.shape[0]} degrees of freedom but the "
+            f"state was prepared for {state.num_dofs}"
+        )
+    if forces.shape[0] != positions.shape[0]:
+        raise ValueError(
+            f"forces has {forces.shape[0]} entries, positions has {positions.shape[0]}"
+        )
+    if batch_idx.shape[0] != positions.shape[0]:
+        raise ValueError(
+            f"batch_idx has {batch_idx.shape[0]} entries, positions has "
+            f"{positions.shape[0]}"
+        )
+
+
+def lbfgs_reduce(forces, state: LBFGSState, batch_idx, **kwargs) -> None:
+    """Compute the per-system reductions for one call. See :func:`lbfgs_step`."""
+    _lbfgs_reduce_impl(
+        forces, state.direction, batch_idx, state.status, state.gg,
+        state.fmax, state.frms_sq, **kwargs,
+    )  # fmt: skip
+
+
+def lbfgs_update(positions, forces, state: LBFGSState, batch_idx, n_particles,
+                 **kwargs) -> None:  # fmt: skip
+    """Advance the state machine and produce a search direction.
+
+    Everything except the position update. Use with :func:`lbfgs_prepare_step`
+    and :func:`lbfgs_apply_step` when you need to interpose your own logic
+    before the atoms move; :func:`lbfgs_step` chains all three.
+    """
+    _check_inputs(positions, forces, batch_idx, state)
+    _lbfgs_update_impl(
+        positions=positions, forces=forces, batch_idx=batch_idx,
+        n_particles=n_particles, **_arrays(state), **kwargs,
+    )  # fmt: skip
+
+
+def lbfgs_prepare_step(state: LBFGSState, **kwargs) -> None:
+    """Repair a bad direction and apply the trust region."""
+    _lbfgs_prepare_step_impl(
+        state.gg, state.d0, state.dmax, state.dquad, state.alpha_step,
+        state.status, state.end, state.n_loop, state.history_count, **kwargs,
+    )  # fmt: skip
+
+
+def lbfgs_apply_step(positions, forces, state: LBFGSState, batch_idx) -> None:
+    """Move the positions to the next point."""
+    _lbfgs_apply_step_impl(
+        positions, forces, state.x_base, state.force_base, state.direction,
+        batch_idx, state.status, state.n_loop, state.gg, state.alpha_step,
+    )  # fmt: skip
+
+
+def lbfgs_step(positions, forces, state: LBFGSState, batch_idx, n_particles,
+               **kwargs) -> None:  # fmt: skip
+    """Consume one force evaluation and produce the next geometry.
+
+    Parameters
+    ----------
+    positions, forces : array, shape (num_dofs,)
+        Current geometry and the forces there. Mutated in place.
+    state : LBFGSState
+        From :func:`lbfgs_prepare_state`, or built from your own arrays.
+    batch_idx : array, shape (num_dofs,), dtype int32
+        Sorted system index per degree of freedom.
+    n_particles : array, shape (num_systems,), dtype int32
+        Atom count per system, for the optional RMS criterion.
+    **kwargs
+        ``force_tol``, ``rms_tol``, ``stress_tol``, ``maxstep``,
+        ``curvature_eps`` and the optional Cartesian companions.
+    """
+    _check_inputs(positions, forces, batch_idx, state)
+    _lbfgs_step_impl(
+        positions=positions, forces=forces, batch_idx=batch_idx,
+        n_particles=n_particles, **_arrays(state), **kwargs,
+    )  # fmt: skip
+
+
+def lbfgs_step_coord_cell(positions, forces, cell, stress, state: LBFGSState,
+                          cell_state: LBFGSCellState, batch_idx, n_particles,
+                          **kwargs) -> None:  # fmt: skip
+    """Advance one variable-cell step, relaxing coordinates and cell together.
+
+    ``state`` must be sized for ``num_atoms + 2 * num_systems`` degrees of
+    freedom; ``cell_state`` carries the chart. Call
+    :func:`lbfgs_set_reference_cell` and :func:`lbfgs_cell_kappa` once before
+    the first step.
+    """
+    if state.num_dofs != cell_state.num_packed_dofs:
+        raise ValueError(
+            f"state is sized for {state.num_dofs} degrees of freedom but the "
+            f"cell state is packed for {cell_state.num_packed_dofs}"
+        )
+    if positions.shape[0] + 2 * state.num_systems != state.num_dofs:
+        raise ValueError(
+            f"{positions.shape[0]} atoms in {state.num_systems} systems needs "
+            f"{positions.shape[0] + 2 * state.num_systems} degrees of freedom, "
+            f"but the state has {state.num_dofs}"
+        )
+    _lbfgs_step_coord_cell_impl(
+        positions=positions, forces=forces, cell=cell, stress=stress,
+        batch_idx=batch_idx, n_particles=n_particles,
+        **_arrays(state), **_arrays(cell_state), **kwargs,
+    )  # fmt: skip

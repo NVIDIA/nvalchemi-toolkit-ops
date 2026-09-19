@@ -54,6 +54,7 @@ from nvalchemiops.dynamics.optimizers import (
     LBFGS_CONVERGED,
     LBFGS_NEED_EVAL,
     fire2_step,
+    lbfgs_prepare_state,
     lbfgs_step,
 )
 
@@ -104,89 +105,25 @@ wp_dtype = system.wp_dtype
 wp_vec_dtype = system.wp_vec_dtype
 
 # %%
-# Allocate the L-BFGS Buffers
-# ---------------------------
+# Prepare the L-BFGS State
+# ------------------------
 #
-# Every array is yours: the package allocates nothing and keeps no hidden
-# state, so nothing is allocated inside the loop -- and the three buffers that
-# do not start at zero are your responsibility (see below). ``history_size`` is
-# the memory knob; 3 to 7 is usual.
+# :func:`~nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_prepare_state` allocates
+# and initializes every array the optimizer needs and hands them back as an
+# :class:`~nvalchemiops.dynamics.optimizers.lbfgs.LBFGSState`. Calling it again
+# is how you restart. It is a plain dataclass, so every field stays reachable
+# -- ``state.fmax``, ``state.status`` -- and you can build one from arrays you
+# already own instead, then call ``state.validate()``.
 #
-# Coordinates may be single or double precision, but **every per-system scalar
-# is float64 regardless**: ``ys / yy`` scales the initial inverse Hessian, and
-# near convergence it is a ratio of differences of nearly equal vectors.
+# ``history_size`` is the memory knob; 3 to 7 is usual. Coordinates may be
+# single or double precision, but **every per-system scalar is float64
+# regardless**: ``ys / yy`` scales the initial inverse Hessian, and near
+# convergence it is a ratio of differences of nearly equal vectors.
 
 history_size = 6
-
-# Per-degree-of-freedom arrays, at the coordinate precision.
-x_base = wp.zeros(num_atoms, dtype=wp_vec_dtype, device=device)
-force_base = wp.zeros(num_atoms, dtype=wp_vec_dtype, device=device)
-direction = wp.zeros(num_atoms, dtype=wp_vec_dtype, device=device)
-s_history = wp.zeros((history_size, num_atoms), dtype=wp_vec_dtype, device=device)
-y_history = wp.zeros((history_size, num_atoms), dtype=wp_vec_dtype, device=device)
-
-
-# Per-history-slot and per-system scalars, always float64.
-def f64(*shape) -> wp.array:
-    """Allocate a zeroed float64 array."""
-    return wp.zeros(
-        shape if len(shape) > 1 else shape[0], dtype=wp.float64, device=device
-    )
-
-
-ys = f64(history_size, 1)
-yy = f64(history_size, 1)
-alpha_hist = f64(history_size, 1)
-beta_hist = f64(history_size, 1)
-ss = f64(1)
-gg = f64(1)
-fmax = f64(1)
-frms_sq = f64(1)
-smax = f64(1)
-d0 = f64(1)
-dmax = f64(1)
-dquad = f64(1)
-alpha_step = f64(1)
-
-# Per-system integer control state.
-status = wp.zeros(1, dtype=wp.int32, device=device)
-iteration = wp.zeros(1, dtype=wp.int32, device=device)
-end = wp.zeros(1, dtype=wp.int32, device=device)
-n_loop = wp.zeros(1, dtype=wp.int32, device=device)
-history_count = wp.zeros(1, dtype=wp.int32, device=device)
-
-lbfgs_state = dict(
-    x_base=x_base,
-    force_base=force_base,
-    direction=direction,
-    s_history=s_history,
-    y_history=y_history,
-    ys=ys,
-    yy=yy,
-    alpha_hist=alpha_hist,
-    beta_hist=beta_hist,
-    ss=ss,
-    gg=gg,
-    fmax=fmax,
-    frms_sq=frms_sq,
-    smax=smax,
-    d0=d0,
-    dmax=dmax,
-    dquad=dquad,
-    alpha_step=alpha_step,
-    status=status,
-    iteration=iteration,
-    end=end,
-    n_loop=n_loop,
-    history_count=history_count,
+state = lbfgs_prepare_state(
+    num_atoms, 1, dtype=wp_vec_dtype, history_size=history_size, device=device
 )
-
-# Everything above starts at zero, which is already correct for all but three
-# buffers. Set those three explicitly. To restart a relaxation later, zero the
-# buffers again and repeat exactly these three lines.
-alpha_step.fill_(1.0)  # the line-search step length for a fresh direction
-iteration.fill_(-1)  # the "never evaluated yet" marker
-status.fill_(LBFGS_NEED_EVAL)  # numerically zero, but say it out loud
 
 # Batching metadata: all zeros for a single system.
 batch_idx = wp.zeros(num_atoms, dtype=wp.int32, device=device)
@@ -229,30 +166,30 @@ for step in range(max_evals):
     lbfgs_step(
         positions=system.wp_positions,
         forces=system.wp_forces,
+        state=state,
         batch_idx=batch_idx,
         n_particles=n_particles,
         force_tol=force_tolerance,
         maxstep=maxstep,
-        **lbfgs_state,
     )
 
     # `fmax` is computed on the device every call, so logging it is free of an
     # extra reduction; reading it back is the only synchronization.
     pe = float(energies.numpy().sum())
-    current_fmax = float(fmax.numpy()[0])
+    current_fmax = float(state.fmax.numpy()[0])
     energy_hist.append(pe)
     maxf_hist.append(current_fmax)
-    alpha_hist_log.append(float(alpha_step.numpy()[0]))
+    alpha_hist_log.append(float(state.alpha_step.numpy()[0]))
 
     if step % log_interval == 0:
         print(
             f"eval={step:4d}  PE={pe:12.6f} eV  max|F|={current_fmax:10.3e} eV/Å  "
             f"alpha={alpha_hist_log[-1]:9.3e}  "
-            f"iter={int(iteration.numpy()[0]):3d}  "
-            f"hist={int(history_count.numpy()[0]):2d}"
+            f"iter={int(state.iteration.numpy()[0]):3d}  "
+            f"hist={int(state.history_count.numpy()[0]):2d}"
         )
 
-    state_now = int(status.numpy()[0])
+    state_now = int(state.status.numpy()[0])
     if state_now != LBFGS_NEED_EVAL:
         break
 
@@ -264,7 +201,7 @@ for step in range(max_evals):
 # keep going, or converged. There is no failure state -- a trust-region step
 # cannot exhaust a budget the way a line search can.
 
-final_status = int(status.numpy()[0])
+final_status = int(state.status.numpy()[0])
 status_name = {
     LBFGS_NEED_EVAL: "NEED_EVAL (ran out of evaluations)",
     LBFGS_CONVERGED: "CONVERGED",

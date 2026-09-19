@@ -26,9 +26,8 @@ import pytest
 import warp as wp
 
 from nvalchemiops.dynamics.optimizers.lbfgs import (
-    _CELL_BUFFERS,
-    _OPTIMIZER_BUFFERS,
-    LBFGS_NEED_EVAL,
+    lbfgs_prepare_cell_state,
+    lbfgs_prepare_state,
 )
 
 DEVICES = ["cuda:0"]
@@ -44,71 +43,69 @@ DTYPE_CONFIGS = [
 
 
 def make_lbfgs_state(num_dofs, num_systems, history_size, vec_dtype, device):
-    """Allocate the caller-owned optimizer buffers, ready for the first step.
+    """Return an :class:`LBFGSState` ready for the first step.
 
-    The package allocates and initializes nothing, so this is a test-only
-    factory. It returns the buffers keyed by name, in the canonical order, so
-    tests can splat it with ``**state`` or pass ``*state.values()``
-    positionally.
+    A thin wrapper over the package's own allocator, kept so the tests read the
+    same whichever binding they exercise.
     """
-
-    def f64(n):
-        return wp.zeros(n, dtype=wp.float64, device=device)
-
-    def f64_2d(a, b):
-        return wp.zeros((a, b), dtype=wp.float64, device=device)
-
-    def vec(n):
-        return wp.zeros(n, dtype=vec_dtype, device=device)
-
-    def i32(n):
-        return wp.zeros(n, dtype=wp.int32, device=device)
-
-    buffers = {
-        "x_base": vec(num_dofs),
-        "force_base": vec(num_dofs),
-        "direction": vec(num_dofs),
-        "s_history": wp.zeros((history_size, num_dofs), dtype=vec_dtype, device=device),
-        "y_history": wp.zeros((history_size, num_dofs), dtype=vec_dtype, device=device),
-        "ys": f64_2d(history_size, num_systems),
-        "yy": f64_2d(history_size, num_systems),
-        "alpha_hist": f64_2d(history_size, num_systems),
-        "beta_hist": f64_2d(history_size, num_systems),
-        "ss": f64(num_systems),
-        "gg": f64(num_systems),
-        "fmax": f64(num_systems),
-        "frms_sq": f64(num_systems),
-        "smax": f64(num_systems),
-        "d0": f64(num_systems),
-        "dmax": f64(num_systems),
-        "dquad": f64(num_systems),
-        "alpha_step": f64(num_systems),
-        "status": i32(num_systems),
-        "iteration": i32(num_systems),
-        "end": i32(num_systems),
-        "n_loop": i32(num_systems),
-        "history_count": i32(num_systems),
-    }
-    _check_order(buffers, _OPTIMIZER_BUFFERS, "make_lbfgs_state")
-    # Exactly three buffers do not start at zero.
-    buffers["alpha_step"].fill_(1.0)
-    buffers["iteration"].fill_(-1)
-    buffers["status"].fill_(LBFGS_NEED_EVAL)
-    return buffers
+    return lbfgs_prepare_state(
+        num_dofs, num_systems, dtype=vec_dtype, history_size=history_size,
+        device=device,
+    )  # fmt: skip
 
 
-def _check_order(buffers, expected, where):
-    """Fail loudly if a factory drifts from the canonical buffer order.
+def make_lbfgs_cell_state(num_atoms, num_systems, vec_dtype, device, counts=None):
+    """Return an :class:`LBFGSCellState` with its topology and ``kappa`` filled.
 
-    Buffers are passed positionally, so a reordering here would silently swap
-    two arrays and nothing downstream would notice.
+    The reference cell still has to be captured with
+    ``lbfgs_set_reference_cell``; tests that need a ragged batch pass
+    ``counts``, which is the reason this does not just call the allocator with
+    an even split.
+
+    Parameters
+    ----------
+    counts : sequence of int, optional
+        Atom count per system. Defaults to an even split, which requires
+        ``num_atoms`` to divide evenly.
     """
-    if tuple(buffers) != tuple(expected):
-        raise AssertionError(
-            f"{where} returns buffers in the wrong order:\n"
-            f"  expected: {tuple(expected)}\n"
-            f"  got:      {tuple(buffers)}"
-        )
+    from nvalchemiops.batch_utils import atom_ptr_to_batch_idx
+    from nvalchemiops.dynamics.optimizers.lbfgs import lbfgs_cell_kappa
+    from nvalchemiops.dynamics.utils.cell_filter import extend_atom_ptr
+
+    num_ext = num_atoms + 2 * num_systems
+    if counts is None:
+        if num_atoms % num_systems:
+            raise ValueError(
+                f"num_atoms {num_atoms} does not divide evenly into {num_systems} "
+                "systems; pass explicit counts for a ragged batch"
+            )
+        counts = [num_atoms // num_systems] * num_systems
+    counts = np.asarray(counts, np.int32)
+    if int(counts.sum()) != num_atoms:
+        raise ValueError(f"counts sum to {counts.sum()}, not num_atoms {num_atoms}")
+
+    # Build the extended topology with the generic batch utilities rather than
+    # by hand, which is what makes ragged batches expressible at all.
+    atom_ptr = wp.array(
+        np.concatenate([[0], np.cumsum(counts)]).astype(np.int32),
+        dtype=wp.int32,
+        device=device,
+    )
+    ext_atom_ptr = wp.zeros(num_systems + 1, dtype=wp.int32, device=device)
+    extend_atom_ptr(atom_ptr, ext_atom_ptr, device=device)
+    ext_batch_idx = wp.zeros(num_ext, dtype=wp.int32, device=device)
+    atom_ptr_to_batch_idx(ext_atom_ptr, ext_batch_idx)
+
+    state = lbfgs_prepare_cell_state(
+        num_atoms, num_systems, ext_batch_idx, ext_atom_ptr,
+        dtype=vec_dtype, device=device,
+    )  # fmt: skip
+    lbfgs_cell_kappa(
+        wp.array(counts, dtype=wp.int32, device=device),
+        state.kappa,
+        cell_force_scale=1.0 / float(counts.max()),
+    )
+    return state
 
 
 def numpy_two_loop(s_vecs, y_vecs, ys, yy, q, gamma=None):
@@ -209,79 +206,3 @@ class CellPotential:
         # Transposes leave these non-contiguous, and `torch.tensor` preserves
         # numpy strides, so hand back contiguous arrays.
         return energy, np.ascontiguousarray(forces), np.ascontiguousarray(stress)
-
-
-def make_lbfgs_cell_state(num_atoms, num_systems, vec_dtype, device, counts=None):
-    """Allocate the caller-owned variable-cell buffers, keyed by name.
-
-    ``kappa``, ``ext_batch_idx`` and ``ext_atom_ptr`` depend only on topology
-    and are filled here; the reference cell still has to be captured with
-    ``lbfgs_set_reference_cell``.
-
-    Parameters
-    ----------
-    counts : sequence of int, optional
-        Atom count per system, for a ragged batch. Defaults to an even split,
-        which requires ``num_atoms`` to divide evenly.
-    """
-    from nvalchemiops.batch_utils import atom_ptr_to_batch_idx
-    from nvalchemiops.dynamics.optimizers.lbfgs import lbfgs_cell_kappa
-    from nvalchemiops.dynamics.utils.cell_filter import extend_atom_ptr
-
-    mat_dtype = wp.mat33f if vec_dtype == wp.vec3f else wp.mat33d
-    scalar_dtype = wp.float32 if vec_dtype == wp.vec3f else wp.float64
-    num_ext = num_atoms + 2 * num_systems
-
-    if counts is None:
-        if num_atoms % num_systems:
-            raise ValueError(
-                f"num_atoms {num_atoms} does not divide evenly into {num_systems} "
-                "systems; pass explicit counts for a ragged batch"
-            )
-        counts = [num_atoms // num_systems] * num_systems
-    counts = np.asarray(counts, np.int32)
-    if int(counts.sum()) != num_atoms:
-        raise ValueError(f"counts sum to {counts.sum()}, not num_atoms {num_atoms}")
-
-    # Build the extended topology with the generic batch utilities rather than
-    # by hand, which is what makes ragged batches expressible at all.
-    atom_ptr = wp.array(
-        np.concatenate([[0], np.cumsum(counts)]).astype(np.int32),
-        dtype=wp.int32,
-        device=device,
-    )
-    ext_atom_ptr = wp.zeros(num_systems + 1, dtype=wp.int32, device=device)
-    extend_atom_ptr(atom_ptr, ext_atom_ptr, device=device)
-    ext_batch_idx = wp.zeros(num_ext, dtype=wp.int32, device=device)
-    atom_ptr_to_batch_idx(ext_atom_ptr, ext_batch_idx)
-
-    kappa = wp.zeros(num_systems, dtype=scalar_dtype, device=device)
-    n_atoms_per_system = wp.array(counts, dtype=wp.int32, device=device)
-    lbfgs_cell_kappa(
-        n_atoms_per_system, kappa, cell_force_scale=1.0 / float(counts.max())
-    )
-
-    def mat(n):
-        return wp.zeros(n, dtype=mat_dtype, device=device)
-
-    def vec(n):
-        return wp.zeros(n, dtype=vec_dtype, device=device)
-
-    buffers = {
-        "ref_cell": mat(num_systems),
-        "ref_cell_inv": mat(num_systems),
-        "kappa": kappa,
-        "ext_batch_idx": ext_batch_idx,
-        "ext_atom_ptr": ext_atom_ptr,
-        "phi": mat(num_systems),
-        "phi_inv": mat(num_systems),
-        "d_phi": mat(num_systems),
-        "cell_dof_a": vec(num_systems),
-        "cell_dof_b": vec(num_systems),
-        "cell_force_a": vec(num_systems),
-        "cell_force_b": vec(num_systems),
-        "ext_positions": vec(num_ext),
-        "ext_forces": vec(num_ext),
-    }
-    _check_order(buffers, _CELL_BUFFERS, "make_lbfgs_cell_state")
-    return buffers

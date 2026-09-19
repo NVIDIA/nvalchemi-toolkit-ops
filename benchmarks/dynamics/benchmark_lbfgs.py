@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import dataclasses
 import pathlib
 
 import numpy as np
@@ -58,9 +59,9 @@ from nvalchemiops.dynamics.optimizers import (
     LBFGS_CONVERGED,
     LBFGS_NEED_EVAL,
     fire2_step,
+    lbfgs_prepare_state,
     lbfgs_step,
 )
-from nvalchemiops.dynamics.optimizers.lbfgs import _OPTIMIZER_BUFFERS
 
 DEVICE = "cuda:0"
 
@@ -68,8 +69,6 @@ DEVICE = "cuda:0"
 #: ``maxstep``-capped walk, so the optimizer stays in steady state.
 GATE_CENTRE = 1.0e6
 GATE_HISTORY = 6
-_STATUS = _OPTIMIZER_BUFFERS.index("status")
-_HISTORY_COUNT = _OPTIMIZER_BUFFERS.index("history_count")
 
 #: Fallbacks used when a knob is absent from the config file, so the benchmark
 #: still runs standalone.
@@ -92,73 +91,17 @@ def lennard_jones(positions):
 
 
 def _allocate_lbfgs_state(num_dofs, num_systems, history_size):
-    """Allocate the caller-owned buffers, already in their required start state."""
-
-    def f64(n):
-        return wp.zeros(n, dtype=wp.float64, device=DEVICE)
-
-    def f64_2d(a, b):
-        return wp.zeros((a, b), dtype=wp.float64, device=DEVICE)
-
-    def vec(n):
-        return wp.zeros(n, dtype=wp.vec3d, device=DEVICE)
-
-    def i32(n):
-        return wp.zeros(n, dtype=wp.int32, device=DEVICE)
-
-    buffers = {
-        "x_base": vec(num_dofs),
-        "force_base": vec(num_dofs),
-        "direction": vec(num_dofs),
-        "s_history": wp.zeros((history_size, num_dofs), dtype=wp.vec3d, device=DEVICE),
-        "y_history": wp.zeros((history_size, num_dofs), dtype=wp.vec3d, device=DEVICE),
-        "ys": f64_2d(history_size, num_systems),
-        "yy": f64_2d(history_size, num_systems),
-        "alpha_hist": f64_2d(history_size, num_systems),
-        "beta_hist": f64_2d(history_size, num_systems),
-        "ss": f64(num_systems),
-        "gg": f64(num_systems),
-        "fmax": f64(num_systems),
-        "frms_sq": f64(num_systems),
-        "smax": f64(num_systems),
-        "d0": f64(num_systems),
-        "dmax": f64(num_systems),
-        "dquad": f64(num_systems),
-        "alpha_step": f64(num_systems),
-        "status": i32(num_systems),
-        "iteration": i32(num_systems),
-        "end": i32(num_systems),
-        "n_loop": i32(num_systems),
-        "history_count": i32(num_systems),
-    }
-    # Three buffers do not start at zero; the optimizer initializes nothing.
-    buffers["alpha_step"].fill_(1.0)
-    buffers["iteration"].fill_(-1)
-    buffers["status"].fill_(LBFGS_NEED_EVAL)
-    return buffers
+    """The Warp state, already in its required start state."""
+    return lbfgs_prepare_state(
+        num_dofs, num_systems, history_size=history_size, device=DEVICE
+    )
 
 
 def _allocate_lbfgs_buffers_torch(num_dofs, num_systems, history_size):
-    """The same buffers as torch tensors, in the order the step takes them."""
-    import torch
+    """The same state as torch tensors."""
+    from nvalchemiops.torch.lbfgs import lbfgs_prepare_state as prepare
 
-    f64, i32 = torch.float64, torch.int32
-
-    def z(*shape, dt=f64):
-        return torch.zeros(shape, dtype=dt, device=DEVICE)
-
-    alpha_step = torch.ones(num_systems, dtype=f64, device=DEVICE)
-    iteration = torch.full((num_systems,), -1, dtype=i32, device=DEVICE)
-    return (
-        z(num_dofs, 3), z(num_dofs, 3), z(num_dofs, 3),
-        z(history_size, num_dofs, 3), z(history_size, num_dofs, 3),
-        z(history_size, num_systems), z(history_size, num_systems),
-        z(history_size, num_systems), z(history_size, num_systems),
-        *[z(num_systems) for _ in range(8)],   # ss..dquad
-        alpha_step,
-        z(num_systems, dt=i32), iteration,
-        *[z(num_systems, dt=i32) for _ in range(3)],
-    )  # fmt: skip
+    return prepare(num_dofs, num_systems, history_size=history_size, device=DEVICE)
 
 
 def run_lbfgs(start, force_tol, history_size=6, maxstep=0.2, eval_cap=EVAL_CAP):
@@ -178,16 +121,16 @@ def run_lbfgs(start, force_tol, history_size=6, maxstep=0.2, eval_cap=EVAL_CAP):
         lbfgs_step(
             positions=positions,
             forces=forces,
+            state=state,
             batch_idx=batch_idx,
             n_particles=n_particles,
             force_tol=force_tol,
             maxstep=maxstep,
-            **state,
         )
         wp.synchronize()
-        if state["status"].numpy()[0] != LBFGS_NEED_EVAL:
+        if state.status.numpy()[0] != LBFGS_NEED_EVAL:
             final = np.linalg.norm(lennard_jones(positions.numpy())[1], axis=1).max()
-            return n_evals, state["status"].numpy()[0] == LBFGS_CONVERGED, final
+            return n_evals, state.status.numpy()[0] == LBFGS_CONVERGED, final
     final = np.linalg.norm(lennard_jones(positions.numpy())[1], axis=1).max()
     return eval_cap, False, final
 
@@ -327,12 +270,15 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50):
             out.copy_(-(stiffness * (pos - GATE_CENTRE)))
 
         def reset():
-            """Return to the same starting state before each timed phase."""
+            """Return to the same starting state before each timed phase.
+
+            The tensors are copied into rather than rebound, so a captured
+            graph keeps pointing at the buffers it recorded.
+            """
             positions.copy_(start)
-            for buf, fresh in zip(
-                buffers, _allocate_lbfgs_buffers_torch(num_atoms, 1, GATE_HISTORY)
-            ):
-                buf.copy_(fresh)
+            fresh = _allocate_lbfgs_buffers_torch(num_atoms, 1, GATE_HISTORY)
+            for field in dataclasses.fields(buffers):
+                getattr(buffers, field.name).copy_(getattr(fresh, field.name))
 
         def model_only():
             evaluate(positions, forces)
@@ -342,17 +288,17 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50):
             lbfgs_step_coord(
                 positions,
                 forces,
+                buffers,
                 batch_idx,
                 n_particles,
-                *buffers,
                 force_tol=1e-8,
                 maxstep=0.5,
             )
 
         def check(phase):
             """Fail loudly if the timed steps were not representative."""
-            status = int(buffers[_STATUS].item())
-            history = int(buffers[_HISTORY_COUNT].item())
+            status = int(buffers.status.item())
+            history = int(buffers.history_count.item())
             if status != LBFGS_NEED_EVAL or history != GATE_HISTORY:
                 raise RuntimeError(
                     f"{phase} timing at {num_atoms} atoms left status={status}, "

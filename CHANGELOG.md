@@ -26,10 +26,11 @@
   component. This avoids rebuilding the integer index grid while preserving
   the reciprocal vectors' dependence on the current cell.
 - Batched L-BFGS geometry optimization, with PyTorch and JAX bindings, for both
-  fixed-cell and variable-cell relaxation. See the dynamics user guide for the
-  interface and behaviour, `docs/benchmarks/dynamics.md` for performance, and
-  `examples/dynamics/12_lbfgs_optimization.py` and `13_lbfgs_variable_cell.py`
-  for worked examples.
+  fixed-cell and variable-cell relaxation. State is prepared once into an
+  `LBFGSState` and each call takes one force evaluation. See the dynamics user
+  guide for the interface and behaviour, `docs/benchmarks/dynamics.md` for
+  performance, and `examples/dynamics/12_lbfgs_optimization.py` and
+  `13_lbfgs_variable_cell.py` for worked examples.
 
 ### Fixed
 

@@ -8,15 +8,16 @@ JAX bindings for the batched L-BFGS geometry optimizer.
     :no-inherited-members:
 
 .. tip::
-   Every buffer is caller-owned, and JAX arrays are immutable, so these entry
-   points take the buffers individually and return them as a flat tuple in the
-   same order. Donate them with ``jax.jit(donate_argnums=...)`` so XLA can
-   reuse the memory; see the module documentation above for the required
-   initial contents and the donation and CUDA-graph contract.
+   JAX arrays are immutable, so these entry points take the state and *return*
+   a new one rather than writing in place. Both state classes are registered
+   pytrees, so a state passes through ``jax.jit`` as one argument and
+   ``donate_argnums`` donates every field at once. See the module
+   documentation above for the donation and CUDA-graph contract.
 
 Coordinate Relaxation
 ---------------------
 
+.. autofunction:: nvalchemiops.jax.lbfgs.lbfgs_prepare_state
 .. autofunction:: nvalchemiops.jax.lbfgs.lbfgs_step_coord
 .. autofunction:: nvalchemiops.jax.lbfgs.lbfgs_converged
 
@@ -30,6 +31,7 @@ two-loop recursion couples them automatically. Build ``ext_atom_ptr`` and
 :func:`~nvalchemiops.batch_utils.atom_ptr_to_batch_idx`, which handle ragged
 batches as well as uniform ones.
 
+.. autofunction:: nvalchemiops.jax.lbfgs.lbfgs_prepare_cell_state
 .. autofunction:: nvalchemiops.jax.lbfgs.lbfgs_set_reference_cell
 .. autofunction:: nvalchemiops.jax.lbfgs.lbfgs_cell_kappa
 .. autofunction:: nvalchemiops.jax.lbfgs.lbfgs_step_coord_cell

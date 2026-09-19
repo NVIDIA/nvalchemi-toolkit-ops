@@ -79,8 +79,8 @@ from nvalchemiops.dynamics.utils.cell_filter import extend_atom_ptr
 from nvalchemiops.torch.lbfgs import (
     LBFGS_CONVERGED,
     LBFGS_NEED_EVAL,
-    lbfgs_cell_kappa,
-    lbfgs_set_reference_cell,
+    lbfgs_prepare_cell_state,
+    lbfgs_prepare_state,
     lbfgs_step_coord_cell,
 )
 
@@ -152,11 +152,15 @@ wp.synchronize()
 print(f"\nAligned cell:\n{cell.numpy()[0]}")
 
 # %%
-# Allocate the Buffers
-# --------------------
+# Prepare the Two States
+# ----------------------
 #
-# Two groups, both yours: the 23 optimizer buffers, as on the coordinate-only
-# path, and the 14 variable-cell buffers carrying the chart and its scratch.
+# Two objects, both yours: an
+# :class:`~nvalchemiops.dynamics.optimizers.lbfgs.LBFGSState` as on the
+# coordinate-only path, and an
+# :class:`~nvalchemiops.dynamics.optimizers.lbfgs.LBFGSCellState` carrying the
+# chart and its scratch. The preparation functions allocate, initialize and
+# validate both; every field stays reachable by name.
 
 # Work on the system's own arrays, so in-place writes are visible to the force
 # engine. Only the cell needs handing back: its inverse and the neighbor list
@@ -168,63 +172,21 @@ n_particles = torch.full(
     (num_systems,), num_atoms, dtype=torch.int32, device=torch_device
 )
 
-dtype = torch.float64
+dtype, i32 = torch.float64, torch.int32
 history_size = 6
-# The cell contributes two packed entries per system, so every optimizer buffer
-# is sized for num_atoms + 2 * num_systems degrees of freedom, not num_atoms.
+# The cell contributes two packed entries per system, so the optimizer state is
+# sized for num_atoms + 2 * num_systems degrees of freedom, not num_atoms.
 num_dofs = num_atoms + 2 * num_systems
 
-
-def zeros(*shape, dt=dtype) -> torch.Tensor:
-    """Allocate a zeroed tensor on the run device."""
-    return torch.zeros(shape, dtype=dt, device=torch_device)
-
-
-f64, i32 = torch.float64, torch.int32
-
-# Per-degree-of-freedom arrays, at the coordinate precision.
-x_base = zeros(num_dofs, 3)
-force_base = zeros(num_dofs, 3)
-direction = zeros(num_dofs, 3)
-s_history = zeros(history_size, num_dofs, 3)
-y_history = zeros(history_size, num_dofs, 3)
-
-# Per-slot and per-system scalars, float64 whatever the coordinates use:
+# Coordinates may be fp32, but every per-system scalar is float64 regardless:
 # ``ys / yy`` scales the initial inverse Hessian and cancels badly in fp32.
-ys = zeros(history_size, num_systems, dt=f64)
-yy = zeros(history_size, num_systems, dt=f64)
-alpha_hist = zeros(history_size, num_systems, dt=f64)
-beta_hist = zeros(history_size, num_systems, dt=f64)
-ss = zeros(num_systems, dt=f64)
-gg = zeros(num_systems, dt=f64)
-fmax = zeros(num_systems, dt=f64)
-frms_sq = zeros(num_systems, dt=f64)
-smax = zeros(num_systems, dt=f64)
-d0 = zeros(num_systems, dt=f64)
-dmax = zeros(num_systems, dt=f64)
-dquad = zeros(num_systems, dt=f64)
-alpha_step = zeros(num_systems, dt=f64)
-
-# Per-system integer control state.
-status = zeros(num_systems, dt=i32)
-iteration = zeros(num_systems, dt=i32)
-end = zeros(num_systems, dt=i32)
-n_loop = zeros(num_systems, dt=i32)
-history_count = zeros(num_systems, dt=i32)
-
-# Three buffers do not start at zero. Setting them is the whole of
-# initialization; to restart later, zero everything and repeat these lines.
-alpha_step.fill_(1.0)  # the line-search step length for a fresh direction
-iteration.fill_(-1)  # the "never evaluated yet" marker
-status.fill_(LBFGS_NEED_EVAL)  # numerically zero, but say it out loud
-
-# The buffers are passed positionally, in this exact order, to every step.
-optimizer_buffers = (
-    x_base, force_base, direction, s_history, y_history,
-    ys, yy, alpha_hist, beta_hist, ss, gg,
-    fmax, frms_sq, smax, d0, dmax, dquad, alpha_step,
-    status, iteration, end, n_loop, history_count,
-)  # fmt: skip
+state = lbfgs_prepare_state(
+    num_dofs,
+    num_systems,
+    dtype=dtype,
+    history_size=history_size,
+    device=torch_device,
+)
 
 # %%
 # Build the Extended Topology
@@ -249,33 +211,22 @@ atom_ptr_to_batch_idx(
     wp.from_torch(ext_batch_idx, dtype=wp.int32),
 )
 
-# The chart itself, plus scratch the step reuses every call.
-ref_cell = zeros(num_systems, 3, 3)
-ref_cell_inv = zeros(num_systems, 3, 3)
-kappa = zeros(num_systems)
-phi = zeros(num_systems, 3, 3)
-phi_inv = zeros(num_systems, 3, 3)
-d_phi = zeros(num_systems, 3, 3)
-cell_dof_a = zeros(num_systems, 3)
-cell_dof_b = zeros(num_systems, 3)
-cell_force_a = zeros(num_systems, 3)
-cell_force_b = zeros(num_systems, 3)
-ext_positions = zeros(num_dofs, 3)
-ext_forces = zeros(num_dofs, 3)
-
-# Capture the reference cell that defines the chart. Once, before stepping.
-lbfgs_set_reference_cell(cell_t, ref_cell, ref_cell_inv)
-
-# ``kappa`` scales the cell coordinate against the atomic ones. It depends only
-# on topology, so it is computed once. The default here puts the cell and the
-# atoms on a comparable footing; raise it to make the cell move less per step.
-lbfgs_cell_kappa(n_particles, kappa, cell_force_scale=1.0 / num_atoms)
-
-cell_buffers = (
-    ref_cell, ref_cell_inv, kappa, ext_batch_idx, ext_atom_ptr,
-    phi, phi_inv, d_phi, cell_dof_a, cell_dof_b,
-    cell_force_a, cell_force_b, ext_positions, ext_forces,
-)  # fmt: skip
+# Passing ``cell`` and ``n_particles`` captures the reference cell that defines
+# the chart and computes ``kappa`` here, so the state comes back ready to step.
+# ``kappa`` scales the cell coordinate against the atomic ones and depends only
+# on topology. The value below puts the cell and the atoms on a comparable
+# footing; raise it to make the cell move less per step.
+cell_state = lbfgs_prepare_cell_state(
+    num_atoms,
+    num_systems,
+    ext_batch_idx,
+    ext_atom_ptr,
+    cell=cell_t,
+    n_particles=n_particles,
+    cell_force_scale=1.0 / num_atoms,
+    dtype=dtype,
+    device=torch_device,
+)
 
 
 print(f"\nOptimizer degrees of freedom: {num_atoms} atoms + {2 * num_systems} cell")
@@ -313,10 +264,10 @@ for step in range(max_evals):
         cell_t,
         wp.to_torch(forces),
         wp.to_torch(stress).reshape(num_systems, 3, 3),
+        state,
+        cell_state,
         batch_idx,
         n_particles,
-        *optimizer_buffers,
-        *cell_buffers,
         force_tol=force_tol,
         stress_tol=stress_tol,
         maxstep=maxstep,
@@ -326,14 +277,14 @@ for step in range(max_evals):
     # inverse is recomputed and the neighbor list is rebuilt.
     md_system.update_cell(cell)
 
-    converged = int(status.item()) != LBFGS_NEED_EVAL
+    converged = int(state.status.item()) != LBFGS_NEED_EVAL
     if step < 20 or step % 25 == 0 or converged:
         volume = float(np.linalg.det(cell_t.detach().cpu().numpy()[0]))
         stress_np = stress.numpy()[0]
         stress_gpa = pressure_ev_per_a3_to_gpa(0.5 * (stress_np + stress_np.T))
         stress_residual = float(np.linalg.svd(stress_gpa, compute_uv=False).max())
         pe = float(energies.numpy().sum())
-        fmax_now = float(fmax.item())
+        fmax_now = float(state.fmax.item())
 
         energy_hist.append(pe)
         max_force_hist.append(fmax_now)
@@ -351,7 +302,7 @@ for step in range(max_evals):
 # Result
 # ------
 
-final_status = int(status.item())
+final_status = int(state.status.item())
 status_name = {
     LBFGS_NEED_EVAL: "NEED_EVAL (ran out of evaluations)",
     LBFGS_CONVERGED: "CONVERGED",
@@ -361,7 +312,7 @@ final_volume = float(np.linalg.det(cell_t.detach().cpu().numpy()[0]))
 final_a = (final_volume / (n_cells**3)) ** (1 / 3)
 print(f"\nFinished after {n_evals} evaluations: {status_name}")
 print(f"  lattice constant: {a_initial:.4f} Å -> {final_a:.4f} Å")
-print(f"  final max|F|    : {float(fmax.item()):.3e} eV/Å")
+print(f"  final max|F|    : {float(state.fmax.item()):.3e} eV/Å")
 print(f"  final volume    : {final_volume:.2f} Å³")
 print(f"  final |stress|  : {pressure_hist[-1]:.4f} GPa")
 print("  (textbook FCC argon equilibrium is near 5.26 Å)")

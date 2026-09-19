@@ -93,8 +93,8 @@ Geometry Optimization Examples
     - Caller-driven loop: one force evaluation per ``lbfgs_step`` call, and no
       energy input at all
     - Progress reported through a per-system ``status`` array
-    - Shows the full caller-owned buffer allocation, including the three
-      buffers whose initial values are not zero
+    - Prepares the state once with ``lbfgs_prepare_state`` and reads progress
+      off it by field name
     - Head-to-head force-evaluation count against FIRE2 on the same cluster
 
 13_lbfgs_variable_cell.py
@@ -106,7 +106,8 @@ Geometry Optimization Examples
     - Shows why the reference cell is captured once, and why positions must
       not be wrapped mid-relaxation
     - Builds the extended topology with the generic batch utilities, which is
-      what makes ragged batches expressible
+      what makes ragged batches expressible, and hands it to
+      ``lbfgs_prepare_cell_state`` along with the cell
 
 11_fire2_variable_cell.py
     Variable-cell FIRE2 optimization for joint atom + cell relaxation.

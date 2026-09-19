@@ -18,8 +18,8 @@
 Tests cover:
 
 - The registered operator's schema, and that its parameters stay in the
-  canonical caller-owned buffer order.
-- That the removed state containers and allocators really are gone.
+  canonical field order of :class:`LBFGSState`.
+- That the superseded allocators really are gone.
 - Tracing under ``make_fx`` and compilation under ``torch.compile``.
 - CUDA-graph capture and replay, and that a step allocates nothing.
 - Relaxation results, checked against the Warp layer rather than restating the
@@ -28,6 +28,7 @@ Tests cover:
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import warnings
 
@@ -42,6 +43,8 @@ from nvalchemiops.dynamics.optimizers.lbfgs import (
 from nvalchemiops.torch.lbfgs import (
     LBFGS_CONVERGED,
     LBFGS_NEED_EVAL,
+    lbfgs_prepare_cell_state,
+    lbfgs_prepare_state,
     lbfgs_step_coord,
 )
 
@@ -53,53 +56,15 @@ DTYPES = [
 STIFFNESS = torch.tensor([1.0, 4.0, 9.0], dtype=torch.float64)
 
 
-def make_torch_buffers(num_dofs, num_systems, dtype, device, history_size=6):
-    """Allocate the caller-owned optimizer buffers, ready for the first step.
-
-    The package allocates and initializes nothing, so this is a test-only
-    factory. Keyed by name in the canonical order, so it can be splatted
-    positionally with ``*buffers.values()``.
-    """
-    f64, i32 = torch.float64, torch.int32
-
-    def z(*shape, dt=f64):
-        return torch.zeros(shape, dtype=dt, device=device)
-
-    buffers = {
-        "x_base": z(num_dofs, 3, dt=dtype),
-        "force_base": z(num_dofs, 3, dt=dtype),
-        "direction": z(num_dofs, 3, dt=dtype),
-        "s_history": z(history_size, num_dofs, 3, dt=dtype),
-        "y_history": z(history_size, num_dofs, 3, dt=dtype),
-        "ys": z(history_size, num_systems),
-        "yy": z(history_size, num_systems),
-        "alpha_hist": z(history_size, num_systems),
-        "beta_hist": z(history_size, num_systems),
-        "ss": z(num_systems),
-        "gg": z(num_systems),
-        "fmax": z(num_systems),
-        "frms_sq": z(num_systems),
-        "smax": z(num_systems),
-        "d0": z(num_systems),
-        "dmax": z(num_systems),
-        "dquad": z(num_systems),
-        "alpha_step": z(num_systems),
-        "status": z(num_systems, dt=i32),
-        "iteration": z(num_systems, dt=i32),
-        "end": z(num_systems, dt=i32),
-        "n_loop": z(num_systems, dt=i32),
-        "history_count": z(num_systems, dt=i32),
-    }
-    assert tuple(buffers) == _OPTIMIZER_BUFFERS, "factory drifted from buffer order"
-    # Exactly three buffers do not start at zero.
-    buffers["alpha_step"].fill_(1.0)
-    buffers["iteration"].fill_(-1)
-    buffers["status"].fill_(LBFGS_NEED_EVAL)
-    return buffers
+def make_torch_state(num_dofs, num_systems, dtype, device, history_size=6):
+    """Return an :class:`LBFGSState` ready for the first step."""
+    return lbfgs_prepare_state(
+        num_dofs, num_systems, dtype=dtype, history_size=history_size, device=device
+    )
 
 
-def make_torch_cell_buffers(num_atoms, num_systems, dtype, device, counts=None):
-    """Allocate the caller-owned variable-cell buffers, keyed by name.
+def make_torch_cell_state(num_atoms, num_systems, dtype, device, counts=None):
+    """Return an :class:`LBFGSCellState` with its topology and ``kappa`` filled.
 
     The extended topology is built with the generic batch utilities, which is
     what lets a ragged batch work; ``counts`` defaults to an even split.
@@ -132,31 +97,14 @@ def make_torch_cell_buffers(num_atoms, num_systems, dtype, device, counts=None):
         wp.from_torch(ext_batch_idx, dtype=wp.int32),
     )
 
-    def z(*shape):
-        return torch.zeros(shape, dtype=dtype, device=device)
-
-    kappa = z(num_systems)
+    state = lbfgs_prepare_cell_state(
+        num_atoms, num_systems, ext_batch_idx, ext_atom_ptr, dtype=dtype, device=device
+    )
     n_per_system = torch.tensor(counts_np, dtype=i32, device=device)
-    lbfgs_cell_kappa(n_per_system, kappa, cell_force_scale=1.0 / float(counts_np.max()))
-
-    buffers = {
-        "ref_cell": z(num_systems, 3, 3),
-        "ref_cell_inv": z(num_systems, 3, 3),
-        "kappa": kappa,
-        "ext_batch_idx": ext_batch_idx,
-        "ext_atom_ptr": ext_atom_ptr,
-        "phi": z(num_systems, 3, 3),
-        "phi_inv": z(num_systems, 3, 3),
-        "d_phi": z(num_systems, 3, 3),
-        "cell_dof_a": z(num_systems, 3),
-        "cell_dof_b": z(num_systems, 3),
-        "cell_force_a": z(num_systems, 3),
-        "cell_force_b": z(num_systems, 3),
-        "ext_positions": z(num_ext, 3),
-        "ext_forces": z(num_ext, 3),
-    }
-    assert tuple(buffers) == _CELL_BUFFERS, "factory drifted from buffer order"
-    return buffers
+    lbfgs_cell_kappa(
+        n_per_system, state.kappa, cell_force_scale=1.0 / float(counts_np.max())
+    )
+    return state
 
 
 class TorchDriver:
@@ -177,7 +125,7 @@ class TorchDriver:
         self.n_particles = torch.full(
             (num_systems,), per_system, dtype=torch.int32, device=device
         )
-        self.buffers = make_torch_buffers(
+        self.state = make_torch_state(
             self.num_dofs, num_systems, dtype, device, history_size
         )
         self.stiffness = STIFFNESS.to(device)
@@ -192,22 +140,22 @@ class TorchDriver:
         lbfgs_step_coord(
             self.positions,
             self.forces,
+            self.state,
             self.batch_idx,
             self.n_particles,
-            *self.buffers.values(),
             **kwargs,
         )
 
     @property
     def status(self):
-        return self.buffers["status"]
+        return self.state.status
 
     def run(self, max_evals=200, **kwargs):
         for _ in range(max_evals):
             self.evaluate()
             self.step(**kwargs)
             torch.cuda.synchronize()
-            if not (self.buffers["status"] == LBFGS_NEED_EVAL).any():
+            if not (self.state.status == LBFGS_NEED_EVAL).any():
                 break
         return self
 
@@ -218,15 +166,14 @@ def _cluster(num_systems, atoms_per_system, seed=42, scale=2.0):
 
 
 class TestLBFGSTorchState:
-    """The public surface, and the buffer order every caller relies on."""
+    """The public surface, and the field order the operator schema relies on."""
 
     def test_removed_state_api_is_absent(self):
-        """The state containers and allocators are gone, with no shims.
+        """The superseded entry points are gone, with no shims.
 
-        Buffers are caller-owned, so anything that allocated or owned them on
-        the caller's behalf must not quietly survive as an alias. An import
-        that still resolves would let old code keep working against an API
-        that no longer has the semantics it assumes.
+        :class:`LBFGSState` and the preparation functions replaced them
+        outright, so an import that still resolves would let old code keep
+        working against an API that no longer has the semantics it assumes.
 
         Covers the Warp core and the PyTorch binding only. Torch and JAX are
         independent extras, so importing the JAX module here would fail the
@@ -239,8 +186,6 @@ class TestLBFGSTorchState:
         from nvalchemiops.dynamics.optimizers import lbfgs as warp_lbfgs
 
         removed = (
-            "LBFGSState",
-            "LBFGSCellState",
             "lbfgs_allocate_state",
             "lbfgs_allocate_cell_state",
             "lbfgs_reset",
@@ -256,7 +201,7 @@ class TestLBFGSTorchState:
         for module in modules:
             for name in removed:
                 assert not hasattr(module, name), (
-                    f"{module.__name__}.{name} still exists; caller-owned buffers "
+                    f"{module.__name__}.{name} still exists; caller-owned state "
                     "were meant to replace it outright"
                 )
                 assert name not in getattr(module, "__all__", ()), (
@@ -323,15 +268,25 @@ class TestLBFGSTorchState:
         offset = 4  # positions, forces, batch_idx, n_particles
         assert params[offset : offset + len(_OPTIMIZER_BUFFERS)] == _OPTIMIZER_BUFFERS
 
-    def test_public_wrapper_takes_the_buffers_in_the_same_order(self):
-        """The wrapper and the operator must not drift apart.
+    def test_public_wrapper_forwards_every_state_field(self):
+        """The wrapper must hand the operator all of the state, and only that.
 
-        The wrapper forwards positionally, so a mismatch would pass every
-        shape check and then compute nonsense.
+        It forwards by keyword, so a name that drifted would raise rather than
+        swap two tensors -- but a field that was *added* and not forwarded
+        would leave the operator reading a stale buffer, which would not.
         """
+        from nvalchemiops.torch.lbfgs import _state_args
+
         params = tuple(inspect.signature(lbfgs_step_coord).parameters)
-        offset = 4  # positions, forces, batch_idx, n_particles
-        assert params[offset : offset + len(_OPTIMIZER_BUFFERS)] == _OPTIMIZER_BUFFERS
+        assert params[:5] == (
+            "positions",
+            "forces",
+            "state",
+            "batch_idx",
+            "n_particles",
+        )
+        state = lbfgs_prepare_state(3, 1, device="cpu")
+        assert tuple(_state_args(state)) == _OPTIMIZER_BUFFERS
 
     def test_mutates_args_covers_every_buffer(self):
         """Every buffer is declared mutable, and nothing else is."""
@@ -359,7 +314,7 @@ class TestLBFGSTorchState:
         """Buffer size must match what the documentation promises.
 
         Callers size ``history_size`` against a memory budget and now allocate
-        the buffers themselves, so the published formula has to stay true::
+        the state themselves, so the published formula has to stay true::
 
             (2m + 3) * 3 * sizeof(dof) * num_dofs   per-DOF vectors + s/y history
           + (4m + 9) * 8 * num_systems              per-slot and per-system float64
@@ -375,13 +330,16 @@ class TestLBFGSTorchState:
 
         torch.cuda.synchronize()
         before = torch.cuda.memory_allocated(device)
-        buffers = make_torch_buffers(num_dofs, num_systems, dtype, device, history_size)
+        state = make_torch_state(num_dofs, num_systems, dtype, device, history_size)
         torch.cuda.synchronize()
-        measured = sum(b.numel() * b.element_size() for b in buffers.values())
+        measured = sum(
+            getattr(state, f.name).numel() * getattr(state, f.name).element_size()
+            for f in dataclasses.fields(state)
+        )
         allocated = torch.cuda.memory_allocated(device) - before
 
         assert measured == expected, (
-            f"buffers are {measured} bytes but the formula says {expected}; "
+            f"state are {measured} bytes but the formula says {expected}; "
             "the documented memory model has drifted"
         )
         # The caching allocator rounds up, so compare loosely against it.
@@ -392,17 +350,9 @@ class TestLBFGSTorchState:
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_bad_dtype_is_rejected(self, device):
-        d = TorchDriver(_cluster(1, 3), 1, torch.float64, device)
-        d.evaluate()
-        half = make_torch_buffers(3, 1, torch.float16, device)
+        """Preparation refuses the dtype, so it cannot reach a kernel."""
         with pytest.raises(ValueError, match="float32 or float64"):
-            lbfgs_step_coord(
-                d.positions.to(torch.float16),
-                d.forces.to(torch.float16),
-                d.batch_idx,
-                d.n_particles,
-                *half.values(),
-            )
+            lbfgs_prepare_state(3, 1, dtype=torch.float16, device=device)
 
 
 class TestLBFGSTorchCoord:
@@ -415,7 +365,7 @@ class TestLBFGSTorchCoord:
         d = TorchDriver(_cluster(2, 4), 2, dtype, device).run(
             force_tol=force_tol, maxstep=0.5
         )
-        assert (d.buffers["status"] == LBFGS_CONVERGED).all(), d.buffers["status"]
+        assert (d.state.status == LBFGS_CONVERGED).all(), d.state.status
         assert d.positions.abs().max().item() < 10 * force_tol
 
     @pytest.mark.parametrize("device", DEVICES)
@@ -454,21 +404,21 @@ class TestLBFGSTorchCoord:
             warp_step(
                 positions=wp_positions,
                 forces=wp_forces,
+                state=wp_state,
                 batch_idx=wp_batch,
                 n_particles=wp_nparts,
                 force_tol=1e-8,
                 maxstep=0.5,
-                **wp_state,
             )
             wp.synchronize()
             torch.cuda.synchronize()
             np.testing.assert_array_equal(
                 torch_driver.positions.cpu().numpy(), wp_positions.numpy()
             )
-            if not (torch_driver.buffers["status"] == LBFGS_NEED_EVAL).any():
+            if not (torch_driver.state.status == LBFGS_NEED_EVAL).any():
                 break
         np.testing.assert_array_equal(
-            torch_driver.buffers["status"].cpu().numpy(), wp_state["status"].numpy()
+            torch_driver.state.status.cpu().numpy(), wp_state.status.numpy()
         )
 
 
@@ -487,16 +437,16 @@ class TestLBFGSTorchRegistration:
         d = TorchDriver(_cluster(1, 3), 1, torch.float64, device)
         d.evaluate()
 
-        def run(positions, forces, batch_idx, n_particles, *buffers):
-            lbfgs_step_coord(
-                positions,
-                forces,
-                batch_idx,
-                n_particles,
-                *buffers,
-                force_tol=1e-8,
-                maxstep=0.5,
+        def run(positions, forces, batch_idx, n_particles, *fields):
+            # make_fx traces tensors, not dataclasses, so the state is rebuilt
+            # here from the traced ones to keep every tensor in the graph.
+            state = dataclasses.replace(
+                d.state, **dict(zip(_OPTIMIZER_BUFFERS, fields, strict=True))
             )
+            lbfgs_step_coord(
+                positions, forces, state, batch_idx, n_particles,
+                force_tol=1e-8, maxstep=0.5,
+            )  # fmt: skip
             return positions
 
         graph = make_fx(run, tracing_mode="fake")(
@@ -504,7 +454,7 @@ class TestLBFGSTorchRegistration:
             d.forces,
             d.batch_idx,
             d.n_particles,
-            *d.buffers.values(),
+            *(getattr(d.state, name) for name in _OPTIMIZER_BUFFERS),
         )
         target = torch.ops.nvalchemiops.lbfgs_step.default
         nodes = [n for n in graph.graph.nodes if n.target is target]
@@ -528,9 +478,9 @@ class TestLBFGSTorchRegistration:
             lbfgs_step_coord(
                 positions,
                 forces,
+                compiled_driver.state,
                 compiled_driver.batch_idx,
                 compiled_driver.n_particles,
-                *compiled_driver.buffers.values(),
                 force_tol=1e-8,
                 maxstep=0.5,
             )
@@ -555,9 +505,9 @@ class TestLBFGSTorchRegistration:
             lbfgs_step_coord(
                 positions,
                 forces,
+                d.state,
                 d.batch_idx,
                 d.n_particles,
-                *d.buffers.values(),
                 force_tol=1e-8,
                 maxstep=0.5,
             )
@@ -567,9 +517,9 @@ class TestLBFGSTorchRegistration:
             lbfgs_step_coord(
                 positions,
                 forces,
+                d.state,
                 d.batch_idx,
                 d.n_particles,
-                *d.buffers.values(),
                 force_tol=1e-8,
                 maxstep=0.5,
             )
@@ -658,9 +608,9 @@ class TestLBFGSTorchErrors:
             lbfgs_step_coord(
                 d.positions,
                 torch.zeros(2, 3, dtype=torch.float64, device=device),
+                d.state,
                 d.batch_idx,
                 d.n_particles,
-                *d.buffers.values(),
             )
 
     @pytest.mark.parametrize("device", DEVICES)
@@ -680,23 +630,43 @@ class TestLBFGSTorchErrors:
             lbfgs_step_coord(
                 strided,
                 d.forces,
+                d.state,
                 d.batch_idx,
                 d.n_particles,
-                *d.buffers.values(),
             )
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_scalars_must_be_float64(self, device):
+        """A uniformly float32 scalar group is internally consistent.
+
+        So ``validate`` alone does not catch it; only this layer knows the
+        scalars must specifically be float64.
+        """
+        d = TorchDriver(_cluster(1, 3), 1, torch.float64, device)
+        d.evaluate()
+        st = dataclasses.replace(
+            d.state,
+            **{
+                name: getattr(d.state, name).to(torch.float32)
+                for name in _OPTIMIZER_BUFFERS[5:18]
+            },
+        )
+        st.validate()  # internally consistent
+        with pytest.raises(ValueError, match="must be float64"):
+            lbfgs_step_coord(d.positions, d.forces, st, d.batch_idx, d.n_particles)
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_history_size_mismatch(self, device):
         d = TorchDriver(_cluster(1, 3), 1, torch.float64, device)
         d.evaluate()
-        other = make_torch_buffers(9, 1, torch.float64, device)
-        with pytest.raises(ValueError, match="history buffers"):
+        other = make_torch_state(9, 1, torch.float64, device)
+        with pytest.raises(ValueError, match="prepared for 9"):
             lbfgs_step_coord(
                 d.positions,
                 d.forces,
+                other,
                 d.batch_idx,
                 d.n_particles,
-                *other.values(),
             )
 
 
@@ -719,13 +689,11 @@ class TestLBFGSTorchCoordCell:
 
         positions = torch.tensor(positions_np, dtype=torch.float64, device=device)
         cell = torch.tensor(cell_np[None], dtype=torch.float64, device=device)
-        cell_buffers = make_torch_cell_buffers(num_atoms, 1, torch.float64, device)
-        lbfgs_set_reference_cell(
-            cell, cell_buffers["ref_cell"], cell_buffers["ref_cell_inv"]
-        )
+        cell_state = make_torch_cell_state(num_atoms, 1, torch.float64, device)
+        lbfgs_set_reference_cell(cell, cell_state.ref_cell, cell_state.ref_cell_inv)
         # The cell contributes two packed entries per system.
-        buffers = make_torch_buffers(num_atoms + 2, 1, torch.float64, device)
-        return positions, cell, buffers, cell_buffers, potential
+        state = make_torch_state(num_atoms + 2, 1, torch.float64, device)
+        return positions, cell, state, cell_state, potential
 
     @staticmethod
     def _evaluate(positions, cell, potential, device):
@@ -805,10 +773,10 @@ class TestLBFGSTorchCoordCell:
         from nvalchemiops.torch.lbfgs import lbfgs_step_coord_cell
 
         n = 6
-        positions, cell, buffers, cell_buffers, potential = self._setup(device, n)
+        positions, cell, state, cell_state, potential = self._setup(device, n)
         batch_idx = torch.zeros(n, dtype=torch.int32, device=device)
         n_particles = torch.full((1,), n, dtype=torch.int32, device=device)
-        status = buffers["status"]
+        status = state.status
 
         for _ in range(400):
             forces, stress = self._evaluate(positions, cell, potential, device)
@@ -817,10 +785,10 @@ class TestLBFGSTorchCoordCell:
                 cell,
                 forces,
                 stress,
+                state,
+                cell_state,
                 batch_idx,
                 n_particles,
-                *buffers.values(),
-                *cell_buffers.values(),
                 force_tol=1e-6,
                 stress_tol=1e-6,
                 maxstep=0.2,
@@ -849,10 +817,10 @@ class TestLBFGSTorchCoordCell:
         from ...conftest import make_lbfgs_cell_state, make_lbfgs_state
 
         n = 6
-        positions, cell, buffers, cell_buffers, potential = self._setup(device, n)
+        positions, cell, state, cell_state, potential = self._setup(device, n)
         batch_idx = torch.zeros(n, dtype=torch.int32, device=device)
         n_particles = torch.full((1,), n, dtype=torch.int32, device=device)
-        status = buffers["status"]
+        status = state.status
 
         start_pos = positions.cpu().numpy().copy()
         start_cell = cell.cpu().numpy()[0].copy()
@@ -863,8 +831,8 @@ class TestLBFGSTorchCoordCell:
         wp_batch = wp.zeros(n, dtype=wp.int32, device=device)
         wp_nparts = wp.array(np.array([n], np.int32), dtype=wp.int32, device=device)
         wp_cell_state = make_lbfgs_cell_state(n, 1, wp.vec3d, device)
-        warp_set_ref(wp_cell, wp_cell_state["ref_cell"], wp_cell_state["ref_cell_inv"])
-        wp_state_dict = make_lbfgs_state(n + 2, 1, 6, wp.vec3d, device)
+        warp_set_ref(wp_cell, wp_cell_state.ref_cell, wp_cell_state.ref_cell_inv)
+        wp_state = make_lbfgs_state(n + 2, 1, 6, wp.vec3d, device)
 
         for _ in range(25):
             forces, stress = self._evaluate(positions, cell, potential, device)
@@ -873,10 +841,10 @@ class TestLBFGSTorchCoordCell:
                 cell,
                 forces,
                 stress,
+                state,
+                cell_state,
                 batch_idx,
                 n_particles,
-                *buffers.values(),
-                *cell_buffers.values(),
                 force_tol=1e-8,
                 stress_tol=1e-8,
                 maxstep=0.2,
@@ -890,10 +858,10 @@ class TestLBFGSTorchCoordCell:
                 wp_forces,
                 wp_cell,
                 wp_stress,
+                wp_state,
+                wp_cell_state,
                 wp_batch,
                 wp_nparts,
-                *wp_state_dict.values(),
-                *wp_cell_state.values(),
                 force_tol=1e-8,
                 stress_tol=1e-8,
                 maxstep=0.2,
@@ -904,19 +872,17 @@ class TestLBFGSTorchCoordCell:
             np.testing.assert_array_equal(cell.cpu().numpy(), wp_cell.numpy())
             if status.item() != LBFGS_NEED_EVAL:
                 break
-        np.testing.assert_array_equal(
-            status.cpu().numpy(), wp_state_dict["status"].numpy()
-        )
+        np.testing.assert_array_equal(status.cpu().numpy(), wp_state.status.numpy())
 
     @pytest.mark.parametrize("device", DEVICES)
-    def test_buffers_sized_for_the_wrong_dof_count_are_rejected(self, device):
+    def test_state_sized_for_the_wrong_dof_count_is_rejected(self, device):
         """The cell adds two degrees of freedom per system; coordinate-sized
-        buffers would silently under-cover the packed array."""
+        state would silently under-cover the packed array."""
         from nvalchemiops.torch.lbfgs import lbfgs_step_coord_cell
 
         n = 6
-        positions, cell, _, cell_buffers, potential = self._setup(device, n)
-        wrong = make_torch_buffers(n, 1, torch.float64, device)
+        positions, cell, _, cell_state, potential = self._setup(device, n)
+        wrong = make_torch_state(n, 1, torch.float64, device)
         forces, stress = self._evaluate(positions, cell, potential, device)
         with pytest.raises(ValueError, match="num_atoms \\+ 2 \\* num_systems"):
             lbfgs_step_coord_cell(
@@ -924,18 +890,19 @@ class TestLBFGSTorchCoordCell:
                 cell,
                 forces,
                 stress,
+                wrong,
+                cell_state,
                 torch.zeros(n, dtype=torch.int32, device=device),
                 torch.full((1,), n, dtype=torch.int32, device=device),
-                *wrong.values(),
-                *cell_buffers.values(),
             )
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_cell_operator_schema_matches_the_buffer_order(self, device):
         """Both buffer groups must line up with the operator, in order.
 
-        Callers pass all 40 tensors positionally, so an ordering mismatch
-        would type-check and then compute nonsense.
+        The operator's parameter list is written out by hand, so an ordering
+        mismatch against the dataclass fields would type-check and then
+        compute nonsense.
         """
         from nvalchemiops.torch.lbfgs import (
             _CELL_MUTATED,
@@ -951,10 +918,18 @@ class TestLBFGSTorchCoordCell:
             _CELL_BUFFERS
         )
 
-        # The public wrapper forwards positionally, so it must agree too.
+        # The public wrapper takes the two states and forwards every field.
         wrapper = tuple(inspect.signature(lbfgs_step_coord_cell).parameters)
-        assert wrapper[6 : 6 + n_opt] == _OPTIMIZER_BUFFERS
-        assert wrapper[6 + n_opt : 6 + n_opt + len(_CELL_BUFFERS)] == _CELL_BUFFERS
+        assert wrapper[:8] == (
+            "positions",
+            "cell",
+            "forces",
+            "stress",
+            "state",
+            "cell_state",
+            "batch_idx",
+            "n_particles",
+        )
 
         # The read-only chart inputs must not be declared as mutated.
         assert set(_CELL_MUTATED).isdisjoint(_CELL_BUFFERS[:5])
@@ -978,7 +953,7 @@ class TestLBFGSTorchCoordCell:
         n_particles = torch.full((1,), n, dtype=torch.int32, device=device)
 
         def one_run(compiled):
-            positions, cell, buffers, cell_buffers, potential = self._setup(device, n)
+            positions, cell, state, cell_state, potential = self._setup(device, n)
             forces, stress = self._evaluate(positions, cell, potential, device)
 
             def body(p, c, f, s):
@@ -987,10 +962,10 @@ class TestLBFGSTorchCoordCell:
                     c,
                     f,
                     s,
+                    state,
+                    cell_state,
                     batch_idx,
                     n_particles,
-                    *buffers.values(),
-                    *cell_buffers.values(),
                     **opts,
                 )
 
@@ -998,7 +973,7 @@ class TestLBFGSTorchCoordCell:
             fn = torch.compile(body, fullgraph=True) if compiled else body
             fn(positions, cell, forces, stress)
             torch.cuda.synchronize()
-            return positions.clone(), cell.clone(), buffers["status"].clone()
+            return positions.clone(), cell.clone(), state.status.clone()
 
         eager = one_run(False)
         compiled = one_run(True)

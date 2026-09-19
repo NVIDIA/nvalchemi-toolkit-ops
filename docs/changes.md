@@ -21,12 +21,16 @@
   region rather than from a line search, so models whose forces are not the
   gradient of their reported energy -- direct force heads, and anything with a
   rough energy surface -- relax as well as conservative ones.
-- Every optimizer buffer is caller-owned: the package allocates nothing,
-  initializes nothing and keeps no hidden state between calls, so the buffers
-  can come from whatever pool you already have and a step allocates no memory.
-  Zero them, then set `alpha_step` to `1.0`, `iteration` to `-1` and `status`
-  to `LBFGS_NEED_EVAL`; that is the whole of initialization, and repeating it
-  is how you restart a relaxation.
+- State is grouped into two transparent dataclasses, `LBFGSState` and
+  `LBFGSCellState`. `lbfgs_prepare_state` and `lbfgs_prepare_cell_state`
+  allocate, initialize and validate a complete state in one call -- shapes,
+  dtypes, devices, history depth and the packed cell relationship -- and
+  calling them again is how you restart. Every field stays reachable by name,
+  so you can equally build a state from arrays you already own and check it
+  with `validate()`, which compares shapes, dtypes and device without touching
+  the GPU; each step then only verifies that its own inputs are compatible. A step still allocates nothing, so it stays capturable in a CUDA
+  graph. In JAX both classes are registered pytrees and the step returns a new
+  state functionally, so one `donate_argnums` entry donates every field.
 - Both coordinate-only and variable-cell relaxation are supported. The
   variable-cell path maps positions and cell into a single packed coordinate
   vector following ASE's `UnitCellFilter` convention, so the two-loop recursion

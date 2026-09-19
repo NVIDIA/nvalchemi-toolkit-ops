@@ -462,27 +462,26 @@ costs exactly one evaluation per step just as FIRE2 does. If your force
 evaluation is expensive relative to a handful of microseconds of kernel time,
 prefer L-BFGS.
 
-**You own the buffers.** The optimizer allocates nothing, initializes nothing
-and keeps no hidden state between calls. You allocate the 26 buffers once and
-pass them to every step, which means a step allocates no memory and the arrays
-can come from whatever pool you already have.
+**Prepare the state once.** `lbfgs_prepare_state` allocates, initializes and
+validates every array the optimizer needs and returns them as an `LBFGSState`.
+Calling it again is how you restart. A step allocates nothing, so it stays
+capturable in a CUDA graph.
 
-Zero every buffer, then set exactly three:
+The arrays stay yours. `LBFGSState` is a plain dataclass, so every field is
+reachable by name — `state.fmax`, `state.status` — and you can build one from
+buffers you already have and check it with `state.validate()`, which compares
+shapes, dtypes and device without touching the GPU. If you do, match what
+preparation produces: zero everything, then `alpha_step` to `1.0`,
+`iteration` to `-1` (the "never evaluated" marker) and `status` to
+`LBFGS_NEED_EVAL`, which is numerically zero.
 
-| Buffer | Initial value |
-| --- | --- |
-| `alpha_step` | `1.0` — the line-search step length for a new direction |
-| `iteration` | `-1` — the "never evaluated" marker |
-| `status` | `LBFGS_NEED_EVAL`, which is numerically zero |
-
-That is the whole of initialization, and repeating it is how you restart a
-relaxation. See the `nvalchemiops.dynamics.optimizers.lbfgs` module
-documentation for the shapes; briefly, with `P` degrees of freedom, `M` systems
-and history size `m`: `x_base`, `force_base` and `direction` are `(P,)` vectors,
-`s_history` and `y_history` are `(m, P)`, `ys`/`yy`/`alpha_hist`/`beta_hist` are
-`(m, M)` float64, `ss` through `alpha_step` are `(M,)` float64, and `status`
-through `history_count` are `(M,)` int32. The per-system scalars stay float64
-whatever precision the coordinates use.
+See the `nvalchemiops.dynamics.optimizers.lbfgs` module documentation for the
+shapes; briefly, with `P` degrees of freedom, `M` systems and history size `m`:
+`x_base`, `force_base` and `direction` are `(P,)` vectors, `s_history` and
+`y_history` are `(m, P)`, `ys`/`yy`/`alpha_hist`/`beta_hist` are `(m, M)`
+float64, `ss` through `alpha_step` are `(M,)` float64, and `status` through
+`history_count` are `(M,)` int32. The per-system scalars stay float64 whatever
+precision the coordinates use.
 
 **You own the loop.** Each `lbfgs_step` call consumes exactly one force
 evaluation. Inspect `status` to decide when to stop:
@@ -492,33 +491,31 @@ import numpy as np
 import warp as wp
 from nvalchemiops.dynamics.optimizers import (
     LBFGS_NEED_EVAL,
+    lbfgs_prepare_state,
     lbfgs_step,
 )
 
-# `buffers` is your own dict of the 26 arrays, in the canonical order.
-buffers["alpha_step"].fill_(1.0)
-buffers["iteration"].fill_(-1)
-buffers["status"].fill_(LBFGS_NEED_EVAL)
-status = buffers["status"]
+state = lbfgs_prepare_state(num_atoms, num_systems, device=device)
 
 while True:
     forces = model(positions)
     lbfgs_step(
         positions=positions,
         forces=forces,
+        state=state,
         batch_idx=batch_idx,
         n_particles=n_particles,
         force_tol=0.05,   # eV/A, on the largest per-atom force
         maxstep=0.2,      # A, largest displacement in one step
-        **buffers,
     )
-    if not (status.numpy() == LBFGS_NEED_EVAL).any():
+    if not (state.status.numpy() == LBFGS_NEED_EVAL).any():
         break
 ```
 
-The PyTorch binding takes the same buffers positionally and mutates them in
-place; the JAX binding takes them individually and returns them as a flat tuple
-in the same order, since JAX arrays are immutable.
+The PyTorch binding takes the same state and mutates it in place. The JAX
+binding *returns* a new one, since JAX arrays are immutable; both state classes
+are registered pytrees there, so a state crosses `jax.jit` as a single argument
+and one `donate_argnums` entry donates every field.
 
 `status` takes three values per system:
 
@@ -548,12 +545,15 @@ A consequence worth knowing: without Armijo the energy is not guaranteed to
 decrease monotonically, though the force does converge.
 
 **Variable cell.** The packed layout interleaves each system's atoms with its
-two cell entries, so the buffers must be sized for `num_atoms + 2 * num_systems`
-degrees of freedom. Build `ext_atom_ptr` and `ext_batch_idx` with the generic
-`extend_atom_ptr` and `atom_ptr_to_batch_idx` utilities; because nothing
-assumes a uniform split, ragged batches whose systems have different atom
-counts work the same way uniform ones do. Call `lbfgs_set_reference_cell` and
-`lbfgs_cell_kappa` once, before the first step.
+two cell entries, so the `LBFGSState` must be sized for
+`num_atoms + 2 * num_systems` degrees of freedom, and a second
+`LBFGSCellState` from `lbfgs_prepare_cell_state` carries the chart. Build
+`ext_atom_ptr` and `ext_batch_idx` with the generic `extend_atom_ptr` and
+`atom_ptr_to_batch_idx` utilities and pass them in; because nothing assumes a
+uniform split, ragged batches whose systems have different atom counts work the
+same way uniform ones do. Pass `cell` and `n_particles` to the preparation
+function to have the chart captured there, or fill it yourself with
+`lbfgs_set_reference_cell` and `lbfgs_cell_kappa` before the first step.
 
 **Memory.** The history dominates: `2 * m` vectors of `num_dofs` each. At
 `m = 6` and float32 coordinates that is roughly `192` bytes per degree of
