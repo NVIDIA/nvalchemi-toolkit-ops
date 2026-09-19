@@ -195,6 +195,19 @@ for step in range(max_evals):
         maxstep=maxstep,
     )
 
+# The loop tests before stepping, so on the converged path the last values
+# logged already describe the geometry we are keeping. If the budget ran out
+# instead, the loop's final act was a *step*, and the last logged values
+# describe the point before it. Re-evaluate once so everything reported below
+# refers to the positions actually returned. This evaluation is for reporting,
+# not optimization, so it is deliberately not counted in `lbfgs_evals` -- that
+# number is the head-to-head metric against FIRE2.
+if not lbfgs_converged:
+    energies = system.compute_forces()
+    energy_hist.append(float(energies.numpy().sum()))
+    maxf_hist.append(float(np.linalg.norm(system.wp_forces.numpy(), axis=1).max()))
+    alpha_hist_log.append(float(state.alpha_step.numpy()[0]))
+
 # %%
 # Deciding when to stop
 # ---------------------
@@ -209,9 +222,16 @@ for step in range(max_evals):
 # so the trust region caps it at exactly ``maxstep`` however small the force
 # is. Stepping a geometry that has already arrived would kick it by ``maxstep``
 # rather than leave it alone. Test before you step, as the loop above does.
+#
+# Testing before stepping has a reporting consequence too. On the converged
+# path the loop breaks *without* stepping, so the last values it logged still
+# describe the geometry you keep. On the budget-exhausted path its final act
+# was a step, so they describe the point before that -- which is why the loop
+# re-evaluates once above before anything below is printed.
 
 status_name = "CONVERGED" if lbfgs_converged else "ran out of evaluations"
 print(f"\nFinished after {lbfgs_evals} force evaluations: {status_name}")
+# These describe `lbfgs_positions` below, on both paths.
 print(f"  final max|F| = {maxf_hist[-1]:.3e} eV/Å")
 print(f"  final PE     = {energy_hist[-1]:.6f} eV")
 

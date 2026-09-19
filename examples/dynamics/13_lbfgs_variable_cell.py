@@ -302,6 +302,24 @@ for step in range(max_evals):
     # inverse is recomputed and the neighbor list is rebuilt.
     md_system.update_cell(cell)
 
+# The loop tests before stepping, so on the converged path the last values
+# logged already describe the geometry and cell we are keeping. If the budget
+# ran out instead, the loop's final act was a *step*, and those values describe
+# the point before it -- while `cell_t` below is the post-step cell. Pairing
+# them would report a lattice constant and a force from two different
+# geometries. Re-evaluate once so everything below agrees. This is a reporting
+# evaluation, so it is deliberately not counted in `n_evals`.
+if not converged:
+    energies, forces, virial = md_system.compute_forces_virial()
+    stress = virial_to_stress(virial, md_system.wp_cell, target_pressure, device)
+    fmax_now = float(wp.to_torch(forces).norm(dim=1).max())
+    stress_np = stress.numpy()[0]
+    stress_gpa = pressure_ev_per_a3_to_gpa(0.5 * (stress_np + stress_np.T))
+    energy_hist.append(float(energies.numpy().sum()))
+    max_force_hist.append(fmax_now)
+    volume_hist.append(float(np.linalg.det(cell_t.detach().cpu().numpy()[0])))
+    pressure_hist.append(float(np.linalg.svd(stress_gpa, compute_uv=False).max()))
+
 # %%
 # Result
 # ------
@@ -313,7 +331,8 @@ final_volume = float(np.linalg.det(cell_t.detach().cpu().numpy()[0]))
 final_a = (final_volume / (n_cells**3)) ** (1 / 3)
 print(f"\nFinished after {n_evals} evaluations: {status_name}")
 print(f"  lattice constant: {a_initial:.4f} Å -> {final_a:.4f} Å")
-print(f"  final max|F|    : {fmax_now:.3e} eV/Å")
+# All four of these describe the same, final geometry on both paths.
+print(f"  final max|F|    : {max_force_hist[-1]:.3e} eV/Å")
 print(f"  final volume    : {final_volume:.2f} Å³")
 print(f"  final |stress|  : {pressure_hist[-1]:.4f} GPa")
 print("  (textbook FCC argon equilibrium is near 5.26 Å)")
