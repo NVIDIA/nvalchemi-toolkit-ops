@@ -21,8 +21,9 @@ pytest.importorskip("jax", reason="No JAX installed.")
 
 import jax  # noqa: E402
 
-# float64 is required: per-system scalars are float64 whatever the coordinate
-# precision, so x64 has to be on before any array is created.
+# x64 is enabled so this suite can exercise the fp64 path; the fp32 path
+# deliberately does not need it, which ``test_fp32_runs_without_x64`` checks in
+# a subprocess.
 jax.config.update("jax_enable_x64", True)
 
 

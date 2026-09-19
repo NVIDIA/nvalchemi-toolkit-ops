@@ -32,6 +32,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import inspect
+import os
 import warnings
 
 import numpy as np
@@ -300,7 +301,7 @@ class TestLBFGSJaxRegistration:
         state = make_jax_state(7, 3, history_size=4)
         assert state.s_history.shape == (4, 7, 3)
         assert state.ys.shape == (4, 3)
-        # Per-system scalars are float64 whatever the coordinate precision.
+        # Scalars follow the coordinates; this fixture is float64.
         assert state.gg.dtype == jnp.float64
         np.testing.assert_array_equal(state.iteration, np.full(3, -1))
         np.testing.assert_array_equal(state.alpha_step, np.ones(3))
@@ -465,24 +466,56 @@ class TestLBFGSJaxErrors:
                 d.batch_idx,
             )
 
-    def test_scalars_must_be_float64(self, _gpu):
-        """Without ``JAX_ENABLE_X64`` every float64 silently becomes float32.
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_scalars_follow_the_coordinate_dtype(self, _gpu, dtype):
+        """An fp32 state is fp32 throughout.
 
-        JAX only warns, so preparation would hand back a state the algorithm
-        cannot use. The group is uniformly float32 and therefore internally
-        consistent, which is why this is checked separately from ``validate``.
+        That is what frees the fp32 path from ``JAX_ENABLE_X64``: nothing in it
+        asks JAX for a float64 array. See the Warp module on why fp32
+        coordinates do not need float64 scalars.
         """
-        d = JaxDriver(_cluster(3))
-        st = dataclasses.replace(
-            d.state,
-            **{
-                name: getattr(d.state, name).astype(jnp.float32)
-                for name in _OPTIMIZER_BUFFERS[5:15]
-            },
+        st = lbfgs_prepare_state(3, 1, dtype=dtype)
+        for name in _OPTIMIZER_BUFFERS[5:15]:
+            assert jnp.dtype(getattr(st, name).dtype) == jnp.dtype(dtype), name
+
+    def test_fp32_runs_without_x64(self, _gpu):
+        """The fp32 path must not need ``JAX_ENABLE_X64``.
+
+        Run in a subprocess, because x64 is a global flag fixed at import and
+        the rest of this suite enables it. This is the whole user-facing point
+        of letting the scalars follow the coordinate dtype: under the old
+        policy an fp32 caller was silently handed float32 scalars by a JAX that
+        refused the float64 request, and the step then rejected its own state.
+        """
+        import subprocess
+        import sys
+        import textwrap
+
+        script = textwrap.dedent("""
+            import numpy as np, jax, jax.numpy as jnp
+            assert not jax.config.jax_enable_x64, "x64 leaked into the subprocess"
+            from nvalchemiops.jax.lbfgs import (
+                lbfgs_prepare_state, lbfgs_step_coord)
+            st = lbfgs_prepare_state(13, 1, dtype=jnp.float32)
+            assert jnp.dtype(st.ys.dtype) == jnp.float32, st.ys.dtype
+            K = jnp.array([1.0, 4.0, 9.0], jnp.float32)
+            pos = jnp.asarray(
+                np.random.default_rng(3).normal(size=(13, 3)) * 2.0, jnp.float32)
+            bidx = jnp.zeros(13, jnp.int32)
+            for _ in range(500):
+                f = -(K * pos)
+                if float(jnp.linalg.norm(f, axis=1).max()) < 1e-4:
+                    break
+                pos, st = lbfgs_step_coord(pos, f, st, bidx, maxstep=0.5)
+            assert float(jnp.abs(pos).max()) < 1e-4, float(jnp.abs(pos).max())
+            print("ok")
+        """)
+        env = {k: v for k, v in os.environ.items() if k != "JAX_ENABLE_X64"}
+        out = subprocess.run(  # noqa: S603 - fixed script, this interpreter
+            [sys.executable, "-c", script], capture_output=True, text=True, env=env
         )
-        st.validate()  # internally consistent
-        with pytest.raises(ValueError, match="must be float64"):
-            lbfgs_step_coord(d.positions, d.model(d.positions), st, d.batch_idx)
+        assert out.returncode == 0, out.stderr[-2000:]
+        assert "ok" in out.stdout
 
     def test_history_size_mismatch(self, _gpu):
         d = JaxDriver(_cluster(3))

@@ -176,8 +176,8 @@ history_size = 6
 # sized for num_atoms + 2 * num_systems degrees of freedom, not num_atoms.
 num_dofs = num_atoms + 2 * num_systems
 
-# Coordinates may be fp32, but every per-system scalar is float64 regardless:
-# ``ys / yy`` scales the initial inverse Hessian and cancels badly in fp32.
+# Every per-system scalar follows the coordinate dtype, so this is an fp64
+# state end to end; passing float32 would give an fp32 one.
 state = lbfgs_prepare_state(
     num_dofs,
     num_systems,

@@ -32,9 +32,9 @@ tensors you already own -- see
 :mod:`nvalchemiops.dynamics.optimizers.lbfgs` for the shapes and the required
 initial contents.
 
-Per-system scalars are float64 whatever the coordinate precision: ``ys / yy``
-scales the initial inverse Hessian, and near convergence ``y = force_base - F``
-is a difference of nearly equal vectors.
+Every per-system scalar follows the coordinate dtype, so ``torch.float32``
+gives an end-to-end fp32 state and ``torch.float64`` an end-to-end fp64 one.
+See the Warp module on why fp32 coordinates do not need float64 scalars.
 
 Usage
 -----
@@ -183,6 +183,7 @@ def _lbfgs_step_op(
     capture would record nothing.
     """
     vec = _TORCH_TO_WP_VEC[positions.dtype]
+    sc = _TORCH_TO_WP_SCALAR[positions.dtype]
     with scoped_warp_stream(positions.device):
         _wp_step(
             positions=_wp(positions, vec),
@@ -193,16 +194,16 @@ def _lbfgs_step_op(
             direction=_wp(direction, vec),
             s_history=_wp(s_history, vec),
             y_history=_wp(y_history, vec),
-            ys=_wp(ys, wp.float64),
-            yy=_wp(yy, wp.float64),
-            alpha_hist=_wp(alpha_hist, wp.float64),
-            beta_hist=_wp(beta_hist, wp.float64),
-            ss=_wp(ss, wp.float64),
-            gg=_wp(gg, wp.float64),
-            d0=_wp(d0, wp.float64),
-            dmax=_wp(dmax, wp.float64),
-            dquad=_wp(dquad, wp.float64),
-            alpha_step=_wp(alpha_step, wp.float64),
+            ys=_wp(ys, sc),
+            yy=_wp(yy, sc),
+            alpha_hist=_wp(alpha_hist, sc),
+            beta_hist=_wp(beta_hist, sc),
+            ss=_wp(ss, sc),
+            gg=_wp(gg, sc),
+            d0=_wp(d0, sc),
+            dmax=_wp(dmax, sc),
+            dquad=_wp(dquad, sc),
+            alpha_step=_wp(alpha_step, sc),
             iteration=_wp(iteration, wp.int32),
             end=_wp(end, wp.int32),
             n_loop=_wp(n_loop, wp.int32),
@@ -255,7 +256,8 @@ def lbfgs_prepare_state(
     num_systems : int
         Independent systems in the batch.
     dtype : torch.dtype, optional
-        Coordinate precision. Per-system scalars are float64 either way.
+        Coordinate precision. Every per-system scalar follows it, so this
+        selects an end-to-end fp32 or fp64 state.
     device : optional
         Torch device.
     history_size : int, optional
@@ -269,7 +271,7 @@ def lbfgs_prepare_state(
         raise ValueError(f"dtype must be float32 or float64; got {dtype}")
     if history_size < 1:
         raise ValueError(f"history_size must be >= 1; got {history_size}")
-    f64 = {"dtype": torch.float64, "device": device}
+    sc = {"dtype": dtype, "device": device}
     i32 = {"dtype": torch.int32, "device": device}
     kw = {"dtype": dtype, "device": device}
     m, p_, n = history_size, num_dofs, num_systems
@@ -279,16 +281,16 @@ def lbfgs_prepare_state(
         direction=torch.zeros(p_, 3, **kw),
         s_history=torch.zeros(m, p_, 3, **kw),
         y_history=torch.zeros(m, p_, 3, **kw),
-        ys=torch.zeros(m, n, **f64),
-        yy=torch.zeros(m, n, **f64),
-        alpha_hist=torch.zeros(m, n, **f64),
-        beta_hist=torch.zeros(m, n, **f64),
-        ss=torch.zeros(n, **f64),
-        gg=torch.zeros(n, **f64),
-        d0=torch.zeros(n, **f64),
-        dmax=torch.zeros(n, **f64),
-        dquad=torch.zeros(n, **f64),
-        alpha_step=torch.ones(n, **f64),
+        ys=torch.zeros(m, n, **sc),
+        yy=torch.zeros(m, n, **sc),
+        alpha_hist=torch.zeros(m, n, **sc),
+        beta_hist=torch.zeros(m, n, **sc),
+        ss=torch.zeros(n, **sc),
+        gg=torch.zeros(n, **sc),
+        d0=torch.zeros(n, **sc),
+        dmax=torch.zeros(n, **sc),
+        dquad=torch.zeros(n, **sc),
+        alpha_step=torch.ones(n, **sc),
         iteration=torch.full((n,), -1, **i32),
         end=torch.zeros(n, **i32),
         n_loop=torch.zeros(n, **i32),
@@ -457,20 +459,6 @@ def lbfgs_step_coord_cell(
     )  # fmt: skip
 
 
-def _check_scalar_precision(state) -> None:
-    """Confirm the per-system scalars are float64.
-
-    ``LBFGSState.validate`` checks only that they agree with each other, since
-    it is shared with the Warp and JAX layers; the float64 requirement is
-    spelled in this layer's own dtype vocabulary.
-    """
-    if state.ys.dtype != torch.float64:
-        raise ValueError(
-            f"per-system scalars must be float64, got {state.ys.dtype}; "
-            "ys / yy scales the initial inverse Hessian and cancels in fp32"
-        )
-
-
 def _validate(positions, forces, batch_idx, state):
     """Confirm this call's inputs match the prepared state.
 
@@ -478,7 +466,6 @@ def _validate(positions, forces, batch_idx, state):
     fields can be reassigned between steps.
     """
     state.validate()
-    _check_scalar_precision(state)
     if positions.dtype not in _TORCH_TO_WP_VEC:
         raise ValueError(f"positions must be float32 or float64; got {positions.dtype}")
     if forces.shape != positions.shape:
@@ -547,7 +534,7 @@ def _lbfgs_step_coord_cell_op(
     """Run one registered variable-cell L-BFGS step."""
     vec = _TORCH_TO_WP_VEC[positions.dtype]
     mat = _TORCH_TO_WP_MAT[positions.dtype]
-    scalar = _TORCH_TO_WP_SCALAR[positions.dtype]
+    sc = _TORCH_TO_WP_SCALAR[positions.dtype]
     with scoped_warp_stream(positions.device):
         _wp_step_cell(
             positions=_wp(positions, vec),
@@ -560,23 +547,23 @@ def _lbfgs_step_coord_cell_op(
             direction=_wp(direction, vec),
             s_history=_wp(s_history, vec),
             y_history=_wp(y_history, vec),
-            ys=_wp(ys, wp.float64),
-            yy=_wp(yy, wp.float64),
-            alpha_hist=_wp(alpha_hist, wp.float64),
-            beta_hist=_wp(beta_hist, wp.float64),
-            ss=_wp(ss, wp.float64),
-            gg=_wp(gg, wp.float64),
-            d0=_wp(d0, wp.float64),
-            dmax=_wp(dmax, wp.float64),
-            dquad=_wp(dquad, wp.float64),
-            alpha_step=_wp(alpha_step, wp.float64),
+            ys=_wp(ys, sc),
+            yy=_wp(yy, sc),
+            alpha_hist=_wp(alpha_hist, sc),
+            beta_hist=_wp(beta_hist, sc),
+            ss=_wp(ss, sc),
+            gg=_wp(gg, sc),
+            d0=_wp(d0, sc),
+            dmax=_wp(dmax, sc),
+            dquad=_wp(dquad, sc),
+            alpha_step=_wp(alpha_step, sc),
             iteration=_wp(iteration, wp.int32),
             end=_wp(end, wp.int32),
             n_loop=_wp(n_loop, wp.int32),
             history_count=_wp(history_count, wp.int32),
             ref_cell=_wp(ref_cell, mat),
             ref_cell_inv=_wp(ref_cell_inv, mat),
-            kappa=_wp(kappa, scalar),
+            kappa=_wp(kappa, sc),
             ext_batch_idx=_wp(ext_batch_idx, wp.int32),
             ext_atom_ptr=_wp(ext_atom_ptr, wp.int32),
             phi=_wp(phi, mat),
@@ -672,7 +659,6 @@ def _validate_cell(positions, forces, cell, stress, batch_idx, state, cell_state
     """Confirm this call's inputs match both prepared states."""
     state.validate()
     cell_state.validate(num_atoms=positions.shape[0])
-    _check_scalar_precision(state)
     num_systems = state.num_systems
     if positions.dtype not in _TORCH_TO_WP_VEC:
         raise ValueError(f"positions must be float32 or float64; got {positions.dtype}")

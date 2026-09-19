@@ -32,12 +32,10 @@ from nvalchemiops.dynamics.optimizers.lbfgs import (
 
 DEVICES = ["cuda:0"]
 
-# L-BFGS pins every per-system scalar to float64 regardless of the coordinate
-# precision, so the scalar column is float64 in both configurations. Copying
-# the matched-precision pairs used by the FIRE2 tests would exercise a
-# combination that is deliberately not registered.
+# Every L-BFGS per-system scalar follows the coordinate dtype, so the two
+# configurations are matched pairs: fp32 end to end, and fp64 end to end.
 DTYPE_CONFIGS = [
-    pytest.param(wp.vec3f, wp.float64, np.float32, id="dof_f32"),
+    pytest.param(wp.vec3f, wp.float32, np.float32, id="dof_f32"),
     pytest.param(wp.vec3d, wp.float64, np.float64, id="dof_f64"),
 ]
 

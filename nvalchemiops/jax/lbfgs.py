@@ -58,9 +58,9 @@ and check it with ``state.validate()``. See
 :mod:`nvalchemiops.dynamics.optimizers.lbfgs` for the shape table and the
 required initial contents.
 
-Per-system scalars stay float64 whatever the coordinate precision, because
-``ys / yy`` scales the initial inverse Hessian and near convergence
-``y = force_base - F`` is a difference of nearly equal vectors.
+Every per-system scalar follows the coordinate dtype, so an fp32 state is
+fp32 end to end and **needs no** ``JAX_ENABLE_X64``. See the Warp module on why
+fp32 coordinates do not need float64 scalars.
 
 Positions only move *forward* from the evaluated point -- nothing is rolled
 back -- so the ``forces`` you passed in still describe the ``positions`` you
@@ -157,22 +157,22 @@ def _lbfgs_body_f32(
     direction: wp.array(dtype=wp.vec3f),
     s_history: wp.array(dtype=wp.vec3f, ndim=2),
     y_history: wp.array(dtype=wp.vec3f, ndim=2),
-    ys: wp.array(dtype=wp.float64, ndim=2),
-    yy: wp.array(dtype=wp.float64, ndim=2),
-    alpha_hist: wp.array(dtype=wp.float64, ndim=2),
-    beta_hist: wp.array(dtype=wp.float64, ndim=2),
-    ss: wp.array(dtype=wp.float64),
-    gg: wp.array(dtype=wp.float64),
-    d0: wp.array(dtype=wp.float64),
-    dmax: wp.array(dtype=wp.float64),
-    dquad: wp.array(dtype=wp.float64),
-    alpha_step: wp.array(dtype=wp.float64),
+    ys: wp.array(dtype=wp.float32, ndim=2),
+    yy: wp.array(dtype=wp.float32, ndim=2),
+    alpha_hist: wp.array(dtype=wp.float32, ndim=2),
+    beta_hist: wp.array(dtype=wp.float32, ndim=2),
+    ss: wp.array(dtype=wp.float32),
+    gg: wp.array(dtype=wp.float32),
+    d0: wp.array(dtype=wp.float32),
+    dmax: wp.array(dtype=wp.float32),
+    dquad: wp.array(dtype=wp.float32),
+    alpha_step: wp.array(dtype=wp.float32),
     iteration: wp.array(dtype=wp.int32),
     end: wp.array(dtype=wp.int32),
     n_loop: wp.array(dtype=wp.int32),
     history_count: wp.array(dtype=wp.int32),
-    maxstep: wp.float64,
-    curvature_eps: wp.float64,
+    maxstep: wp.float32,
+    curvature_eps: wp.float32,
 ) -> None:
     """Advance one L-BFGS step on f32 coordinates.
 
@@ -345,8 +345,9 @@ def lbfgs_prepare_state(
     num_systems : int
         Independent systems in the batch.
     dtype : optional
-        Coordinate precision, float32 or float64. Per-system scalars are
-        float64 either way; see the module docstring on precision.
+        Coordinate precision, float32 or float64. Every per-system scalar
+        follows it, so this selects an end-to-end fp32 or fp64 state -- and an
+        fp32 state needs no ``JAX_ENABLE_X64``.
     history_size : int, optional
         Stored curvature pairs ``m``; 3 to 7 is the usual range.
 
@@ -359,7 +360,8 @@ def lbfgs_prepare_state(
     if history_size < 1:
         raise ValueError(f"history_size must be >= 1; got {history_size}")
     m, n = history_size, num_systems
-    z64 = lambda *s: jnp.zeros(s, jnp.float64)  # noqa: E731
+    sc = jnp.dtype(dtype)
+    z64 = lambda *s: jnp.zeros(s, sc)  # noqa: E731
     state = LBFGSState(
         x_base=jnp.zeros((num_dofs, 3), dtype),
         force_base=jnp.zeros((num_dofs, 3), dtype),
@@ -370,16 +372,13 @@ def lbfgs_prepare_state(
         ss=z64(n), gg=z64(n),
         d0=z64(n), dmax=z64(n), dquad=z64(n),
         # The only three fields whose initial value is not zero.
-        alpha_step=jnp.ones(n, jnp.float64),
+        alpha_step=jnp.ones(n, sc),
         iteration=jnp.full(n, -1, jnp.int32),
         end=jnp.zeros(n, jnp.int32),
         n_loop=jnp.zeros(n, jnp.int32),
         history_count=jnp.zeros(n, jnp.int32),
     )  # fmt: skip
     state.validate()
-    # Without JAX_ENABLE_X64 every float64 above comes back as float32, with
-    # only a warning. Fail here rather than at the first step.
-    _check_scalar_precision(state)
     return state
 
 
@@ -441,22 +440,6 @@ def lbfgs_step_coord(
     return out[0], LBFGSState(**dict(zip(_OPTIMIZER_BUFFERS, out[1:], strict=True)))
 
 
-def _check_scalar_precision(state) -> None:
-    """Confirm the per-system scalars are float64.
-
-    ``LBFGSState.validate`` checks only that they agree with each other, since
-    it is shared with the Warp and PyTorch layers; the float64 requirement is
-    spelled in this layer's own dtype vocabulary. Note this needs
-    ``JAX_ENABLE_X64``, without which JAX silently downcasts them to float32.
-    """
-    if jnp.dtype(state.ys.dtype) != jnp.dtype(jnp.float64):
-        raise ValueError(
-            f"per-system scalars must be float64, got {state.ys.dtype}; "
-            "ys / yy scales the initial inverse Hessian and cancels in fp32. "
-            "If this says float32, enable JAX_ENABLE_X64."
-        )
-
-
 def _validate(positions, forces, batch_idx, state) -> None:
     """Confirm this call's inputs match the state.
 
@@ -464,7 +447,6 @@ def _validate(positions, forces, batch_idx, state) -> None:
     the arrays that arrive fresh each call are re-checked here.
     """
     state.validate()
-    _check_scalar_precision(state)
     if jnp.dtype(positions.dtype).type not in _BODIES:
         raise ValueError(f"positions must be float32 or float64; got {positions.dtype}")
     if forces.shape != positions.shape:
@@ -498,16 +480,16 @@ def _lbfgs_cell_body_f32(
     direction: wp.array(dtype=wp.vec3f),
     s_history: wp.array(dtype=wp.vec3f, ndim=2),
     y_history: wp.array(dtype=wp.vec3f, ndim=2),
-    ys: wp.array(dtype=wp.float64, ndim=2),
-    yy: wp.array(dtype=wp.float64, ndim=2),
-    alpha_hist: wp.array(dtype=wp.float64, ndim=2),
-    beta_hist: wp.array(dtype=wp.float64, ndim=2),
-    ss: wp.array(dtype=wp.float64),
-    gg: wp.array(dtype=wp.float64),
-    d0: wp.array(dtype=wp.float64),
-    dmax: wp.array(dtype=wp.float64),
-    dquad: wp.array(dtype=wp.float64),
-    alpha_step: wp.array(dtype=wp.float64),
+    ys: wp.array(dtype=wp.float32, ndim=2),
+    yy: wp.array(dtype=wp.float32, ndim=2),
+    alpha_hist: wp.array(dtype=wp.float32, ndim=2),
+    beta_hist: wp.array(dtype=wp.float32, ndim=2),
+    ss: wp.array(dtype=wp.float32),
+    gg: wp.array(dtype=wp.float32),
+    d0: wp.array(dtype=wp.float32),
+    dmax: wp.array(dtype=wp.float32),
+    dquad: wp.array(dtype=wp.float32),
+    alpha_step: wp.array(dtype=wp.float32),
     iteration: wp.array(dtype=wp.int32),
     end: wp.array(dtype=wp.int32),
     n_loop: wp.array(dtype=wp.int32),
@@ -526,8 +508,8 @@ def _lbfgs_cell_body_f32(
     cell_force_b: wp.array(dtype=wp.vec3f),
     ext_positions: wp.array(dtype=wp.vec3f),
     ext_forces: wp.array(dtype=wp.vec3f),
-    maxstep: wp.float64,
-    curvature_eps: wp.float64,
+    maxstep: wp.float32,
+    curvature_eps: wp.float32,
 ) -> None:
     """Advance one variable-cell L-BFGS step on f32 coordinates.
 
@@ -953,7 +935,6 @@ def _validate_cell(
     """
     state.validate()
     cell_state.validate(num_atoms=positions.shape[0])
-    _check_scalar_precision(state)
     num_systems = state.num_systems
     if jnp.dtype(positions.dtype).type not in _CELL_BODIES:
         raise ValueError(f"positions must be float32 or float64; got {positions.dtype}")

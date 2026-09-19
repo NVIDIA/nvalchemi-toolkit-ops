@@ -311,14 +311,17 @@ class TestLBFGSTorchState:
         the state themselves, so the published formula has to stay true::
 
             (2m + 3) * 3 * sizeof(dof) * num_dofs   per-DOF vectors + s/y history
-          + (4m + 6) * 8 * num_systems              per-slot and per-system float64
+          + (4m + 6) * sizeof(dof) * num_systems    per-slot and per-system scalars
           +        4 * 4 * num_systems              per-system int32
+
+        Every scalar follows the coordinate dtype, so ``sizeof(dof)`` appears
+        in both of the first two terms.
         """
         num_systems = 8
         element_size = 4 if dtype == torch.float32 else 8
         expected = (
             (2 * history_size + 3) * 3 * element_size * num_dofs
-            + (4 * history_size + 6) * 8 * num_systems
+            + (4 * history_size + 6) * element_size * num_systems
             + 4 * 4 * num_systems
         )
 
@@ -614,24 +617,12 @@ class TestLBFGSTorchErrors:
             )
 
     @pytest.mark.parametrize("device", DEVICES)
-    def test_scalars_must_be_float64(self, device):
-        """A uniformly float32 scalar group is internally consistent.
-
-        So ``validate`` alone does not catch it; only this layer knows the
-        scalars must specifically be float64.
-        """
-        d = TorchDriver(_cluster(1, 3), 1, torch.float64, device)
-        d.evaluate()
-        st = dataclasses.replace(
-            d.state,
-            **{
-                name: getattr(d.state, name).to(torch.float32)
-                for name in _OPTIMIZER_BUFFERS[5:15]
-            },
-        )
-        st.validate()  # internally consistent
-        with pytest.raises(ValueError, match="must be float64"):
-            lbfgs_step_coord(d.positions, d.forces, st, d.batch_idx)
+    @pytest.mark.parametrize("dtype", DTYPES)
+    def test_scalars_follow_the_coordinate_dtype(self, device, dtype):
+        """An fp32 state is fp32 throughout, so fp32 needs no fp64 arithmetic."""
+        st = lbfgs_prepare_state(3, 1, dtype=dtype, device=device)
+        for name in _OPTIMIZER_BUFFERS[5:15]:
+            assert getattr(st, name).dtype == dtype, name
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_history_size_mismatch(self, device):

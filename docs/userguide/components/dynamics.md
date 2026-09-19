@@ -479,8 +479,10 @@ shapes; briefly, with `P` degrees of freedom, `M` systems and history size `m`:
 `x_base`, `force_base` and `direction` are `(P,)` vectors, `s_history` and
 `y_history` are `(m, P)`, `ys`/`yy`/`alpha_hist`/`beta_hist` are `(m, M)`
 float64, `ss` through `alpha_step` are `(M,)` float64, and `iteration` through
-`history_count` are `(M,)` int32. The per-system scalars stay float64 whatever
-precision the coordinates use.
+`history_count` are `(M,)` int32. Every scalar follows the coordinate dtype,
+so an fp32 state is fp32 throughout and an fp64 state fp64 throughout — there
+is no mixed configuration, and a mismatched one is rejected rather than
+silently half-converted.
 
 **You own the loop, and you own convergence.** Each `lbfgs_step` call consumes
 exactly one force evaluation: it updates the history, restarts the direction if

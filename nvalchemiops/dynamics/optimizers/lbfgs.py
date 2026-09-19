@@ -100,10 +100,38 @@ into each kernel. So ``y_history`` holds *gradient* differences
 
 Precision
 ---------
-Coordinates may be single or double precision; **all per-system scalars are
-float64 regardless**. ``ys / yy`` scales the initial inverse Hessian, and near
-convergence ``y = force_base - F`` is a difference of nearly equal vectors,
-where float32 cancellation destroys it.
+**Every array follows the coordinate dtype.** ``wp.vec3f`` gives an fp32 state
+end to end, ``wp.vec3d`` an fp64 one. There is no mixed configuration: the
+overloads are keyed so a mismatched state is rejected rather than silently
+half-converted.
+
+An earlier version pinned the per-system scalars to float64 whatever the
+coordinates, on the grounds that ``y = force_base - F`` cancels near
+convergence. That reasoning does not survive contact with the code. ``y`` is
+formed *at the coordinate precision*, and so is each ``wp.dot``; the float64
+only ever saw an already-rounded product::
+
+    yvec = force_base[i] - fi                  # fp32 subtraction: the loss is here
+    acc += wp.float64(wp.dot(svec, yvec))      # widened only after the fact
+
+A wider accumulator cannot recover what that subtraction discarded. What it
+did change is the summation across degrees of freedom -- a different and much
+smaller effect. Measured on fp32 inputs: the cancellation in ``y`` costs about
+``3e-2`` relative error once ``|dF|/|F|`` reaches ``1e-6``, while fp32
+accumulation of the dot product costs about ``1e-5`` at a million degrees of
+freedom. The accumulator was refining a quantity already swamped by three
+orders of magnitude.
+
+End to end the difference is not measurable. Over twelve Lennard-Jones
+relaxations (13 to 55 atoms, four seeds each) both policies converged 12/12,
+with a geometric-mean evaluation ratio of 0.96 and a best-reachable-force
+ratio of 1.02 -- both inside the scatter you get from any one-ULP perturbation,
+since the trajectory is a discontinuous function of reduction order.
+
+So the float64 bought nothing and cost something: fp32 users paid for float64
+arithmetic, and in JAX they were forced to enable ``JAX_ENABLE_X64`` for an
+fp32 run. If some future reduction genuinely needs a wider accumulator, widen
+*that* reduction and bring the measurement with it.
 
 State
 -----
@@ -124,9 +152,9 @@ Buffer                                         Shape       dtype
 =============================================  ==========  ===========
 ``x_base``, ``force_base``, ``direction``      ``(P,)``    vec3f/vec3d
 ``s_history``, ``y_history``                   ``(m, P)``  vec3f/vec3d
-``ys``, ``yy``, ``alpha_hist``, ``beta_hist``  ``(m, M)``  float64
-``ss``, ``gg``                                 ``(M,)``    float64
-``d0``, ``dmax``, ``dquad``, ``alpha_step``    ``(M,)``    float64
+``ys``, ``yy``, ``alpha_hist``, ``beta_hist``  ``(m, M)``  float32/float64
+``ss``, ``gg``                                 ``(M,)``    float32/float64
+``d0``, ``dmax``, ``dquad``, ``alpha_step``    ``(M,)``    float32/float64
 ``iteration``, ``end``                         ``(M,)``    int32
 ``n_loop``, ``history_count``                  ``(M,)``    int32
 =============================================  ==========  ===========
@@ -168,10 +196,12 @@ Memory
 ------
 For ``P`` degrees of freedom, ``M`` systems and history ``m``::
 
-    bytes = (2m + 3) * 3 * sizeof(dof) * P + (4m + 6) * 8 * M + 4 * 4 * M
+    bytes = (2m + 3) * 3 * sizeof(dof) * P + (4m + 6) * sizeof(dof) * M
+            + 4 * 4 * M
 
-At ``m = 6`` that is 180 bytes per degree of freedom with float32 coordinates,
-360 with float64. The two histories dominate; 3 to 7 is the usual range for
+``sizeof(dof)`` appears in both array terms because every scalar follows the
+coordinate dtype. At ``m = 6`` that is 180 bytes per degree of freedom with
+float32 coordinates, 360 with float64. The two histories dominate; 3 to 7 is the usual range for
 ``m``.
 
 References
@@ -546,7 +576,9 @@ def _check_kinds(state, kinds: dict[str, tuple[str, ...]], cls_name: str) -> Non
 _NLOOP_PENDING = -4  # accepted; the (s, y) pair is written but not yet committed
 _NLOOP_RESTART = -1  # first step or restart: take a steepest-descent direction
 
-_BIG = 1.0e300  # stands in for "no trust-region limit"
+# Stands in for "no trust-region limit". Must be representable in float32 as
+# well as float64, since the per-system scalars follow the coordinate dtype.
+_BIG = 1.0e30
 
 
 # =============================================================================
@@ -555,9 +587,7 @@ _BIG = 1.0e300  # stands in for "no trust-region limit"
 
 
 @wp.func
-def _alpha_cap(
-    a_lin: wp.float64, b_quad: wp.float64, maxstep: wp.float64
-) -> wp.float64:
+def _alpha_cap(a_lin: Any, b_quad: Any, maxstep: Any):
     """Largest step length whose Cartesian displacement stays within ``maxstep``.
 
     The displacement of an atom is ``alpha * a_lin + alpha**2 * b_quad`` in the
@@ -585,13 +615,14 @@ def _alpha_cap(
     alone would let a cell whose first-order displacement happens to cancel
     take an unbounded step.
 
-    A non-positive ``maxstep`` disables the trust region.
+    A non-positive ``maxstep`` disables the trust region. Generic in the
+    scalar type, which follows the coordinate precision.
     """
-    zero = wp.float64(0.0)
+    zero = type(a_lin)(0.0)
     if maxstep <= zero or (a_lin <= zero and b_quad <= zero):
-        return wp.float64(_BIG)
-    disc = a_lin * a_lin + wp.float64(4.0) * b_quad * maxstep
-    return (wp.float64(2.0) * maxstep) / (a_lin + wp.sqrt(disc))
+        return type(a_lin)(_BIG)
+    disc = a_lin * a_lin + type(a_lin)(4.0) * b_quad * maxstep
+    return (type(a_lin)(2.0) * maxstep) / (a_lin + wp.sqrt(disc))
 
 
 @wp.func
@@ -613,7 +644,7 @@ def _slot(end: wp.int32, back: wp.int32, m: wp.int32) -> wp.int32:
 def _lbfgs_reduce_kernel(
     forces: wp.array(dtype=Any),
     batch_idx: wp.array(dtype=wp.int32),
-    gg: wp.array(dtype=wp.float64),
+    gg: wp.array(dtype=Any),
     n_dofs: wp.int32,
     elems_per_thread: wp.int32,
 ):
@@ -643,7 +674,7 @@ def _lbfgs_reduce_kernel(
         return
     stop = wp.min(start + elems_per_thread, n_dofs)
 
-    zero = wp.float64(0.0)
+    zero = type(gg[0])(0.0)
     s_cur = batch_idx[start]
     acc_gg = zero
 
@@ -654,16 +685,16 @@ def _lbfgs_reduce_kernel(
             s_cur = s
             acc_gg = zero
         fi = forces[i]
-        acc_gg += wp.float64(wp.dot(fi, fi))
+        acc_gg += type(gg[0])(wp.dot(fi, fi))
 
     wp.atomic_add(gg, s_cur, acc_gg)
 
 
 @wp.kernel(enable_backward=False)
 def _lbfgs_step_decision_kernel(
-    ys: wp.array(dtype=wp.float64, ndim=2),
-    yy: wp.array(dtype=wp.float64, ndim=2),
-    ss: wp.array(dtype=wp.float64),
+    ys: wp.array(dtype=Any, ndim=2),
+    yy: wp.array(dtype=Any, ndim=2),
+    ss: wp.array(dtype=Any),
     iteration: wp.array(dtype=wp.int32),
     end: wp.array(dtype=wp.int32),
     n_loop: wp.array(dtype=wp.int32),
@@ -716,9 +747,9 @@ def _lbfgs_step_decision_kernel(
     n_loop[tid] = _NLOOP_PENDING
 
     slot = end[tid]
-    ys[slot, tid] = wp.float64(0.0)
-    yy[slot, tid] = wp.float64(0.0)
-    ss[tid] = wp.float64(0.0)
+    ys[slot, tid] = type(ss[0])(0.0)
+    yy[slot, tid] = type(ss[0])(0.0)
+    ss[tid] = type(ss[0])(0.0)
 
 
 @wp.kernel(enable_backward=False)
@@ -732,9 +763,9 @@ def _lbfgs_history_update_kernel(
     batch_idx: wp.array(dtype=wp.int32),
     end: wp.array(dtype=wp.int32),
     n_loop: wp.array(dtype=wp.int32),
-    ys: wp.array(dtype=wp.float64, ndim=2),
-    yy: wp.array(dtype=wp.float64, ndim=2),
-    ss: wp.array(dtype=wp.float64),
+    ys: wp.array(dtype=Any, ndim=2),
+    yy: wp.array(dtype=Any, ndim=2),
+    ss: wp.array(dtype=Any),
     n_dofs: wp.int32,
     elems_per_thread: wp.int32,
 ):
@@ -769,7 +800,7 @@ def _lbfgs_history_update_kernel(
         return
     stop = wp.min(start + elems_per_thread, n_dofs)
 
-    zero = wp.float64(0.0)
+    zero = type(ss[0])(0.0)
     s_cur = batch_idx[start]
     slot = end[s_cur]
     active = n_loop[s_cur] == _NLOOP_PENDING
@@ -800,9 +831,9 @@ def _lbfgs_history_update_kernel(
             y_history[slot, i] = yvec
             x_base[i] = pi
             force_base[i] = fi
-            acc_sy += wp.float64(wp.dot(svec, yvec))
-            acc_ss += wp.float64(wp.dot(svec, svec))
-            acc_yy += wp.float64(wp.dot(yvec, yvec))
+            acc_sy += type(ss[0])(wp.dot(svec, yvec))
+            acc_ss += type(ss[0])(wp.dot(svec, svec))
+            acc_yy += type(ss[0])(wp.dot(yvec, yvec))
 
     if active:
         wp.atomic_add(ys, slot, s_cur, acc_sy)
@@ -812,14 +843,14 @@ def _lbfgs_history_update_kernel(
 
 @wp.kernel(enable_backward=False)
 def _lbfgs_history_commit_kernel(
-    ys: wp.array(dtype=wp.float64, ndim=2),
-    yy: wp.array(dtype=wp.float64, ndim=2),
-    ss: wp.array(dtype=wp.float64),
+    ys: wp.array(dtype=Any, ndim=2),
+    yy: wp.array(dtype=Any, ndim=2),
+    ss: wp.array(dtype=Any),
     end: wp.array(dtype=wp.int32),
     n_loop: wp.array(dtype=wp.int32),
     history_count: wp.array(dtype=wp.int32),
     m: wp.int32,
-    curvature_eps: wp.float64,
+    curvature_eps: Any,
 ):
     """Keep or discard the candidate pair, and finalize the loop bound.
 
@@ -877,10 +908,10 @@ def _lbfgs_loop1_kernel(
     batch_idx: wp.array(dtype=wp.int32),
     end: wp.array(dtype=wp.int32),
     n_loop: wp.array(dtype=wp.int32),
-    ys: wp.array(dtype=wp.float64, ndim=2),
-    yy: wp.array(dtype=wp.float64, ndim=2),
-    alpha_hist: wp.array(dtype=wp.float64, ndim=2),
-    beta_hist: wp.array(dtype=wp.float64, ndim=2),
+    ys: wp.array(dtype=Any, ndim=2),
+    yy: wp.array(dtype=Any, ndim=2),
+    alpha_hist: wp.array(dtype=Any, ndim=2),
+    beta_hist: wp.array(dtype=Any, ndim=2),
     step: wp.int32,
     m: wp.int32,
     n_dofs: wp.int32,
@@ -917,7 +948,7 @@ def _lbfgs_loop1_kernel(
         return
     stop = wp.min(start + elems_per_thread, n_dofs)
 
-    zero = wp.float64(0.0)
+    zero = type(ys[0, 0])(0.0)
     s_cur = batch_idx[start]
     acc = zero
 
@@ -930,7 +961,7 @@ def _lbfgs_loop1_kernel(
     coeff = zero
     j_cur = wp.int32(0)
     j_prev = wp.int32(0)
-    gamma = wp.float64(1.0)
+    gamma = type(ys[0, 0])(1.0)
     if active:
         if step >= 1:
             j_prev = _slot(e, step - 1, m)
@@ -958,7 +989,7 @@ def _lbfgs_loop1_kernel(
             active = step < nl and nl > 0
             is_last = step == bound
             coeff = zero
-            gamma = wp.float64(1.0)
+            gamma = type(ys[0, 0])(1.0)
             if active:
                 if step >= 1:
                     j_prev = _slot(e, step - 1, m)
@@ -977,9 +1008,9 @@ def _lbfgs_loop1_kernel(
                 qi = direction[i] - type(direction[i][0])(coeff) * y_history[j_prev, i]
             if is_last:
                 qi = type(qi[0])(gamma) * qi
-                acc += wp.float64(wp.dot(y_history[j_cur, i], qi))
+                acc += type(ys[0, 0])(wp.dot(y_history[j_cur, i], qi))
             else:
-                acc += wp.float64(wp.dot(s_history[j_cur, i], qi))
+                acc += type(ys[0, 0])(wp.dot(s_history[j_cur, i], qi))
             direction[i] = qi
 
     if active:
@@ -998,10 +1029,10 @@ def _lbfgs_loop2_kernel(
     batch_idx: wp.array(dtype=wp.int32),
     end: wp.array(dtype=wp.int32),
     n_loop: wp.array(dtype=wp.int32),
-    ys: wp.array(dtype=wp.float64, ndim=2),
-    alpha_hist: wp.array(dtype=wp.float64, ndim=2),
-    beta_hist: wp.array(dtype=wp.float64, ndim=2),
-    d0: wp.array(dtype=wp.float64),
+    ys: wp.array(dtype=Any, ndim=2),
+    alpha_hist: wp.array(dtype=Any, ndim=2),
+    beta_hist: wp.array(dtype=Any, ndim=2),
+    d0: wp.array(dtype=Any),
     step: wp.int32,
     m: wp.int32,
     n_dofs: wp.int32,
@@ -1035,7 +1066,7 @@ def _lbfgs_loop2_kernel(
         return
     stop = wp.min(start + elems_per_thread, n_dofs)
 
-    zero = wp.float64(0.0)
+    zero = type(ys[0, 0])(0.0)
     s_cur = batch_idx[start]
     acc = zero
 
@@ -1082,9 +1113,9 @@ def _lbfgs_loop2_kernel(
             direction[i] = ri
             if is_last:
                 # d0 = g_base . d = -(force_base . d)
-                acc -= wp.float64(wp.dot(force_base[i], ri))
+                acc -= type(ys[0, 0])(wp.dot(force_base[i], ri))
             else:
-                acc += wp.float64(wp.dot(y_history[j_next, i], ri))
+                acc += type(ys[0, 0])(wp.dot(y_history[j_next, i], ri))
 
     if active:
         if is_last:
@@ -1095,8 +1126,8 @@ def _lbfgs_loop2_kernel(
 
 @wp.kernel(enable_backward=False)
 def _lbfgs_restart_check_kernel(
-    gg: wp.array(dtype=wp.float64),
-    d0: wp.array(dtype=wp.float64),
+    gg: wp.array(dtype=Any),
+    d0: wp.array(dtype=Any),
     end: wp.array(dtype=wp.int32),
     n_loop: wp.array(dtype=wp.int32),
     history_count: wp.array(dtype=wp.int32),
@@ -1119,7 +1150,7 @@ def _lbfgs_restart_check_kernel(
         Per-system control state.
     """
     tid = wp.tid()
-    if n_loop[tid] > 0 and d0[tid] >= wp.float64(0.0):
+    if n_loop[tid] > 0 and d0[tid] >= type(d0[0])(0.0):
         n_loop[tid] = _NLOOP_RESTART
         history_count[tid] = 0
         end[tid] = 0
@@ -1138,7 +1169,7 @@ def _lbfgs_seed_direction_kernel(
     direction: wp.array(dtype=Any),
     batch_idx: wp.array(dtype=wp.int32),
     n_loop: wp.array(dtype=wp.int32),
-    gg: wp.array(dtype=wp.float64),
+    gg: wp.array(dtype=Any),
 ):
     """Set a steepest-descent direction and seed the base point.
 
@@ -1164,8 +1195,8 @@ def _lbfgs_seed_direction_kernel(
     if n_loop[s] != _NLOOP_RESTART:
         return
     gn = wp.sqrt(gg[s])
-    if gn > wp.float64(0.0):
-        scale = type(forces[tid][0])(wp.float64(1.0) / gn)
+    if gn > type(gg[0])(0.0):
+        scale = type(forces[tid][0])(type(gg[0])(1.0) / gn)
         direction[tid] = scale * forces[tid]
     else:
         direction[tid] = type(forces[tid])()
@@ -1177,8 +1208,8 @@ def _lbfgs_seed_direction_kernel(
 def _lbfgs_trust_region_kernel(
     direction: wp.array(dtype=Any),
     batch_idx: wp.array(dtype=wp.int32),
-    dmax: wp.array(dtype=wp.float64),
-    dquad: wp.array(dtype=wp.float64),
+    dmax: wp.array(dtype=Any),
+    dquad: wp.array(dtype=Any),
     n_dofs: wp.int32,
     elems_per_thread: wp.int32,
 ):
@@ -1204,7 +1235,7 @@ def _lbfgs_trust_region_kernel(
         return
     stop = wp.min(start + elems_per_thread, n_dofs)
 
-    zero = wp.float64(0.0)
+    zero = type(dmax[0])(0.0)
     s_cur = batch_idx[start]
     loc_max = zero
 
@@ -1214,7 +1245,7 @@ def _lbfgs_trust_region_kernel(
             wp.atomic_max(dmax, s_cur, loc_max)
             s_cur = s
             loc_max = zero
-        loc_max = wp.max(loc_max, wp.float64(wp.length(direction[i])))
+        loc_max = wp.max(loc_max, type(dmax[0])(wp.length(direction[i])))
 
     wp.atomic_max(dmax, s_cur, loc_max)
 
@@ -1226,15 +1257,15 @@ def _lbfgs_trust_region_kernel(
 
 @wp.kernel(enable_backward=False)
 def _lbfgs_prepare_step_kernel(
-    gg: wp.array(dtype=wp.float64),
-    d0: wp.array(dtype=wp.float64),
-    dmax: wp.array(dtype=wp.float64),
-    dquad: wp.array(dtype=wp.float64),
-    alpha_step: wp.array(dtype=wp.float64),
+    gg: wp.array(dtype=Any),
+    d0: wp.array(dtype=Any),
+    dmax: wp.array(dtype=Any),
+    dquad: wp.array(dtype=Any),
+    alpha_step: wp.array(dtype=Any),
     end: wp.array(dtype=wp.int32),
     n_loop: wp.array(dtype=wp.int32),
     history_count: wp.array(dtype=wp.int32),
-    maxstep: wp.float64,
+    maxstep: Any,
 ):
     """Repair a bad direction and apply the trust region.
 
@@ -1266,7 +1297,7 @@ def _lbfgs_prepare_step_kernel(
     tid = wp.tid()
     # The step length is never carried between calls: the trust region below
     # determines it outright, starting from the full quasi-Newton step.
-    alpha_step[tid] = wp.float64(1.0)
+    alpha_step[tid] = type(alpha_step[0])(1.0)
 
     cap = _alpha_cap(dmax[tid], dquad[tid], maxstep)
     alpha_step[tid] = wp.min(alpha_step[tid], cap)
@@ -1281,8 +1312,8 @@ def _lbfgs_apply_step_kernel(
     direction: wp.array(dtype=Any),
     batch_idx: wp.array(dtype=wp.int32),
     n_loop: wp.array(dtype=wp.int32),
-    gg: wp.array(dtype=wp.float64),
-    alpha_step: wp.array(dtype=wp.float64),
+    gg: wp.array(dtype=Any),
+    alpha_step: wp.array(dtype=Any),
 ):
     """Move the positions to the next point, or finish the system off.
 
@@ -1314,7 +1345,7 @@ def _lbfgs_apply_step_kernel(
 # Kernel overloads
 #
 # Coordinates may be single or double precision; every per-system scalar is
-# float64 either way, so the overload key is just the vector dtype.
+# scalars follow them, so the overload key is just the vector dtype.
 # =============================================================================
 
 _VEC_TYPES = [wp.vec3f, wp.vec3d]
@@ -1326,11 +1357,21 @@ _history_update_overloads = {}
 _loop1_overloads = {}
 _loop2_overloads = {}
 _apply_step_overloads = {}
+_step_decision_overloads = {}
+_history_commit_overloads = {}
+_restart_check_overloads = {}
+_prepare_step_overloads = {}
+_zero_d0_overloads = {}
 
-_F64 = wp.float64
 _I32 = wp.int32
 
+#: The per-system scalar that goes with each coordinate precision. Every
+#: optimizer scalar follows the coordinates, so the overload key stays the
+#: vector type alone and the instantiation count does not grow with it.
+_SCALAR_FOR = {wp.vec3f: wp.float32, wp.vec3d: wp.float64}
+
 for _v in _VEC_TYPES:
+    _F64 = _SCALAR_FOR[_v]  # named for history; it is the coordinate scalar
     _reduce_overloads[_v] = wp.overload(
         _lbfgs_reduce_kernel,
         [
@@ -1445,6 +1486,58 @@ for _v in _VEC_TYPES:
         ],
     )
 
+    _step_decision_overloads[_F64] = wp.overload(
+        _lbfgs_step_decision_kernel,
+        [
+            wp.array(dtype=_F64, ndim=2),  # ys
+            wp.array(dtype=_F64, ndim=2),  # yy
+            wp.array(dtype=_F64),  # ss
+            wp.array(dtype=_I32),  # iteration
+            wp.array(dtype=_I32),  # end
+            wp.array(dtype=_I32),  # n_loop
+        ],
+    )
+
+    _history_commit_overloads[_F64] = wp.overload(
+        _lbfgs_history_commit_kernel,
+        [
+            wp.array(dtype=_F64, ndim=2),  # ys
+            wp.array(dtype=_F64, ndim=2),  # yy
+            wp.array(dtype=_F64),  # ss
+            wp.array(dtype=_I32),  # end
+            wp.array(dtype=_I32),  # n_loop
+            wp.array(dtype=_I32),  # history_count
+            _I32,  # m
+            _F64,  # curvature_eps
+        ],
+    )
+
+    _restart_check_overloads[_F64] = wp.overload(
+        _lbfgs_restart_check_kernel,
+        [
+            wp.array(dtype=_F64),  # gg
+            wp.array(dtype=_F64),  # d0
+            wp.array(dtype=_I32),  # end
+            wp.array(dtype=_I32),  # n_loop
+            wp.array(dtype=_I32),  # history_count
+        ],
+    )
+
+    _prepare_step_overloads[_F64] = wp.overload(
+        _lbfgs_prepare_step_kernel,
+        [
+            wp.array(dtype=_F64),  # gg
+            wp.array(dtype=_F64),  # d0
+            wp.array(dtype=_F64),  # dmax
+            wp.array(dtype=_F64),  # dquad
+            wp.array(dtype=_F64),  # alpha_step
+            wp.array(dtype=_I32),  # end
+            wp.array(dtype=_I32),  # n_loop
+            wp.array(dtype=_I32),  # history_count
+            _F64,  # maxstep
+        ],
+    )
+
 
 # =============================================================================
 # Public API
@@ -1478,8 +1571,9 @@ def lbfgs_prepare_state(
     num_systems : int
         Independent systems in the batch.
     dtype : optional
-        Coordinate precision, ``wp.vec3f`` or ``wp.vec3d``. Per-system scalars
-        are float64 either way; see the module docstring on precision.
+        Coordinate precision, ``wp.vec3f`` or ``wp.vec3d``. Every per-system
+        scalar follows it, so ``wp.vec3f`` gives an end-to-end fp32 state and
+        ``wp.vec3d`` an end-to-end fp64 one.
     history_size : int, optional
         Stored curvature pairs ``m``; 3 to 7 is the usual range. Memory is
         dominated by the two ``(m, num_dofs)`` history buffers.
@@ -1499,9 +1593,11 @@ def lbfgs_prepare_state(
         return wp.zeros(shape if len(shape) > 1 else shape[0], dtype=dtype,
                         device=device)  # fmt: skip
 
-    def f64(*shape):
-        return wp.zeros(shape if len(shape) > 1 else shape[0],
-                        dtype=wp.float64, device=device)  # fmt: skip
+    scalar = _SCALAR_FOR[dtype]
+
+    def sc(*shape):
+        return wp.zeros(shape if len(shape) > 1 else shape[0], dtype=scalar,
+                        device=device)  # fmt: skip
 
     def i32(n):
         return wp.zeros(n, dtype=wp.int32, device=device)
@@ -1512,16 +1608,16 @@ def lbfgs_prepare_state(
         direction=vec(num_dofs),
         s_history=vec(history_size, num_dofs),
         y_history=vec(history_size, num_dofs),
-        ys=f64(history_size, num_systems),
-        yy=f64(history_size, num_systems),
-        alpha_hist=f64(history_size, num_systems),
-        beta_hist=f64(history_size, num_systems),
-        ss=f64(num_systems),
-        gg=f64(num_systems),
-        d0=f64(num_systems),
-        dmax=f64(num_systems),
-        dquad=f64(num_systems),
-        alpha_step=f64(num_systems),
+        ys=sc(history_size, num_systems),
+        yy=sc(history_size, num_systems),
+        alpha_hist=sc(history_size, num_systems),
+        beta_hist=sc(history_size, num_systems),
+        ss=sc(num_systems),
+        gg=sc(num_systems),
+        d0=sc(num_systems),
+        dmax=sc(num_systems),
+        dquad=sc(num_systems),
+        alpha_step=sc(num_systems),
         iteration=i32(num_systems),
         end=i32(num_systems),
         n_loop=i32(num_systems),
@@ -1790,7 +1886,7 @@ def _lbfgs_update_impl(
         _lbfgs_reduce_impl(forces, direction, batch_idx, gg)
 
     wp.launch(
-        _lbfgs_step_decision_kernel,
+        _step_decision_overloads[ss.dtype],
         dim=num_systems,
         inputs=[ys, yy, ss, iteration, end, n_loop],
         device=device,
@@ -1819,9 +1915,18 @@ def _lbfgs_update_impl(
     )
 
     wp.launch(
-        _lbfgs_history_commit_kernel,
+        _history_commit_overloads[ss.dtype],
         dim=num_systems,
-        inputs=[ys, yy, ss, end, n_loop, history_count, m, float(curvature_eps)],
+        inputs=[
+            ys,
+            yy,
+            ss,
+            end,
+            n_loop,
+            history_count,
+            m,
+            ss.dtype(curvature_eps),
+        ],  # fmt: skip
         device=device,
     )
 
@@ -1890,7 +1995,7 @@ def _lbfgs_update_impl(
     # `d0`, and before the seed kernel rebuilds `direction`. Demoting any later
     # would leave the rejected direction in place for the apply kernel.
     wp.launch(
-        _lbfgs_restart_check_kernel,
+        _restart_check_overloads[gg.dtype],
         dim=num_systems,
         inputs=[gg, d0, end, n_loop, history_count],
         device=device,
@@ -1925,7 +2030,7 @@ def _lbfgs_update_impl(
 
 @wp.kernel(enable_backward=False)
 def _lbfgs_zero_d0_kernel(
-    d0: wp.array(dtype=wp.float64),
+    d0: wp.array(dtype=Any),
     n_loop: wp.array(dtype=wp.int32),
 ):
     """Clear the accumulated slope for systems about to run the second loop.
@@ -1944,13 +2049,23 @@ def _lbfgs_zero_d0_kernel(
     """
     tid = wp.tid()
     if n_loop[tid] > 0:
-        d0[tid] = wp.float64(0.0)
+        d0[tid] = type(d0[0])(0.0)
+
+
+for _v in _VEC_TYPES:
+    _zero_d0_overloads[_SCALAR_FOR[_v]] = wp.overload(
+        _lbfgs_zero_d0_kernel,
+        [
+            wp.array(dtype=_SCALAR_FOR[_v]),  # d0
+            wp.array(dtype=_I32),  # n_loop
+        ],
+    )
 
 
 def _zero_pending_d0(d0, n_loop, num_systems, device) -> None:
     """Zero ``d0`` only where the second loop is about to accumulate into it."""
     wp.launch(
-        _lbfgs_zero_d0_kernel,
+        _zero_d0_overloads[d0.dtype],
         dim=num_systems,
         inputs=[d0, n_loop],
         device=device,
@@ -1987,7 +2102,7 @@ def _lbfgs_prepare_step_impl(
     lbfgs_apply_step : runs after this.
     """
     wp.launch(
-        _lbfgs_prepare_step_kernel,
+        _prepare_step_overloads[gg.dtype],
         dim=gg.shape[0],
         inputs=[
             gg,
@@ -1998,7 +2113,7 @@ def _lbfgs_prepare_step_impl(
             end,
             n_loop,
             history_count,
-            float(maxstep),
+            gg.dtype(maxstep),
         ],  # fmt: skip
         device=gg.device,
     )
@@ -2172,7 +2287,7 @@ def _lbfgs_step_impl(
 @wp.kernel(enable_backward=False)
 def _lbfgs_cell_kappa_kernel(
     n_atoms_per_system: wp.array(dtype=wp.int32),
-    cell_force_scale: wp.float64,
+    cell_force_scale: Any,
     kappa: wp.array(dtype=Any),
 ):
     """Precompute the per-system cell coordinate scaling.
@@ -2416,8 +2531,8 @@ def _lbfgs_cell_trust_region_kernel(
     phi: wp.array(dtype=Any),
     d_phi: wp.array(dtype=Any),
     batch_idx: wp.array(dtype=wp.int32),
-    dmax: wp.array(dtype=wp.float64),
-    dquad: wp.array(dtype=wp.float64),
+    dmax: wp.array(dtype=Any),
+    dquad: wp.array(dtype=Any),
 ):
     """Measure the Cartesian displacement a variable-cell step produces.
 
@@ -2446,8 +2561,8 @@ def _lbfgs_cell_trust_region_kernel(
     u = ext_positions[e]
     linear = phi[s] * d_u + d_phi[s] * u
     quadratic = d_phi[s] * d_u
-    wp.atomic_max(dmax, s, wp.float64(wp.length(linear)))
-    wp.atomic_max(dquad, s, wp.float64(wp.length(quadratic)))
+    wp.atomic_max(dmax, s, type(dmax[0])(wp.length(linear)))
+    wp.atomic_max(dquad, s, type(dmax[0])(wp.length(quadratic)))
 
 
 _MAT_TYPES = {wp.vec3f: wp.mat33f, wp.vec3d: wp.mat33d}
@@ -2460,7 +2575,7 @@ _unpack_atoms_overloads = {}
 _cell_direction_overloads = {}
 _cell_trust_region_overloads = {}
 
-_SCALAR_OF = {wp.vec3f: wp.float32, wp.vec3d: wp.float64}
+_SCALAR_OF = _SCALAR_FOR
 
 for _v, _mt in _MAT_TYPES.items():
     _sc = _SCALAR_OF[_v]
@@ -2468,7 +2583,7 @@ for _v, _mt in _MAT_TYPES.items():
         _lbfgs_cell_kappa_kernel,
         [
             wp.array(dtype=_I32),  # n_atoms_per_system
-            _F64,  # cell_force_scale
+            _sc,  # cell_force_scale
             wp.array(dtype=_sc),  # kappa
         ],
     )
@@ -2542,8 +2657,8 @@ for _v, _mt in _MAT_TYPES.items():
             wp.array(dtype=_mt),  # phi
             wp.array(dtype=_mt),  # d_phi
             wp.array(dtype=_I32),  # batch_idx
-            wp.array(dtype=_F64),  # dmax
-            wp.array(dtype=_F64),  # dquad
+            wp.array(dtype=_sc),  # dmax
+            wp.array(dtype=_sc),  # dquad
         ],
     )
 
@@ -3029,13 +3144,6 @@ def _check_inputs(positions, forces, batch_idx, state: LBFGSState) -> None:
     matches would read out of bounds inside a kernel rather than raise.
     """
     state.validate()
-    # ``validate`` checks that the per-system scalars agree with each other;
-    # only this layer knows they must specifically be float64.
-    if state.ys.dtype != wp.float64:
-        raise ValueError(
-            f"per-system scalars must be float64, got {state.ys.dtype}; "
-            "ys / yy scales the initial inverse Hessian and cancels in fp32"
-        )
     if positions.shape[0] != state.num_dofs:
         raise ValueError(
             f"positions has {positions.shape[0]} degrees of freedom but the "

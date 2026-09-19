@@ -24,6 +24,10 @@
   region rather than from a line search, so models whose forces are not the
   gradient of their reported energy -- direct force heads, and anything with a
   rough energy surface -- relax as well as conservative ones.
+- Every array in the state follows the coordinate dtype, so float32
+  coordinates give an fp32 optimizer end to end and float64 an fp64 one, with
+  no mixed configuration. In JAX this means an fp32 relaxation needs no
+  `JAX_ENABLE_X64`.
 - State is grouped into two transparent dataclasses, `LBFGSState` and
   `LBFGSCellState`. `lbfgs_prepare_state` and `lbfgs_prepare_cell_state`
   allocate, initialize and validate a complete state in one call -- shapes,

@@ -840,26 +840,30 @@ class TestLBFGSStateValidation:
             st.validate()
 
     @pytest.mark.parametrize("device", DEVICES)
-    def test_scalars_must_be_float64(self, device):
-        """A uniformly float32 scalar group passes the group check, not this.
+    @pytest.mark.parametrize(
+        "vec,scalar", [(wp.vec3f, wp.float32), (wp.vec3d, wp.float64)]
+    )
+    def test_scalars_follow_the_coordinate_dtype(self, device, vec, scalar):
+        """fp32 coordinates give an fp32 state, fp64 an fp64 one.
 
-        ``ys / yy`` scales the initial inverse Hessian, and near convergence
-        it is a ratio of differences of nearly equal vectors.
+        There is no mixed configuration. ``y = force_base - F`` and the dot
+        products are formed at the coordinate precision, so a wider
+        accumulator cannot recover what that subtraction already lost -- see
+        the module docstring. Making the scalars follow instead keeps an fp32
+        run free of float64 arithmetic entirely.
         """
-        st = make_lbfgs_state(3, 1, HISTORY_SIZE, wp.vec3d, device)
+        st = make_lbfgs_state(6, 2, HISTORY_SIZE, vec, device)
         for name in _OPTIMIZER_BUFFERS[5:15]:
-            old = getattr(st, name)
-            setattr(st, name, wp.zeros(old.shape, dtype=wp.float32, device=device))
-        st.validate()  # internally consistent, so this alone does not catch it
-        d = Driver(_cluster(1, 3), 1, wp.vec3d, np.float64, device)
-        d.evaluate()
-        with pytest.raises(ValueError, match="must be float64"):
-            lbfgs_step(
-                positions=d.positions,
-                forces=d.forces,
-                state=st,
-                batch_idx=d.batch_idx,
-            )
+            assert getattr(st, name).dtype is scalar, name
+        st.validate()
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_a_mixed_state_is_rejected(self, device):
+        """Promoting one scalar to float64 must not silently half-work."""
+        st = make_lbfgs_state(6, 1, HISTORY_SIZE, wp.vec3f, device)
+        st.gg = wp.zeros(1, dtype=wp.float64, device=device)
+        with pytest.raises(ValueError, match="must share one dtype"):
+            st.validate()
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_fields_must_share_one_device(self, device):
