@@ -27,6 +27,13 @@ FIRE (Fast Inertial Relaxation Engine)
 FIRE2 (Fast Inertial Relaxation Engine v2)
     Improved FIRE with adaptive damping and velocity mixing.
 
+L-BFGS (Limited-memory Broyden-Fletcher-Goldfarb-Shanno)
+    Quasi-Newton optimization with a ``maxstep`` trust region. Usually reaches
+    a given force tolerance in far fewer force evaluations than the FIRE
+    optimizers, which is the cost that dominates relaxation with a
+    machine-learned potential. It reads no energy, so a model whose forces are
+    not the gradient of its reported energy relaxes just as well.
+
 Main API Functions
 ------------------
 fire_step
@@ -45,6 +52,28 @@ fire2_update
     FIRE2 reduction, adaptive parameter update, and velocity mixing WITHOUT
     position/cell application. Use for custom final apply phases such as
     coupled variable-cell optimization.
+
+lbfgs_step
+    Complete L-BFGS step. Consumes exactly one force evaluation per call and
+    reports progress through a per-system ``status`` array. Every call is an
+    accepted step: the direction comes from the two-loop recursion and the step
+    length from a ``maxstep`` trust region, so no energy is read at all.
+    Uses batch_idx batching only.
+
+lbfgs_update
+    L-BFGS reductions, line-search decision, history update and two-loop
+    recursion WITHOUT the position update. Use with ``lbfgs_prepare_step``
+    and ``lbfgs_apply_step`` for custom apply phases.
+
+    All L-BFGS buffers are caller-owned: the package allocates and initializes
+    nothing. See :mod:`nvalchemiops.dynamics.optimizers.lbfgs` for the required
+    shapes and initial contents.
+
+lbfgs_set_reference_cell, lbfgs_cell_kappa, lbfgs_pack_cell,
+lbfgs_unpack_cell, lbfgs_cell_trust_region
+    Variable-cell relaxation. Positions and cell are mapped into a single
+    packed coordinate vector so the two-loop recursion couples them
+    automatically, then mapped back after the step.
 
 Kernel Selection
 ----------------
@@ -71,6 +100,22 @@ from nvalchemiops.dynamics.optimizers.fire2 import (
     fire2_step,
     fire2_update,
 )
+from nvalchemiops.dynamics.optimizers.lbfgs import (
+    LBFGSCellState,
+    LBFGSState,
+    lbfgs_apply_step,
+    lbfgs_cell_kappa,
+    lbfgs_cell_trust_region,
+    lbfgs_pack_cell,
+    lbfgs_prepare_cell_state,
+    lbfgs_prepare_state,
+    lbfgs_prepare_step,
+    lbfgs_reduce,
+    lbfgs_set_reference_cell,
+    lbfgs_step,
+    lbfgs_unpack_cell,
+    lbfgs_update,
+)
 
 __all__ = [
     # Unified API
@@ -81,6 +126,22 @@ __all__ = [
     "fire2_update",
     "fire2_apply_step",
     "fire2_reduce",
+    # L-BFGS
+    "LBFGSState",
+    "LBFGSCellState",
+    "lbfgs_prepare_state",
+    "lbfgs_prepare_cell_state",
+    "lbfgs_step",
+    "lbfgs_update",
+    "lbfgs_prepare_step",
+    "lbfgs_apply_step",
+    "lbfgs_reduce",
+    # L-BFGS variable cell
+    "lbfgs_set_reference_cell",
+    "lbfgs_cell_kappa",
+    "lbfgs_pack_cell",
+    "lbfgs_unpack_cell",
+    "lbfgs_cell_trust_region",
     # Low-level kernels
     "_fire_step_no_downhill_ptr_kernel",
     "_fire_step_downhill_ptr_kernel",

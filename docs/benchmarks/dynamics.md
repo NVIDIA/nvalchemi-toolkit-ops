@@ -167,6 +167,93 @@ Total throughput (atom-steps/s) for batched optimization.
 
 - Checks maximum force component: $\max(|\mathbf{F}|) < f_{\max}$ (default 0.01 eV/Å)
 
+### L-BFGS
+
+L-BFGS is a quasi-Newton method: it approximates the inverse Hessian from recent
+position and force differences to choose a search direction, then takes a step
+along it bounded by a `maxstep` trust region. There is no line search and no
+energy input, so the step costs exactly one force evaluation. As with FIRE2,
+convergence is the caller's, so the figures below are optimizer time only.
+
+**Evaluations to convergence.** The metric that matters when a machine-learned
+potential dominates the optimizer's own kernel time. Argon clusters of 13, 32
+and 55 atoms, relaxed through the package's own LJ kernels with the shared
+`potential` parameters, `fmax <= 1e-4 eV/Å`, five starting geometries per size,
+with FIRE2's timestep swept over 8 settings per case and its *best* converged
+result used as the baseline:
+
+| Metric | L-BFGS / FIRE2 |
+| --- | --- |
+| Geometric mean | **0.59** |
+| Worst individual case | **1.1 – 1.4** |
+| Cases where both converged | 15 / 15 |
+
+**L-BFGS needs about 1.7x fewer force evaluations on average, and it loses
+outright in the worst case.** The worst ratio exceeded 1.0 in all three repeat
+runs (1.08, 1.17, 1.41), so on this workload L-BFGS is not uniformly better —
+it is better on average.
+
+Evaluation counts vary by roughly 20% run to run. Neighbor-list rebuild
+ordering perturbs the forces in their last bits, and both optimizers amplify
+that into a different trajectory, so read the aggregate rather than a single
+cell.
+
+These numbers are much less favourable than the `0.129` this table carried
+previously. That figure came from a NumPy all-pairs potential in reduced units
+rather than the configured workload, evaluated with a FIRE2 timestep grid tuned
+for those units — which handicapped the baseline once the units changed. Both
+are fixed: the forces now come from the package kernels, and the grid runs to
+3.0 fs because FIRE2 keeps improving well past the value the MD blocks use.
+
+**Per-step optimizer cost.** Optimizer time only, single system, fp64, harmonic
+potential, measured with `--gates`:
+
+Median of three runs; the ratio varies by roughly +/- 0.3 between runs. Each
+run writes `lbfgs_gate_timings.csv` alongside the other benchmark results, so
+this table has a regenerable record behind it.
+
+| Atoms | Eager (ms) | CUDA graph (ms) | FIRE2 (ms) | vs FIRE2 |
+| --- | --- | --- | --- | --- |
+| 10,000 | 0.46 | 0.16 | 0.053 | 8.7x |
+| 100,000 | 1.02 | 1.02 | 0.114 | 9.0x |
+| 1,000,000 | 3.12 | 3.11 | 0.319 | 9.8x |
+
+**A single L-BFGS step is roughly ten times more expensive than a FIRE2 step.**
+It runs `2m + O(1)` passes over the degrees of freedom against FIRE2's handful.
+At ten thousand atoms the step is launch-bound and CUDA-graph replay recovers
+about 2.9x; from one hundred thousand upwards the device work dominates and
+replay recovers nothing.
+
+**Break-even is no longer comfortable.** The model must cost more than roughly
+0.5, 1.2 and 3.7 milliseconds per evaluation at these three sizes for L-BFGS to
+win end to end. A machine-learned potential is milliseconds per evaluation, so
+at ten thousand atoms L-BFGS wins clearly, at a hundred thousand it is close,
+and at a million it needs a genuinely expensive model.
+
+That follows arithmetically from the evaluation ratio: at `0.129` L-BFGS saved
+almost 8x the evaluations and could absorb a 10x step cost easily; at `0.59` it
+saves 1.7x, so the model has to be far more expensive to pay for the same step.
+Prefer FIRE2 when the force evaluation is cheap, when the system is large, or
+when worst-case behaviour matters more than the average.
+
+**Memory.** With `P` degrees of freedom, `M` systems and history size `m`:
+
+```text
+bytes = (2m + 3) * 3 * sizeof(dof) * P + (4m + 6) * sizeof(dof) * M
+        + 4 * 4 * M
+```
+
+At `m = 6` that is 180 bytes per degree of freedom with float32 coordinates and
+360 with float64. The two history buffers dominate; reduce `m` if memory is
+tight, with 3 to 7 the usual range.
+
+Every scalar follows the coordinate dtype, so `sizeof(dof)` appears in both
+array terms. For one large system that changes nothing — the `O(M)` scalars are
+lost next to the `O(P)` history — but for a batch of many small systems it is
+worth having: at 10<sup>6</sup> two-atom systems an fp32 state is 496 MB against
+616 MB when the scalars were pinned to float64, a 20% saving. Per-step time is
+unchanged either way (measured within ±5%).
+
 ## Hardware Information
 
 **GPU**: NVIDIA H100 80GB HBM3
@@ -230,6 +317,20 @@ sizes across float32 and float64:
 ```bash
 python benchmark_fire2.py --config benchmark_config.yaml --output-dir ./benchmark_results
 ```
+
+### L-BFGS vs FIRE2
+
+Energy/force evaluations to convergence, which is the cost that dominates
+relaxation driven by a machine-learned potential, plus per-step cost gates:
+
+```bash
+python benchmark_lbfgs.py --config benchmark_config.yaml --output-dir ./benchmark_results
+python benchmark_lbfgs.py --gates
+```
+
+FIRE2 is swept over the grid in the config's `lbfgs.fire2_sweep` block and its
+best converged result is what L-BFGS is compared against, so the baseline is not
+handicapped by an untuned timestep.
 
 ### Configuration File
 

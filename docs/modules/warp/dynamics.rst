@@ -120,6 +120,55 @@ Fast Inertial Relaxation Engine for geometry optimization.
 .. autofunction:: nvalchemiops.dynamics.optimizers.fire.fire_step
 .. autofunction:: nvalchemiops.dynamics.optimizers.fire.fire_update
 
+L-BFGS
+~~~~~~
+
+Limited-memory quasi-Newton optimizer with a ``maxstep`` trust region. Each
+:func:`~nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_step` call consumes exactly
+one force evaluation: it updates the curvature history, restarts if the
+direction stops descending, and takes one bounded step. A whole batch relaxes
+in one stream of kernel launches.
+
+Like FIRE2, it owns no tolerance and has no terminal status -- testing
+convergence and ending the loop are the caller's, which keeps the stopping
+rule where the physics is. There is no line search and no energy input either:
+the step length is bounded by ``maxstep`` rather than chosen by comparing
+energies, so a model whose forces are not the gradient of its energy relaxes
+just as well.
+
+.. autoclass:: nvalchemiops.dynamics.optimizers.lbfgs.LBFGSState
+   :members:
+.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_prepare_state
+.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_step
+.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_update
+.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_prepare_step
+.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_apply_step
+.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_reduce
+
+.. note::
+   Call :func:`~nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_prepare_state`
+   once to allocate, initialize and validate the whole state; calling it again
+   is how you reset. The arrays remain yours -- :class:`LBFGSState` is a plain
+   dataclass, so you can build one from buffers you already own and check it
+   with :meth:`LBFGSState.validate`.
+
+Variable-cell relaxation maps positions and cell into a single packed
+coordinate vector, so the two-loop recursion couples them automatically. Build
+``ext_atom_ptr`` and ``ext_batch_idx`` with
+:func:`~nvalchemiops.dynamics.utils.cell_filter.extend_atom_ptr` and
+:func:`~nvalchemiops.batch_utils.atom_ptr_to_batch_idx`, which handle ragged
+batches as well as uniform ones.
+
+.. autoclass:: nvalchemiops.dynamics.optimizers.lbfgs.LBFGSCellState
+   :members:
+.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_prepare_cell_state
+.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_set_reference_cell
+.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_cell_kappa
+.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_pack_cell
+.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_unpack_cell
+.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_step_coord_cell
+.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_cell_trust_region
+
 FIRE2
 ~~~~~
 
