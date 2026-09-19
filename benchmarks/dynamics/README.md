@@ -283,9 +283,15 @@ To add new benchmarks:
 
 Compares L-BFGS with FIRE2 by **force evaluations to convergence**,
 which is the cost that dominates relaxation driven by a machine-learned
-potential. The system is a Lennard-Jones cluster in reduced units; FIRE2's
-timestep and step cap are swept per case and its best configuration reported,
-so the comparison is not skewed by an untuned baseline.
+potential. The system is an argon cluster relaxed through the package's own LJ
+kernels and neighbor list, with the LJ and neighbor parameters taken from the
+shared `potential` config block — the same path the other dynamics benchmarks
+use. FIRE2's timestep is swept per case and its best converged configuration
+reported, so the comparison is not skewed by an untuned baseline.
+
+Evaluation counts vary by roughly 20% run to run: neighbor-list rebuild
+ordering perturbs the forces in their last bits, and both optimizers amplify
+that into a different trajectory. Read the aggregate, not a single row.
 
 ```bash
 python -m benchmarks.dynamics.benchmark_lbfgs --output-dir ./benchmark_results

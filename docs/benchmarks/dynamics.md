@@ -176,29 +176,34 @@ energy input, so the step costs exactly one force evaluation. As with FIRE2,
 convergence is the caller's, so the figures below are optimizer time only.
 
 **Evaluations to convergence.** The metric that matters when a machine-learned
-potential dominates the optimizer's own kernel time. Lennard-Jones clusters in
-reduced units, `fmax <= 1e-4`, five starting geometries per size, with FIRE2
-swept over 12 hyperparameter settings per case and its *best* converged result
-used as the baseline:
+potential dominates the optimizer's own kernel time. Argon clusters of 13, 32
+and 55 atoms, relaxed through the package's own LJ kernels with the shared
+`potential` parameters, `fmax <= 1e-4 eV/Å`, five starting geometries per size,
+with FIRE2's timestep swept over 8 settings per case and its *best* converged
+result used as the baseline:
 
 | Metric | L-BFGS / FIRE2 |
 | --- | --- |
-| Geometric mean, cases where both converged | **0.169** |
-| Worst individual case | **0.557** |
-| Cases where both converged | 12 / 15 |
-| L-BFGS converged | 15 / 15 |
+| Geometric mean | **0.59** |
+| Worst individual case | **1.1 – 1.4** |
+| Cases where both converged | 15 / 15 |
 
-The aggregate covers only the 12 cases where **both** optimizers converged.
-FIRE2 hit the 20,000-evaluation cap in the other 3; its true count there is at
-least the cap, so those ratios (0.033, 0.039, 0.065) bound rather than measure,
-and averaging them in would report a number that is partly not a measurement.
-It would also flatter L-BFGS: including them moves the headline from 0.169 to
-0.129, a 31% improvement drawn entirely from cases that establish no ratio.
-L-BFGS converged in all 15.
+**L-BFGS needs about 1.7x fewer force evaluations on average, and it loses
+outright in the worst case.** The worst ratio exceeded 1.0 in all three repeat
+runs (1.08, 1.17, 1.41), so on this workload L-BFGS is not uniformly better —
+it is better on average.
 
-The worst individual ratio, 0.557, comes from a case where FIRE2 converged and
-is the conservative headline. Note that these are LJ clusters, not a
-machine-learned potential on a realistic materials workload.
+Evaluation counts vary by roughly 20% run to run. Neighbor-list rebuild
+ordering perturbs the forces in their last bits, and both optimizers amplify
+that into a different trajectory, so read the aggregate rather than a single
+cell.
+
+These numbers are much less favourable than the `0.129` this table carried
+previously. That figure came from a NumPy all-pairs potential in reduced units
+rather than the configured workload, evaluated with a FIRE2 timestep grid tuned
+for those units — which handicapped the baseline once the units changed. Both
+are fixed: the forces now come from the package kernels, and the grid runs to
+3.0 fs because FIRE2 keeps improving well past the value the MD blocks use.
 
 **Per-step optimizer cost.** Optimizer time only, single system, fp64, harmonic
 potential, measured with `--gates`:
@@ -219,16 +224,17 @@ At ten thousand atoms the step is launch-bound and CUDA-graph replay recovers
 about 2.9x; from one hundred thousand upwards the device work dominates and
 replay recovers nothing.
 
-That cost is not the reason to choose L-BFGS, and it is not usually the cost
-that matters. The model must cost more than roughly 30, 70 and 250 microseconds
-per evaluation at these three sizes for L-BFGS to win end to end — a
-machine-learned potential exceeds that by one to two orders of magnitude, and
-L-BFGS needs several times fewer evaluations. Prefer FIRE2 when the force
-evaluation is genuinely cheap.
+**Break-even is no longer comfortable.** The model must cost more than roughly
+0.5, 1.2 and 3.7 milliseconds per evaluation at these three sizes for L-BFGS to
+win end to end. A machine-learned potential is milliseconds per evaluation, so
+at ten thousand atoms L-BFGS wins clearly, at a hundred thousand it is close,
+and at a million it needs a genuinely expensive model.
 
-(These break-even figures follow from the evaluation ratio above, so correcting
-that ratio raised them: they were quoted as 10, 20 and 95 microseconds when the
-aggregate still included the capped cases.)
+That follows arithmetically from the evaluation ratio: at `0.129` L-BFGS saved
+almost 8x the evaluations and could absorb a 10x step cost easily; at `0.59` it
+saves 1.7x, so the model has to be far more expensive to pay for the same step.
+Prefer FIRE2 when the force evaluation is cheap, when the system is large, or
+when worst-case behaviour matters more than the average.
 
 **Memory.** With `P` degrees of freedom, `M` systems and history size `m`:
 

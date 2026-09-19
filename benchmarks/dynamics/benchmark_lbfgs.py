@@ -20,10 +20,16 @@ machine-learned potential: the model call dominates the optimizer's own kernel
 time by orders of magnitude, so the optimizer that reaches a given force
 tolerance in fewer evaluations wins regardless of its per-step cost.
 
-The test system is a Lennard-Jones cluster in reduced units, which is cheap to
-evaluate on the host and anharmonic enough to be a fair test. FIRE2's timestep
-and step cap are swept and its **best** configuration is reported, so the
-baseline is not handicapped by a poor choice of hyperparameters.
+The test system is an argon cluster relaxed with the package's own Lennard-Jones
+kernels behind a warp-native neighbor list, using the LJ and neighbor
+parameters from the shared ``potential`` config block -- the same path the
+other dynamics benchmarks take. FIRE2's timestep is swept and its **best**
+converged configuration is reported, so the baseline is not handicapped by a
+poor choice of hyperparameters.
+
+Evaluation counts vary by roughly 20% run to run: neighbor-list rebuild
+ordering perturbs the forces in the last bits, and both optimizers amplify that
+into a different trajectory. Read the aggregate, not a single cell.
 
 Passing ``--gates`` instead measures the per-step cost commitments: optimizer
 time against FIRE2 at scale, what CUDA-graph replay recovers, and the model
@@ -41,7 +47,7 @@ Usage
                                                   [--force-tol 1e-4]
                                                   [--output-dir DIR]
                                                   [--device cuda:0]
-    python -m benchmarks.dynamics.benchmark_lbfgs --gates [--eval-ratio 0.169]
+    python -m benchmarks.dynamics.benchmark_lbfgs --gates [--eval-ratio 0.59]
                                                           [--device cuda:0]
 
 ``--device`` matches ``benchmark_fire2.py``, since this runner reports a ratio
@@ -60,7 +66,11 @@ import numpy as np
 import torch
 import warp as wp
 
-from benchmarks.dynamics.shared_utils import load_config
+from benchmarks.dynamics.shared_utils import (
+    MDSystem,
+    create_random_cluster,
+    load_config,
+)
 from nvalchemiops.dynamics.optimizers import (
     fire2_step,
     lbfgs_prepare_state,
@@ -80,20 +90,75 @@ GATE_HISTORY = 6
 #: still runs standalone.
 EVAL_CAP = 20000
 CONFIG_PATH = pathlib.Path(__file__).with_name("benchmark_config.yaml")
-FIRE2_SWEEP = {"dt_start": [0.005, 0.01, 0.02, 0.05], "maxstep": [0.05, 0.1, 0.2]}
+#: FIRE2 grid, in the real units the shared ``potential`` block implies (fs,
+#: angstrom). ``tmax`` is swept as a multiple of ``dt_start`` because FIRE2
+#: clamps its timestep to ``tmax``, so a large starting step with a small cap
+#: is not a distinct configuration. ``maxstep`` is *not* swept: measured on
+#: this workload it never binds, so sweeping it only multiplies the runtime.
+FIRE2_SWEEP = {
+    "dt_start": [0.15, 0.25, 0.4, 0.6, 1.0, 1.5, 2.0, 3.0],
+    "tmax_factor": [2.0],
+}
+FIRE2_MAXSTEP = 0.25
+
+#: Argon, matching the ``potential`` block of the shared config and the
+#: defaults the other dynamics benchmarks use.
+DEFAULT_POTENTIAL = {"epsilon": 0.0104, "sigma": 3.40, "cutoff": 8.5, "skin": 1.0}
 
 
-def lennard_jones(positions):
-    """All-pairs Lennard-Jones in reduced units (epsilon = sigma = 1)."""
-    delta = positions[:, None, :] - positions[None, :, :]
-    r2 = (delta**2).sum(-1)
-    np.fill_diagonal(r2, np.inf)
-    inv6 = r2**-3
-    inv12 = inv6**2
-    per_atom_energy = 0.5 * (4.0 * (inv12 - inv6)).sum(1)
-    coefficient = 24.0 * (2.0 * inv12 - inv6) / r2
-    forces = (coefficient[..., None] * delta).sum(1)
-    return per_atom_energy, forces
+def make_cluster(num_atoms, potential, device, seed=0):
+    """An argon cluster evaluated by the package's own LJ kernels.
+
+    Uses :class:`~benchmarks.dynamics.shared_utils.MDSystem`, as the other
+    dynamics benchmarks do, so the forces come from
+    :func:`nvalchemiops.interactions.lj_energy_forces` behind a warp-native
+    neighbor list and the LJ and neighbor parameters are the ones in the
+    shared ``potential`` config block.
+
+    The cluster sits in a large non-periodic box, so it stays a cluster: the
+    box only has to exceed the cluster diameter plus the cutoff.
+
+    Parameters
+    ----------
+    num_atoms : int
+        Atoms in the cluster.
+    potential : dict
+        The ``potential`` block: ``epsilon``, ``sigma``, ``cutoff``, ``skin``.
+    device : str
+        CUDA device.
+    seed : int
+        Starting geometry.
+
+    Returns
+    -------
+    MDSystem
+    """
+    sigma = potential["sigma"]
+    cutoff = potential["cutoff"]
+    # Spread the atoms so the cluster is loose enough to be a real relaxation
+    # rather than a rattle, and keep them apart enough to avoid the r^-12 wall.
+    radius = 0.75 * sigma * num_atoms ** (1.0 / 3.0) + sigma
+    positions = create_random_cluster(
+        num_atoms, radius=radius, min_dist=0.9 * sigma, seed=seed
+    )
+    box = 2.0 * (radius + cutoff) + potential["skin"]
+    return MDSystem(
+        positions=torch.tensor(positions, dtype=torch.float64, device=device),
+        cell=torch.eye(3, dtype=torch.float64, device=device) * box,
+        pbc=torch.zeros(3, dtype=torch.bool, device=device),
+        epsilon=potential["epsilon"],
+        sigma=sigma,
+        cutoff=cutoff,
+        skin=potential["skin"],
+        device=device,
+    )
+
+
+def _fmax(system):
+    """Largest per-atom force magnitude, read back from the device."""
+    return float(
+        np.linalg.norm(wp.to_torch(system.wp_forces).cpu().numpy(), axis=1).max()
+    )
 
 
 def _allocate_lbfgs_state(num_dofs, num_systems, history_size, device):
@@ -110,44 +175,45 @@ def _allocate_lbfgs_buffers_torch(num_dofs, num_systems, history_size, device):
     return prepare(num_dofs, num_systems, history_size=history_size, device=device)
 
 
-def run_lbfgs(start, force_tol, history_size=6, maxstep=0.2, eval_cap=EVAL_CAP,
+def run_lbfgs(system, force_tol, history_size=6, maxstep=0.2, eval_cap=EVAL_CAP,
               device=DEFAULT_DEVICE):  # fmt: skip
-    """Relax with L-BFGS; return (evaluations, converged, final max force)."""
-    num_atoms = start.shape[0]
-    positions = wp.array(start.copy(), dtype=wp.vec3d, device=device)
-    forces = wp.zeros(num_atoms, dtype=wp.vec3d, device=device)
+    """Relax ``system`` with L-BFGS; return (evaluations, converged, max force).
+
+    ``system`` is consumed: its positions are relaxed in place.
+    """
+    num_atoms = system.num_atoms
     batch_idx = wp.zeros(num_atoms, dtype=wp.int32, device=device)
     state = _allocate_lbfgs_state(num_atoms, 1, history_size, device)
 
     # Deliberately the same shape as ``run_fire2`` below: both optimizers
     # leave convergence to the caller, so both loops test then step.
     for n_evals in range(1, eval_cap + 1):
-        f = lennard_jones(positions.numpy())[1]
-        current = np.linalg.norm(f, axis=1).max()
+        system.compute_forces()
+        current = _fmax(system)
         if current <= force_tol:
             return n_evals, True, current
-        forces.assign(f)
         lbfgs_step(
-            positions=positions,
-            forces=forces,
+            positions=system.wp_positions,
+            forces=system.wp_forces,
             state=state,
             batch_idx=batch_idx,
             maxstep=maxstep,
         )
         wp.synchronize()
-    final = np.linalg.norm(lennard_jones(positions.numpy())[1], axis=1).max()
-    return eval_cap, False, final
+    system.compute_forces()
+    return eval_cap, False, _fmax(system)
 
 
 def run_fire2(
-    start, force_tol, dt_start=0.02, maxstep=0.05, tmax=0.1, eval_cap=EVAL_CAP,
+    system, force_tol, dt_start=0.02, maxstep=0.05, tmax=0.1, eval_cap=EVAL_CAP,
     device=DEFAULT_DEVICE,
 ):  # fmt: skip
-    """Relax with FIRE2; return (evaluations, converged, final max force)."""
-    num_atoms = start.shape[0]
-    positions = wp.array(start.copy(), dtype=wp.vec3d, device=device)
+    """Relax ``system`` with FIRE2; return (evaluations, converged, max force).
+
+    ``system`` is consumed: its positions are relaxed in place.
+    """
+    num_atoms = system.num_atoms
     velocities = wp.zeros(num_atoms, dtype=wp.vec3d, device=device)
-    forces = wp.zeros(num_atoms, dtype=wp.vec3d, device=device)
     batch_idx = wp.zeros(num_atoms, dtype=wp.int32, device=device)
     alpha = wp.array(np.array([0.09]), dtype=wp.float64, device=device)
     dt = wp.array(np.array([dt_start]), dtype=wp.float64, device=device)
@@ -155,15 +221,14 @@ def run_fire2(
     scratch = [wp.zeros(1, dtype=wp.float64, device=device) for _ in range(4)]
 
     for n_evals in range(1, eval_cap + 1):
-        f = lennard_jones(positions.numpy())[1]
-        current = np.linalg.norm(f, axis=1).max()
+        system.compute_forces()
+        current = _fmax(system)
         if current <= force_tol:
             return n_evals, True, current
-        forces.assign(f)
         fire2_step(
-            positions,
+            system.wp_positions,
             velocities,
-            forces,
+            system.wp_forces,
             batch_idx,
             alpha,
             dt,
@@ -182,31 +247,35 @@ def run_fire2(
     return eval_cap, False, current
 
 
-def best_fire2(start, force_tol, sweep=None, eval_cap=EVAL_CAP,
+def best_fire2(make_system, force_tol, sweep=None, eval_cap=EVAL_CAP,
                device=DEFAULT_DEVICE):  # fmt: skip
     """FIRE2 at its best over a small hyperparameter sweep.
 
     Comparing against an untuned baseline would overstate the result; FIRE2 is
     sensitive to its timestep on this system. The grid comes from the
     ``lbfgs.fire2_sweep`` block of the config file.
+
+    ``make_system`` is called once per sweep entry, because each relaxation
+    consumes the system it is given.
     """
     sweep = FIRE2_SWEEP if sweep is None else sweep
     best = (eval_cap + 1, False, np.inf, None)
     for dt_start in sweep["dt_start"]:
-        for maxstep in sweep["maxstep"]:
+        for factor in sweep.get("tmax_factor", [2.0]):
             evals, converged, final = run_fire2(
-                start,
+                make_system(),
                 force_tol,
                 dt_start=dt_start,
-                maxstep=maxstep,
+                maxstep=FIRE2_MAXSTEP,
+                tmax=factor * dt_start,
                 eval_cap=eval_cap,
                 device=device,
             )
             if converged and evals < best[0]:
-                best = (evals, converged, final, (dt_start, maxstep))
+                best = (evals, converged, final, (dt_start, factor))
     if best[3] is None:
         evals, converged, final = run_fire2(
-            start, force_tol, eval_cap=eval_cap, device=device
+            make_system(), force_tol, eval_cap=eval_cap, device=device
         )
         return evals, converged, final, "none converged"
     return best
@@ -389,7 +458,7 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50, device=DEFAULT_DEVICE):
 
 
 def _load_lbfgs_config(path):
-    """Read the ``lbfgs`` and ``output`` blocks of the benchmark config.
+    """Read the ``lbfgs``, ``output`` and ``potential`` blocks of the config.
 
     The benchmark is useful standalone, so a missing file or section is not an
     error -- the module-level fallbacks apply instead.
@@ -397,13 +466,18 @@ def _load_lbfgs_config(path):
     Returns
     -------
     tuple of dict
-        The ``lbfgs`` section and the shared ``output`` section.
+        The ``lbfgs`` section, and the shared ``output`` and ``potential``
+        sections. The potential falls back to the argon parameters the other
+        dynamics benchmarks default to, so this still runs standalone.
     """
     path = pathlib.Path(path)
-    if not path.is_file():
-        return {}, {}
-    document = load_config(path)
-    return document.get("lbfgs", {}) or {}, document.get("output", {}) or {}
+    document = load_config(path) if path.is_file() else {}
+    potential = {**DEFAULT_POTENTIAL, **(document.get("potential", {}) or {})}
+    return (
+        document.get("lbfgs", {}) or {},
+        document.get("output", {}) or {},
+        potential,
+    )
 
 
 def _resolve_output_dir(explicit, output_config, config_path):
@@ -476,7 +550,7 @@ def main():
     )
     args = parser.parse_args()
 
-    config, output_config = _load_lbfgs_config(args.config)
+    config, output_config, potential = _load_lbfgs_config(args.config)
     gates_config = config.get("gates", {}) or {}
     output_dir = _resolve_output_dir(args.output_dir, output_config, args.config)
 
@@ -509,7 +583,7 @@ def main():
                 [10_000, 100_000, 1_000_000],
                 section=gates_config,
             ),
-            pick(args.eval_ratio, "eval_ratio", 0.169, section=gates_config),
+            pick(args.eval_ratio, "eval_ratio", 0.59, section=gates_config),
             gates_config.get("warmup", 10),
             gates_config.get("runs", 50),
             device=args.device,
@@ -550,14 +624,16 @@ def main():
     )
     for num_atoms in sizes:
         for seed in range(seeds):
-            rng = np.random.default_rng(seed)
-            start = rng.normal(size=(num_atoms, 3)) * (num_atoms ** (1 / 3)) * 0.55
+
+            def make_system(n=num_atoms, s=seed):
+                return make_cluster(n, potential, args.device, seed=s)
 
             lb_evals, lb_ok, lb_force = run_lbfgs(
-                start, force_tol, history_size, maxstep, eval_cap, args.device
-            )
+                make_system(), force_tol, history_size, maxstep, eval_cap,
+                args.device,
+            )  # fmt: skip
             f2_evals, f2_ok, f2_force, f2_cfg = best_fire2(
-                start, force_tol, sweep, eval_cap, args.device
+                make_system, force_tol, sweep, eval_cap, args.device
             )
             ratio = lb_evals / f2_evals
             rows.append(
