@@ -20,7 +20,7 @@ Particle-mesh DFT-D3(BJ) with no real-space cutoff on the dispersion sum. See
 :mod:`nvalchemiops.interactions.dispersion._fourier_dftd3` for the method.
 
 This layer supplies the two Fourier transforms, which Warp cannot perform on a full mesh, and
-drives the Warp launchers through ``warp.jax_experimental.jax_kernel``. Kernels run with
+drives the Warp launchers through ``warp.jax_kernel``. Kernels run with
 ``enable_backward=False``, matching :func:`~nvalchemiops.jax.interactions.dispersion.dftd3`:
 forces and the virial are explicit outputs, not derivatives of the energy.
 
@@ -39,7 +39,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import warp as wp
-from warp.jax_experimental import jax_kernel
+from warp import jax_kernel
 
 from nvalchemiops.interactions.dispersion._c6_decomposition import (
     decompose_c6_reference,
@@ -64,9 +64,15 @@ __all__ = [
     "fourier_dftd3",
 ]
 
-# warp.jax_experimental.ffi hardcodes a block dimension of 256, so any kernel whose launch is
-# expressed per atom must be given that as its second launch dimension.
-JAX_BLOCK_DIM = 256
+_ELEMENTWISE_BLOCK_DIM = 256
+"""Threads per block for the passes with no block-level cooperation.
+
+These kernels are one thread per atom, or per atom and stencil point, with no reduction
+across the block, so the size only has to keep the machine busy. Stated explicitly rather
+than left to ``jax_kernel``'s default, which is this same value but not part of its
+contract. The coordination-number and reciprocal-space passes reduce within a block and set
+their own sizes.
+"""
 
 
 def _normalize_dtype(dtype):
@@ -101,8 +107,12 @@ _coordination_kernels = _make_jax_kernels(
 _coordination_matrix_kernels = _make_jax_kernels(
     _fd3_cn_matrix_kernel_overload, 1, block_dim=FD3_CN_BLOCK_SIZE
 )
-_coefficient_kernels = _make_jax_kernels(_fd3_coefficients_kernel_overload, 2)
-_spread_kernels = _make_jax_kernels(_fd3_spread_kernel_overload, 1, ["mesh"])
+_coefficient_kernels = _make_jax_kernels(
+    _fd3_coefficients_kernel_overload, 2, block_dim=_ELEMENTWISE_BLOCK_DIM
+)
+_spread_kernels = _make_jax_kernels(
+    _fd3_spread_kernel_overload, 1, ["mesh"], block_dim=_ELEMENTWISE_BLOCK_DIM
+)
 _kspace_kernels = _make_jax_kernels(
     _fd3_kspace_kernel_overload,
     3,
@@ -110,12 +120,20 @@ _kspace_kernels = _make_jax_kernels(
     block_dim=FD3_KSPACE_BLOCK_SIZE,
 )
 _gather_kernels = _make_jax_kernels(
-    _fd3_gather_and_force_kernel_overload, 2, ["d_energy_d_c6", "forces"]
+    _fd3_gather_and_force_kernel_overload,
+    2,
+    ["d_energy_d_c6", "forces"],
+    block_dim=_ELEMENTWISE_BLOCK_DIM,
 )
 _self_energy_kernels = _make_jax_kernels(
-    _fd3_self_energy_kernel_overload, 2, ["energy", "d_energy_d_c6"]
+    _fd3_self_energy_kernel_overload,
+    2,
+    ["energy", "d_energy_d_c6"],
+    block_dim=_ELEMENTWISE_BLOCK_DIM,
 )
-_sensitivity_kernels = _make_jax_kernels(_fd3_cn_sensitivity_kernel_overload, 1)
+_sensitivity_kernels = _make_jax_kernels(
+    _fd3_cn_sensitivity_kernel_overload, 1, block_dim=_ELEMENTWISE_BLOCK_DIM
+)
 _cn_forces_kernels = _make_jax_kernels(
     _fd3_cn_forces_kernel_overload,
     2,
