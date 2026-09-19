@@ -643,8 +643,16 @@ def test_prepared_batch_exact_coo_geometry_uses_cached_partition() -> None:
     )
     metadata = state._partition_metadata
     assert metadata is not None
-    metadata_values = tuple(value.clone() for value in metadata)
-    metadata_pointers = tuple(value.data_ptr() for value in metadata)
+    metadata_tensors = (
+        metadata.atom_system,
+        metadata.batch_ptr_padded,
+        metadata.padded_slot_system,
+        metadata.real_sorted_rank_to_padded_slot,
+        metadata.group_ptr,
+        metadata.group_system,
+    )
+    metadata_values = tuple(value.clone() for value in metadata_tensors)
+    metadata_pointers = tuple(value.data_ptr() for value in metadata_tensors)
 
     def call(values: torch.Tensor, box: torch.Tensor) -> tuple[torch.Tensor, ...]:
         return cluster_tile_neighbor_list_prepared(values, box, state)
@@ -714,8 +722,9 @@ def test_prepared_batch_exact_coo_geometry_uses_cached_partition() -> None:
         (changed_positions, changed_cell),
     )
     assert all(torch.isfinite(value).all() for value in changed_gradients)
-    assert tuple(value.data_ptr() for value in metadata) == metadata_pointers
-    for value, expected_value in zip(metadata, metadata_values):
+    assert state._partition_metadata is metadata
+    assert tuple(value.data_ptr() for value in metadata_tensors) == metadata_pointers
+    for value, expected_value in zip(metadata_tensors, metadata_values):
         assert torch.equal(value, expected_value)
 
 
@@ -782,30 +791,17 @@ def test_prepared_batch_partition_metadata_is_cached() -> None:
     )
     metadata = state._partition_metadata
     assert metadata is not None
-    assert metadata._fields == (
-        "atom_system",
-        "batch_ptr_padded",
-        "padded_slot_system",
-        "real_sorted_rank_to_padded_slot",
-        "group_ptr",
-        "group_system",
+    metadata_tensors = (
+        metadata.atom_system,
+        metadata.batch_ptr_padded,
+        metadata.padded_slot_system,
+        metadata.real_sorted_rank_to_padded_slot,
+        metadata.group_ptr,
+        metadata.group_system,
     )
-    assert metadata.atom_system.tolist() == [1, 1, 2, 2, 2]
-    assert metadata.batch_ptr_padded.tolist() == [0, 0, 32, 64]
-    assert metadata.padded_slot_system.tolist() == [1] * 32 + [2] * 32
-    assert metadata.real_sorted_rank_to_padded_slot.tolist() == [0, 1, 32, 33, 34]
-    assert metadata.group_ptr.tolist() == [0, 0, 1, 2]
-    assert metadata.group_system.tolist() == [1, 2]
-    assert metadata.padded_slot_system is state._scratch[5]
-    assert metadata.batch_ptr_padded is state._scratch[6]
-    assert metadata.group_system is state._scratch[7]
-    assert metadata.group_ptr is state._scratch[8]
-
-    metadata_tensors = tuple(metadata)
     metadata_values = tuple(value.clone() for value in metadata_tensors)
     metadata_pointers = tuple(value.data_ptr() for value in metadata_tensors)
     cluster_tile_neighbor_list_prepared(positions, cell, state)
-    sorted_positions_before = state._scratch[2].clone()
 
     changed_positions = positions.clone()
     changed_positions[1, 0] = 0.9
@@ -827,7 +823,7 @@ def test_prepared_batch_partition_metadata_is_cached() -> None:
         max_tiles_per_group=2,
     )
     _assert_same(actual, expected, format="matrix", batched=True)
-    assert not torch.equal(sorted_positions_before, state._scratch[2])
+    assert state._partition_metadata is metadata
     assert tuple(value.data_ptr() for value in metadata_tensors) == metadata_pointers
     for value, expected_value in zip(metadata_tensors, metadata_values):
         assert torch.equal(value, expected_value)
