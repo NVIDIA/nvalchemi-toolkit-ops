@@ -328,6 +328,32 @@ def _resolve_mesh(mesh_dimensions, mesh_spacing, cells, spline_order):
     )
 
 
+def _reject_out_of_range_batch(batch_idx, num_systems):
+    """Reject batch indices that point at no system.
+
+    Out of range, an atom lands on a mesh slab belonging to no system and its contribution
+    vanishes with no error: a whole-system ``batch_idx`` of 5 against one system returns
+    exactly zero energy. The shapes above are static and always checked; these are values, so
+    reading them is impossible while tracing and the check is skipped under ``jax.jit``, as in
+    :func:`_reject_half_filled`.
+    """
+    if batch_idx.shape[0] == 0:
+        return
+    try:
+        lowest = int(np.asarray(batch_idx).min())
+        highest = int(np.asarray(batch_idx).max())
+    except (
+        jax.errors.ConcretizationTypeError,
+        jax.errors.TracerArrayConversionError,
+    ):
+        return
+    if lowest < 0 or highest >= num_systems:
+        raise ValueError(
+            f"batch_idx values span [{lowest}, {highest}], outside "
+            f"[0, {num_systems}) for {num_systems} system(s)."
+        )
+
+
 def _reject_uncovered_species(species_index, numbers):
     """Reject atoms whose element the decomposition does not cover.
 
@@ -579,9 +605,20 @@ def fourier_dftd3(
     n_atoms = positions.shape[0]
     if num_systems is None:
         num_systems = cells.shape[0]
+    elif num_systems != cells.shape[0]:
+        raise ValueError(
+            f"num_systems is {num_systems} but cell holds {cells.shape[0]} system(s). "
+            "The energy and virial are shaped from num_systems while the mesh is built "
+            "from the cells, so a mismatch silently pads the result with zeros."
+        )
     if batch_idx is None:
         batch_idx = jnp.zeros(n_atoms, dtype=jnp.int32)
+    elif batch_idx.shape[0] != n_atoms:
+        raise ValueError(
+            f"batch_idx has {batch_idx.shape[0]} entries but there are {n_atoms} atoms."
+        )
     batch_idx = batch_idx.astype(jnp.int32)
+    _reject_out_of_range_batch(batch_idx, num_systems)
     numbers = numbers.astype(jnp.int32)
     if fill_value is None:
         fill_value = n_atoms

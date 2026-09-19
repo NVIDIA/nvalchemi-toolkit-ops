@@ -1457,3 +1457,50 @@ class TestRankChunking:
         system = _system("cuda:0")
         with pytest.raises(ValueError, match="at least 1"):
             _evaluate(system, rank_chunk_size=0)
+
+
+@pytest.mark.gpu
+class TestBatchArgumentValidation:
+    """Batch arguments must be checked before they can corrupt the result.
+
+    An out-of-range index sends an atom to a mesh slab owned by no system, and its whole
+    contribution disappears: a uniform ``batch_idx`` of 5 against one system returned
+    exactly zero energy with no error at all.
+    """
+
+    def test_num_systems_must_match_the_cells(self):
+        """Otherwise the outputs are padded with zeros for systems that do not exist."""
+        system = _system("cuda:0")
+        with pytest.raises(ValueError, match="but cell holds"):
+            _evaluate(system, num_systems=3)
+
+    def test_batch_idx_must_cover_every_atom(self):
+        """A short batch_idx used to fail deep inside a broadcast."""
+        system = _system("cuda:0")
+        short = torch.zeros(
+            system["positions"].shape[0] // 2, dtype=torch.int32, device="cuda:0"
+        )
+        with pytest.raises(ValueError, match="entries but there are"):
+            _evaluate(system, batch_idx=short)
+
+    @pytest.mark.parametrize("value", [-1, 5])
+    def test_batch_idx_must_be_in_range(self, value):
+        """Both ends matter: negative and past the last system."""
+        system = _system("cuda:0")
+        out_of_range = torch.full(
+            (system["positions"].shape[0],), value, dtype=torch.int32, device="cuda:0"
+        )
+        with pytest.raises(ValueError, match="outside"):
+            _evaluate(system, batch_idx=out_of_range)
+
+    def test_a_valid_single_system_batch_is_accepted(self):
+        """The guard must not reject the ordinary case it is wrapped around."""
+        system = _system("cuda:0")
+        explicit = torch.zeros(
+            system["positions"].shape[0], dtype=torch.int32, device="cuda:0"
+        )
+        with_batch = _evaluate(system, batch_idx=explicit, num_systems=1)[0]
+        default = _evaluate(system)[0]
+        np.testing.assert_allclose(
+            with_batch.cpu().numpy(), default.cpu().numpy(), rtol=1e-12
+        )

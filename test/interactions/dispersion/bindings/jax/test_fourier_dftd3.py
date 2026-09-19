@@ -719,6 +719,69 @@ class TestJit:
 
 
 @pytest.mark.gpu
+class TestBatchArgumentValidation:
+    """Batch arguments must be checked before they can corrupt the result.
+
+    An out-of-range index sends an atom to a mesh slab owned by no system and its whole
+    contribution disappears: a uniform ``batch_idx`` of 5 against one system returned exactly
+    zero energy with no error.
+    """
+
+    @staticmethod
+    def _call(parts, **extra):
+        return fourier_dftd3(
+            jnp.asarray(parts["positions"]),
+            jnp.asarray(parts["numbers"], dtype=jnp.int32),
+            **DAMPING,
+            fd3_params=parts["params"],
+            cell=jnp.asarray(parts["cell"]),
+            r_cut=R_CUT,
+            mesh_dimensions=MESH,
+            neighbor_matrix=jnp.asarray(parts["matrix"], dtype=jnp.int32),
+            neighbor_matrix_shifts=jnp.asarray(parts["matrix_shifts"], dtype=jnp.int32),
+            **extra,
+        )
+
+    def test_num_systems_must_match_the_cells(self):
+        """Static, so this is caught while tracing too."""
+        parts = _single(5.0, 0)
+        with pytest.raises(ValueError, match="but cell holds"):
+            self._call(parts, num_systems=3)
+
+    def test_batch_idx_must_cover_every_atom(self):
+        """A short batch_idx used to fail inside a broadcast."""
+        parts = _single(5.0, 0)
+        with pytest.raises(ValueError, match="entries but there are"):
+            self._call(parts, batch_idx=jnp.zeros(parts["n_atoms"] // 2, jnp.int32))
+
+    @pytest.mark.parametrize("value", [-1, 5])
+    def test_batch_idx_must_be_in_range(self, value):
+        """Both ends matter: negative and past the last system."""
+        parts = _single(5.0, 0)
+        with pytest.raises(ValueError, match="outside"):
+            self._call(parts, batch_idx=jnp.full((parts["n_atoms"],), value, jnp.int32))
+
+    def test_the_static_check_survives_tracing(self):
+        """``num_systems`` is a shape, so ``jax.jit`` does not hide the mismatch."""
+        parts = _single(5.0, 0)
+        with pytest.raises(ValueError, match="but cell holds"):
+            jax.jit(lambda p: self._call(parts, num_systems=3))(
+                jnp.asarray(parts["positions"])
+            )
+
+    def test_a_valid_single_system_batch_is_accepted(self):
+        """The guard must not reject the ordinary case it is wrapped around."""
+        parts = _single(5.0, 0)
+        explicit = self._call(
+            parts, batch_idx=jnp.zeros(parts["n_atoms"], jnp.int32), num_systems=1
+        )[0]
+        default = self._call(parts)[0]
+        np.testing.assert_allclose(
+            np.asarray(explicit), np.asarray(default), rtol=1e-12
+        )
+
+
+@pytest.mark.gpu
 class TestNeighbourArgumentValidation:
     """Each format needs its companion arrays, and says so at the API boundary.
 

@@ -1200,9 +1200,31 @@ def fourier_dftd3(
     n_atoms = positions.size(0)
     if num_systems is None:
         num_systems = cells.size(0)
+    elif num_systems != cells.size(0):
+        raise ValueError(
+            f"num_systems is {num_systems} but cell holds {cells.size(0)} system(s). "
+            "The energy and virial are shaped from num_systems while the mesh is built "
+            "from the cells, so a mismatch silently pads the result with zeros."
+        )
     if batch_idx is None:
         batch_idx = torch.zeros(n_atoms, dtype=torch.int32, device=positions.device)
+    elif batch_idx.numel() != n_atoms:
+        raise ValueError(
+            f"batch_idx has {batch_idx.numel()} entries but there are {n_atoms} atoms."
+        )
     batch_idx = batch_idx.to(dtype=torch.int32)
+    # Out of range, an atom lands on a mesh slab belonging to no system and its contribution
+    # disappears without trace -- a whole-system batch_idx of 5 returns exactly zero energy.
+    # Reading the bounds back synchronises, so this is skipped under compile and capture, as
+    # the species and half-filled checks are.
+    if not torch.compiler.is_compiling() and not _capturing() and n_atoms > 0:
+        lowest = int(batch_idx.min())
+        highest = int(batch_idx.max())
+        if lowest < 0 or highest >= num_systems:
+            raise ValueError(
+                f"batch_idx values span [{lowest}, {highest}], outside "
+                f"[0, {num_systems}) for {num_systems} system(s)."
+            )
 
     params = fd3_params.to(device=positions.device, dtype=positions.dtype)
     species_index = params.species_map[numbers.long()].to(torch.int32)
