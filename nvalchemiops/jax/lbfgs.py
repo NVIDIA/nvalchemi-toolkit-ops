@@ -807,13 +807,23 @@ def lbfgs_cell_kappa(
     Returns
     -------
     jax.Array, shape (num_systems,)
+
+    Notes
+    -----
+    ``kappa`` is divided into the cell force, so it must never be zero. A
+    system with no atoms is treated as having one, since with nothing to
+    balance the cell against the scale is arbitrary anyway.
     """
     if cell_force_scale <= 0.0:
         raise ValueError(f"cell_force_scale must be positive; got {cell_force_scale}")
     dtype = jnp.float64 if dtype is None else jnp.dtype(dtype).type
     if dtype not in _CELL_BODIES:
         raise ValueError(f"dtype must be float32 or float64; got {dtype}")
-    return jnp.asarray(n_particles, dtype) * dtype(cell_force_scale)
+    # Clamp an empty system to one atom, matching the Warp kernel: kappa is
+    # divided into the cell force and the unpacked cell, so a zero makes both
+    # infinite. A system with no atoms still owns two cell degrees of freedom.
+    counts = jnp.maximum(jnp.asarray(n_particles), 1)
+    return counts.astype(dtype) * dtype(cell_force_scale)
 
 
 def lbfgs_step_coord_cell(

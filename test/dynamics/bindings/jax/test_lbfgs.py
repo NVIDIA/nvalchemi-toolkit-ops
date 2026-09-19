@@ -767,6 +767,24 @@ class TestLBFGSJaxCoordCell:
         np.testing.assert_array_equal(jitted[1], eager[1])
         np.testing.assert_array_equal(jitted[2], eager[2])
 
+    def test_zero_atom_system_gets_a_positive_kappa(self, _gpu):
+        """An empty system must not produce ``kappa = 0``.
+
+        ``kappa`` is divided into the cell force and the unpacked cell, so a
+        zero turns both infinite. All three layers share one contract: a system
+        with no atoms counts as one, since with nothing to balance the cell
+        against the scale is arbitrary. This is asserted per layer rather than
+        cross-layer because Torch and JAX are independent extras.
+        """
+        from nvalchemiops.jax.lbfgs import lbfgs_cell_kappa
+
+        kappa = np.asarray(
+            lbfgs_cell_kappa(jnp.asarray([4, 0, 3], jnp.int32), cell_force_scale=0.25)
+        )
+        assert (kappa > 0.0).all(), f"non-positive kappa: {kappa}"
+        assert np.isfinite(1.0 / kappa).all()
+        np.testing.assert_allclose(kappa, [1.0, 0.25, 0.75])
+
     def test_reference_cell_is_an_independent_copy(self, _gpu):
         """``ref_cell`` must not share a buffer with the caller's ``cell``.
 

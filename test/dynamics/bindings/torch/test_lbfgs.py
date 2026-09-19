@@ -738,6 +738,27 @@ class TestLBFGSTorchCoordCell:
         )
 
     @pytest.mark.parametrize("device", DEVICES)
+    def test_zero_atom_system_gets_a_positive_kappa(self, device):
+        """An empty system must not produce ``kappa = 0``.
+
+        ``kappa`` is divided into the cell force and the unpacked cell, so a
+        zero turns both infinite. All three layers share one contract: a system
+        with no atoms counts as one, since with nothing to balance the cell
+        against the scale is arbitrary. This is asserted per layer rather than
+        cross-layer because Torch and JAX are independent extras.
+        """
+        from nvalchemiops.torch.lbfgs import lbfgs_cell_kappa
+
+        counts = torch.tensor([4, 0, 3], dtype=torch.int32, device=device)
+        kappa = torch.zeros(3, dtype=torch.float64, device=device)
+        lbfgs_cell_kappa(counts, kappa, cell_force_scale=0.25)
+        torch.cuda.synchronize()
+
+        k = kappa.cpu().numpy()
+        assert (k > 0.0).all(), f"non-positive kappa: {k}"
+        np.testing.assert_allclose(k, [1.0, 0.25, 0.75])
+
+    @pytest.mark.parametrize("device", DEVICES)
     def test_relaxes_cell_and_coordinates(self, device):
         """A compressed cell expands to the target volume while atoms relax."""
         from nvalchemiops.torch.lbfgs import lbfgs_step_coord_cell
