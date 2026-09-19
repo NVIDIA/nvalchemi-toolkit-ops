@@ -195,22 +195,49 @@ indistinguishable counts. Counts vary by roughly 20% run to run, since
 neighbor-list rebuild ordering perturbs the forces in their last bits, so read
 the aggregate rather than a single cell.
 
-**Scope.** This is the *reproducible* benchmark — everything it needs is in
-this repository and it runs in minutes on one GPU. It is not a stand-in for a
-periodic solid under a machine-learned potential, which is what L-BFGS is
-meant for here: a smooth pair potential on a 55-atom cluster exercises neither
-stiff crystalline curvature nor a force field that is not the gradient of its
-own energy. The comparison that would settle that is a relaxation over OMat24
-structures with an OMat24-trained potential, which is not reproduced here —
-both are behind a gated third-party licence and would add a large optional
-dependency. Those figures remain the reviewer's own measurement, cited rather
-than reproduced.
+**Scope.** The above is the *reproducible* benchmark — everything it needs is
+in this repository and it runs in minutes on one GPU. It is not the setting
+L-BFGS is meant for: a smooth pair potential on a 55-atom cluster exercises
+neither stiff crystalline curvature nor a force field that is not the gradient
+of its own energy. That setting is measured separately below.
 
 These numbers are much less favourable than the `0.129` this table carried
 previously, which came from a NumPy all-pairs potential in reduced units with
 a FIRE2 grid tuned for those units. Both are fixed: forces now come from the
 package kernels, and the grid runs to 3.0 fs because FIRE2 keeps improving
 past the value the MD blocks use.
+
+#### OMat24 structures under a machine-learned potential
+
+The realistic comparison, and the one that matters for the intended use.
+120 periodic inorganic structures from OMat24 (3 to 88 atoms, 57 elements),
+relaxed at fixed cell with **MACE-MPA-0** to `fmax <= 0.05 eV/Å`, float64.
+Each structure is relaxed independently, FIRE2's timestep swept per structure
+over 0.5–4.0 fs with its best converged run as the baseline, both optimizers
+sharing the same `maxstep = 0.2 Å`. Evaluations are counted at the potential
+itself, so neither loop can undercount. Reproduce with
+`benchmark_lbfgs_omat24.py`; the per-structure record is
+`lbfgs_vs_fire2_omat24.csv`.
+
+| Metric | L-BFGS / FIRE2 |
+| --- | --- |
+| Geometric mean | **0.34** |
+| Median | **0.32** |
+| 90th percentile | 0.55 |
+| Worst individual case | 1.50 |
+| Structures where L-BFGS used fewer evaluations | **118 / 120** |
+| Cases where both converged | 120 / 120 |
+
+**L-BFGS needs about 2.9x fewer force evaluations — 3,259 against 9,005 in
+total, a 64% saving.** This is a much stronger result than the Lennard-Jones
+clusters give, and the gap is the point: the LJ workload understates L-BFGS
+because a smooth pair potential is close to the regime where FIRE2's inertial
+dynamics already work well. On stiff, anisotropic crystalline curvature the
+quasi-Newton direction earns its history. The advantage is stable across size
+— geometric means of 0.42, 0.29 and 0.36 for 3–9, 10–24 and 25–88 atoms.
+
+It is still not uniform: two structures out of 120 cost more, the worst at
+1.50. Read the aggregate.
 
 **Per-step optimizer cost.** Optimizer time only, single system, harmonic
 potential, `--gates`. The table is a transcription of the
@@ -239,12 +266,12 @@ handful. At ten thousand atoms the step is launch-bound and CUDA-graph replay
 recovers about 2.9x; from a hundred thousand upwards device work dominates and
 replay recovers nothing.
 
-**Break-even is no longer comfortable.** The model must cost more than roughly
-0.5, 1.1 and 3.7 ms per evaluation at these three sizes for L-BFGS to win end
-to end. That follows from the evaluation ratio: at `0.129` it saved almost 8x
-the evaluations and could absorb a 10x step cost; at `0.59` it saves 1.7x.
-Prefer FIRE2 when the force evaluation is cheap, when the system is large, or
-when worst-case behaviour matters more than the average.
+**Break-even.** The model must cost more than roughly 0.5, 1.1 and 3.7 ms per
+evaluation at these three sizes for L-BFGS to win end to end, given the LJ
+evaluation ratio of `0.59`. At the OMat24 ratio of `0.34` the bar is far
+lower, and MACE-MPA-0 on these structures already clears it. Prefer FIRE2 when
+the force evaluation is cheap, when the system is large enough that the step
+itself dominates, or when worst-case behaviour matters more than the average.
 
 **Memory.** With `P` degrees of freedom, `M` systems and history size `m`:
 
