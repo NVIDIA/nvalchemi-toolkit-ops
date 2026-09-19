@@ -22,6 +22,7 @@ come after it, so the failure path needs coverage of its own.
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -89,3 +90,59 @@ class TestSweepFailureHandling:
         for row in results:
             assert row["success"] is False
             assert row["error_type"] == expected_type
+
+
+class TestConfiguration:
+    """The YAML config has to be read, not bypassed.
+
+    Building the config inline in ``main`` left ``benchmark_fourier_config.yaml`` unused,
+    including its ``output.base_dir``, so results went nowhere unless ``--output-dir`` was
+    passed and the configured cutoffs were silently ignored.
+    """
+
+    def test_the_shipped_config_parses_and_carries_what_the_sweep_needs(self):
+        """A missing key here would fall back to a default and hide the config."""
+        config = benchmark_module.load_yaml_config(benchmark_module.DEFAULT_CONFIG)
+        parameters = config["parameters"]
+        for key in (
+            "density",
+            "atom_counts",
+            "real_space_cutoffs",
+            "timing_runs",
+            "warmup_runs",
+        ):
+            assert key in parameters, key
+        assert config["output"]["base_dir"]
+
+    def test_cli_flags_override_the_config_only_when_given(self):
+        """An unset flag must leave the configured value alone."""
+        args = argparse.Namespace(
+            atom_counts=None, density=0.25, timing_runs=None, warmup_runs=None
+        )
+        config = benchmark_module.merge_cli_overrides(
+            {"parameters": {"atom_counts": [7], "density": 0.1, "timing_runs": 4}}, args
+        )
+        assert config["parameters"]["atom_counts"] == [7]
+        assert config["parameters"]["timing_runs"] == 4
+        assert config["parameters"]["density"] == 0.25
+
+    @pytest.mark.gpu
+    def test_results_land_in_the_configured_base_dir(self, monkeypatch, tmp_path):
+        """Without ``--output-dir`` the sweep uses ``output.base_dir``.
+
+        Driven through the failure path so no kernel runs: what is under test is where the
+        CSV is written, not what is in it.
+        """
+        error = RuntimeError("synthetic failure")
+        monkeypatch.setattr(
+            benchmark_module, "benchmark_fourier_d3", _raise(error), raising=True
+        )
+        monkeypatch.setattr(
+            benchmark_module, "benchmark_real_space_d3", _raise(error), raising=True
+        )
+        config = dict(CONFIG)
+        config["output"] = {"base_dir": str(tmp_path)}
+
+        benchmark_module.run_from_config(config, None)
+
+        assert list(tmp_path.glob("fd3_*/fd3-random-system-size-scaling.csv"))

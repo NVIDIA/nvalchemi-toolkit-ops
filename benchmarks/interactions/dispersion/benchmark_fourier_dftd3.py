@@ -47,9 +47,11 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+from benchmarks.config import load_yaml_config  # noqa: E402
 from benchmarks.suite_utils import (  # noqa: E402
     build_failure_result,
     build_result,
+    create_run_directory,
     cuda_timed_runs,
     failure_error_type,
     make_row_meta,
@@ -57,10 +59,13 @@ from benchmarks.suite_utils import (  # noqa: E402
     save_results,
 )
 
+DEFAULT_CONFIG = Path(__file__).with_name("benchmark_fourier_config.yaml")
+
 __all__ = [
     "benchmark_fourier_d3",
     "dry_run_from_config",
     "main",
+    "merge_cli_overrides",
     "parse_args",
     "run_from_config",
 ]
@@ -372,6 +377,11 @@ def run_from_config(config: dict, output_dir, backend: str = "torch") -> list[di
                     )
                 )
 
+    if output_dir is None:
+        # No --output-dir, so use the directory the config names, as the other runners do.
+        base_dir = config.get("output", {}).get("base_dir")
+        if base_dir is not None:
+            output_dir = create_run_directory(base_dir, prefix="fd3")
     if output_dir is not None:
         save_results(
             results,
@@ -398,27 +408,43 @@ def parse_args():
     """Command-line interface."""
     parser = argparse.ArgumentParser(description="FourierD3 benchmarks")
     parser.add_argument(
-        "--output-dir", default=None, help="Directory for the results CSV."
+        "--config",
+        default=str(DEFAULT_CONFIG),
+        help="YAML configuration. Defaults to the one beside this script.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Directory for the results CSV. Defaults to output.base_dir from the config.",
     )
     parser.add_argument("--atom-counts", type=int, nargs="+", default=None)
-    parser.add_argument("--density", type=float, default=0.1)
-    parser.add_argument("--timing-runs", type=int, default=10)
-    parser.add_argument("--warmup-runs", type=int, default=3)
+    parser.add_argument("--density", type=float, default=None)
+    parser.add_argument("--timing-runs", type=int, default=None)
+    parser.add_argument("--warmup-runs", type=int, default=None)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
+
+
+def merge_cli_overrides(config: dict, args: argparse.Namespace) -> dict:
+    """Apply the CLI flags that were actually given on top of the YAML config."""
+    parameters = config.setdefault("parameters", {})
+    for flag, key in (
+        ("atom_counts", "atom_counts"),
+        ("density", "density"),
+        ("timing_runs", "timing_runs"),
+        ("warmup_runs", "warmup_runs"),
+    ):
+        value = getattr(args, flag, None)
+        if value is not None:
+            parameters[key] = value
+    return config
 
 
 def main():
     """Run the sweep and print a summary table."""
     args = parse_args()
-    config = {
-        "parameters": {
-            "atom_counts": args.atom_counts or [500, 2000, 8000, 20000],
-            "density": args.density,
-            "timing_runs": args.timing_runs,
-            "warmup_runs": args.warmup_runs,
-        }
-    }
+    config = merge_cli_overrides(load_yaml_config(args.config), args)
+    density = config["parameters"].get("density", 0.1)
     if args.dry_run:
         for case in dry_run_from_config(config):
             print(case)
@@ -426,7 +452,7 @@ def main():
 
     results = run_from_config(config, args.output_dir)
     print(
-        f"\ndensity {args.density} atoms/A^3;  times in ms. 'eval' is the reported metric: "
+        f"\ndensity {density} atoms/A^3;  times in ms. 'eval' is the reported metric: "
         f"the kernel style\nguide keeps neighbour-list construction out of kernel timing. "
         f"'nlist' and 'total' are shown\nbecause the list a method needs is part of what a "
         f"converged correction costs.\n"
