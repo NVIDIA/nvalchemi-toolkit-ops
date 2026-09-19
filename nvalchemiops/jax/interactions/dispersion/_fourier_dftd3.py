@@ -20,7 +20,12 @@ Particle-mesh DFT-D3(BJ) with no real-space cutoff on the dispersion sum. See
 :mod:`nvalchemiops.interactions.dispersion._fourier_dftd3` for the method.
 
 This layer supplies the two Fourier transforms, which Warp cannot perform on a full mesh, and
-drives the Warp launchers through ``warp.jax_kernel``. Kernels run with
+drives the Warp launchers through ``warp.jax_kernel``. The coordination-number and
+reciprocal-space passes reduce within a block, which Warp's CPU backend cannot do, so their
+launches narrow to one thread per item there; see :func:`_blocked`. Results agree between
+backends.
+
+Kernels run with
 ``enable_backward=False``, matching :func:`~nvalchemiops.jax.interactions.dispersion.dftd3`:
 forces and the virial are explicit outputs, not derivatives of the energy.
 
@@ -367,28 +372,31 @@ def _resolve_mesh(mesh_dimensions, mesh_spacing, cells, spline_order):
     )
 
 
-def _reject_cpu_backend(positions):
-    """Refuse a CPU backend, where this binding does not compute the right answer.
+def _blocked(call, gpu_block, reference):
+    """Run a block-per-item kernel with the block width its backend can actually provide.
 
-    The coordination-number and reciprocal-space passes are launched one block per atom and
-    per bin, with the threads of a block striding through the work and reducing at the end.
-    Warp's CPU backend has no block launches, so the stride runs with a single active thread
-    and most of each atom's neighbours are never visited. The Warp launchers used by the
-    Torch binding collapse the stride to one on CPU for exactly this reason; ``jax_kernel``
-    is given the block size at registration, so this path cannot do the same and would
-    otherwise return a plausible energy that is several percent wrong.
+    These passes launch one block per atom or per bin, stride the block's threads through
+    that item's work and reduce at the end. Warp's CPU backend has no block launches, so a
+    wide launch there leaves every partial sum but the first unwritten and the result is
+    silently wrong. One thread per item, striding by one, is correct on CPU and is what the
+    Warp launchers behind the Torch binding already do.
+
+    Two paths, because neither alone covers both. Eagerly ``reference`` carries a concrete
+    device and the width follows it directly, which is the only thing that respects an
+    explicit ``jax.device_put``. While tracing it carries nothing, so both widths are staged
+    and :func:`jax.lax.platform_dependent` resolves the choice at lowering, where the
+    compilation target is known.
+
+    ``call`` takes a block width and returns the kernel's outputs.
     """
     try:
-        platforms = {device.platform for device in positions.devices()}
+        platforms = {device.platform for device in reference.devices()}
     except (AttributeError, jax.errors.ConcretizationTypeError):
-        platforms = {jax.default_backend()}
-    if platforms and not platforms & {"gpu", "cuda", "rocm"}:
-        raise RuntimeError(
-            f"FourierD3's JAX binding requires a GPU backend, got {sorted(platforms)}. "
-            "Its block-per-atom passes need real block launches, which Warp's CPU backend "
-            "does not provide; on CPU the result would be silently wrong rather than slow. "
-            "The Torch binding runs correctly on either device."
+        return jax.lax.platform_dependent(
+            cpu=lambda: call(1),
+            default=lambda: call(gpu_block),
         )
+    return call(gpu_block if platforms & {"gpu", "cuda", "rocm"} else 1)
 
 
 def _reject_out_of_range_batch(batch_idx, num_systems):
@@ -667,7 +675,6 @@ def fourier_dftd3(
                 "unit_shifts is required: FourierD3 is periodic, so every neighbour needs "
                 "its lattice image."
             )
-    _reject_cpu_backend(positions)
     if cell is None:
         raise ValueError("cell is required: FourierD3 evaluates a periodic sum.")
     if spline_order < 2 or spline_order > 6:
@@ -760,31 +767,38 @@ def fourier_dftd3(
 
     # Pass 1: coordination numbers.
     if matrix_given:
-        (coordination,) = _coordination_matrix_kernels[dtype](
-            positions,
-            numbers,
-            neighbours,
-            cartesian_shifts,
-            covalent_radii,
-            float(r_cut),
-            int(fill_value),
-            int(FD3_CN_BLOCK_SIZE),
-            launch_dims=(n_atoms, FD3_CN_BLOCK_SIZE),
-            output_dims={"coord_num": (n_atoms,)},
-        )
+
+        def _coordination(block):
+            return _coordination_matrix_kernels[dtype](
+                positions,
+                numbers,
+                neighbours,
+                cartesian_shifts,
+                covalent_radii,
+                float(r_cut),
+                int(fill_value),
+                int(block),
+                launch_dims=(n_atoms, block),
+                output_dims={"coord_num": (n_atoms,)},
+            )
+
     else:
-        (coordination,) = _coordination_kernels[dtype](
-            positions,
-            numbers,
-            neighbours,
-            jnp.asarray(neighbor_ptr, dtype=jnp.int32),
-            cartesian_shifts,
-            covalent_radii,
-            float(r_cut),
-            int(FD3_CN_BLOCK_SIZE),
-            launch_dims=(n_atoms, FD3_CN_BLOCK_SIZE),
-            output_dims={"coord_num": (n_atoms,)},
-        )
+
+        def _coordination(block):
+            return _coordination_kernels[dtype](
+                positions,
+                numbers,
+                neighbours,
+                jnp.asarray(neighbor_ptr, dtype=jnp.int32),
+                cartesian_shifts,
+                covalent_radii,
+                float(r_cut),
+                int(block),
+                launch_dims=(n_atoms, block),
+                output_dims={"coord_num": (n_atoms,)},
+            )
+
+    (coordination,) = _blocked(_coordination, FD3_CN_BLOCK_SIZE, positions)
 
     # Pass 2: separable coefficients.
     c6, dc6_dcn = _coefficient_kernels[dtype](
@@ -842,35 +856,43 @@ def fourier_dftd3(
         # Pass 5: reciprocal-space contraction. The bin count is padded so that a block of the
         # reduction never spans two systems.
         num_bins = mesh_nx * mesh_ny * (mesh_nz // 2 + 1)
-        padded_bins = -(-num_bins // FD3_KSPACE_BLOCK_SIZE) * FD3_KSPACE_BLOCK_SIZE
         energy_init = jnp.zeros(num_systems, dtype=dtype)
         virial_init = jnp.zeros((num_systems, 3, 3), dtype=dtype)
         cotangent_init = jnp.zeros_like(mesh_fft_pairs)
-        energy, cotangent, virial = _kspace_kernels[dtype](
-            mesh_fft_pairs,
-            k_matrix,
-            moduli[0],
-            moduli[1],
-            moduli[2],
-            volumes,
-            sqrt_q,
-            eigs_chunk,
-            float(s6),
-            float(s8),
-            float(a1),
-            float(a2),
-            int(mesh_nx),
-            int(mesh_ny),
-            int(mesh_nz),
-            int(num_bins),
-            int(FD3_KSPACE_BLOCK_SIZE),
-            int(n_species),
-            int(slot_count),
-            bool(compute_virial),
-            energy_init,
-            cotangent_init,
-            virial_init,
-            launch_dims=(num_systems, padded_bins),
+
+        def _contract(block):
+            # Padded so that a block of the reduction never spans two systems. At a width of
+            # one there is nothing to pad.
+            padded_bins = -(-num_bins // block) * block
+            return _kspace_kernels[dtype](
+                mesh_fft_pairs,
+                k_matrix,
+                moduli[0],
+                moduli[1],
+                moduli[2],
+                volumes,
+                sqrt_q,
+                eigs_chunk,
+                float(s6),
+                float(s8),
+                float(a1),
+                float(a2),
+                int(mesh_nx),
+                int(mesh_ny),
+                int(mesh_nz),
+                int(num_bins),
+                int(block),
+                int(n_species),
+                int(slot_count),
+                bool(compute_virial),
+                energy_init,
+                cotangent_init,
+                virial_init,
+                launch_dims=(num_systems, padded_bins),
+            )
+
+        energy, cotangent, virial = _blocked(
+            _contract, FD3_KSPACE_BLOCK_SIZE, positions
         )
 
         # Pass 6: inverse transform, unnormalised so that it is the adjoint of the forward one.
@@ -934,39 +956,46 @@ def fourier_dftd3(
         output_dims={"d_energy_d_cn": (n_atoms,)},
     )
     if matrix_given:
-        forces_total, virial_total = _cn_forces_matrix_kernels[dtype](
-            sensitivity,
-            positions,
-            numbers,
-            neighbours,
-            cartesian_shifts,
-            covalent_radii,
-            float(r_cut),
-            int(fill_value),
-            batch_idx,
-            int(FD3_CN_BLOCK_SIZE),
-            bool(compute_virial),
-            forces_total,
-            virial_total,
-            launch_dims=(n_atoms, FD3_CN_BLOCK_SIZE),
-        )
+
+        def _chain(block):
+            return _cn_forces_matrix_kernels[dtype](
+                sensitivity,
+                positions,
+                numbers,
+                neighbours,
+                cartesian_shifts,
+                covalent_radii,
+                float(r_cut),
+                int(fill_value),
+                batch_idx,
+                int(block),
+                bool(compute_virial),
+                forces_total,
+                virial_total,
+                launch_dims=(n_atoms, block),
+            )
+
     else:
-        forces_total, virial_total = _cn_forces_kernels[dtype](
-            sensitivity,
-            positions,
-            numbers,
-            neighbours,
-            jnp.asarray(neighbor_ptr, dtype=jnp.int32),
-            cartesian_shifts,
-            covalent_radii,
-            float(r_cut),
-            batch_idx,
-            int(FD3_CN_BLOCK_SIZE),
-            bool(compute_virial),
-            forces_total,
-            virial_total,
-            launch_dims=(n_atoms, FD3_CN_BLOCK_SIZE),
-        )
+
+        def _chain(block):
+            return _cn_forces_kernels[dtype](
+                sensitivity,
+                positions,
+                numbers,
+                neighbours,
+                jnp.asarray(neighbor_ptr, dtype=jnp.int32),
+                cartesian_shifts,
+                covalent_radii,
+                float(r_cut),
+                batch_idx,
+                int(block),
+                bool(compute_virial),
+                forces_total,
+                virial_total,
+                launch_dims=(n_atoms, block),
+            )
+
+    forces_total, virial_total = _blocked(_chain, FD3_CN_BLOCK_SIZE, positions)
 
     # 1.0 unless tracing found an element the decomposition misses; see
     # :func:`_reject_uncovered_species`.

@@ -1160,3 +1160,83 @@ class TestParameterValidation:
         fields[name] = fields[name].reshape(shape)
         with pytest.raises(ValueError, match="must be .D"):
             FourierD3Parameters(**fields)
+
+
+@pytest.mark.gpu
+class TestBackendGuard:
+    """The block-per-atom passes must give the same answer on either backend.
+
+    They reduce within a block, which Warp's CPU backend cannot do; the launches narrow to
+    one thread per item there. Getting that wrong does not fail, it returns a plausible
+    energy several percent out, so the backends are compared directly.
+    """
+
+    @staticmethod
+    def _call(parts, arrays):
+        positions, numbers, cell, matrix, shifts = arrays
+        return fourier_dftd3(
+            positions,
+            numbers,
+            **DAMPING,
+            fd3_params=parts["params"],
+            cell=cell,
+            r_cut=R_CUT,
+            mesh_dimensions=MESH,
+            neighbor_matrix=matrix,
+            neighbor_matrix_shifts=shifts,
+        )[0]
+
+    @staticmethod
+    def _arrays(parts, device=None):
+        arrays = (
+            jnp.asarray(parts["positions"]),
+            jnp.asarray(parts["numbers"], dtype=jnp.int32),
+            jnp.asarray(parts["cell"]),
+            jnp.asarray(parts["matrix"], dtype=jnp.int32),
+            jnp.asarray(parts["matrix_shifts"], dtype=jnp.int32),
+        )
+        if device is None:
+            return arrays
+        return tuple(jax.device_put(array, device) for array in arrays)
+
+    def test_cpu_and_gpu_agree(self):
+        """Eager placement is concrete, so the width follows the arrays' own device."""
+        parts = _single(5.0, 0)
+        cpu = jax.devices("cpu")[0]
+        on_gpu = self._call(parts, self._arrays(parts))
+        on_cpu = self._call(parts, self._arrays(parts, cpu))
+        np.testing.assert_allclose(np.asarray(on_cpu), np.asarray(on_gpu), rtol=1e-12)
+
+    def test_cpu_and_gpu_agree_under_jit(self):
+        """A tracer carries no device, so lowering picks the width instead.
+
+        This is the case a concrete check cannot reach: arrays placed on CPU and then
+        jitted while the process default is GPU.
+        """
+        parts = _single(5.0, 0)
+        cpu = jax.devices("cpu")[0]
+        traced = jax.jit(lambda *a: self._call(parts, a))
+        on_gpu = traced(*self._arrays(parts))
+        on_cpu = traced(*self._arrays(parts, cpu))
+        np.testing.assert_allclose(np.asarray(on_cpu), np.asarray(on_gpu), rtol=1e-12)
+
+    def test_gpu_placement_is_accepted(self):
+        """The guard must not reject the backend the binding is built for."""
+        parts = _single(5.0, 0)
+        energy = self._call(parts, self._arrays(parts))
+        assert np.isfinite(np.asarray(energy)).all()
+
+    def test_tracing_does_not_guess_the_backend(self):
+        """A tracer carries no placement, so the check steps aside rather than guess.
+
+        Guessing from ``jax.default_backend()`` was wrong in both directions: it let a
+        CPU-placed jit call through, and would have rejected a GPU jit call whenever the
+        process default happened to be CPU. This pins the ordinary jitted GPU path working.
+        """
+        parts = _single(5.0, 0)
+        arrays = self._arrays(parts)
+        traced = jax.jit(lambda *a: self._call(parts, a))(*arrays)
+        assert np.isfinite(np.asarray(traced)).all()
+        np.testing.assert_allclose(
+            np.asarray(traced), np.asarray(self._call(parts, arrays)), rtol=1e-12
+        )
