@@ -746,12 +746,14 @@ def compiled_neighbors(current_positions, current_cell):
 ```
 
 Prepared execution supports single and batched tile, matrix, dual-cutoff
-matrix, and nonselective exact COO output. It preserves the corresponding
-direct function's return tuple. Matrix and tile results borrow state-owned
-storage and a later call overwrites them. Exact COO topology, shifts, and
-requested geometry are newly sized on each call. Reusable capacity buffers are
-available as `state.neighbor_vectors` and `state.neighbor_distances`; only the
-active prefix matching the returned pair count is defined.
+matrix topology, and nonselective exact COO output. Dual-cutoff prepared state
+does not support vectors or distances. Preparation rejects that combination
+before allocating storage. The other formats preserve the corresponding direct
+function's return tuple. Matrix and tile results borrow state-owned storage and
+a later call overwrites them. Exact COO topology, shifts, and requested geometry
+are newly sized on each call. Reusable capacity buffers are available as
+`state.neighbor_vectors` and `state.neighbor_distances`; only the active prefix
+matching the returned pair count is defined.
 
 Preparation avoids reallocating the fixed scratch and output buffers, but
 execution may still allocate temporary tensors and exact-sized COO results. It

@@ -43,6 +43,8 @@
 - Differentiable Torch cluster-tile matrix geometry is returned independently
   from reusable output buffers. Supplied buffers receive detached value
   snapshots and remain non-differentiable storage.
+- Prepared Torch cluster-tile state now rejects dual-cutoff vectors or
+  distances during preparation instead of failing later during execution.
 - Torch cluster-tile compact COO outputs are now trimmed to the actual pair
   count. Requested distances and vectors are returned with the topology, so
   callers no longer need to provide geometry buffers. If reusable buffers are

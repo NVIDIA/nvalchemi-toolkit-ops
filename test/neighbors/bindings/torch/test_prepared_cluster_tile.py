@@ -21,6 +21,7 @@ from dataclasses import FrozenInstanceError, is_dataclass
 import pytest
 import torch
 
+import nvalchemiops.torch.neighbors.prepared_cluster_tile as prepared_module
 from nvalchemiops.torch.neighbors import (
     ClusterTileState,
     batch_cluster_tile_neighbor_list,
@@ -412,7 +413,7 @@ def test_prepared_geometry_and_gradients(batched: bool) -> None:
 @pytest.mark.gpu
 @pytest.mark.slow
 def test_prepared_exact_coo_geometry_is_aligned() -> None:
-    """State-owned COO geometry follows each exact returned pair."""
+    """Prepared COO returns exact geometry and updates reusable buffers."""
     positions = torch.tensor(
         [[0.0, 0.0, 0.0], [0.4, 0.0, 0.0], [3.0, 0.0, 0.0]],
         dtype=torch.float32,
@@ -433,8 +434,7 @@ def test_prepared_exact_coo_geometry_is_aligned() -> None:
 
     @torch.compile(fullgraph=True)
     def run(values: torch.Tensor, box: torch.Tensor) -> tuple[torch.Tensor, ...]:
-        topology = cluster_tile_neighbor_list_prepared(values, box, state)
-        return (*topology, state.neighbor_distances, state.neighbor_vectors)
+        return cluster_tile_neighbor_list_prepared(values, box, state)
 
     grad_positions = positions.clone().requires_grad_(True)
     grad_cell = cell.clone().requires_grad_(True)
@@ -447,11 +447,51 @@ def test_prepared_exact_coo_geometry_is_aligned() -> None:
     )
     torch.testing.assert_close(vectors[:count], expected)
     torch.testing.assert_close(distances[:count], expected.norm(dim=-1))
+    torch.testing.assert_close(state.neighbor_vectors[:count], expected)
+    torch.testing.assert_close(state.neighbor_distances[:count], expected.norm(dim=-1))
+    assert vectors.data_ptr() != state.neighbor_vectors.data_ptr()
+    assert distances.data_ptr() != state.neighbor_distances.data_ptr()
     gradients = torch.autograd.grad(
-        distances[:count].sum(),
+        distances.sum(),
         (grad_positions, grad_cell),
     )
     assert all(torch.isfinite(value).all() for value in gradients)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize(
+    ("return_vectors", "return_distances"),
+    [(True, False), (False, True), (True, True)],
+)
+def test_prepared_rejects_dual_cutoff_geometry_before_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+    return_vectors: bool,
+    return_distances: bool,
+) -> None:
+    """Dual-cutoff geometry fails before prepared scratch is allocated."""
+    positions, cell, _ = _inputs(False)
+
+    def unexpected_allocation(*args, **kwargs):
+        pytest.fail("dual-cutoff geometry reached scratch allocation")
+
+    monkeypatch.setattr(
+        prepared_module,
+        "allocate_cluster_tile_list",
+        unexpected_allocation,
+    )
+    with pytest.raises(
+        ValueError,
+        match="cutoff2 cannot be combined with return_vectors or return_distances",
+    ):
+        prepare_cluster_tile(
+            positions,
+            1.2,
+            cell,
+            format="matrix",
+            cutoff2=1.6,
+            return_vectors=return_vectors,
+            return_distances=return_distances,
+        )
 
 
 @pytest.mark.gpu

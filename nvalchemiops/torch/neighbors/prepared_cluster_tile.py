@@ -197,7 +197,8 @@ def prepare_cluster_tile(
     max_pairs : int, optional
         Exact COO capacity. Defaults to ``N * max_neighbors``.
     cutoff2 : float, optional
-        Secondary cutoff for matrix output.
+        Secondary cutoff for matrix topology output. Dual-cutoff geometry is
+        not supported.
     return_vectors, return_distances : bool, default=False
         Allocate reusable geometry buffers.
     max_tiles_per_group : int, optional
@@ -227,6 +228,10 @@ def prepare_cluster_tile(
         raise ValueError("cutoff2 must be positive")
     if cutoff2 is not None and format != "matrix":
         raise ValueError("cutoff2 is supported only with format='matrix'")
+    if cutoff2 is not None and (return_vectors or return_distances):
+        raise ValueError(
+            "cutoff2 cannot be combined with return_vectors or return_distances"
+        )
     if format == "tile" and (return_vectors or return_distances):
         raise ValueError("tile output does not support vectors or distances")
 
