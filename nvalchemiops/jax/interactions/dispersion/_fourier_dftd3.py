@@ -33,6 +33,7 @@ D3 parameters are conventionally atomic units, so ``r_cut`` has no default.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import partial
 
 import jax
 import jax.numpy as jnp
@@ -129,6 +130,11 @@ _cn_forces_matrix_kernels = _make_jax_kernels(
 )
 
 
+@partial(
+    jax.tree_util.register_dataclass,
+    data_fields=["rcov", "sqrt_q", "cnref", "v_q", "eigs", "species_map"],
+    meta_fields=["max_relative_error"],
+)
 @dataclass
 class FourierD3Parameters:
     """Separable dispersion coefficients for the species in a system.

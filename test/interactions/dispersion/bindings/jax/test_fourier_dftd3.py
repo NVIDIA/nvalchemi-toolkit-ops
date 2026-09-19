@@ -719,6 +719,55 @@ class TestJit:
 
 
 @pytest.mark.gpu
+class TestParametersUnderJit:
+    """``FourierD3Parameters`` has to survive being a traced argument.
+
+    A plain dataclass is one opaque leaf, so ``jax.jit`` rejects it as an argument and the
+    caller is forced to close over it -- which retraces whenever the parameters change.
+    """
+
+    def test_it_is_a_registered_pytree(self):
+        """Six array fields flatten out; the tolerance stays static metadata."""
+        parts = _single(5.0, 0)
+        params = parts["params"]
+        leaves, treedef = jax.tree_util.tree_flatten(params)
+        assert len(leaves) == 6
+
+        restored = jax.tree_util.tree_unflatten(treedef, leaves)
+        assert restored.rank == params.rank
+        assert restored.n_species == params.n_species
+        assert restored.max_relative_error == params.max_relative_error
+
+    def test_it_can_be_passed_as_a_runtime_argument(self):
+        """Passing the container into a jitted call must match closing over it."""
+        parts = _single(5.0, 0)
+        positions = jnp.asarray(parts["positions"])
+
+        def evaluate(positions, params):
+            return fourier_dftd3(
+                positions,
+                jnp.asarray(parts["numbers"], dtype=jnp.int32),
+                **DAMPING,
+                fd3_params=params,
+                cell=jnp.asarray(parts["cell"]),
+                r_cut=R_CUT,
+                mesh_dimensions=MESH,
+                neighbor_matrix=jnp.asarray(parts["matrix"], dtype=jnp.int32),
+                neighbor_matrix_shifts=jnp.asarray(
+                    parts["matrix_shifts"], dtype=jnp.int32
+                ),
+                compute_virial=True,
+            )
+
+        runtime = jax.jit(evaluate)(positions, parts["params"])
+        closure = jax.jit(lambda x: evaluate(x, parts["params"]))(positions)
+        for from_argument, from_closure in zip(runtime, closure):
+            np.testing.assert_allclose(
+                np.asarray(from_argument), np.asarray(from_closure), rtol=1e-12
+            )
+
+
+@pytest.mark.gpu
 class TestEnergyIsNotDifferentiable:
     """The documented contract: forces are an output, not an autodiff result.
 
