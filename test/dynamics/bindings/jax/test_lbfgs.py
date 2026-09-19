@@ -30,7 +30,9 @@ Tests cover:
 from __future__ import annotations
 
 import dataclasses
+import functools
 import os
+import warnings
 
 import numpy as np
 import pytest
@@ -231,6 +233,57 @@ class TestLBFGSJax:
         np.testing.assert_array_equal(
             np.asarray(candidate.state.iteration),
             np.asarray(reference.state.iteration),
+        )
+
+    def test_graph_mode_replays_instead_of_recapturing(self, _gpu):
+        """One graph for many steps, not one graph per step.
+
+        The other graph-mode tests compare numbers, and this regression
+        produces *correct* numbers -- it just captures afresh every call, so
+        graph mode becomes pure overhead. Nothing else here would notice.
+
+        Measured from a cleared cache so the separation is unambiguous:
+        replaying leaves a handful of entries however many steps are taken,
+        while capturing per step leaves one per step (up to warp's own cache
+        cap). No machine-tuned constant, because 1 and 20 are not close.
+
+        What this does *not* claim to bound is memory: warp caps the cache at
+        ``graph_cache_max`` itself, so captures cannot grow without limit
+        whatever this code does.
+        """
+        from nvalchemiops.jax.lbfgs import _get_callable
+
+        call = _get_callable(jnp.float64, "warp")
+        # Fail here rather than silently measuring nothing if warp renames it.
+        assert hasattr(call, "graph_cache_size") and hasattr(call, "captures"), (
+            "warp no longer exposes its graph cache; this test measures "
+            "nothing until it is pointed at the replacement"
+        )
+
+        d = JaxDriver(_cluster(6, seed=31))
+        batch_idx = d.batch_idx
+
+        @functools.partial(jax.jit, donate_argnums=(0, 1))
+        def relax_step(positions, state, forces):
+            return lbfgs_step_coord(positions, forces, state, batch_idx, maxstep=0.5)
+
+        steps = 20
+        # Start from empty, so this measures these steps rather than whatever
+        # earlier tests left in the module-wide callable.
+        call.captures.clear()
+        # A refused donation is only a warning; make it fail, since losing
+        # donation is the usual route to a growing capture set.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            for _ in range(steps):
+                forces = d.model(d.positions)
+                d.positions, d.state = relax_step(d.positions, d.state, forces)
+        jax.block_until_ready(d.positions)
+
+        assert call.graph_cache_size < steps // 4, (
+            f"{steps} steps left {call.graph_cache_size} graphs cached; the "
+            "capture count is tracking the step count, so replay is not "
+            "happening and graph mode is pure overhead"
         )
 
     def test_step_is_not_differentiable(self, _gpu):
