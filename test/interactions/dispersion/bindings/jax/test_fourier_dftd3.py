@@ -578,20 +578,11 @@ class TestEmptySystem:
 
 
 @pytest.mark.gpu
-class TestModulusConvention:
-    """Both B-spline attenuation conventions, matching the Torch binding's surface."""
+class TestCrossBinding:
+    """The JAX and Torch bindings evaluate the same thing."""
 
-    def test_the_two_conventions_differ(self, device, system):
-        """The switch has to do something, or agreeing with Torch proves nothing."""
-        exact = _evaluate(system, exact_moduli=True)
-        continuous = _evaluate(system, exact_moduli=False)
-        assert abs(float(exact[0][0]) - float(continuous[0][0])) > 1e-10 * abs(
-            float(exact[0][0])
-        )
-
-    @pytest.mark.parametrize("exact_moduli", [True, False])
-    def test_matches_the_torch_binding(self, device, system, exact_moduli):
-        """The two bindings agree on both conventions, not only on the default."""
+    def test_matches_the_torch_binding(self, device, system):
+        """The two bindings agree on energy and forces."""
         torch = pytest.importorskip("torch", reason="PyTorch not installed.")
         from nvalchemiops.torch.interactions.dispersion import (
             FourierD3Parameters as TorchParameters,
@@ -601,7 +592,7 @@ class TestModulusConvention:
         )
 
         numpy = system["numpy"]
-        ours = _evaluate(system, exact_moduli=exact_moduli)
+        ours = _evaluate(system)
 
         def tensor(array, dtype=torch.float64):
             return torch.as_tensor(
@@ -626,7 +617,6 @@ class TestModulusConvention:
             cell=tensor(numpy["cell"]),
             r_cut=R_CUT,
             mesh_dimensions=MESH,
-            exact_moduli=exact_moduli,
             neighbor_list=torch.stack(
                 [tensor(sources, torch.int32), tensor(numpy["targets"], torch.int32)]
             ),

@@ -1141,15 +1141,8 @@ rank_chunk_size`, so prefer the largest chunk that fits rather than the smallest
 ### B-spline Deconvolution
 
 Interpolating onto a mesh attenuates each frequency, and dividing that attenuation out is what
-recovers the structure factor the mesh stands in for. Two conventions exist: the discrete
-modulus, which is the magnitude of the DFT of the spline coefficients and is what
-interpolation on a finite mesh actually applies, and `sinc(m/N)**p`, its continuous
-approximation, which the electrostatics PME path in this package uses.
-
-FourierD3 uses the **discrete** form by default. Measured against an independent
-implementation of the same method, the discrete form agrees to machine precision while the
-continuous one leaves a force discrepancy around `1e-5` at a 48-cubed mesh. Pass
-`exact_moduli=False` only to reproduce the PME convention.
+recovers the structure factor the mesh stands in for. FourierD3 uses `sinc(m/N)**p`, the same
+convention as the electrostatics PME path, via the shared `compute_bspline_moduli_1d`.
 
 ### Making It Fast
 

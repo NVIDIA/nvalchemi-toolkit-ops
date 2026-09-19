@@ -33,32 +33,14 @@ from nvalchemiops.interactions.dispersion import _fourier_dftd3 as fd3
 __all__ = ["bspline_moduli", "fourier_d3_energy"]
 
 
-def _cardinal_bspline(u, order):
-    """Cardinal B-spline of the given order, by the Cox-de Boor recursion."""
-    if order == 1:
-        return np.where((u >= 0.0) & (u < 1.0), 1.0, 0.0)
-    return (
-        u * _cardinal_bspline(u, order - 1)
-        + (float(order) - u) * _cardinal_bspline(u - 1.0, order - 1)
-    ) / float(order - 1)
-
-
 def bspline_moduli(miller, mesh_size, spline_order):
-    """Discrete B-spline attenuation for one mesh axis.
+    """B-spline attenuation for one mesh axis.
 
     Interpolating onto a mesh damps each frequency; dividing it out recovers the structure
-    factor the mesh stands in for. This is the magnitude of the DFT of the spline
-    coefficients, which is what interpolation on a finite mesh actually applies.
+    factor the mesh stands in for. Same ``sinc(m / N) ** p`` convention as the bindings and
+    the in-repo PME.
     """
-    coefficients = np.zeros(mesh_size)
-    coefficients[:spline_order] = _cardinal_bspline(
-        np.arange(spline_order) + 1.0, spline_order
-    )
-    modulus = np.abs(np.fft.fft(coefficients))
-    if mesh_size % 2 == 0:
-        half = mesh_size // 2
-        modulus[half] = 0.5 * (modulus[half - 1] + modulus[half + 1])
-    return modulus[np.round(miller).astype(int) % mesh_size]
+    return np.sinc(miller / mesh_size) ** spline_order
 
 
 def _wp_types(np_dtype):

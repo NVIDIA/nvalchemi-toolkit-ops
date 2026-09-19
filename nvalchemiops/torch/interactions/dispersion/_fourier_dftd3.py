@@ -60,6 +60,9 @@ from nvalchemiops.interactions.dispersion._fourier_dftd3 import (
 )
 from nvalchemiops.torch import torch_custom_op
 from nvalchemiops.torch.autograd import warp_from_torch, warp_stream_from_torch
+from nvalchemiops.torch.interactions.electrostatics.pme import (
+    compute_bspline_moduli_1d,
+)
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 __all__ = [
@@ -628,63 +631,6 @@ def _fd3_finalise_op(
         )
 
 
-def _bspline_moduli(miller, mesh_size, spline_order, exact, dtype, device):
-    """B-spline attenuation for one mesh axis.
-
-    Two conventions exist. ``sinc(m/N)**p`` is the continuous transform of the spline, which
-    is what the electrostatics PME path in this package uses. The exact discrete alternative
-    is the magnitude of the DFT of the spline coefficients, which is what the interpolation
-    on a finite mesh actually applies; it differs at large ``m`` and matters more for forces
-    than for energies, because the force involves the gradient of the interpolation.
-
-    Parameters
-    ----------
-    miller : torch.Tensor
-        Signed frequency indices for the axis.
-    mesh_size : int
-        Number of mesh points along the axis.
-    spline_order : int
-        B-spline order.
-    exact : bool
-        Whether to use the discrete form.
-
-    Returns
-    -------
-    torch.Tensor
-        Attenuation per frequency, same shape as ``miller``.
-    """
-    if not exact:
-        return torch.special.sinc(miller / mesh_size) ** spline_order
-
-    # Cardinal B-spline weights at integer offsets, zero-padded to the mesh length.
-    coefficients = torch.zeros(mesh_size, dtype=dtype, device=device)
-    nodes = torch.arange(spline_order, dtype=dtype, device=device)
-    weights = _cardinal_bspline(nodes + 1.0, spline_order)
-    coefficients[:spline_order] = weights
-    modulus = torch.fft.fft(coefficients).abs()
-    if mesh_size % 2 == 0:
-        # The Nyquist bin can vanish, which would divide by zero during deconvolution.
-        half = mesh_size // 2
-        modulus[half] = 0.5 * (modulus[half - 1] + modulus[half + 1])
-    index = miller.round().long() % mesh_size
-    return modulus[index]
-
-
-def _cardinal_bspline(u, order):
-    """Cardinal B-spline of the given order, by the Cox-de Boor recursion.
-
-    ``M_1`` is the indicator of ``[0, 1)`` and
-    ``M_n(u) = (u * M_{n-1}(u) + (n - u) * M_{n-1}(u - 1)) / (n - 1)``.
-    """
-    if order == 1:
-        return torch.where(
-            (u >= 0.0) & (u < 1.0), torch.ones_like(u), torch.zeros_like(u)
-        )
-    lower = _cardinal_bspline(u, order - 1)
-    shifted = _cardinal_bspline(u - 1.0, order - 1)
-    return (u * lower + (float(order) - u) * shifted) / float(order - 1)
-
-
 @dataclass
 class FourierD3Setup:
     """Cell- and mesh-derived quantities that do not change from step to step.
@@ -731,7 +677,6 @@ class FourierD3Setup:
     mesh_dimensions: tuple[int, int, int]
     spline_order: int
     cell: torch.Tensor
-    exact_moduli: bool
 
     @classmethod
     def build(
@@ -740,7 +685,6 @@ class FourierD3Setup:
         n_species: int,
         mesh_dimensions: tuple[int, int, int],
         spline_order: int = 4,
-        exact_moduli: bool = True,
     ) -> FourierD3Setup:
         """Derive the reusable quantities from a cell and a mesh.
 
@@ -754,8 +698,6 @@ class FourierD3Setup:
             Mesh size.
         spline_order : int, default=4
             B-spline order.
-        exact_moduli : bool, default=True
-            Whether to use the discrete B-spline modulus.
 
         Returns
         -------
@@ -780,7 +722,7 @@ class FourierD3Setup:
             torch.fft.rfftfreq(mesh_nz, d=1.0 / mesh_nz, dtype=dtype, device=device),
         )
         moduli = [
-            _bspline_moduli(m, n, spline_order, exact_moduli, dtype, device)
+            compute_bspline_moduli_1d(m, n, spline_order)
             for m, n in zip(millers, (mesh_nx, mesh_ny, mesh_nz), strict=True)
         ]
         return cls(
@@ -798,7 +740,6 @@ class FourierD3Setup:
             # unchanged when it already is, so the record would alias the caller's tensor and
             # ``validate_for`` would compare it against itself.
             cell=cells.clone(),
-            exact_moduli=exact_moduli,
         )
 
     def validate_for(self, cells, n_species, mesh_dimensions, mesh_spacing=None):
@@ -938,7 +879,6 @@ def fourier_dftd3(
     batch_idx: torch.Tensor | None = None,
     compute_virial: bool = False,
     num_systems: int | None = None,
-    exact_moduli: bool = True,
     rank_chunk_size: int | None = None,
     setup: FourierD3Setup | None = None,
     device: str | None = None,
@@ -1018,13 +958,6 @@ def fourier_dftd3(
         Whether to return the virial.
     num_systems : int, optional
         Number of systems, inferred from ``cell`` when omitted.
-    exact_moduli : bool, default=True
-        Use the discrete B-spline modulus rather than ``sinc(m/N)**p``. The discrete form is
-        what interpolation on a finite mesh actually applies; ``sinc(m/N)**p`` is its
-        continuous approximation, which the electrostatics PME path in this package uses.
-        Measured against an independent implementation of this method, the discrete form
-        agrees to machine precision while the continuous one leaves a force discrepancy
-        around 1e-5 at a 48-cubed mesh. Set to False only to reproduce the PME convention.
     rank_chunk_size : int, optional
         Number of rank slots to hold on the mesh at once. ``None``, the default, processes
         all ``rank`` slots in a single pass, which is fastest. The mesh and its transforms
@@ -1185,7 +1118,7 @@ def fourier_dftd3(
     ).to(torch.int32)
     if setup is None:
         setup = FourierD3Setup.build(
-            cells, n_species, (mesh_nx, mesh_ny, mesh_nz), spline_order, exact_moduli
+            cells, n_species, (mesh_nx, mesh_ny, mesh_nz), spline_order
         )
     cell_inv_grouped = setup.cell_inv_grouped
 

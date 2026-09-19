@@ -64,6 +64,9 @@ from nvalchemiops.interactions.dispersion._fourier_dftd3 import (
     _fd3_spread_kernel_overload,
     _resolve_mesh,
 )
+from nvalchemiops.jax.interactions.electrostatics.pme import (
+    compute_bspline_moduli_1d,
+)
 from nvalchemiops.jax.types import normalize_float_dtype
 
 __all__ = [
@@ -390,7 +393,6 @@ def fourier_dftd3(
     fill_value: int | None = None,
     s6: float = 1.0,
     spline_order: int = 4,
-    exact_moduli: bool = True,
     rank_chunk_size: int | None = None,
     batch_idx=None,
     compute_virial: bool = False,
@@ -444,13 +446,6 @@ def fourier_dftd3(
         orders of magnitude apart each way, so raising the order buys more than refining the
         mesh does. Order 3 is noticeably noisier than its neighbours; prefer an even order
         unless you have measured otherwise.
-    exact_moduli : bool, default=True
-        Which B-spline attenuation to divide out. ``True`` uses the discrete modulus, the
-        magnitude of the DFT of the spline coefficients, which is what interpolation on a
-        finite mesh actually applies and what the gather differentiates. ``False`` uses the
-        continuous ``sinc(m / N) ** spline_order``, the convention the in-repo PME uses,
-        retained so results can be reproduced against it. Host-static, so it selects a branch
-        at trace time and is safe under ``jax.jit``.
     rank_chunk_size : int, optional
         Number of rank slots to hold on the mesh at once. ``None``, the default, stages all
         ``rank`` slots in a single pass, which is fastest. The mesh and its transforms
@@ -674,7 +669,7 @@ def fourier_dftd3(
     miller_y = jnp.fft.fftfreq(mesh_ny, d=1.0 / mesh_ny).astype(dtype)
     miller_z = jnp.fft.rfftfreq(mesh_nz, d=1.0 / mesh_nz).astype(dtype)
     moduli = [
-        _bspline_moduli(m, n, spline_order, exact_moduli, dtype)
+        compute_bspline_moduli_1d(m, n, spline_order).astype(dtype)
         for m, n in ((miller_x, mesh_nx), (miller_y, mesh_ny), (miller_z, mesh_nz))
     ]
     volumes = jnp.abs(jnp.linalg.det(cells)).astype(dtype)
@@ -879,41 +874,3 @@ def fourier_dftd3(
     if compute_virial:
         return energy_total, forces_total, virial_total * covered
     return energy_total, forces_total
-
-
-def _cardinal_bspline(u, order):
-    """Cardinal B-spline of the given order, by the Cox-de Boor recursion."""
-    if order == 1:
-        return jnp.where((u >= 0.0) & (u < 1.0), 1.0, 0.0)
-    lower = _cardinal_bspline(u, order - 1)
-    shifted = _cardinal_bspline(u - 1.0, order - 1)
-    return (u * lower + (float(order) - u) * shifted) / float(order - 1)
-
-
-def _bspline_moduli(miller, mesh_size, spline_order, exact, dtype):
-    """B-spline attenuation for one mesh axis.
-
-    With ``exact`` set, the magnitude of the DFT of the spline coefficients, which is what
-    interpolation on a finite mesh actually applies. The Nyquist bin of an even mesh can
-    vanish, which would divide by zero during deconvolution, so it is replaced by the mean of
-    its neighbours.
-
-    Otherwise ``sinc(m / N) ** spline_order``, the continuous transform of the spline and the
-    convention the in-repo PME uses. It is the cheaper approximation and is retained so that
-    results can be reproduced against PME; the discrete form is the default because it is
-    what the gather actually differentiates.
-    """
-    if not exact:
-        return (jnp.sinc(miller / mesh_size) ** spline_order).astype(dtype)
-
-    nodes = jnp.arange(spline_order, dtype=dtype) + 1.0
-    coefficients = (
-        jnp.zeros(mesh_size, dtype=dtype)
-        .at[:spline_order]
-        .set(_cardinal_bspline(nodes, spline_order))
-    )
-    modulus = jnp.abs(jnp.fft.fft(coefficients))
-    if mesh_size % 2 == 0:
-        half = mesh_size // 2
-        modulus = modulus.at[half].set(0.5 * (modulus[half - 1] + modulus[half + 1]))
-    return modulus[jnp.round(miller).astype(jnp.int32) % mesh_size].astype(dtype)
