@@ -63,6 +63,7 @@ from __future__ import annotations
 import argparse
 import csv
 import dataclasses
+import itertools
 import pathlib
 
 import numpy as np
@@ -108,8 +109,23 @@ FIRE2_MAXSTEP = 0.25
 #: defaults the other dynamics benchmarks use.
 DEFAULT_POTENTIAL = {"epsilon": 0.0104, "sigma": 3.40, "cutoff": 8.5, "skin": 1.0}
 
+#: Coordinate precisions, spelled the way ``benchmark_fire2.py`` spells them so
+#: the two runners can be compared row for row. Every L-BFGS array follows the
+#: coordinate dtype, so one entry fixes the whole state; FIRE2's scalars are
+#: selected the same way here, or the comparison would be measuring precision
+#: rather than optimizer.
+DTYPES = {
+    "float32": (torch.float32, wp.vec3f, wp.float32, np.float32),
+    "float64": (torch.float64, wp.vec3d, wp.float64, np.float64),
+}
 
-def make_cluster(num_atoms, potential, device, seed=0):
+#: fp32 is the default because it is what a machine-learned potential emits.
+#: fp64 is supported and benchmarked, but it is a deliberate choice rather
+#: than the only configuration the runner can express.
+DEFAULT_DTYPES = ["float32", "float64"]
+
+
+def make_cluster(num_atoms, potential, device, seed=0, dtype=torch.float32):
     """An argon cluster evaluated by the package's own LJ kernels.
 
     Uses :class:`~benchmarks.dynamics.shared_utils.MDSystem`, as the other
@@ -131,6 +147,10 @@ def make_cluster(num_atoms, potential, device, seed=0):
         CUDA device.
     seed : int
         Starting geometry.
+    dtype : torch.dtype
+        Coordinate precision. Carried into the neighbor list and the LJ
+        evaluation as well as the optimizer state, so an fp32 run is fp32 end
+        to end rather than fp64 arrays relabelled.
 
     Returns
     -------
@@ -146,14 +166,15 @@ def make_cluster(num_atoms, potential, device, seed=0):
     )
     box = 2.0 * (radius + cutoff) + potential["skin"]
     return MDSystem(
-        positions=torch.tensor(positions, dtype=torch.float64, device=device),
-        cell=torch.eye(3, dtype=torch.float64, device=device) * box,
+        positions=torch.tensor(positions, dtype=dtype, device=device),
+        cell=torch.eye(3, dtype=dtype, device=device) * box,
         pbc=torch.zeros(3, dtype=torch.bool, device=device),
         epsilon=potential["epsilon"],
         sigma=sigma,
         cutoff=cutoff,
         skin=potential["skin"],
         device=device,
+        dtype=dtype,
     )
 
 
@@ -164,29 +185,39 @@ def _fmax(system):
     )
 
 
-def _allocate_lbfgs_state(num_dofs, num_systems, history_size, device):
+def _allocate_lbfgs_state(num_dofs, num_systems, history_size, device,
+                          vec_dtype=wp.vec3f):  # fmt: skip
     """The Warp state, already in its required start state."""
     return lbfgs_prepare_state(
-        num_dofs, num_systems, history_size=history_size, device=device
-    )
+        num_dofs, num_systems, dtype=vec_dtype, history_size=history_size,
+        device=device,
+    )  # fmt: skip
 
 
-def _allocate_lbfgs_buffers_torch(num_dofs, num_systems, history_size, device):
+def _allocate_lbfgs_buffers_torch(num_dofs, num_systems, history_size, device,
+                                  dtype=torch.float32):  # fmt: skip
     """The same state as torch tensors."""
     from nvalchemiops.torch.lbfgs import lbfgs_prepare_state as prepare
 
-    return prepare(num_dofs, num_systems, history_size=history_size, device=device)
+    return prepare(
+        num_dofs, num_systems, dtype=dtype, history_size=history_size,
+        device=device,
+    )  # fmt: skip
 
 
 def run_lbfgs(system, force_tol, history_size=6, maxstep=0.2, eval_cap=EVAL_CAP,
               device=DEFAULT_DEVICE):  # fmt: skip
     """Relax ``system`` with L-BFGS; return (evaluations, converged, max force).
 
-    ``system`` is consumed: its positions are relaxed in place.
+    ``system`` is consumed: its positions are relaxed in place. The state is
+    allocated at the system's own coordinate precision, so the dtype comes
+    from the caller's choice of system rather than from a default here.
     """
     num_atoms = system.num_atoms
     batch_idx = wp.zeros(num_atoms, dtype=wp.int32, device=device)
-    state = _allocate_lbfgs_state(num_atoms, 1, history_size, device)
+    state = _allocate_lbfgs_state(
+        num_atoms, 1, history_size, device, vec_dtype=system.wp_positions.dtype
+    )
 
     # Deliberately the same shape as ``run_fire2`` below: both optimizers
     # leave convergence to the caller, so both loops test then step.
@@ -216,12 +247,17 @@ def run_fire2(
     ``system`` is consumed: its positions are relaxed in place.
     """
     num_atoms = system.num_atoms
-    velocities = wp.zeros(num_atoms, dtype=wp.vec3d, device=device)
+    # FIRE2 runs at the system's precision too: comparing an fp32 L-BFGS
+    # against an fp64 FIRE2 would be measuring precision, not optimizer.
+    vec_dtype = system.wp_positions.dtype
+    scalar_dtype = wp.float32 if vec_dtype == wp.vec3f else wp.float64
+    np_dtype = np.float32 if vec_dtype == wp.vec3f else np.float64
+    velocities = wp.zeros(num_atoms, dtype=vec_dtype, device=device)
     batch_idx = wp.zeros(num_atoms, dtype=wp.int32, device=device)
-    alpha = wp.array(np.array([0.09]), dtype=wp.float64, device=device)
-    dt = wp.array(np.array([dt_start]), dtype=wp.float64, device=device)
+    alpha = wp.array(np.array([0.09], np_dtype), dtype=scalar_dtype, device=device)
+    dt = wp.array(np.array([dt_start], np_dtype), dtype=scalar_dtype, device=device)
     nsteps_inc = wp.zeros(1, dtype=wp.int32, device=device)
-    scratch = [wp.zeros(1, dtype=wp.float64, device=device) for _ in range(4)]
+    scratch = [wp.zeros(1, dtype=scalar_dtype, device=device) for _ in range(4)]
 
     for n_evals in range(1, eval_cap + 1):
         system.compute_forces()
@@ -328,7 +364,8 @@ def _time_ms(fn, warmup=10, runs=50):
     return start.elapsed_time(stop) / runs
 
 
-def run_gates(sizes, eval_ratio, warmup=10, runs=50, device=DEFAULT_DEVICE):
+def run_gates(sizes, eval_ratio, warmup=10, runs=50, device=DEFAULT_DEVICE,
+              dtype_name="float32"):  # fmt: skip
     """Measure per-step cost, graph replay, and the break-even model cost.
 
     Reported per system size:
@@ -345,12 +382,20 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50, device=DEFAULT_DEVICE):
         evaluation-count advantage measured by the default benchmark. Negative
         means it wins outright, because needing far fewer evaluations more than
         pays for a costlier step.
+
+    ``dtype_name`` fixes the coordinate precision for both arms. Measured, the
+    effect is smaller than the halved byte count suggests -- 0.98 against 1.03
+    ms at 1e5 atoms -- because FIRE2 halves too, so the ratio moves from 8.4x
+    to 9.0x rather than doubling. Reported per precision all the same: it is
+    a measurement, not something to be inferred from one run and a factor.
     """
+    torch_dtype, vec_dtype, scalar_dtype, np_dtype = DTYPES[dtype_name]
     from nvalchemiops.dynamics.optimizers import fire2_step
     from nvalchemiops.torch.lbfgs import lbfgs_step_coord
 
     # Before any stream, event, graph or scoped stream is created.
     select_device(device)
+    print(f"coordinate precision: {dtype_name}")
     print(
         f"{'atoms':>9} {'eager ms':>9} {'graph ms':>9} {'fire2 ms':>9} "
         f"{'eager/f2':>9} {'graph gain':>11} {'break-even':>12}"
@@ -359,14 +404,16 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50, device=DEFAULT_DEVICE):
     for num_atoms in sizes:
         rng = np.random.default_rng(0)
         start = torch.tensor(
-            rng.normal(size=(num_atoms, 3)), dtype=torch.float64, device=device
+            rng.normal(size=(num_atoms, 3)), dtype=torch_dtype, device=device
         )
         batch_idx = torch.zeros(num_atoms, dtype=torch.int32, device=device)
-        stiffness = torch.tensor([1.0, 4.0, 9.0], dtype=torch.float64, device=device)
+        stiffness = torch.tensor([1.0, 4.0, 9.0], dtype=torch_dtype, device=device)
 
         positions = start.clone()
         forces = torch.empty_like(positions)
-        buffers = _allocate_lbfgs_buffers_torch(num_atoms, 1, GATE_HISTORY, device)
+        buffers = _allocate_lbfgs_buffers_torch(
+            num_atoms, 1, GATE_HISTORY, device, dtype=torch_dtype
+        )
 
         def evaluate(pos, out):
             """The model, on device so it stays CUDA-graph capturable.
@@ -387,7 +434,9 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50, device=DEFAULT_DEVICE):
             graph keeps pointing at the buffers it recorded.
             """
             positions.copy_(start)
-            fresh = _allocate_lbfgs_buffers_torch(num_atoms, 1, GATE_HISTORY, device)
+            fresh = _allocate_lbfgs_buffers_torch(
+                num_atoms, 1, GATE_HISTORY, device, dtype=torch_dtype
+            )
             for field in dataclasses.fields(buffers):
                 getattr(buffers, field.name).copy_(getattr(fresh, field.name))
 
@@ -438,14 +487,14 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50, device=DEFAULT_DEVICE):
         # FIRE2 gets the same model, so the ratio compares like with like.
         f2_positions = start.clone()
         f2_forces = torch.empty_like(f2_positions)
-        wp_positions = wp.from_torch(f2_positions, dtype=wp.vec3d)
-        wp_forces = wp.from_torch(f2_forces, dtype=wp.vec3d)
-        wp_velocities = wp.zeros(num_atoms, dtype=wp.vec3d, device=device)
+        wp_positions = wp.from_torch(f2_positions, dtype=vec_dtype)
+        wp_forces = wp.from_torch(f2_forces, dtype=vec_dtype)
+        wp_velocities = wp.zeros(num_atoms, dtype=vec_dtype, device=device)
         wp_batch = wp.zeros(num_atoms, dtype=wp.int32, device=device)
-        alpha = wp.array(np.array([0.09]), dtype=wp.float64, device=device)
-        dt = wp.array(np.array([0.02]), dtype=wp.float64, device=device)
+        alpha = wp.array(np.array([0.09], np_dtype), dtype=scalar_dtype, device=device)
+        dt = wp.array(np.array([0.02], np_dtype), dtype=scalar_dtype, device=device)
         nsteps_inc = wp.zeros(1, dtype=wp.int32, device=device)
-        scratch = [wp.zeros(1, dtype=wp.float64, device=device) for _ in range(4)]
+        scratch = [wp.zeros(1, dtype=scalar_dtype, device=device) for _ in range(4)]
 
         def fire2_once():
             evaluate(f2_positions, f2_forces)
@@ -472,7 +521,7 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50, device=DEFAULT_DEVICE):
         n_fire2 = 1000.0
         n_lbfgs = eval_ratio * n_fire2
         break_even_ms = (n_lbfgs * eager - n_fire2 * fire2) / (n_fire2 - n_lbfgs)
-        rows.append((num_atoms, eager, graphed, fire2, break_even_ms))
+        rows.append((dtype_name, num_atoms, eager, graphed, fire2, break_even_ms))
         print(
             f"{num_atoms:>9} {eager:>9.4f} {graphed:>9.4f} {fire2:>9.4f} "
             f"{eager / fire2:>8.2f}x {eager / graphed:>10.1f}x "
@@ -481,7 +530,8 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50, device=DEFAULT_DEVICE):
 
     largest = rows[-1]
     print(
-        f"\nper-step ratio at {largest[0]} atoms: {largest[1] / largest[3]:.2f}x FIRE2"
+        f"\nper-step ratio at {largest[1]} atoms ({dtype_name}): "
+        f"{largest[2] / largest[4]:.2f}x FIRE2"
     )
     print(
         "break-even is the model cost per evaluation above which L-BFGS wins end "
@@ -573,6 +623,17 @@ def main():
     )
     parser.add_argument("--gate-sizes", type=int, nargs="+", default=None)
     parser.add_argument(
+        "--dtype",
+        type=str,
+        nargs="+",
+        choices=sorted(DTYPES),
+        default=None,
+        help=(
+            "coordinate precisions to run; every optimizer array follows this. "
+            "Defaults to the config file's lbfgs.dtypes, else float32 and float64"
+        ),
+    )
+    parser.add_argument(
         "--device",
         type=str,
         default=DEFAULT_DEVICE,
@@ -612,25 +673,31 @@ def main():
     maxstep = config.get("maxstep", 0.2)
     sweep = config.get("fire2_sweep", FIRE2_SWEEP)
 
+    dtypes = pick(args.dtype, "dtypes", DEFAULT_DTYPES)
+
     if args.gates:
-        gate_rows = run_gates(
-            pick(
-                args.gate_sizes,
-                "system_sizes",
-                [10_000, 100_000, 1_000_000],
-                section=gates_config,
-            ),
-            pick(args.eval_ratio, "eval_ratio", 0.59, section=gates_config),
-            gates_config.get("warmup", 10),
-            gates_config.get("runs", 50),
-            device=args.device,
-        )
+        gate_rows = []
+        for dtype_name in dtypes:
+            gate_rows += run_gates(
+                pick(
+                    args.gate_sizes,
+                    "system_sizes",
+                    [10_000, 100_000, 1_000_000],
+                    section=gates_config,
+                ),
+                pick(args.eval_ratio, "eval_ratio", 0.59, section=gates_config),
+                gates_config.get("warmup", 10),
+                gates_config.get("runs", 50),
+                device=args.device,
+                dtype_name=dtype_name,
+            )
         # These rows are what the published per-step table is drawn from, so
         # they have to survive the run.
         _write_csv(
             output_dir,
             "lbfgs_gate_timings.csv",
             [
+                "dtype",
                 "atoms",
                 "eager_ms",
                 "graph_ms",
@@ -641,6 +708,7 @@ def main():
             ],
             [
                 {
+                    "dtype": dtype_name,
                     "atoms": atoms,
                     "eager_ms": f"{eager:.6f}",
                     "graph_ms": f"{graphed:.6f}",
@@ -649,49 +717,50 @@ def main():
                     "graph_gain": f"{eager / graphed:.4f}" if graphed else "",
                     "break_even_us": f"{break_even * 1e3:.4f}",
                 }
-                for atoms, eager, graphed, fire2, break_even in gate_rows
+                for dtype_name, atoms, eager, graphed, fire2, break_even in gate_rows
             ],
         )
         return
 
     rows = []
     print(
-        f"{'atoms':>6} {'seed':>5} {'lbfgs':>7} {'fire2':>7} "
+        f"{'dtype':>8} {'atoms':>6} {'seed':>5} {'lbfgs':>7} {'fire2':>7} "
         f"{'ratio':>7}  {'fire2 config':>14}"
     )
-    for num_atoms in sizes:
-        for seed in range(seeds):
+    for dtype_name, num_atoms, seed in itertools.product(dtypes, sizes, range(seeds)):
+        torch_dtype = DTYPES[dtype_name][0]
 
-            def make_system(n=num_atoms, s=seed):
-                return make_cluster(n, potential, args.device, seed=s)
+        def make_system(n=num_atoms, s=seed, d=torch_dtype):
+            return make_cluster(n, potential, args.device, seed=s, dtype=d)
 
-            lb_evals, lb_ok, lb_force = run_lbfgs(
-                make_system(), force_tol, history_size, maxstep, eval_cap,
-                args.device,
-            )  # fmt: skip
-            f2_evals, f2_ok, f2_force, f2_cfg = best_fire2(
-                make_system, force_tol, sweep, eval_cap, args.device
-            )
-            ratio = lb_evals / f2_evals
-            rows.append(
-                {
-                    "num_atoms": num_atoms,
-                    "seed": seed,
-                    "lbfgs_evals": lb_evals,
-                    "lbfgs_converged": lb_ok,
-                    "lbfgs_fmax": lb_force,
-                    "fire2_evals": f2_evals,
-                    "fire2_converged": f2_ok,
-                    "fire2_fmax": f2_force,
-                    "fire2_config": str(f2_cfg),
-                    "ratio": ratio,
-                }
-            )
-            print(
-                f"{num_atoms:>6} {seed:>5} {lb_evals:>7} {f2_evals:>7} "
-                f"{ratio:>7.3f}  {str(f2_cfg):>14}"
-                f"{'' if (lb_ok and f2_ok) else '  (capped)'}"
-            )
+        lb_evals, lb_ok, lb_force = run_lbfgs(
+            make_system(), force_tol, history_size, maxstep, eval_cap,
+            args.device,
+        )  # fmt: skip
+        f2_evals, f2_ok, f2_force, f2_cfg = best_fire2(
+            make_system, force_tol, sweep, eval_cap, args.device
+        )
+        ratio = lb_evals / f2_evals
+        rows.append(
+            {
+                "dtype": dtype_name,
+                "num_atoms": num_atoms,
+                "seed": seed,
+                "lbfgs_evals": lb_evals,
+                "lbfgs_converged": lb_ok,
+                "lbfgs_fmax": lb_force,
+                "fire2_evals": f2_evals,
+                "fire2_converged": f2_ok,
+                "fire2_fmax": f2_force,
+                "fire2_config": str(f2_cfg),
+                "ratio": ratio,
+            }
+        )
+        print(
+            f"{dtype_name:>8} {num_atoms:>6} {seed:>5} {lb_evals:>7} "
+            f"{f2_evals:>7} {ratio:>7.3f}  {str(f2_cfg):>14}"
+            f"{'' if (lb_ok and f2_ok) else '  (capped)'}"
+        )
 
     # The aggregate is over cases where *both* optimizers converged. A capped
     # FIRE2 run only bounds its evaluation count from below, so its ratio
@@ -699,25 +768,34 @@ def main():
     # would report a number that is partly not a measurement -- and in the
     # direction that flatters L-BFGS, since a capped run divides by a count
     # that is too small.
-    comparable = [r for r in rows if r["lbfgs_converged"] and r["fire2_converged"]]
+    # Reported per precision, not pooled: fp32 and fp64 are two different
+    # measurements of two different runs, and one geometric mean over both
+    # would describe neither.
+    for dtype_name in dtypes:
+        of_dtype = [r for r in rows if r["dtype"] == dtype_name]
+        comparable = [
+            r for r in of_dtype if r["lbfgs_converged"] and r["fire2_converged"]
+        ]
+        print(f"\n{dtype_name}:")
+        if comparable:
+            ratios = [r["ratio"] for r in comparable]
+            geo_mean = float(np.exp(np.mean(np.log(ratios))))
+            print(
+                f"  cases where both converged:                      "
+                f"{len(comparable)}/{len(of_dtype)}"
+            )
+            print(f"  geometric mean evaluation ratio (L-BFGS / FIRE2): {geo_mean:.3f}")
+            print(
+                f"  worst individual ratio:                          {max(ratios):.3f}"
+            )
+        else:
+            print("  no case had both optimizers converge; no ratio can be quoted")
+
     fire2_capped = [
         r for r in rows if r["lbfgs_converged"] and not r["fire2_converged"]
     ]
     lbfgs_failed = [r for r in rows if not r["lbfgs_converged"]]
     both_failed = [r for r in lbfgs_failed if not r["fire2_converged"]]
-
-    print()
-    if comparable:
-        ratios = [r["ratio"] for r in comparable]
-        geo_mean = float(np.exp(np.mean(np.log(ratios))))
-        print(
-            f"cases where both converged:                      "
-            f"{len(comparable)}/{len(rows)}"
-        )
-        print(f"geometric mean evaluation ratio (L-BFGS / FIRE2): {geo_mean:.3f}")
-        print(f"worst individual ratio:                          {max(ratios):.3f}")
-    else:
-        print("no case had both optimizers converge; no ratio can be quoted")
 
     if fire2_capped:
         bounds = ", ".join(f"{r['ratio']:.3f}" for r in fire2_capped)

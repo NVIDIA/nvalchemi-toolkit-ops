@@ -299,6 +299,13 @@ lbfgs:
   # each has a well-defined global minimum to fall into.
   system_sizes: [13, 32, 55]
 
+  # Coordinate precisions. Every optimizer array follows the coordinate dtype,
+  # so this one key fixes the whole state, the neighbor list and the LJ
+  # evaluation. float32 first because it is what a machine-learned potential
+  # emits; float64 is kept, but as a deliberate second configuration rather
+  # than the only one the runner can express.
+  dtypes: ["float32", "float64"]
+
   # Independent starting geometries per size
   seeds: 5
 

@@ -180,23 +180,48 @@ potential dominates the optimizer's own kernel time. Argon clusters of 13, 32
 and 55 atoms, relaxed through the package's own LJ kernels with the shared
 `potential` parameters, `fmax <= 1e-4 eV/Å`, five starting geometries per size,
 with FIRE2's timestep swept over 8 settings per case and its *best* converged
-result used as the baseline:
+result used as the baseline. Run in both coordinate precisions, and reported
+separately — every optimizer array follows the coordinate dtype, and both arms
+run at whichever is selected, so an fp32 row compares fp32 against fp32:
 
-| Metric | L-BFGS / FIRE2 |
-| --- | --- |
-| Geometric mean | **0.59** |
-| Worst individual case | **1.1 – 1.4** |
-| Cases where both converged | 15 / 15 |
+| Metric | float32 | float64 |
+| --- | --- | --- |
+| Geometric mean | **0.59** | **0.57** |
+| Worst individual case | **1.01** | **1.12** |
+| Cases where both converged | 15 / 15 | 15 / 15 |
 
 **L-BFGS needs about 1.7x fewer force evaluations on average, and it loses
-outright in the worst case.** The worst ratio exceeded 1.0 in all three repeat
-runs (1.08, 1.17, 1.41), so on this workload L-BFGS is not uniformly better —
-it is better on average.
+outright in the worst case.** The worst ratio exceeded 1.0 in every run
+measured, so on this workload L-BFGS is not uniformly better — it is better on
+average.
+
+**fp32 costs nothing in evaluation count here.** Both precisions reach the same
+`1e-4` tolerance in statistically indistinguishable counts, which is the point
+of letting every scalar follow the coordinate dtype: the fp32 path is a
+complete path, not a degraded one.
 
 Evaluation counts vary by roughly 20% run to run. Neighbor-list rebuild
 ordering perturbs the forces in their last bits, and both optimizers amplify
 that into a different trajectory, so read the aggregate rather than a single
 cell.
+
+**What this workload is, and what it is not.** Argon clusters under a
+Lennard-Jones potential are a *reproducible* benchmark: everything it needs is
+in this repository, it runs in minutes on one GPU, and anyone can regenerate
+the table above. It is not a stand-in for a periodic inorganic solid under a
+machine-learned potential, which is the setting L-BFGS is actually meant for
+here, and the two can disagree — a smooth pair potential on a 55-atom cluster
+exercises neither the stiff, strongly anisotropic curvature of a relaxing
+crystal nor a force field that is not the gradient of its own energy.
+
+The comparison that would settle that is a relaxation over OMat24 structures
+with an OMat24-trained potential. It is not reproduced here: both the
+structures and the trained models are distributed under a gated third-party
+licence and would add a large optional dependency to this benchmark suite, so
+running them is a deliberate choice for whoever needs that evidence rather
+than something this suite does by default. The OMat24 figures quoted in review
+remain that reviewer's own measurement, cited rather than reproduced. Read the
+table above as what it is: the in-repo, regenerable result.
 
 These numbers are much less favourable than the `0.129` this table carried
 previously. That figure came from a NumPy all-pairs potential in reduced units
@@ -205,18 +230,28 @@ for those units — which handicapped the baseline once the units changed. Both
 are fixed: the forces now come from the package kernels, and the grid runs to
 3.0 fs because FIRE2 keeps improving well past the value the MD blocks use.
 
-**Per-step optimizer cost.** Optimizer time only, single system, fp64, harmonic
-potential, measured with `--gates`:
+**Per-step optimizer cost.** Optimizer time only, single system, harmonic
+potential, measured with `--gates`. Both arms run at the stated precision:
 
-Median of three runs; the ratio varies by roughly +/- 0.3 between runs. Each
-run writes `lbfgs_gate_timings.csv` alongside the other benchmark results, so
-this table has a regenerable record behind it.
+The ratio varies by roughly +/- 0.3 between runs. Each run writes
+`lbfgs_gate_timings.csv` alongside the other benchmark results, so this table
+has a regenerable record behind it.
 
-| Atoms | Eager (ms) | CUDA graph (ms) | FIRE2 (ms) | vs FIRE2 |
-| --- | --- | --- | --- | --- |
-| 10,000 | 0.46 | 0.16 | 0.053 | 8.7x |
-| 100,000 | 1.02 | 1.02 | 0.114 | 9.0x |
-| 1,000,000 | 3.12 | 3.11 | 0.319 | 9.8x |
+| Atoms | Precision | Eager (ms) | CUDA graph (ms) | FIRE2 (ms) | vs FIRE2 |
+| --- | --- | --- | --- | --- | --- |
+| 10,000 | float32 | 0.47 | 0.14 | 0.059 | 7.9x |
+| 10,000 | float64 | 0.45 | 0.16 | 0.058 | 7.7x |
+| 100,000 | float32 | 0.98 | 0.98 | 0.116 | 8.5x |
+| 100,000 | float64 | 1.02 | 1.02 | 0.112 | 9.1x |
+| 1,000,000 | float64 | 3.12 | 3.11 | 0.319 | 9.8x |
+
+The million-atom row predates the precision split and has not been regenerated;
+it is float64 only. Re-run `--gates` without `--gate-sizes` to refresh it.
+
+**Precision moves this less than the halved byte count suggests**, because
+FIRE2 halves too: at a hundred thousand atoms the step goes 1.02 ms to 0.98 ms
+and the ratio moves from 9.1x to 8.5x. It is reported per precision because it
+is a measurement, not something to infer from one run and a factor.
 
 **A single L-BFGS step is roughly ten times more expensive than a FIRE2 step.**
 It runs `2m + O(1)` passes over the degrees of freedom against FIRE2's handful.
@@ -225,8 +260,8 @@ about 2.9x; from one hundred thousand upwards the device work dominates and
 replay recovers nothing.
 
 **Break-even is no longer comfortable.** The model must cost more than roughly
-0.5, 1.2 and 3.7 milliseconds per evaluation at these three sizes for L-BFGS to
-win end to end. A machine-learned potential is milliseconds per evaluation, so
+0.5, 1.1 and 3.7 milliseconds per evaluation at these three sizes for L-BFGS to
+win end to end (fp32: 0.53 and 1.13 ms at the two regenerated sizes). A machine-learned potential is milliseconds per evaluation, so
 at ten thousand atoms L-BFGS wins clearly, at a hundred thousand it is close,
 and at a million it needs a genuinely expensive model.
 

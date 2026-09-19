@@ -310,6 +310,20 @@ python -m benchmarks.dynamics.benchmark_lbfgs \
 Writes `lbfgs_vs_fire2_evaluations.csv`. Runs that hit the evaluation cap are
 flagged; their ratios are upper bounds on L-BFGS's advantage.
 
+`--dtype` picks the coordinate precisions, and both arms run at whichever is
+selected — comparing an fp32 L-BFGS against an fp64 FIRE2 would measure
+precision rather than optimizer. Every optimizer array follows the coordinate
+dtype, so the one flag fixes the whole state; the neighbor list and the LJ
+evaluation follow it too, so an fp32 run is fp32 end to end. It defaults to
+`lbfgs.dtypes` in the config, which is `float32` then `float64`: fp32 first
+because that is what a machine-learned potential emits, and fp64 kept as a
+deliberate second configuration rather than the only one available. Results
+are reported and aggregated per precision, never pooled.
+
+```bash
+python -m benchmarks.dynamics.benchmark_lbfgs --dtype float64   # fp64 only
+```
+
 `--device` selects the GPU and defaults to `cuda:0`, matching
 `benchmark_fire2.py` — point both at the same device when comparing their
 numbers. It is made the current CUDA device at entry, not just passed to
@@ -339,8 +353,10 @@ above and update that value if you change the sizes or the tolerance, or pass
 `--eval-ratio` to try one without editing the file.
 
 Writes `lbfgs_gate_timings.csv` through the same output path as the
-evaluation-count run above — one row per size, with the eager, graph and FIRE2
-times, both ratios and the break-even cost. That file is the record behind the
+evaluation-count run above — one row per size *and precision*, with the eager,
+graph and FIRE2 times, both ratios and the break-even cost. `--dtype` applies
+here too, and matters more than elsewhere: from a hundred thousand atoms up the
+step is bandwidth-bound rather than launch-bound. That file is the record behind the
 per-step table in `docs/benchmarks/dynamics.md`, so regenerate it when you
 update those numbers.
 
