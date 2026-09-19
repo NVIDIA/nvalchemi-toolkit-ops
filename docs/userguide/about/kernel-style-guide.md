@@ -64,8 +64,12 @@ semantic clarity; i.e. if the threads map onto atom indices, then use
 
 ### Warp Array Objects
 
-The preferred way of instantiating `warp` arrays is to convert from PyTorch
-tensors, rather than using Warp constructor methods like `wp.zeros`:
+Framework bindings own their tensors, temporary storage, dtype and layout
+normalization, and conversion to Warp array views. Core launchers accept Warp
+arrays and run on the caller's current Warp stream; they must not select a
+PyTorch or JAX stream by inspecting an array.
+
+For a PyTorch binding, allocate with PyTorch and create a Warp view:
 
 ```python
 output = torch.zeros(..., device=..., dtype=torch.float32)
@@ -82,6 +86,35 @@ output_wp = wp.zeros(..., device=...)
 # run kernel...
 output = wp.to_torch(output_wp)
 ```
+
+`wp.from_torch(..., dtype=...)` selects a storage-compatible Warp scalar,
+vector, or matrix view; it does not perform a numerical dtype conversion.
+Perform required casts with PyTorch. Preserve supported strides and materialize
+a contiguous tensor only when the selected Warp view or kernel layout requires
+it. Casts and layout normalization may allocate, so keep their results alive
+through the final Warp launch that uses them.
+
+#### Framework stream ownership
+
+Framework-owned storage and Warp work must share one execution stream:
+
+- PyTorch launch leaves establish the current PyTorch CUDA stream with the
+  shared `scoped_warp_stream` context or `scoped_torch_warp_stream` decorator
+  before converting storage or launching kernels.
+- JAX bindings use `jax_kernel` for individual launches and `jax_callable` for
+  multi-launch callbacks. These adapters supply the XLA execution stream; a
+  callback must not replace it.
+- Direct Warp callers retain ownership of the current Warp stream and of the
+  lifetime of every input, output, and scratch array.
+- Core launchers never infer which framework owns an array and never switch to
+  a framework stream.
+
+The binding operation owns materialized casts and layout conversions, temporary
+allocation, and Warp views. Enter the Torch stream scope before Warp conversion
+or launch and retain it through the final dependent Warp launch. Enqueue
+dependent Torch work on that same Torch stream before observing results on the
+host. Do not use device synchronization, `CUDA_LAUNCH_BLOCKING`, or
+`record_stream` as substitutes for correct stream ownership.
 
 Some additional tips for performance:
 
@@ -121,22 +154,31 @@ numbers_wp = wp.from_torch(numbers.contiguous(), dtype=wp.int32)
 
 ### Naming Conventions
 
-Kernel wrappers are two-tiered:
+Kernel wrappers are layered by ownership:
 
-- Low-level functions are decorated with `@torch.library.custom_op` with
-  `mutates_args`, that take pre-allocated tensors and return `None`. These
-  private functions dispatch the kernels and are registered so that
-  `torch.compile`/backwards passes will recognize them.
-- Higher-level wrapper functions handle tensor allocations and call the
-  low-level wrapper.
+- Core functions take Warp arrays, launch on the current Warp stream, and do
+  not import a framework.
+- PyTorch launch leaves establish the PyTorch stream and dispatch core kernels.
+  Use `@torch.library.custom_op` with accurate `mutates_args` when compiler or
+  autograd integration requires a custom operator; direct binding functions use
+  the same stream contract.
+- JAX bindings dispatch through `jax_kernel` or `jax_callable`. New or modified
+  bindings keep inputs, outputs, materialized conversions, and temporary
+  operands owned by JAX/XLA; callback-local Warp allocation in existing code is
+  deferred migration work, not a pattern to extend.
+- Higher-level framework wrappers handle allocation and normalization before
+  calling the low-level binding.
+
+When a custom operator is required:
 
 ```python
 @torch.library.custom_op(
     "nvalchemiops::kernel_name",
     mutates_args=(...),
 )
+@scoped_torch_warp_stream
 def _low_level_wrapper(...):
-    """Infer devices, dtypes, dispatch correct warp kernel"""
+    """Establish the current PyTorch stream and dispatch the Warp kernel."""
 
 def high_level_wrapper(...):
     """Handles tensor allocations; main entry point for users"""
@@ -266,6 +308,14 @@ class TestCategory:
        hardcoded_values = torch.tensor(...)
        assert torch.allclose(values, hardcoded_values, rtol=..., atol=...)
    ```
+
+1. Framework-stream regressions: on CUDA, warm compilation first, queue a
+   pending framework producer, call the public API, and immediately consume its
+   output in the same framework. Synchronize only when observing the final
+   numerical assertion. Use a non-default PyTorch stream; for JAX, keep the
+   producer, operation, and consumer in one compiled computation or in
+   dependency-linked compiled calls, without an intermediate
+   `block_until_ready()`.
 
 1. Known fail states: If a kernel or function is known to fail
    predictably with certain inputs or conditions, there must be tests

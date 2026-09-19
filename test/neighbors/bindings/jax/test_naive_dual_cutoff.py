@@ -25,6 +25,8 @@ import numpy as np
 import pytest
 
 from nvalchemiops.jax.neighbors import (
+    batch_naive_neighbor_list_dual_cutoff,
+    compute_naive_num_shifts,
     naive_neighbor_list,
     naive_neighbor_list_dual_cutoff,
 )
@@ -34,6 +36,56 @@ from .conftest import create_simple_cubic_system_jax, requires_gpu
 pytestmark = requires_gpu
 
 dual_module = import_module("nvalchemiops.jax.neighbors.naive_dual_cutoff")
+
+
+def test_zero_cutoff_fixed_dual_coo_returns_fresh_recovery_metadata():
+    """Dual zero cutoff returns one fresh recovery group per cutoff."""
+    positions = jnp.zeros((2, 3), dtype=jnp.float32)
+    _l1, _p1, counts1, valid1, _l2, _p2, counts2, valid2 = (
+        naive_neighbor_list_dual_cutoff(
+            positions,
+            0.0,
+            0.0,
+            max_neighbors1=1,
+            max_neighbors2=1,
+            num_neighbors1=jnp.full(2, 7, dtype=jnp.int32),
+            num_neighbors2=jnp.full(2, 7, dtype=jnp.int32),
+            return_neighbor_list=True,
+            coo_capacity=2,
+        )
+    )
+
+    np.testing.assert_array_equal(counts1, jnp.zeros(2, dtype=jnp.int32))
+    np.testing.assert_array_equal(counts2, jnp.zeros(2, dtype=jnp.int32))
+    assert bool(valid1) and bool(valid2)
+
+
+class TestDualCutoffOrder:
+    """Dual-cutoff boundaries require the second cutoff to be no smaller."""
+
+    def test_direct_naive_rejects_reversed_cutoffs_before_pbc_setup(self):
+        """The direct PBC entry point rejects a reversed cutoff pair."""
+        positions, cell, pbc = create_simple_cubic_system_jax(
+            num_atoms=2,
+            cell_size=2.0,
+            dtype=jnp.float32,
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="^cutoff2 must be greater than or equal to cutoff1$",
+        ):
+            naive_neighbor_list_dual_cutoff(positions, 1.0, 0.5, pbc=pbc, cell=cell)
+
+    def test_direct_batch_naive_rejects_reversed_cutoffs(self):
+        """The batched direct entry point rejects a reversed cutoff pair."""
+        positions = jnp.zeros((0, 3), dtype=jnp.float32)
+
+        with pytest.raises(
+            ValueError,
+            match="^cutoff2 must be greater than or equal to cutoff1$",
+        ):
+            batch_naive_neighbor_list_dual_cutoff(positions, 1.0, 0.5)
 
 
 def _active_neighbor_shift_rows(
@@ -52,6 +104,49 @@ def _active_neighbor_shift_rows(
         axis=1,
     )
     return sorted(tuple(row) for row in rows.tolist())
+
+
+def _assert_fixed_coo_matches_matrix(
+    neighbor_list,
+    neighbor_ptr,
+    neighbor_shifts,
+    reference_matrix,
+    reference_counts,
+    reference_shifts,
+    capacity,
+    fill_value,
+):
+    """Compare fixed COO pointers and per-source pair/shift records."""
+    neighbor_list = np.asarray(neighbor_list)
+    neighbor_ptr = np.asarray(neighbor_ptr)
+    neighbor_shifts = np.asarray(neighbor_shifts)
+    reference_counts = np.asarray(reference_counts)
+    expected_ptr = np.concatenate(
+        [np.array([0], dtype=np.int32), np.cumsum(reference_counts)]
+    )
+    np.testing.assert_array_equal(neighbor_ptr, expected_ptr)
+    assert neighbor_ptr[0] == 0
+    assert np.all(np.diff(neighbor_ptr) >= 0)
+    assert np.all((neighbor_ptr >= 0) & (neighbor_ptr <= capacity))
+    for source in range(reference_matrix.shape[0]):
+        start, end = int(neighbor_ptr[source]), int(neighbor_ptr[source + 1])
+        expected = _active_neighbor_shift_rows(
+            reference_matrix,
+            reference_shifts,
+            reference_counts,
+            source,
+        )
+        actual = sorted(
+            (int(neighbor_list[1, slot]), *map(int, neighbor_shifts[slot]))
+            for slot in range(start, end)
+        )
+        assert np.all(neighbor_list[0, start:end] == source)
+        assert actual == expected
+    num_pairs = int(neighbor_ptr[-1])
+    if num_pairs < capacity:
+        np.testing.assert_array_equal(neighbor_list[:, num_pairs:], fill_value)
+        np.testing.assert_array_equal(neighbor_shifts[num_pairs:], 0)
+    return num_pairs
 
 
 class TestNaiveDualCutoffCorrectness:
@@ -234,6 +329,32 @@ class TestNaiveDualCutoffCorrectness:
 
 class TestNaiveDualCutoffEdgeCases:
     """Test edge cases for naive dual cutoff neighbor list."""
+
+    @pytest.mark.parametrize(
+        ("coo_capacity", "return_neighbor_list", "error"),
+        [
+            (4, False, "coo_capacity requires return_neighbor_list=True"),
+            ((1,), True, "coo_capacity must contain exactly two values"),
+            ((1, -1), True, "coo_capacity values must be non-negative"),
+        ],
+    )
+    def test_coo_capacity_validation(
+        self,
+        coo_capacity,
+        return_neighbor_list,
+        error,
+    ):
+        """Fixed COO capacities reject incompatible and malformed values."""
+        positions = jnp.zeros((1, 3), dtype=jnp.float32)
+
+        with pytest.raises(ValueError, match=error):
+            naive_neighbor_list_dual_cutoff(
+                positions,
+                cutoff1=1.0,
+                cutoff2=1.5,
+                return_neighbor_list=return_neighbor_list,
+                coo_capacity=coo_capacity,
+            )
 
     def test_single_atom(self):
         """Test with single atom (should have no neighbors)."""
@@ -428,6 +549,102 @@ class TestNaiveDualCutoffJIT:
         assert nm2.shape == (8, 25)
         assert nn1.shape == (8,)
         assert nn2.shape == (8,)
+
+    @pytest.mark.parametrize("use_pbc", [False, True], ids=["no-pbc", "pbc"])
+    def test_jit_fixed_capacity_coo(self, use_pbc):
+        """Fixed COO dual outputs match independent public matrix references."""
+        positions, cell, pbc = create_simple_cubic_system_jax(
+            num_atoms=8, cell_size=2.0, dtype=jnp.float32
+        )
+        cutoff1 = 1.1
+        cutoff2 = 1.5
+        pbc_kwargs = {}
+        if use_pbc:
+            shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+                cell,
+                cutoff2,
+                pbc,
+            )
+            pbc_kwargs = {
+                "cell": cell,
+                "pbc": pbc,
+                "shift_range_per_dimension": shift_range,
+                "num_shifts_per_system": num_shifts,
+                "max_shifts_per_system": max_shifts,
+            }
+
+        @jax.jit
+        def jitted_dual(positions):
+            return naive_neighbor_list_dual_cutoff(
+                positions,
+                cutoff1=cutoff1,
+                cutoff2=cutoff2,
+                max_neighbors1=32,
+                max_neighbors2=64,
+                return_neighbor_list=True,
+                coo_capacity=(256, 512),
+                **pbc_kwargs,
+            )
+
+        result = jitted_dual(positions)
+        if use_pbc:
+            nl1, ptr1, shifts1, counts1, valid1, nl2, ptr2, shifts2, counts2, valid2 = (
+                result
+            )
+            assert shifts1.shape == (256, 3)
+            assert shifts2.shape == (512, 3)
+        else:
+            nl1, ptr1, counts1, valid1, nl2, ptr2, counts2, valid2 = result
+
+        assert nl1.shape == (2, 256)
+        assert nl2.shape == (2, 512)
+        assert ptr1.shape == ptr2.shape == (9,)
+        assert bool(valid1)
+        assert bool(valid2)
+        assert jnp.all(counts1 >= 0)
+        assert jnp.all(counts2 >= 0)
+
+        reference1 = naive_neighbor_list(
+            positions,
+            cutoff=cutoff1,
+            max_neighbors=32,
+            **pbc_kwargs,
+        )
+        reference2 = naive_neighbor_list(
+            positions,
+            cutoff=cutoff2,
+            max_neighbors=64,
+            **pbc_kwargs,
+        )
+        if use_pbc:
+            ref_nm1, ref_nn1, ref_shifts1 = reference1
+            ref_nm2, ref_nn2, ref_shifts2 = reference2
+        else:
+            ref_nm1, ref_nn1 = reference1
+            ref_nm2, ref_nn2 = reference2
+            ref_shifts1 = jnp.zeros((positions.shape[0], 32, 3), dtype=jnp.int32)
+            ref_shifts2 = jnp.zeros((positions.shape[0], 64, 3), dtype=jnp.int32)
+        num_pairs1 = _assert_fixed_coo_matches_matrix(
+            nl1,
+            ptr1,
+            shifts1 if use_pbc else jnp.zeros((256, 3), dtype=jnp.int32),
+            ref_nm1,
+            ref_nn1,
+            ref_shifts1,
+            256,
+            positions.shape[0],
+        )
+        num_pairs2 = _assert_fixed_coo_matches_matrix(
+            nl2,
+            ptr2,
+            shifts2 if use_pbc else jnp.zeros((512, 3), dtype=jnp.int32),
+            ref_nm2,
+            ref_nn2,
+            ref_shifts2,
+            512,
+            positions.shape[0],
+        )
+        assert num_pairs1 > 0 and num_pairs2 >= num_pairs1
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])

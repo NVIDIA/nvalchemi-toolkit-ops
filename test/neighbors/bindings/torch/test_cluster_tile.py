@@ -155,6 +155,23 @@ def _run_isolated_fullgraph_overflow(kind: str) -> subprocess.CompletedProcess[s
 # Correctness
 # =============================================================================
 class TestTileNeighborListCorrectness:
+    def test_current_stream_consumes_event_gated_input(
+        self, device, dtype, torch_stream_runner
+    ):
+        """Cluster-tile temporaries and outputs stay on the caller's stream."""
+        source = torch.tensor(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=dtype, device=device
+        )
+        positions = torch.empty_like(source)
+        cell = _orthorhombic_cell(4.0, device, dtype)
+        _, snapshot, expected = torch_stream_runner(
+            source,
+            positions,
+            lambda value: cluster_tile_neighbor_list(value, 1.0, cell, max_neighbors=8),
+        )
+        for result, reference in zip(snapshot, expected, strict=True):
+            torch.testing.assert_close(result, reference)
+
     def test_single_atom_no_neighbors(self, device, dtype):
         """Single atom system should have no neighbors."""
         positions = torch.tensor([[0.0, 0.0, 0.0]], dtype=dtype, device=device)
@@ -1217,6 +1234,60 @@ class TestClusterTileCompile:
         assert torch.all(neighbor_list_shifts == -77)
 
     @pytest.mark.slow
+    def test_selective_coo_wrapper_fullgraph_clamps_overflow_count(self, device, dtype):
+        """Compiled valid segments report at most their written capacity."""
+        natom = 64
+        capacity = 64
+        positions = torch.zeros((natom, 3), dtype=dtype, device=device)
+        cell = _orthorhombic_cell(6.0, device, dtype)
+        num_tiles, tile_row_group, tile_col_group, *_ = cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell,
+            format="tile",
+        )
+        neighbor_list = torch.full(
+            (2, capacity),
+            -77,
+            dtype=torch.int32,
+            device=device,
+        )
+        neighbor_list_shifts = torch.full(
+            (capacity, 3),
+            -77,
+            dtype=torch.int32,
+            device=device,
+        )
+        pair_offsets = torch.tensor([0, capacity], dtype=torch.int32, device=device)
+        pair_counts = torch.zeros(1, dtype=torch.int32, device=device)
+
+        @torch.compile(fullgraph=True)
+        def run(runtime_pair_counts):
+            return cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell,
+                max_neighbors=64,
+                format="coo",
+                rebuild_flags=torch.ones(1, dtype=torch.bool, device=device),
+                return_state=True,
+                num_tiles=num_tiles,
+                tile_row_group=tile_row_group,
+                tile_col_group=tile_col_group,
+                neighbor_list=neighbor_list,
+                pair_offsets=pair_offsets,
+                pair_counts=runtime_pair_counts,
+                neighbor_list_shifts=neighbor_list_shifts,
+            )
+
+        result = run(pair_counts)
+
+        assert result[2].data_ptr() == pair_counts.data_ptr()
+        assert int(pair_counts.item()) == capacity
+        assert torch.all(neighbor_list != -77)
+        assert torch.all(neighbor_list_shifts != -77)
+
+    @pytest.mark.slow
     @pytest.mark.parametrize(
         ("kind", "message"),
         [
@@ -2141,22 +2212,36 @@ class TestClusterTileCellListParity:
             assert_neighbor_lists_equal((i_got, j_got, u_got), (i_ref, j_ref, u_ref))
 
     def test_tile_buffer_overflow_raises(self, device, dtype):
-        """A too-small tile buffer must raise, not silently truncate tiles.
+        """All public output formats report the same tile-buffer requirement.
 
         Forced cheaply with ``max_tiles_per_group=1`` rather than a large
         dense system; exercises the build->query tile-overflow guard.
         """
         torch.manual_seed(3)
         n, box, cutoff = 128, 12.0, 5.0
-        pos = torch.rand(n, 3, dtype=dtype, device=device) * box
+        pos = torch.zeros((n, 3), dtype=dtype, device=device)
         cell = _orthorhombic_cell(box, device, dtype)
-        with pytest.raises(TileBufferOverflow) as caught:
-            cluster_tile_neighbor_list(
-                pos,
-                cutoff,
-                cell,
-                max_neighbors=256,
-                max_tiles_per_group=1,
-            )
-        assert caught.value.num_tiles > caught.value.max_tiles
-        assert caught.value.system_index is None
+        required_counts = {}
+        for format in ("matrix", "coo", "tile"):
+            with pytest.raises(TileBufferOverflow) as caught:
+                cluster_tile_neighbor_list(
+                    pos,
+                    cutoff,
+                    cell,
+                    max_neighbors=256,
+                    max_tiles_per_group=1,
+                    format=format,
+                )
+            required_counts[format] = caught.value.num_tiles
+            assert caught.value.num_tiles > caught.value.max_tiles
+            assert caught.value.system_index is None
+        assert len(set(required_counts.values())) == 1
+        result = cluster_tile_neighbor_list(
+            pos,
+            cutoff,
+            cell,
+            format="tile",
+            max_tiles_per_group=4,
+        )
+        assert int(result[0].item()) == next(iter(required_counts.values()))
+        assert int(result[0].item()) <= result[1].shape[0]

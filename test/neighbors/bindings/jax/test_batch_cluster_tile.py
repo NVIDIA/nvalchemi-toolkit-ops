@@ -28,10 +28,10 @@ from nvalchemiops.jax.neighbors import _cluster_tile_preload
 from nvalchemiops.jax.neighbors.batch_cluster_tile import (
     _BATCH_CLUSTER_TILE_QUERIES,
     TILE_GROUP_SIZE,
-    _batch_tile_buffer_max_tiles_per_group,
     allocate_batch_cluster_tile_list,
     batch_build_cluster_tile_list,
     batch_cluster_tile_neighbor_list,
+    batch_query_cluster_tile,
     estimate_batch_cluster_tile_list_sizes,
     estimate_batch_cluster_tile_segments,
     estimate_batch_max_tiles_per_group,
@@ -70,6 +70,71 @@ def _traced_preload_device_count() -> int:
         device for device in local_devices if device.platform in {"gpu", "cuda", "rocm"}
     )
     return len(accelerators or local_devices)
+
+
+class TestBatchClusterTileDualCutoffValidation:
+    """Exercise the batched public matrix dual-cutoff boundaries."""
+
+    def test_batch_query_rejects_reversed_dual_cutoffs_and_accepts_equal(self):
+        """The direct batched matrix query validates cutoff ordering."""
+        positions, cell_batch, batch_ptr = _make_batch([32], [4.0])
+        positions = positions.astype(jnp.float32)
+        tile_state = batch_cluster_tile_neighbor_list(
+            positions,
+            1.0,
+            cell_batch,
+            batch_ptr,
+            format="tile",
+        )
+        query_args = (
+            tile_state[4],
+            tile_state[5],
+            tile_state[6],
+            tile_state[7],
+            cell_batch,
+            tile_state[0],
+            tile_state[1],
+            tile_state[2],
+            tile_state[3],
+            1.0,
+            positions.shape[0],
+            32,
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="cutoff2 must be greater than or equal to cutoff",
+        ):
+            batch_query_cluster_tile(*query_args, cutoff2=0.5)
+
+        result = batch_query_cluster_tile(*query_args, cutoff2=1.0)
+        assert len(result) == 6
+
+    def test_batch_wrapper_rejects_reversed_dual_cutoffs_and_accepts_equal(self):
+        """The one-shot batch wrapper applies the same ordering contract."""
+        positions, cell_batch, batch_ptr = _make_batch([32], [4.0])
+        positions = positions.astype(jnp.float32)
+
+        with pytest.raises(
+            ValueError,
+            match="cutoff2 must be greater than or equal to cutoff",
+        ):
+            batch_cluster_tile_neighbor_list(
+                positions,
+                1.0,
+                cell_batch,
+                batch_ptr,
+                cutoff2=0.5,
+            )
+
+        result = batch_cluster_tile_neighbor_list(
+            positions,
+            1.0,
+            cell_batch,
+            batch_ptr,
+            cutoff2=1.0,
+        )
+        assert len(result) == 6
 
 
 class TestJaxBatchClusterTileValidation:
@@ -527,6 +592,229 @@ class TestBatchTileNeighborListErrors:
         assert segmented.value.num_tiles > segmented.value.max_tiles
 
 
+class TestBatchClusterTileBuildCapacity:
+    """Direct batched builders report compact and segmented tile overflow."""
+
+    def test_full_build_overflow_and_adequate_retry(self):
+        """Compact overflow reports the global required count and retry works."""
+        positions = jnp.zeros((64, 3), dtype=jnp.float32)
+        cell_batch = jnp.tile(jnp.eye(3, dtype=jnp.float32)[None] * 12.0, (2, 1, 1))
+        batch_ptr = jnp.array([0, 32, 64], dtype=jnp.int32)
+
+        undersized = allocate_batch_cluster_tile_list(
+            batch_ptr, 64, max_tiles_per_group=1
+        )
+        with pytest.raises(TileBufferOverflow) as caught:
+            batch_build_cluster_tile_list(
+                positions,
+                5.0,
+                cell_batch,
+                batch_ptr,
+                max_tiles_per_group=256,
+                tile_offsets=jnp.array([0, 1000, 2000], dtype=jnp.int32),
+                tile_counts=jnp.zeros(2, dtype=jnp.int32),
+                num_tiles=undersized[0],
+                tile_row_group=undersized[1][:1],
+                tile_col_group=undersized[2][:1],
+                tile_system=undersized[3][:1],
+            )
+        assert caught.value.max_tiles == 1
+        required = caught.value.num_tiles
+
+        adequate = allocate_batch_cluster_tile_list(
+            batch_ptr, 64, max_tiles_per_group=1
+        )
+        state = batch_build_cluster_tile_list(
+            positions,
+            5.0,
+            cell_batch,
+            batch_ptr,
+            max_tiles_per_group=256,
+            num_tiles=adequate[0],
+            tile_row_group=adequate[1],
+            tile_col_group=adequate[2],
+            tile_system=adequate[3],
+        )
+        assert int(state[15][0]) == required
+        neighbor_matrix, num_neighbors, shifts = batch_query_cluster_tile(
+            state[0],
+            state[2],
+            state[3],
+            state[4],
+            cell_batch,
+            state[15],
+            state[16],
+            state[17],
+            state[18],
+            5.0,
+            positions.shape[0],
+            32,
+        )
+        assert np.all(np.asarray(num_neighbors) == 31)
+        matrix = np.asarray(neighbor_matrix)
+        for atom in range(64):
+            system_start = 0 if atom < 32 else 32
+            expected = set(range(system_start, system_start + 32))
+            expected.remove(atom)
+            assert set(matrix[atom, :31]) == expected
+        assert shifts.shape == (64, 32, 3)
+
+    def test_selective_build_reports_overflowing_system(self):
+        """Segmented selective overflow identifies the system with the short segment."""
+        positions = jnp.zeros((96, 3), dtype=jnp.float32)
+        cell_batch = jnp.tile(jnp.eye(3, dtype=jnp.float32)[None] * 12.0, (2, 1, 1))
+        batch_ptr = jnp.array([0, 32, 96], dtype=jnp.int32)
+        with pytest.raises(TileBufferOverflow) as caught:
+            batch_build_cluster_tile_list(
+                positions,
+                5.0,
+                cell_batch,
+                batch_ptr,
+                max_tiles_per_group=256,
+                rebuild_flags=jnp.ones(2, dtype=jnp.bool_),
+                tile_offsets=jnp.array([0, 1, 2], dtype=jnp.int32),
+                tile_counts=jnp.zeros(2, dtype=jnp.int32),
+                num_tiles=jnp.zeros(1, dtype=jnp.int32),
+                tile_row_group=jnp.zeros(2, dtype=jnp.int32),
+                tile_col_group=jnp.zeros(2, dtype=jnp.int32),
+                tile_system=jnp.zeros(2, dtype=jnp.int32),
+            )
+        assert caught.value.system_index == 1
+        assert caught.value.max_tiles == 1
+        assert caught.value.num_tiles > caught.value.max_tiles
+
+    def test_jit_complete_supplied_storage_omits_capacity_factor(self):
+        """Complete batched tile arrays remove only the allocation-time factor."""
+        positions = jnp.zeros((64, 3), dtype=jnp.float32)
+        cell_batch = jnp.tile(jnp.eye(3, dtype=jnp.float32)[None] * 12.0, (2, 1, 1))
+        batch_ptr = jnp.array([0, 32, 64], dtype=jnp.int32)
+
+        @jax.jit
+        def build(positions, tile_row_group, tile_col_group, tile_system):
+            return batch_build_cluster_tile_list(
+                positions,
+                5.0,
+                cell_batch,
+                batch_ptr,
+                tile_row_group=tile_row_group,
+                tile_col_group=tile_col_group,
+                tile_system=tile_system,
+            )
+
+        state = build(
+            positions,
+            jnp.zeros(2, dtype=jnp.int32),
+            jnp.zeros(2, dtype=jnp.int32),
+            jnp.zeros(2, dtype=jnp.int32),
+        )
+        assert int(state[15][0]) == 2
+        assert state[16].shape == state[17].shape == state[18].shape == (2,)
+
+    def test_jit_partial_supplied_storage_still_requires_capacity_factor(self):
+        """A missing batched tile-index array still requires static allocation."""
+        positions = jnp.zeros((64, 3), dtype=jnp.float32)
+        cell_batch = jnp.tile(jnp.eye(3, dtype=jnp.float32)[None] * 12.0, (2, 1, 1))
+        batch_ptr = jnp.array([0, 32, 64], dtype=jnp.int32)
+
+        @jax.jit
+        def build(positions, tile_row_group, tile_col_group):
+            return batch_build_cluster_tile_list(
+                positions,
+                5.0,
+                cell_batch,
+                batch_ptr,
+                tile_row_group=tile_row_group,
+                tile_col_group=tile_col_group,
+            )
+
+        with pytest.raises(ValueError, match="static Python integer"):
+            build(
+                positions,
+                jnp.zeros(2, dtype=jnp.int32),
+                jnp.zeros(2, dtype=jnp.int32),
+            )
+
+    def test_jit_complete_storage_still_requires_static_batch_ptr(self):
+        """Caller-owned tile storage does not make batch segmentation dynamic."""
+        positions = jnp.zeros((64, 3), dtype=jnp.float32)
+        cell_batch = jnp.tile(jnp.eye(3, dtype=jnp.float32)[None] * 12.0, (2, 1, 1))
+
+        @jax.jit
+        def build(positions, batch_ptr, tile_row_group, tile_col_group, tile_system):
+            return batch_build_cluster_tile_list(
+                positions,
+                5.0,
+                cell_batch,
+                batch_ptr,
+                tile_row_group=tile_row_group,
+                tile_col_group=tile_col_group,
+                tile_system=tile_system,
+            )
+
+        with pytest.raises(ValueError, match="batch_ptr.*concrete"):
+            build(
+                positions,
+                jnp.array([0, 32, 64], dtype=jnp.int32),
+                jnp.zeros(2, dtype=jnp.int32),
+                jnp.zeros(2, dtype=jnp.int32),
+                jnp.zeros(2, dtype=jnp.int32),
+            )
+
+    @pytest.mark.parametrize("invalid_factor", [0, -1, True, 1.5])
+    def test_complete_supplied_storage_rejects_invalid_factor(self, invalid_factor):
+        """Complete batched buffers do not excuse an invalid explicit factor."""
+        positions = jnp.zeros((32, 3), dtype=jnp.float32)
+        cell_batch = jnp.eye(3, dtype=jnp.float32)[None] * 4.0
+        batch_ptr = jnp.array([0, 32], dtype=jnp.int32)
+        with pytest.raises(ValueError, match="positive integer"):
+            batch_build_cluster_tile_list(
+                positions,
+                1.0,
+                cell_batch,
+                batch_ptr,
+                max_tiles_per_group=invalid_factor,
+                tile_row_group=jnp.zeros(1, dtype=jnp.int32),
+                tile_col_group=jnp.zeros(1, dtype=jnp.int32),
+                tile_system=jnp.zeros(1, dtype=jnp.int32),
+            )
+
+    def test_segmented_overflow_retries_reinitialize_resized_state(self):
+        """Successive first-system failures lead to a full-state adequate retry."""
+        positions = jnp.zeros((160, 3), dtype=jnp.float32)
+        cell_batch = jnp.tile(jnp.eye(3, dtype=jnp.float32)[None] * 12.0, (2, 1, 1))
+        batch_ptr = jnp.array([0, 64, 160], dtype=jnp.int32)
+
+        def build_with_offsets(tile_offsets):
+            capacity = int(tile_offsets[-1])
+            return batch_build_cluster_tile_list(
+                positions,
+                5.0,
+                cell_batch,
+                batch_ptr,
+                rebuild_flags=jnp.ones(2, dtype=jnp.bool_),
+                tile_offsets=tile_offsets,
+                tile_counts=jnp.zeros(2, dtype=jnp.int32),
+                num_tiles=jnp.zeros(1, dtype=jnp.int32),
+                tile_row_group=jnp.zeros(capacity, dtype=jnp.int32),
+                tile_col_group=jnp.zeros(capacity, dtype=jnp.int32),
+                tile_system=jnp.zeros(capacity, dtype=jnp.int32),
+            )
+
+        with pytest.raises(TileBufferOverflow) as first:
+            build_with_offsets(jnp.array([0, 1, 2], dtype=jnp.int32))
+        assert first.value.system_index == 0
+        assert first.value.num_tiles == 3
+
+        with pytest.raises(TileBufferOverflow) as second:
+            build_with_offsets(jnp.array([0, 3, 4], dtype=jnp.int32))
+        assert second.value.system_index == 1
+        assert second.value.num_tiles == 6
+
+        state = build_with_offsets(jnp.array([0, 3, 9], dtype=jnp.int32))
+        np.testing.assert_array_equal(np.asarray(state[-1]), np.array([3, 6]))
+        assert state[16].shape == state[17].shape == state[18].shape == (9,)
+
+
 class TestEstimateBatchSizes:
     """Pure-Python sizing helper tests."""
 
@@ -577,6 +865,32 @@ class TestEstimateBatchSizes:
         with pytest.raises(ValueError, match="cell_batch.*shape"):
             estimate_batch_max_tiles_per_group(batch_ptr, 2.0, cell_batch)
 
+    def test_batch_max_tiles_per_group_rejects_cell_count_mismatch(self):
+        """Public sizing requires one cell per batch segment."""
+        batch_ptr = jnp.array([0, 32], dtype=jnp.int32)
+        cell_batch = jnp.zeros((0, 3, 3), dtype=jnp.float32)
+
+        with pytest.raises(ValueError, match="cell_volumes"):
+            estimate_batch_max_tiles_per_group(batch_ptr, 2.0, cell_batch)
+
+    def test_batch_tile_buffer_max_tiles_per_group_rejects_cell_batch_mismatch(self):
+        """Non-empty batch pointers still validate against cell_batch length."""
+        positions = jnp.zeros((32, 3), dtype=jnp.float32)
+        batch_ptr = jnp.array([0, 32], dtype=jnp.int32)
+        cell_batch = jnp.zeros((0, 3, 3), dtype=jnp.float32)
+
+        with pytest.raises(ValueError, match="cell_volumes"):
+            from nvalchemiops.jax.neighbors.batch_cluster_tile import (
+                _batch_tile_buffer_max_tiles_per_group,
+            )
+
+            _batch_tile_buffer_max_tiles_per_group(
+                positions,
+                batch_ptr,
+                2.0,
+                cell_batch,
+            )
+
     def test_batch_max_tiles_per_group_rejects_traced_cell_batch(self):
         """Public batch max-tile sizing requires concrete cell_batch."""
         batch_ptr = jnp.array([0, 32], dtype=jnp.int32)
@@ -599,19 +913,68 @@ class TestEstimateBatchSizes:
         with pytest.raises(ValueError, match="batch_ptr.*concrete"):
             call_with_traced_batch_ptr(jnp.array([0, 32], dtype=jnp.int32))
 
-    def test_batch_tile_buffer_max_tiles_per_group_rejects_cell_batch_mismatch(self):
-        """Non-empty batch pointers still validate against cell_batch length."""
-        positions = jnp.zeros((32, 3), dtype=jnp.float32)
-        batch_ptr = jnp.array([0, 32], dtype=jnp.int32)
-        cell_batch = jnp.zeros((0, 3, 3), dtype=jnp.float32)
+    def test_jit_requires_static_batch_ptr_for_tile_allocation(self):
+        """A dynamic batch pointer cannot determine tile buffer capacity."""
+        positions, cell_batch, batch_ptr = _make_batch([32], [4.0])
 
-        with pytest.raises(ValueError, match="cell_volumes"):
-            _batch_tile_buffer_max_tiles_per_group(
+        @jax.jit
+        def build(positions, batch_ptr):
+            return batch_cluster_tile_neighbor_list(
                 positions,
-                batch_ptr,
-                2.0,
+                1.0,
                 cell_batch,
+                batch_ptr,
+                max_neighbors=32,
+                max_tiles_per_group=1,
             )
+
+        with pytest.raises(ValueError, match="close over batch_ptr"):
+            build(positions, batch_ptr)
+
+    def test_jit_requires_static_cutoff_for_tile_allocation(self):
+        """A dynamic cutoff cannot determine tile buffer capacity."""
+        positions, cell_batch, batch_ptr = _make_batch([32], [4.0])
+
+        @jax.jit
+        def build(positions, cutoff):
+            return batch_cluster_tile_neighbor_list(
+                positions,
+                cutoff,
+                cell_batch,
+                batch_ptr,
+                max_neighbors=32,
+                max_tiles_per_group=1,
+            )
+
+        with pytest.raises(ValueError, match="close over cutoff before tracing"):
+            build(positions, jnp.asarray(1.0, dtype=jnp.float32))
+
+    def test_jit_dense_tile_output_with_explicit_capacity(self):
+        """An explicit compiled capacity contains every dense tile pair."""
+        num_groups = 512
+        num_atoms = num_groups * TILE_GROUP_SIZE
+        positions = jnp.zeros((num_atoms, 3), dtype=jnp.float32)
+        cell_batch = (jnp.eye(3, dtype=jnp.float32) * 64.0)[None]
+        batch_ptr = jnp.array([0, num_atoms], dtype=jnp.int32)
+
+        @jax.jit
+        def build(positions):
+            return batch_cluster_tile_neighbor_list(
+                positions,
+                1.0,
+                cell_batch,
+                batch_ptr,
+                format="tile",
+                max_tiles_per_group=(num_groups + 2) // 2,
+            )
+
+        num_tiles, tile_row_group, tile_col_group, tile_system, *_ = build(positions)
+        tile_count = int(num_tiles[0])
+        expected_tiles = num_groups * (num_groups + 1) // 2
+
+        assert tile_count == expected_tiles
+        assert tile_count <= tile_row_group.shape[0]
+        assert tile_row_group.shape == tile_col_group.shape == tile_system.shape
 
     def test_aligned_two_systems(self):
         batch_ptr = jnp.array([0, 64, 192], dtype=jnp.int32)
@@ -883,9 +1246,9 @@ class TestJaxBatchClusterTileCutoff2Selective:
         _nm1, nn1, _sh1, _nm2, nn2, _sh2 = out
         assert int(nn2.sum()) >= int(nn1.sum())
 
-    @pytest.mark.parametrize("cutoff2", [0.91, 4.0])
-    def test_default_capacity_uses_larger_dual_cutoff(self, cutoff2):
-        """Reversed and equal dual cutoffs preserve each input-order matrix."""
+    @pytest.mark.parametrize("cutoff, cutoff2", [(0.91, 4.0), (4.0, 4.0)])
+    def test_default_capacity_uses_larger_dual_cutoff(self, cutoff, cutoff2):
+        """Ordered and equal dual cutoffs preserve each input-order matrix."""
         positions = jnp.stack(
             (
                 jnp.arange(40, dtype=jnp.float32) * jnp.float32(0.05),
@@ -897,9 +1260,9 @@ class TestJaxBatchClusterTileCutoff2Selective:
         cell_batch = jnp.eye(3, dtype=jnp.float32)[None] * 10.0
         batch_ptr = jnp.array([0, 40], dtype=jnp.int32)
         out = batch_cluster_tile_neighbor_list(
-            positions, 4.0, cell_batch, batch_ptr, cutoff2=cutoff2
+            positions, cutoff, cell_batch, batch_ptr, cutoff2=cutoff2
         )
-        for offset, reference_cutoff in ((0, 4.0), (3, cutoff2)):
+        for offset, reference_cutoff in ((0, cutoff), (3, cutoff2)):
             got = _matrix_to_pair_set_full(
                 *out[offset : offset + 3], positions.shape[0]
             )
@@ -956,6 +1319,131 @@ class TestJaxBatchClusterTileCutoff2Selective:
         np.testing.assert_array_equal(np.asarray(nm2), np.asarray(nm))
         np.testing.assert_array_equal(np.asarray(nn2), np.asarray(nn))
         np.testing.assert_array_equal(np.asarray(shifts2), np.asarray(shifts))
+
+    def test_mixed_rebuild_flags_preserve_unflagged_system(self):
+        """Rebuilding one system leaves the other system's topology intact."""
+        positions, cell_batch, batch_ptr = _make_batch([32, 64], [6.0, 6.0], seed=34)
+        cutoff = 2.0
+        max_neighbors = 64
+        n_atoms = int(batch_ptr[-1])
+        (
+            empty_num_tiles,
+            empty_tile_row_group,
+            empty_tile_col_group,
+            empty_tile_system,
+            empty_tile_counts,
+            tile_offsets,
+        ) = allocate_batch_cluster_tile_list(batch_ptr, max_neighbors)
+        initial = batch_cluster_tile_neighbor_list(
+            positions,
+            cutoff,
+            cell_batch,
+            batch_ptr,
+            max_neighbors=max_neighbors,
+            rebuild_flags=jnp.ones(2, dtype=jnp.bool_),
+            tile_offsets=tile_offsets,
+            previous_tile_counts=empty_tile_counts,
+            previous_num_tiles=empty_num_tiles,
+            previous_tile_row_group=empty_tile_row_group,
+            previous_tile_col_group=empty_tile_col_group,
+            previous_tile_system=empty_tile_system,
+            previous_neighbor_matrix=jnp.full(
+                (n_atoms, max_neighbors), n_atoms, dtype=jnp.int32
+            ),
+            previous_num_neighbors=jnp.zeros(n_atoms, dtype=jnp.int32),
+            previous_neighbor_matrix_shifts=jnp.zeros(
+                (n_atoms, max_neighbors, 3), dtype=jnp.int32
+            ),
+        )
+        (
+            initial_matrix,
+            initial_counts,
+            initial_shifts,
+            _initial_offsets,
+            initial_tile_counts,
+            initial_num_tiles,
+            initial_tile_row_group,
+            initial_tile_col_group,
+            initial_tile_system,
+        ) = initial
+
+        # Change both systems to a dense geometry. Only the first is rebuilt;
+        # the second must retain its previous topology even though rebuilding it
+        # would produce a detectably different result.
+        moved = jnp.zeros_like(positions)
+        mixed = batch_cluster_tile_neighbor_list(
+            moved,
+            cutoff,
+            cell_batch,
+            batch_ptr,
+            max_neighbors=max_neighbors,
+            rebuild_flags=jnp.array([True, False], dtype=jnp.bool_),
+            tile_offsets=tile_offsets,
+            previous_tile_counts=initial_tile_counts,
+            previous_num_tiles=initial_num_tiles,
+            previous_tile_row_group=initial_tile_row_group,
+            previous_tile_col_group=initial_tile_col_group,
+            previous_tile_system=initial_tile_system,
+            previous_neighbor_matrix=initial_matrix,
+            previous_num_neighbors=initial_counts,
+            previous_neighbor_matrix_shifts=initial_shifts,
+        )
+        mixed_matrix, mixed_counts, mixed_shifts, _, mixed_tile_counts, *_ = mixed
+
+        fresh_matrix, fresh_counts, fresh_shifts = batch_cluster_tile_neighbor_list(
+            moved,
+            cutoff,
+            cell_batch,
+            batch_ptr,
+            max_neighbors=max_neighbors,
+        )
+
+        np.testing.assert_array_equal(
+            np.asarray(mixed_counts[32:]), np.asarray(initial_counts[32:])
+        )
+        assert np.any(np.asarray(fresh_counts[32:]) != np.asarray(initial_counts[32:]))
+        assert int(mixed_tile_counts[1]) == int(initial_tile_counts[1])
+        initial_matrix_np = np.asarray(initial_matrix)
+        initial_shifts_np = np.asarray(initial_shifts)
+        mixed_matrix_np = np.asarray(mixed_matrix)
+        mixed_shifts_np = np.asarray(mixed_shifts)
+        fresh_matrix_np = np.asarray(fresh_matrix)
+        fresh_shifts_np = np.asarray(fresh_shifts)
+
+        for atom in range(32):
+            mixed_pairs = {
+                (
+                    int(mixed_matrix_np[atom, index]),
+                    *map(int, mixed_shifts_np[atom, index]),
+                )
+                for index in range(int(mixed_counts[atom]))
+            }
+            fresh_pairs = {
+                (
+                    int(fresh_matrix_np[atom, index]),
+                    *map(int, fresh_shifts_np[atom, index]),
+                )
+                for index in range(int(fresh_counts[atom]))
+            }
+            assert mixed_pairs == fresh_pairs
+
+        for atom in range(32, 96):
+            count = int(initial_counts[atom])
+            initial_pairs = {
+                (
+                    int(initial_matrix_np[atom, index]),
+                    *map(int, initial_shifts_np[atom, index]),
+                )
+                for index in range(count)
+            }
+            mixed_pairs = {
+                (
+                    int(mixed_matrix_np[atom, index]),
+                    *map(int, mixed_shifts_np[atom, index]),
+                )
+                for index in range(int(mixed_counts[atom]))
+            }
+            assert mixed_pairs == initial_pairs
 
     def test_rebuild_flags_true_from_empty_segmented_state(self):
         positions, cell_batch, batch_ptr = _make_batch([32, 64], [6.0, 6.0], seed=33)

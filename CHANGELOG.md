@@ -4,11 +4,32 @@
 
 ### Changed
 
+- Added fixed-capacity ``jax.jit`` support to the method-specific JAX neighbor
+  APIs. Naive and cell-list methods, including batched variants, accept
+  ``coo_capacity`` for padded COO output with clipped pointers, raw required row
+  counts, and a scalar launch-metadata validity flag. Batched pair-centric
+  cell-list calls additionally need static launch metadata under ``jax.jit``.
+  Invalid static launch relationships raise before the CUDA query, while runtime
+  metadata mismatches invalidate the returned counts.
+  ``neighbor_list`` performs eager orchestration, and compact COO output uses
+  eager shape compaction.
+- JAX dual-cutoff neighbor APIs now reject reversed cutoffs. Naive methods
+  require ``cutoff2 >= cutoff1`` and cluster-tile methods require
+  ``cutoff2 >= cutoff``; equal cutoffs remain valid.
+- JAX DFT-D3 now accepts `D3Parameters` directly as a runtime argument to
+  `jax.jit`, without unpacking and reconstructing its parameter arrays.
 - Raised the minimum supported Warp version to 1.15 and migrated JAX bindings
   from Warp's removed experimental JAX module to its public JAX API, restoring
   compatibility with `warp>=1.15`.
 - Warp initialization now retains warning-level diagnostics instead of
   suppressing all Warp log output.
+- CUDA tiled direct-Warp multipole launchers now require caller-owned,
+  operation-specific scratch bundles. PyTorch bindings allocate and retain this
+  scratch internally, so their public APIs are unchanged; CPU direct-Warp paths
+  do not require scratch.
+- PyTorch segmented operations now accept int64 segment indices whose values
+  fit in int32; these inputs are converted to int32 internally.
+
 ### Added
 
 - `TileBufferOverflow` reports how many cluster-tile pairs were required, how
@@ -23,9 +44,10 @@
   `TileBufferOverflow` when tile-pair construction exceeds the allocated
   capacity. For cluster-tile calls, `NeighborOverflowError` identifies an
   undersized final matrix or COO buffer.
-- Compiled JAX cluster-tile calls now require `max_tiles_per_group` to be a
-  positive static Python integer. Compiled calls do not raise
-  `TileBufferOverflow`.
+- Compiled JAX cluster-tile calls that allocate tile-index storage now require
+  `max_tiles_per_group` to be a positive static Python integer. Complete
+  caller-supplied tile-index storage determines capacity without that factor.
+  Compiled calls do not raise `TileBufferOverflow`.
 - Torch and JAX Ewald now expose caller-retained reciprocal Miller topology via
   `generate_ewald_miller_indices(...)` and
   `k_vectors_from_miller_indices(...)`. Full `ewald_summation(...)` accepts
@@ -42,6 +64,18 @@
 
 ### Fixed
 
+- Torch bindings now launch Warp work on the current PyTorch CUDA stream across
+  neighbors, dynamics, dispersion, electrostatics, spline, and math operations.
+  This prevents Warp from observing unfinished Torch inputs, Torch from
+  consuming incomplete Warp outputs, and Torch temporary storage from being
+  reused while Warp still references it. JAX bindings continue to use
+  XLA-provided streams through Warp's JAX adapters.
+- Corrected the multipole Ewald/PME uniform-background coefficient for
+  non-neutral cells. Split Ewald, PME, and cached Ewald now use the same
+  zero-mode convention as the direct reciprocal calculation, including charge
+  and cell derivatives.
+- Segmented sums no longer retain CUDA graph-pool allocations through cached Warp
+  launches when used from compiled PyTorch custom operators.
 - Fixed JAX autodiff through `ewald_reciprocal_space(...)` when `k_vectors`
   are derived from the differentiated cell. The custom JVP previously
   discarded the `k_vectors` tangent and omitted the reciprocal-cell

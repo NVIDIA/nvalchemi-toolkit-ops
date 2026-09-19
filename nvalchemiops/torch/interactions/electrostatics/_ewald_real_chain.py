@@ -51,6 +51,9 @@ from nvalchemiops.interactions.electrostatics.ewald_real_factory import (
 from nvalchemiops.torch._warp_op_helpers import (
     register_warp_op_chain,
 )
+from nvalchemiops.torch._warp_op_helpers import (
+    scoped_warp_stream as _scoped_stream,
+)
 from nvalchemiops.torch.interactions.electrostatics._util import (
     _distribute_system_mean_cotangent_to_atoms,
     _is_per_system_uniform_cotangent,
@@ -80,15 +83,6 @@ _EWALD_REAL_OPS_REGISTERED = False
 def _wp(tensor: torch.Tensor, dtype):
     """``wp.from_torch`` with shadow-gradient allocation disabled (chain owns bwd)."""
     return wp.from_torch(tensor.detach().contiguous(), dtype=dtype, requires_grad=False)
-
-
-def _scoped_stream(device: torch.device):
-    """Bind Warp's stream to PyTorch's current CUDA stream (graph-capture safe)."""
-    if device.type != "cuda":
-        from contextlib import nullcontext
-
-        return nullcontext()
-    return wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream(device)))
 
 
 def _per_system_cotangent(grad_energy_atom, batch_idx, num_systems, num_atoms):

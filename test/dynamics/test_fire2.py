@@ -457,6 +457,22 @@ def make_fire2_torch_state(N, M, torch_dtype, device, *, rng=None):
     )
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+def test_torch_fire2_step_uses_current_stream(torch_stream_runner):
+    """FIRE2 consumes event-gated state and exposes updates on the caller's stream."""
+    device = torch.device("cuda:0")
+    source = make_fire2_torch_state(12, 2, torch.float64, device)[:7]
+    actual = tuple(torch.empty_like(tensor) for tensor in source)
+
+    def step(values):
+        fire2_step_coord(*values, **FIRE2_DEFAULTS)
+        return values
+
+    _, snapshots, expected = torch_stream_runner(source, actual, step)
+    for result, reference in zip(snapshots, expected, strict=True):
+        torch.testing.assert_close(result, reference)
+
+
 def make_fire2_variable_state(
     atom_counts, dtype_vec, dtype_scalar, np_dtype, device, *, rng=None
 ):

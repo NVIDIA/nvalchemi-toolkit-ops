@@ -895,22 +895,27 @@ class TestBatchTileNeighborListCorrectness:
             assert s1 == s2, f"atom {i} neighbor set mismatch"
 
     def test_tile_buffer_overflow_raises(self, device, dtype):
-        """A too-small batch tile buffer must raise, not silently truncate."""
-        positions, cell_batch, batch_ptr = _make_batch(
-            [256, 256], [8.0, 8.0], device=device, dtype=dtype, seed=9
-        )
-        cutoff = 4.0
-        with pytest.raises(TileBufferOverflow) as caught:
-            batch_cluster_tile_neighbor_list(
-                positions,
-                cutoff,
-                cell_batch,
-                batch_ptr,
-                max_neighbors=256,
-                max_tiles_per_group=1,
-            )
-        assert caught.value.num_tiles > caught.value.max_tiles
-        assert caught.value.system_index is None
+        """All batched output formats report one compact tile requirement."""
+        positions = torch.zeros((96, 3), dtype=dtype, device=device)
+        cell_batch = torch.eye(3, dtype=dtype, device=device).repeat(2, 1, 1) * 12.0
+        batch_ptr = torch.tensor([0, 32, 96], dtype=torch.int32, device=device)
+        cutoff = 5.0
+        required_counts = {}
+        for format in ("matrix", "coo", "tile"):
+            with pytest.raises(TileBufferOverflow) as caught:
+                batch_cluster_tile_neighbor_list(
+                    positions,
+                    cutoff,
+                    cell_batch,
+                    batch_ptr,
+                    max_neighbors=256,
+                    max_tiles_per_group=1,
+                    format=format,
+                )
+            required_counts[format] = caught.value.num_tiles
+            assert caught.value.num_tiles > caught.value.max_tiles
+            assert caught.value.system_index is None
+        assert len(set(required_counts.values())) == 1
 
         segmented_positions = torch.zeros((160, 3), dtype=dtype, device=device)
         segmented_cells = torch.eye(3, dtype=dtype, device=device).repeat(2, 1, 1)
@@ -947,6 +952,16 @@ class TestBatchTileNeighborListCorrectness:
         assert segmented.value.system_index == 1
         assert segmented.value.max_tiles == 1
         assert segmented.value.num_tiles > segmented.value.max_tiles
+        result = batch_cluster_tile_neighbor_list(
+            positions,
+            cutoff,
+            cell_batch,
+            batch_ptr,
+            format="tile",
+            max_tiles_per_group=2,
+        )
+        assert int(result[0].item()) == next(iter(required_counts.values()))
+        assert int(result[0].item()) <= result[1].shape[0]
 
     def test_matrix_overflow_reports_eager_fields(self, device, dtype):
         """Batched matrix overflow identifies the compact capacity and count."""

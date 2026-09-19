@@ -58,6 +58,7 @@ from nvalchemiops.neighbors.neighbor_utils import (
     selective_zero_num_neighbors as wp_selective_zero_num_neighbors,
 )
 from nvalchemiops.neighbors.output_args import _has_partial_or_pair_outputs
+from nvalchemiops.torch._warp_op_helpers import scoped_torch_warp_stream
 from nvalchemiops.torch.neighbors._autograd import _reconstruct_matrix_geometry
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     _check_neighbor_capacity,
@@ -83,6 +84,7 @@ __all__ = [
     "nvalchemiops::_batch_cluster_tile_fill_neighbor_matrix_tail",
     mutates_args=("neighbor_matrix",),
 )
+@scoped_torch_warp_stream
 def _batch_cluster_tile_fill_neighbor_matrix_tail_op(
     num_neighbors: torch.Tensor,
     neighbor_matrix: torch.Tensor,
@@ -534,6 +536,7 @@ def _batched_morton_sort_padded(
         "tile_counts",
     ),
 )
+@scoped_torch_warp_stream
 def _batch_build_cluster_tile_list_op(
     positions: torch.Tensor,
     cutoff: float,
@@ -1026,6 +1029,7 @@ def batch_build_cluster_tile_list(
         "neighbor_distances",
     ),
 )
+@scoped_torch_warp_stream
 def _batch_query_cluster_tile_op(
     cutoff: float,
     natom: int,
@@ -1150,6 +1154,7 @@ def _(
         "neighbor_matrix_shifts2",
     ),
 )
+@scoped_torch_warp_stream
 def _batch_query_cluster_tile_topology_op(
     cutoff: float,
     cutoff2: float,
@@ -1275,6 +1280,7 @@ def _(
     "nvalchemiops::_batch_cluster_tile_selective_fill_neighbor_matrix_tail",
     mutates_args=("neighbor_matrix", "neighbor_matrix2"),
 )
+@scoped_torch_warp_stream
 def _batch_cluster_tile_selective_fill_neighbor_matrix_tail_op(
     num_neighbors: torch.Tensor,
     num_neighbors2: torch.Tensor,
@@ -1348,6 +1354,7 @@ def _(
     return None
 
 
+@scoped_torch_warp_stream
 def batch_query_cluster_tile(
     sorted_atom_index: torch.Tensor,
     sorted_pos_x: torch.Tensor,
@@ -1666,6 +1673,7 @@ def batch_query_cluster_tile(
     )
 
 
+@scoped_torch_warp_stream
 def _batch_query_cluster_tile_optional(
     cell_batch: torch.Tensor,
     inv_cell_batch: torch.Tensor,
@@ -1798,6 +1806,7 @@ def _batch_query_cluster_tile_optional(
     "nvalchemiops::_batch_query_cluster_tile_coo",
     mutates_args=("pair_counter", "coo_list", "coo_shifts"),
 )
+@scoped_torch_warp_stream
 def _batch_query_cluster_tile_coo_op(
     cutoff: float,
     natom: int,
@@ -1881,6 +1890,7 @@ def _(
     return None
 
 
+@scoped_torch_warp_stream
 def _batch_query_cluster_tile_coo_optional(
     cell_batch: torch.Tensor,
     inv_cell_batch: torch.Tensor,
@@ -2215,9 +2225,6 @@ def batch_query_cluster_tile_coo(
     )
 
 
-# =============================================================================
-# High-level convenience
-# =============================================================================
 def _validate_batch_matrix_state(
     *,
     device: torch.device,
