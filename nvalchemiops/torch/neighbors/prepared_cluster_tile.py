@@ -54,7 +54,10 @@ class ClusterTileState:
     differentiable tensors and writes matching detached values to these
     buffers. Build losses from the returned geometry. Batched state caches only
     metadata derived from the fixed partition; geometry-dependent sorting and
-    bounds are recomputed for every execution.
+    bounds are recomputed for nonselective executions and selected systems in
+    selective executions. Eager and ordinary compiled all-false selective calls
+    preserve existing state and may skip rebuild work. CUDA Graph replay keeps
+    the fixed captured launch sequence.
     """
 
     format: str
@@ -235,7 +238,8 @@ def prepare_cluster_tile(
     Preparation allocates storage but does not build a neighbor list. Capture
     the returned state as a closure constant for ``torch.compile``. A warmed,
     compiled matrix-topology callable supports CUDA Graph capture with stable
-    input and state storage; direct eager prepared execution does not.
+    input and state storage; direct eager prepared execution does not. Capture
+    covers forward matrix topology, not geometry or backward execution.
     """
     _validate_positions(positions)
     if format not in ("tile", "matrix", "coo"):
@@ -445,11 +449,15 @@ def _execute_prepared_cluster_tile(
     A selective eager call invalidates every selected system before rebuilding
     it and marks the systems initialized only after the complete call succeeds.
     After a failed rebuild, those systems cannot be preserved with false flags.
+    Eager and ordinary compiled all-false calls preserve existing state and may
+    skip inverse, sorting, and build work.
 
     Warmed ``torch.compile(fullgraph=True)`` matrix-topology execution supports
     CUDA Graph capture with stable tensor storage. Selective flags may change
-    between replays, but replay always executes the fixed captured launch
-    sequence.
+    between replays, but replay always executes the fixed captured inverse,
+    Morton sort, metadata update, tile-build, query, and tail sequence, even
+    when every flag is false. Capture covers forward matrix topology, not
+    geometry or backward execution.
     """
     if not isinstance(state, ClusterTileState):
         raise TypeError("state must be a ClusterTileState")

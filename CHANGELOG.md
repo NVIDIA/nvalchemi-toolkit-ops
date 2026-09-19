@@ -44,10 +44,15 @@
   storage with `prepare_cluster_tile(...)`, then execute it with
   `cluster_tile_neighbor_list(..., state=state)` or
   `batch_cluster_tile_neighbor_list(..., state=state)`, with optional selective
-  matrix rebuilds for single systems and batches.
+  matrix rebuilds for single systems and batches. Outside CUDA Graph capture,
+  eager and ordinary compiled all-false selective calls preserve existing state
+  and may skip rebuild work.
 - Warmed, compiled prepared matrix-topology calls can be captured with
   `torch.cuda.CUDAGraph` and replayed after copying new positions, cells, or
-  selective rebuild flags into the original input tensors.
+  selective rebuild flags into the original input tensors. Replay retains the
+  fixed captured inverse, sort, build, query, and tail sequence even when every
+  selective flag is false. Capture covers forward matrix topology, not geometry
+  or backward execution.
 
 ### Changed
 
@@ -58,7 +63,8 @@
 - Prepared Torch cluster-tile state now rejects dual-cutoff vectors or
   distances during preparation instead of failing later during execution.
 - Prepared batched Torch cluster-tile state now reuses fixed partition and
-  padded-layout metadata while recomputing geometry-dependent data each call.
+  padded-layout metadata while recomputing geometry-dependent data for rebuilt
+  executions or systems.
 - Torch cluster-tile compact COO outputs are now trimmed to the actual pair
   count. Requested distances and vectors are returned with the topology, so
   callers no longer need to provide geometry buffers. If reusable buffers are
