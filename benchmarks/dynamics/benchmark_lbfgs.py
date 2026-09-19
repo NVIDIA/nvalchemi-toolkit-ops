@@ -40,7 +40,13 @@ Usage
                                                   [--seeds 5]
                                                   [--force-tol 1e-4]
                                                   [--output-dir DIR]
+                                                  [--device cuda:0]
     python -m benchmarks.dynamics.benchmark_lbfgs --gates [--eval-ratio 0.129]
+                                                          [--device cuda:0]
+
+``--device`` matches ``benchmark_fire2.py``, since this runner reports a ratio
+against FIRE2 and the two have to be pointed at the same GPU to compare. It is
+threaded through every allocation rather than read from a module global.
 """
 
 from __future__ import annotations
@@ -61,7 +67,9 @@ from nvalchemiops.dynamics.optimizers import (
     lbfgs_step,
 )
 
-DEVICE = "cuda:0"
+#: Default for ``--device``; every function takes the choice explicitly,
+#: matching ``benchmark_fire2.py`` so the two can be run side by side.
+DEFAULT_DEVICE = "cuda:0"
 
 #: Gate model: anisotropic harmonic with its minimum out of reach of a
 #: ``maxstep``-capped walk, so the optimizer stays in steady state.
@@ -88,27 +96,28 @@ def lennard_jones(positions):
     return per_atom_energy, forces
 
 
-def _allocate_lbfgs_state(num_dofs, num_systems, history_size):
+def _allocate_lbfgs_state(num_dofs, num_systems, history_size, device):
     """The Warp state, already in its required start state."""
     return lbfgs_prepare_state(
-        num_dofs, num_systems, history_size=history_size, device=DEVICE
+        num_dofs, num_systems, history_size=history_size, device=device
     )
 
 
-def _allocate_lbfgs_buffers_torch(num_dofs, num_systems, history_size):
+def _allocate_lbfgs_buffers_torch(num_dofs, num_systems, history_size, device):
     """The same state as torch tensors."""
     from nvalchemiops.torch.lbfgs import lbfgs_prepare_state as prepare
 
-    return prepare(num_dofs, num_systems, history_size=history_size, device=DEVICE)
+    return prepare(num_dofs, num_systems, history_size=history_size, device=device)
 
 
-def run_lbfgs(start, force_tol, history_size=6, maxstep=0.2, eval_cap=EVAL_CAP):
+def run_lbfgs(start, force_tol, history_size=6, maxstep=0.2, eval_cap=EVAL_CAP,
+              device=DEFAULT_DEVICE):  # fmt: skip
     """Relax with L-BFGS; return (evaluations, converged, final max force)."""
     num_atoms = start.shape[0]
-    positions = wp.array(start.copy(), dtype=wp.vec3d, device=DEVICE)
-    forces = wp.zeros(num_atoms, dtype=wp.vec3d, device=DEVICE)
-    batch_idx = wp.zeros(num_atoms, dtype=wp.int32, device=DEVICE)
-    state = _allocate_lbfgs_state(num_atoms, 1, history_size)
+    positions = wp.array(start.copy(), dtype=wp.vec3d, device=device)
+    forces = wp.zeros(num_atoms, dtype=wp.vec3d, device=device)
+    batch_idx = wp.zeros(num_atoms, dtype=wp.int32, device=device)
+    state = _allocate_lbfgs_state(num_atoms, 1, history_size, device)
 
     # Deliberately the same shape as ``run_fire2`` below: both optimizers
     # leave convergence to the caller, so both loops test then step.
@@ -131,18 +140,19 @@ def run_lbfgs(start, force_tol, history_size=6, maxstep=0.2, eval_cap=EVAL_CAP):
 
 
 def run_fire2(
-    start, force_tol, dt_start=0.02, maxstep=0.05, tmax=0.1, eval_cap=EVAL_CAP
-):
+    start, force_tol, dt_start=0.02, maxstep=0.05, tmax=0.1, eval_cap=EVAL_CAP,
+    device=DEFAULT_DEVICE,
+):  # fmt: skip
     """Relax with FIRE2; return (evaluations, converged, final max force)."""
     num_atoms = start.shape[0]
-    positions = wp.array(start.copy(), dtype=wp.vec3d, device=DEVICE)
-    velocities = wp.zeros(num_atoms, dtype=wp.vec3d, device=DEVICE)
-    forces = wp.zeros(num_atoms, dtype=wp.vec3d, device=DEVICE)
-    batch_idx = wp.zeros(num_atoms, dtype=wp.int32, device=DEVICE)
-    alpha = wp.array(np.array([0.09]), dtype=wp.float64, device=DEVICE)
-    dt = wp.array(np.array([dt_start]), dtype=wp.float64, device=DEVICE)
-    nsteps_inc = wp.zeros(1, dtype=wp.int32, device=DEVICE)
-    scratch = [wp.zeros(1, dtype=wp.float64, device=DEVICE) for _ in range(4)]
+    positions = wp.array(start.copy(), dtype=wp.vec3d, device=device)
+    velocities = wp.zeros(num_atoms, dtype=wp.vec3d, device=device)
+    forces = wp.zeros(num_atoms, dtype=wp.vec3d, device=device)
+    batch_idx = wp.zeros(num_atoms, dtype=wp.int32, device=device)
+    alpha = wp.array(np.array([0.09]), dtype=wp.float64, device=device)
+    dt = wp.array(np.array([dt_start]), dtype=wp.float64, device=device)
+    nsteps_inc = wp.zeros(1, dtype=wp.int32, device=device)
+    scratch = [wp.zeros(1, dtype=wp.float64, device=device) for _ in range(4)]
 
     for n_evals in range(1, eval_cap + 1):
         f = lennard_jones(positions.numpy())[1]
@@ -172,7 +182,8 @@ def run_fire2(
     return eval_cap, False, current
 
 
-def best_fire2(start, force_tol, sweep=None, eval_cap=EVAL_CAP):
+def best_fire2(start, force_tol, sweep=None, eval_cap=EVAL_CAP,
+               device=DEFAULT_DEVICE):  # fmt: skip
     """FIRE2 at its best over a small hyperparameter sweep.
 
     Comparing against an untuned baseline would overstate the result; FIRE2 is
@@ -189,11 +200,14 @@ def best_fire2(start, force_tol, sweep=None, eval_cap=EVAL_CAP):
                 dt_start=dt_start,
                 maxstep=maxstep,
                 eval_cap=eval_cap,
+                device=device,
             )
             if converged and evals < best[0]:
                 best = (evals, converged, final, (dt_start, maxstep))
     if best[3] is None:
-        evals, converged, final = run_fire2(start, force_tol, eval_cap=eval_cap)
+        evals, converged, final = run_fire2(
+            start, force_tol, eval_cap=eval_cap, device=device
+        )
         return evals, converged, final, "none converged"
     return best
 
@@ -213,7 +227,7 @@ def _time_ms(fn, warmup=10, runs=50):
     return start.elapsed_time(stop) / runs
 
 
-def run_gates(sizes, eval_ratio, warmup=10, runs=50):
+def run_gates(sizes, eval_ratio, warmup=10, runs=50, device=DEFAULT_DEVICE):
     """Measure per-step cost, graph replay, and the break-even model cost.
 
     Reported per system size:
@@ -242,14 +256,14 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50):
     for num_atoms in sizes:
         rng = np.random.default_rng(0)
         start = torch.tensor(
-            rng.normal(size=(num_atoms, 3)), dtype=torch.float64, device=DEVICE
+            rng.normal(size=(num_atoms, 3)), dtype=torch.float64, device=device
         )
-        batch_idx = torch.zeros(num_atoms, dtype=torch.int32, device=DEVICE)
-        stiffness = torch.tensor([1.0, 4.0, 9.0], dtype=torch.float64, device=DEVICE)
+        batch_idx = torch.zeros(num_atoms, dtype=torch.int32, device=device)
+        stiffness = torch.tensor([1.0, 4.0, 9.0], dtype=torch.float64, device=device)
 
         positions = start.clone()
         forces = torch.empty_like(positions)
-        buffers = _allocate_lbfgs_buffers_torch(num_atoms, 1, GATE_HISTORY)
+        buffers = _allocate_lbfgs_buffers_torch(num_atoms, 1, GATE_HISTORY, device)
 
         def evaluate(pos, out):
             """The model, on device so it stays CUDA-graph capturable.
@@ -270,7 +284,7 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50):
             graph keeps pointing at the buffers it recorded.
             """
             positions.copy_(start)
-            fresh = _allocate_lbfgs_buffers_torch(num_atoms, 1, GATE_HISTORY)
+            fresh = _allocate_lbfgs_buffers_torch(num_atoms, 1, GATE_HISTORY, device)
             for field in dataclasses.fields(buffers):
                 getattr(buffers, field.name).copy_(getattr(fresh, field.name))
 
@@ -321,12 +335,12 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50):
         f2_forces = torch.empty_like(f2_positions)
         wp_positions = wp.from_torch(f2_positions, dtype=wp.vec3d)
         wp_forces = wp.from_torch(f2_forces, dtype=wp.vec3d)
-        wp_velocities = wp.zeros(num_atoms, dtype=wp.vec3d, device=DEVICE)
-        wp_batch = wp.zeros(num_atoms, dtype=wp.int32, device=DEVICE)
-        alpha = wp.array(np.array([0.09]), dtype=wp.float64, device=DEVICE)
-        dt = wp.array(np.array([0.02]), dtype=wp.float64, device=DEVICE)
-        nsteps_inc = wp.zeros(1, dtype=wp.int32, device=DEVICE)
-        scratch = [wp.zeros(1, dtype=wp.float64, device=DEVICE) for _ in range(4)]
+        wp_velocities = wp.zeros(num_atoms, dtype=wp.vec3d, device=device)
+        wp_batch = wp.zeros(num_atoms, dtype=wp.int32, device=device)
+        alpha = wp.array(np.array([0.09]), dtype=wp.float64, device=device)
+        dt = wp.array(np.array([0.02]), dtype=wp.float64, device=device)
+        nsteps_inc = wp.zeros(1, dtype=wp.int32, device=device)
+        scratch = [wp.zeros(1, dtype=wp.float64, device=device) for _ in range(4)]
 
         def fire2_once():
             evaluate(f2_positions, f2_forces)
@@ -449,6 +463,12 @@ def main():
     )
     parser.add_argument("--gate-sizes", type=int, nargs="+", default=None)
     parser.add_argument(
+        "--device",
+        type=str,
+        default=DEFAULT_DEVICE,
+        help="CUDA device",
+    )
+    parser.add_argument(
         "--eval-ratio",
         type=float,
         default=None,
@@ -492,6 +512,7 @@ def main():
             pick(args.eval_ratio, "eval_ratio", 0.129, section=gates_config),
             gates_config.get("warmup", 10),
             gates_config.get("runs", 50),
+            device=args.device,
         )
         # These rows are what the published per-step table is drawn from, so
         # they have to survive the run.
@@ -533,10 +554,10 @@ def main():
             start = rng.normal(size=(num_atoms, 3)) * (num_atoms ** (1 / 3)) * 0.55
 
             lb_evals, lb_ok, lb_force = run_lbfgs(
-                start, force_tol, history_size, maxstep, eval_cap
+                start, force_tol, history_size, maxstep, eval_cap, args.device
             )
             f2_evals, f2_ok, f2_force, f2_cfg = best_fire2(
-                start, force_tol, sweep, eval_cap
+                start, force_tol, sweep, eval_cap, args.device
             )
             ratio = lb_evals / f2_evals
             rows.append(

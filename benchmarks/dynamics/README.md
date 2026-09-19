@@ -304,6 +304,10 @@ python -m benchmarks.dynamics.benchmark_lbfgs \
 Writes `lbfgs_vs_fire2_evaluations.csv`. Runs that hit the evaluation cap are
 flagged; their ratios are upper bounds on L-BFGS's advantage.
 
+`--device` selects the GPU and defaults to `cuda:0`, matching
+`benchmark_fire2.py` — point both at the same device when comparing their
+numbers.
+
 With no `--output-dir`, results go to `output.results_dir` from the config,
 resolved relative to the config file — the same rule the neighborlist and
 interactions configs use for their `base_dir`. Set `output.save_timing: false`
