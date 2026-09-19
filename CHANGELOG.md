@@ -42,7 +42,8 @@
 
 - Differentiable Torch cluster-tile matrix geometry is returned independently
   from reusable output buffers. Supplied buffers receive detached value
-  snapshots and remain non-differentiable storage.
+  snapshots and remain non-differentiable storage. Prepared state exposes these
+  buffers as borrowed snapshots that later executions may overwrite.
 - Prepared Torch cluster-tile state now rejects dual-cutoff vectors or
   distances during preparation instead of failing later during execution.
 - Prepared batched Torch cluster-tile state now reuses fixed partition and

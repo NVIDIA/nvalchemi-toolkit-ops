@@ -381,9 +381,21 @@ def test_prepared_fullgraph_exact_coo_changes_size(batched: bool) -> None:
 
 @pytest.mark.gpu
 @pytest.mark.slow
-@pytest.mark.parametrize("batched", [False, True])
-def test_prepared_geometry_and_gradients(batched: bool) -> None:
-    """Prepared matrix geometry keeps position and cell gradients."""
+@pytest.mark.parametrize("batched", [False, True], ids=["single", "batch"])
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "fullgraph"])
+@pytest.mark.parametrize(
+    ("return_distances", "return_vectors"),
+    [(True, False), (False, True), (True, True)],
+    ids=["distances", "vectors", "both"],
+)
+def test_prepared_matrix_geometry_buffer_lifecycle(
+    batched: bool,
+    compiled: bool,
+    return_distances: bool,
+    return_vectors: bool,
+    recwarn: pytest.WarningsRecorder,
+) -> None:
+    """Prepared matrix buffers stay detached across grad-mode changes."""
     positions, cell, batch_ptr = _inputs(batched)
     state = prepare_cluster_tile(
         positions,
@@ -392,22 +404,171 @@ def test_prepared_geometry_and_gradients(batched: bool) -> None:
         format="matrix",
         batch_ptr=batch_ptr,
         max_neighbors=32,
-        return_vectors=True,
-        return_distances=True,
+        return_vectors=return_vectors,
+        return_distances=return_distances,
         max_tiles_per_group=4,
     )
 
-    @torch.compile(fullgraph=True)
-    def run(values: torch.Tensor, box: torch.Tensor) -> tuple[torch.Tensor, ...]:
+    def call(values: torch.Tensor, box: torch.Tensor) -> tuple[torch.Tensor, ...]:
         return cluster_tile_neighbor_list_prepared(values, box, state)
+
+    if compiled:
+        torch.compiler.reset()
+        run = torch.compile(call, fullgraph=True)
+    else:
+        run = call
+
+    def direct(values: torch.Tensor, box: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        kwargs = {
+            "format": "matrix",
+            "max_neighbors": 32,
+            "max_tiles_per_group": 4,
+            "return_vectors": return_vectors,
+            "return_distances": return_distances,
+        }
+        if batch_ptr is None:
+            return cluster_tile_neighbor_list(values, 1.5, box, **kwargs)
+        return batch_cluster_tile_neighbor_list(
+            values,
+            1.5,
+            box,
+            batch_ptr,
+            **kwargs,
+        )
+
+    def geometry_loss(output: tuple[torch.Tensor, ...]) -> torch.Tensor:
+        """Return an order-independent loss over requested geometry."""
+        output_index = 3
+        terms = []
+        if return_distances:
+            terms.append(output[output_index].sum())
+            output_index += 1
+        if return_vectors:
+            terms.append(output[output_index].square().sum())
+        return sum(terms)
+
+    def assert_geometry_values(
+        output: tuple[torch.Tensor, ...],
+        values: torch.Tensor,
+        box: torch.Tensor,
+    ) -> None:
+        """Check active matrix geometry against current positions and cells."""
+        matrix, counts, shifts = output[:3]
+        output_index = 3
+        distances = output[output_index] if return_distances else None
+        output_index += int(return_distances)
+        vectors = output[output_index] if return_vectors else None
+        for source, count in enumerate(counts.cpu().tolist()):
+            if count == 0:
+                continue
+            targets = matrix[source, :count].long()
+            source_cell = (
+                box
+                if batch_ptr is None
+                else box[
+                    torch.bucketize(
+                        torch.tensor(source, dtype=torch.int32, device=values.device),
+                        batch_ptr[1:],
+                        right=True,
+                    ).long()
+                ]
+            )
+            expected_vectors = values[targets] - values[source]
+            expected_vectors = expected_vectors + (
+                shifts[source, :count].to(values.dtype) @ source_cell
+            )
+            if vectors is not None:
+                torch.testing.assert_close(vectors[source, :count], expected_vectors)
+            if distances is not None:
+                torch.testing.assert_close(
+                    distances[source, :count], expected_vectors.norm(dim=-1)
+                )
+
+    def assert_snapshot_contract(
+        output: tuple[torch.Tensor, ...], *, aliases: bool
+    ) -> None:
+        """Check returned geometry against the state-owned snapshots."""
+        output_index = 3
+        if return_distances:
+            returned_distances = output[output_index]
+            output_index += 1
+            assert state.neighbor_distances is not None
+            torch.testing.assert_close(
+                state.neighbor_distances, returned_distances.detach()
+            )
+            if aliases:
+                assert returned_distances is state.neighbor_distances
+            else:
+                assert returned_distances is not state.neighbor_distances
+                assert (
+                    returned_distances.data_ptr() != state.neighbor_distances.data_ptr()
+                )
+            assert not state.neighbor_distances.requires_grad
+            assert state.neighbor_distances.grad_fn is None
+        if return_vectors:
+            returned_vectors = output[output_index]
+            assert state.neighbor_vectors is not None
+            torch.testing.assert_close(
+                state.neighbor_vectors, returned_vectors.detach()
+            )
+            if aliases:
+                assert returned_vectors is state.neighbor_vectors
+            else:
+                assert returned_vectors is not state.neighbor_vectors
+                assert returned_vectors.data_ptr() != state.neighbor_vectors.data_ptr()
+            assert not state.neighbor_vectors.requires_grad
+            assert state.neighbor_vectors.grad_fn is None
+
+    def gradients_for(
+        runner,
+        values: torch.Tensor,
+        box: torch.Tensor,
+    ) -> tuple[tuple[torch.Tensor, ...], tuple[torch.Tensor, ...]]:
+        """Run one differentiable call and consume its graph."""
+        output = runner(values, box)
+        gradients = torch.autograd.grad(geometry_loss(output), (values, box))
+        return output, gradients
 
     grad_positions = positions.clone().requires_grad_(True)
     grad_cell = cell.clone().requires_grad_(True)
-    output = run(grad_positions, grad_cell)
-    assert output[3] is state.neighbor_distances
-    assert output[4] is state.neighbor_vectors
-    gradients = torch.autograd.grad(output[3].sum(), (grad_positions, grad_cell))
-    assert all(torch.isfinite(value).all() for value in gradients)
+    output, gradients = gradients_for(run, grad_positions, grad_cell)
+    assert_geometry_values(output, grad_positions, grad_cell)
+    assert_snapshot_contract(output, aliases=False)
+
+    reference_positions = positions.clone().requires_grad_(True)
+    reference_cell = cell.clone().requires_grad_(True)
+    reference_output, reference_gradients = gradients_for(
+        direct, reference_positions, reference_cell
+    )
+    assert _matrix_records(output) == _matrix_records(reference_output)
+    torch.testing.assert_close(gradients, reference_gradients)
+
+    warning_count = len(recwarn)
+    no_grad_positions = positions + 0.03
+    no_grad_cell = cell * 1.01
+    with torch.no_grad():
+        no_grad_output = run(no_grad_positions, no_grad_cell)
+    assert_geometry_values(no_grad_output, no_grad_positions, no_grad_cell)
+    assert_snapshot_contract(no_grad_output, aliases=True)
+    assert all(not tensor.requires_grad for tensor in no_grad_output[3:])
+    assert all(
+        "not a leaf Tensor" not in str(warning.message)
+        for warning in recwarn.list[warning_count:]
+    )
+
+    final_positions = (positions + 0.06).requires_grad_(True)
+    final_cell = (cell * 0.99).requires_grad_(True)
+    final_output, final_gradients = gradients_for(run, final_positions, final_cell)
+    assert_geometry_values(final_output, final_positions, final_cell)
+    assert_snapshot_contract(final_output, aliases=False)
+
+    final_reference_positions = (positions + 0.06).requires_grad_(True)
+    final_reference_cell = (cell * 0.99).requires_grad_(True)
+    final_reference_output, final_reference_gradients = gradients_for(
+        direct, final_reference_positions, final_reference_cell
+    )
+    assert _matrix_records(final_output) == _matrix_records(final_reference_output)
+    torch.testing.assert_close(final_gradients, final_reference_gradients)
 
 
 @pytest.mark.gpu
@@ -451,6 +612,10 @@ def test_prepared_exact_coo_geometry_is_aligned() -> None:
     torch.testing.assert_close(state.neighbor_distances[:count], expected.norm(dim=-1))
     assert vectors.data_ptr() != state.neighbor_vectors.data_ptr()
     assert distances.data_ptr() != state.neighbor_distances.data_ptr()
+    assert not state.neighbor_vectors.requires_grad
+    assert state.neighbor_vectors.grad_fn is None
+    assert not state.neighbor_distances.requires_grad
+    assert state.neighbor_distances.grad_fn is None
     gradients = torch.autograd.grad(
         distances.sum(),
         (grad_positions, grad_cell),

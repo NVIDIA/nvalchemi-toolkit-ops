@@ -50,9 +50,12 @@ class ClusterTileState:
 
     Create a state with :func:`prepare_cluster_tile`. Configuration attributes
     cannot be reassigned. ``neighbor_vectors`` and ``neighbor_distances`` are
-    borrowed buffers that a later execution may overwrite. Batched state caches
-    only metadata derived from the fixed partition; geometry-dependent sorting
-    and bounds are recomputed for every execution.
+    borrowed, non-differentiable snapshot buffers that a later execution may
+    overwrite. When matrix geometry requires autograd, execution returns fresh
+    differentiable tensors and writes matching detached values to these
+    buffers. Build losses from the returned geometry. Batched state caches only
+    metadata derived from the fixed partition; geometry-dependent sorting and
+    bounds are recomputed for every execution.
     """
 
     format: str
@@ -79,12 +82,12 @@ class ClusterTileState:
 
     @property
     def neighbor_vectors(self) -> torch.Tensor | None:
-        """Borrowed vector buffer, if vectors were configured."""
+        """Borrowed non-differentiable vector snapshot, if configured."""
         return self._neighbor_vectors
 
     @property
     def neighbor_distances(self) -> torch.Tensor | None:
-        """Borrowed distance buffer, if distances were configured."""
+        """Borrowed non-differentiable distance snapshot, if configured."""
         return self._neighbor_distances
 
 
@@ -380,9 +383,13 @@ def cluster_tile_neighbor_list_prepared(
 
     Notes
     -----
-    Returned matrix and tile tensors borrow state-owned storage. Exact COO
-    tensors are exact-sized per call. Finish backward or copy any values that
-    must survive before reusing ``state``.
+    Returned matrix topology and tile tensors borrow state-owned storage. When
+    autograd reconstruction is needed, matrix geometry is returned as fresh
+    differentiable tensors and state-owned geometry buffers receive matching
+    detached snapshots. Without reconstruction, returned matrix geometry
+    aliases those buffers. Build losses from the returned geometry, not from
+    the snapshot buffers. Exact COO tensors are exact-sized per call. Finish
+    backward or copy any values that must survive before reusing ``state``.
     """
     if not isinstance(state, ClusterTileState):
         raise TypeError("state must be a ClusterTileState")

@@ -749,16 +749,23 @@ Prepared execution supports single and batched tile, matrix, dual-cutoff
 matrix topology, and nonselective exact COO output. Dual-cutoff prepared state
 does not support vectors or distances. Preparation rejects that combination
 before allocating storage. The other formats preserve the corresponding direct
-function's return tuple. Matrix and tile results borrow state-owned storage and
-a later call overwrites them. Exact COO topology, shifts, and requested geometry
-are newly sized on each call. Reusable capacity buffers are available as
+function's return tuple. Matrix topology and tile results borrow state-owned
+storage and a later call overwrites them. State-owned matrix geometry buffers
+are also borrowed, non-differentiable snapshots. When autograd reconstruction
+is needed, the function returns fresh differentiable geometry and writes
+matching detached values to those buffers; build losses from the returned
+geometry. Without reconstruction, returned matrix geometry aliases the state
+buffers. Exact COO topology, shifts, and requested geometry are newly sized on
+each call. Reusable exact-COO capacity buffers are available as
 `state.neighbor_vectors` and `state.neighbor_distances`; only the active prefix
-matching the returned pair count is defined.
+matching the returned pair count is defined, and it is a detached snapshot of
+the returned geometry.
 
 Preparation avoids reallocating the fixed scratch and output buffers, but
 execution may still allocate temporary tensors and exact-sized COO results. It
-is not an allocation-free API. Finish backward, or copy every result that must
-survive, before reusing the same state. A second state owns distinct storage.
+is not an allocation-free API. Finish backward before reusing the same state,
+and copy every borrowed result that must survive that reuse. A second state owns
+distinct storage.
 
 Preparation fixes the atom count, batch partition, shape, dtype, and device.
 For batches, it caches atom/system and padded-layout mappings derived only from
