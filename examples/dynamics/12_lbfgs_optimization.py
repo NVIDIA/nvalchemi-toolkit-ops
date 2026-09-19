@@ -33,10 +33,12 @@ line search, and no energy is read at all. Compared with FIRE2
 
 - Reaches a given force tolerance in **far fewer force evaluations**, which is
   the cost that dominates relaxation with a machine-learned potential
-- Needs no timestep to tune; the line search chooses the step length
+- Needs no timestep to tune; the ``maxstep`` trust region bounds the step
 - Costs more memory: ``2 * history_size`` vectors of stored history
-- Reports progress through a per-system ``status`` array rather than requiring
-  the caller to test the forces
+
+Like FIRE2, it owns no tolerance and reports no terminal status. Each call
+updates the curvature history, restarts the direction if it stops descending,
+and takes one bounded step; testing convergence and ending the loop are yours.
 
 To make that first point concrete, this example relaxes the *same* cluster with
 both optimizers and compares how many force evaluations each needed.
@@ -132,10 +134,12 @@ batch_idx = wp.zeros(num_atoms, dtype=wp.int32, device=device)
 # L-BFGS Optimization Loop
 # ------------------------
 #
-# You own the loop, as with FIRE2, but **each call consumes exactly one force
-# evaluation** and you stop when ``status`` says so. No energy is passed in:
-# the step length comes from the ``maxstep`` trust region, so a model whose
-# forces are not the gradient of its energy relaxes just as well.
+# You own the loop, as with FIRE2, and **each call consumes exactly one force
+# evaluation**. You also own the stopping rule: the optimizer has no tolerance
+# and no terminal status, so the loop below tests the forces itself. No energy
+# is passed in either -- the step length comes from the ``maxstep`` trust
+# region, so a model whose forces are not the gradient of its energy relaxes
+# just as well.
 
 max_evals = 500
 force_tolerance = 1e-3  # eV/Å, on the largest per-atom force
@@ -229,8 +233,8 @@ if not lbfgs_converged:
 # was a step, so they describe the point before that -- which is why the loop
 # re-evaluates once above before anything below is printed.
 
-status_name = "CONVERGED" if lbfgs_converged else "ran out of evaluations"
-print(f"\nFinished after {lbfgs_evals} force evaluations: {status_name}")
+outcome = "CONVERGED" if lbfgs_converged else "ran out of evaluations"
+print(f"\nFinished after {lbfgs_evals} force evaluations: {outcome}")
 # These describe `lbfgs_positions` below, on both paths.
 print(f"  final max|F| = {maxf_hist[-1]:.3e} eV/Å")
 print(f"  final PE     = {energy_hist[-1]:.6f} eV")
@@ -297,7 +301,7 @@ for step in range(3000):
 print("\n" + "=" * 95)
 print("FORCE EVALUATIONS TO CONVERGENCE")
 print("=" * 95)
-print(f"  L-BFGS : {lbfgs_evals:5d}  ({status_name})")
+print(f"  L-BFGS : {lbfgs_evals:5d}  ({outcome})")
 print(
     f"  FIRE2  : {fire2_evals:5d}  "
     f"({'converged, tuned settings' if fire2_converged else 'hit the evaluation cap'})"

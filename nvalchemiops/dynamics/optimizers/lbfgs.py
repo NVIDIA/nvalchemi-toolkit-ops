@@ -1962,11 +1962,13 @@ def _lbfgs_update_impl(
 ) -> None:
     """Advance the state machine and produce a search direction.
 
-    Runs everything except the position update: the reductions, the
-    line-search decision, the history update, and the two-loop recursion. Use
-    it together with :func:`lbfgs_prepare_step` and :func:`lbfgs_apply_step`
-    when you need to interpose your own logic before the atoms move;
-    :func:`lbfgs_step` is the convenience wrapper that chains all three.
+    Runs everything except the position update: the reduction, the state
+    machine, the history update and its curvature test, and the two-loop
+    recursion. There is no line search and nothing decides you have finished --
+    convergence is the caller's. Use it together with
+    :func:`lbfgs_prepare_step` and :func:`lbfgs_apply_step` when you need to
+    interpose your own logic before the atoms move; :func:`lbfgs_step` chains
+    all three.
 
     Parameters
     ----------

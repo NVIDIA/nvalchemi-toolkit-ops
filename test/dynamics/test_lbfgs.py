@@ -35,6 +35,8 @@ evaluation counts, never step-by-step trajectory equality.
 
 from __future__ import annotations
 
+import pathlib
+
 import numpy as np
 import pytest
 import warp as wp
@@ -931,6 +933,68 @@ class TestLBFGSPublicSurface:
 
         missing = [n for n in self.PHASES if not hasattr(module, n)]
         assert not missing, f"no longer importable: {missing}"
+
+
+class TestLBFGSDocumentedContract:
+    """The published prose must not re-acquire the removed behaviour.
+
+    Convergence moved to the caller in code, but the claim survived in several
+    docstrings and both examples long after the API did -- a reader following
+    them would look for a ``status`` array that no longer exists. Signatures
+    are checked elsewhere; this checks the sentences.
+    """
+
+    #: Phrases that describe an optimizer owning convergence or a line search.
+    RETIRED = (
+        "line-search decision",
+        "reports progress through",
+        "status says",
+        "the line search chooses",
+    )
+
+    #: Every public surface a user reads before writing a loop.
+    SURFACES = (
+        "nvalchemiops/dynamics/optimizers/lbfgs.py",
+        "nvalchemiops/dynamics/optimizers/__init__.py",
+        "nvalchemiops/torch/lbfgs.py",
+        "nvalchemiops/jax/lbfgs.py",
+        "examples/dynamics/12_lbfgs_optimization.py",
+        "examples/dynamics/13_lbfgs_variable_cell.py",
+        "docs/userguide/components/dynamics.md",
+        "docs/modules/warp/dynamics.rst",
+    )
+
+    @staticmethod
+    def _repo_root():
+        here = pathlib.Path(__file__).resolve()
+        for parent in here.parents:
+            if (parent / "nvalchemiops").is_dir():
+                return parent
+        raise AssertionError("could not locate the repository root")
+
+    def test_no_surface_claims_the_optimizer_owns_convergence(self):
+        root = self._repo_root()
+        offenders = []
+        for rel in self.SURFACES:
+            path = root / rel
+            assert path.is_file(), f"{rel} moved; this test is now blind to it"
+            text = path.read_text().lower()
+            offenders += [
+                f"{rel}: {phrase!r}" for phrase in self.RETIRED if phrase in text
+            ]
+        assert not offenders, (
+            "documentation still describes convergence or a line search as the "
+            f"optimizer's: {offenders}"
+        )
+
+    def test_the_status_constants_are_really_gone(self):
+        """Prose aside, nothing may re-export a terminal status."""
+        import nvalchemiops.dynamics.optimizers as package
+        import nvalchemiops.dynamics.optimizers.lbfgs as module
+
+        for namespace in (package, module):
+            leaked = [n for n in dir(namespace) if n.startswith("LBFGS_")]
+            assert not leaked, f"{namespace.__name__} exposes {leaked}"
 
 
 class TestLBFGSCurvatureThreshold:

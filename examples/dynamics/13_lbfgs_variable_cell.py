@@ -241,9 +241,11 @@ print(f"\nOptimizer degrees of freedom: {num_atoms} atoms + {2 * num_systems} ce
 # Optimization Loop
 # -----------------
 #
-# One force/stress evaluation per call, and ``status`` says when
-# to stop. Both tolerances are physical: ``force_tol`` is eV/Å on the largest
-# per-atom force, ``stress_tol`` is a stress.
+# One force/stress evaluation per call. The optimizer owns neither tolerance
+# and reports no terminal status, so the loop below applies both thresholds
+# itself. Both are physical, and both are applied to the **Cartesian** forces
+# and the stress rather than to the packed norms: ``force_tol`` is eV/Å on the
+# largest per-atom force, ``stress_tol`` is a stress.
 
 max_evals = 200
 force_tol = 1e-4  # eV/Å
@@ -334,11 +336,11 @@ if not converged:
 # ------
 
 
-status_name = "CONVERGED" if converged else "ran out of evaluations"
+outcome = "CONVERGED" if converged else "ran out of evaluations"
 
 final_volume = float(np.linalg.det(cell_t.detach().cpu().numpy()[0]))
 final_a = (final_volume / (n_cells**3)) ** (1 / 3)
-print(f"\nFinished after {n_evals} evaluations: {status_name}")
+print(f"\nFinished after {n_evals} evaluations: {outcome}")
 print(f"  lattice constant: {a_initial:.4f} Å -> {final_a:.4f} Å")
 # All four of these describe the same, final geometry on both paths.
 print(f"  final max|F|    : {max_force_hist[-1]:.3e} eV/Å")
