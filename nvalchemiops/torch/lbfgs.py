@@ -96,6 +96,7 @@ from nvalchemiops.dynamics.optimizers.lbfgs import (
     LBFGSCellState,
     LBFGSState,
     _resolve_curvature_eps,
+    check_against_state,
 )
 from nvalchemiops.dynamics.optimizers.lbfgs import (
     _lbfgs_step_coord_cell_impl as _wp_step_cell,
@@ -475,6 +476,11 @@ def _validate(positions, forces, batch_idx, state):
     fields can be reassigned between steps.
     """
     state.validate()
+    check_against_state(
+        state,
+        coordinates=(("positions", positions), ("forces", forces)),
+        indices=(("batch_idx", batch_idx),),
+    )
     if positions.dtype not in _TORCH_TO_WP_VEC:
         raise ValueError(f"positions must be float32 or float64; got {positions.dtype}")
     if forces.shape != positions.shape:
@@ -668,6 +674,17 @@ def _validate_cell(positions, forces, cell, stress, batch_idx, state, cell_state
     """Confirm this call's inputs match both prepared states."""
     state.validate()
     cell_state.validate(num_atoms=positions.shape[0])
+    check_against_state(
+        state,
+        coordinates=(
+            ("positions", positions),
+            ("forces", forces),
+            ("cell", cell),
+            ("stress", stress),
+        ),  # fmt: skip
+        indices=(("batch_idx", batch_idx),),
+        extra_states=(("cell_state", cell_state),),
+    )
     num_systems = state.num_systems
     if positions.dtype not in _TORCH_TO_WP_VEC:
         raise ValueError(f"positions must be float32 or float64; got {positions.dtype}")

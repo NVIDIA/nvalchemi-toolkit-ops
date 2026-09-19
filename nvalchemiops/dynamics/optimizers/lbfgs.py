@@ -309,6 +309,8 @@ from nvalchemiops.segment_ops import compute_ept
 __all__ = [
     "LBFGSCellState",
     "LBFGSState",
+    "check_against_state",
+    "check_packed_topology",
     "check_cell_is_aligned",
     "lbfgs_cell_kappa",
     "lbfgs_prepare_cell_state",
@@ -1864,6 +1866,10 @@ def lbfgs_prepare_cell_state(
         ext_forces=vec(num_packed),
     )
     state.validate(num_atoms=num_atoms)
+    # Values, not just shapes: affordable here because preparation runs once.
+    check_packed_topology(
+        ext_atom_ptr, ext_batch_idx, num_systems, num_atoms + 2 * num_systems
+    )
     if (cell is None) != (n_particles is None):
         raise ValueError("cell and n_particles must be given together")
     if cell is not None:
@@ -3359,6 +3365,122 @@ def _arrays(state) -> dict:
     return {f.name: getattr(state, f.name) for f in dataclasses.fields(state)}
 
 
+def check_packed_topology(ext_atom_ptr, ext_batch_idx, num_systems, num_packed) -> None:
+    """Confirm the packed topology's *values*, not just its shapes.
+
+    :meth:`LBFGSCellState.validate` deliberately stops at shapes, because it
+    runs on every step and reading these arrays means a device-to-host sync.
+    The values still have to be right -- every kernel on the cell path indexes
+    the packed array through them -- so they are checked here instead, at
+    preparation, which runs once.
+
+    Checks that ``ext_atom_ptr`` starts at zero, ends at the packed size, never
+    decreases, leaves room for each system's two cell rows, and that
+    ``ext_batch_idx`` is exactly the system index it implies.
+
+    Raises
+    ------
+    ValueError
+        If the topology could not have come from ``extend_atom_ptr`` and
+        ``atom_ptr_to_batch_idx``.
+    """
+    import numpy as _np
+
+    ptr = _np.asarray(ext_atom_ptr.numpy()).astype(_np.int64)
+    idx = _np.asarray(ext_batch_idx.numpy()).astype(_np.int64)
+    if ptr[0] != 0 or ptr[-1] != num_packed:
+        raise ValueError(
+            f"ext_atom_ptr must run from 0 to {num_packed}; got {ptr[0]} to "
+            f"{ptr[-1]}. Build it with extend_atom_ptr(atom_ptr, ext_atom_ptr)."
+        )
+    spans = _np.diff(ptr)
+    if (spans < 0).any():
+        raise ValueError(f"ext_atom_ptr must be non-decreasing; got {ptr.tolist()}")
+    short = _np.flatnonzero(spans < 2)
+    if short.size:
+        raise ValueError(
+            f"system(s) {short.tolist()} span fewer than 2 packed entries, but "
+            "every system owns two cell rows however few atoms it has"
+        )
+    expected = _np.repeat(_np.arange(num_systems, dtype=_np.int64), spans)
+    if not _np.array_equal(idx, expected):
+        wrong = int(_np.flatnonzero(idx != expected)[0])
+        raise ValueError(
+            f"ext_batch_idx disagrees with ext_atom_ptr at entry {wrong}: "
+            f"got system {idx[wrong]}, expected {expected[wrong]}. Build it "
+            "with atom_ptr_to_batch_idx(ext_atom_ptr, ext_batch_idx)."
+        )
+
+
+def check_against_state(state, coordinates=(), indices=(), extra_states=()) -> None:
+    """Confirm this call's arrays agree with the prepared state.
+
+    Agreeing with each other is not enough. An array whose precision matches
+    its neighbours but not the state still reaches a kernel typed for the
+    state, where it fails as a launch error -- or, when the mismatch is the
+    *device* rather than the dtype, as a segmentation fault.
+
+    Shared by all three layers rather than reimplemented per binding:
+    :func:`_precision_of` maps Warp's ``vec3d``/``mat33d``/``float64`` onto one
+    scalar and passes PyTorch and JAX dtypes through unchanged, so one
+    comparison covers them all. Dtypes and devices only -- no device reads.
+
+    Parameters
+    ----------
+    state : LBFGSState
+        The prepared state defining the expected precision and device.
+    coordinates : sequence of (str, array)
+        Arrays carrying the coordinate precision: positions, forces, and on
+        the variable-cell path the cell and stress.
+    indices : sequence of (str, array)
+        Arrays carrying the integer topology, such as ``batch_idx``.
+    extra_states : sequence of (str, state)
+        Further states that must agree, such as an :class:`LBFGSCellState`.
+
+    Raises
+    ------
+    ValueError
+        If any array or state disagrees with ``state``.
+    """
+    want_float = _precision_of(state.x_base.dtype)
+    want_int = state.iteration.dtype
+    for name, array in coordinates:
+        if _precision_of(array.dtype) != want_float:
+            raise ValueError(
+                f"{name} has precision {array.dtype}, but the state was "
+                f"prepared for {state.x_base.dtype}"
+            )
+    for name, array in indices:
+        if array.dtype != want_int:
+            raise ValueError(
+                f"{name} has dtype {array.dtype}, but the state's integer "
+                f"fields are {want_int}"
+            )
+    for label, other in extra_states:
+        if _precision_of(other.ref_cell.dtype) != want_float:
+            raise ValueError(
+                f"{label} holds {other.ref_cell.dtype} but the state was "
+                f"prepared for {state.x_base.dtype}"
+            )
+
+    # A host array handed to a device kernel is a segfault, not an error.
+    want_device = getattr(state.x_base, "device", None)
+    if want_device is None:  # a JAX tracer exposes no device
+        return
+    for name, array in tuple(coordinates) + tuple(indices):
+        device = getattr(array, "device", None)
+        if device is not None and str(device) != str(want_device):
+            raise ValueError(
+                f"{name} is on {device}, but the state is on {want_device}"
+            )
+    for label, other in extra_states:
+        device = getattr(other.ref_cell, "device", None)
+        if device is not None and str(device) != str(want_device):
+            raise ValueError(
+                f"{label} is on {device}, but the state is on {want_device}"
+            )
+
+
 def _check_inputs(positions, forces, batch_idx, state: LBFGSState) -> None:
     """Confirm this call's inputs match the state that was prepared.
 
@@ -3368,6 +3490,11 @@ def _check_inputs(positions, forces, batch_idx, state: LBFGSState) -> None:
     matches would read out of bounds inside a kernel rather than raise.
     """
     state.validate()
+    check_against_state(
+        state,
+        coordinates=(("positions", positions), ("forces", forces)),
+        indices=(("batch_idx", batch_idx),),
+    )
     if positions.shape[0] != state.num_dofs:
         raise ValueError(
             f"positions has {positions.shape[0]} degrees of freedom but the "
@@ -3399,6 +3526,17 @@ def _check_cell_inputs(positions, forces, cell, stress, batch_idx, state, cell_s
     """
     state.validate()
     cell_state.validate(num_atoms=positions.shape[0])
+    check_against_state(
+        state,
+        coordinates=(
+            ("positions", positions),
+            ("forces", forces),
+            ("cell", cell),
+            ("stress", stress),
+        ),  # fmt: skip
+        indices=(("batch_idx", batch_idx),),
+        extra_states=(("cell_state", cell_state),),
+    )
     num_systems = state.num_systems
 
     if state.num_dofs != cell_state.num_packed_dofs:

@@ -1552,6 +1552,103 @@ class TestLBFGSCellPrecision:
         assert not np.allclose(cell.numpy()[0], cell_np), "the cell did not move"
 
 
+class TestLBFGSInputsAgainstState:
+    """Fresh inputs are checked against the *state*, not only each other.
+
+    An array agreeing with its neighbours but not with the prepared state
+    still reaches a kernel typed for the state. Measured before this existed:
+    a precision mismatch surfaced as a warp launch error, and a *device*
+    mismatch as a **segmentation fault**.
+    """
+
+    @staticmethod
+    def _call(device, positions=None, forces=None, batch_idx=None):
+        st = lbfgs_prepare_state(4, 1, dtype=wp.vec3d, device=device)
+        lbfgs_step(
+            positions=positions
+            if positions is not None
+            else wp.zeros(4, dtype=wp.vec3d, device=device),
+            forces=forces
+            if forces is not None
+            else wp.zeros(4, dtype=wp.vec3d, device=device),
+            state=st,
+            batch_idx=batch_idx
+            if batch_idx is not None
+            else wp.zeros(4, dtype=wp.int32, device=device),
+        )
+        wp.synchronize()
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_accepts_matching_inputs(self, device):
+        """The fixture must be valid, or the rest proves nothing."""
+        self._call(device)
+
+    @pytest.mark.parametrize("name", ["positions", "forces"])
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_a_coordinate_precision_mismatch_is_rejected(self, device, name):
+        with pytest.raises(ValueError, match="precision"):
+            self._call(device, **{name: wp.zeros(4, dtype=wp.vec3f, device=device)})
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_a_topology_dtype_mismatch_is_rejected(self, device):
+        with pytest.raises(ValueError, match="batch_idx has dtype"):
+            self._call(device, batch_idx=wp.zeros(4, dtype=wp.int64, device=device))
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_an_input_on_the_wrong_device_is_rejected(self, device):
+        """This one segfaulted rather than raising."""
+        with pytest.raises(ValueError, match="is on cpu"):
+            self._call(device, positions=wp.zeros(4, dtype=wp.vec3d, device="cpu"))
+
+
+class TestLBFGSPackedTopology:
+    """``ext_atom_ptr`` and ``ext_batch_idx`` values, checked at preparation.
+
+    ``validate`` stops at shapes because it runs every step and reading these
+    means a host sync. Preparation runs once, so it can afford the values --
+    and every kernel on the cell path indexes the packed array through them.
+    """
+
+    @staticmethod
+    def _topology(counts, device):
+        from nvalchemiops.batch_utils import atom_ptr_to_batch_idx
+        from nvalchemiops.dynamics.utils.cell_filter import extend_atom_ptr
+
+        counts = np.asarray(counts, np.int32)
+        n, m = int(counts.sum()), len(counts)
+        atom_ptr = wp.array(
+            np.concatenate([[0], np.cumsum(counts)]).astype(np.int32),
+            dtype=wp.int32, device=device,
+        )  # fmt: skip
+        ext_ptr = wp.zeros(m + 1, dtype=wp.int32, device=device)
+        extend_atom_ptr(atom_ptr, ext_ptr, device=device)
+        ext_idx = wp.zeros(n + 2 * m, dtype=wp.int32, device=device)
+        atom_ptr_to_batch_idx(ext_ptr, ext_idx)
+        return n, m, ext_ptr, ext_idx
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_a_ragged_topology_from_the_utilities_is_accepted(self, device):
+        """Built the documented way, including unequal atom counts."""
+        n, m, ptr, idx = self._topology([4, 7], device)
+        lbfgs_prepare_cell_state(n, m, idx, ptr, device=device)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_a_batch_index_disagreeing_with_the_pointers_is_rejected(self, device):
+        n, m, ptr, idx = self._topology([4, 7], device)
+        reversed_idx = wp.array(idx.numpy()[::-1].copy(), dtype=wp.int32, device=device)
+        with pytest.raises(ValueError, match="ext_batch_idx disagrees"):
+            lbfgs_prepare_cell_state(n, m, reversed_idx, ptr, device=device)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_a_system_without_room_for_its_cell_rows_is_rejected(self, device):
+        """Every system owns two packed entries however few atoms it has."""
+        n, m, _, idx = self._topology([4, 7], device)
+        bad = wp.array(np.array([0, 1, n + 2 * m], np.int32),
+                       dtype=wp.int32, device=device)  # fmt: skip
+        with pytest.raises(ValueError, match="fewer than 2 packed entries"):
+            lbfgs_prepare_cell_state(n, m, idx, bad, device=device)
+
+
 class TestLBFGSCellStepErrors:
     """The variable-cell entry point validates as thoroughly as the others.
 
@@ -1567,7 +1664,10 @@ class TestLBFGSCellStepErrors:
     def _inputs(device, n=4, m=1):
         cell = wp.array((np.eye(3) * 6.0)[None], dtype=wp.mat33d, device=device)
         npart = wp.array(np.array([n], np.int32), dtype=wp.int32, device=device)
-        ep = wp.array(np.array([0, n], np.int32), dtype=wp.int32, device=device)
+        # The *extended* pointer spans the cell rows too, so it ends at
+        # n + 2 * m rather than n. Passing the atom pointer here is a real
+        # mistake that went unnoticed until the values were validated.
+        ep = wp.array(np.array([0, n + 2 * m], np.int32), dtype=wp.int32, device=device)
         eb = wp.zeros(n + 2 * m, dtype=wp.int32, device=device)
         st = lbfgs_prepare_state(n + 2 * m, m, device=device)
         cs = lbfgs_prepare_cell_state(

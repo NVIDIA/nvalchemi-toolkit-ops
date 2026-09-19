@@ -113,6 +113,7 @@ from nvalchemiops.dynamics.optimizers.lbfgs import (
     LBFGSCellState,
     LBFGSState,
     _resolve_curvature_eps,
+    check_against_state,
 )
 from nvalchemiops.dynamics.optimizers.lbfgs import (
     _lbfgs_step_coord_cell_impl as _warp_step_cell,
@@ -455,6 +456,11 @@ def _validate(positions, forces, batch_idx, state) -> None:
     the arrays that arrive fresh each call are re-checked here.
     """
     state.validate()
+    check_against_state(
+        state,
+        coordinates=(("positions", positions), ("forces", forces)),
+        indices=(("batch_idx", batch_idx),),
+    )
     if jnp.dtype(positions.dtype).type not in _BODIES:
         raise ValueError(f"positions must be float32 or float64; got {positions.dtype}")
     if forces.shape != positions.shape:
@@ -946,6 +952,17 @@ def _validate_cell(
     """
     state.validate()
     cell_state.validate(num_atoms=positions.shape[0])
+    check_against_state(
+        state,
+        coordinates=(
+            ("positions", positions),
+            ("forces", forces),
+            ("cell", cell),
+            ("stress", stress),
+        ),  # fmt: skip
+        indices=(("batch_idx", batch_idx),),
+        extra_states=(("cell_state", cell_state),),
+    )
     num_systems = state.num_systems
     if jnp.dtype(positions.dtype).type not in _CELL_BODIES:
         raise ValueError(f"positions must be float32 or float64; got {positions.dtype}")
