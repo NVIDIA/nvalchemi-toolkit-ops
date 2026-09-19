@@ -689,6 +689,30 @@ def _reference_pairs_per_system(
 # Correctness
 # =============================================================================
 class TestBatchTileNeighborListCorrectness:
+    def test_current_stream_consumes_event_gated_geometry_input(
+        self, device, dtype, torch_stream_runner
+    ):
+        """Batched geometry writes stay on the caller's current stream."""
+        source, cell_batch, batch_ptr = _make_batch(
+            [2, 3], [4.0, 4.0], device=device, dtype=dtype, seed=4
+        )
+        positions = torch.empty_like(source)
+        _, snapshot, expected = torch_stream_runner(
+            source,
+            positions,
+            lambda value: batch_cluster_tile_neighbor_list(
+                value,
+                1.0,
+                cell_batch,
+                batch_ptr,
+                max_neighbors=8,
+                return_vectors=True,
+                return_distances=True,
+            ),
+        )
+        for result, reference in zip(snapshot, expected, strict=True):
+            torch.testing.assert_close(result, reference)
+
     @requires_vesin
     def test_single_system_batch(self, device, dtype):
         """Batch of size 1 should match brute-force."""
@@ -2171,8 +2195,8 @@ class TestBatchClusterTileComponentsAPI:
         matrix = torch.full((N, 64), N, dtype=torch.int32, device=device)
         counts = torch.zeros(N, dtype=torch.int32, device=device)
         shifts = torch.zeros((N, 64, 3), dtype=torch.int32, device=device)
-        vectors = torch.zeros((N, 64, 3), dtype=dtype, device=device)
-        distances = torch.zeros((N, 64), dtype=dtype, device=device)
+        vectors = torch.full((N, 64, 3), -7.0, dtype=dtype, device=device)
+        distances = torch.full((N, 64), -7.0, dtype=dtype, device=device)
 
         @torch.compile(fullgraph=True)
         def run(runtime_positions):
@@ -2527,6 +2551,42 @@ class TestBatchClusterTileAutograd:
             row_a = sorted(nm_a[i, :n].tolist())
             row_b = sorted(nm_b[i, :n].tolist())
             assert row_a == row_b
+
+    def test_no_grad_uses_nondifferentiable_geometry(self, device):
+        """Disabled grad mode returns batched geometry without an autograd graph."""
+        pos, cell_batch, batch_ptr = self._make_batch(device)
+        pos.requires_grad_(True)
+        cell_batch.requires_grad_(True)
+
+        with torch.no_grad():
+            matrix, counts, shifts, distances, vectors = (
+                batch_cluster_tile_neighbor_list(
+                    pos,
+                    1.5,
+                    cell_batch,
+                    batch_ptr,
+                    max_neighbors=64,
+                    return_distances=True,
+                    return_vectors=True,
+                )
+            )
+
+        active = torch.arange(matrix.shape[1], device=device)[None, :] < counts[:, None]
+        batch_idx = torch.repeat_interleave(
+            torch.arange(cell_batch.shape[0], device=device),
+            (batch_ptr[1:] - batch_ptr[:-1]).to(torch.long),
+        )
+        assert not distances.requires_grad
+        assert not vectors.requires_grad
+        assert torch.equal(distances[~active], torch.zeros_like(distances[~active]))
+        assert torch.equal(vectors[~active], torch.zeros_like(vectors[~active]))
+        safe_neighbors = torch.where(active, matrix, 0).to(torch.long)
+        expected = pos[safe_neighbors] - pos[:, None]
+        expected = expected + torch.einsum(
+            "nma,nab->nmb", shifts.to(pos.dtype), cell_batch[batch_idx]
+        )
+        torch.testing.assert_close(vectors[active], expected[active])
+        torch.testing.assert_close(distances[active], expected.norm(dim=-1)[active])
 
     def test_grad_matches_fd_spot_check(self, device):
         """fp32 spot-check on a tight per-system cluster.  See the

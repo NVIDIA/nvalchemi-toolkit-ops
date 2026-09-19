@@ -167,7 +167,14 @@ class TestTileNeighborListCorrectness:
         _, snapshot, expected = torch_stream_runner(
             source,
             positions,
-            lambda value: cluster_tile_neighbor_list(value, 1.0, cell, max_neighbors=8),
+            lambda value: cluster_tile_neighbor_list(
+                value,
+                1.0,
+                cell,
+                max_neighbors=8,
+                return_vectors=True,
+                return_distances=True,
+            ),
         )
         for result, reference in zip(snapshot, expected, strict=True):
             torch.testing.assert_close(result, reference)
@@ -983,8 +990,8 @@ class TestClusterTileCompile:
         matrix = torch.full((N, 64), N, dtype=torch.int32, device=device)
         counts = torch.zeros(N, dtype=torch.int32, device=device)
         shifts = torch.zeros((N, 64, 3), dtype=torch.int32, device=device)
-        vectors = torch.zeros((N, 64, 3), dtype=dtype, device=device)
-        distances = torch.zeros((N, 64), dtype=dtype, device=device)
+        vectors = torch.full((N, 64, 3), -7.0, dtype=dtype, device=device)
+        distances = torch.full((N, 64), -7.0, dtype=dtype, device=device)
 
         @torch.compile(fullgraph=True)
         def run(runtime_positions):
@@ -1517,6 +1524,33 @@ class TestClusterTileAutograd:
             row_a = sorted(nm_a[i, :n].tolist())
             row_b = sorted(nm_b[i, :n].tolist())
             assert row_a == row_b
+
+    def test_no_grad_uses_nondifferentiable_geometry(self, device):
+        """Disabled grad mode returns geometry without an autograd graph."""
+        pos, cell = self._make_system(device)
+        pos.requires_grad_(True)
+        cell.requires_grad_(True)
+
+        with torch.no_grad():
+            matrix, counts, shifts, distances, vectors = cluster_tile_neighbor_list(
+                pos,
+                1.5,
+                cell,
+                max_neighbors=64,
+                return_distances=True,
+                return_vectors=True,
+            )
+
+        active = torch.arange(matrix.shape[1], device=device)[None, :] < counts[:, None]
+        assert not distances.requires_grad
+        assert not vectors.requires_grad
+        assert torch.equal(distances[~active], torch.zeros_like(distances[~active]))
+        assert torch.equal(vectors[~active], torch.zeros_like(vectors[~active]))
+        safe_neighbors = torch.where(active, matrix, 0).to(torch.long)
+        expected = pos[safe_neighbors] - pos[:, None]
+        expected = expected + shifts.to(pos.dtype) @ cell
+        torch.testing.assert_close(vectors[active], expected[active])
+        torch.testing.assert_close(distances[active], expected.norm(dim=-1)[active])
 
     def test_grad_matches_fd_spot_check(self, device):
         """fp32 spot-check: analytical gradient agrees with central-FD

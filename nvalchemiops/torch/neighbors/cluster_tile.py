@@ -767,6 +767,13 @@ def _query_cluster_tile_op(
     # ``n_tiles`` (host-synced emitted-tile count from the caller) sets the
     # launch dimension so we don't launch over the full allocated tile
     # buffer.  The kernel still guards ``tile >= num_tiles[0]`` defensively.
+    # Warp writes active pairs only. Clear padding inside the same opaque
+    # mutation boundary before launching the query.
+    if return_vectors:
+        neighbor_vectors.zero_()
+    if return_distances:
+        neighbor_distances.zero_()
+
     device = sorted_pos_x.device
     wp_device = str(device)
     wp_dtype = get_wp_dtype(sorted_pos_x.dtype)
@@ -1208,6 +1215,29 @@ def _query_cluster_tile_optional_no_pair_fn_op(
     return_vectors: bool,
     return_distances: bool,
 ) -> None:
+    # Selective queries must retain every output entry when the system is not
+    # rebuilt; a rebuilt system starts with zeroed geometry padding.
+    if rebuild_flags is None:
+        if return_vectors and neighbor_vectors is not None:
+            neighbor_vectors.zero_()
+        if return_distances and neighbor_distances is not None:
+            neighbor_distances.zero_()
+    else:
+        rebuild = rebuild_flags.reshape(-1)[0]
+        if return_vectors and neighbor_vectors is not None:
+            neighbor_vectors.copy_(
+                torch.where(
+                    rebuild, torch.zeros_like(neighbor_vectors), neighbor_vectors
+                )
+            )
+        if return_distances and neighbor_distances is not None:
+            neighbor_distances.copy_(
+                torch.where(
+                    rebuild,
+                    torch.zeros_like(neighbor_distances),
+                    neighbor_distances,
+                )
+            )
     _query_cluster_tile_optional(
         cell_mat,
         inv_cell_mat,
@@ -2579,6 +2609,11 @@ def cluster_tile_neighbor_list(
         and pair_forces is None
         and format == "matrix"
     )
+    requires_reconstruction = (
+        geometry_requested
+        and torch.is_grad_enabled()
+        and (positions.requires_grad or cell.requires_grad)
+    )
 
     # Candidate tiles must cover both radii. The query then filters each matrix
     # with its own cutoff.
@@ -2640,9 +2675,9 @@ def cluster_tile_neighbor_list(
             if previous_col is not None:
                 tile_col_group = previous_col
     build_cluster_tile_list(
-        positions.detach() if geometry_requested else positions,
+        positions.detach() if requires_reconstruction else positions,
         build_cutoff,
-        cell.detach() if geometry_requested else cell,
+        cell.detach() if requires_reconstruction else cell,
         sorted_atom_index,
         morton_codes,
         sorted_pos_x,
@@ -2863,12 +2898,12 @@ def cluster_tile_neighbor_list(
         num_neighbors2=num_neighbors2,
         neighbor_matrix_shifts2=neighbor_matrix_shifts2,
         rebuild_flags=rebuild_flags,
-        return_vectors=return_vectors and not geometry_requested,
-        return_distances=return_distances and not geometry_requested,
+        return_vectors=return_vectors and not requires_reconstruction,
+        return_distances=return_distances and not requires_reconstruction,
         pair_fn=pair_fn,
         pair_params=pair_params,
-        neighbor_vectors=None if geometry_requested else neighbor_vectors,
-        neighbor_distances=None if geometry_requested else neighbor_distances,
+        neighbor_vectors=None if requires_reconstruction else neighbor_vectors,
+        neighbor_distances=None if requires_reconstruction else neighbor_distances,
         pair_energies=pair_energies,
         pair_forces=pair_forces,
     )
@@ -2915,7 +2950,7 @@ def cluster_tile_neighbor_list(
     if dual_cutoff and num_neighbors2 is not None:
         _check_neighbor_capacity(num_neighbors2, int(max_neighbors))
 
-    if geometry_requested:
+    if requires_reconstruction:
         distances, vectors = _reconstruct_matrix_geometry(
             positions,
             cell,
