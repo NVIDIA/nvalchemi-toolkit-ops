@@ -196,7 +196,9 @@ realistic materials workload.
 **Per-step optimizer cost.** Optimizer time only, single system, fp64, harmonic
 potential, measured with `--gates`:
 
-Median of three runs; the ratio varies by roughly +/- 0.3 between runs.
+Median of three runs; the ratio varies by roughly +/- 0.3 between runs. Each
+run writes `lbfgs_gate_timings.csv` alongside the other benchmark results, so
+this table has a regenerable record behind it.
 
 | Atoms | Eager (ms) | CUDA graph (ms) | FIRE2 (ms) | vs FIRE2 |
 | --- | --- | --- | --- | --- |

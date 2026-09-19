@@ -375,15 +375,55 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50):
 
 
 def _load_lbfgs_config(path):
-    """Read the ``lbfgs`` block of the benchmark config, if there is one.
+    """Read the ``lbfgs`` and ``output`` blocks of the benchmark config.
 
     The benchmark is useful standalone, so a missing file or section is not an
     error -- the module-level fallbacks apply instead.
+
+    Returns
+    -------
+    tuple of dict
+        The ``lbfgs`` section and the shared ``output`` section.
     """
     path = pathlib.Path(path)
     if not path.is_file():
-        return {}
-    return load_config(path).get("lbfgs", {}) or {}
+        return {}, {}
+    document = load_config(path)
+    return document.get("lbfgs", {}) or {}, document.get("output", {}) or {}
+
+
+def _resolve_output_dir(explicit, output_config, config_path):
+    """Where results go: the flag first, then ``output.results_dir``.
+
+    ``results_dir`` is interpreted relative to the config file that declares
+    it, which is how the neighborlist and interactions configs read their
+    ``base_dir``. ``save_timing: false`` turns writing off, but an explicit
+    ``--output-dir`` still wins -- asking for a directory on the command line
+    is unambiguous.
+
+    Returns ``None`` when nothing should be written.
+    """
+    if explicit is not None:
+        return pathlib.Path(explicit)
+    if not output_config.get("save_timing", True):
+        return None
+    results_dir = output_config.get("results_dir")
+    if results_dir is None:
+        return None
+    return (pathlib.Path(config_path).parent / results_dir).resolve()
+
+
+def _write_csv(output_dir, name, fieldnames, rows):
+    """Write ``rows`` to ``output_dir/name``; no-op when there is nowhere to go."""
+    if output_dir is None or not rows:
+        return
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / name
+    with open(path, "w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"wrote {path}")
 
 
 def main():
@@ -416,8 +456,9 @@ def main():
     )
     args = parser.parse_args()
 
-    config = _load_lbfgs_config(args.config)
+    config, output_config = _load_lbfgs_config(args.config)
     gates_config = config.get("gates", {}) or {}
+    output_dir = _resolve_output_dir(args.output_dir, output_config, args.config)
 
     # `enabled` works the way it does for the other dynamics benchmarks: it is
     # how a config file turns a suite off without editing the runner.
@@ -441,7 +482,7 @@ def main():
     sweep = config.get("fire2_sweep", FIRE2_SWEEP)
 
     if args.gates:
-        run_gates(
+        gate_rows = run_gates(
             pick(
                 args.gate_sizes,
                 "system_sizes",
@@ -451,6 +492,33 @@ def main():
             pick(args.eval_ratio, "eval_ratio", 0.129, section=gates_config),
             gates_config.get("warmup", 10),
             gates_config.get("runs", 50),
+        )
+        # These rows are what the published per-step table is drawn from, so
+        # they have to survive the run.
+        _write_csv(
+            output_dir,
+            "lbfgs_gate_timings.csv",
+            [
+                "atoms",
+                "eager_ms",
+                "graph_ms",
+                "fire2_ms",
+                "eager_over_fire2",
+                "graph_gain",
+                "break_even_us",
+            ],
+            [
+                {
+                    "atoms": atoms,
+                    "eager_ms": f"{eager:.6f}",
+                    "graph_ms": f"{graphed:.6f}",
+                    "fire2_ms": f"{fire2:.6f}",
+                    "eager_over_fire2": f"{eager / fire2:.4f}" if fire2 else "",
+                    "graph_gain": f"{eager / graphed:.4f}" if graphed else "",
+                    "break_even_us": f"{break_even * 1e3:.4f}",
+                }
+                for atoms, eager, graphed, fire2, break_even in gate_rows
+            ],
         )
         return
 
@@ -504,9 +572,9 @@ def main():
             "so those ratios are upper bounds on L-BFGS's advantage."
         )
 
-    if args.output_dir is not None:
-        args.output_dir.mkdir(parents=True, exist_ok=True)
-        out = args.output_dir / "lbfgs_vs_fire2_evaluations.csv"
+    if output_dir is not None and rows:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        out = output_dir / "lbfgs_vs_fire2_evaluations.csv"
         with out.open("w", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
             writer.writeheader()

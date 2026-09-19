@@ -304,6 +304,12 @@ python -m benchmarks.dynamics.benchmark_lbfgs \
 Writes `lbfgs_vs_fire2_evaluations.csv`. Runs that hit the evaluation cap are
 flagged; their ratios are upper bounds on L-BFGS's advantage.
 
+With no `--output-dir`, results go to `output.results_dir` from the config,
+resolved relative to the config file — the same rule the neighborlist and
+interactions configs use for their `base_dir`. Set `output.save_timing: false`
+to write nothing; an explicit `--output-dir` still writes, since asking for a
+directory on the command line is unambiguous.
+
 ### Per-step cost gates
 
 ```bash
@@ -319,6 +325,12 @@ The break-even figure needs the measured evaluation ratio, which is read from
 `lbfgs.gates.eval_ratio` in the config. Re-run the evaluation-count benchmark
 above and update that value if you change the sizes or the tolerance, or pass
 `--eval-ratio` to try one without editing the file.
+
+Writes `lbfgs_gate_timings.csv` through the same output path as the
+evaluation-count run above — one row per size, with the eager, graph and FIRE2
+times, both ratios and the break-even cost. That file is the record behind the
+per-step table in `docs/benchmarks/dynamics.md`, so regenerate it when you
+update those numbers.
 
 Per-step times here are launch-bound and vary a few percent between runs; treat
 the FIRE2 ratio as approximate rather than as a three-digit measurement.

@@ -389,8 +389,12 @@ hardware:
 # Output Configuration
 # --------------------
 output:
-  # Output directory for CSV results
-  results_dir: "../docs/benchmarks/benchmark_results"
+  # Output directory for CSV results, relative to this file -- the same rule
+  # the neighborlist and interactions configs use for their `base_dir`.
+  # As written this was one level short and resolved to a non-existent
+  # benchmarks/docs/..., so nothing could have been written there.
+  results_dir: "../../docs/benchmarks/benchmark_results"
 
-  # Whether to save detailed timing data
+  # Whether to save detailed timing data. An explicit --output-dir still
+  # writes, since asking for a directory on the command line is unambiguous.
   save_timing: true
