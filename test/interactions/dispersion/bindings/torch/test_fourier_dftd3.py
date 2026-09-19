@@ -793,6 +793,34 @@ class TestMeshAndUnits:
             )
             assert fine < coarse, f"order {order} not converging: {coarse} -> {fine}"
 
+    def test_forces_converge_with_the_mesh(self):
+        """Pins force accuracy, which the energy tests above cannot see.
+
+        Forces come from the gather, so a deconvolution that does not match the attenuation
+        the spread applies shows up here long before it shows up in the energy. Comparing
+        against the Warp harness would not catch it, since the harness divides out the same
+        modulus the bindings do.
+        """
+        system = _system("cuda:0")
+        reference = _evaluate(system, mesh_dimensions=(128, 128, 128), spline_order=6)[
+            1
+        ]
+        scale = reference.abs().max()
+        errors = [
+            (
+                (
+                    _evaluate(system, mesh_dimensions=(m, m, m), spline_order=4)[1]
+                    - reference
+                )
+                .abs()
+                .max()
+                / scale
+            ).item()
+            for m in (24, 32, 48, 64)
+        ]
+        assert errors == sorted(errors, reverse=True), errors
+        assert errors[-1] < 1e-5, errors
+
     @pytest.mark.parametrize("mesh_size", [1, 2, 3])
     def test_a_mesh_shorter_than_the_stencil_is_refused(self, mesh_size):
         """The order-4 stencil wraps onto a shorter axis and visits a node twice.
