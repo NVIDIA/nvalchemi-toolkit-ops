@@ -49,8 +49,7 @@ real-space cutoff that remains is the short coordination-number list.
 
 Unlike the launchers above, these are **component** launchers rather than one end-to-end
 call. Warp has no full-mesh FFT, so the two transforms belong to the calling framework and
-the launchers are driven around them, in the order given by the table in the module
-documentation.
+the launchers are driven around them, in the pass order given below.
 
 .. automodule:: nvalchemiops.interactions.dispersion._fourier_dftd3
     :no-members:

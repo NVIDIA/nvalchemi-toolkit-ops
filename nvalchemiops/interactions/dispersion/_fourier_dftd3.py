@@ -20,45 +20,28 @@ FourierD3: Particle-Mesh Evaluation of the DFT-D3 Dispersion Correction
 Periodic DFT-D3(BJ) dispersion in :math:`O(N \log N)` with **no real-space cutoff on the
 dispersion sum**; only the short coordination-number list remains.
 
-Mesh summation needs the pairwise coefficient to separate into atom-centred factors, and D3's
-:math:`C_6` does not -- it couples both atoms' coordination numbers. A host-side low-rank
-decomposition (:mod:`nvalchemiops.interactions.dispersion._c6_decomposition`) restores it:
+Mesh summation needs a separable pair coefficient, and D3's :math:`C_6` couples both atoms'
+coordination numbers. A host-side low-rank decomposition
+(:mod:`nvalchemiops.interactions.dispersion._c6_decomposition`) restores separability,
+:math:`C_6^{ij} = \sum_\ell \lambda_\ell c_6[i, \ell] c_6[j, \ell]`, so each slot spreads onto
+its own mesh channel. Becke-Johnson damping makes the potential absolutely integrable, so its
+transform is closed-form: no Ewald splitting parameter and no real-space dispersion sum, with
+the mesh Nyquist frequency the only truncation.
 
-.. math::
+Warp has no full-mesh FFT, so the two transforms belong to the calling framework and this
+module supplies the surrounding kernels. Bindings drive nine passes: coordination numbers,
+low-rank coefficients, B-spline spread, forward FFT, reciprocal contraction, inverse FFT,
+gather, self-energy, and the coordination chain rule. The spread and gather live in
+:mod:`nvalchemiops.math.spline`; the rest are here, one launcher each.
 
-    C_6^{ij} = \sum_{\ell} \lambda_{\ell}\, c_6[i, \ell]\, c_6[j, \ell]
-
-Becke-Johnson damping makes the pair potential absolutely integrable, so its transform is
-closed-form with an exponentially decaying envelope. **No Ewald splitting parameter and no
-real-space dispersion sum**: the mesh Nyquist frequency is the only truncation, unlike the
-electrostatics PME path here.
-
-Pass structure
---------------
-
-Warp has no full-mesh FFT, so the transforms belong to the calling framework:
-
-===== =========================================================== ==============
-Pass  Operation                                                   Performed by
-===== =========================================================== ==============
-1     Coordination numbers from the neighbour list                this module
-2     Reference weights, low-rank coefficients, ``dc6/dCN``       this module
-3     B-spline spread onto the ``(system, species, rank)`` mesh   ``math.spline``
-4     Forward real-to-complex FFT                                 framework
-5     Reciprocal-space contraction, energy and virial             this module
-6     Inverse FFT of the cotangent field                          framework
-7     Gather ``dE/dc6`` and the direct mesh forces                ``math.spline``
-8     Self-energy, and its contribution to ``dE/dc6``             this module
-9     Contract to ``dE/dCN`` and apply the chain rule to forces   this module
-===== =========================================================== ==============
-
-Pass 8 must precede pass 9: the self-energy is quadratic in coefficients that depend on
-coordination number, so applying it as a final scalar would drop its force and virial terms.
+Self-energy must precede the chain rule: it is quadratic in the coefficients, which depend on
+coordination number, so applying it afterwards as a scalar would drop its force and virial
+contribution.
 
 Units
 -----
-Unit-agnostic, but ``positions``, ``cell``, ``covalent_radii``, ``r_cut`` and the mesh spacing must
-share one system (D3 parameters are conventionally atomic units). ``r_cut`` must equal the
+Unit-agnostic, but ``positions``, ``cell``, ``covalent_radii``, ``r_cut`` and the mesh spacing
+must share one system (D3 parameters are conventionally atomic units). ``r_cut`` must equal the
 neighbour-list cutoff, because the counting function reaches zero exactly there.
 
 References
