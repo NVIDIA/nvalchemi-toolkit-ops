@@ -107,18 +107,14 @@ wp_vec_dtype = system.wp_vec_dtype
 # Allocate the L-BFGS Buffers
 # ---------------------------
 #
-# Every array the optimizer touches is yours: the package allocates nothing,
-# initializes nothing, and keeps no hidden state between calls. That means no
-# allocation happens inside the loop, and it also means the three buffers whose
-# starting values are *not* zero are your responsibility -- see below.
-# ``history_size`` is the memory knob: the two history buffers dominate, and
-# 3 to 7 is the usual range.
+# Every array is yours: the package allocates nothing and keeps no hidden
+# state, so nothing is allocated inside the loop -- and the three buffers that
+# do not start at zero are your responsibility (see below). ``history_size`` is
+# the memory knob; 3 to 7 is usual.
 #
-# Note the precision split. Coordinates may be single or double precision, but
-# **every per-system scalar is float64 regardless**. The ratio ``ys / yy`` sets
-# the initial inverse-Hessian scaling, and near convergence it is a ratio of
-# differences of nearly equal vectors -- the regime where single precision
-# cancels away the information.
+# Coordinates may be single or double precision, but **every per-system scalar
+# is float64 regardless**: ``ys / yy`` scales the initial inverse Hessian, and
+# near convergence it is a ratio of differences of nearly equal vectors.
 
 history_size = 6
 
@@ -201,13 +197,10 @@ n_particles = wp.array([num_atoms], dtype=wp.int32, device=device)
 # L-BFGS Optimization Loop
 # ------------------------
 #
-# You own the loop, exactly as with FIRE2, but the contract is different:
-# **each call consumes exactly one force evaluation**, and you stop when
-# ``status`` says so rather than by testing the forces yourself.
-#
-# No energy is passed in at all. The step length comes from the ``maxstep``
-# trust region rather than from a line search comparing energies, so a model
-# whose forces are not the gradient of its energy relaxes just as well.
+# You own the loop, as with FIRE2, but **each call consumes exactly one force
+# evaluation** and you stop when ``status`` says so. No energy is passed in:
+# the step length comes from the ``maxstep`` trust region, so a model whose
+# forces are not the gradient of its energy relaxes just as well.
 
 max_evals = 500
 force_tolerance = 1e-3  # eV/Å, on the largest per-atom force
@@ -286,17 +279,14 @@ lbfgs_positions = wp.to_torch(system.wp_positions).cpu().numpy().copy()
 # Compare Against FIRE2
 # ---------------------
 #
-# The same cluster, the same starting geometry and the same force tolerance,
-# relaxed with FIRE2. What matters is the number of force evaluations: with a
-# machine-learned potential the model call dominates the optimizer's own
-# kernel time by orders of magnitude.
+# Same cluster, same start, same tolerance, relaxed with FIRE2. What matters is
+# the evaluation count: with a machine-learned potential the model call
+# dominates the optimizer's kernel time by orders of magnitude.
 #
 # The FIRE2 settings below were **tuned for this system** by sweeping the
-# timestep and step cap, and are the best found. Comparing against an untuned
-# baseline would overstate the result: FIRE2 is sensitive to its timestep, and
-# the much smaller ``dt`` used in ``09_fire2_optimization.py`` does not converge
-# this cluster within a few thousand evaluations. L-BFGS needs no such tuning,
-# which is a practical advantage in its own right.
+# timestep and step cap. Comparing against an untuned baseline would overstate
+# the result -- FIRE2 is sensitive to its timestep, and L-BFGS needs no such
+# tuning, which is a practical advantage in itself.
 
 fire2_system = make_system()
 velocities = wp.zeros(num_atoms, dtype=wp_vec_dtype, device=device)
@@ -359,10 +349,8 @@ else:
 # Plot convergence
 # ----------------
 #
-# The energy is plotted for interest, not as a convergence signal. Without a
-# line search there is no Armijo test forcing it down, so it may rise on an
-# individual step; the *force* is what the optimizer drives to zero and what
-# ``status`` reports on.
+# Energy is plotted for interest, not as a convergence signal: with no Armijo
+# test forcing it down it may rise on a step. The *force* is what converges.
 
 fig, ax = plt.subplots(2, 1, figsize=(7.0, 5.5), constrained_layout=True)
 

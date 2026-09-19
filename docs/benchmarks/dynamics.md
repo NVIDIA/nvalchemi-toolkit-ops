@@ -197,9 +197,9 @@ potential, measured with `--gates`:
 
 | Atoms | Eager (ms) | CUDA graph (ms) | FIRE2 (ms) | vs FIRE2 |
 | --- | --- | --- | --- | --- |
-| 10,000 | 0.479 | 0.169 | 0.059 | 8.2x |
-| 100,000 | 1.091 | 1.087 | 0.113 | 9.6x |
-| 1,000,000 | 3.219 | 3.215 | 0.319 | 10.1x |
+| 10,000 | 0.49 | 0.17 | 0.057 | 8.5x |
+| 100,000 | 1.09 | 1.16 | 0.118 | 9.3x |
+| 1,000,000 | 3.30 | 3.38 | 0.337 | 9.8x |
 
 **A single L-BFGS step is roughly ten times more expensive than a FIRE2 step.**
 It runs `2m + O(1)` passes over the degrees of freedom against FIRE2's handful.
@@ -208,7 +208,7 @@ recovers about 2.8x; from one hundred thousand upwards it is bandwidth-bound
 and replay recovers nothing.
 
 That cost is not the reason to choose L-BFGS, and it is not usually the cost
-that matters. The model must cost more than roughly 4, 31 and 111 microseconds
+that matters. The model must cost more than roughly 7, 26 and 102 microseconds
 per evaluation at these three sizes for L-BFGS to win end to end — a
 machine-learned potential exceeds that by two to three orders of magnitude, and
 L-BFGS needs several times fewer evaluations. Prefer FIRE2 when the force

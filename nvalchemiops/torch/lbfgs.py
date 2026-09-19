@@ -15,61 +15,32 @@
 
 """PyTorch bindings for the batched L-BFGS geometry optimizer.
 
-L-BFGS reaches a given force tolerance in far fewer force evaluations
-than the FIRE optimizers, which is the cost that dominates relaxation with a
+L-BFGS reaches a given force tolerance in far fewer force evaluations than the
+FIRE optimizers, which is the cost that dominates relaxation with a
 machine-learned potential.
 
 Caller-owned buffers
 --------------------
 As with the FIRE optimizers, **you allocate, initialize and retain every
-buffer**; nothing is allocated here. That keeps allocation out of the step,
-which is what makes it capturable in a CUDA graph. See
-:mod:`nvalchemiops.dynamics.optimizers.lbfgs` for the full table of shapes and
-required initial contents. In short, for ``P`` degrees of freedom, ``M``
-systems and history depth ``m``::
+buffer**; nothing is allocated here. That keeps allocation out of the step and
+makes it capturable in a CUDA graph. See
+:mod:`nvalchemiops.dynamics.optimizers.lbfgs` for the full table of shapes.
 
-    kw = dict(dtype=positions.dtype, device=positions.device)
-    f64 = dict(dtype=torch.float64, device=positions.device)
-    i32 = dict(dtype=torch.int32, device=positions.device)
+Zero every buffer, then set the three that do not start at zero::
 
-    buffers = dict(
-        x_base=torch.zeros(P, 3, **kw),
-        force_base=torch.zeros(P, 3, **kw),
-        direction=torch.zeros(P, 3, **kw),
-        s_history=torch.zeros(m, P, 3, **kw),
-        y_history=torch.zeros(m, P, 3, **kw),
-        ys=torch.zeros(m, M, **f64),
-        yy=torch.zeros(m, M, **f64),
-        alpha_hist=torch.zeros(m, M, **f64),
-        beta_hist=torch.zeros(m, M, **f64),
-        ss=torch.zeros(M, **f64),
-        gg=torch.zeros(M, **f64),
-        fmax=torch.zeros(M, **f64),
-        frms_sq=torch.zeros(M, **f64),
-        smax=torch.zeros(M, **f64),
-        d0=torch.zeros(M, **f64),
-        dmax=torch.zeros(M, **f64),
-        dquad=torch.zeros(M, **f64),
-        alpha_step=torch.ones(M, **f64),       # one, not zero
-        status=torch.zeros(M, **i32),          # LBFGS_NEED_EVAL is zero
-        iteration=torch.full((M,), -1, **i32),  # minus one
-        end=torch.zeros(M, **i32),
-        n_loop=torch.zeros(M, **i32),
-        history_count=torch.zeros(M, **i32),
-    )
+    buffers["alpha_step"].fill_(1.0)   # the step length for a new direction
+    buffers["iteration"].fill_(-1)     # the "never evaluated" marker
+    buffers["status"].fill_(LBFGS_NEED_EVAL)   # numerically zero
 
-Per-system scalars are float64 whatever the coordinate precision. The ratio
-``ys / yy`` sets the initial inverse-Hessian scaling for the two-loop recursion,
-and near convergence ``y = force_base - F`` is a difference of two nearly equal
-vectors -- exactly where single-precision cancellation destroys the ratio.
-
-Restoring those same values is what resets the optimizer; there is no reset
-helper, because there is no state object to reset.
+Per-system scalars are float64 whatever the coordinate precision: ``ys / yy``
+scales the initial inverse Hessian, and near convergence ``y = force_base - F``
+is a difference of nearly equal vectors. Restoring those same values is how you
+reset; there is no reset helper, because there is no state object.
 
 Usage
 -----
-You own the loop. Each call consumes exactly one force evaluation and
-mutates its buffers in place::
+You own the loop. Each call consumes exactly one force evaluation and mutates
+its buffers in place::
 
     from nvalchemiops.torch.lbfgs import LBFGS_NEED_EVAL, lbfgs_step_coord
 
@@ -82,38 +53,31 @@ mutates its buffers in place::
         if not (buffers["status"] == LBFGS_NEED_EVAL).any():
             break
 
-``status`` is the only value you need to inspect: ``LBFGS_NEED_EVAL`` means
-keep going, ``LBFGS_CONVERGED`` means ``positions`` hold the answer, and
-There is no failure status and no energy input: the step length comes from a
-``maxstep`` trust region rather than from an Armijo test, so a model whose
-forces are not the gradient of its energy -- a direct force head, for instance
--- relaxes just as well. Every call is an accepted step.
+``status`` is the only value to inspect: ``LBFGS_NEED_EVAL`` means keep going,
+``LBFGS_CONVERGED`` means ``positions`` hold the answer. There is no failure
+status and no energy input -- the step length comes from a ``maxstep`` trust
+region, so a model whose forces are not the gradient of its energy relaxes just
+as well.
 
 These operations mutate their inputs and are not differentiable; they are
-registered as PyTorch custom operators so they trace correctly under
-``torch.compile``.
+registered as PyTorch custom operators so they trace under ``torch.compile``.
 
 CUDA graphs
 -----------
-A step captures in a CUDA graph, which is worth doing for a loop that runs
-thousands of times. Warp launches have to be bound to the capture stream by the
-caller, so wrap the capture::
-
-    import warp as wp
+A step captures in a CUDA graph, worth doing for a loop that runs thousands of
+times. Warp launches must be bound to the capture stream by the caller::
 
     with wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream())):
         with torch.cuda.graph(graph):
             lbfgs_step_coord(...)
 
 Without that scope the capture records nothing and replay silently does no
-work. Every buffer must be pre-allocated and reused; the step itself allocates
-nothing and does all of its zeroing on the device.
+work.
 
 See Also
 --------
-nvalchemiops.dynamics.optimizers.lbfgs : the underlying Warp implementation,
-    which documents the algorithm, the sign convention and the precision policy
-    in detail.
+nvalchemiops.dynamics.optimizers.lbfgs : the Warp implementation, which
+    documents the algorithm, sign convention and precision policy.
 """
 
 from __future__ import annotations

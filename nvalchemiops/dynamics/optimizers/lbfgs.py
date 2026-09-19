@@ -13,42 +13,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-r"""
-L-BFGS Optimizer Kernels
+r"""L-BFGS Optimizer Kernels
 ========================
 
 GPU-accelerated Warp kernels for batched L-BFGS geometry optimization.
 
-L-BFGS is a quasi-Newton method. It builds an implicit approximation to the
-inverse Hessian from the last ``m`` position/gradient differences and uses it
-to choose a search direction, then takes a step along that direction bounded by
-a trust region. Compared with the FIRE optimizers it typically reaches a given
-force tolerance in far fewer force evaluations, which is the cost that
-dominates relaxation with a machine-learned potential.
+L-BFGS approximates the inverse Hessian from the last ``m`` position/force
+differences to pick a direction, then steps along it as far as a ``maxstep``
+trust region allows. It reaches a given force tolerance in far fewer force
+evaluations than FIRE -- the cost that dominates relaxation with a
+machine-learned potential.
 
 Forces only: there is no line search
 ------------------------------------
-**Nothing here reads an energy.** The step length is bounded by ``maxstep``
-rather than chosen by comparing energies, which is a deliberate choice for
-machine-learned potentials rather than a simplification.
-
-A line search accepts or rejects a trial point with an Armijo test on *total
-energies*, while the search direction comes from *forces*. Those are the same
-surface only if the model is conservative -- if its forces really are
-``-grad E`` of the energy it reports. Many models are not: a direct force head
-predicts forces independently, and even a conservative model can have an energy
-surface rough at the scale the Armijo test resolves. When the two disagree the
-test rejects good steps, and tuning ``ftol`` or the Wolfe constant does not
-help, because the predicate is measuring the wrong thing.
-
-Dropping the line search also makes the cadence uniform: there are no trials to
-reject, so **every call is an accepted step** that forms exactly one curvature
-pair and takes exactly one bounded step.
+**Nothing here reads an energy.** An Armijo test compares *total energies*
+while the direction comes from *forces* -- the same surface only for a
+conservative model, so a direct force head makes it reject good steps, and no
+tuning repairs that. Bounding by ``maxstep`` instead makes the cadence uniform:
+**every call is an accepted step** forming one curvature pair. The cost is that
+nothing forces the energy down, so it may rise on a step; the force still
+converges, and that is what ``status`` reports.
 
 Calling convention
 ------------------
-You own the loop. Each call to :func:`lbfgs_step` consumes **exactly one**
-force evaluation::
+You own the loop. Each :func:`lbfgs_step` call consumes **exactly one** force
+evaluation::
 
     while True:
         forces = my_model(positions)
@@ -56,17 +45,14 @@ force evaluation::
         if not (status.numpy() == LBFGS_NEED_EVAL).any():
             break
 
-Internally each system runs a small state machine that tests convergence,
-forms the curvature pair and picks the direction. Systems in a batch stay in
-lock step in *evaluations* while diverging in *iterations*, which is what lets
-a whole batch relax in one stream of kernel launches with no per-system host
-control flow.
+Systems stay in lock step in *evaluations* while diverging in *iterations*, so
+a batch relaxes in one stream of launches with no per-system host control
+flow.
 
 Relation to FIRE2
 -----------------
-The decomposition deliberately mirrors FIRE2's, so the two optimizers are
-driven the same way and a caller can interpose their own logic at the same
-points:
+The decomposition mirrors FIRE2's, so both are driven the same way and a caller
+can interpose logic at the same points:
 
 ========================  ==========================  ========================
 Phase                     FIRE2                       L-BFGS
@@ -78,85 +64,37 @@ move the atoms            ``fire2_apply_step``        :func:`lbfgs_apply_step`
 all of the above          ``fire2_step``              :func:`lbfgs_step`
 ========================  ==========================  ========================
 
-State is prepared **once**, and more strictly than for FIRE2: every buffer is
-caller-owned, is initialized once (zero everything, then ``alpha_step = 1``,
-``iteration = -1``, ``status = LBFGS_NEED_EVAL``), and nothing is re-prepared
-per call. A step allocates nothing.
-
-The cadence matches too: FIRE2 performs one state update and one step per
-call, and so does this. Without a line search there are no trials to reject,
-so every call forms exactly one curvature pair (subject to the curvature guard)
-and takes exactly one bounded step.
-
-One phase has no FIRE2 counterpart. :func:`lbfgs_prepare_step` settles the step
-length between the update and the move; FIRE2 folds that into its apply phase
-because its displacement follows from the velocity, whereas here the length has
-to be known *before* the atoms move, and on the variable-cell path it cannot be
-inferred from the force norm at all.
-
-``maxstep`` also bounds the step slightly differently. No atom moves further
-than ``maxstep`` and the bound is re-applied every call, but it is imposed by
-shrinking ``alpha`` rather than by clamping each displacement the way FIRE2
-does. Clamping per degree of freedom would break ``x = x_base + alpha * d``,
-and the stored secant pair ``s = alpha * d`` is defined through that relation.
+Cadence matches too: one state update and one step per call. The extra phase
+exists because the step length must be settled *before* the atoms move.
+``maxstep`` shrinks ``alpha`` rather than clamping each displacement, since the
+stored pair ``s = alpha * d`` is defined through that relation.
 
 Reading ``status``
 ------------------
-``status`` is the only value you need to inspect:
-
-``LBFGS_NEED_EVAL``
-    Keep going: ``positions`` hold a new point that needs forces.
-``LBFGS_CONVERGED``
-    Done: ``positions`` hold the converged geometry.
-
-There is no failure status. A line search could exhaust its budget and give up;
-a trust-region step cannot, because a sufficiently short step along a descent
-direction always makes progress, and an ascent direction is replaced by
-steepest descent with the history discarded. A caller that wants to stop early
-bounds the loop itself.
-
-Positions and forces stay consistent
-------------------------------------
-``forces`` is an input: you evaluate it, the optimizer reads it, and it is
-never written back. Positions only ever move *forward* from the point the
-forces were evaluated at -- nothing is rolled back -- so after
-``LBFGS_CONVERGED`` your ``forces`` array still describes the geometry you are
-handed. ``force_base`` holds the same forces, alongside the matching
-``x_base``, if you would rather read them from the optimizer.
-
-If the curvature model goes bad -- the two-loop recursion returning a direction
-that points uphill -- the history is discarded and that step falls back to
-steepest descent, which always descends. ``iteration`` therefore counts steps
-since the most recent such restart rather than since the beginning of the run.
+``LBFGS_NEED_EVAL`` means keep going; ``LBFGS_CONVERGED`` means ``positions``
+hold the answer. There is no failure status -- an ascent direction is replaced
+by steepest descent, so nothing can stall. Bound the loop yourself to stop
+early. Positions only move *forward* from the evaluated point, so the
+``forces`` you passed in still describe the ``positions`` you get back.
 
 Forces, not gradients
 ---------------------
-The public API is expressed in **forces**. Because ``F = -grad E``, the
-optimizer's gradient is ``g = -F``. No gradient array is ever materialized:
-``force_base`` stores forces, and each kernel folds the sign into its own
-expression. Two consequences are worth knowing when reading the state:
-
-- ``y_history`` holds *gradient* differences, computed as ``force_base - F``.
-- A valid descent direction satisfies ``force_base . d > 0`` (the direction
-  points along the force), which is the sign-folded form of ``d0 < 0``.
+The API is in **forces**, the algorithm in gradients, with ``g = -F`` folded
+into each kernel. So ``y_history`` holds *gradient* differences
+(``force_base - F``), and a descent direction satisfies ``force_base . d > 0``.
 
 Precision
 ---------
-Coordinates may be single or double precision, but **all per-system scalars are
-float64 regardless**. The ratio ``ys / yy`` sets the initial inverse-Hessian
-scaling for the two-loop recursion, and near convergence ``y = force_base - F``
-is a difference of two nearly equal vectors -- exactly the regime where float32
-cancellation destroys the ratio and with it the quasi-Newton model. The
-per-system arrays are ``O(num_systems)`` and the cost is negligible.
+Coordinates may be single or double precision; **all per-system scalars are
+float64 regardless**. ``ys / yy`` scales the initial inverse Hessian, and near
+convergence ``y = force_base - F`` is a difference of nearly equal vectors,
+where float32 cancellation destroys it.
 
 Caller-owned buffers
 --------------------
-The package allocates and initializes **nothing**: every persistent and scratch
-buffer is yours to create, initialize and keep alive across steps, exactly as
-with the FIRE optimizers. That keeps allocation out of the step, which is what
-makes the step capturable in a CUDA graph and free of per-call allocation.
-
-For ``P`` degrees of freedom, ``M`` systems and history depth ``m``:
+The package allocates and initializes **nothing**, which keeps the step free of
+per-call allocation and capturable in a CUDA graph. For ``P`` degrees of
+freedom, ``M`` systems and history depth ``m``:
 
 =============================================  ==========  ===========
 Buffer                                         Shape       dtype
@@ -171,18 +109,10 @@ Buffer                                         Shape       dtype
 ``n_loop``, ``history_count``                  ``(M,)``    int32
 =============================================  ==========  ===========
 
-Per-system scalars are float64 whatever the coordinate precision; see
-`Precision`_ below.
-
-Initial contents, before the first step:
-
-- **zero** for every buffer except the two below;
-- ``alpha_step`` to **one**;
-- ``iteration`` to **minus one**, the "never evaluated" marker.
-
-``status`` starts at ``LBFGS_NEED_EVAL``, which is numerically zero, so zeroing
-it is correct. Reset the optimizer -- to discard the history after changing the
-potential, say -- by restoring those same values.
+Initial contents: **zero everything**, then ``alpha_step`` to **one** and
+``iteration`` to **minus one** (the "never evaluated" marker). ``status``
+starts at ``LBFGS_NEED_EVAL``, which is zero. Restoring those same values is
+how you reset.
 
 Variable-cell relaxation adds, for the packed path with
 ``P = num_atoms + 2 * M``:
@@ -202,9 +132,7 @@ Buffer                                                 Shape                 dty
 ``kappa`` matches the *coordinate* precision, not float64, because it scales
 matrices. ``ref_cell``, ``ref_cell_inv`` and ``kappa`` are filled once by
 :func:`lbfgs_set_reference_cell` and :func:`lbfgs_cell_kappa`; the rest is
-scratch and may start as anything.
-
-Build the packed topology yourself, so ragged batches are expressible::
+scratch. Build the packed topology yourself, so ragged batches work::
 
     from nvalchemiops.batch_utils import atom_ptr_to_batch_idx
     from nvalchemiops.dynamics.utils.cell_filter import extend_atom_ptr
@@ -214,17 +142,13 @@ Build the packed topology yourself, so ragged batches are expressible::
 
 Memory
 ------
-The optimizer state costs, for ``P`` degrees of freedom, ``M`` systems and a
-history depth ``m``::
+For ``P`` degrees of freedom, ``M`` systems and history ``m``::
 
-    (2m + 3) * 3 * sizeof(dof) * P     per-DOF vectors and the s/y history
-  + (4m + 11) * 8 * M                  per-slot and per-system float64 scalars
-  +        6  * 4 * M                  per-system int32
+    bytes = (2m + 3) * 3 * sizeof(dof) * P + (4m + 9) * 8 * M + 5 * 4 * M
 
-``positions`` is not included: it belongs to the caller. The history dominates,
-so ``m`` is the knob to turn if memory is tight; 3 to 7 is the usual range. At
-``m = 6`` with single-precision coordinates this is 180 bytes per degree of
-freedom, or 180 MB at a million.
+At ``m = 6`` that is 180 bytes per degree of freedom with float32 coordinates,
+360 with float64. The two histories dominate; 3 to 7 is the usual range for
+``m``.
 
 References
 ----------
@@ -235,8 +159,7 @@ Liu, D. C. and Nocedal, J. "On the limited memory BFGS method for large scale
 optimization." *Math. Program.* 45 (1989) 503-528.
 
 Nocedal, J. and Wright, S. J. *Numerical Optimization*, 2nd ed., chapters 3
-and 7.
-"""
+and 7."""
 
 from __future__ import annotations
 
@@ -2123,31 +2046,20 @@ def lbfgs_step(
 # =============================================================================
 # Variable-cell support
 #
-# Relaxing the cell alongside the coordinates needs an explicit choice of
-# generalized coordinates, because the obvious one is wrong. The stress-derived
-# cell force is the gradient with respect to an affine deformation in which the
-# atoms ride along with the cell. Concatenating raw Cartesian positions with raw
-# cell rows gives a coordinate the atoms do *not* follow, so the stored (s, y)
-# pairs would pair a displacement in one space with a gradient in another and
-# the quasi-Newton model would be built from mismatched quantities.
+# The chart is ASE's UnitCellFilter. Concatenating raw positions with raw cell
+# rows would be wrong: the stress-derived cell force is conjugate to an affine
+# deformation the atoms ride along with, so the (s, y) pairs would mix spaces.
+# With H0 captured once and lattice vectors as columns (r = H s):
 #
-# The chart used here is the one ASE's UnitCellFilter uses. With a reference
-# cell H0 captured once at the start, and lattice vectors held as columns so
-# that r = H s:
-#
-#     Phi = H H0^-1          deformation gradient, the identity at the start
-#     u   = Phi^-1 r         atom coordinates, in the reference frame
+#     Phi = H H0^-1          deformation gradient, identity at the start
+#     u   = Phi^-1 r         atom coordinates in the reference frame
 #     c   = kappa * Phi      cell coordinates, six lower-triangular components
-#
-# with conjugate forces obtained by the chain rule:
-#
-#     f_u = Phi^T F                    since r = Phi u
-#     f_c = -(V sigma) Phi^-T / kappa  since H = Phi H0
+#     f_u = Phi^T F
+#     f_c = -(V sigma) Phi^-T / kappa
 #
 # Scaling the cell coordinate by kappa and dividing its force by the same
-# factor is what keeps g . dx independent of the chart, which is what makes the
-# packed pairs genuine secant pairs. The two-loop recursion itself needs no
-# changes: it simply runs on the packed array.
+# factor keeps g . dx chart-independent, which is what makes the packed pairs
+# genuine secant pairs. The two-loop recursion needs no changes.
 # =============================================================================
 
 

@@ -64,9 +64,8 @@ from nvalchemiops.dynamics.optimizers.lbfgs import _OPTIMIZER_BUFFERS
 
 DEVICE = "cuda:0"
 
-#: Gate-benchmark model: an anisotropic harmonic whose minimum sits far enough
-#: away that a ``maxstep``-capped walk never reaches it, keeping the optimizer
-#: in its steady state for the whole measurement.
+#: Gate model: anisotropic harmonic with its minimum out of reach of a
+#: ``maxstep``-capped walk, so the optimizer stays in steady state.
 GATE_CENTRE = 1.0e6
 GATE_HISTORY = 6
 _STATUS = _OPTIMIZER_BUFFERS.index("status")
@@ -318,17 +317,12 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50):
         def evaluate(pos, out):
             """The model, on device so it stays CUDA-graph capturable.
 
-            Evaluated at the *current* geometry on every call. Timing against a
-            force array that is filled once would measure the wrong thing:
-            ``y = force_base - F`` is then identically zero, so the curvature
-            guard rejects every pair, the history never fills, and the two-loop
-            is masked out of every step.
-
-            The minimum sits at ``GATE_CENTRE``, far outside the reach of a
-            ``maxstep``-capped walk, so the optimizer stays in its steady state
-            -- history full, trust region binding -- for the whole measurement
-            instead of converging partway through and timing the early-return
-            path.
+            Re-evaluated every call. Against a force array filled once,
+            ``y = force_base - F`` is zero, so the curvature guard rejects
+            every pair and the two-loop is masked out of every step. The
+            minimum at ``GATE_CENTRE`` is out of reach of a ``maxstep``-capped
+            walk, keeping the optimizer in steady state rather than converging
+            partway through and timing the early-return path.
             """
             out.copy_(-(stiffness * (pos - GATE_CENTRE)))
 
@@ -366,8 +360,7 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50):
                     "active full-history iterations"
                 )
 
-        # The model runs inside every timed call to keep the state valid, so
-        # measure it once and subtract to recover optimizer-only time.
+        # Subtract the model, which runs inside every timed call.
         reset()
         model_ms = _time_ms(model_only, warmup, runs)
 
@@ -392,9 +385,7 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50):
         graphed = _time_ms(graph.replay, warmup, runs) - model_ms
         check("graph")
 
-        # FIRE2 gets the same model and the same treatment, so the ratio
-        # compares optimizer against optimizer rather than one degenerate path
-        # against another.
+        # FIRE2 gets the same model, so the ratio compares like with like.
         f2_positions = start.clone()
         f2_forces = torch.empty_like(f2_positions)
         wp_positions = wp.from_torch(f2_positions, dtype=wp.vec3d)
@@ -420,7 +411,12 @@ def run_gates(sizes, eval_ratio, warmup=10, runs=50):
                 maxstep=0.05,
             )
 
-        fire2 = _time_ms(fire2_once, warmup, runs) - model_ms
+        # Bind Warp to the stream the events are recorded on: the model is a
+        # PyTorch op and fire2_step a raw Warp launcher, so otherwise the
+        # events bracket only the PyTorch half. The L-BFGS arm's custom op
+        # binds the stream itself. Scoped once, not per call.
+        with wp.ScopedStream(wp.stream_from_torch(torch.cuda.current_stream())):
+            fire2 = _time_ms(fire2_once, warmup, runs) - model_ms
 
         # n_L (C + O_L) < n_F (C + O_F), with n_L / n_F = eval_ratio.
         n_fire2 = 1000.0

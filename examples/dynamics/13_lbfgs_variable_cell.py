@@ -130,20 +130,18 @@ md_system = MDSystem(
 # Align the Cell, Once
 # --------------------
 #
-# The optimizer keeps the cell lower-triangular, which is what stops it
-# drifting into a rigid rotation. Align before capturing the reference cell:
-# re-aligning mid-run would redefine the chart and invalidate the history.
+# The optimizer keeps the cell lower-triangular, stopping it drifting into a
+# rotation. Align *before* capturing the reference cell: re-aligning mid-run
+# redefines the chart and invalidates the history.
 
 transform = wp.empty(1, dtype=wp.mat33d, device=device)
 positions, cell = align_cell(positions, cell, transform=transform, device=device)
 wp.copy(md_system.wp_positions, positions)
 md_system.update_cell(cell)
 
-# Wrap once, before the first step. Wrapping *during* the relaxation would be a
-# mistake here: it teleports atoms across the periodic boundary, and the stored
-# curvature pairs relate displacements to gradient changes, so a discontinuous
-# jump in the coordinates corrupts the history. FIRE2 tolerates per-step
-# wrapping because it carries no such history.
+# Wrap once, before the first step. Wrapping *during* the run teleports atoms
+# across the boundary, and that discontinuity corrupts the curvature pairs.
+# FIRE2 tolerates per-step wrapping because it carries no history.
 wrap_positions_to_cell(
     positions=md_system.wp_positions,
     cells=md_system.wp_cell,
@@ -157,13 +155,12 @@ print(f"\nAligned cell:\n{cell.numpy()[0]}")
 # Allocate the Buffers
 # --------------------
 #
-# Two groups, both yours: the 26 optimizer buffers, identical to the
-# coordinate-only path, and the 14 variable-cell buffers that carry the
-# coordinate chart and its scratch space.
+# Two groups, both yours: the 23 optimizer buffers, as on the coordinate-only
+# path, and the 14 variable-cell buffers carrying the chart and its scratch.
 
-# Work directly on the system's own arrays, so the optimizer's in-place writes
-# are immediately visible to the force engine. Only the cell needs an explicit
-# hand-back, because its inverse and the neighbor list depend on it.
+# Work on the system's own arrays, so in-place writes are visible to the force
+# engine. Only the cell needs handing back: its inverse and the neighbor list
+# depend on it.
 positions_t = wp.to_torch(md_system.wp_positions)
 cell_t = wp.to_torch(cell).reshape(num_systems, 3, 3)
 batch_idx = torch.zeros(num_atoms, dtype=torch.int32, device=torch_device)
@@ -192,10 +189,8 @@ direction = zeros(num_dofs, 3)
 s_history = zeros(history_size, num_dofs, 3)
 y_history = zeros(history_size, num_dofs, 3)
 
-# Per-history-slot and per-system scalars. These stay float64 whatever
-# precision the coordinates use: the ratio ``ys / yy`` scales the initial
-# inverse Hessian, and near convergence it is a ratio of differences of nearly
-# equal vectors, which single precision cancels away.
+# Per-slot and per-system scalars, float64 whatever the coordinates use:
+# ``ys / yy`` scales the initial inverse Hessian and cancels badly in fp32.
 ys = zeros(history_size, num_systems, dt=f64)
 yy = zeros(history_size, num_systems, dt=f64)
 alpha_hist = zeros(history_size, num_systems, dt=f64)
@@ -375,10 +370,8 @@ print("  (textbook FCC argon equilibrium is near 5.26 Å)")
 # Plot convergence
 # ----------------
 #
-# The energy is plotted for interest, not as a convergence signal. Without a
-# line search there is no Armijo test forcing it down, so it may rise on an
-# individual step; the *force* is what the optimizer drives to zero and what
-# ``status`` reports on.
+# Energy is plotted for interest, not as a convergence signal: with no Armijo
+# test forcing it down it may rise on a step. The *force* is what converges.
 
 points = np.arange(len(energy_hist))
 fig, ax = plt.subplots(3, 1, figsize=(7.0, 7.5), sharex=True, constrained_layout=True)

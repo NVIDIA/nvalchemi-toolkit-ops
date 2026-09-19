@@ -15,30 +15,14 @@
 
 """JAX bindings for the batched L-BFGS geometry optimizer.
 
-L-BFGS reaches a given force tolerance in far fewer force evaluations
-than the FIRE optimizers, which is the cost that dominates relaxation with a
+L-BFGS reaches a given force tolerance in far fewer force evaluations than the
+FIRE optimizers, which is the cost that dominates relaxation with a
 machine-learned potential.
 
-Every optimizer buffer is yours: this module allocates nothing and hides
-nothing. You pass the same 26 arrays to every step and get 26 back, in the
-same order. JAX arrays are immutable, so unlike the PyTorch binding these
-entry points **return** new arrays rather than writing them in place::
-
-    import functools, jax, jax.numpy as jnp
-    from nvalchemiops.jax.lbfgs import LBFGS_NEED_EVAL, lbfgs_step_coord
-
-    m, P, M = 6, num_atoms, num_systems
-    dt = jnp.float64
-    buffers = [
-        jnp.zeros((P, 3), dt), jnp.zeros((P, 3), dt), jnp.zeros((P, 3), dt),
-        jnp.zeros((m, P, 3), dt), jnp.zeros((m, P, 3), dt),
-        *[jnp.zeros((m, M), jnp.float64) for _ in range(4)],
-        *[jnp.zeros((M,), jnp.float64) for _ in range(10)],
-        jnp.ones((M,), jnp.float64),                  # alpha_step starts at 1
-        jnp.zeros((M,), jnp.int32),                   # status = LBFGS_NEED_EVAL
-        jnp.full((M,), -1, jnp.int32),                # iteration = -1
-        *[jnp.zeros((M,), jnp.int32) for _ in range(4)],
-    ]
+Every buffer is yours: this module allocates nothing. JAX arrays are immutable,
+so unlike the PyTorch binding these entry points **return** new arrays rather
+than writing in place -- you pass the 23 buffers in and get 23 back, in the
+same order::
 
     @functools.partial(jax.jit, donate_argnums=tuple(range(len(buffers) + 1)))
     def relax_step(positions, *buffers, forces=None):
@@ -49,74 +33,51 @@ entry points **return** new arrays rather than writing them in place::
     while True:
         forces = model(positions)
         positions, *buffers = relax_step(positions, *buffers, forces=forces)
-        if bool(lbfgs_converged(buffers[20])):
+        if bool(lbfgs_converged(buffers[STATUS])):
             break
 
 Required buffer contents
 ------------------------
-The optimizer never initializes anything, so the first step reads whatever you
-hand it. Zero every buffer, then set exactly three things:
+Zero everything, then set the three that do not start at zero: ``alpha_step``
+to ``1.0``, ``iteration`` to ``-1``, and ``status`` to ``LBFGS_NEED_EVAL``
+(numerically zero). See :mod:`nvalchemiops.dynamics.optimizers.lbfgs` for the
+shape table. Per-system scalars stay float64 whatever the coordinate
+precision, because ``ys / yy`` scales the initial inverse Hessian and near
+convergence ``y = force_base - F`` is a difference of nearly equal vectors.
 
-=================  ========================================================
-``alpha_step``     ``1.0`` -- the line-search step length for a new direction
-``iteration``      ``-1`` -- the "never evaluated" marker
-``status``         ``LBFGS_NEED_EVAL``, which is numerically zero
-=================  ========================================================
+To restart, rebuild the buffers in that state: in a functional setting
+resetting and allocating are the same operation.
 
-Shapes, with ``P`` degrees of freedom, ``M`` systems and history size ``m``:
-``x_base``, ``force_base`` and ``direction`` are ``(P, 3)``; ``s_history`` and
-``y_history`` are ``(m, P, 3)``; ``ys``, ``yy``, ``alpha_hist`` and
-``beta_hist`` are ``(m, M)`` float64; ``ss`` through ``alpha_step`` are
-``(M,)`` float64; ``status`` through ``history_count`` are ``(M,)`` int32.
-The float64 scalars stay float64 whatever precision the coordinates use,
-because the ``ys / yy`` ratio that scales the initial inverse Hessian is a
-ratio of differences of nearly equal vectors near convergence.
-
-To restart a relaxation, rebuild the buffers in that initial state. There is
-no separate reset: in a functional setting resetting and allocating are the
-same operation.
-
-Positions and forces stay consistent
-------------------------------------
-``forces`` is an input: it is read, never aliased or returned. Positions only
-move *forward* from the point the forces were evaluated at -- nothing is ever
-rolled back -- so the ``forces`` you passed in still describe the ``positions``
-you get back. ``force_base`` holds the same forces alongside the matching
-``x_base`` if you would rather read them from the returned buffers.
+Positions only move *forward* from the evaluated point -- nothing is rolled
+back -- so the ``forces`` you passed in still describe the ``positions`` you
+get back. ``force_base`` holds the same forces alongside ``x_base``.
 
 Donation and pointer stability
 ------------------------------
-Every mutable array is declared as an input-output alias, so XLA may reuse each
-input buffer for the matching output. Two things follow, and both matter for
-performance rather than correctness:
+Every mutable array is an input-output alias, so XLA may reuse each input
+buffer for the matching output. Two consequences, both about performance:
 
-- **Donate the buffers.** ``jax.jit(donate_argnums=...)`` over ``positions``
-  and all 26 buffers lets them round-trip at stable addresses. Without donation
-  JAX copies, which doubles peak memory and moves the pointers.
-- **Keep the topology out of the donated set.** ``batch_idx`` and
-  ``n_particles`` never change, so close over them rather than donating them.
+- **Donate the buffers.** Without donation JAX copies, doubling peak memory and
+  moving the pointers.
+- **Keep topology out of the donated set.** ``batch_idx`` and ``n_particles``
+  never change, so close over them.
 
-Under ``JaxCallableGraphMode.WARP`` the step is captured and replayed as a CUDA graph. The
-capture is keyed on the input buffer addresses, so a fresh ``forces`` array each
-step produces a small working set of graphs rather than one; measurements on a
-six-atom system settle at four or five captures and stay there, well inside the
-default cache. If you see the count grow without bound, pass
-``graph_mode="warp_staged"``, which keys the capture on the call instead and
-patches the changing buffers in, at the cost of one copy per staged array.
+Under ``JaxCallableGraphMode.WARP`` the step replays as a CUDA graph. The
+capture is keyed on input addresses, so a fresh ``forces`` array each step
+gives a small working set rather than one graph; measurements settle at four or
+five. If the count grows without bound, pass ``graph_mode="warp_staged"``,
+which keys on the call instead at the cost of one copy per staged array.
 
 Scalars are baked into the compiled call, so changing ``force_tol`` or
-``maxstep`` between steps triggers a recompilation. Hold them fixed for the
-duration of a relaxation.
+``maxstep`` between steps triggers a recompilation.
 
-These operations are **not differentiable**. ``jax.grad`` through a step will
-fail rather than return a silently wrong answer. Callers that relax and then
-differentiate the relaxed energy should stop the gradient at the relaxed
-positions themselves.
+These operations are **not differentiable**. ``jax.grad`` through a step fails
+rather than returning a silently wrong answer.
 
 See Also
 --------
-nvalchemiops.dynamics.optimizers.lbfgs : the underlying Warp implementation,
-    which documents the algorithm, the sign convention and the precision policy.
+nvalchemiops.dynamics.optimizers.lbfgs : the Warp implementation, which
+    documents the algorithm, sign convention and precision policy.
 """
 
 from __future__ import annotations
