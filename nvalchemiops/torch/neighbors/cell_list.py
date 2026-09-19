@@ -191,7 +191,7 @@ def estimate_cell_list_sizes(
         cap (2 x max_nbins x 4 bytes).
     min_cells_per_dimension : int, default=4
         Lower bound for the per-axis cell count. Pass 1 for the legacy grid
-        rule.
+        rule used by explicit atom-centric benchmarks.
 
     Returns
     -------
@@ -457,7 +457,7 @@ def build_cell_list(
         to extract atoms for each cell.
     min_cells_per_dimension : int, default=4
         Lower bound for the per-axis cell count. Pass 1 for the legacy grid
-        rule.
+        rule used by explicit atom-centric benchmarks.
 
     Notes
     -----
@@ -843,8 +843,8 @@ def query_cell_list(
         ``wp.utils.array_scan`` (CUB), whose ``cudaMallocAsync`` workspace
         allocation is not permitted during ``torch.cuda.graph`` capture.
     target_indices : torch.Tensor, shape (num_targets,), dtype=int32, optional
-        Indices of the central atoms for compact partial rows. Output rows
-        follow ``target_indices`` order.
+        Restrict central rows to a subset of atom indices.  Output rows are
+        compact and follow ``target_indices`` order.
     return_vectors, return_distances : bool, default ``False``
         Write per-pair displacement vectors / distances into
         ``neighbor_vectors`` / ``neighbor_distances``.
@@ -1096,8 +1096,8 @@ def _query_cell_list_direct_eager(
 ) -> None:
     """Eager fast path for explicit atom-centric direct queries.
 
-    This keeps the common eager path off the generic custom-op boundary while
-    preserving that boundary for ``torch.compile``.
+    This keeps the common benchmark/runtime path off the generic custom-op
+    boundary while preserving that boundary for ``torch.compile``.
     """
     total_atoms = positions.shape[0]
     device = positions.device

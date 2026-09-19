@@ -1734,22 +1734,22 @@ identical results are available via `atom_centric`).
 
 For topology-only partial `naive` lists, `strategy="tile"` is CUDA-only and is
 available in both PyTorch and JAX for no-PBC, wrapped PBC, and prewrapped PBC.
-For native, PyTorch, and eager JAX single-system CUDA calls, `strategy="auto"`
-selects a strategy from the dtype and atom count. JAX traced partial `auto`
-calls without `graph_mode="warp"` and batched partial `auto` calls remain
-scalar. `graph_mode="warp"` requires tile and routes `auto` to tile. Explicit
-tile supports both single and batched compact rows.
-Geometry buffers, distances, vectors, pair functions, and pair energy/force
-outputs remain scalar-only. Scalar and tiled rows can differ in order; compare
-counts and sorted `(neighbor, periodic_shift)` multisets. JAX additionally
-supports `graph_mode="warp"` replay with stable caller-owned output buffers
-donated through `jax.jit`. Wrapped PBC also requires stable inverse-cell and
-wrapping scratch buffers; cutoff, `half_fill`, and PBC shift metadata are
-statically specialized. There is no corresponding Torch graph-replay API.
+For single-system CUDA calls, `strategy="auto"` selects tile at float64
+`N >= 256` and float16/float32 `N >= 1024`; otherwise it selects scalar. CPU
+auto is scalar and explicit tile rejects CPU. Batched partial auto is always
+scalar, while explicit tile supports batched compact rows. Geometry buffers,
+distances, vectors, and pair-function outputs remain scalar-only, and explicit
+tile rejects those requests. `target_indices` with `graph_mode="warp"` is
+rejected; supported full-row and cell-list graph modes are unchanged.
 
-`target_indices` must contain unique, in-bounds global atom indices. Violating
-this precondition is undefined behavior. Naive partial lists do not support
-`rebuild_flags`; this restriction does not apply to cell-list APIs.
+Scalar and tiled rows can differ in order. When neither result overflows its
+output capacity, their stored `(neighbor, periodic_shift)` multisets agree for
+each compact row. Repeated and empty valid targets are supported. Eager JAX and
+Torch calls reject negative and out-of-bounds target indices. Under `jax.jit`
+and `torch.compile`, callers must prevalidate target indices; invalid rows are
+memory-safe and produce zero counts without stored neighbors. Naive partial
+lists do not support `rebuild_flags`; this restriction does not apply to
+cell-list APIs.
 
 For batched PBC naive lists, `max_atoms_per_system` is used only for full-row
 launch sizing. Every compact partial path, including geometry and pair-output

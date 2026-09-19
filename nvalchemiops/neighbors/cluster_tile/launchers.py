@@ -677,7 +677,7 @@ def query_cluster_tile(
       ``num_tiles.item()`` sync to set the launch dimension.
     - Modifies: ``neighbor_matrix``, ``num_neighbors``,
       ``neighbor_matrix_shifts``, and any enabled pair-output buffers.
-    - Cluster-tile iterates emitted tile pairs rather than central atoms,
+    - Cluster-tile iterates emitted tile pairs rather than source atoms,
       so partial neighbor lists (``target_indices``) are not supported
       here. Use :func:`nvalchemiops.neighbors.cell_list.query_cell_list`
       or :func:`nvalchemiops.neighbors.naive.naive_neighbor_matrix` for

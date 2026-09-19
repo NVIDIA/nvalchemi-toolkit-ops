@@ -833,9 +833,10 @@ def batch_naive_neighbor_list(
         CPU device raises ``ValueError``. Topology-only compact
         ``target_indices`` rows support no-PBC, wrapped PBC, and prewrapped
         PBC. ``"auto"`` keeps batched partial rows on scalar; ``"scalar"`` is
-        a deterministic opt-out. Geometry and pair outputs use scalar; partial
-        neighbor lists do not support ``rebuild_flags``. The tile and scalar
-        paths may order entries differently; compare counts and sorted
+        a deterministic opt-out. Explicit tile rejects geometry and pair
+        outputs; partial neighbor lists do not support ``rebuild_flags``. When
+        neither result overflows capacity, the tile and scalar paths may order
+        entries differently but have the same stored
         ``(neighbor, periodic_shift)`` multisets.
     neighbor_distances : jax.Array, shape (num_rows, max_neighbors), optional
         Pre-shaped distance output for ``return_distances=True`` or ``pair_fn``.
@@ -845,7 +846,8 @@ def batch_naive_neighbor_list(
         Indices of the central atoms for compact partial rows. Output row ``r``
         maps to atom ``target_indices[r]``. In COO output, the first row holds
         compact row ids. User buffers must be compact-row shaped, not full
-        atom-row shaped. Values must be in bounds; repeated rows are allowed.
+        atom-row shaped. Repeated rows are allowed. Eager calls reject
+        out-of-bounds values; under ``jax.jit`` callers must prevalidate them.
 
     Returns
     -------

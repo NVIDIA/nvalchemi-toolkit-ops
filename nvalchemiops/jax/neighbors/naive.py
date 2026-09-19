@@ -938,7 +938,7 @@ _GRAPH_NAIVE_WARP_CALLABLES = _register_graph_naive_callables()
 # ==============================================================================
 #
 # These force ``strategy="tile"`` in the inner Warp launchers. Eager calls
-# pre-fill topology outputs; the replay callables below capture their resets.
+# pre-fill topology outputs.
 # Cutoff, ``half_fill``, ``partial``, and PBC shift count are static.
 
 
@@ -1653,13 +1653,14 @@ def naive_neighbor_list(
         ``wp.launch_tiled`` kernel and is **CUDA-only**: requesting it on a
         CPU device raises ``ValueError``. Tile supports topology-only compact
         ``target_indices`` rows; geometry and pair outputs use the scalar path.
-        For concrete eager CUDA arrays, topology-only single-system partial
-        ``"auto"`` selects a strategy from the dtype and atom count. Non-replay
-        traced and batched partial ``"auto"`` remain scalar.
-        ``graph_mode="warp"`` requires tile and therefore routes ``"auto"`` to
-        tile. Partial neighbor lists do not support ``rebuild_flags``. The tile
-        and scalar paths produce identical pair *multisets* (per-row ordering
-        may differ).
+        For concrete-shape single-system CUDA arrays, topology-only partial
+        ``"auto"`` selects tile at float64 ``N >= 256`` and float16/float32
+        ``N >= 1024``; batched partial auto remains scalar. Explicit tile
+        rejects geometry and pair outputs. ``target_indices`` with
+        ``graph_mode="warp"`` is rejected. Partial neighbor lists do not
+        support ``rebuild_flags``. When neither result overflows capacity, tile
+        and scalar paths produce identical stored pair *multisets* (per-row
+        ordering may differ).
     inv_cell : jax.Array, shape (1, 3, 3), dtype matches positions, optional
         Inverse cell matrix consumed by the wrap kernel. Only used when
         ``pbc`` is provided and ``wrap_positions=True``. Pass in a
@@ -1688,10 +1689,8 @@ def naive_neighbor_list(
         preserves the existing per-kernel ``jax_kernel`` dispatch path.
         ``"warp"`` uses fused ``jax_callable(..., graph_mode=JaxCallableGraphMode.WARP)``
         callbacks and is intended for ``jax.jit`` call sites that donate
-        reusable output buffers. Topology-only ``target_indices`` calls are
-        supported when ``strategy="tile"`` or when ``"auto"`` selects tile,
-        but require ``return_neighbor_list=False`` because COO output has
-        data-dependent shape.
+        reusable output buffers. ``target_indices`` calls are rejected in this
+        mode; supported full-row graph behavior is unchanged.
 
     Returns
     -------
@@ -1892,7 +1891,7 @@ def naive_neighbor_list(
     if strategy == "tile":
         # The tile-cooperative kernel is CUDA-only and has no geometry/pair_fn,
         # selective (rebuild_flags), or full-row CUDA-graph variant. Compact
-        # topology-only rows use the partial Warp-graph callable family.
+        # topology-only rows launch the tiled kernel directly.
         device_kind = _jax_array_device_kind(positions)
         if device_kind == "cpu":
             _require_cuda_tile_device("cpu")

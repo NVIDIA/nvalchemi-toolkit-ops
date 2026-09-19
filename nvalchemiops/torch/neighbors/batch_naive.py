@@ -1383,14 +1383,18 @@ def batch_naive_neighbor_list(
         Indices of the central atoms for compact partial rows. Output row ``r``
         maps to atom ``target_indices[r]``. In COO output, the first row holds
         compact row ids. User buffers must be compact-row shaped, not full
-        atom-row shaped. Values must be unique and in bounds.
+        atom-row shaped. Repeated valid rows are supported. Eager calls reject
+        out-of-bounds values; under ``torch.compile`` callers must prevalidate
+        them.
     strategy : {"auto", "scalar", "tile"}, default="auto"
         ``"auto"`` keeps batched topology-only partial rows on the scalar
         kernel, while ``"scalar"`` is a deterministic opt-out and ``"tile"``
         explicitly selects the CUDA tiled kernel. Explicit tile supports
-        no-PBC, wrapped PBC, and prewrapped PBC compact rows. Geometry and
-        pair outputs use scalar; partial neighbor lists do not support
-        ``rebuild_flags``.
+        no-PBC, wrapped PBC, and prewrapped PBC compact rows. Explicit tile
+        rejects geometry and pair outputs; partial neighbor lists do not support
+        ``rebuild_flags``. When neither result overflows capacity, scalar and
+        tile stored ``(neighbor, shift)`` multisets agree although ordering may
+        differ.
 
     Returns
     -------

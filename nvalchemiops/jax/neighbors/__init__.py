@@ -266,6 +266,16 @@ def neighbor_list(
             with PBC for full-row launch sizing. Every compact partial path,
             including geometry and pair-output paths, ignores this bound.
             Can be provided to avoid CUDA synchronization.
+        target_indices : jax.Array, optional
+            Select central atoms for a compact partial neighbor list. Repeated
+            and empty valid targets are supported. Topology-only naive partial
+            calls may use CUDA ``strategy="tile"`` explicitly; single-system
+            CUDA ``strategy="auto"`` selects tile at float64 ``N >= 256`` and
+            float16/float32 ``N >= 1024``. CPU auto and batched partial auto
+            remain scalar, and explicit tile rejects CPU.
+            Distances, vectors, and pair-function outputs are scalar-only and
+            reject explicit tile. Eager calls reject out-of-bounds indices;
+            under ``jax.jit`` callers must prevalidate them.
         return_distances : bool, default=False
             Also return per-pair distances ``|r_ij|``, differentiable w.r.t.
             positions (and cell). Matrix layout is

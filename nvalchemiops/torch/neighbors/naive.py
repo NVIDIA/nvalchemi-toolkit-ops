@@ -990,7 +990,7 @@ def _naive_pair_outputs_forward(
             )
         # ``pair_fn`` and/or ``target_indices`` bypass the custom op and call
         # the Warp scalar launcher directly. Torch custom ops cannot carry a
-        # Python pair_fn, and they do not expose compact partial rows.
+        # Python pair_fn; compact partial rows use their dedicated routing path.
         wp_dtype = get_wp_dtype(positions.dtype)
         wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
         pair_kwargs = {}
@@ -1283,8 +1283,10 @@ def naive_neighbor_list(
         omitted and ``pair_fn`` is set, allocated internally.
     strategy : {"auto", "scalar", "tile"}, default "auto"
         Naive kernel variant.  ``"scalar"`` uses a global-load O(N^2) path;
-        ``"tile"`` uses shared-memory tiling (CUDA only, no PBC pair outputs
-        or partial rows).  ``"auto"`` picks between them.
+        ``"tile"`` uses CUDA shared-memory tiling for topology-only compact
+        partial rows. Concrete-shape single-system CUDA ``"auto"`` selects tile
+        at float64 ``N >= 256`` and float16/float32 ``N >= 1024``. Explicit
+        tile rejects geometry and pair outputs.
     return_neighbor_list : bool, optional - default = False
         If True, convert the neighbor matrix to a neighbor list (idx_i, idx_j) format by
         creating a mask over the fill_value, which can incur a performance penalty.
@@ -1293,7 +1295,11 @@ def naive_neighbor_list(
     target_indices : torch.Tensor, shape (num_targets,), dtype=torch.int32, optional
         Compact partial-list source rows. Output row ``r`` maps to atom
         ``target_indices[r]``; COO source rows remain compact row ids. User
-        buffers must be compact-row shaped, not full atom-row shaped.
+        buffers must be compact-row shaped, not full atom-row shaped. Repeated
+        valid rows are supported. Eager calls reject out-of-bounds values; under
+        ``torch.compile`` callers must prevalidate them. When neither result
+        overflows capacity, scalar and tile stored ``(neighbor, shift)``
+        multisets agree although ordering may differ.
 
     Returns
     -------
