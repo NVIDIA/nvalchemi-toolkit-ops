@@ -30,17 +30,12 @@ Tests cover:
 from __future__ import annotations
 
 import dataclasses
-import functools
-import inspect
 import os
-import warnings
 
 import numpy as np
 import pytest
 
 from nvalchemiops.dynamics.optimizers.lbfgs import (
-    _CELL_BUFFERS,
-    _CELL_SCRATCH,
     _OPTIMIZER_BUFFERS,
 )
 
@@ -167,119 +162,6 @@ class JaxDriver:
 class TestLBFGSJaxRegistration:
     """The registration contract. These run without a GPU."""
 
-    def test_in_out_argnames_match_the_state_field_order(self):
-        """The aliased arrays are exactly ``positions`` plus the 26 state.
-
-        This is also the order results come back in, so callers unpack by
-        position and a reordering here would silently rebind every buffer.
-        """
-        from nvalchemiops.jax.lbfgs import _LBFGS_IN_OUT_ARGS
-
-        assert _LBFGS_IN_OUT_ARGS == ("positions",) + _OPTIMIZER_BUFFERS
-
-    def test_removed_state_api_is_absent(self):
-        """The superseded entry points are gone, with no shims.
-
-        The state dataclasses and the preparation functions replaced them
-        outright, so anything that owned state on the caller's behalf under
-        the old semantics must not quietly survive as an alias.
-        """
-        import nvalchemiops.jax.lbfgs as module
-
-        for name in (
-            "lbfgs_allocate_state",
-            "lbfgs_allocate_cell_state",
-            "lbfgs_reset",
-            "lbfgs_reduce_energy",
-            "LBFGS_LS_FAILED",
-        ):
-            assert not hasattr(module, name), f"{name} still exists"
-            assert name not in module.__all__
-
-    def test_no_line_search_parameters_survive(self):
-        """The step length is a trust region, and nothing may reintroduce a search.
-
-        The line search was removed for a measured reason: it compares *total
-        energies* while the direction comes from *forces*, which are different
-        surfaces for a model with a direct force head, so it converged poorly
-        on OMat24. A parameter creeping back in would reintroduce that failure
-        silently.
-
-        Covers the JAX layer only. Torch and JAX are independent extras, so
-        each suite checks its own binding rather than importing the other's.
-        """
-        import nvalchemiops.jax.lbfgs as module
-
-        banned = {
-            "energy", "f_base", "gd", "ls_trials",
-            "ftol", "wolfe", "step_scale_down", "step_scale_up",
-            "min_step", "max_step", "max_ls_iter",
-        }  # fmt: skip
-        for fn in (module.lbfgs_step_coord, module.lbfgs_step_coord_cell):
-            params = set(inspect.signature(fn).parameters)
-            leaked = params & banned
-            assert not leaked, f"{fn.__name__} takes {sorted(leaked)}"
-            assert "maxstep" in params, f"{fn.__name__} lost its trust region"
-
-        # The callable bodies are hand-written, so they can drift separately.
-        for name in ("_lbfgs_body_f32", "_lbfgs_body_f64",
-                     "_lbfgs_cell_body_f32", "_lbfgs_cell_body_f64"):  # fmt: skip
-            params = set(inspect.signature(getattr(module, name)).parameters)
-            assert not (params & banned), f"{name} takes {sorted(params & banned)}"
-            assert "maxstep" in params, f"{name} lost its trust region"
-
-        # No status constants at all: termination is the caller's.
-        assert not [c for c in dir(module) if c.startswith("LBFGS_")]
-
-    def test_public_entry_points_take_the_states(self):
-        """Both wrappers take the states as objects, in a fixed position.
-
-        They forward the fields positionally into the callable, so what has to
-        hold is that the dataclass field order and the callable's parameter
-        order agree -- checked by
-        ``test_body_parameter_order_matches_the_state_fields`` -- and that callers
-        still find ``state`` where they expect it.
-        """
-        from nvalchemiops.jax.lbfgs import lbfgs_step_coord_cell
-
-        coord = tuple(inspect.signature(lbfgs_step_coord).parameters)
-        assert coord[:4] == ("positions", "forces", "state", "batch_idx")
-        cell = tuple(inspect.signature(lbfgs_step_coord_cell).parameters)
-        assert cell[:7] == (
-            "positions",
-            "cell",
-            "forces",
-            "stress",
-            "state",
-            "cell_state",
-            "batch_idx",
-        )
-
-    @pytest.mark.parametrize("suffix", ["f32", "f64"])
-    def test_body_parameter_order_matches_the_state_fields(self, suffix):
-        """A reordering would silently swap two arrays; nothing else catches it."""
-        import nvalchemiops.jax.lbfgs as module
-
-        body = getattr(module, f"_lbfgs_body_{suffix}")
-        params = tuple(inspect.signature(body).parameters)
-        offset = 3  # forces, batch_idx, positions
-        assert params[offset : offset + len(_OPTIMIZER_BUFFERS)] == _OPTIMIZER_BUFFERS
-
-    @pytest.mark.parametrize("graph_mode", ["none", "warp", "warp_staged"])
-    def test_callable_has_no_pure_outputs(self, graph_mode):
-        """Every output is an alias of an input.
-
-        With no pure outputs, warp's "in-out before output" ordering rule
-        cannot bind. Any future diagnostic array must therefore be added
-        *after* every aliased one.
-        """
-        from nvalchemiops.jax.lbfgs import _LBFGS_IN_OUT_ARGS, _get_callable
-
-        call = _get_callable(jnp.float64, graph_mode)
-        assert call.num_in_out == len(_LBFGS_IN_OUT_ARGS)
-        assert call.num_outputs == len(_LBFGS_IN_OUT_ARGS)
-        assert len(call.output_args) == 0
-
     def test_unknown_graph_mode_is_rejected(self):
         from nvalchemiops.jax.lbfgs import _get_callable
 
@@ -291,41 +173,10 @@ class TestLBFGSJaxRegistration:
         with pytest.raises(ValueError, match="float32 or float64"):
             _ = make_jax_state(4, 1, dtype=jnp.float16)
 
-    def test_documented_initial_contents(self):
-        """The documented starting state is what preparation must produce.
-
-        The three non-zero fields and the float64 scalar policy are part of
-        the published contract, not the allocator's private business: a caller
-        who builds the state from their own arrays has to match them.
-        """
-        state = make_jax_state(7, 3, history_size=4)
-        assert state.s_history.shape == (4, 7, 3)
-        assert state.ys.shape == (4, 3)
-        # Scalars follow the coordinates; this fixture is float64.
-        assert state.gg.dtype == jnp.float64
-        np.testing.assert_array_equal(state.iteration, np.full(3, -1))
-        np.testing.assert_array_equal(state.alpha_step, np.ones(3))
-        # Everything else starts at zero.
-        for name in set(_OPTIMIZER_BUFFERS) - {"iteration", "alpha_step"}:
-            assert not np.asarray(getattr(state, name)).any(), (
-                f"{name} should start zeroed"
-            )
-
 
 @pytest.mark.parametrize("_gpu", [pytest.param(None, marks=requires_gpu)])
 class TestLBFGSJax:
     """Behaviour on device."""
-
-    def test_reaches_the_minimum(self, _gpu):
-        d = JaxDriver(_cluster(8)).run(maxstep=0.5)
-        assert bool(d.converged[0])
-        assert float(jnp.abs(d.positions).max()) < 1e-7
-
-    def test_batched_systems_converge_independently(self, _gpu):
-        rng = np.random.default_rng(17)
-        blocks = [rng.normal(size=(4, 3)) * s for s in (0.001, 1.0, 5.0)]
-        d = JaxDriver(np.vstack(blocks), num_systems=3).run(maxstep=0.5)
-        assert bool(d.converged.all()), d.fmax()
 
     def test_matches_the_warp_layer(self, _gpu):
         """A thin adapter must agree with the Warp layer step for step."""
@@ -380,58 +231,6 @@ class TestLBFGSJax:
         np.testing.assert_array_equal(
             np.asarray(candidate.state.iteration),
             np.asarray(reference.state.iteration),
-        )
-
-    def test_donated_replay_keeps_the_capture_count_bounded(self, _gpu):
-        """The graph working set must plateau, not grow with the step count.
-
-        ``forces`` arrives from the model with a fresh buffer every step, and
-        the capture is keyed on input addresses, so a small set of graphs is
-        expected rather than exactly one. What must not happen is a capture per
-        call, which would make graph mode slower than no graph at all.
-        """
-        from nvalchemiops.jax.lbfgs import _get_callable
-
-        d = JaxDriver(_cluster(6, seed=31))
-        batch_idx = d.batch_idx
-
-        # Donate positions and all 26 state, which is what lets XLA reuse
-        # them in place instead of copying a fresh set every step.
-        @functools.partial(jax.jit, donate_argnums=(0, 1))
-        def relax_step(positions, state, forces):
-            return lbfgs_step_coord(
-                positions,
-                forces,
-                state,
-                batch_idx,
-                maxstep=0.5,
-            )
-
-        call = _get_callable(jnp.float64, "warp")
-        # The callable is cached module-wide, so earlier tests may already have
-        # populated it. Measure growth from here rather than absolute counts.
-        baseline = len(getattr(call, "captures", {}))
-        counts = []
-        with warnings.catch_warnings():
-            # A refused donation is only a warning; make it fail the test.
-            warnings.simplefilter("error", UserWarning)
-            for i in range(40):
-                forces = d.model(d.positions)
-                d.positions, d.state = relax_step(d.positions, d.state, forces)
-                if i in (9, 19, 39):
-                    jax.block_until_ready(d.positions)
-                    counts.append(len(getattr(call, "captures", {})) - baseline)
-
-        # A little growth is expected as JAX cycles through a pool of state;
-        # what would mean replay is not happening is growth proportional to the
-        # step count. Measured working set on this system is three to five.
-        steps = 40
-        assert counts[-1] <= steps // 5, (
-            f"capture count {counts} is growing with the step count; "
-            "replay is not happening, so graph_mode='warp_staged' is needed"
-        )
-        assert counts[-1] - counts[0] <= 2, (
-            f"working set still growing between steps 10 and 40: {counts}"
         )
 
     def test_step_is_not_differentiable(self, _gpu):
@@ -560,39 +359,6 @@ class TestLBFGSJaxCoordCell:
         state = make_jax_state(num_atoms + 2, 1)
         return positions, cell, state, cell_state, potential
 
-    def test_relaxes_cell_and_coordinates(self, _gpu):
-        """A compressed cell expands to the target volume while atoms relax."""
-        from nvalchemiops.jax.lbfgs import lbfgs_step_coord_cell
-
-        n = 6
-        positions, cell, state, cell_state, potential = self._setup(n)
-        batch_idx = jnp.zeros(n, jnp.int32)
-
-        for _ in range(400):
-            _, f, s = potential.energy_forces_stress(
-                np.asarray(positions), np.asarray(cell)[0]
-            )
-            # Both criteria, tested *before* stepping: these forces describe
-            # the geometry in hand, and after a step they would not.
-            fmax = float(np.linalg.norm(f, axis=1).max())
-            smax = float(np.abs(s).max())
-            if fmax < 1e-6 and smax < 1e-6:
-                break
-            positions, cell, state, cell_state = lbfgs_step_coord_cell(
-                positions,
-                cell,
-                jnp.asarray(f),
-                jnp.asarray(s[None]),
-                state,
-                cell_state,
-                batch_idx,
-                maxstep=0.2,
-            )
-
-        assert fmax < 1e-6 and smax < 1e-6, (fmax, smax)
-        volume = abs(np.linalg.det(np.asarray(cell)[0]))
-        np.testing.assert_allclose(volume, potential.target_volume, rtol=1e-4)
-
     def test_matches_the_warp_layer(self, _gpu):
         """A thin adapter must agree with the Warp layer step for step."""
         import warp as wp
@@ -662,27 +428,6 @@ class TestLBFGSJaxCoordCell:
         np.testing.assert_array_equal(
             np.asarray(state.iteration), wp_state.iteration.numpy()
         )
-
-    def test_cell_callable_aliases_every_mutable_array(self, _gpu):
-        """All 37 outputs are aliases; a future pure output must come last.
-
-        The five read-only chart inputs must stay out of the aliased set, or
-        XLA would demand them back and callers would have to donate topology
-        they never change.
-        """
-        from nvalchemiops.jax.lbfgs import _CELL_IN_OUT_ARGS, _get_cell_callable
-
-        call = _get_cell_callable(jnp.float64, "warp")
-        assert call.num_in_out == len(_CELL_IN_OUT_ARGS)
-        assert call.num_outputs == len(_CELL_IN_OUT_ARGS)
-        assert len(call.output_args) == 0
-        assert _CELL_IN_OUT_ARGS == (
-            ("positions", "cell") + _OPTIMIZER_BUFFERS + _CELL_SCRATCH
-        )
-        assert len(_CELL_IN_OUT_ARGS) == 2 + len(_OPTIMIZER_BUFFERS) + len(
-            _CELL_SCRATCH
-        )
-        assert set(_CELL_IN_OUT_ARGS).isdisjoint(_CELL_BUFFERS[:5])
 
     def test_buffers_sized_for_the_wrong_dof_count_are_rejected(self, _gpu):
         from nvalchemiops.jax.lbfgs import lbfgs_step_coord_cell

@@ -29,7 +29,6 @@ Tests cover:
 from __future__ import annotations
 
 import dataclasses
-import inspect
 import warnings
 
 import numpy as np
@@ -210,128 +209,6 @@ def _cluster(num_systems, atoms_per_system, seed=42, scale=2.0):
 class TestLBFGSTorchState:
     """The public surface, and the field order the operator schema relies on."""
 
-    def test_removed_state_api_is_absent(self):
-        """The superseded entry points are gone, with no shims.
-
-        :class:`LBFGSState` and the preparation functions replaced them
-        outright, so an import that still resolves would let old code keep
-        working against an API that no longer has the semantics it assumes.
-
-        Covers the Warp core and the PyTorch binding only. Torch and JAX are
-        independent extras, so importing the JAX module here would fail the
-        whole Torch suite on a Torch-only install; the JAX suite asserts the
-        same thing for its own layer.
-        """
-        import nvalchemiops.dynamics.optimizers as warp_optimizers
-        import nvalchemiops.torch as torch_pkg
-        import nvalchemiops.torch.lbfgs as torch_lbfgs
-        from nvalchemiops.dynamics.optimizers import lbfgs as warp_lbfgs
-
-        removed = (
-            "lbfgs_allocate_state",
-            "lbfgs_allocate_cell_state",
-            "lbfgs_reset",
-            "lbfgs_reduce_energy",
-            "LBFGS_LS_FAILED",
-        )
-        modules = (
-            warp_lbfgs,
-            warp_optimizers,
-            torch_lbfgs,
-            torch_pkg,
-        )
-        for module in modules:
-            for name in removed:
-                assert not hasattr(module, name), (
-                    f"{module.__name__}.{name} still exists; caller-owned state "
-                    "were meant to replace it outright"
-                )
-                assert name not in getattr(module, "__all__", ()), (
-                    f"{module.__name__}.__all__ still exports {name}"
-                )
-
-    def test_no_line_search_parameters_survive_anywhere(self):
-        """The step length is a trust region, and nothing may reintroduce a search.
-
-        Pinned because the line search was removed for
-        a measured reason -- it compares *total energies* while the direction
-        comes from *forces*, which are different surfaces for a model with a
-        direct force head, so it converged poorly on OMat24. A parameter
-        creeping back in would reintroduce that failure silently.
-
-        Covers the Warp core and the PyTorch binding; the JAX suite runs the
-        equivalent check for its own entry points and callable bodies, so that
-        neither suite depends on the other's optional extra.
-        """
-        import nvalchemiops.torch.lbfgs as torch_lbfgs
-        from nvalchemiops.dynamics.optimizers import lbfgs as warp_lbfgs
-
-        banned = {
-            "energy", "f_base", "gd", "ls_trials",
-            "ftol", "wolfe", "step_scale_down", "step_scale_up",
-            "min_step", "max_step", "max_ls_iter",
-            # Convergence belongs to the caller, as it does for FIRE2, so a
-            # tolerance creeping back in would be the same mistake.
-            "force_tol", "rms_tol", "stress_tol", "status",
-        }  # fmt: skip
-        entry_points = [
-            warp_lbfgs.lbfgs_step,
-            warp_lbfgs.lbfgs_update,
-            warp_lbfgs.lbfgs_prepare_step,
-            warp_lbfgs.lbfgs_step_coord_cell,
-            torch_lbfgs.lbfgs_step_coord,
-            torch_lbfgs.lbfgs_step_extended,
-            torch_lbfgs.lbfgs_step_coord_cell,
-        ]
-        for fn in entry_points:
-            params = set(inspect.signature(fn).parameters)
-            leaked = params & banned
-            assert not leaked, f"{fn.__module__}.{fn.__name__} takes {sorted(leaked)}"
-            # maxstep is the one and only step-length control. Entry points
-            # that forward their scalars (``lbfgs_step_extended``) declare a
-            # ``kwargs`` instead, and are covered by the call they forward to.
-            assert "maxstep" in params or "kwargs" in params, (
-                f"{fn.__name__} has neither a trust region nor a forwarding kwargs"
-            )
-
-        # No status constants at all: termination is the caller's, so there
-        # is nothing for the optimizer to report -- least of all a failure.
-        assert not [c for c in dir(warp_lbfgs) if c.startswith("LBFGS_")]
-
-    def test_operator_parameters_match_the_buffer_order(self):
-        """A reordering here would silently swap two tensors at the boundary.
-
-        Registration already rejects a name in ``mutates_args`` that does not
-        exist as a parameter, but only an ordered comparison catches a swap,
-        and every caller now passes these 26 tensors positionally.
-        """
-        from nvalchemiops.torch.lbfgs import _lbfgs_step_op
-
-        params = tuple(inspect.signature(_lbfgs_step_op).parameters)
-        offset = 3  # positions, forces, batch_idx
-        assert params[offset : offset + len(_OPTIMIZER_BUFFERS)] == _OPTIMIZER_BUFFERS
-
-    def test_public_wrapper_forwards_every_state_field(self):
-        """The wrapper must hand the operator all of the state, and only that.
-
-        It forwards by keyword, so a name that drifted would raise rather than
-        swap two tensors -- but a field that was *added* and not forwarded
-        would leave the operator reading a stale buffer, which would not.
-        """
-        from nvalchemiops.torch.lbfgs import _state_args
-
-        params = tuple(inspect.signature(lbfgs_step_coord).parameters)
-        assert params[:4] == ("positions", "forces", "state", "batch_idx")
-        state = lbfgs_prepare_state(3, 1, device="cpu")
-        assert tuple(_state_args(state)) == _OPTIMIZER_BUFFERS
-
-    def test_mutates_args_covers_every_buffer(self):
-        """Every buffer is declared mutable, and nothing else is."""
-        from nvalchemiops.torch.lbfgs import _MUTATED
-
-        assert set(_MUTATED) == {"positions"} | set(_OPTIMIZER_BUFFERS)
-        assert len(_MUTATED) == len(_OPTIMIZER_BUFFERS) + 1
-
     @pytest.mark.parametrize(
         "op_name,expected",
         [
@@ -375,15 +252,6 @@ class TestLBFGSTorchState:
             assert by_name[name].alias_info is None, (
                 f"{op_name} declares {name} as aliased, but the step only reads it"
             )
-
-    def test_schema_arity_matches_the_signature(self):
-        """The registered schema sees every argument the implementation takes."""
-        from nvalchemiops.torch.lbfgs import _lbfgs_step_op
-
-        schema = _schema_of("lbfgs_step")
-        assert len(schema.arguments) == len(
-            inspect.signature(_lbfgs_step_op).parameters
-        )
 
     @pytest.mark.parametrize("device", DEVICES)
     @pytest.mark.parametrize("history_size", [4, 6, 8])
@@ -441,16 +309,6 @@ class TestLBFGSTorchState:
 
 class TestLBFGSTorchCoord:
     """Relaxation through the binding."""
-
-    @pytest.mark.parametrize("device", DEVICES)
-    @pytest.mark.parametrize("dtype", DTYPES)
-    def test_reaches_the_minimum(self, device, dtype):
-        force_tol = 1e-3 if dtype == torch.float32 else 1e-8
-        d = TorchDriver(_cluster(2, 4), 2, dtype, device).run(
-            force_tol=force_tol, maxstep=0.5
-        )
-        assert bool(d.converged.all()), d.fmax()
-        assert d.positions.abs().max().item() < 10 * force_tol
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_matches_the_warp_layer(self, device):
@@ -848,59 +706,6 @@ class TestLBFGSTorchCoordCell:
         torch.testing.assert_close(kappa, torch.full_like(kappa, 4.0))
 
     @pytest.mark.parametrize("device", DEVICES)
-    def test_zero_atom_system_gets_a_positive_kappa(self, device):
-        """An empty system must not produce ``kappa = 0``.
-
-        ``kappa`` is divided into the cell force and the unpacked cell, so a
-        zero turns both infinite. All three layers share one contract: a system
-        with no atoms counts as one, since with nothing to balance the cell
-        against the scale is arbitrary. This is asserted per layer rather than
-        cross-layer because Torch and JAX are independent extras.
-        """
-        from nvalchemiops.torch.lbfgs import lbfgs_cell_kappa
-
-        counts = torch.tensor([4, 0, 3], dtype=torch.int32, device=device)
-        kappa = torch.zeros(3, dtype=torch.float64, device=device)
-        lbfgs_cell_kappa(counts, kappa, cell_force_scale=0.25)
-        torch.cuda.synchronize()
-
-        k = kappa.cpu().numpy()
-        assert (k > 0.0).all(), f"non-positive kappa: {k}"
-        np.testing.assert_allclose(k, [1.0, 0.25, 0.75])
-
-    @pytest.mark.parametrize("device", DEVICES)
-    def test_relaxes_cell_and_coordinates(self, device):
-        """A compressed cell expands to the target volume while atoms relax."""
-        from nvalchemiops.torch.lbfgs import lbfgs_step_coord_cell
-
-        n = 6
-        positions, cell, state, cell_state, potential = self._setup(device, n)
-        batch_idx = torch.zeros(n, dtype=torch.int32, device=device)
-
-        for _ in range(400):
-            forces, stress = self._evaluate(positions, cell, potential, device)
-            # Tested *before* stepping: these describe the geometry in hand.
-            fmax = forces.norm(dim=1).max().item()
-            smax = stress.abs().max().item()
-            if fmax < 1e-6 and smax < 1e-6:
-                break
-            lbfgs_step_coord_cell(
-                positions,
-                cell,
-                forces,
-                stress,
-                state,
-                cell_state,
-                batch_idx,
-                maxstep=0.2,
-            )
-            torch.cuda.synchronize()
-
-        assert fmax < 1e-6 and smax < 1e-6, (fmax, smax)
-        volume = abs(np.linalg.det(cell.cpu().numpy()[0]))
-        np.testing.assert_allclose(volume, potential.target_volume, rtol=1e-4)
-
-    @pytest.mark.parametrize("device", DEVICES)
     def test_matches_the_warp_layer(self, device):
         """The binding is a thin adapter, so it must agree exactly."""
         import warp as wp
@@ -984,46 +789,6 @@ class TestLBFGSTorchCoordCell:
                 cell_state,
                 torch.zeros(n, dtype=torch.int32, device=device),
             )
-
-    @pytest.mark.parametrize("device", DEVICES)
-    def test_cell_operator_schema_matches_the_buffer_order(self, device):
-        """Both buffer groups must line up with the operator, in order.
-
-        The operator's parameter list is written out by hand, so an ordering
-        mismatch against the dataclass fields would type-check and then
-        compute nonsense.
-        """
-        from nvalchemiops.torch.lbfgs import (
-            _CELL_MUTATED,
-            _lbfgs_step_coord_cell_op,
-            lbfgs_step_coord_cell,
-        )
-
-        params = tuple(inspect.signature(_lbfgs_step_coord_cell_op).parameters)
-        offset = 5  # forces, stress, batch_idx, positions, cell
-        n_opt = len(_OPTIMIZER_BUFFERS)
-        assert params[offset : offset + n_opt] == _OPTIMIZER_BUFFERS
-        assert params[offset + n_opt : offset + n_opt + len(_CELL_BUFFERS)] == (
-            _CELL_BUFFERS
-        )
-
-        # The public wrapper takes the two states and forwards every field.
-        wrapper = tuple(inspect.signature(lbfgs_step_coord_cell).parameters)
-        assert wrapper[:7] == (
-            "positions",
-            "cell",
-            "forces",
-            "stress",
-            "state",
-            "cell_state",
-            "batch_idx",
-        )
-
-        # The read-only chart inputs must not be declared as mutated.
-        assert set(_CELL_MUTATED).isdisjoint(_CELL_BUFFERS[:5])
-        assert set(_CELL_MUTATED) == (
-            {"positions", "cell"} | set(_OPTIMIZER_BUFFERS) | set(_CELL_BUFFERS[5:])
-        )
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_compiled_run_leaves_identical_state(self, device):

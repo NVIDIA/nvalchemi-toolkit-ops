@@ -47,6 +47,7 @@ from nvalchemiops.dynamics.optimizers.lbfgs import (
     lbfgs_cell_kappa,
     lbfgs_cell_trust_region,
     lbfgs_pack_cell,
+    lbfgs_prepare_state,
     lbfgs_prepare_step,
     lbfgs_set_reference_cell,
     lbfgs_step,
@@ -924,6 +925,22 @@ class TestLBFGSStateValidation:
     are the mistakes that would otherwise reach a kernel as silently wrong
     numbers rather than as an error.
     """
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("vec", [wp.vec3f, wp.vec3d])
+    def test_preparation_produces_the_documented_initial_contents(self, device, vec):
+        """The published starting state, which a hand-built state must match.
+
+        Core owns this because it is the algorithm's contract, not a binding
+        detail: ``iteration = -1`` is what makes the first call take a
+        steepest-descent step, and ``alpha_step = 1`` is the full quasi-Newton
+        step the trust region then shrinks.
+        """
+        st = lbfgs_prepare_state(7, 3, dtype=vec, history_size=4, device=device)
+        np.testing.assert_array_equal(st.iteration.numpy(), np.full(3, -1))
+        np.testing.assert_array_equal(st.alpha_step.numpy(), np.ones(3))
+        for name in set(_OPTIMIZER_BUFFERS) - {"iteration", "alpha_step"}:
+            assert not getattr(st, name).numpy().any(), f"{name} should start zeroed"
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_scalar_group_must_share_a_dtype(self, device):
