@@ -122,13 +122,16 @@ def _prepare_batch_ptr(
         or batch_ptr.numel() < 2
     ):
         raise ValueError("batch_ptr must be a CUDA int32 tensor with shape (B + 1,)")
-    values = batch_ptr.detach().cpu().tolist()
-    if (
-        values[0] != 0
-        or values[-1] != positions.shape[0]
-        or any(stop < start for start, stop in zip(values, values[1:]))
-    ):
-        raise ValueError("batch_ptr must start at 0, be monotone, and end at N")
+    valid = (
+        (batch_ptr[0] == 0)
+        & (batch_ptr[-1] == positions.shape[0])
+        & (batch_ptr[1:] >= batch_ptr[:-1]).all()
+    )
+    if not bool(valid.item()):
+        raise ValueError(
+            "batch_ptr must start at 0, end at positions.shape[0], "
+            "and be non-decreasing"
+        )
     return batch_ptr.detach().clone().contiguous()
 
 
@@ -197,7 +200,11 @@ def prepare_cluster_tile(
     format : {"tile", "matrix", "coo"}
         Fixed output representation.
     batch_ptr : torch.Tensor, optional
-        Int32 cumulative atom counts. Preparation copies the partition.
+        Int32 cumulative atom offsets defining a system-contiguous partition.
+        The first offset must be zero, the final offset must equal the number
+        of positions, and offsets must be non-decreasing. Repeated offsets
+        represent empty systems. Preparation validates and copies the
+        partition.
     max_neighbors : int, optional
         Matrix row capacity. Also determines the default COO capacity.
     fill_value : int, optional

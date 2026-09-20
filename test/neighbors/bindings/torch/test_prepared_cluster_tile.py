@@ -789,6 +789,8 @@ def test_prepared_batch_partition_metadata_is_cached() -> None:
         max_neighbors=8,
         max_tiles_per_group=2,
     )
+    prepared_batch_ptr = batch_ptr.clone()
+    batch_ptr.fill_(5)
     metadata = state._partition_metadata
     assert metadata is not None
     metadata_tensors = (
@@ -817,7 +819,7 @@ def test_prepared_batch_partition_metadata_is_cached() -> None:
         changed_positions,
         1.2,
         changed_cell,
-        batch_ptr,
+        prepared_batch_ptr,
         format="matrix",
         max_neighbors=8,
         max_tiles_per_group=2,
@@ -927,14 +929,62 @@ def test_prepared_rejects_static_input_mismatches() -> None:
         cluster_tile_neighbor_list_prepared(positions, cell.double(), state)
     with pytest.raises(ValueError, match="cell device"):
         cluster_tile_neighbor_list_prepared(positions, cell.cpu(), state)
-    bad_ptr = torch.tensor([0, 16, 31], dtype=torch.int32, device="cuda")
-    with pytest.raises(ValueError, match="end at N"):
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize(
+    "values",
+    ([1, 16, 32], [0, 16, 31], [0, 24, 16, 32], [0, -1, 32]),
+)
+def test_prepared_rejects_invalid_batch_partitions(values: list[int]) -> None:
+    """Preparation rejects invalid cumulative batch partitions."""
+    positions, cell, _ = _inputs(False)
+    batch_ptr = torch.tensor(values, dtype=torch.int32, device="cuda")
+    cell_batch = cell.repeat(len(values) - 1, 1, 1)
+    with pytest.raises(
+        ValueError,
+        match=(
+            "batch_ptr must start at 0, end at positions.shape\\[0\\], "
+            "and be non-decreasing"
+        ),
+    ):
+        prepare_cluster_tile(
+            positions,
+            1.2,
+            cell_batch,
+            format="matrix",
+            batch_ptr=batch_ptr,
+        )
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize(
+    "kind",
+    ("dtype", "device", "rank", "length"),
+)
+def test_prepared_rejects_invalid_batch_partition_structure(
+    kind: str,
+) -> None:
+    """Preparation enforces the documented batch pointer representation."""
+    positions, cell, _ = _inputs(False)
+    if kind == "dtype":
+        batch_ptr = torch.tensor([0, 16, 32], dtype=torch.int64, device="cuda")
+    elif kind == "device":
+        batch_ptr = torch.tensor([0, 16, 32], dtype=torch.int32)
+    elif kind == "rank":
+        batch_ptr = torch.tensor([[0, 16, 32]], dtype=torch.int32, device="cuda")
+    else:
+        batch_ptr = torch.tensor([0], dtype=torch.int32, device="cuda")
+    with pytest.raises(
+        ValueError,
+        match="batch_ptr must be a CUDA int32 tensor with shape",
+    ):
         prepare_cluster_tile(
             positions,
             1.2,
             cell.repeat(2, 1, 1),
             format="matrix",
-            batch_ptr=bad_ptr,
+            batch_ptr=batch_ptr,
         )
 
 
