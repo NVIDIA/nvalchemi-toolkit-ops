@@ -16,7 +16,7 @@
 r"""
 PyTorch binding for FourierD3.
 
-Particle-mesh DFT-D3(BJ) with no real-space cutoff on the dispersion sum. See
+Periodic particle-mesh DFT-D3(BJ), with no pair cutoff on the dispersion sum. See
 :mod:`nvalchemiops.interactions.dispersion._fourier_dftd3` for the method and pass structure.
 
 This layer supplies the two Fourier transforms, which Warp cannot perform on a full mesh, and

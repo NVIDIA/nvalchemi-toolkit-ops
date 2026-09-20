@@ -63,7 +63,7 @@ FourierD3: Particle-Mesh DFT-D3
 
 Evaluates a periodic particle-mesh variant of DFT-D3(BJ) in :math:`O(N \log N)`, using the
 same damped dispersion lattice sum with a modified coordination-number model, and with no
-real-space cutoff on the dispersion sum.
+pair cutoff on the dispersion sum.
 
 .. note::
    ``mesh_spacing`` reads the cell lengths into Python integers, so it cannot be used inside

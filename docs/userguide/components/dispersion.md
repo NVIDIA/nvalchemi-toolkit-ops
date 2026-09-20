@@ -921,11 +921,11 @@ calculations (C6 interpolation, damping, energy/force accumulation) use
 
 For detailed API documentation, see the [PyTorch API](../../modules/torch/dispersion), [JAX API](../../modules/jax/dispersion), and [Warp API](../../modules/warp/dispersion) references.
 
-## FourierD3: Dispersion Without a Real-Space Cutoff
+## FourierD3: Periodic Particle-Mesh Dispersion
 
 `fourier_dftd3` evaluates a periodic particle-mesh variant of DFT-D3(BJ) in `O(N log N)`,
 using the same damped dispersion lattice sum with a modified coordination-number model. It has
-**no real-space cutoff on the dispersion sum**; the only real-space cutoff left is the short
+**no pair cutoff on the dispersion sum**; the one real-space cutoff that remains is the short
 coordination-number list, which a machine-learned force field already builds for its own
 descriptors.
 

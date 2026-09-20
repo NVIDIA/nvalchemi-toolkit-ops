@@ -14,17 +14,21 @@
 # limitations under the License.
 
 """
-FourierD3: Dispersion Without a Real-Space Cutoff
-=================================================
+FourierD3: Periodic Particle-Mesh Dispersion
+============================================
 
 The DFT-D3 dispersion correction decays as :math:`1/r^6`. Summed over three dimensions that
 leaves a truncation error decaying only as :math:`1/r^3`, so converging it in real space needs
 a neighbour list far larger than a machine-learned force field's own, and building that list
 comes to dominate the simulation step.
 
-FourierD3 evaluates the dispersion sum on a particle mesh instead. There is no cutoff on the
-dispersion itself; the only real-space list it needs is the short coordination-number one the
-force field already builds.
+FourierD3 evaluates the dispersion sum on a particle mesh instead, so there is no pair cutoff
+on the dispersion at all. It still needs one real-space cutoff --- the short
+coordination-number list the force field already builds --- but that radius is fixed by the
+coordination-number model rather than by how far the dispersion reaches.
+
+FourierD3 is periodic by construction: the mesh sum runs over the infinite lattice, so there
+is no open-boundary path.
 
 In this example you will learn:
 

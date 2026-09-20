@@ -35,7 +35,7 @@ FourierD3: Particle-Mesh DFT-D3
 
 Evaluates a periodic particle-mesh variant of DFT-D3(BJ) in :math:`O(N \log N)`, using the
 same damped dispersion lattice sum with a modified coordination-number model, and with no
-real-space cutoff on the dispersion sum. Both neighbour formats are supported, as above.
+pair cutoff on the dispersion sum. Both neighbour formats are supported, as above.
 
 Two differences from :func:`dftd3` are worth noting before use:
 

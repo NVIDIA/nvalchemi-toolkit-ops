@@ -17,7 +17,7 @@ r"""
 FourierD3: Particle-Mesh Evaluation of the DFT-D3 Dispersion Correction
 ======================================================================
 
-Periodic DFT-D3(BJ) dispersion in :math:`O(N \log N)` with **no real-space cutoff on the
+Periodic DFT-D3(BJ) dispersion in :math:`O(N \log N)` with **no pair cutoff on the
 dispersion sum**; only the short coordination-number list remains.
 
 Mesh summation needs a separable pair coefficient, and D3's :math:`C_6` couples both atoms'

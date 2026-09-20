@@ -44,8 +44,8 @@ FourierD3: Particle-Mesh DFT-D3
 
 FourierD3 evaluates a periodic particle-mesh variant of DFT-D3(BJ) in
 :math:`O(N \log N)`, using the same damped dispersion lattice sum with a modified
-coordination-number model, and with no real-space cutoff on the dispersion sum. The only
-real-space cutoff that remains is the short coordination-number list.
+coordination-number model, and with no pair cutoff on the dispersion sum. The one real-space
+cutoff that remains is the short coordination-number list.
 
 Unlike the launchers above, these are **component** launchers rather than one end-to-end
 call. Warp has no full-mesh FFT, so the two transforms belong to the calling framework and

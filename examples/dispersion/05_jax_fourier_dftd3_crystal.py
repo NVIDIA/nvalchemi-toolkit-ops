@@ -14,12 +14,12 @@
 # limitations under the License.
 
 """
-JAX FourierD3: Particle-Mesh Dispersion Under ``jax.jit``
-=========================================================
+JAX FourierD3: Periodic Particle-Mesh Dispersion Under ``jax.jit``
+==================================================================
 
 FourierD3 evaluates the DFT-D3(BJ) correction on a particle mesh, so the dispersion sum
-carries no real-space cutoff and the only neighbour list left is the short one the
-coordination numbers need. The JAX binding is the counterpart of
+carries no pair cutoff. The one real-space cutoff that remains is the short
+coordination-number list. The JAX binding is the counterpart of
 :func:`nvalchemiops.torch.interactions.dispersion.fourier_dftd3`, and the argument list is the
 same minus ``device``.
 
@@ -202,16 +202,21 @@ print(f"virial trace : {float(jnp.trace(virial[0])):.6e} Hartree")
 # ------------------
 #
 # Everything that changes the shape of the work --- the damping constants, ``cutoff``, the
-# mesh and the spline order --- has to be static. The arrays stay traced, so one compiled
-# step serves a whole trajectory as long as the neighbour list keeps its length.
+# mesh and the spline order --- has to be static.
+#
+# The wrapper below closes over the cell and the parameters as well, so it is reusable for a
+# **fixed-cell** trajectory whose input shapes stay the same: positions and numbers are
+# traced arguments, and the neighbour list may change content but not length without
+# retracing. Under variable-cell dynamics the closed-over cell would go stale silently, so
+# pass ``cell`` as an argument there instead --- it is a traced array like any other.
 
 jitted = jax.jit(
-    lambda pos, num, nl, ptr, sh: fourier_dftd3(
+    lambda pos, num, box, nl, ptr, sh: fourier_dftd3(
         pos,
         num,
         **damping,
         fourier_d3_params=params,
-        cell=cell,
+        cell=box,
         cutoff=cutoff,
         mesh_dimensions=(32, 32, 32),
         neighbor_list=nl,
@@ -221,7 +226,7 @@ jitted = jax.jit(
 )
 
 compiled_energy, compiled_forces = jitted(
-    positions, numbers, neighbor_list, neighbor_ptr, unit_shifts
+    positions, numbers, cell, neighbor_list, neighbor_ptr, unit_shifts
 )
 jax.block_until_ready(compiled_energy)
 
@@ -237,8 +242,9 @@ print(f"force agreement : {float(jnp.abs(compiled_forces - forces).max()):.2e}")
 #   species set, on the host, independently of the functional.
 # - ``fourier_dftd3`` is periodic only, needs a coordination-number list whose cutoff equals
 #   ``cutoff``, and takes exactly one of ``mesh_dimensions`` or ``mesh_spacing``.
-# - Under ``jax.jit`` the shape-determining arguments must be static; the arrays stay traced,
-#   so one compiled step serves a whole trajectory at fixed neighbour-list length.
+# - Under ``jax.jit`` the shape-determining arguments must be static. Anything left in the
+#   closure is frozen at trace time, so pass ``cell`` as an argument if it changes; one
+#   compiled step then serves a trajectory whose input shapes are stable.
 # - Forces and the virial are returned explicitly, not obtained by differentiation.
 #
 # For open boundary conditions, or for small systems where the truncation error does not
