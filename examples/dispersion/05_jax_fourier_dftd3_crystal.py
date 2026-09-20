@@ -23,15 +23,17 @@ coordination numbers need. The JAX binding is the counterpart of
 :func:`nvalchemiops.torch.interactions.dispersion.fourier_dftd3`, and the argument list is the
 same minus ``device``.
 
-Eager JAX dispatches each of the nine passes separately, and that overhead dominates a
-correction this cheap. Wrapping the call in :func:`jax.jit` is what makes it worth using, so
-that is what this example concentrates on.
+Eager JAX dispatches each pass separately, and that overhead dominates a correction this
+cheap. Wrapping the call in :func:`jax.jit` is what makes it worth using, so that is what
+this example concentrates on.
 
 In this example you will learn:
 
 - How to build ``FourierD3Parameters`` for the JAX API
-- How to evaluate the correction, and what the returned virial means
+- How to evaluate the correction on a CsCl crystal
 - How to ``jax.jit`` the call, and which arguments have to be static to do so
+
+For mesh sensitivity, see ``04_fourier_dftd3_crystal.py``; the behaviour is identical here.
 
 .. important::
     This script is intended as an API demonstration. Do not use this script
@@ -46,6 +48,9 @@ In this example you will learn:
 # precision has to be enabled before the first array is created.
 
 from __future__ import annotations
+
+import os
+from pathlib import Path
 
 import numpy as np
 
@@ -69,54 +74,71 @@ from nvalchemiops.jax.interactions.dispersion import (  # noqa: E402
 BOHR_TO_ANGSTROM = 0.529177210544
 HARTREE_TO_EV = 27.211386245981
 
-# Runs on either backend -- the block-per-atom passes narrow to one thread per atom where
-# there are no block launches -- but CPU is far too slow to be worth demonstrating.
 if jax.default_backend() == "cpu":
     print("This example needs a GPU backend to be worth running. Skipping.")
     raise SystemExit(0)
 
 # %%
-# A periodic cell
-# ---------------
-#
-# A cubic box of carbon and hydrogen. FourierD3 is periodic by construction: there is no
-# open-boundary path, because the mesh sum is over the infinite lattice.
-
-rng = np.random.default_rng(0)
-box = 20.0  # Bohr
-n_atoms = 64
-positions = jnp.asarray(rng.uniform(0.0, box, (n_atoms, 3)))
-numbers = jnp.asarray(rng.choice([1, 6], n_atoms), dtype=jnp.int32)
-cell = jnp.eye(3) * box
-
-# %%
 # Reference parameters
 # --------------------
 #
-# The decomposition of Grimme's reference tensor runs once on the host, for the species
-# present, and is independent of the damping parameters --- one instance serves every
-# functional. The tables below stand in for the published ones; ``examples/dispersion/utils.py``
-# downloads and parses the real values.
+# The published Grimme tables, cached by ``utils.py`` on first run. The decomposition of the
+# reference tensor happens once on the host, for the species present, and does not depend on
+# the damping parameters --- one instance serves every functional.
 
-max_z = 10
-n_ref = 5
-rcov = np.zeros(max_z)
-rcov[[1, 6]] = [0.60, 1.20]
-r4r2 = np.zeros(max_z)
-r4r2[[1, 6]] = [1.00, 1.40]
+param_file = (
+    Path(os.path.expanduser("~")) / ".cache" / "nvalchemiops" / "dftd3_parameters.pt"
+)
+if param_file.exists():
+    import torch
 
-c6ab = np.zeros((max_z, max_z, n_ref, n_ref))
-cn_ref = np.zeros_like(c6ab)
-used = {1: 2, 6: 5}
-factors = {z: rng.normal(size=(n, 3)) for z, n in used.items()}
-for z_i, n_i in used.items():
-    for z_j, n_j in used.items():
-        c6ab[z_i, z_j, :n_i, :n_j] = factors[z_i] @ factors[z_j].T + 20.0
-        for p in range(n_i):
-            cn_ref[z_i, z_j, p, :n_j] = float(np.linspace(0.0, 3.5, n_i)[p])
+    tables = {
+        k: v.numpy() for k, v in torch.load(param_file, weights_only=True).items()
+    }
+else:
+    from utils import extract_dftd3_parameters, save_dftd3_parameters
 
-params = FourierD3Parameters.from_tables(rcov, r4r2, c6ab, cn_ref, species=[1, 6])
-print(f"species covered      : {params.n_species}")
+    torch_tables = extract_dftd3_parameters()
+    save_dftd3_parameters(torch_tables)
+    tables = {k: v.numpy() for k, v in torch_tables.items()}
+
+# %%
+# A CsCl crystal
+# --------------
+#
+# Caesium chloride is simple cubic with Cs at the corner and Cl at the body centre.
+# FourierD3 is periodic by construction: there is no open-boundary path, because the mesh sum
+# is over the infinite lattice.
+
+LATTICE_A = 4.119 / BOHR_TO_ANGSTROM  # Bohr
+REPEATS = 4
+
+basis_fractional = np.array([[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]])
+basis_numbers = np.array([55, 17], dtype=np.int32)  # Cs, Cl
+
+offsets = np.stack(np.meshgrid(*[np.arange(REPEATS)] * 3, indexing="ij"), axis=-1)
+offsets = offsets.reshape(-1, 3).astype(float)
+fractional = ((offsets[:, None, :] + basis_fractional[None, :, :]) / REPEATS).reshape(
+    -1, 3
+)
+cell_np = np.eye(3) * (LATTICE_A * REPEATS)
+
+positions = jnp.asarray(fractional @ cell_np)
+numbers = jnp.asarray(np.tile(basis_numbers, REPEATS**3), dtype=jnp.int32)
+cell = jnp.asarray(cell_np)
+n_atoms = int(positions.shape[0])
+
+species = sorted(set(np.asarray(numbers).tolist()))
+params = FourierD3Parameters.from_tables(
+    tables["rcov"].astype(np.float64),
+    tables["r4r2"].astype(np.float64),
+    tables["c6ab"].astype(np.float64),
+    tables["cn_ref"].astype(np.float64),
+    species=species,
+)
+print(f"atoms                : {n_atoms}")
+print(f"cell edge            : {float(cell[0, 0]) * BOHR_TO_ANGSTROM:.2f} Angstrom")
+print(f"species              : {species}")
 print(f"decomposition rank   : {params.rank}")
 print(f"mesh channels needed : {params.n_species * params.rank}")
 
@@ -125,10 +147,10 @@ print(f"mesh channels needed : {params.n_species * params.rank}")
 # ----------------------------
 #
 # Only the coordination numbers need a neighbour list, so its cutoff is short. It must equal
-# ``cutoff``: the counting function is built to reach zero exactly there, and a list built to a
+# ``cutoff``: the counting function reaches zero exactly there, and a list built to a
 # different radius would silently truncate it.
 
-cutoff = 6.0 / BOHR_TO_ANGSTROM  # 6 Angstrom, the usual MLFF cutoff, in Bohr
+cutoff = 6.0 / BOHR_TO_ANGSTROM  # 6 Angstrom, a typical MLFF cutoff, in Bohr
 
 pbc = jnp.array([True, True, True])
 neighbor_list, neighbor_ptr, unit_shifts = neighbors.neighbor_list(
@@ -138,9 +160,7 @@ neighbor_list, neighbor_ptr, unit_shifts = neighbors.neighbor_list(
     pbc=pbc,
     return_neighbor_list=True,
 )
-print(
-    f"\nneighbour cutoff : {cutoff:.3f} Bohr ({cutoff * BOHR_TO_ANGSTROM:.1f} Angstrom)"
-)
+print(f"\nneighbour cutoff : {cutoff * BOHR_TO_ANGSTROM:.1f} Angstrom")
 print(f"directed edges   : {neighbor_list.shape[1]}")
 
 # %%
@@ -148,12 +168,11 @@ print(f"directed edges   : {neighbor_list.shape[1]}")
 # -------------------------
 #
 # ``cell`` and ``cutoff`` are both required, and exactly one of ``mesh_dimensions`` and
-# ``mesh_spacing`` must be given --- there is no accuracy-based default, because the right
-# mesh depends on the cell and on how much error you are willing to accept.
+# ``mesh_spacing`` must be given --- there is no accuracy-based default.
 #
-# Forces are returned rather than differentiated out. The kernels carry hand-derived
-# adjoints and are built with ``enable_backward=False``, which is what keeps the call
-# compilable; ``jax.grad`` of the energy is therefore not the route to forces here.
+# Energy has shape ``(num_systems,)``, forces ``(n_atoms, 3)`` and the virial
+# ``(num_systems, 3, 3)``. Forces and the virial are returned explicitly; ``jax.grad`` of the
+# energy is not the route to them here.
 
 damping = dict(a1=0.4289, a2=4.4407, s8=0.7875)  # PBE-D3(BJ)
 common = dict(
@@ -171,18 +190,19 @@ energy, forces, virial = fourier_dftd3(
 )
 
 print(f"\nenergy       : {float(energy[0]):.8f} Hartree")
-print(f"             : {float(energy[0]) * HARTREE_TO_EV:.6f} eV")
-print(f"max |force|  : {float(jnp.abs(forces).max()):.3e} Hartree/Bohr")
+print(f"per atom     : {float(energy[0]) / n_atoms * HARTREE_TO_EV * 1e3:.4f} meV")
+print(
+    f"max |force|  : {float(jnp.abs(forces).max()):.3e} Hartree/Bohr (zero by symmetry)"
+)
 print(f"virial trace : {float(jnp.trace(virial[0])):.6e} Hartree")
 
 # %%
 # Compiling the call
 # ------------------
 #
-# Everything that changes the shape of the work --- the damping constants, ``cutoff``, the mesh
-# and the spline order --- has to be static, because the Warp kernels are specialised on them.
-# The arrays stay traced, so a compiled step can be reused across a trajectory as long as the
-# neighbour list keeps its length.
+# Everything that changes the shape of the work --- the damping constants, ``cutoff``, the
+# mesh and the spline order --- has to be static. The arrays stay traced, so one compiled
+# step serves a whole trajectory as long as the neighbour list keeps its length.
 
 jitted = jax.jit(
     lambda pos, num, nl, ptr, sh: fourier_dftd3(
@@ -209,44 +229,16 @@ print(f"compiled energy : {float(compiled_energy[0]):.12f} Hartree")
 print(f"force agreement : {float(jnp.abs(compiled_forces - forces).max()):.2e}")
 
 # %%
-# Mesh convergence
-# ----------------
-#
-# The mesh is the only accuracy knob on the dispersion sum. Refining it converges the energy;
-# there is no cutoff to enlarge, and no neighbour list that grows while you do it.
-
-print("\n mesh      energy (Hartree)      change")
-previous = None
-for size in (16, 24, 32, 48):
-    value = float(
-        fourier_dftd3(
-            positions,
-            numbers,
-            **damping,
-            fourier_d3_params=params,
-            cell=cell,
-            cutoff=cutoff,
-            mesh_dimensions=(size, size, size),
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            unit_shifts=unit_shifts,
-        )[0][0]
-    )
-    change = "" if previous is None else f"{abs(value - previous) / abs(value):.2e}"
-    print(f" {size:3d}^3    {value:+.12f}    {change:>9}")
-    previous = value
-
-# %%
 # Summary
 # -------
 #
-# - ``FourierD3Parameters.from_tables`` decomposes the reference tensor once per species set,
-#   on the host, independently of the functional.
+# - ``FourierD3Parameters.from_tables`` decomposes the published reference tensor once per
+#   species set, on the host, independently of the functional.
 # - ``fourier_dftd3`` is periodic only, needs a coordination-number list whose cutoff equals
 #   ``cutoff``, and takes exactly one of ``mesh_dimensions`` or ``mesh_spacing``.
 # - Under ``jax.jit`` the shape-determining arguments must be static; the arrays stay traced,
 #   so one compiled step serves a whole trajectory at fixed neighbour-list length.
-# - Forces and the virial are returned directly rather than obtained by differentiation.
+# - Forces and the virial are returned explicitly, not obtained by differentiation.
 #
 # For open boundary conditions, or for small systems where the truncation error does not
 # matter, :func:`nvalchemiops.jax.interactions.dispersion.dftd3` remains the right choice.
