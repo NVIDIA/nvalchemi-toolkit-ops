@@ -55,12 +55,10 @@ from nvalchemiops.interactions.electrostatics.ewald_recip_factory import (
     get_ewald_recip_component_kernel,
     get_ewald_recip_kernel,
 )
+from nvalchemiops.jax._lazy_jax_kernels import make_jax_kernel_factory
 from nvalchemiops.jax.interactions.electrostatics._autograd import (
     _cell_grad_from_strain_virial,
     _inject_charge_grad,
-)
-from nvalchemiops.jax.interactions.electrostatics._lazy_jax_kernels import (
-    _make_jax_kernel_factory,
 )
 from nvalchemiops.jax.interactions.electrostatics._utils import (
     _apply_energy_reduction,
@@ -97,7 +95,7 @@ __all__ = [
 
 PI = math.pi
 
-# ``_make_jax_kernel_factory`` returns lazy dtype mappings whose entries
+# ``make_jax_kernel_factory`` returns lazy dtype mappings whose entries
 # materialize their ``jax_kernel`` wrappers on first ``__getitem__``. Module import
 # is therefore free of FFI work; warp NVRTC compile defers to first launch.
 
@@ -124,7 +122,7 @@ def _jax_ewald_real_forward(
     cell_grad: bool,
 ):
     """Return the lazy JAX wrapper for a factory-backed Ewald real forward kernel."""
-    return _make_jax_kernel_factory(
+    return make_jax_kernel_factory(
         lambda wp_dtype: get_ewald_real_kernel(
             wp_dtype,
             batched=batched,
@@ -149,7 +147,7 @@ def _jax_ewald_real_double_backward(
     output_names = ["grad_grad_energy", "grad_positions", "grad_charges"]
     if cell_grad:
         output_names.append("grad_cell")
-    return _make_jax_kernel_factory(
+    return make_jax_kernel_factory(
         lambda wp_dtype: get_ewald_real_kernel(
             wp_dtype,
             batched=batched,
@@ -170,7 +168,7 @@ def _jax_ewald_recip_component(
     batched: bool = False,
 ):
     """Return a lazy JAX wrapper for a factory-backed Ewald reciprocal component."""
-    return _make_jax_kernel_factory(
+    return make_jax_kernel_factory(
         lambda wp_dtype: get_ewald_recip_component_kernel(
             wp_dtype,
             component=component,
@@ -459,7 +457,7 @@ _jax_batch_ewald_reciprocal_virial = _jax_ewald_recip_component(
     batched=True,
 )
 
-_jax_ewald_reciprocal_double_backward_reduce = _make_jax_kernel_factory(
+_jax_ewald_reciprocal_double_backward_reduce = make_jax_kernel_factory(
     lambda wp_dtype: (
         get_ewald_recip_kernel(
             wp_dtype,
@@ -481,7 +479,7 @@ _jax_ewald_reciprocal_double_backward_reduce = _make_jax_kernel_factory(
     ],
 )
 
-_jax_ewald_reciprocal_double_backward_compute = _make_jax_kernel_factory(
+_jax_ewald_reciprocal_double_backward_compute = make_jax_kernel_factory(
     lambda wp_dtype: (
         get_ewald_recip_kernel(
             wp_dtype,
@@ -495,7 +493,7 @@ _jax_ewald_reciprocal_double_backward_compute = _make_jax_kernel_factory(
     ["grad_positions", "grad_charges"],
 )
 
-_jax_batch_ewald_reciprocal_double_backward_reduce = _make_jax_kernel_factory(
+_jax_batch_ewald_reciprocal_double_backward_reduce = make_jax_kernel_factory(
     lambda wp_dtype: (
         get_ewald_recip_kernel(
             wp_dtype,
@@ -517,7 +515,7 @@ _jax_batch_ewald_reciprocal_double_backward_reduce = _make_jax_kernel_factory(
     ],
 )
 
-_jax_batch_ewald_reciprocal_double_backward_compute = _make_jax_kernel_factory(
+_jax_batch_ewald_reciprocal_double_backward_compute = make_jax_kernel_factory(
     lambda wp_dtype: (
         get_ewald_recip_kernel(
             wp_dtype,

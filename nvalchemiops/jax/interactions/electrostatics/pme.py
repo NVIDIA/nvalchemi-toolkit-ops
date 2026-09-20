@@ -58,12 +58,12 @@ from nvalchemiops.interactions.electrostatics.pme_kernels import (
     _pme_virial_bg_apply_kernel_overload,
     _pme_virial_bg_reduce_kernel_overload,
 )
+from nvalchemiops.jax._lazy_jax_kernels import (
+    make_jax_kernel_factory,
+    make_jax_kernels,
+)
 from nvalchemiops.jax.interactions.electrostatics._autograd import (
     _inject_charge_grad,
-)
-from nvalchemiops.jax.interactions.electrostatics._lazy_jax_kernels import (
-    _make_jax_kernel_factory,
-    _make_jax_kernels,
 )
 from nvalchemiops.jax.interactions.electrostatics._utils import (
     _apply_energy_reduction,
@@ -116,7 +116,7 @@ __all__ = [
 # Helper Function for JAX Kernel Creation
 # ==============================================================================
 
-# ``_make_jax_kernels`` returns a lazy dict (see _lazy_jax_kernels) that
+# ``make_jax_kernels`` returns a lazy dict (see nvalchemiops.jax._lazy_jax_kernels) that
 # materializes its ``jax_kernel`` entries on first __getitem__. Prefer
 # ``jax_kernel`` for single-launch ops; use ``jax_callable`` only when
 # fusing multiple wp.launch calls into one FFI thunk
@@ -131,7 +131,7 @@ def _jax_pme_factory_component(
     charge_grad: bool = False,
 ):
     """Return a lazy JAX wrapper for a factory-backed PME component."""
-    return _make_jax_kernel_factory(
+    return make_jax_kernel_factory(
         lambda wp_dtype: get_pme_kernel(
             wp_dtype,
             component=component,
@@ -148,7 +148,7 @@ def _jax_pme_factory_component(
 # ==============================================================================
 
 # Single-system kernels
-_jax_pme_green_sf = _make_jax_kernels(
+_jax_pme_green_sf = make_jax_kernels(
     _pme_green_structure_factor_kernel_overload,
     2,
     ["green_function", "structure_factor_sq"],
@@ -166,7 +166,7 @@ _jax_pme_energy_corrections_charge_grad = _jax_pme_factory_component(
 )
 
 # Batch kernels
-_jax_batch_pme_green_sf = _make_jax_kernels(
+_jax_batch_pme_green_sf = make_jax_kernels(
     _batch_pme_green_structure_factor_kernel_overload,
     2,
     ["green_function", "structure_factor_sq"],
@@ -204,13 +204,13 @@ _jax_batch_pme_convolve = _jax_pme_factory_component(
 # charges into per-system total charges (atomic_add). Pass 2 computes
 # E_bg = π Q² / (2 α² V) per system and subtracts it from the three diagonal
 # entries of ``virial_in``. Mirrors the torch path's ``pme_virial_bg_correction``.
-_jax_pme_virial_bg_reduce = _make_jax_kernels(
+_jax_pme_virial_bg_reduce = make_jax_kernels(
     _pme_virial_bg_reduce_kernel_overload,
     1,
     ["total_charges"],
 )
 
-_jax_pme_virial_bg_apply = _make_jax_kernels(
+_jax_pme_virial_bg_apply = make_jax_kernels(
     _pme_virial_bg_apply_kernel_overload,
     1,
     ["virial_out"],

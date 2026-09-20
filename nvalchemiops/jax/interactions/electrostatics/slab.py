@@ -41,9 +41,7 @@ from nvalchemiops.interactions.electrostatics.slab_kernels import (
     _slab_precompute_geometry_kernel_overload,
     _slab_reduce_moments_kernel_overload,
 )
-from nvalchemiops.jax.interactions.electrostatics._lazy_jax_kernels import (
-    _make_jax_kernels,
-)
+from nvalchemiops.jax._lazy_jax_kernels import make_jax_kernels
 from nvalchemiops.jax.interactions.electrostatics._utils import (
     _apply_energy_reduction,
     _build_electrostatic_result,
@@ -55,97 +53,97 @@ from nvalchemiops.jax.types import normalize_float_dtype
 __all__ = ["compute_slab_correction"]
 
 
-_jax_slab_reduce_moments = _make_jax_kernels(
+_jax_slab_reduce_moments = make_jax_kernels(
     _slab_reduce_moments_kernel_overload,
     3,
     ["mz", "mz2", "qtotal"],
 )
 
-_jax_slab_precompute_geometry = _make_jax_kernels(
+_jax_slab_precompute_geometry = make_jax_kernels(
     _slab_precompute_geometry_kernel_overload,
     4,
     ["slab_axis", "slab_normal", "slab_volume", "slab_height_sq"],
 )
 
-_jax_slab_correction_energy = _make_jax_kernels(
+_jax_slab_correction_energy = make_jax_kernels(
     _slab_correction_energy_kernel_overload,
     1,
     ["energy_out"],
 )
 
-_jax_slab_correction_energy_forces = _make_jax_kernels(
+_jax_slab_correction_energy_forces = make_jax_kernels(
     _slab_correction_energy_forces_kernel_overload,
     2,
     ["energy_out", "forces"],
 )
 
-_jax_slab_correction_energy_forces_virial = _make_jax_kernels(
+_jax_slab_correction_energy_forces_virial = make_jax_kernels(
     _slab_correction_energy_forces_virial_kernel_overload,
     3,
     ["energy_out", "forces", "virial"],
 )
 
-_jax_slab_correction_energy_forces_charge_grad = _make_jax_kernels(
+_jax_slab_correction_energy_forces_charge_grad = make_jax_kernels(
     _slab_correction_energy_forces_charge_grad_kernel_overload,
     3,
     ["energy_out", "forces", "charge_grads"],
 )
 
-_jax_slab_correction_energy_forces_charge_grad_virial = _make_jax_kernels(
+_jax_slab_correction_energy_forces_charge_grad_virial = make_jax_kernels(
     _slab_correction_energy_forces_charge_grad_virial_kernel_overload,
     4,
     ["energy_out", "forces", "charge_grads", "virial"],
 )
 
-_jax_slab_correction_energy_charge_grad = _make_jax_kernels(
+_jax_slab_correction_energy_charge_grad = make_jax_kernels(
     _slab_correction_energy_charge_grad_kernel_overload,
     2,
     ["energy_out", "charge_grads"],
 )
 
-_jax_slab_correction_energy_charge_grad_virial = _make_jax_kernels(
+_jax_slab_correction_energy_charge_grad_virial = make_jax_kernels(
     _slab_correction_energy_charge_grad_virial_kernel_overload,
     3,
     ["energy_out", "charge_grads", "virial"],
 )
 
-_jax_slab_correction_energy_virial = _make_jax_kernels(
+_jax_slab_correction_energy_virial = make_jax_kernels(
     _slab_correction_energy_virial_kernel_overload,
     2,
     ["energy_out", "virial"],
 )
 
-_jax_slab_correction_backward_atoms = _make_jax_kernels(
+_jax_slab_correction_backward_atoms = make_jax_kernels(
     _slab_correction_backward_atoms_kernel_overload,
     3,
     ["grad_positions", "grad_charges", "grad_normal"],
 )
 
-_jax_slab_correction_backward_cell = _make_jax_kernels(
+_jax_slab_correction_backward_cell = make_jax_kernels(
     _slab_correction_backward_cell_kernel_overload,
     1,
     ["grad_cell"],
 )
 
-_jax_slab_directional_geometry = _make_jax_kernels(
+_jax_slab_directional_geometry = make_jax_kernels(
     _slab_directional_geometry_kernel_overload,
     3,
     ["dnormal", "dvolume", "dheight_sq"],
 )
 
-_jax_slab_directional_moments = _make_jax_kernels(
+_jax_slab_directional_moments = make_jax_kernels(
     _slab_directional_moments_kernel_overload,
     3,
     ["dmz", "dmz2", "dqtotal"],
 )
 
-_jax_slab_correction_double_backward_atoms = _make_jax_kernels(
+_jax_slab_correction_double_backward_atoms = make_jax_kernels(
     _slab_correction_double_backward_atoms_kernel_overload,
     4,
     ["grad_positions", "grad_charges", "grad_normal", "h_grad_normal"],
 )
 
-_jax_slab_correction_double_backward_cell = _make_jax_kernels(
+_jax_slab_correction_double_backward_cell = make_jax_kernels(
     _slab_correction_double_backward_cell_kernel_overload,
     1,
     ["grad_cell"],
