@@ -849,12 +849,18 @@ def _batch_build_cluster_tile_list_op(
     tile_counts: torch.Tensor,
     use_rebuild_flags: bool,
     use_segmented: bool,
+    rebuild_observed: bool,
     compute_inv_cell_batch: bool,
 ) -> None:
     device = positions.device
     with torch.cuda.device(device):
         capturing = torch.cuda.is_current_stream_capturing()
-    if use_rebuild_flags and not capturing and not bool(rebuild_flags.any().item()):
+    if (
+        use_rebuild_flags
+        and not capturing
+        and not rebuild_observed
+        and not bool(rebuild_flags.any().item())
+    ):
         return
     if compute_inv_cell_batch:
         computed_inv_cell_batch, info = torch.linalg.inv_ex(
@@ -989,6 +995,7 @@ def _(
     tile_counts: torch.Tensor,
     use_rebuild_flags: bool,
     use_segmented: bool,
+    rebuild_observed: bool,
     compute_inv_cell_batch: bool,
 ) -> None:
     return None
@@ -1141,6 +1148,7 @@ def _batch_build_cluster_tile_list_normalized(
     rebuild_flags: torch.Tensor | None = None,
     tile_offsets: torch.Tensor | None = None,
     tile_counts: torch.Tensor | None = None,
+    rebuild_observed: bool = False,
 ) -> torch.Tensor:
     """Build batched tile neighbor list state into pre-allocated outputs.
 
@@ -1327,6 +1335,7 @@ def _batch_build_cluster_tile_list_normalized(
         tile_counts if tile_counts is not None else dummy_i32,
         bool(use_rebuild_flags),
         bool(use_segmented),
+        bool(rebuild_observed),
         bool(compute_inv_cell_batch),
     )
     return inv_cell_batch
@@ -3129,6 +3138,18 @@ def _batch_cluster_tile_neighbor_list_impl(
         or pair_energies is not None
         or pair_forces is not None
     )
+    is_compiling = torch.compiler.is_compiling()
+    eager_rebuild_values = (
+        tuple(bool(value) for value in rebuild_flags.flatten().tolist())
+        if rebuild_flags is not None and not is_compiling
+        else None
+    )
+    eager_any_rebuild = (
+        any(eager_rebuild_values) if eager_rebuild_values is not None else False
+    )
+    eager_all_true = (
+        all(eager_rebuild_values) if eager_rebuild_values is not None else False
+    )
     if return_state and rebuild_flags is None:
         raise ValueError("return_state=True requires rebuild_flags")
     if has_pair_outputs and format == "tile":
@@ -3154,11 +3175,7 @@ def _batch_cluster_tile_neighbor_list_impl(
         rebuild_flags is not None
         and format == "coo"
         and (pair_offsets is None or pair_counts is None)
-        and (
-            torch.compiler.is_compiling()
-            or not bool(rebuild_flags.all().item())
-            or not return_state
-        )
+        and (is_compiling or not eager_all_true or not return_state)
     ):
         raise ValueError(
             "cluster_tile selective COO requires pair_offsets and pair_counts"
@@ -3176,7 +3193,6 @@ def _batch_cluster_tile_neighbor_list_impl(
     device = positions.device
     N = positions.shape[0]
     num_systems = int(batch_ptr.shape[0]) - 1
-    is_compiling = torch.compiler.is_compiling()
     if (
         is_compiling
         and format == "coo"
@@ -3234,9 +3250,7 @@ def _batch_cluster_tile_neighbor_list_impl(
                 "state or no persistent state"
             )
     eager_has_false = (
-        rebuild_flags is not None
-        and not is_compiling
-        and not bool(rebuild_flags.all().item())
+        rebuild_flags is not None and not is_compiling and not eager_all_true
     )
 
     if eager_has_false:
@@ -3544,6 +3558,39 @@ def _batch_cluster_tile_neighbor_list_impl(
             tile_col_group=tile_col_group,
             tile_system=tile_system,
         )
+
+    if rebuild_flags is not None and not is_compiling and not eager_any_rebuild:
+        if format == "coo":
+            outputs = (
+                neighbor_list,
+                pair_offsets,
+                pair_counts,
+                neighbor_list_shifts,
+            )
+        elif cutoff2 is not None:
+            outputs = (
+                neighbor_matrix,
+                num_neighbors,
+                neighbor_matrix_shifts,
+                neighbor_matrix2,
+                num_neighbors2,
+                neighbor_matrix_shifts2,
+            )
+        else:
+            outputs = (neighbor_matrix, num_neighbors, neighbor_matrix_shifts)
+        if return_state:
+            return (
+                *outputs,
+                tile_offsets,
+                tile_counts,
+                num_tiles,
+                tile_row_group,
+                tile_col_group,
+                tile_system,
+            )
+        return outputs
+
+    if partition_metadata is None:
         partition_metadata = _prepare_batch_partition_metadata(
             batch_ptr,
             num_atoms=N,
@@ -3586,6 +3633,7 @@ def _batch_cluster_tile_neighbor_list_impl(
         rebuild_flags=rebuild_flags,
         tile_offsets=tile_offsets,
         tile_counts=tile_counts,
+        rebuild_observed=eager_any_rebuild,
     )
 
     if format == "tile":

@@ -707,6 +707,7 @@ def _build_cluster_tile_list_op(
     tile_col_group: torch.Tensor,
     rebuild_flags: torch.Tensor,
     use_rebuild_flags: bool,
+    rebuild_observed: bool,
     compute_inv_cell: bool,
 ) -> None:
     """Compute Morton codes + argsort + SoA gather in torch, then run
@@ -723,7 +724,12 @@ def _build_cluster_tile_list_op(
     device = positions.device
     with torch.cuda.device(device):
         capturing = torch.cuda.is_current_stream_capturing()
-    if use_rebuild_flags and not capturing and not bool(rebuild_flags.any().item()):
+    if (
+        use_rebuild_flags
+        and not capturing
+        and not rebuild_observed
+        and not bool(rebuild_flags.any().item())
+    ):
         return
     if compute_inv_cell:
         computed_inv_cell, info = torch.linalg.inv_ex(cell, check_errors=False)
@@ -872,6 +878,7 @@ def _(
     tile_col_group: torch.Tensor,
     rebuild_flags: torch.Tensor,
     use_rebuild_flags: bool,
+    rebuild_observed: bool,
     compute_inv_cell: bool,
 ) -> None:
     return None
@@ -897,6 +904,7 @@ def _build_cluster_tile_list_normalized(
     tile_col_group: torch.Tensor,
     *,
     rebuild_flags: torch.Tensor | None = None,
+    rebuild_observed: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Build tiles and return the normalized cell and inverse used by queries."""
     if positions.dtype != torch.float32:
@@ -930,6 +938,7 @@ def _build_cluster_tile_list_normalized(
         tile_col_group,
         rebuild_flags if rebuild_flags is not None else dummy_rebuild_flags,
         rebuild_flags is not None,
+        bool(rebuild_observed),
         compute_inv_cell,
     )
     return cell_mat, inv_cell_mat
@@ -2869,7 +2878,7 @@ def cluster_tile_neighbor_list(
         raise NotImplementedError(
             "torch.compile(fullgraph=True) cluster-tile pair_fn is not supported"
         )
-    eager_all_true = (
+    eager_rebuild_requested = (
         selective and not is_compiling and bool(rebuild_flags.flatten()[0].item())
     )
     if return_state and not selective:
@@ -2932,7 +2941,9 @@ def cluster_tile_neighbor_list(
                 }
             )
         missing = [name for name, value in required.items() if value is None]
-        bootstrap_coo = format == "coo" and eager_all_true and bool(return_state)
+        bootstrap_coo = (
+            format == "coo" and eager_rebuild_requested and bool(return_state)
+        )
         if missing and not bootstrap_coo:
             raise ValueError(
                 "rebuild_flags requires previous cluster_tile state: "
@@ -3010,7 +3021,7 @@ def cluster_tile_neighbor_list(
             or neighbor_matrix_shifts2.shape != (N, int(max_neighbors), 3)
         ):
             raise ValueError("selective secondary matrix state has an invalid shape")
-    if selective and format == "coo" and eager_all_true:
+    if selective and format == "coo" and eager_rebuild_requested:
         coo_state = (
             neighbor_list,
             pair_offsets,
@@ -3052,11 +3063,7 @@ def cluster_tile_neighbor_list(
         if max_pairs is not None and int(max_pairs) != max_pairs_from_buffers:
             raise ValueError("max_pairs must equal neighbor_list.shape[1]")
 
-    if (
-        selective
-        and not torch.compiler.is_compiling()
-        and not bool(rebuild_flags.flatten()[0].item())
-    ):
+    if selective and not is_compiling and not eager_rebuild_requested:
         if format == "coo":
             outputs = (
                 neighbor_list,
@@ -3195,6 +3202,7 @@ def cluster_tile_neighbor_list(
         tile_row_group,
         tile_col_group,
         rebuild_flags=rebuild_flags if selective else None,
+        rebuild_observed=eager_rebuild_requested,
     )
 
     if format == "tile":

@@ -509,8 +509,6 @@ def _execute_prepared_cluster_tile(
                 "selective ClusterTileState cannot preserve uninitialized systems"
             )
         if not torch.compiler.is_compiling():
-            if not bool(rebuild_flags.any().item()):
-                return state._topology
             initialized.copy_(torch.where(rebuild_flags, False, initialized))
 
     topology = state._topology

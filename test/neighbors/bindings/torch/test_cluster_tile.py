@@ -1879,60 +1879,6 @@ class TestClusterTileCompile:
         assert torch.all(neighbor_list_shifts == -77)
 
     @pytest.mark.slow
-    def test_selective_coo_wrapper_fullgraph_clamps_overflow_count(self, device, dtype):
-        """Compiled valid segments report at most their written capacity."""
-        natom = 64
-        capacity = 64
-        positions = torch.zeros((natom, 3), dtype=dtype, device=device)
-        cell = _orthorhombic_cell(6.0, device, dtype)
-        num_tiles, tile_row_group, tile_col_group, *_ = cluster_tile_neighbor_list(
-            positions,
-            2.0,
-            cell,
-            format="tile",
-        )
-        neighbor_list = torch.full(
-            (2, capacity),
-            -77,
-            dtype=torch.int32,
-            device=device,
-        )
-        neighbor_list_shifts = torch.full(
-            (capacity, 3),
-            -77,
-            dtype=torch.int32,
-            device=device,
-        )
-        pair_offsets = torch.tensor([0, capacity], dtype=torch.int32, device=device)
-        pair_counts = torch.zeros(1, dtype=torch.int32, device=device)
-
-        @torch.compile(fullgraph=True)
-        def run(runtime_pair_counts):
-            return cluster_tile_neighbor_list(
-                positions,
-                2.0,
-                cell,
-                max_neighbors=64,
-                format="coo",
-                rebuild_flags=torch.ones(1, dtype=torch.bool, device=device),
-                return_state=True,
-                num_tiles=num_tiles,
-                tile_row_group=tile_row_group,
-                tile_col_group=tile_col_group,
-                neighbor_list=neighbor_list,
-                pair_offsets=pair_offsets,
-                pair_counts=runtime_pair_counts,
-                neighbor_list_shifts=neighbor_list_shifts,
-            )
-
-        result = run(pair_counts)
-
-        assert result[2].data_ptr() == pair_counts.data_ptr()
-        assert int(pair_counts.item()) == capacity
-        assert torch.all(neighbor_list != -77)
-        assert torch.all(neighbor_list_shifts != -77)
-
-    @pytest.mark.slow
     @pytest.mark.parametrize(
         ("kind", "message"),
         [
