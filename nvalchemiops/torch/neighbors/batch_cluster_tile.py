@@ -849,19 +849,9 @@ def _batch_build_cluster_tile_list_op(
     tile_counts: torch.Tensor,
     use_rebuild_flags: bool,
     use_segmented: bool,
-    rebuild_observed: bool,
     compute_inv_cell_batch: bool,
 ) -> None:
     device = positions.device
-    with torch.cuda.device(device):
-        capturing = torch.cuda.is_current_stream_capturing()
-    if (
-        use_rebuild_flags
-        and not capturing
-        and not rebuild_observed
-        and not bool(rebuild_flags.any().item())
-    ):
-        return
     if compute_inv_cell_batch:
         computed_inv_cell_batch, info = torch.linalg.inv_ex(
             cell_batch,
@@ -995,7 +985,6 @@ def _(
     tile_counts: torch.Tensor,
     use_rebuild_flags: bool,
     use_segmented: bool,
-    rebuild_observed: bool,
     compute_inv_cell_batch: bool,
 ) -> None:
     return None
@@ -1148,7 +1137,6 @@ def _batch_build_cluster_tile_list_normalized(
     rebuild_flags: torch.Tensor | None = None,
     tile_offsets: torch.Tensor | None = None,
     tile_counts: torch.Tensor | None = None,
-    rebuild_observed: bool = False,
 ) -> torch.Tensor:
     """Build batched tile neighbor list state into pre-allocated outputs.
 
@@ -1335,7 +1323,6 @@ def _batch_build_cluster_tile_list_normalized(
         tile_counts if tile_counts is not None else dummy_i32,
         bool(use_rebuild_flags),
         bool(use_segmented),
-        bool(rebuild_observed),
         bool(compute_inv_cell_batch),
     )
     return inv_cell_batch
@@ -2802,6 +2789,7 @@ def _batch_cluster_tile_neighbor_list_impl(
     max_tiles_per_group: int | None = None,
     *,
     state: "ClusterTileState | None" = None,
+    eager_rebuild_count: int | None = None,
 ) -> tuple[torch.Tensor, ...]:
     """Build and query a batched cluster-pair tile neighbor list in one call.
 
@@ -3139,17 +3127,14 @@ def _batch_cluster_tile_neighbor_list_impl(
         or pair_forces is not None
     )
     is_compiling = torch.compiler.is_compiling()
-    eager_rebuild_values = (
-        tuple(bool(value) for value in rebuild_flags.flatten().tolist())
-        if rebuild_flags is not None and not is_compiling
-        else None
-    )
-    eager_any_rebuild = (
-        any(eager_rebuild_values) if eager_rebuild_values is not None else False
-    )
-    eager_all_true = (
-        all(eager_rebuild_values) if eager_rebuild_values is not None else False
-    )
+    if rebuild_flags is not None and not is_compiling:
+        if eager_rebuild_count is None:
+            eager_rebuild_count = int(torch.count_nonzero(rebuild_flags).item())
+        eager_any_rebuild = eager_rebuild_count > 0
+        eager_all_true = eager_rebuild_count == rebuild_flags.numel()
+    else:
+        eager_any_rebuild = False
+        eager_all_true = False
     if return_state and rebuild_flags is None:
         raise ValueError("return_state=True requires rebuild_flags")
     if has_pair_outputs and format == "tile":
@@ -3633,7 +3618,6 @@ def _batch_cluster_tile_neighbor_list_impl(
         rebuild_flags=rebuild_flags,
         tile_offsets=tile_offsets,
         tile_counts=tile_counts,
-        rebuild_observed=eager_any_rebuild,
     )
 
     if format == "tile":

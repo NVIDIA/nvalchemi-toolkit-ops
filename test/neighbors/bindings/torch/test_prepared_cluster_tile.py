@@ -158,7 +158,7 @@ def _run_direct_eager_capture() -> subprocess.CompletedProcess[str]:
 def _run_singular_prepared_fullgraph(
     batched: bool,
 ) -> subprocess.CompletedProcess[str]:
-    """Run one compiled prepared call with a singular current cell."""
+    """Run one compiled all-false selective call with a singular cell."""
     route = (
         "batch_cluster_tile_neighbor_list" if batched else "cluster_tile_neighbor_list"
     )
@@ -170,9 +170,11 @@ def _run_singular_prepared_fullgraph(
     ).replace("\n", "\n        ")
     singular_update = "cell[1].zero_()" if batched else "cell.zero_()"
     call = (
-        "batch_cluster_tile_neighbor_list(values, None, box, None, state=state)"
+        "batch_cluster_tile_neighbor_list(values, None, box, None, "
+        "rebuild_flags=flags, state=state)"
         if batched
-        else "cluster_tile_neighbor_list(values, None, box, state=state)"
+        else "cluster_tile_neighbor_list(values, None, box, "
+        "rebuild_flags=flags, state=state)"
     )
     script = textwrap.dedent(
         f"""
@@ -190,19 +192,22 @@ def _run_singular_prepared_fullgraph(
             cell,
             format="matrix",
             batch_ptr=batch_ptr,
+            selective=True,
             max_neighbors=32,
             max_tiles_per_group=2,
         )
+        flags = torch.ones(state.num_systems, dtype=torch.bool, device="cuda")
 
         @torch.compile(fullgraph=True)
-        def run(values, box):
+        def run(values, box, flags):
             return {call}
 
-        run(positions, cell)
+        run(positions, cell, flags)
         torch.cuda.synchronize()
         {singular_update}
+        flags.zero_()
         print("SINGULAR_CALL_STARTED", flush=True)
-        run(positions, cell)
+        run(positions, cell, flags)
         torch.cuda.synchronize()
         print("SINGULAR_CALL_RETURNED", flush=True)
         """
@@ -1513,8 +1518,8 @@ def test_selective_dual_matrix_fullgraph_preserves_false_rows() -> None:
 @pytest.mark.gpu
 @pytest.mark.slow
 @pytest.mark.parametrize("batched", [False, True])
-def test_selective_compiled_all_false_preserves_all_state(batched: bool) -> None:
-    """Ordinary compiled all-false execution leaves prepared storage unchanged."""
+def test_selective_compiled_all_false_preserves_topology(batched: bool) -> None:
+    """Ordinary compiled all-false execution preserves prepared topology."""
     positions, cell, batch_ptr = _inputs(batched)
     state = prepare_cluster_tile(
         positions,
@@ -1540,14 +1545,14 @@ def test_selective_compiled_all_false_preserves_all_state(batched: bool) -> None
 
     run(positions, flags)
     torch.cuda.synchronize()
-    storage = (*state._scratch, *state._topology)
-    pointers = tuple(value.data_ptr() for value in storage)
-    snapshot = tuple(value.clone() for value in storage)
+    topology = state._topology
+    pointers = tuple(value.data_ptr() for value in topology)
+    snapshot = tuple(value.clone() for value in topology)
     flags.zero_()
     run(positions * 0.25, flags)
     torch.cuda.synchronize()
-    assert tuple(value.data_ptr() for value in storage) == pointers
-    assert all(torch.equal(value, saved) for value, saved in zip(storage, snapshot))
+    assert tuple(value.data_ptr() for value in topology) == pointers
+    assert all(torch.equal(value, saved) for value, saved in zip(topology, snapshot))
 
 
 @pytest.mark.gpu
@@ -1779,7 +1784,7 @@ def test_direct_eager_prepared_capture_has_actionable_error() -> None:
 @pytest.mark.slow
 @pytest.mark.parametrize("batched", [False, True])
 def test_compiled_prepared_singular_cell_asserts_on_device(batched: bool) -> None:
-    """Compiled inverse validation rejects singular current cells asynchronously."""
+    """Compiled all-false execution still validates singular current cells."""
     result = _run_singular_prepared_fullgraph(batched)
     output = result.stdout + result.stderr
     assert result.returncode != 0, output

@@ -44,9 +44,10 @@
   storage with `prepare_cluster_tile(...)`, then execute it with
   `cluster_tile_neighbor_list(..., state=state)` or
   `batch_cluster_tile_neighbor_list(..., state=state)`, with optional selective
-  matrix rebuilds for single systems and batches. Outside CUDA Graph capture,
-  eager and ordinary compiled all-false selective calls preserve existing state
-  and may skip rebuild work.
+  matrix rebuilds for single systems and batches. Eager all-false selective
+  calls return immediately. Ordinary compiled calls keep rebuild flags on the
+  device and use a fixed inverse, sort, build, query, and tail sequence while
+  false flags preserve existing topology.
 - Warmed, compiled prepared matrix-topology calls can be captured with
   `torch.cuda.CUDAGraph` and replayed after copying new positions, cells, or
   selective rebuild flags into the original input tensors. Replay retains the

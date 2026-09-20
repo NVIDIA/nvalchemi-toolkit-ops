@@ -707,7 +707,6 @@ def _build_cluster_tile_list_op(
     tile_col_group: torch.Tensor,
     rebuild_flags: torch.Tensor,
     use_rebuild_flags: bool,
-    rebuild_observed: bool,
     compute_inv_cell: bool,
 ) -> None:
     """Compute Morton codes + argsort + SoA gather in torch, then run
@@ -722,15 +721,6 @@ def _build_cluster_tile_list_op(
     nvalchemiops.neighbors.cluster_tile.build_cluster_tile_list : warp launcher
     """
     device = positions.device
-    with torch.cuda.device(device):
-        capturing = torch.cuda.is_current_stream_capturing()
-    if (
-        use_rebuild_flags
-        and not capturing
-        and not rebuild_observed
-        and not bool(rebuild_flags.any().item())
-    ):
-        return
     if compute_inv_cell:
         computed_inv_cell, info = torch.linalg.inv_ex(cell, check_errors=False)
         torch._assert_async(info == 0, "cell matrix must be non-singular")
@@ -878,7 +868,6 @@ def _(
     tile_col_group: torch.Tensor,
     rebuild_flags: torch.Tensor,
     use_rebuild_flags: bool,
-    rebuild_observed: bool,
     compute_inv_cell: bool,
 ) -> None:
     return None
@@ -904,7 +893,6 @@ def _build_cluster_tile_list_normalized(
     tile_col_group: torch.Tensor,
     *,
     rebuild_flags: torch.Tensor | None = None,
-    rebuild_observed: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Build tiles and return the normalized cell and inverse used by queries."""
     if positions.dtype != torch.float32:
@@ -938,7 +926,6 @@ def _build_cluster_tile_list_normalized(
         tile_col_group,
         rebuild_flags if rebuild_flags is not None else dummy_rebuild_flags,
         rebuild_flags is not None,
-        bool(rebuild_observed),
         compute_inv_cell,
     )
     return cell_mat, inv_cell_mat
@@ -2530,7 +2517,7 @@ def query_cluster_tile_coo(
 
 
 @scoped_torch_warp_stream
-def cluster_tile_neighbor_list(
+def _cluster_tile_neighbor_list_impl(
     positions: torch.Tensor,
     cutoff: float | None = None,
     cell: torch.Tensor | None = None,
@@ -2581,6 +2568,7 @@ def cluster_tile_neighbor_list(
     *,
     max_tiles_per_group: int | None = None,
     state: object | None = None,
+    eager_rebuild_count: int | None = None,
 ) -> tuple[torch.Tensor, ...]:
     """Build and query a cluster-pair tile neighbor list in one call.
 
@@ -2878,9 +2866,12 @@ def cluster_tile_neighbor_list(
         raise NotImplementedError(
             "torch.compile(fullgraph=True) cluster-tile pair_fn is not supported"
         )
-    eager_rebuild_requested = (
-        selective and not is_compiling and bool(rebuild_flags.flatten()[0].item())
-    )
+    if selective and not is_compiling:
+        if eager_rebuild_count is None:
+            eager_rebuild_count = int(torch.count_nonzero(rebuild_flags).item())
+        eager_rebuild_requested = eager_rebuild_count > 0
+    else:
+        eager_rebuild_requested = False
     if return_state and not selective:
         raise ValueError("return_state=True requires rebuild_flags")
     if not selective and (pair_offsets is not None or pair_counts is not None):
@@ -3202,7 +3193,6 @@ def cluster_tile_neighbor_list(
         tile_row_group,
         tile_col_group,
         rebuild_flags=rebuild_flags if selective else None,
-        rebuild_observed=eager_rebuild_requested,
     )
 
     if format == "tile":
@@ -3616,3 +3606,104 @@ def cluster_tile_neighbor_list(
     if return_state:
         return (*outputs, num_tiles, tile_row_group, tile_col_group)
     return outputs
+
+
+def cluster_tile_neighbor_list(
+    positions: torch.Tensor,
+    cutoff: float | None = None,
+    cell: torch.Tensor | None = None,
+    max_neighbors: int | None = None,
+    fill_value: int | None = None,
+    format: str = "matrix",
+    max_pairs: int | None = None,
+    cutoff2: float | None = None,
+    rebuild_flags: torch.Tensor | None = None,
+    return_state: bool = False,
+    neighbor_matrix: torch.Tensor | None = None,
+    neighbor_matrix_shifts: torch.Tensor | None = None,
+    num_neighbors: torch.Tensor | None = None,
+    neighbor_matrix2: torch.Tensor | None = None,
+    neighbor_matrix_shifts2: torch.Tensor | None = None,
+    num_neighbors2: torch.Tensor | None = None,
+    neighbor_list: torch.Tensor | None = None,
+    neighbor_list_shifts: torch.Tensor | None = None,
+    pair_offsets: torch.Tensor | None = None,
+    pair_counts: torch.Tensor | None = None,
+    pair_counter: torch.Tensor | None = None,
+    sorted_atom_index: torch.Tensor | None = None,
+    morton_codes: torch.Tensor | None = None,
+    sorted_pos_x: torch.Tensor | None = None,
+    sorted_pos_y: torch.Tensor | None = None,
+    sorted_pos_z: torch.Tensor | None = None,
+    group_ctr_x: torch.Tensor | None = None,
+    group_ctr_y: torch.Tensor | None = None,
+    group_ctr_z: torch.Tensor | None = None,
+    group_ext_x: torch.Tensor | None = None,
+    group_ext_y: torch.Tensor | None = None,
+    group_ext_z: torch.Tensor | None = None,
+    num_tiles: torch.Tensor | None = None,
+    tile_row_group: torch.Tensor | None = None,
+    tile_col_group: torch.Tensor | None = None,
+    return_vectors: bool = False,
+    return_distances: bool = False,
+    pair_fn: wp.Function | None = None,
+    pair_params: torch.Tensor | None = None,
+    neighbor_vectors: torch.Tensor | None = None,
+    neighbor_distances: torch.Tensor | None = None,
+    pair_energies: torch.Tensor | None = None,
+    pair_forces: torch.Tensor | None = None,
+    *,
+    max_tiles_per_group: int | None = None,
+    state: object | None = None,
+) -> tuple[torch.Tensor, ...]:
+    """Build and query a cluster-pair tile neighbor list in one call."""
+    return _cluster_tile_neighbor_list_impl(
+        positions,
+        cutoff,
+        cell,
+        max_neighbors=max_neighbors,
+        fill_value=fill_value,
+        format=format,
+        max_pairs=max_pairs,
+        cutoff2=cutoff2,
+        rebuild_flags=rebuild_flags,
+        return_state=return_state,
+        neighbor_matrix=neighbor_matrix,
+        neighbor_matrix_shifts=neighbor_matrix_shifts,
+        num_neighbors=num_neighbors,
+        neighbor_matrix2=neighbor_matrix2,
+        neighbor_matrix_shifts2=neighbor_matrix_shifts2,
+        num_neighbors2=num_neighbors2,
+        neighbor_list=neighbor_list,
+        neighbor_list_shifts=neighbor_list_shifts,
+        pair_offsets=pair_offsets,
+        pair_counts=pair_counts,
+        pair_counter=pair_counter,
+        sorted_atom_index=sorted_atom_index,
+        morton_codes=morton_codes,
+        sorted_pos_x=sorted_pos_x,
+        sorted_pos_y=sorted_pos_y,
+        sorted_pos_z=sorted_pos_z,
+        group_ctr_x=group_ctr_x,
+        group_ctr_y=group_ctr_y,
+        group_ctr_z=group_ctr_z,
+        group_ext_x=group_ext_x,
+        group_ext_y=group_ext_y,
+        group_ext_z=group_ext_z,
+        num_tiles=num_tiles,
+        tile_row_group=tile_row_group,
+        tile_col_group=tile_col_group,
+        return_vectors=return_vectors,
+        return_distances=return_distances,
+        pair_fn=pair_fn,
+        pair_params=pair_params,
+        neighbor_vectors=neighbor_vectors,
+        neighbor_distances=neighbor_distances,
+        pair_energies=pair_energies,
+        pair_forces=pair_forces,
+        max_tiles_per_group=max_tiles_per_group,
+        state=state,
+    )
+
+
+cluster_tile_neighbor_list.__doc__ = _cluster_tile_neighbor_list_impl.__doc__

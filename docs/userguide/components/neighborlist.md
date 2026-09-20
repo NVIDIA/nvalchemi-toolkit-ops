@@ -775,8 +775,10 @@ For batches, it caches atom/system and padded-layout mappings derived only from
 that partition. Morton ordering, sorted coordinates, cell inverses, and group
 bounds remain geometry-dependent and are recomputed when rebuild work runs. A
 mixed selective batch may still sort all atoms even though only selected
-systems' topology is rebuilt. An all-false eager or ordinary compiled selective
-call may preserve the existing state without rebuilding.
+systems' topology is rebuilt. An all-false eager call returns without rebuilding.
+Ordinary compiled selective calls use a fixed device-predicated execution
+sequence, so false flags preserve topology without promising skipped internal
+work.
 Execution rejects mismatches before launching kernels. Prepared pair callbacks,
 energies, forces, and caller-provided buffers are not supported.
 
@@ -800,8 +802,11 @@ vectors, distances, or pair callbacks. Each execution requires a Boolean
 flag rebuilds that system. A false flag preserves its initialized neighbor
 matrix, counts, and shifts byte-for-byte; preserving a system before its first
 successful rebuild raises an error. Outside CUDA Graph capture, an all-false
-eager or ordinary compiled call preserves all existing state and may skip the
-inverse, sorting, and build work.
+eager call preserves topology and returns before inverse, sorting, and build
+work. Ordinary compiled execution keeps flags on the device and always runs the
+inverse, Morton sort, build, query, and tail sequence; false flags preserve the
+corresponding topology. Consequently, an invalid current cell can fail during
+compiled execution even when every flag is false.
 
 An eager call marks every selected system uninitialized before rebuilding it
 and marks it initialized only after the complete call succeeds. If an eager
@@ -828,9 +833,9 @@ Selective replay accepts different flag values without recapture. The captured
 graph always records the complete inverse, Morton sort, metadata update,
 tile-build, query, and tail sequence; device-side flags decide which systems are
 updated on each replay. Therefore an all-false replay preserves topology but
-does not skip sorting or reduce the recorded launch sequence. Outside graph
-capture, eager all-false calls return immediately and ordinary compiled
-all-false calls skip the build after reading the flags on the host.
+does not skip sorting or reduce the recorded launch sequence. Eager all-false
+calls return immediately. Ordinary compiled calls use the same fixed sequence
+without reading rebuild flags on the host.
 
 Capture is not supported for a direct eager prepared call, exact COO output,
 tile output, pair geometry, or backward execution. A device assertion during

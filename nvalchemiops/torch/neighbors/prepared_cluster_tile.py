@@ -56,9 +56,9 @@ class ClusterTileState:
     metadata derived from the fixed partition. Geometry-dependent work is
     recomputed for nonselective executions and when selective rebuild work runs.
     A mixed selective call may still sort the full batch; only selected systems'
-    topology is rebuilt. Eager and ordinary compiled all-false selective calls
-    preserve existing state and may skip rebuild work. CUDA Graph replay keeps
-    the fixed captured launch sequence.
+    topology is rebuilt. Eager all-false selective calls return immediately.
+    Ordinary compiled calls keep rebuild flags on the device and use the same
+    fixed sequence as CUDA Graph replay; false flags preserve topology.
     """
 
     format: str
@@ -450,8 +450,11 @@ def _execute_prepared_cluster_tile(
     A selective eager call invalidates every selected system before rebuilding
     it and marks the systems initialized only after the complete call succeeds.
     After a failed rebuild, those systems cannot be preserved with false flags.
-    Eager and ordinary compiled all-false calls preserve existing state and may
-    skip inverse, sorting, and build work.
+    Eager all-false calls preserve topology and return before inverse, sorting,
+    and build work. Ordinary compiled calls always execute the inverse, Morton
+    sort, build, query, and tail sequence without reading rebuild flags on the
+    host. False flags preserve topology, but an invalid current cell can still
+    fail during compiled all-false execution.
 
     Warmed ``torch.compile(fullgraph=True)`` matrix-topology execution supports
     CUDA Graph capture with stable tensor storage. Selective flags may change
@@ -478,7 +481,8 @@ def _execute_prepared_cluster_tile(
         raise ValueError("rebuild_flags requires a selective ClusterTileState")
     if state.selective and rebuild_flags is None:
         raise ValueError("selective ClusterTileState requires rebuild_flags")
-    if not torch.compiler.is_compiling():
+    is_compiling = torch.compiler.is_compiling()
+    if not is_compiling:
         with torch.cuda.device(state.device):
             capturing = torch.cuda.is_current_stream_capturing()
         if capturing:
@@ -487,6 +491,7 @@ def _execute_prepared_cluster_tile(
                 "warm and capture a torch.compile(fullgraph=True) prepared "
                 "matrix-topology callable instead"
             )
+    eager_rebuild_count: int | None = None
     if state.selective:
         if (
             rebuild_flags.dtype != torch.bool
@@ -499,16 +504,24 @@ def _execute_prepared_cluster_tile(
             )
         initialized = state._selective_state[0]
         may_preserve = initialized | rebuild_flags
-        if torch.compiler.is_compiling():
+        if is_compiling:
             torch._assert_async(
                 may_preserve.all(),
                 "selective ClusterTileState cannot preserve uninitialized systems",
             )
-        elif not bool(may_preserve.all().item()):
-            raise ValueError(
-                "selective ClusterTileState cannot preserve uninitialized systems"
+        else:
+            summary = torch.where(
+                may_preserve.all(),
+                torch.count_nonzero(rebuild_flags),
+                -1,
             )
-        if not torch.compiler.is_compiling():
+            eager_rebuild_count = int(summary.item())
+            if eager_rebuild_count < 0:
+                raise ValueError(
+                    "selective ClusterTileState cannot preserve uninitialized systems"
+                )
+            if eager_rebuild_count == 0:
+                return state._topology
             initialized.copy_(torch.where(rebuild_flags, False, initialized))
 
     topology = state._topology
@@ -591,6 +604,7 @@ def _execute_prepared_cluster_tile(
             tile_col_group=tile_col_group,
             tile_system=tile_system,
             rebuild_flags=rebuild_flags,
+            eager_rebuild_count=eager_rebuild_count,
             tile_offsets=(state._selective_state[1] if state.selective else None),
             tile_counts=(state._selective_state[2] if state.selective else None),
             **matrix_kwargs,
@@ -616,9 +630,11 @@ def _execute_prepared_cluster_tile(
         tile_row_group,
         tile_col_group,
     ) = state._scratch
-    from nvalchemiops.torch.neighbors.cluster_tile import cluster_tile_neighbor_list
+    from nvalchemiops.torch.neighbors.cluster_tile import (
+        _cluster_tile_neighbor_list_impl,
+    )
 
-    output = cluster_tile_neighbor_list(
+    output = _cluster_tile_neighbor_list_impl(
         positions,
         state.cutoff,
         cell,
@@ -647,6 +663,7 @@ def _execute_prepared_cluster_tile(
         tile_row_group=tile_row_group,
         tile_col_group=tile_col_group,
         rebuild_flags=rebuild_flags,
+        eager_rebuild_count=eager_rebuild_count,
         **matrix_kwargs,
         **coo_kwargs,
     )
