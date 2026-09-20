@@ -14,28 +14,23 @@
 # limitations under the License.
 
 """
-Torch.compile Performance Benefits Example
-==========================================
+Torch Compile Neighbor List Example
+===================================
 
-This example demonstrates the significant performance benefits of using torch.compile
-with nvalchemiops neighbor list routines in a realistic molecular dynamics simulation.
-We'll cover:
+This example demonstrates how to use PyTorch neighbor list operations inside
+``torch.compile``. In this example you will learn:
 
-- torch.compile integration with build_cell_list and query_cell_list
-- Lennard-Jones molecular dynamics simulation using neighbor lists
-- Performance comparison between compiled and uncompiled versions
-- Speedup analysis and compilation overhead considerations
+- How to compile exact matrix-to-COO conversion with changing edge counts
+- How to compile ``build_cell_list`` and ``query_cell_list``
+- How to use compiled neighbor lists in a Lennard-Jones simulation
+- How to account for compilation overhead when timing
 
-The build_cell_list and query_cell_list functions are torch.compile compatible,
-which means they can be used within compiled functions. This example shows how
-to integrate them into an MD workflow for maximum performance.
+The exact matrix-to-COO example requires PyTorch >=2.10.
 
-Note that torch.compile does not necessarily speedup the neighbor list routines itself,
-since they are written with CUDA/Warp kernels, but they show that these routines can
-be used within compiled functions without incurring graph breaks.
+.. important::
 
-Note that this example is not a comprehensive performance analysis of the neighbor list routines,
-but rather a demonstration of how to use them within compiled functions.
+    The timings in this example are workload-specific and do not imply a
+    universal speedup.
 """
 
 import time
@@ -53,6 +48,7 @@ from nvalchemiops.torch.neighbors.cell_list import (
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     allocate_cell_list,
     estimate_max_neighbors,
+    get_neighbor_list_from_neighbor_matrix,
 )
 
 # %%
@@ -133,6 +129,41 @@ velocities = velocities * torch.sqrt(temperature / current_temp)
 
 print(f"Initial density: {num_atoms / box_size**3:.4f}")
 print(f"Initial temperature: {(velocities**2).sum().item() / (3 * num_atoms):.3f}")
+
+# %%
+# Demonstrate Compiled Matrix-to-COO Conversion
+# =============================================
+
+
+@torch.compile(fullgraph=True)
+def compiled_matrix_to_coo(
+    neighbor_matrix: torch.Tensor,
+    num_neighbors: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Convert a fixed-width matrix to exact COO output under fullgraph."""
+    return get_neighbor_list_from_neighbor_matrix(
+        neighbor_matrix,
+        num_neighbors,
+        fill_value=-1,
+    )
+
+
+# Reuse one compiled function with two fixed-width matrices containing different
+# numbers of edges. Exact sizing via ``nonzero`` may synchronize the host.
+matrix_2_edges = torch.tensor(
+    [[1, -1], [0, -1], [-1, -1]], dtype=torch.int32, device=device
+)
+matrix_3_edges = torch.tensor(
+    [[1, 2], [0, -1], [-1, -1]], dtype=torch.int32, device=device
+)
+counts_2_edges = torch.tensor([1, 1, 0], dtype=torch.int32, device=device)
+counts_3_edges = torch.tensor([2, 1, 0], dtype=torch.int32, device=device)
+coo_2_edges, _ = compiled_matrix_to_coo(matrix_2_edges, counts_2_edges)
+coo_3_edges, _ = compiled_matrix_to_coo(matrix_3_edges, counts_3_edges)
+print(
+    "Compiled matrix-to-COO edge counts: "
+    f"{coo_2_edges.shape[1]} -> {coo_3_edges.shape[1]}"
+)
 
 # %%
 # Define Lennard-Jones force computation
