@@ -1196,56 +1196,51 @@ def _batch_build_cluster_tile_list_normalized(
         raise ValueError(
             f"cell_batch must be (S, 3, 3) float32; got {tuple(cell_batch.shape)}",
         )
-    if batch_ptr.dtype != torch.int32 or batch_ptr.ndim != 1:
-        raise ValueError("batch_ptr must be 1D int32")
-    if batch_ptr.shape[0] < 2:
-        raise ValueError("batch_ptr must have length at least 2")
-
+    if partition_metadata is None:
+        if batch_ptr.dtype != torch.int32 or batch_ptr.ndim != 1:
+            raise ValueError("batch_ptr must be 1D int32")
+        if batch_ptr.shape[0] < 2:
+            raise ValueError("batch_ptr must have length at least 2")
     num_systems = cell_batch.shape[0]
     if batch_ptr.shape[0] != num_systems + 1:
         raise ValueError(
             f"batch_ptr length {batch_ptr.shape[0]} != num_systems+1 = {num_systems + 1}",
         )
-    N = positions.shape[0]
-    if torch.compiler.is_compiling():
-        torch._assert_async(
-            batch_ptr[-1] == N,
-            "batch_ptr[-1] must equal positions.shape[0]",
-        )
-    elif int(batch_ptr[-1].item()) != N:
-        raise ValueError(f"batch_ptr[-1] ({int(batch_ptr[-1])}) != N ({N})")
-
-    _validate_batch_cluster_tile_scratch(
-        positions=positions,
-        batch_ptr=batch_ptr,
-        sorted_atom_index=sorted_atom_index,
-        sort_inv=sort_inv,
-        sorted_pos_x=sorted_pos_x,
-        sorted_pos_y=sorted_pos_y,
-        sorted_pos_z=sorted_pos_z,
-        batch_idx_sorted=batch_idx_sorted,
-        batch_ptr_padded=batch_ptr_padded,
-        group_system=group_system,
-        group_ptr=group_ptr,
-        group_ctr_x=group_ctr_x,
-        group_ctr_y=group_ctr_y,
-        group_ctr_z=group_ctr_z,
-        group_ext_x=group_ext_x,
-        group_ext_y=group_ext_y,
-        group_ext_z=group_ext_z,
-        num_tiles=num_tiles,
-        tile_row_group=tile_row_group,
-        tile_col_group=tile_col_group,
-        tile_system=tile_system,
-    )
-
-    if inv_cell_batch is None:
-        inv_cell_batch = torch.linalg.inv(cell_batch).contiguous()
-
     if partition_metadata is None:
+        N = positions.shape[0]
+        if torch.compiler.is_compiling():
+            torch._assert_async(
+                batch_ptr[-1] == N,
+                "batch_ptr[-1] must equal positions.shape[0]",
+            )
+        elif int(batch_ptr[-1].item()) != N:
+            raise ValueError(f"batch_ptr[-1] ({int(batch_ptr[-1])}) != N ({N})")
+        _validate_batch_cluster_tile_scratch(
+            positions=positions,
+            batch_ptr=batch_ptr,
+            sorted_atom_index=sorted_atom_index,
+            sort_inv=sort_inv,
+            sorted_pos_x=sorted_pos_x,
+            sorted_pos_y=sorted_pos_y,
+            sorted_pos_z=sorted_pos_z,
+            batch_idx_sorted=batch_idx_sorted,
+            batch_ptr_padded=batch_ptr_padded,
+            group_system=group_system,
+            group_ptr=group_ptr,
+            group_ctr_x=group_ctr_x,
+            group_ctr_y=group_ctr_y,
+            group_ctr_z=group_ctr_z,
+            group_ext_x=group_ext_x,
+            group_ext_y=group_ext_y,
+            group_ext_z=group_ext_z,
+            num_tiles=num_tiles,
+            tile_row_group=tile_row_group,
+            tile_col_group=tile_col_group,
+            tile_system=tile_system,
+        )
         partition_metadata = _prepare_batch_partition_metadata(
             batch_ptr,
-            num_atoms=N,
+            num_atoms=positions.shape[0],
             padded_slot_system=batch_idx_sorted,
             batch_ptr_padded=batch_ptr_padded,
             group_system=group_system,
@@ -1258,6 +1253,9 @@ def _batch_build_cluster_tile_list_normalized(
         or partition_metadata.group_ptr is not group_ptr
     ):
         raise ValueError("prepared partition metadata must belong to batch scratch")
+
+    if inv_cell_batch is None:
+        inv_cell_batch = torch.linalg.inv(cell_batch).contiguous()
 
     use_segmented = (tile_offsets is not None) or (tile_counts is not None)
     if (tile_offsets is None) != (tile_counts is None):
@@ -3036,8 +3034,12 @@ def _batch_cluster_tile_neighbor_list_impl(
         raise ValueError("Pass both 'pair_offsets' and 'pair_counts', or neither.")
     if (tile_offsets is None) != (tile_counts is None):
         raise ValueError("Pass both 'tile_offsets' and 'tile_counts', or neither.")
-    if batch_ptr.shape[0] < 2:
-        raise ValueError("batch_ptr must have length at least 2")
+    has_cached_partition_metadata = partition_metadata is not None
+    if not has_cached_partition_metadata:
+        if batch_ptr.dtype != torch.int32 or batch_ptr.ndim != 1:
+            raise ValueError("batch_ptr must be 1D int32")
+        if batch_ptr.shape[0] < 2:
+            raise ValueError("batch_ptr must have length at least 2")
     device = positions.device
     N = positions.shape[0]
     num_systems = int(batch_ptr.shape[0]) - 1
@@ -3051,13 +3053,14 @@ def _batch_cluster_tile_neighbor_list_impl(
         raise NotImplementedError(
             "torch.compile(fullgraph=True) cluster-tile pair_fn is not supported"
         )
-    if is_compiling:
-        torch._assert_async(
-            batch_ptr[-1] == N,
-            "batch_ptr[-1] must equal positions.shape[0]",
-        )
-    elif int(batch_ptr[-1].item()) != N:
-        raise ValueError(f"batch_ptr[-1] ({int(batch_ptr[-1])}) != N ({N})")
+    if not has_cached_partition_metadata:
+        if is_compiling:
+            torch._assert_async(
+                batch_ptr[-1] == N,
+                "batch_ptr[-1] must equal positions.shape[0]",
+            )
+        elif int(batch_ptr[-1].item()) != N:
+            raise ValueError(f"batch_ptr[-1] ({int(batch_ptr[-1])}) != N ({N})")
 
     scratch_values = (
         sorted_atom_index,
@@ -3382,6 +3385,39 @@ def _batch_cluster_tile_neighbor_list_impl(
             tile_row_group=tile_row_group,
             tile_col_group=tile_col_group,
             tile_system=tile_system,
+        )
+
+    if partition_metadata is None:
+        _validate_batch_cluster_tile_scratch(
+            positions=positions,
+            batch_ptr=batch_ptr,
+            sorted_atom_index=sorted_atom_index,
+            sort_inv=sort_inv,
+            sorted_pos_x=sorted_pos_x,
+            sorted_pos_y=sorted_pos_y,
+            sorted_pos_z=sorted_pos_z,
+            batch_idx_sorted=batch_idx_sorted,
+            batch_ptr_padded=batch_ptr_padded,
+            group_system=group_system,
+            group_ptr=group_ptr,
+            group_ctr_x=group_ctr_x,
+            group_ctr_y=group_ctr_y,
+            group_ctr_z=group_ctr_z,
+            group_ext_x=group_ext_x,
+            group_ext_y=group_ext_y,
+            group_ext_z=group_ext_z,
+            num_tiles=num_tiles,
+            tile_row_group=tile_row_group,
+            tile_col_group=tile_col_group,
+            tile_system=tile_system,
+        )
+        partition_metadata = _prepare_batch_partition_metadata(
+            batch_ptr,
+            num_atoms=N,
+            padded_slot_system=batch_idx_sorted,
+            batch_ptr_padded=batch_ptr_padded,
+            group_system=group_system,
+            group_ptr=group_ptr,
         )
 
     _batch_build_cluster_tile_list_normalized(
