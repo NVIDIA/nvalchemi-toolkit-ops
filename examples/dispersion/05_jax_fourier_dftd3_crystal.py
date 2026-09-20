@@ -204,11 +204,13 @@ print(f"virial trace : {float(jnp.trace(virial[0])):.6e} Hartree")
 # Everything that changes the shape of the work --- the damping constants, ``cutoff``, the
 # mesh and the spline order --- has to be static.
 #
-# The wrapper below closes over the cell and the parameters as well, so it is reusable for a
-# **fixed-cell** trajectory whose input shapes stay the same: positions and numbers are
-# traced arguments, and the neighbour list may change content but not length without
-# retracing. Under variable-cell dynamics the closed-over cell would go stale silently, so
-# pass ``cell`` as an argument there instead --- it is a traced array like any other.
+# The cell is passed as an argument below rather than captured, so the same compiled function
+# serves variable-cell dynamics as well as fixed-cell: positions, numbers, the cell and the
+# neighbour arrays are all traced. Anything left in the closure --- here the decomposed
+# parameters --- is frozen at trace time, so rebuild the wrapper if you change it.
+#
+# Retracing is driven by shapes, not values, so a trajectory reuses one compiled function as
+# long as the neighbour list keeps its length; its contents may change freely.
 
 jitted = jax.jit(
     lambda pos, num, box, nl, ptr, sh: fourier_dftd3(
@@ -242,9 +244,9 @@ print(f"force agreement : {float(jnp.abs(compiled_forces - forces).max()):.2e}")
 #   species set, on the host, independently of the functional.
 # - ``fourier_dftd3`` is periodic only, needs a coordination-number list whose cutoff equals
 #   ``cutoff``, and takes exactly one of ``mesh_dimensions`` or ``mesh_spacing``.
-# - Under ``jax.jit`` the shape-determining arguments must be static. Anything left in the
-#   closure is frozen at trace time, so pass ``cell`` as an argument if it changes; one
-#   compiled step then serves a trajectory whose input shapes are stable.
+# - Under ``jax.jit`` the shape-determining arguments must be static; arrays, including the
+#   cell, stay traced. One compiled function then serves a trajectory --- fixed-cell or
+#   variable-cell --- as long as the input shapes hold.
 # - Forces and the virial are returned explicitly, not obtained by differentiation.
 #
 # For open boundary conditions, or for small systems where the truncation error does not
