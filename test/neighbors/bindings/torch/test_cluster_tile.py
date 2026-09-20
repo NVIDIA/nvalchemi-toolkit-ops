@@ -869,6 +869,123 @@ class TestTileNeighborListErrors:
                 neighbor_matrix2=torch.empty((2, 4), dtype=torch.int32),
             )
 
+    @pytest.mark.parametrize(
+        ("buffer_name", "invalid_kind"),
+        [
+            ("neighbor_list", "dtype"),
+            ("neighbor_list", "device"),
+            ("neighbor_list", "shape"),
+            ("neighbor_list", "capacity"),
+            ("neighbor_list_shifts", "dtype"),
+            ("neighbor_list_shifts", "device"),
+            ("neighbor_list_shifts", "shape"),
+            ("neighbor_list_shifts", "capacity"),
+            ("pair_counter", "dtype"),
+            ("pair_counter", "device"),
+            ("pair_counter", "shape"),
+        ],
+    )
+    def test_compact_coo_rejects_invalid_outputs_before_mutation(
+        self,
+        device,
+        buffer_name,
+        invalid_kind,
+    ):
+        """Malformed compact COO storage fails before any supplied mutation."""
+        capacity = 16
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [4.0, 0.0, 0.0]],
+            dtype=torch.float32,
+            device=device,
+        )
+        cell = _orthorhombic_cell(20.0, device)
+        scratch_names = (
+            "sorted_atom_index",
+            "morton_codes",
+            "sorted_pos_x",
+            "sorted_pos_y",
+            "sorted_pos_z",
+            "group_ctr_x",
+            "group_ctr_y",
+            "group_ctr_z",
+            "group_ext_x",
+            "group_ext_y",
+            "group_ext_z",
+            "num_tiles",
+            "tile_row_group",
+            "tile_col_group",
+        )
+        scratch = dict(
+            zip(
+                scratch_names,
+                allocate_cluster_tile_list(
+                    positions.shape[0],
+                    torch.device(device),
+                    dtype=positions.dtype,
+                    max_tiles_per_group=1,
+                ),
+            )
+        )
+        outputs = {
+            "neighbor_list": torch.full(
+                (2, capacity), -31, dtype=torch.int32, device=device
+            ),
+            "neighbor_list_shifts": torch.full(
+                (capacity, 3), -32, dtype=torch.int32, device=device
+            ),
+            "pair_counter": torch.full((1,), -33, dtype=torch.int32, device=device),
+        }
+        shapes = {
+            "neighbor_list": (2, capacity),
+            "neighbor_list_shifts": (capacity, 3),
+            "pair_counter": (1,),
+        }
+        invalid_shape = {
+            "neighbor_list": (capacity, 2),
+            "neighbor_list_shifts": (capacity, 2),
+            "pair_counter": (2,),
+        }
+        if invalid_kind == "dtype":
+            outputs[buffer_name] = torch.full(
+                shapes[buffer_name], -1.0, dtype=torch.float32, device=device
+            )
+        elif invalid_kind == "device":
+            outputs[buffer_name] = torch.full(
+                shapes[buffer_name], -1, dtype=torch.int32, device="cpu"
+            )
+        elif invalid_kind == "shape":
+            outputs[buffer_name] = torch.full(
+                invalid_shape[buffer_name], -1, dtype=torch.int32, device=device
+            )
+        else:
+            short_shape = (
+                (2, capacity - 1)
+                if buffer_name == "neighbor_list"
+                else (capacity - 1, 3)
+            )
+            outputs[buffer_name] = torch.full(
+                short_shape, -1, dtype=torch.int32, device=device
+            )
+        supplied = {**scratch, **outputs}
+        for index, tensor in enumerate(scratch.values(), start=1):
+            tensor.fill_(index)
+        before = {name: tensor.clone() for name, tensor in supplied.items()}
+
+        with pytest.raises(ValueError, match=buffer_name):
+            cluster_tile_neighbor_list(
+                positions,
+                1.0,
+                cell,
+                format="coo",
+                max_neighbors=8,
+                max_pairs=capacity,
+                max_tiles_per_group=1,
+                **supplied,
+            )
+        assert all(
+            torch.equal(before[name], tensor) for name, tensor in supplied.items()
+        )
+
     def test_wrong_dtype(self, device):
         positions = torch.rand(32, 3, dtype=torch.float64, device=device) * 10.0
         cell = _orthorhombic_cell(10.0, device)

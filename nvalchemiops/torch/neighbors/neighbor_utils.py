@@ -204,6 +204,47 @@ def _prepare_compact_coo_geometry_buffers(
     return neighbor_vectors, neighbor_distances
 
 
+def _validate_compact_coo_outputs(
+    *,
+    device: torch.device,
+    capacity: int,
+    neighbor_list: torch.Tensor | None,
+    neighbor_list_shifts: torch.Tensor | None,
+    pair_counter: torch.Tensor | None,
+) -> None:
+    """Validate caller-owned compact-COO outputs before mutation."""
+    if neighbor_list is not None and (
+        neighbor_list.device != device
+        or neighbor_list.dtype != torch.int32
+        or neighbor_list.ndim != 2
+        or neighbor_list.shape[0] != 2
+        or neighbor_list.shape[1] < capacity
+    ):
+        raise ValueError(
+            "neighbor_list must have shape (2, capacity), dtype int32, "
+            "match positions.device, and have capacity at least max_pairs"
+        )
+    if neighbor_list_shifts is not None and (
+        neighbor_list_shifts.device != device
+        or neighbor_list_shifts.dtype != torch.int32
+        or neighbor_list_shifts.ndim != 2
+        or neighbor_list_shifts.shape[1] != 3
+        or neighbor_list_shifts.shape[0] < capacity
+    ):
+        raise ValueError(
+            "neighbor_list_shifts must have shape (capacity, 3), dtype int32, "
+            "match positions.device, and have capacity at least max_pairs"
+        )
+    if pair_counter is not None and (
+        pair_counter.device != device
+        or pair_counter.dtype != torch.int32
+        or pair_counter.shape != (1,)
+    ):
+        raise ValueError(
+            "pair_counter must have shape (1,), dtype int32, and match positions.device"
+        )
+
+
 @torch.library.custom_op("nvalchemiops::_compact_coo_prefix", mutates_args=())
 def _compact_coo_prefix(
     pair_count: torch.Tensor,

@@ -73,6 +73,7 @@ from nvalchemiops.torch.neighbors.neighbor_utils import (
     _normalize_compiled_single_segment_coo_count,
     _prepare_compact_coo_geometry_buffers,
     _validate_cluster_tile_matrix_outputs,
+    _validate_compact_coo_outputs,
     _validate_segmented_coo_state,
 )
 from nvalchemiops.torch.types import get_wp_dtype
@@ -2525,7 +2526,9 @@ def cluster_tile_neighbor_list(
         the trio; supply all three or none.
     neighbor_list, neighbor_list_shifts, pair_counter : optional
         Pre-allocated compact COO outputs with shapes ``(2, max_pairs)``,
-        ``(max_pairs, 3)``, ``(1,)`` int32.
+        ``(max_pairs, 3)``, and ``(1,)``, dtype int32 and on the same device
+        as ``positions``. Each buffer may be supplied independently; omitted
+        buffers are allocated.
     pair_offsets, pair_counts : optional
         Fixed selective-COO segment metadata with shapes ``(2,)`` and
         ``(1,)`` int32. Requires ``rebuild_flags``, caller-owned
@@ -2877,18 +2880,28 @@ def cluster_tile_neighbor_list(
     )
     snapshot_vectors = neighbor_vectors is not None
     snapshot_distances = neighbor_distances is not None
-    if format == "coo" and not selective and geometry_requested:
+    if format == "coo" and not selective:
         if max_pairs is None:
             max_pairs = N * max_neighbors
-        neighbor_vectors, neighbor_distances = _prepare_compact_coo_geometry_buffers(
+        _validate_compact_coo_outputs(
             device=device,
-            dtype=positions.dtype,
             capacity=int(max_pairs),
-            return_vectors=bool(return_vectors),
-            return_distances=bool(return_distances),
-            neighbor_vectors=neighbor_vectors,
-            neighbor_distances=neighbor_distances,
+            neighbor_list=neighbor_list,
+            neighbor_list_shifts=neighbor_list_shifts,
+            pair_counter=pair_counter,
         )
+        if geometry_requested:
+            neighbor_vectors, neighbor_distances = (
+                _prepare_compact_coo_geometry_buffers(
+                    device=device,
+                    dtype=positions.dtype,
+                    capacity=int(max_pairs),
+                    return_vectors=bool(return_vectors),
+                    return_distances=bool(return_distances),
+                    neighbor_vectors=neighbor_vectors,
+                    neighbor_distances=neighbor_distances,
+                )
+            )
 
     # Candidate tiles must cover both radii. The query then filters each matrix
     # with its own cutoff.
@@ -3018,18 +3031,6 @@ def cluster_tile_neighbor_list(
                     raise RuntimeError(
                         "torch.compile(fullgraph=True) exact cluster-tile COO requires PyTorch 2.10 or newer"
                     )
-            if coo_buf.ndim != 2 or coo_buf.shape[1] != 2:
-                raise ValueError("neighbor_list must have shape (2, capacity)")
-            if coo_buf.shape[0] < int(max_pairs):
-                raise ValueError("neighbor_list capacity must be at least max_pairs")
-            if (
-                neighbor_list_shifts.ndim != 2
-                or neighbor_list_shifts.shape[1] != 3
-                or neighbor_list_shifts.shape[0] < int(max_pairs)
-            ):
-                raise ValueError(
-                    "neighbor_list_shifts capacity must be at least max_pairs"
-                )
             copy_vectors = bool(
                 geometry_requested and return_vectors and not requires_reconstruction
             )

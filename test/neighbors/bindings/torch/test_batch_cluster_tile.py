@@ -261,6 +261,112 @@ class TestBatchClusterTileValidation:
                 neighbor_matrix2=torch.empty((2, 4), dtype=torch.int32),
             )
 
+    @pytest.mark.parametrize(
+        ("buffer_name", "invalid_kind"),
+        [
+            ("neighbor_list", "dtype"),
+            ("neighbor_list", "device"),
+            ("neighbor_list", "shape"),
+            ("neighbor_list", "capacity"),
+            ("neighbor_list_shifts", "dtype"),
+            ("neighbor_list_shifts", "device"),
+            ("neighbor_list_shifts", "shape"),
+            ("neighbor_list_shifts", "capacity"),
+            ("pair_counter", "dtype"),
+            ("pair_counter", "device"),
+            ("pair_counter", "shape"),
+        ],
+    )
+    def test_compact_coo_rejects_invalid_outputs_before_mutation(
+        self,
+        device,
+        buffer_name,
+        invalid_kind,
+    ):
+        """Malformed batched compact COO storage fails before mutation."""
+        capacity = 32
+        batch_ptr = torch.tensor([0, 2, 5], dtype=torch.int32, device=device)
+        positions = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.4, 0.0, 0.0],
+                [4.0, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+            device=device,
+        )
+        cell_batch = torch.eye(3, device=device).repeat(2, 1, 1) * 20.0
+        scratch = _scratch_kwargs(
+            allocate_batch_cluster_tile_list(
+                batch_ptr,
+                torch.device(device),
+                dtype=positions.dtype,
+                max_tiles_per_group=1,
+            )
+        )
+        outputs = {
+            "neighbor_list": torch.full(
+                (2, capacity), -31, dtype=torch.int32, device=device
+            ),
+            "neighbor_list_shifts": torch.full(
+                (capacity, 3), -32, dtype=torch.int32, device=device
+            ),
+            "pair_counter": torch.full((1,), -33, dtype=torch.int32, device=device),
+        }
+        shapes = {
+            "neighbor_list": (2, capacity),
+            "neighbor_list_shifts": (capacity, 3),
+            "pair_counter": (1,),
+        }
+        invalid_shape = {
+            "neighbor_list": (capacity, 2),
+            "neighbor_list_shifts": (capacity, 2),
+            "pair_counter": (2,),
+        }
+        if invalid_kind == "dtype":
+            outputs[buffer_name] = torch.full(
+                shapes[buffer_name], -1.0, dtype=torch.float32, device=device
+            )
+        elif invalid_kind == "device":
+            outputs[buffer_name] = torch.full(
+                shapes[buffer_name], -1, dtype=torch.int32, device="cpu"
+            )
+        elif invalid_kind == "shape":
+            outputs[buffer_name] = torch.full(
+                invalid_shape[buffer_name], -1, dtype=torch.int32, device=device
+            )
+        else:
+            short_shape = (
+                (2, capacity - 1)
+                if buffer_name == "neighbor_list"
+                else (capacity - 1, 3)
+            )
+            outputs[buffer_name] = torch.full(
+                short_shape, -1, dtype=torch.int32, device=device
+            )
+        supplied = {**scratch, **outputs}
+        for index, tensor in enumerate(scratch.values(), start=1):
+            tensor.fill_(index)
+        before = {name: tensor.clone() for name, tensor in supplied.items()}
+
+        with pytest.raises(ValueError, match=buffer_name):
+            batch_cluster_tile_neighbor_list(
+                positions,
+                1.0,
+                cell_batch,
+                batch_ptr,
+                format="coo",
+                max_neighbors=8,
+                max_pairs=capacity,
+                max_tiles_per_group=1,
+                **supplied,
+            )
+        assert all(
+            torch.equal(before[name], tensor) for name, tensor in supplied.items()
+        )
+
     def test_selective_coo_bootstrap_rejects_partial_state(self):
         """All-true COO bootstrap does not mix caller and allocated state."""
         positions, cell_batch, batch_ptr = _make_batch([32], [8.0], device="cpu")

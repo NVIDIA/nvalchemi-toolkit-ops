@@ -76,6 +76,7 @@ from nvalchemiops.torch.neighbors.neighbor_utils import (
     _compact_coo_prefix,
     _prepare_compact_coo_geometry_buffers,
     _validate_cluster_tile_matrix_outputs,
+    _validate_compact_coo_outputs,
     _validate_segmented_coo_state,
 )
 from nvalchemiops.torch.types import get_wp_dtype
@@ -2745,9 +2746,11 @@ def batch_cluster_tile_neighbor_list(
         Pre-allocated per-atom neighbor counts for the secondary cutoff.
     neighbor_list, neighbor_list_shifts, pair_counter : torch.Tensor, optional
         Pre-allocated COO-format outputs. Shapes ``(2, max_pairs)``,
-        ``(max_pairs, 3)``, ``(1,)`` int32. All-or-nothing: provide all three
-        or none. Selective calls that preserve an unflagged system require
-        complete caller-owned segmented topology state.
+        ``(max_pairs, 3)``, and ``(1,)``, dtype int32 and on the same device
+        as ``positions``. Compact COO buffers may be supplied independently;
+        omitted buffers are allocated. Selective calls that preserve an
+        unflagged system require complete caller-owned segmented topology
+        state.
     inv_cell_batch : torch.Tensor, optional
         Pre-computed inverse cell matrices.
     sorted_atom_index, sort_inv, sorted_pos_x, sorted_pos_y, sorted_pos_z, batch_idx_sorted, batch_ptr_padded, group_system, group_ptr : torch.Tensor, optional
@@ -3175,18 +3178,28 @@ def batch_cluster_tile_neighbor_list(
     )
     snapshot_vectors = neighbor_vectors is not None
     snapshot_distances = neighbor_distances is not None
-    if format == "coo" and pair_offsets is None and geometry_requested:
+    if format == "coo" and pair_offsets is None:
         if max_pairs is None:
             max_pairs = N * max_neighbors
-        neighbor_vectors, neighbor_distances = _prepare_compact_coo_geometry_buffers(
+        _validate_compact_coo_outputs(
             device=device,
-            dtype=positions.dtype,
             capacity=int(max_pairs),
-            return_vectors=bool(return_vectors),
-            return_distances=bool(return_distances),
-            neighbor_vectors=neighbor_vectors,
-            neighbor_distances=neighbor_distances,
+            neighbor_list=neighbor_list,
+            neighbor_list_shifts=neighbor_list_shifts,
+            pair_counter=pair_counter,
         )
+        if geometry_requested:
+            neighbor_vectors, neighbor_distances = (
+                _prepare_compact_coo_geometry_buffers(
+                    device=device,
+                    dtype=positions.dtype,
+                    capacity=int(max_pairs),
+                    return_vectors=bool(return_vectors),
+                    return_distances=bool(return_distances),
+                    neighbor_vectors=neighbor_vectors,
+                    neighbor_distances=neighbor_distances,
+                )
+            )
 
     if sorted_atom_index is None:
         previous_tile_state = (
@@ -3356,18 +3369,6 @@ def batch_cluster_tile_neighbor_list(
                     raise RuntimeError(
                         "torch.compile(fullgraph=True) exact cluster-tile COO requires PyTorch 2.10 or newer"
                     )
-            if coo_buf.ndim != 2 or coo_buf.shape[1] != 2:
-                raise ValueError("neighbor_list must have shape (2, capacity)")
-            if coo_buf.shape[0] < int(max_pairs):
-                raise ValueError("neighbor_list capacity must be at least max_pairs")
-            if (
-                neighbor_list_shifts.ndim != 2
-                or neighbor_list_shifts.shape[1] != 3
-                or neighbor_list_shifts.shape[0] < int(max_pairs)
-            ):
-                raise ValueError(
-                    "neighbor_list_shifts capacity must be at least max_pairs"
-                )
             copy_vectors = bool(
                 geometry_requested and return_vectors and not requires_reconstruction
             )
