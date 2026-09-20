@@ -2387,6 +2387,7 @@ class TestBatchClusterTileCompile:
             ],
             dtype=dtype,
             device=device,
+            requires_grad=True,
         )
         empty = torch.tensor(
             [
@@ -2398,6 +2399,7 @@ class TestBatchClusterTileCompile:
             ],
             dtype=dtype,
             device=device,
+            requires_grad=True,
         )
         cell_batch = torch.stack(
             (
@@ -2457,10 +2459,12 @@ class TestBatchClusterTileCompile:
                     distances = geometry[geometry_index]
                     geometry_index += 1
                     assert distances.shape == (pairs.shape[1],)
+                    assert distances.requires_grad
                     torch.testing.assert_close(distances, expected_vectors.norm(dim=-1))
                 if return_vectors:
                     vectors = geometry[geometry_index]
                     assert vectors.shape == (pairs.shape[1], 3)
+                    assert vectors.requires_grad
                     torch.testing.assert_close(vectors, expected_vectors)
 
     @pytest.mark.slow

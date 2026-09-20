@@ -2795,7 +2795,7 @@ def batch_cluster_tile_neighbor_list(
         / ``pair_fn`` is active. Geometry buffers must not require gradients.
         When geometry is reconstructed for autograd, supplied buffers receive
         detached value snapshots while the returned geometry uses separate
-        differentiable tensors. Omitted matrix buffers are not allocated.
+        differentiable tensors. Omitted geometry buffers are not allocated.
     max_tiles_per_group : int, optional
         Capacity factor for an internally allocated intermediate tile-pair
         buffer. A system with ``g_i`` row groups contributes
@@ -3198,6 +3198,7 @@ def batch_cluster_tile_neighbor_list(
                     return_distances=bool(return_distances),
                     neighbor_vectors=neighbor_vectors,
                     neighbor_distances=neighbor_distances,
+                    allocate_missing=not requires_reconstruction,
                 )
             )
 
@@ -3420,7 +3421,7 @@ def batch_cluster_tile_neighbor_list(
                 )
             )
             total = neighbor_ptr[-1:]
-            _check_neighbor_capacity(
+            resolved_count = _check_neighbor_capacity(
                 total,
                 int(max_pairs),
                 kind="coo",
@@ -3490,6 +3491,7 @@ def batch_cluster_tile_neighbor_list(
                 prefix_vectors,
                 prefix_distances,
                 int(max_pairs),
+                -1 if is_compiling else resolved_count,
                 copy_vectors,
                 copy_distances,
             )
@@ -3503,11 +3505,11 @@ def batch_cluster_tile_neighbor_list(
                     exact_distances, exact_vectors = _reconstruct_coo_geometry(
                         positions, cell_batch, nl, nls, batch_idx_atom
                     )
-                    if return_vectors:
+                    if return_vectors and snapshot_vectors:
                         neighbor_vectors[: exact_vectors.shape[0]].copy_(
                             exact_vectors.detach()
                         )
-                    if return_distances:
+                    if return_distances and snapshot_distances:
                         neighbor_distances[: exact_distances.shape[0]].copy_(
                             exact_distances.detach()
                         )

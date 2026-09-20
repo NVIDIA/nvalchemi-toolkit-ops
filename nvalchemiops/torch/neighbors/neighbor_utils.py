@@ -156,11 +156,15 @@ def _prepare_compact_coo_geometry_buffers(
     return_distances: bool,
     neighbor_vectors: torch.Tensor | None,
     neighbor_distances: torch.Tensor | None,
+    allocate_missing: bool,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Allocate or validate reusable compact-COO geometry buffers."""
+    """Allocate or validate compact-COO geometry buffers and sentinels."""
     if return_vectors:
         if neighbor_vectors is None:
-            neighbor_vectors = torch.empty((capacity, 3), dtype=dtype, device=device)
+            vector_capacity = capacity if allocate_missing else 1
+            neighbor_vectors = torch.empty(
+                (vector_capacity, 3), dtype=dtype, device=device
+            )
         elif (
             neighbor_vectors.device != device
             or neighbor_vectors.dtype != dtype
@@ -182,7 +186,10 @@ def _prepare_compact_coo_geometry_buffers(
 
     if return_distances:
         if neighbor_distances is None:
-            neighbor_distances = torch.empty(capacity, dtype=dtype, device=device)
+            distance_capacity = capacity if allocate_missing else 1
+            neighbor_distances = torch.empty(
+                distance_capacity, dtype=dtype, device=device
+            )
         elif (
             neighbor_distances.device != device
             or neighbor_distances.dtype != dtype
@@ -253,11 +260,16 @@ def _compact_coo_prefix(
     neighbor_vectors: torch.Tensor,
     neighbor_distances: torch.Tensor,
     capacity: int,
+    resolved_count: int,
     copy_vectors: bool,
     copy_distances: bool,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Copy the active compact-COO prefix into exact, non-aliasing outputs."""
-    num_pairs = int(pair_count.reshape(-1)[0].item())
+    num_pairs = (
+        int(resolved_count)
+        if resolved_count >= 0
+        else int(pair_count.reshape(-1)[0].item())
+    )
     copy_length = max(0, min(num_pairs, int(capacity)))
     storage_length = max(copy_length, 1)
 
@@ -291,11 +303,15 @@ def _(
     neighbor_vectors: torch.Tensor,
     neighbor_distances: torch.Tensor,
     capacity: int,
+    resolved_count: int,
     copy_vectors: bool,
     copy_distances: bool,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    ctx = torch.library.get_ctx()
-    num_pairs = ctx.new_dynamic_size(min=0, max=int(capacity))
+    if resolved_count >= 0:
+        num_pairs = min(int(resolved_count), int(capacity))
+    else:
+        ctx = torch.library.get_ctx()
+        num_pairs = ctx.new_dynamic_size(min=0, max=int(capacity))
     pairs = coo_list.new_empty((2, num_pairs))
     shifts = coo_shifts.new_empty((num_pairs, 3))
     vectors = (
