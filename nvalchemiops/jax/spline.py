@@ -265,15 +265,6 @@ class _LazySplinePerOrderJaxKernels:
         return jax_dtype in self._JAX_TO_WP
 
 
-def _normalize_dtype(dtype):
-    """Resolve a floating dtype to the kernel-dispatch key.
-
-    Thin alias for :func:`nvalchemiops.jax.types.normalize_float_dtype`, shared by the
-    JAX bindings; only the error wording differs here.
-    """
-    return normalize_float_dtype(dtype, "spline operations")
-
-
 # ==============================================================================
 # JAX Kernel Wrappers (dtype-dispatched jax_kernel around Warp overloads)
 # ==============================================================================
@@ -394,7 +385,7 @@ def bspline_weight(u: jax.Array, order: int) -> jax.Array:
     >>> weights = bspline_weight(u, order=4)
     """
     num_points = u.shape[0]
-    working_dtype = _normalize_dtype(u.dtype)
+    working_dtype = normalize_float_dtype(u.dtype, "spline operations")
 
     # Allocate output
     weights = jnp.zeros_like(u)
@@ -478,7 +469,7 @@ def spline_spread(
     num_atoms = positions.shape[0]
     num_points = spline_order**3
     mesh_nx, mesh_ny, mesh_nz = mesh_dims
-    working_dtype = _normalize_dtype(positions.dtype)
+    working_dtype = normalize_float_dtype(positions.dtype, "spline operations")
 
     # Cast inputs to working dtype
     values_work = values.astype(working_dtype)
@@ -600,7 +591,7 @@ def spline_gather(
     """
     num_atoms = positions.shape[0]
     num_points = spline_order**3
-    working_dtype = _normalize_dtype(positions.dtype)
+    working_dtype = normalize_float_dtype(positions.dtype, "spline operations")
 
     # Cast inputs to working dtype
     mesh_work = mesh.astype(working_dtype)
@@ -698,7 +689,7 @@ def spline_gather_vec3(
     """
     num_atoms = positions.shape[0]
     num_points = spline_order**3
-    working_dtype = _normalize_dtype(positions.dtype)
+    working_dtype = normalize_float_dtype(positions.dtype, "spline operations")
 
     # Cast inputs to working dtype
     charges_work = charges.astype(working_dtype)
@@ -801,7 +792,7 @@ def spline_gather_gradient(
     """
     num_atoms = positions.shape[0]
     num_points = spline_order**3
-    working_dtype = _normalize_dtype(positions.dtype)
+    working_dtype = normalize_float_dtype(positions.dtype, "spline operations")
 
     # Cast inputs to working dtype
     charges_work = charges.astype(working_dtype)
@@ -862,7 +853,7 @@ def _spline_spread_gradient_weights(
     """Spread per-atom vector weights with B-spline gradient weights."""
     num_atoms = positions.shape[0]
     num_points = spline_order**3
-    working_dtype = _normalize_dtype(positions.dtype)
+    working_dtype = normalize_float_dtype(positions.dtype, "spline operations")
 
     vec_work = per_atom_vec.astype(working_dtype)
     cell_work = cell.astype(working_dtype)
@@ -916,7 +907,7 @@ def _spline_gather_gradient_position_hessian(
     """Apply the position-Hessian of ``spline_gather_gradient``."""
     num_atoms = positions.shape[0]
     num_points = spline_order**3
-    working_dtype = _normalize_dtype(positions.dtype)
+    working_dtype = normalize_float_dtype(positions.dtype, "spline operations")
 
     charges_work = charges.astype(working_dtype)
     v_work = v_per_atom.astype(working_dtype)
@@ -1013,7 +1004,7 @@ def _spline_gather_with_force(
         Cartesian force per atom (already including the -q factor).
     """
     num_atoms = positions.shape[0]
-    working_dtype = _normalize_dtype(positions.dtype)
+    working_dtype = normalize_float_dtype(positions.dtype, "spline operations")
 
     charges_work = charges.astype(working_dtype)
     mesh_work = mesh.astype(working_dtype)
@@ -1150,7 +1141,7 @@ def spline_spread_channels(
     num_channels = values.shape[1]
     num_points = spline_order**3
     mesh_nx, mesh_ny, mesh_nz = mesh_dims
-    working_dtype = _normalize_dtype(positions.dtype)
+    working_dtype = normalize_float_dtype(positions.dtype, "spline operations")
 
     # Cast inputs to working dtype
     values_work = values.astype(working_dtype)
@@ -1248,7 +1239,7 @@ def spline_gather_channels(
     """
     num_atoms = positions.shape[0]
     num_points = spline_order**3
-    working_dtype = _normalize_dtype(positions.dtype)
+    working_dtype = normalize_float_dtype(positions.dtype, "spline operations")
 
     # Cast inputs to working dtype
     mesh_work = mesh.astype(working_dtype)

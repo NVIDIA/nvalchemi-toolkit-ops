@@ -68,7 +68,6 @@ from nvalchemiops.jax.interactions.electrostatics._utils import (
     _component_direct_output_deprecation_msg,
     _direct_output_deprecation_msg,
     _distribute_system_values,
-    _normalize_dtype,
     _prepare_cell,
     _system_sum_from_atoms,
     _validate_energy_reduction,
@@ -87,6 +86,7 @@ from nvalchemiops.jax.interactions.electrostatics.slab import (
 from nvalchemiops.jax.interactions.electrostatics.slab import (
     compute_slab_correction as _compute_slab_correction,
 )
+from nvalchemiops.jax.types import normalize_float_dtype
 
 __all__ = [
     "ewald_real_space",
@@ -790,7 +790,7 @@ def _ewald_real_space_impl(
         )
 
     # Store input dtype for kernel dispatch and outputs
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
 
     # Cast inputs to consistent dtype
     positions_cast = positions.astype(dtype)
@@ -1064,7 +1064,7 @@ def _ewald_reciprocal_space_impl(
         Virial tensor (if compute_virial=True). Always last in the return tuple.
     """
     # Store input dtype for kernel dispatch and outputs
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
 
     # Cast inputs to consistent dtype
     positions_cast = positions.astype(dtype)
@@ -1701,7 +1701,7 @@ def _real_space_energy_reference(
     use_matrix: bool,
 ) -> jax.Array:
     """Pure JAX real-space per-atom energies for transposed weighted losses."""
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     positions = positions.astype(dtype)
     charges = charges.astype(jnp.float64)
     cell_3d = cell.astype(dtype)
@@ -1765,7 +1765,7 @@ def _reciprocal_space_energy_reference(
     batch_idx: jax.Array | None,
 ) -> jax.Array:
     """Pure JAX reciprocal per-atom energies for transposed weighted losses."""
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     positions = positions.astype(dtype)
     charges = charges.astype(jnp.float64)
     cell_3d = cell.astype(dtype)
@@ -1965,7 +1965,7 @@ def _ewald_real_energy_derivatives_jvp_impl(
         use_matrix,
     )
 
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     positions_cast = positions.astype(dtype)
     charges_cast = charges.astype(dtype)
     cell_cast = cell.astype(dtype)
@@ -2095,7 +2095,7 @@ def _ewald_reciprocal_energy_derivatives_jvp(
         max_atoms_per_system,
     )
 
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     positions_cast = positions.astype(dtype)
     charges_cast = charges.astype(dtype)
     cell_cast = cell.astype(dtype)
@@ -3304,7 +3304,7 @@ def ewald_summation(
             batch_idx=batch_idx,
             accuracy=accuracy,
         )
-        dtype = _normalize_dtype(positions.dtype)
+        dtype = normalize_float_dtype(positions.dtype)
         alpha_arr = _prepare_alpha_array(alpha_resolved, cell_3d.shape[0], dtype=dtype)
         if mask_value is None:
             mask_value = positions.shape[0]
@@ -3375,7 +3375,7 @@ def ewald_summation(
         batch_idx=batch_idx,
         accuracy=accuracy,
     )
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     cell_3d = cell if cell.ndim == 3 else cell[jnp.newaxis, :, :]
     alpha_arr = _prepare_alpha_array(alpha_resolved, cell_3d.shape[0], dtype=dtype)
     if mask_value is None:

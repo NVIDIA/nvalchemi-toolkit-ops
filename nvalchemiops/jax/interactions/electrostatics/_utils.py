@@ -22,17 +22,6 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 
-from nvalchemiops.jax.types import normalize_float_dtype
-
-
-def _normalize_dtype(dtype):
-    """Resolve a floating dtype to the kernel-dispatch key.
-
-    Thin alias for :func:`nvalchemiops.jax.types.normalize_float_dtype`, shared by the
-    JAX bindings; only the error wording differs here.
-    """
-    return normalize_float_dtype(dtype, "input")
-
 
 def _prepare_cell(cell: jax.Array) -> tuple[jax.Array, int]:
     """Normalize a cell array to shape ``(B, 3, 3)``."""

@@ -47,10 +47,10 @@ from nvalchemiops.jax.interactions.electrostatics._lazy_jax_kernels import (
 from nvalchemiops.jax.interactions.electrostatics._utils import (
     _apply_energy_reduction,
     _build_electrostatic_result,
-    _normalize_dtype,
     _prepare_cell,
     _validate_energy_reduction,
 )
+from nvalchemiops.jax.types import normalize_float_dtype
 
 __all__ = ["compute_slab_correction"]
 
@@ -194,7 +194,7 @@ def _slab_correction_energy_reference(
     batch_idx: jax.Array | None = None,
 ) -> jax.Array:
     """Compute slab energies with JAX ops for reference checks."""
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     positions_cast = positions.astype(dtype)
     charges_cast = charges.astype(dtype)
     cell_cast, num_systems = _prepare_cell(cell.astype(dtype))
@@ -299,7 +299,7 @@ def _slab_correction_energy_kernel_value(
     batch_idx: jax.Array | None = None,
 ) -> jax.Array:
     """Compute slab energies with the shared Warp FFI kernel."""
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     positions_cast = positions.astype(dtype)
     charges_cast = charges.astype(dtype)
     cell_cast, num_systems = _prepare_cell(cell.astype(dtype))
@@ -361,7 +361,7 @@ def _slab_energy_derivative_values(
     batch_idx: jax.Array | None = None,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Compute literal slab ``(dE/dR, dE/dq, dE/dcell)`` with Warp FFI kernels."""
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     positions_cast = positions.astype(dtype)
     charges_cast = charges.astype(dtype)
     cell_cast, num_systems = _prepare_cell(cell.astype(dtype))
@@ -463,7 +463,7 @@ def _slab_energy_derivatives_jvp(
     t_positions, t_charges, t_cell, _t_pbc, _t_batch_idx = tangents
 
     primal_out = _slab_energy_derivatives(positions, charges, cell, pbc, batch_idx)
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     tpos = _tangent_or_zeros(t_positions, positions, dtype=dtype)
     tq = _tangent_or_zeros(t_charges, charges, dtype=charges.dtype)
     tcell = _tangent_or_zeros(t_cell, cell, dtype=cell.dtype)
@@ -496,7 +496,7 @@ def _slab_energy_hvp_raw(
     batch_idx: jax.Array | None,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Evaluate slab Hessian-vector products from analytic Warp kernels."""
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     positions_cast = positions.astype(dtype)
     charges_cast = charges.astype(dtype)
     cell_cast, num_systems = _prepare_cell(cell.astype(dtype))
@@ -687,7 +687,7 @@ def _slab_correction_energy_jvp_rule(
     t_positions, t_charges, t_cell, _t_pbc, _t_batch_idx = tangents
 
     primal_out = _slab_correction_energy_jvp(positions, charges, cell, pbc, batch_idx)
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     tpos = _tangent_or_zeros(t_positions, positions, dtype=dtype)
     tq = _tangent_or_zeros(t_charges, charges, dtype=charges.dtype)
     tcell = _tangent_or_zeros(t_cell, cell, dtype=cell.dtype)
@@ -731,7 +731,7 @@ def _compute_slab_correction_impl(
     Implementation for :func:`compute_slab_correction`. The public wrapper
     applies the ``energy_reduction`` layout after this function returns.
     """
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     positions_cast = positions.astype(dtype)
     charges_cast = charges.astype(dtype)
     cell_cast, num_systems = _prepare_cell(cell.astype(dtype))

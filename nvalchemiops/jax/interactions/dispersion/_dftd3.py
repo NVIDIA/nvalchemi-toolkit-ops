@@ -115,15 +115,6 @@ JAX_DFTD3_BLOCK_DIM = 256
 # ==============================================================================
 
 
-def _normalize_dtype(dtype):
-    """Resolve a floating dtype to the kernel-dispatch key.
-
-    Thin alias for :func:`nvalchemiops.jax.types.normalize_float_dtype`, which every
-    JAX binding shares; only the error wording differs here.
-    """
-    return normalize_float_dtype(dtype, "DFT-D3 positions")
-
-
 def _launch_kwargs_for_positions(
     positions: jax.Array, kwargs: dict[str, object]
 ) -> dict[str, object]:
@@ -226,7 +217,7 @@ def direct_forces_kernel_nm_virial(
         Non-virial variant with optional virial passthrough.
     """
     positions = args[0]
-    kernel_dtype = _normalize_dtype(positions.dtype)
+    kernel_dtype = normalize_float_dtype(positions.dtype, "DFT-D3 positions")
     launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
     return _direct_forces_kernel_nm_virial[kernel_dtype](*args, **launch_kwargs)
 
@@ -269,7 +260,7 @@ def direct_forces_kernel_nl_virial(
         Non-virial variant with optional virial passthrough.
     """
     positions = args[0]
-    kernel_dtype = _normalize_dtype(positions.dtype)
+    kernel_dtype = normalize_float_dtype(positions.dtype, "DFT-D3 positions")
     launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
     return _direct_forces_kernel_nl_virial[kernel_dtype](*args, **launch_kwargs)
 
@@ -385,7 +376,7 @@ def direct_forces_kernel_nm(
     :func:`nvalchemiops.jax.interactions.dispersion._dftd3.cn_forces_contrib_nm` :
         Adds the CN-gradient force contribution after this pass.
     """
-    kernel_dtype = _normalize_dtype(positions.dtype)
+    kernel_dtype = normalize_float_dtype(positions.dtype, "DFT-D3 positions")
     launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
     if compute_virial:
         return _direct_forces_kernel_nm_virial[kernel_dtype](
@@ -556,7 +547,7 @@ def direct_forces_kernel_nl(
     :func:`nvalchemiops.jax.interactions.dispersion._dftd3.cn_forces_contrib_nl` :
         Adds the CN-gradient force contribution after this pass.
     """
-    kernel_dtype = _normalize_dtype(positions.dtype)
+    kernel_dtype = normalize_float_dtype(positions.dtype, "DFT-D3 positions")
     launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
     if compute_virial:
         return _direct_forces_kernel_nl_virial[kernel_dtype](
@@ -673,7 +664,7 @@ def cn_forces_contrib_nm_virial(
         Non-virial variant with optional virial passthrough.
     """
     positions = args[0]
-    kernel_dtype = _normalize_dtype(positions.dtype)
+    kernel_dtype = normalize_float_dtype(positions.dtype, "DFT-D3 positions")
     launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
     return _cn_forces_contrib_nm_virial[kernel_dtype](*args, **launch_kwargs)
 
@@ -711,7 +702,7 @@ def cn_forces_contrib_nl_virial(
         Non-virial variant with optional virial passthrough.
     """
     positions = args[0]
-    kernel_dtype = _normalize_dtype(positions.dtype)
+    kernel_dtype = normalize_float_dtype(positions.dtype, "DFT-D3 positions")
     launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
     return _cn_forces_contrib_nl_virial[kernel_dtype](*args, **launch_kwargs)
 
@@ -789,7 +780,7 @@ def cn_forces_contrib_nm(
     :func:`nvalchemiops.jax.interactions.dispersion._dftd3.direct_forces_kernel_nm` :
         Preceding pass that produces ``dE_dCN``.
     """
-    kernel_dtype = _normalize_dtype(positions.dtype)
+    kernel_dtype = normalize_float_dtype(positions.dtype, "DFT-D3 positions")
     launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
     if compute_virial:
         return _cn_forces_contrib_nm_virial[kernel_dtype](
@@ -899,7 +890,7 @@ def cn_forces_contrib_nl(
     :func:`nvalchemiops.jax.interactions.dispersion._dftd3.direct_forces_kernel_nl` :
         Preceding pass that produces ``dE_dCN``.
     """
-    kernel_dtype = _normalize_dtype(positions.dtype)
+    kernel_dtype = normalize_float_dtype(positions.dtype, "DFT-D3 positions")
     launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
     if compute_virial:
         return _cn_forces_contrib_nl_virial[kernel_dtype](
@@ -1236,7 +1227,7 @@ def _dftd3_nm_impl(
     if batch_idx is None:
         batch_idx = jnp.zeros(num_atoms, dtype=jnp.int32)
 
-    kernel_dtype = _normalize_dtype(positions.dtype)
+    kernel_dtype = normalize_float_dtype(positions.dtype, "DFT-D3 positions")
     compute_cartesian_shifts_kernel = _compute_cartesian_shifts_nm[kernel_dtype]
     cn_kernel = _cn_kernel_nm[kernel_dtype]
     direct_forces_kernel = _direct_forces_kernel_nm[kernel_dtype]
@@ -1586,7 +1577,7 @@ def _dftd3_nl_impl(
     if batch_idx is None:
         batch_idx = jnp.zeros(num_atoms, dtype=jnp.int32)
 
-    kernel_dtype = _normalize_dtype(positions.dtype)
+    kernel_dtype = normalize_float_dtype(positions.dtype, "DFT-D3 positions")
     compute_cartesian_shifts_kernel = _compute_cartesian_shifts_nl[kernel_dtype]
     cn_kernel = _cn_kernel_nl[kernel_dtype]
     direct_forces_kernel = _direct_forces_kernel_nl[kernel_dtype]

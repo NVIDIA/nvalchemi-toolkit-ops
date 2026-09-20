@@ -70,7 +70,6 @@ from nvalchemiops.jax.interactions.electrostatics._utils import (
     _build_electrostatic_result,
     _component_direct_output_deprecation_msg,
     _direct_output_deprecation_msg,
-    _normalize_dtype,
     _prepare_cell,
     _system_sum_from_atoms,
     _validate_energy_reduction,
@@ -101,6 +100,7 @@ from nvalchemiops.jax.spline import (
     spline_gather_gradient,
     spline_spread,
 )
+from nvalchemiops.jax.types import normalize_float_dtype
 
 __all__ = [
     "particle_mesh_ewald",
@@ -352,7 +352,7 @@ def pme_fused_convolve(
     """
     real_dtype = jnp.float32 if mesh_fft.dtype == jnp.complex64 else jnp.float64
     complex_dtype = mesh_fft.dtype
-    input_dtype = _normalize_dtype(real_dtype)
+    input_dtype = normalize_float_dtype(real_dtype)
 
     # generate_k_vectors_pme squeezes the batch dim when B=1 — restore it
     # for the batch kernel which expects (B, nx, ny, nz_r).
@@ -482,7 +482,7 @@ def pme_green_structure_factor(
       folds deconvolution internally as ``G(k) / C^2(k)``.
     """
     mesh_nx, mesh_ny, mesh_nz = mesh_dimensions
-    input_dtype = _normalize_dtype(k_squared.dtype)
+    input_dtype = normalize_float_dtype(k_squared.dtype)
 
     # Ensure cell is correct shape
     if cell.ndim == 2:
@@ -607,7 +607,7 @@ def pme_virial_bg_correction(
     virial_out : jax.Array, same shape as ``virial``
         Background-corrected virial.
     """
-    input_dtype = _normalize_dtype(charges.dtype)
+    input_dtype = normalize_float_dtype(charges.dtype)
 
     cell_w = cell.astype(input_dtype)
     if cell_w.ndim == 2:
@@ -725,7 +725,7 @@ def pme_energy_corrections(
     - For neutral systems, background correction is zero
     - Supports both float32 and float64 dtypes
     """
-    input_dtype = _normalize_dtype(raw_energies.dtype)
+    input_dtype = normalize_float_dtype(raw_energies.dtype)
     num_atoms = raw_energies.shape[0]
 
     # Ensure alpha is 1D array
@@ -852,7 +852,7 @@ def pme_energy_corrections_with_charge_grad(
     - Useful for training models that predict partial charges
     - Supports both float32 and float64 dtypes
     """
-    input_dtype = _normalize_dtype(raw_energies.dtype)
+    input_dtype = normalize_float_dtype(raw_energies.dtype)
     num_atoms = raw_energies.shape[0]
 
     # Ensure alpha is 1D array
@@ -979,7 +979,7 @@ def _compute_pme_reciprocal_virial(
     mesh_nx, mesh_ny, mesh_nz = mesh_dimensions
 
     # Determine accumulation dtype from k_squared (float32 or float64)
-    acc_dtype = _normalize_dtype(k_squared.dtype)
+    acc_dtype = normalize_float_dtype(k_squared.dtype)
     complex_dtype = jnp.complex64 if acc_dtype == jnp.float32 else jnp.complex128
 
     # Per-k energy density from exact pipeline spectral pair.
@@ -1171,7 +1171,7 @@ def _pme_reciprocal_space_impl(
       charge losses use the private PME mesh HVP path.
     """
     num_atoms = positions.shape[0]
-    input_dtype = _normalize_dtype(positions.dtype)
+    input_dtype = normalize_float_dtype(positions.dtype)
     is_batch = batch_idx is not None
     fft_dims = (1, 2, 3) if is_batch else (0, 1, 2)
     reciprocal_metadata_is_supplied = k_vectors is not None and k_squared is not None
@@ -1538,7 +1538,7 @@ def _spline_spread_reference(
     num_systems: int,
 ) -> jax.Array:
     """Pure-JAX charge spread with the production B-spline stencil."""
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     nx, ny, nz = mesh_dimensions
     atom_system = _reference_atom_systems(positions, batch_idx)
     dims = jnp.asarray(mesh_dimensions, dtype=dtype)
@@ -1591,7 +1591,7 @@ def _spline_gather_reference(
     batch_idx: jax.Array | None,
 ) -> jax.Array:
     """Pure-JAX mesh gather with the production B-spline stencil."""
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     nx, ny, nz = mesh.shape[-3:]
     atom_system = _reference_atom_systems(positions, batch_idx)
     dims = jnp.asarray((nx, ny, nz), dtype=dtype)
@@ -1644,7 +1644,7 @@ def _pme_energy_corrections_reference(
     num_systems: int,
 ) -> jax.Array:
     """Pure-JAX PME self/background correction for reference tangents."""
-    dtype = _normalize_dtype(raw_energies.dtype)
+    dtype = normalize_float_dtype(raw_energies.dtype)
     charges = charges.astype(jnp.float64)
     raw = raw_energies.astype(jnp.float64)
     alpha_arr = _pme_alpha_array(alpha, jnp.float64, num_systems)
@@ -1729,7 +1729,7 @@ def _pme_reciprocal_energy_reference(
     moduli_z: jax.Array | None,
 ) -> jax.Array:
     """Pure-JAX PME reciprocal per-atom energy for weighted-loss tangents."""
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     cell_3d = cell.astype(dtype)
     if cell_3d.ndim == 2:
         cell_3d = cell_3d[jnp.newaxis, :, :]
@@ -1947,7 +1947,7 @@ def _pme_reciprocal_hvp_state(
             raise ValueError("mesh_dimensions must be resolved before PME HVP")
         mesh_dimensions = mesh_spacing_to_dimensions(cell, mesh_spacing)
 
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     positions_cast = positions.astype(dtype)
     charges_cast = charges.astype(dtype)
     cell_cast = cell.astype(dtype)
@@ -2063,7 +2063,7 @@ def _pme_reciprocal_energy_hvp_from_state(
     spline_order: int,
 ) -> tuple[jax.Array, jax.Array]:
     """Evaluate the linear PME reciprocal HVP from saved mesh state."""
-    dtype = _normalize_dtype(positions_cast.dtype)
+    dtype = normalize_float_dtype(positions_cast.dtype)
     is_batch = batch_idx is not None
     mesh_dimensions = (
         tuple(potential_mesh.shape[1:]) if is_batch else tuple(potential_mesh.shape)
@@ -2201,7 +2201,7 @@ def _pme_reciprocal_energy_hvp_raw(
 ) -> tuple[jax.Array, jax.Array]:
     """Evaluate fixed-cell PME reciprocal HVPs for positions and charges."""
     if positions.shape[0] == 0:
-        dtype = _normalize_dtype(positions.dtype)
+        dtype = normalize_float_dtype(positions.dtype)
         return (
             jnp.zeros_like(positions, dtype=dtype),
             jnp.zeros_like(charges, dtype=dtype),
