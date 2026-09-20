@@ -89,18 +89,19 @@ if jax.default_backend() == "cpu":
 param_file = (
     Path(os.path.expanduser("~")) / ".cache" / "nvalchemiops" / "dftd3_parameters.pt"
 )
-if param_file.exists():
-    import torch
+# The tables ship as a Torch checkpoint, so reading them needs Torch even on the JAX path.
+# This is the provenance route ``03_jax_dftd3_molecule.py`` uses too; only the parameters
+# pass through Torch, never the evaluation.
+import torch  # noqa: E402
 
-    tables = {
-        k: v.numpy() for k, v in torch.load(param_file, weights_only=True).items()
-    }
+if param_file.exists():
+    torch_tables = torch.load(param_file, weights_only=True)
 else:
     from utils import extract_dftd3_parameters, save_dftd3_parameters
 
     torch_tables = extract_dftd3_parameters()
     save_dftd3_parameters(torch_tables)
-    tables = {k: v.numpy() for k, v in torch_tables.items()}
+tables = {name: value.numpy() for name, value in torch_tables.items()}
 
 # %%
 # A CsCl crystal
