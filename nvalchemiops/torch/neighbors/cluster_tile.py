@@ -2310,12 +2310,13 @@ def cluster_tile_neighbor_list(
     pair_params : torch.Tensor, shape ``(num_atoms, num_parameters)``, optional
         Per-atom pair-function parameters; required with ``pair_fn``.
     neighbor_vectors, neighbor_distances : torch.Tensor, optional
-        OUTPUT buffers for per-pair displacements / distances. Matrix
-        format allocates them when omitted; COO format requires caller-owned
-        flat buffers. These buffers must not require gradients. When matrix
-        geometry is reconstructed for autograd, they receive detached value
-        snapshots while the returned geometry uses separate differentiable
-        tensors.
+        OUTPUT buffers for per-pair displacements / distances. Without
+        autograd reconstruction, matrix format allocates them when omitted;
+        COO format requires caller-owned flat buffers. These buffers must not
+        require gradients. When matrix geometry is reconstructed for autograd,
+        supplied buffers receive detached value snapshots while omitted
+        buffers are not allocated and the returned geometry uses separate
+        differentiable tensors.
     pair_energies, pair_forces : torch.Tensor, optional
         OUTPUT buffers for per-pair energies / forces. Matrix format
         allocates them when omitted; COO format requires caller-owned flat
@@ -2622,6 +2623,8 @@ def cluster_tile_neighbor_list(
         and torch.is_grad_enabled()
         and (positions.requires_grad or cell.requires_grad)
     )
+    snapshot_vectors = neighbor_vectors is not None
+    snapshot_distances = neighbor_distances is not None
 
     # Candidate tiles must cover both radii. The query then filters each matrix
     # with its own cutoff.
@@ -2855,19 +2858,20 @@ def cluster_tile_neighbor_list(
                 (N, max_neighbors, 3), dtype=torch.int32, device=device
             )
 
-    # Pair-output buffer allocation: caller may omit any of the four
-    # OUTPUT buffer kwargs and have them allocated via framework-native
-    # ``torch.empty`` here.  Required-presence rules
+    # Pair-output buffer allocation: caller may omit any of the four OUTPUT
+    # buffer kwargs. Reconstructed geometry needs no internal snapshot buffer;
+    # it is returned directly and copied only to caller-owned storage.
+    # Required-presence rules
     # (``return_vectors`` ⇒ ``neighbor_vectors``,
     # ``pair_fn`` ⇒ ``pair_{energies,forces}_buffer``) are enforced by
     # the warp launcher.
-    if return_vectors and neighbor_vectors is None:
+    if return_vectors and neighbor_vectors is None and not requires_reconstruction:
         neighbor_vectors = torch.empty(
             (N, max_neighbors, 3),
             dtype=positions.dtype,
             device=device,
         )
-    if return_distances and neighbor_distances is None:
+    if return_distances and neighbor_distances is None and not requires_reconstruction:
         neighbor_distances = torch.empty(
             (N, max_neighbors),
             dtype=positions.dtype,
@@ -2966,9 +2970,9 @@ def cluster_tile_neighbor_list(
             num_neighbors,
             neighbor_matrix_shifts,
         )
-        if return_vectors:
+        if return_vectors and snapshot_vectors:
             neighbor_vectors.copy_(vectors.detach())
-        if return_distances:
+        if return_distances and snapshot_distances:
             neighbor_distances.copy_(distances.detach())
 
     if dual_cutoff:

@@ -2549,9 +2549,10 @@ def batch_cluster_tile_neighbor_list(
     neighbor_vectors, neighbor_distances, pair_energies, pair_forces : torch.Tensor, optional
         OUTPUT buffers, written only when the corresponding enable flag
         / ``pair_fn`` is active. Geometry buffers must not require gradients.
-        When matrix geometry is reconstructed for autograd, they receive
-        detached value snapshots while the returned geometry uses separate
-        differentiable tensors.
+        When matrix geometry is reconstructed for autograd, supplied buffers
+        receive detached value snapshots while omitted buffers are not
+        allocated and the returned geometry uses separate differentiable
+        tensors.
     max_tiles_per_group : int, optional
         Capacity factor for an internally allocated intermediate tile-pair
         buffer. A system with ``g_i`` row groups contributes
@@ -2919,6 +2920,8 @@ def batch_cluster_tile_neighbor_list(
         and torch.is_grad_enabled()
         and (positions.requires_grad or cell_batch.requires_grad)
     )
+    snapshot_vectors = neighbor_vectors is not None
+    snapshot_distances = neighbor_distances is not None
 
     if sorted_atom_index is None:
         previous_tile_state = (
@@ -3191,14 +3194,15 @@ def batch_cluster_tile_neighbor_list(
                 (N, max_neighbors, 3), dtype=torch.int32, device=device
             )
 
-    # Allocate pair output buffers when caller omits them.
-    if return_vectors and neighbor_vectors is None:
+    # Reconstructed geometry is returned directly and needs an output buffer
+    # only when the caller requested a detached snapshot.
+    if return_vectors and neighbor_vectors is None and not requires_reconstruction:
         neighbor_vectors = torch.empty(
             (N, max_neighbors, 3),
             dtype=positions.dtype,
             device=device,
         )
-    if return_distances and neighbor_distances is None:
+    if return_distances and neighbor_distances is None and not requires_reconstruction:
         neighbor_distances = torch.empty(
             (N, max_neighbors),
             dtype=positions.dtype,
@@ -3322,7 +3326,7 @@ def batch_cluster_tile_neighbor_list(
             if rebuild_flags is not None
             else torch.ones(N, dtype=torch.bool, device=device)
         )
-        if return_vectors:
+        if return_vectors and snapshot_vectors:
             neighbor_vectors.copy_(
                 torch.where(
                     row_update[:, None, None],
@@ -3330,7 +3334,7 @@ def batch_cluster_tile_neighbor_list(
                     neighbor_vectors.detach(),
                 )
             )
-        if return_distances:
+        if return_distances and snapshot_distances:
             neighbor_distances.copy_(
                 torch.where(
                     row_update[:, None],
