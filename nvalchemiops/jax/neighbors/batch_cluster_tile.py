@@ -58,6 +58,7 @@ from nvalchemiops.neighbors.cluster_tile import (
     estimate_batch_max_tiles_per_group as _estimate_batch_max_tiles_per_group,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
+    NeighborOverflowError,
     TileBufferOverflow,
     estimate_max_neighbors,
 )
@@ -1988,6 +1989,8 @@ def batch_query_cluster_tile_coo(
     )
 
     npairs = int(pair_counter[0])
+    if npairs > max_pairs:
+        raise NeighborOverflowError(int(max_pairs), npairs)
     coo_list_trim = coo_list[:npairs]
     coo_shifts_trim = coo_shifts[:npairs]
     neighbor_list = coo_list_trim.T
@@ -2067,8 +2070,8 @@ def batch_cluster_tile_neighbor_list(
         in system-contiguous order; interleaved layouts are **not
         supported** and will silently emit cross-system pairs.
     max_neighbors : int, optional
-        Max neighbors per atom (``"matrix"`` format only). Falls back to
-        :func:`estimate_max_neighbors`.
+        Falls back to ``estimate_max_neighbors`` using the larger active cutoff.
+        Matrix format only.
     fill_value : int, optional
         Matrix sentinel; defaults to ``total_atoms``.
     format : {"matrix", "coo", "tile"}, default "matrix"
@@ -2290,7 +2293,7 @@ def batch_cluster_tile_neighbor_list(
     N = positions.shape[0]
     if max_neighbors is None:
         max_neighbors = estimate_max_neighbors(
-            cutoff2 if cutoff2 is not None else cutoff
+            cutoff if cutoff2 is None else max(float(cutoff), float(cutoff2))
         )
 
     if N == 0:

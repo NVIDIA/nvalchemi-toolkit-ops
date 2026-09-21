@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""End-to-end ``pair_fn`` tests for the high-level Torch cell-list bindings.
+"""End-to-end ``pair_fn`` tests for high-level Torch neighbor-list bindings.
 
 Regression coverage for the case where the Torch wrapper converted pair-output
 buffers with ``return_ctype=True`` and handed those CTYPE structs to
@@ -35,6 +35,9 @@ from nvalchemiops.torch.neighbors.batch_cell_list import (
     batch_query_cell_list,
     estimate_batch_cell_list_sizes,
 )
+from nvalchemiops.torch.neighbors.batch_cluster_tile import (
+    batch_cluster_tile_neighbor_list,
+)
 from nvalchemiops.torch.neighbors.batch_naive import batch_naive_neighbor_list
 from nvalchemiops.torch.neighbors.cell_list import (
     allocate_query_sort_scratch,
@@ -42,6 +45,7 @@ from nvalchemiops.torch.neighbors.cell_list import (
     estimate_cell_list_sizes,
     query_cell_list,
 )
+from nvalchemiops.torch.neighbors.cluster_tile import cluster_tile_neighbor_list
 from nvalchemiops.torch.neighbors.naive import naive_neighbor_list
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     allocate_cell_list,
@@ -190,6 +194,56 @@ def _check_pair_outputs_from_geometry(positions, cell, nm, nn, shifts, pe, pf, p
             assert torch.allclose(pf[i, slot], -dr, rtol=1e-5, atol=1e-5)
             checked += 1
     assert checked > 0, "no neighbor pairs were found; test exercised nothing"
+
+
+def _check_compact_pair_outputs(
+    positions,
+    cells,
+    pairs,
+    pointer,
+    shifts,
+    vectors,
+    distances,
+    energies,
+    forces,
+    pair_params,
+    batch_ptr=None,
+):
+    """Verify CSR ownership and every aligned compact pair output."""
+    count = pairs.shape[1]
+    pointer_cpu = pointer.cpu().tolist()
+    assert pointer_cpu[0] == 0
+    assert pointer_cpu[-1] == count
+    assert all(a <= b for a, b in zip(pointer_cpu[:-1], pointer_cpu[1:]))
+    for source, (start, stop) in enumerate(zip(pointer_cpu[:-1], pointer_cpu[1:])):
+        assert torch.all(pairs[0, start:stop] == source)
+    if batch_ptr is None:
+        pair_cells = cells[0].expand(count, -1, -1)
+    else:
+        atom_system = torch.bucketize(
+            torch.arange(
+                positions.shape[0], dtype=torch.int32, device=positions.device
+            ),
+            batch_ptr[1:],
+            right=True,
+        )
+        source_system = atom_system[pairs[0].long()]
+        assert torch.equal(source_system, atom_system[pairs[1].long()])
+        pair_cells = cells[source_system.long()]
+    expected_vectors = positions[pairs[1].long()] - positions[pairs[0].long()]
+    expected_vectors = expected_vectors + torch.einsum(
+        "pa,pab->pb", shifts.to(positions.dtype), pair_cells
+    )
+    expected_distances = expected_vectors.norm(dim=-1)
+    expected_energies = (
+        pair_params[pairs[0].long(), 0]
+        + pair_params[pairs[1].long(), 0]
+        + expected_distances
+    )
+    torch.testing.assert_close(vectors[:count], expected_vectors)
+    torch.testing.assert_close(distances[:count], expected_distances)
+    torch.testing.assert_close(energies[:count], expected_energies)
+    torch.testing.assert_close(forces[:count], -expected_vectors)
 
 
 def _check_target_pair_outputs(nm, nn, nv, nd, pe, pf, pp, target_indices):
@@ -391,6 +445,162 @@ def test_cell_list_pair_fn_coo_outputs_aligned(device):
     assert torch.allclose(pf_coo, -v_coo, rtol=1e-5, atol=1e-5)
     # The caller's in-place buffers keep their matrix layout.
     assert pe.shape == (8, max_neighbors)
+
+
+@pytest.mark.parametrize("batched", [False, True])
+def test_cluster_tile_raw_pair_fn_exact_coo_outputs_aligned(device, batched):
+    """Raw eager cluster-tile pair outputs share direct-CSR slots."""
+    _skip_without_cuda(device)
+    if batched:
+        positions = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.4, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+            device=device,
+        )
+        cells = torch.stack(
+            (
+                torch.eye(3, dtype=torch.float32, device=device) * 8.0,
+                torch.diag(torch.tensor([9.0, 8.0, 7.0], device=device)),
+            )
+        )
+        batch_ptr = torch.tensor([0, 2, 5], dtype=torch.int32, device=device)
+    else:
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [3.0, 0.0, 0.0]],
+            dtype=torch.float32,
+            device=device,
+        )
+        cells = torch.eye(3, dtype=torch.float32, device=device).reshape(1, 3, 3) * 8.0
+        batch_ptr = None
+    logical_capacity = 32
+    capacity = 40
+    pairs_buffer = torch.full((2, capacity), -1, dtype=torch.int32, device=device)
+    shifts_buffer = torch.full((capacity, 3), -1, dtype=torch.int32, device=device)
+    vectors = torch.full((capacity, 3), float("nan"), device=device)
+    distances = torch.full((capacity,), float("nan"), device=device)
+    energies = torch.full((capacity,), float("nan"), device=device)
+    forces = torch.full((capacity, 3), float("nan"), device=device)
+    pair_params = (
+        torch.arange(positions.shape[0], dtype=torch.float32, device=device) + 1.0
+    ).reshape(-1, 1)
+    kwargs = {
+        "format": "coo",
+        "max_neighbors": 8,
+        "max_pairs": logical_capacity,
+        "max_tiles_per_group": 1,
+        "neighbor_list": pairs_buffer,
+        "neighbor_list_shifts": shifts_buffer,
+        "return_vectors": True,
+        "return_distances": True,
+        "neighbor_vectors": vectors,
+        "neighbor_distances": distances,
+        "pair_fn": _sum_pair_fn,
+        "pair_params": pair_params,
+        "pair_energies": energies,
+        "pair_forces": forces,
+    }
+
+    if batched:
+        result = batch_cluster_tile_neighbor_list(
+            positions,
+            1.0,
+            cells,
+            batch_ptr,
+            **kwargs,
+        )
+    else:
+        result = cluster_tile_neighbor_list(positions, 1.0, cells, **kwargs)
+    assert len(result) == 3
+    _check_compact_pair_outputs(
+        positions,
+        cells,
+        *result,
+        vectors,
+        distances,
+        energies,
+        forces,
+        pair_params,
+        batch_ptr,
+    )
+    assert torch.all(pairs_buffer[:, logical_capacity:] == -1)
+    assert torch.all(shifts_buffer[logical_capacity:] == -1)
+    assert torch.isnan(vectors[logical_capacity:]).all()
+    assert torch.isnan(distances[logical_capacity:]).all()
+    assert torch.isnan(energies[logical_capacity:]).all()
+    assert torch.isnan(forces[logical_capacity:]).all()
+
+    previous_energies = energies.clone()
+    updated_params = pair_params + 2.0
+    kwargs["pair_params"] = updated_params
+    if batched:
+        updated = batch_cluster_tile_neighbor_list(
+            positions,
+            1.0,
+            cells,
+            batch_ptr,
+            **kwargs,
+        )
+    else:
+        updated = cluster_tile_neighbor_list(positions, 1.0, cells, **kwargs)
+    _check_compact_pair_outputs(
+        positions,
+        cells,
+        *updated,
+        vectors,
+        distances,
+        energies,
+        forces,
+        updated_params,
+        batch_ptr,
+    )
+    assert not torch.equal(
+        energies[: updated[0].shape[1]], previous_energies[: updated[0].shape[1]]
+    )
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("batched", [False, True])
+def test_cluster_tile_raw_pair_fn_exact_coo_fullgraph_rejected(device, batched):
+    """Fullgraph exact COO rejects a raw Warp function before launch."""
+    _skip_without_cuda(device)
+    positions = _two_cluster_positions(device)
+    cells = torch.eye(3, dtype=torch.float32, device=device).reshape(1, 3, 3) * 8.0
+    batch_ptr = torch.tensor([0, positions.shape[0]], dtype=torch.int32, device=device)
+
+    @torch.compile(fullgraph=True)
+    def run(runtime_positions):
+        if batched:
+            return batch_cluster_tile_neighbor_list(
+                runtime_positions,
+                0.75,
+                cells,
+                batch_ptr,
+                format="coo",
+                max_pairs=16,
+                max_tiles_per_group=1,
+                pair_fn=_sum_pair_fn,
+            )
+        return cluster_tile_neighbor_list(
+            runtime_positions,
+            0.75,
+            cells,
+            format="coo",
+            max_pairs=16,
+            max_tiles_per_group=1,
+            pair_fn=_sum_pair_fn,
+        )
+
+    with pytest.raises(
+        Exception,
+        match=r"torch\.compile\(fullgraph=True\) cluster-tile pair_fn is not supported",
+    ):
+        run(positions)
 
 
 def test_naive_pair_fn_optional_buffers_and_returned(device):

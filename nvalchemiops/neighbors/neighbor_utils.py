@@ -1834,3 +1834,127 @@ def fill_neighbor_matrix_tail(
         block_dim=block_dim,
         device=device,
     )
+
+
+def _make_selective_fill_neighbor_matrix_tail_kernel(*, batched: bool, block_dim: int):
+    """Build the selective neighbor-matrix tail-fill kernel."""
+    BATCHED = wp.constant(bool(batched))
+    block_dim = int(block_dim)
+    if block_dim <= 0:
+        raise ValueError("block_dim must be positive")
+    block_dim_const = wp.constant(block_dim)
+
+    @wp.kernel(enable_backward=False, module="unique")
+    def _kernel(
+        num_neighbors: wp.array(dtype=wp.int32),
+        batch_idx: wp.array(dtype=wp.int32),
+        rebuild_flags: wp.array(dtype=wp.bool),
+        natom: wp.int32,
+        max_neighbors: wp.int32,
+        fill_value: wp.int32,
+        neighbor_matrix: wp.array2d(dtype=wp.int32),
+    ) -> None:
+        """Fill unused columns for selectively rebuilt atom rows
+
+        Parameters
+        ----------
+        num_neighbors : wp.array, shape (natom,), dtype=wp.int32
+            Active-slot count for each atom row.
+        batch_idx : wp.array, shape (natom,), dtype=wp.int32
+            System index for each atom. Ignored by the single-system
+            specialization.
+        rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool
+            Per-system flags selecting rows to update.
+        natom : wp.int32
+            Number of atom rows to process.
+        max_neighbors : wp.int32
+            Number of columns in ``neighbor_matrix``.
+        fill_value : wp.int32
+            Value written to unused columns.
+        neighbor_matrix : wp.array, shape (natom, max_neighbors), dtype=wp.int32
+            OUTPUT: Neighbor matrix whose selected inactive tails are filled.
+
+        Returns
+        -------
+        None
+            This function modifies ``neighbor_matrix`` in-place.
+
+        Notes
+        -----
+        - Thread launch: One tiled thread block per atom row.
+        - Modifies: Tail columns of rows whose system rebuild flag is true.
+
+        See Also
+        --------
+        _selective_fill_neighbor_matrix_tail : Launch this selective tail-fill kernel.
+        """
+        atom_i = wp.tid()
+        if atom_i >= natom:
+            return
+        isys = wp.int32(0)
+        if BATCHED:
+            isys = batch_idx[atom_i]
+        if not rebuild_flags[isys]:
+            return
+        nn = num_neighbors[atom_i]
+        if nn >= max_neighbors:
+            return
+        lane_tile = wp.tile_arange(block_dim_const, dtype=wp.int32)
+        lane = wp.untile(lane_tile)
+        k = nn + lane
+        while k < max_neighbors:
+            neighbor_matrix[atom_i, k] = fill_value
+            k += block_dim_const
+
+    base = (
+        "_selective_fill_neighbor_matrix_tail"
+        if batched
+        else "_selective_fill_neighbor_matrix_tail_single"
+    )
+    name = kernel_specialization_name(base, features=(f"block_{block_dim}",))
+    return set_fn_name(_kernel, name)
+
+
+@lru_cache(maxsize=None)
+def _get_selective_fill_neighbor_matrix_tail_kernel(
+    *, batched: bool, block_dim: int
+) -> wp.Kernel:
+    """Return the cached selective tail-fill kernel."""
+    return _make_selective_fill_neighbor_matrix_tail_kernel(
+        batched=bool(batched), block_dim=int(block_dim)
+    )
+
+
+def _selective_fill_neighbor_matrix_tail(
+    num_neighbors: wp.array,
+    batch_idx: wp.array | None,
+    rebuild_flags: wp.array,
+    natom: int,
+    max_neighbors: int,
+    fill_value: int,
+    neighbor_matrix: wp.array,
+    device: str,
+    *,
+    batched: bool,
+    block_dim: int = FILL_TAIL_BLOCK_DIM,
+) -> None:
+    """Fill unused matrix columns only for selectively rebuilt rows."""
+    block_dim = int(block_dim)
+    batch_idx_arg = batch_idx if batched else _empty_sentinel(1, wp.int32, device)
+    wp.launch_tiled(
+        kernel=_get_selective_fill_neighbor_matrix_tail_kernel(
+            batched=bool(batched), block_dim=block_dim
+        ),
+        dim=[int(natom)],
+        inputs=[
+            num_neighbors,
+            batch_idx_arg,
+            rebuild_flags,
+            int(natom),
+            int(max_neighbors),
+            int(fill_value),
+            neighbor_matrix,
+        ],
+        block_dim=block_dim,
+        device=device,
+    )

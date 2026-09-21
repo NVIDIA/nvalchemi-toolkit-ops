@@ -37,7 +37,10 @@ from nvalchemiops.jax.neighbors.batch_cluster_tile import (
     estimate_batch_max_tiles_per_group,
 )
 from nvalchemiops.neighbors.cluster_tile import estimate_max_tiles_per_group
-from nvalchemiops.neighbors.neighbor_utils import TileBufferOverflow
+from nvalchemiops.neighbors.neighbor_utils import (
+    NeighborOverflowError,
+    TileBufferOverflow,
+)
 
 from .conftest import requires_gpu
 
@@ -302,6 +305,51 @@ class TestBatchTileNeighborListFormats:
         )
         assert int(nn.sum()) == int(nl.shape[1])
         assert int(ptr[-1]) == int(nl.shape[1])
+
+    def test_compact_coo_one_short_capacity_raises(self):
+        """Eager batched compact COO reports the full required pair count."""
+        positions = jnp.zeros((8, 3), dtype=jnp.float32)
+        cell_batch = jnp.repeat(jnp.eye(3, dtype=jnp.float32)[None], 2, axis=0) * 8.0
+        batch_ptr = jnp.array([0, 4, 8], dtype=jnp.int32)
+        kwargs = {
+            "max_neighbors": 8,
+            "format": "coo",
+        }
+        adequate = batch_cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell_batch,
+            batch_ptr,
+            max_pairs=64,
+            **kwargs,
+        )
+        required_pairs = int(adequate[0].shape[1])
+        assert required_pairs > 0
+
+        exact = batch_cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell_batch,
+            batch_ptr,
+            max_pairs=required_pairs,
+            **kwargs,
+        )
+        assert exact[0].shape == (2, required_pairs)
+        assert exact[2].shape == (required_pairs, 3)
+
+        with pytest.raises(NeighborOverflowError) as caught:
+            batch_cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell_batch,
+                batch_ptr,
+                max_pairs=required_pairs - 1,
+                **kwargs,
+            )
+
+        assert caught.value.max_neighbors == required_pairs - 1
+        assert caught.value.num_neighbors == required_pairs
+        assert caught.value.system_index is None
 
     def test_tile_format_returns_state(self):
         positions, cell_batch, batch_ptr = _make_batch([32, 64], [8.0, 8.0], seed=9)
@@ -873,6 +921,24 @@ class TestEstimateBatchSizes:
         with pytest.raises(ValueError, match="cell_volumes"):
             estimate_batch_max_tiles_per_group(batch_ptr, 2.0, cell_batch)
 
+    def test_batch_tile_buffer_max_tiles_per_group_rejects_cell_batch_mismatch(self):
+        """Non-empty batch pointers still validate against cell_batch length."""
+        positions = jnp.zeros((32, 3), dtype=jnp.float32)
+        batch_ptr = jnp.array([0, 32], dtype=jnp.int32)
+        cell_batch = jnp.zeros((0, 3, 3), dtype=jnp.float32)
+
+        with pytest.raises(ValueError, match="cell_volumes"):
+            from nvalchemiops.jax.neighbors.batch_cluster_tile import (
+                _batch_tile_buffer_max_tiles_per_group,
+            )
+
+            _batch_tile_buffer_max_tiles_per_group(
+                positions,
+                batch_ptr,
+                2.0,
+                cell_batch,
+            )
+
     def test_batch_max_tiles_per_group_rejects_traced_cell_batch(self):
         """Public batch max-tile sizing requires concrete cell_batch."""
         batch_ptr = jnp.array([0, 32], dtype=jnp.int32)
@@ -1147,6 +1213,7 @@ class TestJaxBatchClusterTileAutograd:
 # slicing is enough to extend to the batched case.
 from test.neighbors.bindings.jax.test_cluster_tile import (  # noqa: E402
     _brute_force_pairs_full,
+    _matrix_to_pair_set_full,
 )
 
 
@@ -1226,6 +1293,34 @@ class TestJaxBatchClusterTileCutoff2Selective:
         assert len(out) == 6
         _nm1, nn1, _sh1, _nm2, nn2, _sh2 = out
         assert int(nn2.sum()) >= int(nn1.sum())
+
+    @pytest.mark.parametrize("cutoff, cutoff2", [(0.91, 4.0), (4.0, 4.0)])
+    def test_default_capacity_uses_larger_dual_cutoff(self, cutoff, cutoff2):
+        """Ordered and equal dual cutoffs preserve each input-order matrix."""
+        positions = jnp.stack(
+            (
+                jnp.arange(40, dtype=jnp.float32) * jnp.float32(0.05),
+                jnp.zeros(40, dtype=jnp.float32),
+                jnp.zeros(40, dtype=jnp.float32),
+            ),
+            axis=1,
+        )
+        cell_batch = jnp.eye(3, dtype=jnp.float32)[None] * 10.0
+        batch_ptr = jnp.array([0, 40], dtype=jnp.int32)
+        out = batch_cluster_tile_neighbor_list(
+            positions, cutoff, cell_batch, batch_ptr, cutoff2=cutoff2
+        )
+        for offset, reference_cutoff in ((0, cutoff), (3, cutoff2)):
+            got = _matrix_to_pair_set_full(
+                *out[offset : offset + 3], positions.shape[0]
+            )
+            reference = _brute_force_pairs_full(
+                np.asarray(positions),
+                np.asarray(cell_batch[0]),
+                reference_cutoff,
+                pbc=True,
+            )
+            assert got == reference
 
     def test_rebuild_flags_false_preserves_previous_batch_outputs(self):
         positions, cell_batch, batch_ptr = _make_batch([32, 64], [6.0, 6.0], seed=32)

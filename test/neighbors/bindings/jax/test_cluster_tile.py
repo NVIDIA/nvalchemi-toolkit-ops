@@ -36,7 +36,10 @@ from nvalchemiops.jax.neighbors.cluster_tile import (
     query_cluster_tile_coo,
 )
 from nvalchemiops.neighbors.cluster_tile import estimate_max_tiles_per_group
-from nvalchemiops.neighbors.neighbor_utils import TileBufferOverflow
+from nvalchemiops.neighbors.neighbor_utils import (
+    NeighborOverflowError,
+    TileBufferOverflow,
+)
 
 from .conftest import requires_gpu
 
@@ -449,6 +452,47 @@ class TestTileNeighborListFormats:
         )
         assert int(nn.sum()) == int(nl.shape[1])
         assert int(ptr[-1]) == int(nl.shape[1])
+
+    def test_compact_coo_one_short_capacity_raises(self):
+        """Eager compact COO reports the full required pair count."""
+        positions = jnp.zeros((8, 3), dtype=jnp.float32)
+        cell = _orthorhombic_cell(8.0)
+        kwargs = {
+            "max_neighbors": 8,
+            "format": "coo",
+        }
+        adequate = cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell,
+            max_pairs=64,
+            **kwargs,
+        )
+        required_pairs = int(adequate[0].shape[1])
+        assert required_pairs > 0
+
+        exact = cluster_tile_neighbor_list(
+            positions,
+            2.0,
+            cell,
+            max_pairs=required_pairs,
+            **kwargs,
+        )
+        assert exact[0].shape == (2, required_pairs)
+        assert exact[2].shape == (required_pairs, 3)
+
+        with pytest.raises(NeighborOverflowError) as caught:
+            cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell,
+                max_pairs=required_pairs - 1,
+                **kwargs,
+            )
+
+        assert caught.value.max_neighbors == required_pairs - 1
+        assert caught.value.num_neighbors == required_pairs
+        assert caught.value.system_index is None
 
     def test_tile_format_returns_state(self):
         positions = jnp.array(
@@ -989,6 +1033,26 @@ class TestJaxClusterTileCutoff2Selective:
         _nm1, nn1, _sh1, _nm2, nn2, _sh2 = out
         assert int(nn2.sum()) >= int(nn1.sum())
         assert int(nn2.sum()) > 0
+
+    @pytest.mark.parametrize("cutoff, cutoff2", [(0.91, 4.0), (4.0, 4.0)])
+    def test_default_capacity_uses_larger_dual_cutoff(self, cutoff, cutoff2):
+        """Ordered and equal dual cutoffs preserve independently referenced pairs."""
+        positions = jnp.stack(
+            (
+                jnp.arange(40, dtype=jnp.float32) * jnp.float32(0.05),
+                jnp.zeros(40, dtype=jnp.float32),
+                jnp.zeros(40, dtype=jnp.float32),
+            ),
+            axis=1,
+        )
+        cell = _orthorhombic_cell(10.0)
+        out = cluster_tile_neighbor_list(positions, cutoff, cell, cutoff2=cutoff2)
+        for offset, reference_cutoff in ((0, cutoff), (3, cutoff2)):
+            assert _matrix_to_pair_set_full(
+                *out[offset : offset + 3], positions.shape[0]
+            ) == _brute_force_pairs_full(
+                np.asarray(positions), np.asarray(cell), reference_cutoff, pbc=True
+            )
 
     def test_rebuild_flags_false_preserves_previous_single_system_outputs(self):
         rng = np.random.RandomState(23)
@@ -1570,6 +1634,22 @@ class TestJaxClusterTileNeighborListDispatcher:
 class TestJaxClusterTileCompiledBoundary:
     """Public compiled cluster-tile behavior with fixed allocation metadata."""
 
+    def test_geometry_sizing_scales_with_cutoff_when_concrete(self):
+        """The eager geometry estimator scales capacity with the cutoff."""
+        from nvalchemiops.jax.neighbors.cluster_tile import (
+            _tile_buffer_max_tiles_per_group,
+        )
+
+        n = 32768  # ngroup = 1024
+        positions = jnp.zeros((n, 3), dtype=jnp.float32)
+        cell = _orthorhombic_cell(69.8)
+        low = _tile_buffer_max_tiles_per_group(positions, n, 6.0, cell)
+        high = _tile_buffer_max_tiles_per_group(positions, n, 25.0, cell)
+
+        assert low >= 256
+        assert high > low
+        assert high >= 1024
+
     def test_eager_geometry_sizing_scales_with_cutoff(self):
         """The tile-capacity planner covers dense, high-cutoff geometry."""
         num_atoms = 32768
@@ -1667,6 +1747,7 @@ class TestJaxClusterTileCompiledBoundary:
         n = 2048
         cell = _orthorhombic_cell(20.0)
 
+        # Geometry-dependent sizing cannot run while JAX is tracing the call.
         def f(p):
             return _tile_buffer_max_tiles_per_group(p, n, 5.0, cell)
 

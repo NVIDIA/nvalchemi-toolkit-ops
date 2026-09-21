@@ -21,6 +21,8 @@ for both single and batched systems.
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -133,7 +135,7 @@ def neighbor_list(
     return_neighbor_list: bool = False,
     method: str | None = None,
     wrap_positions: bool = True,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Compute an eager neighbor list using the appropriate method.
 
@@ -201,7 +203,7 @@ def neighbor_list(
         wrapped (e.g. by a preceding integration step) to save two
         GPU kernel launches per call. Only applies to naive methods; cell list
         methods handle wrapping internally.
-    **kwargs : dict, optional
+    **kwargs : Any, optional
         Additional keyword arguments to pass to the method.
 
         max_neighbors : int, optional
