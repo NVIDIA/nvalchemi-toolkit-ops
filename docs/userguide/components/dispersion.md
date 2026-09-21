@@ -1195,7 +1195,7 @@ It reports `fourier_dftd3` and `fourier_dftd3_setup` rows across system sizes, t
 evaluation only --- the neighbour list is built outside the timed region, per the
 [kernel style guide](../about/kernel-style-guide.md).
 
-```{warning}
+````{warning}
 `fourier_d3_params` must cover every element in the system. This is a **caller
 precondition**, checked by neither binding in any execution mode --- the same contract as
 `dftd3`, and for the same reason: verifying it means reading device memory on every step.
@@ -1208,7 +1208,18 @@ energy comes back finite and wrong.**
 
 Build `FourierD3Parameters` from the species actually present --- `sorted(set(numbers))` is
 enough --- and rebuild it whenever the composition changes.
+
+`FourierD3Parameters.uncovered_species(numbers)` names anything missing, so the precondition
+can be asserted where it is cheap to do so: at setup, on a composition change, or in a test.
+It synchronises, so keep it out of the dynamics loop. Both bindings expose it and both give
+the same answer.
+
+```python
+missing = params.uncovered_species(numbers)
+if missing:
+    raise ValueError(f"rebuild the decomposition to cover {missing}")
 ```
+````
 
 ```{important}
 For the JAX binding, `jax.jit` is not optional. Unjitted, every operation dispatches

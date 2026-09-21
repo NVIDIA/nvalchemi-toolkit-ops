@@ -569,6 +569,30 @@ class TestParameters:
         second = float(_evaluate(system, a1=0.35, a2=5.0, s8=1.2)[0])
         assert abs(second - first) > 1e-6 * abs(first)
 
+    def test_uncovered_species_names_what_is_missing(self):
+        """Coverage is unchecked at call time, so callers need a way to check it themselves.
+
+        An uncovered element is dropped from the sum and the energy comes back finite and
+        wrong, which is why this exists.
+        """
+        system = _system("cuda:0")
+        params = system["params"]
+        assert params.uncovered_species(system["numbers"]) == []
+
+        inside = system["numbers"].clone()
+        inside[0] = 2  # helium: within the table's length, but not decomposed
+        assert params.uncovered_species(inside) == [2]
+
+        beyond = system["numbers"].clone()
+        beyond[0] = 79  # gold: past the end of the table entirely
+        assert params.uncovered_species(beyond) == [79]
+
+    def test_uncovered_species_ignores_padding(self):
+        """Atomic number zero is padding, not a missing element."""
+        system = _system("cuda:0")
+        padded = torch.zeros_like(system["numbers"])
+        assert system["params"].uncovered_species(padded) == []
+
     def test_reports_its_truncation_error(self):
         """The achieved reconstruction error is available to the caller."""
         system = _system("cuda:0")

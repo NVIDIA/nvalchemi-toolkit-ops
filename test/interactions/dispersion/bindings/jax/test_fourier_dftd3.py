@@ -794,6 +794,18 @@ class TestParameterValidation:
         assert params.rank == 4
         assert params.n_species == 2
 
+    def test_uncovered_species_matches_the_torch_binding(self):
+        """A coverage check written against either binding must behave the same."""
+        parts = _single(5.0, 0)
+        params = parts["params"]
+        numbers = np.asarray(parts["numbers"])
+        assert params.uncovered_species(numbers) == []
+
+        beyond = numbers.copy()
+        beyond[0] = 79
+        assert params.uncovered_species(beyond) == [79]
+        assert params.uncovered_species(np.zeros_like(numbers)) == []
+
     def test_it_still_round_trips_through_jit(self):
         """Validation on a pytree node must tolerate tracers as leaves."""
         params = FourierD3Parameters(**self._fields())

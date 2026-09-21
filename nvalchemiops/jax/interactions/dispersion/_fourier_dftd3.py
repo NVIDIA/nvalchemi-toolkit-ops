@@ -248,6 +248,40 @@ class FourierD3Parameters:
         """Number of species channels."""
         return int(self.cn_ref.shape[0])
 
+    def uncovered_species(self, numbers) -> list[int]:
+        """Atomic numbers in ``numbers`` that this decomposition does not cover.
+
+        Coverage is a caller precondition: ``fourier_dftd3`` does not check it eagerly or
+        under ``jax.jit``, because reading the answer back is a device sync eagerly and
+        impossible while tracing. An uncovered element is grouped with the padding and
+        dropped from the dispersion sum, so the energy comes back finite and wrong.
+
+        Call this once when the parameters or the composition change, on concrete arrays --
+        not on tracers, and not inside a jitted step. It matches the Torch binding's method
+        of the same name, so a check written against either behaves the same.
+
+        Parameters
+        ----------
+        numbers : array_like, shape (N,)
+            Atomic numbers of the system. Zero marks padding and is ignored.
+
+        Returns
+        -------
+        list of int
+            Sorted uncovered atomic numbers; empty when the parameters cover the system.
+        """
+        numbers = np.asarray(numbers)
+        real = numbers[numbers != 0]
+        if real.size == 0:
+            return []
+        present = np.unique(real)
+        species_map = np.asarray(self.species_map)
+        # Past the end of the table is uncovered by definition, and would index out of range.
+        beyond = present[present >= species_map.shape[0]]
+        inside = present[present < species_map.shape[0]]
+        missing = inside[species_map[inside] < 0]
+        return sorted(int(z) for z in np.concatenate([missing, beyond]))
+
     @classmethod
     def from_tables(
         cls,

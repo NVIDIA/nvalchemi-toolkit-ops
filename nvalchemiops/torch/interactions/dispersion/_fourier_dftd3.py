@@ -191,6 +191,48 @@ class FourierD3Parameters:
         """Device the parameters live on."""
         return self.rcov.device
 
+    def uncovered_species(self, numbers: torch.Tensor) -> list[int]:
+        """Atomic numbers in ``numbers`` that this decomposition does not cover.
+
+        Coverage is a caller precondition: ``fourier_dftd3`` does not check it in any
+        execution mode, because reading the answer back would synchronise on every step. An
+        uncovered element is grouped with the padding and dropped from the dispersion sum,
+        so the energy comes back finite and wrong rather than raising.
+
+        Call this once when the parameters or the composition change --- at setup, or in a
+        test --- rather than inside a dynamics loop. It synchronises, and behaves the same
+        eagerly, under ``torch.compile`` and under JAX, so a check written against it does
+        not shift with the execution mode.
+
+        Parameters
+        ----------
+        numbers : torch.Tensor, shape (N,)
+            Atomic numbers of the system. Zero marks padding and is ignored.
+
+        Returns
+        -------
+        list of int
+            Sorted uncovered atomic numbers; empty when the parameters cover the system.
+
+        Examples
+        --------
+        >>> missing = params.uncovered_species(numbers)  # doctest: +SKIP
+        >>> if missing:  # doctest: +SKIP
+        ...     raise ValueError(f"rebuild the decomposition to cover {missing}")
+        """
+        numbers = numbers.to(self.species_map.device).long()
+        real = numbers[numbers != 0]
+        if real.numel() == 0:
+            return []
+        present = torch.unique(real)
+        # An atomic number past the end of the table is uncovered by definition, and
+        # indexing with it would read out of bounds.
+        in_table = present < self.species_map.numel()
+        beyond = present[~in_table]
+        inside = present[in_table]
+        missing = inside[self.species_map[inside] < 0]
+        return sorted(int(z) for z in torch.cat([missing, beyond]).tolist())
+
     def to(self, device=None, dtype=None) -> FourierD3Parameters:
         """Return a copy on the given device and floating dtype.
 
