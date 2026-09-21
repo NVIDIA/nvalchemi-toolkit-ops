@@ -130,7 +130,7 @@ from typing import Any
 
 import warp as wp
 
-from nvalchemiops.math import wp_erfc, wp_exp_kernel
+from nvalchemiops.math import wp_erfc_input_precision, wp_exp_kernel
 
 __all__ = [
     "BATCH_BLOCK_SIZE",
@@ -251,17 +251,17 @@ def can_tile_ewald_recip_on_device(device: object) -> bool:
 
 
 ###########################################################################################
-########################### Helper Functions (always float64) #############################
+########################### Helper Functions (input precision) #############################
 ###########################################################################################
 
 
 @wp.func
 def _ewald_real_space_energy_kernel_compute_energy(
-    qi: Any,
-    qj: Any,
-    distance: Any,
-    alpha: Any,
-) -> Any:
+    qi: wp.Float,
+    qj: wp.Float,
+    distance: wp.Float,
+    alpha: wp.Float,
+) -> wp.Float:
     """Compute damped Coulomb energy for a single pair.
 
     Formula:
@@ -273,13 +273,18 @@ def _ewald_real_space_energy_kernel_compute_energy(
     The 0.5 factor accounts for pair double-counting when iterating
     over all (i,j) pairs.
 
+    ``wp.func`` specializes from the caller's dtype regardless of the
+    annotation; ``wp.Float`` is used here (rather than ``Any``) purely for
+    readability -- these parameters are always float scalars, never vectors
+    or matrices.
+
     Parameters
     ----------
-    qi, qj : Any
+    qi, qj : wp.Float
         Charges of atoms i and j, in the caller's precision.
-    distance : Any
+    distance : wp.Float
         Distance |r_j - r_i|, in the caller's precision.
-    alpha : Any
+    alpha : wp.Float
         Ewald splitting parameter.
 
     Returns
@@ -287,7 +292,13 @@ def _ewald_real_space_energy_kernel_compute_energy(
     wp.float64
         Damped Coulomb energy contribution.
     """
-    return type(distance)(0.5) * qi * qj * wp_erfc(alpha * distance) / distance
+    return (
+        type(distance)(0.5)
+        * qi
+        * qj
+        * wp_erfc_input_precision(alpha * distance)
+        / distance
+    )
 
 
 @wp.func
@@ -327,7 +338,7 @@ def _ewald_real_space_force_magnitude(
     alpha_r = alpha * distance
     alpha_r_squared = alpha_r * alpha_r
 
-    erfc_alpha_r = wp_erfc(alpha_r)
+    erfc_alpha_r = wp_erfc_input_precision(alpha_r)
     exp_term = wp.exp(-alpha_r_squared)
 
     # Force magnitude / r^2
@@ -367,7 +378,7 @@ def _ewald_real_space_charge_grad_potential(
     wp.float64
         Potential factor for charge gradient computation.
     """
-    return type(distance)(0.5) * wp_erfc(alpha * distance) / distance
+    return type(distance)(0.5) * wp_erfc_input_precision(alpha * distance) / distance
 
 
 ###########################################################################################
@@ -836,9 +847,10 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad_tiled(
 # replaces; the crossover depends on the part's transcendental throughput
 # against its memory bandwidth, so measure rather than assume.
 #
-# Opt in with NVALCHEMIOPS_ELECTROSTATICS_FP32=1. Off by default: it changes
-# float32 results at the ~1e-07 level, which is a semantic change for existing
-# callers rather than a pure optimisation.
+# On by default for float32 CUDA inputs; opt out with
+# NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32=1, which forces the legacy float64
+# path instead (a ~1e-07-level semantic change from it, not a pure
+# optimisation). CPU execution is unaffected either way.
 
 
 @wp.kernel
@@ -854,9 +866,15 @@ def _ewald_recip_fill_sf_fp32_nostore(
 ):
     r"""Single-system weighted structure factors, float32 phases, no (K, N) store.
 
-    Phases are formed in float32 and accumulated in float32 per lane; the
-    cross-lane reduction widens to float64, so the stored values are as accurate
-    as a float64 array would hold them.
+    Phases are formed in float32 and accumulated in float32 per lane before the
+    cross-lane reduction widens to float64, so this is not literally as
+    accurate as a float64 array: per-lane accumulation error grows with the
+    number of atoms per lane (roughly N/block terms), measured at
+    ~2.5e-8 relative at N=1e3 atoms, ~1e-6 at N=6.5e4, ~4e-6 at N=2.6e5 for a
+    single-lane running sum of this shape. Comfortably below typical
+    MD/training noise floors at the sizes this path targets, but a real,
+    N-growing gap from true float64 accumulation, not a rounding-neutral
+    promotion.
 
     Parameters
     ----------
@@ -963,9 +981,15 @@ def _ewald_recip_fill_sf_fp32_nostore_cellgrad(
 ):
     r"""Single-system float32 no-store fill, plus the cell-gradient cache.
 
-    Phases are formed in float32 and accumulated in float32 per lane; the
-    cross-lane reduction widens to float64, so the stored values are as accurate
-    as a float64 array would hold them.
+    Phases are formed in float32 and accumulated in float32 per lane before the
+    cross-lane reduction widens to float64, so this is not literally as
+    accurate as a float64 array: per-lane accumulation error grows with the
+    number of atoms per lane (roughly N/block terms), measured at
+    ~2.5e-8 relative at N=1e3 atoms, ~1e-6 at N=6.5e4, ~4e-6 at N=2.6e5 for a
+    single-lane running sum of this shape. Comfortably below typical
+    MD/training noise floors at the sizes this path targets, but a real,
+    N-growing gap from true float64 accumulation, not a rounding-neutral
+    promotion.
 
     Parameters
     ----------

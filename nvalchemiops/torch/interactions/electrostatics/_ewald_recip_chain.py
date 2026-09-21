@@ -66,11 +66,13 @@ from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     BATCH_BLOCK_SIZE,
     EIGHTPI,
     RECIP_TILED_BLOCK_DIM,
+    _batch_ewald_recip_compute_fp32_recompute,
     _batch_ewald_recip_compute_fp32_recompute_tiled,
     _batch_ewald_recip_fill_sf_fp32_nostore,
     _batch_ewald_recip_fill_sf_fp32_nostore_cellgrad,
     _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad,
     _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad_tiled,
+    _ewald_recip_compute_fp32_recompute,
     _ewald_recip_compute_fp32_recompute_tiled,
     _ewald_recip_fill_sf_fp32_nostore,
     _ewald_recip_fill_sf_fp32_nostore_cellgrad,
@@ -475,9 +477,12 @@ def _can_use_fp32_nostore(input_dtype, torch_device) -> bool:
     float32 input is required: dropping the phase arithmetic to float32 is only
     defensible when the caller already chose float32 positions.
 
-    Requires ``NVALCHEMIOPS_ELECTROSTATICS_FP32``; off by default because it
-    changes float32 results at the ~1e-07 level. The same flag governs the
-    real-space per-pair cores, so both halves of the split move together.
+    On by default for float32 CUDA inputs. Set
+    ``NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32=1`` to force the legacy float64
+    reciprocal path instead; check which mode is active with
+    :func:`electrostatics_uses_legacy_fp32`. The same flag governs the
+    real-space per-pair cores, so both halves of the split move together. CPU
+    execution is unaffected either way -- this path is CUDA-only.
     """
     return (
         _use_fp32_electrostatics()
@@ -506,13 +511,18 @@ def _run_fp32_nostore(
     device,
     batched,
     cellgrad_cache=None,
+    max_atoms_per_system_bound: int = 0,
 ):
     """Energy-only reciprocal space with float32 phases and no ``(K, N)`` store.
 
     Two launches: a tiled fill reducing to the ``(K,)`` weighted structure
     factors, then an atom-major pass that *recomputes* the phases rather than
     reading them back. In float32 the recompute is far cheaper than the
-    round-trip it replaces, and peak memory becomes independent of ``K``.
+    round-trip it replaces, and peak memory drops from O(K*N) to O(K): the
+    ``(K, N)`` ``cos_k_dot_r``/``sin_k_dot_r`` arrays the standard path
+    materializes are gone, but ``real_sf``/``imag_sf`` below are still real
+    O(K) (O(S*K) batched) allocations, so this is not literally independent
+    of K -- just no longer N-scaled.
 
     Energies, forces and dE/dq are all produced: they share the k-loop, and the
     extra work over energy alone is three FMAs per k against a transcendental
@@ -525,8 +535,29 @@ def _run_fp32_nostore(
     When ``cellgrad_cache`` is supplied the ``_cellgrad`` fill variants run
     instead; they emit the same unweighted per-k reductions the float64 fill
     does, so the kspace cell-gradient backward is unchanged.
+
+    The fill launch has no serial counterpart -- one cooperative block per
+    k-vector is the only shape that makes sense for it -- but the atom-major
+    compute launch does: ``_ewald_recip_compute_fp32_recompute{,_tiled}`` /
+    ``_batch_...`` mirror the tiled-vs-serial choice
+    :func:`should_tile_ewald_recip_fill` already makes for the standard
+    (materializing) fill kernels elsewhere in this module, honoring the same
+    ``NVALCHEMIOPS_EWALD_RECIP_TILED`` / ``NVALCHEMIOPS_EWALD_RECIP_MIN_ATOMS``
+    overrides. One thread walking all of K is a long serial loop that
+    underfills the device when N is small, which is exactly what the
+    threshold is for.
     """
     dev_t = positions.device
+    max_atoms = (
+        _resolve_max_atoms_per_system(
+            max_atoms_per_system_bound, atom_start, atom_end, num_atoms
+        )
+        if batched
+        else num_atoms
+    )
+    use_tiled_compute = can_tile_ewald_recip_on_device(
+        device
+    ) and should_tile_ewald_recip_fill(max_atoms)
     # float32: the fill reduces across lanes in float64 and narrows only on the
     # final store, so the values are as accurate as a float64 array would hold
     # them -- but the recompute pass reads these K entries once per atom, so the
@@ -580,23 +611,32 @@ def _run_fp32_nostore(
                 device=device,
                 block_dim=RECIP_TILED_BLOCK_DIM,
             )
-            wp.launch_tiled(
-                _batch_ewald_recip_compute_fp32_recompute_tiled,
-                dim=num_atoms,
-                inputs=[
-                    wp_pos,
-                    wp_chg,
-                    _wp(batch_idx, wp.int32),
-                    wp_kv,
-                    wp_re,
-                    wp_im,
-                    wp_en,
-                    wp_f,
-                    wp_cg,
-                ],
-                device=device,
-                block_dim=RECIP_TILED_BLOCK_DIM,
-            )
+            compute_inputs = [
+                wp_pos,
+                wp_chg,
+                _wp(batch_idx, wp.int32),
+                wp_kv,
+                wp_re,
+                wp_im,
+                wp_en,
+                wp_f,
+                wp_cg,
+            ]
+            if use_tiled_compute:
+                wp.launch_tiled(
+                    _batch_ewald_recip_compute_fp32_recompute_tiled,
+                    dim=num_atoms,
+                    inputs=compute_inputs,
+                    device=device,
+                    block_dim=RECIP_TILED_BLOCK_DIM,
+                )
+            else:
+                wp.launch(
+                    _batch_ewald_recip_compute_fp32_recompute,
+                    dim=num_atoms,
+                    inputs=compute_inputs,
+                    device=device,
+                )
         else:
             wp.launch_tiled(
                 _ewald_recip_fill_sf_fp32_nostore_cellgrad
@@ -617,22 +657,31 @@ def _run_fp32_nostore(
                 device=device,
                 block_dim=RECIP_TILED_BLOCK_DIM,
             )
-            wp.launch_tiled(
-                _ewald_recip_compute_fp32_recompute_tiled,
-                dim=num_atoms,
-                inputs=[
-                    wp_pos,
-                    wp_chg,
-                    wp_kv_single,
-                    wp_re,
-                    wp_im,
-                    wp_en,
-                    wp_f,
-                    wp_cg,
-                ],
-                device=device,
-                block_dim=RECIP_TILED_BLOCK_DIM,
-            )
+            compute_inputs = [
+                wp_pos,
+                wp_chg,
+                wp_kv_single,
+                wp_re,
+                wp_im,
+                wp_en,
+                wp_f,
+                wp_cg,
+            ]
+            if use_tiled_compute:
+                wp.launch_tiled(
+                    _ewald_recip_compute_fp32_recompute_tiled,
+                    dim=num_atoms,
+                    inputs=compute_inputs,
+                    device=device,
+                    block_dim=RECIP_TILED_BLOCK_DIM,
+                )
+            else:
+                wp.launch(
+                    _ewald_recip_compute_fp32_recompute,
+                    dim=num_atoms,
+                    inputs=compute_inputs,
+                    device=device,
+                )
 
 
 def _forward_impl(
@@ -717,6 +766,7 @@ def _forward_impl(
             device,
             batched,
             cellgrad_cache if need_cell else None,
+            max_atoms_per_system_bound,
         )
         if need_pos:
             dEdR = (-forces_f).detach()
@@ -1006,12 +1056,23 @@ def _double_backward_impl(
 ):
     # ``dEdR_cache`` / ``dEdq_cache`` (the backward op's leading first-order caches) and
     # the trailing ``need_*`` flags are accepted for positional alignment but unused: the
-    # second order recomputes the per-(system,k) sums from the forward inputs.
-    #
+    # second order always recomputes the per-(system,k) sums from the forward inputs
+    # using the standard (materializing) formulation, regardless of whether forward
+    # used the float32 no-store path -- there is no float32-nostore double-backward
+    # kernel. This matters for any loss built from forces or virial (both are
+    # themselves first derivatives of energy), since differentiating them again is a
+    # second-order gradient through positions/charges even though user code only
+    # calls ``.backward()`` once -- i.e. ordinary force- or stress-matching training,
+    # not just explicit ``create_graph=True`` use. Forward's fast path agrees with
+    # the standard formulation to ~1e-7 in value (see test_ewald_recip_fp32_nostore.py),
+    # so this is a small, deliberate accuracy trade-off -- the returned gradient is
+    # for the standard formulation exactly, not a formally consistent tangent of
+    # the fast forward -- rather than a hard error on the default path, which would
+    # otherwise break force/stress-loss training for every float32 CUDA caller.
+    input_dtype = positions.dtype
     num_atoms = positions.shape[0]
     num_k = k_vectors_2d.shape[-2]
     num_systems = volume.shape[0]
-    input_dtype = positions.dtype
     device = wp.device_from_torch(positions.device)
     wp_scalar = get_wp_dtype(input_dtype)
     wp_vec = get_wp_vec_dtype(input_dtype)

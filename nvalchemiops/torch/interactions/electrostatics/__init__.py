@@ -24,6 +24,9 @@ from __future__ import annotations
 import inspect
 import warnings
 
+from nvalchemiops.interactions.electrostatics._factory_common import (
+    electrostatics_uses_legacy_fp32,
+)
 from nvalchemiops.torch.interactions.electrostatics._multipole_moments import (
     infer_l_max,
     pack_multipole_moments,
@@ -161,6 +164,8 @@ _preserve_deprecated_alias_metadata(
 
 
 __all__ = [
+    # Fast/legacy float32 execution mode
+    "electrostatics_uses_legacy_fp32",
     # Coulomb
     "coulomb_energy",
     "coulomb_forces",

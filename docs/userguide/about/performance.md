@@ -258,8 +258,10 @@ Both methods consume a neighbour list for real space, so the neighbour-list
 section applies to that list as well. Pass the matrix and shifts you already
 built rather than letting the entry point construct one.
 
-For batched systems pass `batch_ptr` alongside `batch_idx`, and
-`max_atoms_per_system` where the entry point accepts it.
+For batched systems pass `batch_idx`, and `max_atoms_per_system` where the
+entry point accepts it (`ewald_summation` does; `particle_mesh_ewald` does
+not). Neither `ewald_summation` nor `particle_mesh_ewald` accepts `batch_ptr`
+-- that parameter belongs to the neighbour-list API, not electrostatics.
 
 ### Work split
 
@@ -405,12 +407,18 @@ where a heuristic is wrong for a given workload.
 
 | Variable | Effect |
 | --- | --- |
-| `NVALCHEMIOPS_EWALD_RECIP_TILED` | Force the Ewald reciprocal fill to use (`1`) or avoid (`0`) a tiled launch. |
-| `NVALCHEMIOPS_EWALD_RECIP_MIN_ATOMS` | Atom-count threshold for automatic tiled fill selection. |
+| `NVALCHEMIOPS_EWALD_RECIP_TILED` | Force the Ewald reciprocal fill (both the standard and float32 no-store paths) to use (`1`) or avoid (`0`) a tiled launch. |
+| `NVALCHEMIOPS_EWALD_RECIP_MIN_ATOMS` | Atom-count threshold for automatic tiled fill selection (default 1024). |
 | `NVALCHEMIOPS_EWALD_RECIP_TILE_DIM` | Block width for tiled reciprocal kernels. |
-| `NVALCHEMIOPS_ELECTROSTATICS_FP32` | Evaluate monopole electrostatics in float32 where the inputs are float32: the per-pair real-space cores and the no-store reciprocal path. Real space is shared by Ewald and PME, so both are affected. Changes float32 results at the ~1e-07 level. |
+| `NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32` | Force monopole electrostatics back onto the legacy float64-core path for float32 CUDA inputs: the per-pair real-space cores and the no-store reciprocal path, both on by default there. Real space is shared by Ewald and PME, so both are affected. CPU execution is unaffected either way. Check which mode is active with `electrostatics_uses_legacy_fp32()`. |
 | `NVALCHEMIOPS_DYNAMICS_TILE_DIM` | Block width for tiled dynamics kernels. |
 | `ALCH_EWALD_BATCH_BLOCK_SIZE` | Block size for batched Ewald kernels. |
+| `NVALCHEMI_NEIGHLIST_CELL_SHELL` | Cost-model weight for cell-list shell work in method auto-selection (default 27.0). |
+| `NVALCHEMI_NEIGHLIST_CELL_SETUP` | Cost-model weight for cell-list setup overhead in method auto-selection (default 4096.0). |
+| `NVALCHEMI_NEIGHLIST_BATCH_PAIR_CUTOFF_FLOOR` | Minimum cutoff for the batched cell-list pair-centric strategy clauses (default 8.0). |
+| `NVALCHEMI_NEIGHLIST_BATCH_PAIR_TOTAL_CAP` | Total-atom-count cap for the small-/medium-N pair-centric clause (default 65,536). |
+| `NVALCHEMI_NEIGHLIST_BATCH_PAIR_AVG_APS_FLOOR` | Minimum average atoms-per-system gating all pair-centric clauses (default 4096). |
+| `NVALCHEMI_NEIGHLIST_BATCH_PAIR_NSYS_CAP` | System-count cap for the few-large-systems pair-centric clause (default 8). |
 
 ## Benchmarking
 

@@ -49,7 +49,7 @@ from typing import Any, Literal, NamedTuple
 
 import warp as wp
 
-from nvalchemiops.math import wp_erfc
+from nvalchemiops.math import wp_erfc_input_precision
 
 __all__ = ["get_backward_scale_kernel"]
 
@@ -127,38 +127,84 @@ _DISTANCE_EPSILON = 1e-8
 _K_SQUARED_EPSILON = 1e-10
 
 
-def _use_fp32_electrostatics() -> bool:
-    """Return whether float32 electrostatics kernels may compute in float32.
+@lru_cache(maxsize=1)
+def _read_legacy_fp32_env() -> bool:
+    """Read ``NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32`` once and cache it.
 
-    Reads ``NVALCHEMIOPS_ELECTROSTATICS_FP32``; unset or empty means off, as
-    does any of ``0``/``false``/``off``. Governs both halves of the monopole
-    split: the real-space per-pair cores below and the reciprocal structure
-    factors in ``ewald_kernels``. Real space is shared by Ewald and PME, so
-    this affects both.
+    ``lru_cache`` on a zero-argument function is a memoized read: the
+    environment is consulted on the first call in a process and never
+    again, so behavior cannot change mid-process if something sets or
+    mutates the variable later (a test fixture, code running after import
+    time, etc). Use :func:`electrostatics_uses_legacy_fp32` rather than
+    calling this directly.
 
-    Off by default because it changes float32 results at the ~1e-07 level,
-    which is a semantic change for existing callers rather than a pure
-    optimisation.
+    Raises
+    ------
+    ValueError
+        If the environment variable is set to a value that is neither a
+        recognized truthy nor a recognized falsy spelling.
+    """
+    value = os.environ.get("NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32")
+    if value is None or value == "":
+        return False
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "on", "y", "yes", "t"}:
+        return True
+    if normalized in {"0", "false", "off", "n", "no", "f"}:
+        return False
+    raise ValueError(
+        "NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32 must be "
+        "one of: 1, true, on, yes, t, y, 0, false, off, no, f, n"
+    )
+
+
+def electrostatics_uses_legacy_fp32() -> bool:
+    """Whether electrostatics kernels are forced onto the legacy float64-core path.
+
+    Reads ``NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32`` once per process (see
+    :func:`_read_legacy_fp32_env`). Unset or falsy (the default) means the
+    fast float32-core path is used for float32 CUDA inputs; set truthy to
+    force every float32 input back onto the same float64-evaluated cores
+    float64 inputs always use.
+
+    Governs both halves of the monopole split -- the real-space per-pair
+    cores and the reciprocal no-store structure factors -- each of which is
+    additionally gated to CUDA only; float32 CPU execution is unaffected by
+    this flag either way. Real space is shared by Ewald and PME, so this
+    affects both.
 
     Returns
     -------
     bool
-        ``True`` if float32 evaluation is requested, ``False`` otherwise.
+        ``True`` if the legacy (always float64 core) path is forced,
+        ``False`` if the fast float32-core path may be used on CUDA.
     """
-    value = os.environ.get("NVALCHEMIOPS_ELECTROSTATICS_FP32")
-    if value is None or value == "":
-        return False
-    return value not in {"0", "false", "False", "off", "OFF"}
+    return _read_legacy_fp32_env()
+
+
+def _use_fp32_electrostatics() -> bool:
+    """Device-agnostic fast/legacy decision (no CUDA gate).
+
+    Equivalent to ``not electrostatics_uses_legacy_fp32()``. Kept as the
+    fallback for call sites that have not been updated to gate on device
+    explicitly and pass a resolved ``core_scalar`` instead (the JAX
+    bindings, the low-level direct warp helpers in ``ewald_kernels.py``) --
+    for those, this makes the fast path available on CPU too, unlike the
+    torch chain call sites, which pass an explicit, CUDA-gated
+    ``core_scalar`` and never reach this function.
+    """
+    return not electrostatics_uses_legacy_fp32()
 
 
 # === Shared per-pair scalar cores (input precision) ===
 #
 # These evaluate in whatever precision the caller passes. They used to be
-# hard-typed float64, which cost the float32 kernels a float64 erfc, exp and
-# several divides on every pair while buying nothing: wp_erfc is an
-# Abramowitz-Stegun polynomial whose own error is ~1.5e-7, so float64 evaluation
-# cannot make it more accurate than float32 evaluation. Accumulators in the
-# calling kernels stay float64 -- that is where the cancellation lives.
+# hard-typed float64, which cost the float32 kernels a float64 exp and several
+# divides on every pair while buying nothing. erfc itself goes through
+# wp_erfc_input_precision, which uses native wp.erfc at float64 and the
+# ~1.5e-7 Abramowitz-Stegun approximation only at float32, where that error is
+# already below float32 epsilon. Accumulators in the calling kernels stay
+# float64 -- that is where the cancellation lives.
 #
 # Component-agnostic erfc calculus shared by the ewald_real forward / backward /
 # double-backward kernels. Charge-unbundled factors (no division by a charge, so
@@ -175,7 +221,7 @@ def _ewald_half_force_scale(distance: Any, alpha: Any) -> Any:
     """``(1/2) S(r)`` -- charge-unbundled force-magnitude scale."""
     two_over_sqrt_pi = type(distance)(_TWO_OVER_SQRT_PI)
     alpha_r = alpha * distance
-    erfc_alpha_r = wp_erfc(alpha_r)
+    erfc_alpha_r = wp_erfc_input_precision(alpha_r)
     exp_term = wp.exp(-alpha_r * alpha_r)
     r2 = distance * distance
     s = erfc_alpha_r / (r2 * distance) + two_over_sqrt_pi * alpha * exp_term / r2
@@ -193,7 +239,7 @@ def _ewald_half_force_scale_deriv(distance: Any, alpha: Any) -> Any:
     """
     two_over_sqrt_pi = type(distance)(_TWO_OVER_SQRT_PI)
     alpha_r = alpha * distance
-    erfc_alpha_r = wp_erfc(alpha_r)
+    erfc_alpha_r = wp_erfc_input_precision(alpha_r)
     exp_term = wp.exp(-alpha_r * alpha_r)
     r2 = distance * distance
     r3 = r2 * distance
@@ -233,7 +279,7 @@ def _ewald_charge_potential_deriv(distance: Any, alpha: Any) -> Any:
     """
     two_over_sqrt_pi = type(distance)(_TWO_OVER_SQRT_PI)
     alpha_r = alpha * distance
-    erfc_alpha_r = wp_erfc(alpha_r)
+    erfc_alpha_r = wp_erfc_input_precision(alpha_r)
     exp_term = wp.exp(-alpha_r * alpha_r)
     r2 = distance * distance
     return -type(distance)(0.5) * (

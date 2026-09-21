@@ -165,6 +165,37 @@
 - `neighbor_list` (Torch and JAX) now annotates `**kwargs` as `Any` instead of
   `dict`, so type checkers no longer reject valid keyword options.
 
+### Changed
+
+- Monopole electrostatics (Ewald real-space per-pair cores and the reciprocal
+  no-store structure-factor path) now default to float32 evaluation for
+  float32 CUDA inputs, instead of promoting to float64 internally. Both real
+  and reciprocal space are affected -- real space is shared by Ewald and PME.
+  CPU execution is unchanged either way; the fast path is CUDA-only. Set
+  `NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32=1` to opt back into the previous
+  (always float64-core) behavior. Changes float32 results at the ~1e-07
+  level; double-backward (Hessian-vector products, including ordinary
+  force- or stress-matching training losses) continues to use the standard
+  float64-materializing formulation regardless of which forward path ran, so
+  it is unaffected.
+
+### Added
+
+- `electrostatics_uses_legacy_fp32()` reports whether the legacy float64-core
+  path is forced, for callers that want to confirm which mode is active.
+- `nvalchemiops.math.wp_erfc_f32_fast` and `nvalchemiops.math.wp_erfc_input_precision`:
+  an explicitly float32-grade `erfc` approximation, and a dispatcher that uses
+  native `wp.erfc` at float64 and the approximation at float32.
+
+### Deprecated
+
+- `nvalchemiops.math.wp_erfc` is deprecated in favor of
+  `wp_erfc_input_precision` (dispatches by input dtype) or
+  `wp_erfc_f32_fast` (the float32-grade approximation explicitly). `wp_erfc`
+  keeps its original behavior -- including evaluating the float32-grade
+  approximation at float64 -- for backward compatibility; it is not being
+  changed underneath existing callers.
+
 ### Notes
 
 - FourierD3 uses a modified coordination-number function that reaches zero at the neighbour

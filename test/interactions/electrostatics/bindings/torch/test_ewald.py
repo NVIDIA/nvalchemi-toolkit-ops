@@ -43,7 +43,10 @@ import warp as wp
 from torch.fx.experimental.proxy_tensor import make_fx
 from torchpme.lib.kvectors import _generate_kvectors as _generate_kvectors_torchpme
 
-from nvalchemiops.interactions.electrostatics._factory_common import _DerivState
+from nvalchemiops.interactions.electrostatics._factory_common import (
+    _DerivState,
+    _read_legacy_fp32_env,
+)
 from nvalchemiops.torch.interactions.electrostatics import (
     _ewald_real_chain,
     _ewald_recip_chain,
@@ -878,6 +881,69 @@ class TestDtypeSupport:
         )
         assert torch.allclose(f_f32.double(), f_f64, rtol=1e-4, atol=1e-5), (
             f"Forces mismatch: f32={f_f32}, f64={f_f64}"
+        )
+
+    def test_fast_vs_legacy_fp32_consistency(self):
+        """The fast (default) float32 CUDA path agrees with the legacy path.
+
+        Real and reciprocal space each gained a float32-specific fast path
+        (default on for float32 CUDA inputs since
+        ``NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32`` was introduced); this
+        checks both directly against ``NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32=1``,
+        not against float64, since :func:`test_float32_vs_float64_consistency`
+        above already covers general float32-vs-float64 precision.
+        """
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device("cuda")
+        positions, charges, cell, nl, nptr, ns = create_dipole_system(
+            device, dtype=torch.float32
+        )
+        alpha = torch.tensor([0.3], dtype=torch.float32, device=device)
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0).squeeze(0)
+
+        def run(legacy):
+            with pytest.MonkeyPatch.context() as mp:
+                if legacy:
+                    mp.setenv("NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32", "1")
+                else:
+                    mp.delenv("NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32", raising=False)
+                _read_legacy_fp32_env.cache_clear()
+                e_real, f_real = ewald_real_space(
+                    positions,
+                    charges,
+                    cell,
+                    alpha,
+                    neighbor_list=nl,
+                    neighbor_ptr=nptr,
+                    neighbor_shifts=ns,
+                    compute_forces=True,
+                )
+                e_recip, f_recip = ewald_reciprocal_space(
+                    positions,
+                    charges,
+                    cell,
+                    k_vectors,
+                    alpha,
+                    compute_forces=True,
+                )
+            _read_legacy_fp32_env.cache_clear()
+            return e_real, f_real, e_recip, f_recip
+
+        e_real_fast, f_real_fast, e_recip_fast, f_recip_fast = run(legacy=False)
+        e_real_legacy, f_real_legacy, e_recip_legacy, f_recip_legacy = run(legacy=True)
+
+        assert torch.allclose(e_real_fast, e_real_legacy, rtol=1e-5, atol=1e-7), (
+            f"real energy: fast={e_real_fast}, legacy={e_real_legacy}"
+        )
+        assert torch.allclose(f_real_fast, f_real_legacy, rtol=1e-5, atol=1e-7), (
+            f"real forces: fast={f_real_fast}, legacy={f_real_legacy}"
+        )
+        assert torch.allclose(e_recip_fast, e_recip_legacy, rtol=1e-5, atol=1e-7), (
+            f"recip energy: fast={e_recip_fast}, legacy={e_recip_legacy}"
+        )
+        assert torch.allclose(f_recip_fast, f_recip_legacy, rtol=1e-5, atol=1e-7), (
+            f"recip forces: fast={f_recip_fast}, legacy={f_recip_legacy}"
         )
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
@@ -3218,6 +3284,105 @@ class TestAutogradFullEwald:
         autograd_forces = -positions_ad.grad
 
         assert torch.allclose(explicit_forces, autograd_forces, rtol=0.01, atol=1e-5)
+
+    def test_fast_vs_legacy_fp32_position_and_charge_gradients(self):
+        """Position/charge gradients through ``ewald_summation`` agree fast vs. legacy.
+
+        float32 CUDA inputs now default to the fast real+reciprocal path
+        (``NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32`` unset); this checks
+        first-order gradients through the full summation against the same
+        computation with the flag forced on, complementing
+        ``TestDtypeSupport.test_fast_vs_legacy_fp32_consistency`` (real/recip
+        energy+forces only) with the composed public entry point.
+        """
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device("cuda")
+        positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts = (
+            create_dipole_system(device, dtype=torch.float32)
+        )
+
+        def run(legacy):
+            with pytest.MonkeyPatch.context() as mp:
+                if legacy:
+                    mp.setenv("NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32", "1")
+                else:
+                    mp.delenv("NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32", raising=False)
+                _read_legacy_fp32_env.cache_clear()
+                p = positions.clone().requires_grad_(True)
+                q = charges.clone().requires_grad_(True)
+                energies = ewald_summation(
+                    p,
+                    q,
+                    cell,
+                    alpha=0.3,
+                    k_cutoff=8.0,
+                    neighbor_list=neighbor_list,
+                    neighbor_ptr=neighbor_ptr,
+                    neighbor_shifts=neighbor_shifts,
+                    compute_forces=False,
+                )
+                grad_p, grad_q = torch.autograd.grad(energies.sum(), (p, q))
+            _read_legacy_fp32_env.cache_clear()
+            return grad_p, grad_q
+
+        fast_p, fast_q = run(legacy=False)
+        legacy_p, legacy_q = run(legacy=True)
+
+        assert torch.isfinite(fast_p).all() and torch.isfinite(fast_q).all()
+        assert torch.allclose(fast_p, legacy_p, rtol=1e-5, atol=1e-7), (
+            f"position grad: fast={fast_p}, legacy={legacy_p}"
+        )
+        assert torch.allclose(fast_q, legacy_q, rtol=1e-5, atol=1e-7), (
+            f"charge grad: fast={fast_q}, legacy={legacy_q}"
+        )
+
+    def test_fast_vs_legacy_fp32_cell_gradient(self):
+        """dE/dcell through ``ewald_summation`` agrees fast vs. legacy at float32 CUDA.
+
+        Uses the ``k_vectors=`` entry point (rather than ``k_cutoff=``) so the
+        reciprocal cell-gradient fill variant runs, mirroring
+        ``test_cell_gradient_matches_default_path`` previously in
+        ``test_ewald_recip_fp32_nostore.py``.
+        """
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device("cuda")
+        positions, charges, cell, _neighbor_list, _neighbor_ptr, _neighbor_shifts = (
+            create_dipole_system(device, dtype=torch.float32)
+        )
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
+
+        def run(legacy):
+            with pytest.MonkeyPatch.context() as mp:
+                if legacy:
+                    mp.setenv("NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32", "1")
+                else:
+                    mp.delenv("NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32", raising=False)
+                _read_legacy_fp32_env.cache_clear()
+                c = cell.detach().clone().requires_grad_(True)
+                energies = ewald_summation(
+                    positions,
+                    charges,
+                    c,
+                    alpha=0.3,
+                    k_vectors=k_vectors,
+                    neighbor_list=_neighbor_list,
+                    neighbor_ptr=_neighbor_ptr,
+                    neighbor_shifts=_neighbor_shifts,
+                    compute_forces=False,
+                )
+                (grad_cell,) = torch.autograd.grad(energies.sum(), c)
+            _read_legacy_fp32_env.cache_clear()
+            return grad_cell
+
+        fast = run(legacy=False)
+        legacy = run(legacy=True)
+
+        assert torch.isfinite(fast).all()
+        assert torch.allclose(fast, legacy, rtol=1e-5, atol=1e-7), (
+            f"cell grad: fast={fast}, legacy={legacy}"
+        )
 
 
 ###########################################################################################
@@ -10017,15 +10182,17 @@ class TestEwaldQRGeometryFallback:
 class TestEwaldDoubleBackward:
     """Second-order contract: create_graph losses + gradgradcheck (real/recip/summation)."""
 
-    def _energy_fn(self, part, device, triclinic=False, explicit_batch=False):
+    def _energy_fn(
+        self, part, device, triclinic=False, explicit_batch=False, dtype=torch.float64
+    ):
         """Return (energy_fn, positions, charges, cell) for the requested part."""
-        positions, charges, cell = _contract_dipole(device)
+        positions, charges, cell = _contract_dipole(device, dtype=dtype)
         if triclinic:
             # Non-cubic cell: exercises the mixed d2E/dpos.dcell second order that a
             # diagonal cell can leave at zero.
             cell = torch.tensor(
                 [[[10.0, 0.0, 0.0], [1.5, 10.0, 0.0], [0.8, 1.2, 10.0]]],
-                dtype=torch.float64,
+                dtype=dtype,
                 device=device,
             )
         batch_idx = (
@@ -10051,7 +10218,7 @@ class TestEwaldDoubleBackward:
                 torch.tensor([[True, True, True]], device=device),
                 return_neighbor_list=True,
             )
-        alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+        alpha = torch.tensor([0.3], dtype=dtype, device=device)
         miller_bounds = (4, 4, 4)
 
         if part == "real":
@@ -10100,6 +10267,60 @@ class TestEwaldDoubleBackward:
                 )
 
         return energy_fn, positions, charges, cell
+
+    @pytest.mark.parametrize("part", ["real", "recip", "summation"])
+    def test_float32_cuda_double_backward_canary(self, part):
+        """Second-order gradients at float32 CUDA, the new default fast-path dtype.
+
+        ``gradgradcheck_energy`` needs float64 to be numerically reliable (its
+        own docstring says so -- finite-difference noise at float32 swamps the
+        signal), so this does not use it. Instead it compares the fast
+        (default) float32 double-backward against the same computation forced
+        onto the legacy path via ``NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32=1``.
+        Both exercise the identical double-backward kernel bundle --
+        ``_ewald_recip_chain._double_backward_impl`` always recomputes with the
+        standard formulation regardless of which forward path ran (see its
+        module comment) -- so the only source of disagreement is forward's
+        float32-vs-float64 core precision, which agrees to ~1e-6 at this size.
+        """
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device("cuda")
+        energy_fn, positions, charges, cell = self._energy_fn(
+            part, device, dtype=torch.float32
+        )
+
+        def loss_of(p, q, c):
+            e = energy_fn(p, q, c)
+            (grad_p,) = torch.autograd.grad(e.sum(), p, create_graph=True)
+            return grad_p.pow(2).sum()
+
+        def run(legacy):
+            with pytest.MonkeyPatch.context() as mp:
+                if legacy:
+                    mp.setenv("NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32", "1")
+                else:
+                    mp.delenv("NVALCHEMIOPS_ELECTROSTATICS_LEGACY_FP32", raising=False)
+                _read_legacy_fp32_env.cache_clear()
+                p = positions.clone().requires_grad_(True)
+                q = charges.clone().requires_grad_(True)
+                loss = loss_of(p, q, cell)
+                grad_p, grad_q = torch.autograd.grad(loss, (p, q))
+            _read_legacy_fp32_env.cache_clear()
+            return grad_p, grad_q
+
+        fast_p, fast_q = run(legacy=False)
+        legacy_p, legacy_q = run(legacy=True)
+
+        assert torch.isfinite(fast_p).all() and torch.isfinite(fast_q).all()
+        assert torch.allclose(fast_p, legacy_p, rtol=1e-2, atol=1e-4), (
+            f"{part} float32 double-backward position grad diverges from legacy: "
+            f"max_abs={(fast_p - legacy_p).abs().max().item():.3e}"
+        )
+        assert torch.allclose(fast_q, legacy_q, rtol=1e-2, atol=1e-4), (
+            f"{part} float32 double-backward charge grad diverges from legacy: "
+            f"max_abs={(fast_q - legacy_q).abs().max().item():.3e}"
+        )
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     @pytest.mark.parametrize("part", ["real", "recip", "summation"])
