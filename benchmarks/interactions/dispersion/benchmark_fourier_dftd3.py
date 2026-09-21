@@ -553,8 +553,12 @@ def dry_run_from_config(config: dict, backend: str | None = None) -> list[dict]:
     return rows
 
 
-def parse_args():
-    """Command-line interface."""
+# Flags that steer the run itself rather than overriding a config value.
+_STRUCTURAL_FLAGS = frozenset({"config", "output_dir", "dry_run", "help"})
+
+
+def build_parser():
+    """Command-line interface, separate from parsing so it can be inspected."""
     parser = argparse.ArgumentParser(description="FourierD3 benchmarks")
     parser.add_argument(
         "--config",
@@ -566,22 +570,25 @@ def parse_args():
         default=None,
         help="Directory for the results CSV. Defaults to output.base_dir from the config.",
     )
-    parser.add_argument("--atom-counts", type=int, nargs="+", default=None)
+    # Sweep sizes come from ``systems.<name>.atom_counts`` in the YAML, as in the DFT-D3
+    # benchmark. A single flat CLI list cannot serve both systems: CsCl is only valid at
+    # 2*k^3, so one list would be silently rounded for one system or the other.
     parser.add_argument("--timing-runs", type=int, default=None)
     parser.add_argument("--warmup-runs", type=int, default=None)
     parser.add_argument("--dry-run", action="store_true")
-    return parser.parse_args()
+    return parser
+
+
+def parse_args():
+    """Parse the command line."""
+    return build_parser().parse_args()
 
 
 def merge_cli_overrides(config: dict, args: argparse.Namespace) -> dict:
     """Apply the CLI flags that were actually given on top of the YAML config."""
     parameters = config.setdefault("parameters", {})
-    for flag, key in (
-        ("atom_counts", "atom_counts"),
-        ("timing_runs", "timing_runs"),
-        ("warmup_runs", "warmup_runs"),
-    ):
-        value = getattr(args, flag, None)
+    for key in ("timing_runs", "warmup_runs"):
+        value = getattr(args, key, None)
         if value is not None:
             parameters[key] = value
     return config

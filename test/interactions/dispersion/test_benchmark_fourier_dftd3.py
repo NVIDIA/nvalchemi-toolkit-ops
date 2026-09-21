@@ -131,12 +131,27 @@ class TestConfiguration:
 
     def test_cli_flags_override_the_config_only_when_given(self):
         """An unset flag must leave the configured value alone."""
-        args = argparse.Namespace(atom_counts=[9], timing_runs=None, warmup_runs=None)
+        args = argparse.Namespace(timing_runs=None, warmup_runs=7)
         config = benchmark_module.merge_cli_overrides(
-            {"parameters": {"atom_counts": [7], "timing_runs": 4}}, args
+            {"parameters": {"timing_runs": 4, "warmup_runs": 1}}, args
         )
-        assert config["parameters"]["atom_counts"] == [9]
         assert config["parameters"]["timing_runs"] == 4
+        assert config["parameters"]["warmup_runs"] == 7
+
+    def test_every_value_flag_is_actually_applied(self):
+        """A flag writing a key nothing reads is silently ignored --- worse than no flag.
+
+        Sweep sizes deliberately have no flag: they live under ``systems.<name>``, where one
+        flat list could not serve both systems.
+        """
+        value_flags = {
+            action.dest
+            for action in benchmark_module.build_parser()._actions
+            if action.dest not in {"config", "output_dir", "dry_run", "help"}
+        }
+        args = argparse.Namespace(**dict.fromkeys(value_flags, 1))
+        config = benchmark_module.merge_cli_overrides({"parameters": {}}, args)
+        assert set(config["parameters"]) == value_flags
 
     @pytest.mark.gpu
     def test_results_land_in_the_configured_base_dir(self, monkeypatch, tmp_path):
