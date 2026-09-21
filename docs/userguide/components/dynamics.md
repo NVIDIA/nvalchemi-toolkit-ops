@@ -456,7 +456,8 @@ relaxation with a machine-learned potential.
 
 **Choosing between FIRE2 and L-BFGS.** Both cost one force evaluation per
 step. FIRE2 carries almost no state, which suits very large systems or
-geometries far from any minimum. L-BFGS spends `2 * m` history vectors and
+geometries far from any minimum. L-BFGS spends `2 * history_size` history
+vectors and
 converges in far fewer evaluations. If your force evaluation costs more than a
 few microseconds, prefer L-BFGS.
 
@@ -542,9 +543,9 @@ reference, topology, and ragged and empty-system behaviour — is stated once in
 the `nvalchemiops.dynamics.optimizers.lbfgs` module documentation. This page
 and both bindings defer to it.
 
-**Memory.** The history dominates: `2 * m` vectors of `num_dofs` each, roughly
-180 bytes per degree of freedom at `m = 6` with float32 coordinates. `m`
-between 3 and 7 is typical.
+**Memory.** The history dominates: `2 * history_size` vectors of `num_dofs`
+each, roughly 180 bytes per degree of freedom at `history_size = 6` with
+float32 coordinates. A `history_size` between 3 and 7 is typical.
 
 ## Temperature Control Utilities
 

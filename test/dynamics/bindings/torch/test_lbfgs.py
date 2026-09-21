@@ -75,42 +75,24 @@ def make_torch_cell_state(num_atoms, num_systems, dtype, device, counts=None):
     The extended topology is built with the generic batch utilities, which is
     what lets a ragged batch work; ``counts`` defaults to an even split.
     """
-    import warp as wp
-
-    from nvalchemiops.batch_utils import atom_ptr_to_batch_idx
-    from nvalchemiops.dynamics.utils.cell_filter import extend_atom_ptr
-    from nvalchemiops.torch.lbfgs import lbfgs_cell_kappa
-
     i32 = torch.int32
-    num_ext = num_atoms + 2 * num_systems
     if counts is None:
         counts = [num_atoms // num_systems] * num_systems
     counts_np = np.asarray(counts, np.int32)
     assert int(counts_np.sum()) == num_atoms
 
-    atom_ptr = wp.array(
+    atom_ptr = torch.tensor(
         np.concatenate([[0], np.cumsum(counts_np)]).astype(np.int32),
-        dtype=wp.int32,
-        device=device,
+        dtype=i32, device=device,
+    )  # fmt: skip
+    cell = torch.tensor(
+        np.tile(np.eye(3), (num_systems, 1, 1)), dtype=dtype, device=device
     )
-    ext_atom_ptr = torch.zeros(num_systems + 1, dtype=i32, device=device)
-    ext_batch_idx = torch.zeros(num_ext, dtype=i32, device=device)
-    extend_atom_ptr(
-        atom_ptr, wp.from_torch(ext_atom_ptr, dtype=wp.int32), device=device
-    )
-    atom_ptr_to_batch_idx(
-        wp.from_torch(ext_atom_ptr, dtype=wp.int32),
-        wp.from_torch(ext_batch_idx, dtype=wp.int32),
-    )
-
-    state = lbfgs_prepare_cell_state(
-        num_atoms, num_systems, ext_batch_idx, ext_atom_ptr, dtype=dtype, device=device
-    )
-    n_per_system = torch.tensor(counts_np, dtype=i32, device=device)
-    lbfgs_cell_kappa(
-        n_per_system, state.kappa, cell_force_scale=1.0 / float(counts_np.max())
-    )
-    return state
+    return lbfgs_prepare_cell_state(
+        atom_ptr, cell,
+        cell_force_scale=1.0 / float(counts_np.max()),
+        dtype=dtype, device=device,
+    )  # fmt: skip
 
 
 def _schema_of(op_name):

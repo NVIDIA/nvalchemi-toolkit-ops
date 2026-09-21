@@ -286,6 +286,25 @@ def run_fire2(
     return eval_cap, False, current
 
 
+def validate_sweep(sweep):
+    """Return the sweep's grids, rejecting one that would run nothing.
+
+    An empty grid is otherwise silent: the sweep loop never executes, no
+    baseline is produced, and the failure surfaces much later as a ``TypeError``
+    unpacking the missing result. FIRE2 *is* the baseline here, so a grid with
+    no entries leaves nothing to compare L-BFGS against.
+    """
+    dt_start = tuple(sweep.get("dt_start") or ())
+    factors = tuple(sweep.get("tmax_factor", [2.0]) or ())
+    if not dt_start or not factors:
+        raise ValueError(
+            "lbfgs.fire2_sweep must list at least one dt_start and one "
+            f"tmax_factor; got dt_start={list(dt_start)}, "
+            f"tmax_factor={list(factors)}"
+        )
+    return dt_start, factors
+
+
 def best_fire2(make_system, force_tol, sweep=None, eval_cap=EVAL_CAP,
                device=DEFAULT_DEVICE):  # fmt: skip
     """FIRE2 at its best over a small hyperparameter sweep.
@@ -303,10 +322,11 @@ def best_fire2(make_system, force_tol, sweep=None, eval_cap=EVAL_CAP,
     ``eval_cap`` evaluations reproducing a number already in hand.
     """
     sweep = FIRE2_SWEEP if sweep is None else sweep
+    dt_grid, factor_grid = validate_sweep(sweep)
     best = None
     first_capped = None
-    for dt_start in sweep["dt_start"]:
-        for factor in sweep.get("tmax_factor", [2.0]):
+    for dt_start in dt_grid:
+        for factor in factor_grid:
             evals, converged, final = run_fire2(
                 make_system(),
                 force_tol,
@@ -684,6 +704,10 @@ def main():
     history_size = config.get("history_size", 6)
     maxstep = config.get("maxstep", 0.2)
     sweep = config.get("fire2_sweep", FIRE2_SWEEP)
+    if not args.gates:
+        # Checked here so a bad grid costs nothing: the alternative is one
+        # L-BFGS relaxation followed by a failure the config caused.
+        validate_sweep(sweep)
 
     dtypes = pick(args.dtype, "dtypes", DEFAULT_DTYPES)
 

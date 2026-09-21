@@ -44,10 +44,10 @@ Two consequences are worth knowing:
 - The cell must be aligned with ``align_cell`` before the first step, exactly
   as ``fire2_step_coord_cell`` requires, and the six packed cell components are
   the same six FIRE2 packs.
-- ``lbfgs_set_reference_cell`` must be called **once**, before the first step.
-  Re-referencing mid-run invalidates every stored curvature pair, because they
-  compare cell coordinates across steps. This is the one rule FIRE2 does not
-  share: it keeps no history.
+- The reference cell is captured **once**, by ``lbfgs_prepare_cell_state``.
+  Rebuilding the chart mid-run invalidates every stored curvature pair, because
+  they compare cell coordinates across steps. This is the one rule FIRE2 does
+  not share: it keeps no history.
 - The optimizer buffers must be sized for ``num_atoms + 2 * num_systems``
   degrees of freedom, because the cell contributes two packed entries per
   system.
@@ -82,9 +82,7 @@ from _dynamics_utils import (
     virial_to_stress,
 )
 
-from nvalchemiops.batch_utils import atom_ptr_to_batch_idx
 from nvalchemiops.dynamics.utils import align_cell, wrap_positions_to_cell
-from nvalchemiops.dynamics.utils.cell_filter import extend_atom_ptr
 from nvalchemiops.torch.lbfgs import (
     lbfgs_prepare_cell_state,
     lbfgs_prepare_state,
@@ -175,9 +173,6 @@ print(f"\nAligned cell:\n{cell.numpy()[0]}")
 positions_t = wp.to_torch(md_system.wp_positions)
 cell_t = wp.to_torch(cell).reshape(num_systems, 3, 3)
 batch_idx = torch.zeros(num_atoms, dtype=torch.int32, device=torch_device)
-n_particles = torch.full(
-    (num_systems,), num_atoms, dtype=torch.int32, device=torch_device
-)
 
 dtype, i32 = torch.float64, torch.int32
 history_size = 6
@@ -196,40 +191,24 @@ state = lbfgs_prepare_state(
 )
 
 # %%
-# Build the Extended Topology
-# ---------------------------
+# Prepare the Variable-Cell Chart
+# ------------------------------
 #
-# The packed layout interleaves each system's atoms with its two cell entries,
-# so it needs its own CSR pointers and its own per-entry system index. These
-# come from the generic batch utilities rather than from a bespoke allocator,
-# which is what lets ragged batches work: build ``atom_ptr`` for whatever atom
-# counts you actually have, and the extension follows.
+# One call. Hand it the ordinary ``atom_ptr`` you already have and the aligned
+# cells, and it derives the packed topology, captures the reference cell that
+# defines the chart, and computes ``kappa`` -- the state comes back ready to
+# step, with nothing left to repair.
+#
+# Deriving the topology costs no generality: ``atom_ptr`` already carries each
+# system's atom count, so ragged batches work exactly as before. ``kappa``
+# scales the cell coordinate against the atomic ones; raise
+# ``cell_force_scale`` to make the cell move less per step.
 
-atom_ptr = wp.array(
-    np.arange(num_systems + 1, dtype=np.int32) * num_atoms,
-    dtype=wp.int32,
-    device=device,
-)
-ext_atom_ptr = torch.zeros(num_systems + 1, dtype=i32, device=torch_device)
-ext_batch_idx = torch.zeros(num_dofs, dtype=i32, device=torch_device)
-extend_atom_ptr(atom_ptr, wp.from_torch(ext_atom_ptr, dtype=wp.int32), device=device)
-atom_ptr_to_batch_idx(
-    wp.from_torch(ext_atom_ptr, dtype=wp.int32),
-    wp.from_torch(ext_batch_idx, dtype=wp.int32),
-)
+atom_ptr = torch.arange(num_systems + 1, dtype=i32, device=torch_device) * num_atoms
 
-# Passing ``cell`` and ``n_particles`` captures the reference cell that defines
-# the chart and computes ``kappa`` here, so the state comes back ready to step.
-# ``kappa`` scales the cell coordinate against the atomic ones and depends only
-# on topology. The value below puts the cell and the atoms on a comparable
-# footing; raise it to make the cell move less per step.
 cell_state = lbfgs_prepare_cell_state(
-    num_atoms,
-    num_systems,
-    ext_batch_idx,
-    ext_atom_ptr,
-    cell=cell_t,
-    n_particles=n_particles,
+    atom_ptr,
+    cell_t,
     cell_force_scale=1.0 / num_atoms,
     dtype=dtype,
     device=torch_device,

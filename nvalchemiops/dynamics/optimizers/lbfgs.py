@@ -18,7 +18,8 @@ r"""L-BFGS Optimizer Kernels
 
 GPU-accelerated Warp kernels for batched L-BFGS geometry optimization.
 
-L-BFGS approximates the inverse Hessian from the last ``m`` position/force
+L-BFGS approximates the inverse Hessian from the last ``history_size``
+position/force
 differences to pick a direction, then steps along it as far as a ``maxstep``
 trust region allows. It reaches a given force tolerance in far fewer force
 evaluations than FIRE -- the cost that dominates relaxation with a
@@ -103,20 +104,31 @@ the step stays capturable in a CUDA graph.
 
 :class:`LBFGSState` is a plain dataclass, so you can also build one from
 buffers you already own and check it with :meth:`LBFGSState.validate`, which
-compares shapes, dtypes and device without touching the GPU. For ``P`` degrees
-of freedom, ``M`` systems and history depth ``m``:
+compares shapes, dtypes and device without touching the GPU.
 
-=============================================  ==========  ===========
-Buffer                                         Shape       dtype
-=============================================  ==========  ===========
-``x_base``, ``force_base``, ``direction``      ``(P,)``    vec3f/vec3d
-``s_history``, ``y_history``                   ``(m, P)``  vec3f/vec3d
-``ys``, ``yy``, ``alpha_hist``, ``beta_hist``  ``(m, M)``  float32/float64
-``ss``, ``gg``                                 ``(M,)``    float32/float64
-``d0``, ``dmax``, ``dquad``, ``alpha_step``    ``(M,)``    float32/float64
-``iteration``, ``end``                         ``(M,)``    int32
-``n_loop``, ``history_count``                  ``(M,)``    int32
-=============================================  ==========  ===========
+**Every array is indexed by its owning entity first**: a per-degree-of-freedom
+buffer leads with ``num_packed``, a per-system one with ``num_systems``, and the
+history depth is always the *trailing* axis. That is what lets a caller select a
+subset of systems, or concatenate two states, with an ordinary gather along
+dimension zero -- the operation batched relaxation drivers perform when they
+retire converged systems and admit replacements.
+
+Writing ``num_packed`` for the degrees of freedom, ``num_systems`` for the
+independent systems and ``history_size`` for the stored pairs:
+
+=============================================  ===========================  ===========
+Buffer                                         Shape                        dtype
+=============================================  ===========================  ===========
+``x_base``, ``force_base``, ``direction``      ``(num_packed,)``            vec3f/vec3d
+``s_history``, ``y_history``                   ``(num_packed, history)``    vec3f/vec3d
+``ys``, ``yy``, ``alpha_hist``, ``beta_hist``  ``(num_systems, history)``   float32/float64
+``ss``, ``gg``                                 ``(num_systems,)``           float32/float64
+``d0``, ``dmax``, ``dquad``, ``alpha_step``    ``(num_systems,)``           float32/float64
+``iteration``, ``end``                         ``(num_systems,)``           int32
+``n_loop``, ``history_count``                  ``(num_systems,)``           int32
+=============================================  ===========================  ===========
+
+``history`` abbreviates ``history_size`` in the table above only.
 
 Building one by hand means matching the initial contents: **zero everything**,
 then ``alpha_step`` to **one** and ``iteration`` to **minus one** (the "never
@@ -124,19 +136,19 @@ evaluated" marker).
 
 Variable-cell relaxation adds an :class:`LBFGSCellState` from
 :func:`lbfgs_prepare_cell_state`, for the packed path with
-``P = num_atoms + 2 * M``:
+``num_packed = num_atoms + 2 * num_systems``:
 
-=====================================================  ==============  =============
-Buffer                                                 Shape           dtype
-=====================================================  ==============  =============
-``ref_cell``, ``ref_cell_inv``, ``phi``, ``phi_inv``   ``(M,)``        mat33f/mat33d
-``d_phi``                                              ``(M,)``        mat33f/mat33d
-``kappa``                                              ``(M,)``        float32/float64
-``cell_dof_a/b``, ``cell_force_a/b``                   ``(M,)``        vec3f/vec3d
-``ext_positions``, ``ext_forces``                      ``(P,)``        vec3f/vec3d
-``ext_batch_idx``                                      ``(P,)``        int32
-``ext_atom_ptr``                                       ``(M + 1,)``    int32
-=====================================================  ==============  =============
+=====================================================  =====================  =============
+Buffer                                                 Shape                  dtype
+=====================================================  =====================  =============
+``ref_cell``, ``ref_cell_inv``, ``phi``, ``phi_inv``   ``(num_systems,)``     mat33f/mat33d
+``d_phi``                                              ``(num_systems,)``     mat33f/mat33d
+``kappa``                                              ``(num_systems,)``     float32/float64
+``cell_dof_a/b``, ``cell_force_a/b``                   ``(num_systems,)``     vec3f/vec3d
+``ext_positions``, ``ext_forces``                      ``(num_packed,)``      vec3f/vec3d
+``ext_batch_idx``                                      ``(num_packed,)``      int32
+``ext_atom_ptr``                                       ``(num_systems + 1,)`` int32
+=====================================================  =====================  =============
 
 ``kappa`` follows the *coordinate* precision because it scales matrices.
 ``ref_cell``, ``ref_cell_inv`` and ``kappa`` are the chart; the rest is
@@ -157,7 +169,7 @@ guide defer here.
    lattice-vector reading (``a`` along x, ``b`` in the xy-plane, ``c``
    general); as a matrix with lattice vectors in columns that is zeros
    strictly above the diagonal. :func:`lbfgs_prepare_cell_state` checks it for
-   you when handed a ``cell``.
+   you, once, and refuses an unaligned batch.
 
 *2. Six components, the same six FIRE2 packs.*
    ``(0,0), (1,0), (2,0) | (1,1), (2,1), (2,2)`` -- two ``vec3`` entries per
@@ -172,42 +184,44 @@ guide defer here.
    ``Phi = H H_ref^-1`` against a fixed reference, scaled by ``kappa`` (ASE's
    ``UnitCellFilter`` chart). Stored pairs compare cell coordinates *across*
    steps, so those coordinates must mean the same thing at every step.
-   **Re-referencing invalidates every stored pair**: if you call
-   :func:`lbfgs_set_reference_cell` again or rebuild the chart mid-run, reset
-   the state with :func:`lbfgs_prepare_state` in the same breath.
+   **Re-referencing invalidates every stored pair**: if you rebuild the chart
+   mid-run, reset the state with :func:`lbfgs_prepare_state` in the same
+   breath.
 
-*4. Topology is yours, which is what makes ragged batches work.*
-   ``ext_batch_idx`` and ``ext_atom_ptr`` are required rather than derived,
-   because deriving them would assume an even split::
+*4. The packed topology is derived, not carried.*
+   ``ext_batch_idx`` and ``ext_atom_ptr`` are a function of ``atom_ptr``
+   alone, so :func:`lbfgs_prepare_cell_state` builds them from the ordinary
+   atom pointer you already have. They are fields of the state because the
+   kernels index them, not because they are yours to supply -- and when batch
+   membership changes they should be **rebuilt** from the new topology rather
+   than gathered and concatenated along with the rest of the state, since
+   their values are global offsets that a gather would leave stale.
 
-       from nvalchemiops.batch_utils import atom_ptr_to_batch_idx
-       from nvalchemiops.dynamics.utils.cell_filter import extend_atom_ptr
-
-       extend_atom_ptr(atom_ptr, ext_atom_ptr)   # ext_atom_ptr[s] = atom_ptr[s] + 2s
-       atom_ptr_to_batch_idx(ext_atom_ptr, ext_batch_idx)
-
-   Atom counts may differ per system; each contributes exactly two packed
-   entries regardless, so ``P = num_atoms + 2 * M`` holds for any split and
+   Ragged batches are unaffected by deriving them: ``atom_ptr`` already
+   carries each system's atom count, so nothing assumes an even split. Each
+   system contributes exactly two packed entries whatever its size, so
+   ``num_packed = num_atoms + 2 * num_systems`` holds for any split, and
    :meth:`LBFGSCellState.validate` checks it.
 
 *5. Empty systems are rejected here, and supported on the coordinate path.*
    ``kappa`` scales the cell coordinate against the atomic ones and is divided
    into the cell force, so a system with no atoms has no scale to give it.
-   :func:`lbfgs_cell_kappa` and :func:`lbfgs_prepare_cell_state` reject the
-   batch, naming the offending systems, in all three layers. The
+   :func:`lbfgs_prepare_cell_state` rejects the batch, naming the offending
+   systems, in all three layers. The
    coordinate-only path is a different case and stays supported: with no cell
    to scale against, zero degrees of freedom is a no-op.
 
 Memory
 ------
-For ``P`` degrees of freedom, ``M`` systems and history ``m``::
+With ``P`` degrees of freedom, ``M`` systems and ``m`` stored pairs -- letters
+used only to keep this formula readable::
 
     bytes = (2m + 3) * 3 * sizeof(dof) * P + (4m + 6) * sizeof(dof) * M
             + 4 * 4 * M
 
-At ``m = 6`` that is 180 bytes per degree of freedom with float32 coordinates,
-360 with float64. The two histories dominate; 3 to 7 is the usual range for
-``m``.
+At ``history_size = 6`` that is 180 bytes per degree of freedom with float32
+coordinates, 360 with float64. The two histories dominate; 3 to 7 is the usual
+range.
 
 References
 ----------
@@ -227,11 +241,16 @@ from typing import Any
 
 import warp as wp
 
+from nvalchemiops.batch_utils import atom_ptr_to_batch_idx
+from nvalchemiops.dynamics.utils.cell_filter import extend_atom_ptr
 from nvalchemiops.dynamics.utils.cell_utils import compute_cell_inverse
 from nvalchemiops.segment_ops import compute_ept
 
-#: The public contract: the two states, the preparation helpers, one step per
-#: call, and the variable-cell setup. ``lbfgs_reduce``, ``lbfgs_update``,
+#: The public contract: the two states, the preparation helpers, and one step
+#: per call. ``lbfgs_set_reference_cell``, ``lbfgs_cell_kappa`` and
+#: ``check_cell_is_aligned`` are no longer here either: preparation builds the
+#: whole chart, so they are steps within it rather than caller
+#: responsibilities. All of these stay importable by name. ``lbfgs_reduce``, ``lbfgs_update``,
 #: ``lbfgs_prepare_step``, ``lbfgs_apply_step``, ``lbfgs_pack_cell``,
 #: ``lbfgs_unpack_cell`` and ``lbfgs_cell_trust_region`` are the decomposition
 #: a step is built from rather than operations in their own right, so they are
@@ -243,12 +262,9 @@ __all__ = [
     "LBFGSState",
     "check_against_state",
     "check_packed_topology",
-    "check_cell_is_aligned",
     "check_no_empty_cell_systems",
-    "lbfgs_cell_kappa",
     "lbfgs_prepare_cell_state",
     "lbfgs_prepare_state",
-    "lbfgs_set_reference_cell",
     "lbfgs_step",
     "lbfgs_step_coord_cell",
 ]
@@ -284,23 +300,24 @@ class LBFGSState:
 
     Attributes
     ----------
-    x_base, force_base : array, shape (P,)
+    x_base, force_base : array, shape (num_packed,)
         Last accepted point and the FORCES there. The gradient is
         ``-force_base``; see the module docstring on the sign convention.
-    direction : array, shape (P,)
+    direction : array, shape (num_packed,)
         Search direction; a descent direction satisfies ``force_base . d > 0``.
-    s_history, y_history : array, shape (m, P)
-        Ring buffers of position and *gradient* differences.
-    ys, yy, alpha_hist, beta_hist : array, shape (m, M), float64
+    s_history, y_history : array, shape (num_packed, history_size)
+        Ring buffers of position and *gradient* differences. The degree of
+        freedom leads; the history slot is the trailing axis.
+    ys, yy, alpha_hist, beta_hist : array, shape (num_systems, history_size)
         Per-slot curvature products and two-loop coefficients.
-    ss, gg : array, shape (M,), float64
+    ss, gg : array, shape (num_systems,)
         Squared norms of the newest ``s`` and of the packed force.
-    d0, dmax, dquad : array, shape (M,), float64
+    d0, dmax, dquad : array, shape (num_systems,)
         Directional derivative and the trust region's linear and quadratic
         displacement coefficients.
-    alpha_step : array, shape (M,), float64
+    alpha_step : array, shape (num_systems,)
         Step length, recomputed from the trust region every call.
-    iteration, end, n_loop, history_count : array, shape (M,), int32
+    iteration, end, n_loop, history_count : array, shape (num_systems,), int32
         Per-system control state. There is no ``status``: the optimizer has no
         terminal state, and deciding when to stop is the caller's, as it is
         for FIRE2.
@@ -338,8 +355,8 @@ class LBFGSState:
 
     @property
     def history_size(self) -> int:
-        """Stored curvature pairs, ``m``."""
-        return self.s_history.shape[0]
+        """Stored curvature pairs."""
+        return self.s_history.shape[1]
 
     def validate(self) -> None:
         """Check the fields against each other: shapes, dtypes and device.
@@ -350,7 +367,10 @@ class LBFGSState:
 
         Three checks. Only *leading* dimensions are compared, because the
         component axis is a framework detail: Warp stores a ``vec3`` array as
-        ``(P,)`` while PyTorch and JAX store it as ``(P, 3)``. Fields that
+        ``(num_packed,)`` while PyTorch and JAX store it as
+        ``(num_packed, 3)`` -- and likewise ``s_history`` is
+        ``(num_packed, history_size)`` against ``(num_packed, history_size, 3)``.
+        Fields that
         hold the same kind of thing must share a dtype, which is what catches
         one array left at the wrong precision. And every field must live on
         one device.
@@ -381,9 +401,9 @@ class LBFGSState:
         for name in ("x_base", "force_base", "direction"):
             check(name, (p,))
         for name in ("s_history", "y_history"):
-            check(name, (m, p))
+            check(name, (p, m))
         for name in ("ys", "yy", "alpha_hist", "beta_hist"):
-            check(name, (m, n))
+            check(name, (n, m))
         for name in _OPTIMIZER_BUFFERS[9:]:
             check(name, (n,))
         _check_kinds(self, _STATE_KINDS, "LBFGSState")
@@ -400,21 +420,21 @@ class LBFGSCellState:
 
     Attributes
     ----------
-    ref_cell, ref_cell_inv : array, shape (M,), mat33
+    ref_cell, ref_cell_inv : array, shape (num_systems,), mat33
         Reference cell ``H0`` and its inverse, from
         :func:`lbfgs_set_reference_cell`.
-    kappa : array, shape (M,)
+    kappa : array, shape (num_systems,)
         Cell coordinate scaling, from :func:`lbfgs_cell_kappa`. Matches the
         *coordinate* precision, not float64, because it scales matrices.
-    ext_batch_idx : array, shape (P,), int32
-    ext_atom_ptr : array, shape (M + 1,), int32
+    ext_batch_idx : array, shape (num_packed,), int32
+    ext_atom_ptr : array, shape (num_systems + 1,), int32
         Packed topology. Build these with the generic batch utilities so ragged
         batches are expressible.
-    phi, phi_inv, d_phi : array, shape (M,), mat33
+    phi, phi_inv, d_phi : array, shape (num_systems,), mat33
         Deformation gradient, its inverse, and its search direction.
-    cell_dof_a, cell_dof_b, cell_force_a, cell_force_b : array, shape (M,)
+    cell_dof_a, cell_dof_b, cell_force_a, cell_force_b : array, shape (num_systems,)
         The cell's two packed degrees of freedom and their conjugate forces.
-    ext_positions, ext_forces : array, shape (P,)
+    ext_positions, ext_forces : array, shape (num_packed,)
         The packed coordinate vector and its forces.
     """
 
@@ -834,8 +854,8 @@ def _lbfgs_step_decision_kernel(
     n_loop[tid] = _NLOOP_PENDING
 
     slot = end[tid]
-    ys[slot, tid] = type(ss[0])(0.0)
-    yy[slot, tid] = type(ss[0])(0.0)
+    ys[tid, slot] = type(ss[0])(0.0)
+    yy[tid, slot] = type(ss[0])(0.0)
     ss[tid] = type(ss[0])(0.0)
 
 
@@ -899,9 +919,9 @@ def _lbfgs_history_update_kernel(
         s = batch_idx[i]
         if s != s_cur:
             if active:
-                wp.atomic_add(ys, slot, s_cur, acc_sy)
+                wp.atomic_add(ys, s_cur, slot, acc_sy)
                 wp.atomic_add(ss, s_cur, acc_ss)
-                wp.atomic_add(yy, slot, s_cur, acc_yy)
+                wp.atomic_add(yy, s_cur, slot, acc_yy)
             s_cur = s
             slot = end[s_cur]
             active = n_loop[s_cur] == _NLOOP_PENDING
@@ -914,8 +934,8 @@ def _lbfgs_history_update_kernel(
             # s = x - x_base;  y = g - g_base = force_base - F  (g = -F)
             svec = pi - x_base[i]
             yvec = force_base[i] - fi
-            s_history[slot, i] = svec
-            y_history[slot, i] = yvec
+            s_history[i, slot] = svec
+            y_history[i, slot] = yvec
             x_base[i] = pi
             force_base[i] = fi
             acc_sy += type(ss[0])(wp.dot(svec, yvec))
@@ -923,9 +943,9 @@ def _lbfgs_history_update_kernel(
             acc_yy += type(ss[0])(wp.dot(yvec, yvec))
 
     if active:
-        wp.atomic_add(ys, slot, s_cur, acc_sy)
+        wp.atomic_add(ys, s_cur, slot, acc_sy)
         wp.atomic_add(ss, s_cur, acc_ss)
-        wp.atomic_add(yy, slot, s_cur, acc_yy)
+        wp.atomic_add(yy, s_cur, slot, acc_yy)
 
 
 @wp.kernel(enable_backward=False)
@@ -967,8 +987,8 @@ def _lbfgs_history_commit_kernel(
 
     slot = end[tid]
 
-    sy = ys[slot, tid]
-    threshold = curvature_eps * wp.sqrt(ss[tid] * yy[slot, tid])
+    sy = ys[tid, slot]
+    threshold = curvature_eps * wp.sqrt(ss[tid] * yy[tid, slot])
     if sy > threshold:
         history_count[tid] = wp.min(history_count[tid] + 1, m)
         end[tid] = (slot + 1) % m
@@ -1052,10 +1072,10 @@ def _lbfgs_loop1_kernel(
     if active:
         if step >= 1:
             j_prev = _slot(e, step - 1, m)
-            coeff = alpha_hist[j_prev, s_cur] / ys[j_prev, s_cur]
+            coeff = alpha_hist[s_cur, j_prev] / ys[s_cur, j_prev]
         if is_last:
             j_new = _slot(e, 0, m)
-            gamma = ys[j_new, s_cur] / yy[j_new, s_cur]
+            gamma = ys[s_cur, j_new] / yy[s_cur, j_new]
             j_cur = _slot(e, bound - 1, m)
         else:
             j_cur = _slot(e, step, m)
@@ -1065,9 +1085,9 @@ def _lbfgs_loop1_kernel(
         if s != s_cur:
             if active:
                 if is_last:
-                    wp.atomic_add(beta_hist, j_cur, s_cur, acc)
+                    wp.atomic_add(beta_hist, s_cur, j_cur, acc)
                 else:
-                    wp.atomic_add(alpha_hist, j_cur, s_cur, acc)
+                    wp.atomic_add(alpha_hist, s_cur, j_cur, acc)
             s_cur = s
             acc = zero
             nl = n_loop[s_cur]
@@ -1080,10 +1100,10 @@ def _lbfgs_loop1_kernel(
             if active:
                 if step >= 1:
                     j_prev = _slot(e, step - 1, m)
-                    coeff = alpha_hist[j_prev, s_cur] / ys[j_prev, s_cur]
+                    coeff = alpha_hist[s_cur, j_prev] / ys[s_cur, j_prev]
                 if is_last:
                     j_new = _slot(e, 0, m)
-                    gamma = ys[j_new, s_cur] / yy[j_new, s_cur]
+                    gamma = ys[s_cur, j_new] / yy[s_cur, j_new]
                     j_cur = _slot(e, bound - 1, m)
                 else:
                     j_cur = _slot(e, step, m)
@@ -1092,19 +1112,19 @@ def _lbfgs_loop1_kernel(
                 # q starts at +F, which is -g.
                 qi = forces[i]
             else:
-                qi = direction[i] - type(direction[i][0])(coeff) * y_history[j_prev, i]
+                qi = direction[i] - type(direction[i][0])(coeff) * y_history[i, j_prev]
             if is_last:
                 qi = type(qi[0])(gamma) * qi
-                acc += type(ys[0, 0])(wp.dot(y_history[j_cur, i], qi))
+                acc += type(ys[0, 0])(wp.dot(y_history[i, j_cur], qi))
             else:
-                acc += type(ys[0, 0])(wp.dot(s_history[j_cur, i], qi))
+                acc += type(ys[0, 0])(wp.dot(s_history[i, j_cur], qi))
             direction[i] = qi
 
     if active:
         if is_last:
-            wp.atomic_add(beta_hist, j_cur, s_cur, acc)
+            wp.atomic_add(beta_hist, s_cur, j_cur, acc)
         else:
-            wp.atomic_add(alpha_hist, j_cur, s_cur, acc)
+            wp.atomic_add(alpha_hist, s_cur, j_cur, acc)
 
 
 @wp.kernel(enable_backward=False)
@@ -1167,8 +1187,8 @@ def _lbfgs_loop2_kernel(
     coeff = zero
     if active:
         j_apply = _slot(e, bound - step, m)
-        coeff = (alpha_hist[j_apply, s_cur] - beta_hist[j_apply, s_cur]) / ys[
-            j_apply, s_cur
+        coeff = (alpha_hist[s_cur, j_apply] - beta_hist[s_cur, j_apply]) / ys[
+            s_cur, j_apply
         ]
         if not is_last:
             j_next = _slot(e, bound - step - 1, m)
@@ -1180,7 +1200,7 @@ def _lbfgs_loop2_kernel(
                 if is_last:
                     wp.atomic_add(d0, s_cur, acc)
                 else:
-                    wp.atomic_add(beta_hist, j_next, s_cur, acc)
+                    wp.atomic_add(beta_hist, s_cur, j_next, acc)
             s_cur = s
             acc = zero
             nl = n_loop[s_cur]
@@ -1190,25 +1210,25 @@ def _lbfgs_loop2_kernel(
             is_last = step == bound
             if active:
                 j_apply = _slot(e, bound - step, m)
-                coeff = (alpha_hist[j_apply, s_cur] - beta_hist[j_apply, s_cur]) / ys[
-                    j_apply, s_cur
+                coeff = (alpha_hist[s_cur, j_apply] - beta_hist[s_cur, j_apply]) / ys[
+                    s_cur, j_apply
                 ]
                 if not is_last:
                     j_next = _slot(e, bound - step - 1, m)
         if active:
-            ri = direction[i] + type(direction[i][0])(coeff) * s_history[j_apply, i]
+            ri = direction[i] + type(direction[i][0])(coeff) * s_history[i, j_apply]
             direction[i] = ri
             if is_last:
                 # d0 = g_base . d = -(force_base . d)
                 acc -= type(ys[0, 0])(wp.dot(force_base[i], ri))
             else:
-                acc += type(ys[0, 0])(wp.dot(y_history[j_next, i], ri))
+                acc += type(ys[0, 0])(wp.dot(y_history[i, j_next], ri))
 
     if active:
         if is_last:
             wp.atomic_add(d0, s_cur, acc)
         else:
-            wp.atomic_add(beta_hist, j_next, s_cur, acc)
+            wp.atomic_add(beta_hist, s_cur, j_next, acc)
 
 
 @wp.kernel(enable_backward=False)
@@ -1662,8 +1682,8 @@ def lbfgs_prepare_state(
         scalar follows it, so ``wp.vec3f`` gives an end-to-end fp32 state and
         ``wp.vec3d`` an end-to-end fp64 one.
     history_size : int, optional
-        Stored curvature pairs ``m``; 3 to 7 is the usual range. Memory is
-        dominated by the two ``(m, num_dofs)`` history buffers.
+        Stored curvature pairs; 3 to 7 is the usual range. Memory is
+        dominated by the two ``(num_dofs, history_size)`` history buffers.
     device : optional
         Warp device.
 
@@ -1693,12 +1713,12 @@ def lbfgs_prepare_state(
         x_base=vec(num_dofs),
         force_base=vec(num_dofs),
         direction=vec(num_dofs),
-        s_history=vec(history_size, num_dofs),
-        y_history=vec(history_size, num_dofs),
-        ys=sc(history_size, num_systems),
-        yy=sc(history_size, num_systems),
-        alpha_hist=sc(history_size, num_systems),
-        beta_hist=sc(history_size, num_systems),
+        s_history=vec(num_dofs, history_size),
+        y_history=vec(num_dofs, history_size),
+        ys=sc(num_systems, history_size),
+        yy=sc(num_systems, history_size),
+        alpha_hist=sc(num_systems, history_size),
+        beta_hist=sc(num_systems, history_size),
         ss=sc(num_systems),
         gg=sc(num_systems),
         d0=sc(num_systems),
@@ -1718,60 +1738,73 @@ def lbfgs_prepare_state(
 
 
 def lbfgs_prepare_cell_state(
-    num_atoms: int,
-    num_systems: int,
-    ext_batch_idx,
-    ext_atom_ptr,
+    atom_ptr,
+    cell,
     *,
-    cell=None,
-    n_particles=None,
     cell_force_scale: float = 1.0,
     dtype=wp.vec3d,
     device=None,
 ) -> LBFGSCellState:
-    """Allocate and validate the variable-cell chart and its scratch space.
+    """Build a complete, ready-to-step variable-cell chart from atom topology.
 
-    The packed topology is *yours*: pass ``ext_batch_idx`` and ``ext_atom_ptr``
-    built with :func:`~nvalchemiops.dynamics.utils.cell_filter.extend_atom_ptr`
-    and :func:`~nvalchemiops.batch_utils.atom_ptr_to_batch_idx`. Requiring them
-    rather than deriving them is deliberate: deriving would mean assuming an
-    even split, which is exactly what makes ragged batches inexpressible.
+    One call. Give it the ordinary ``atom_ptr`` you already have and the
+    aligned cells, and it derives the packed topology, captures the reference
+    chart and computes ``kappa``. There is no follow-up call and no state that
+    needs repairing before the first step.
 
-    Pass ``cell`` and ``n_particles`` to get a state that is ready to step:
-    the chart fields ``ref_cell``, ``ref_cell_inv`` and ``kappa`` are filled
-    for you. Omit them and those three are left zeroed, which a step cannot
-    use -- a zeroed ``ref_cell`` is singular and a zeroed ``kappa`` is divided
-    into the cell force -- so fill them with :func:`lbfgs_set_reference_cell`
-    and :func:`lbfgs_cell_kappa` before the first step.
+    Ragged batches are unaffected by deriving the topology: ``atom_ptr``
+    already carries each system's atom count, so nothing here assumes an even
+    split. What went away is the caller's obligation to build
+    ``ext_atom_ptr`` and ``ext_batch_idx`` by hand.
+
+    The cells must already be aligned -- see rule 1 of
+    :ref:`the variable-cell contract <lbfgs-cell-contract>` -- and that is
+    checked here, once, rather than every step.
 
     Parameters
     ----------
-    num_atoms : int
-        Total atoms across the batch.
-    num_systems : int
-        Independent systems.
-    ext_batch_idx, ext_atom_ptr : wp.array(dtype=int32)
-        Packed topology, shapes ``(num_atoms + 2 * num_systems,)`` and
-        ``(num_systems + 1,)``.
-    cell : wp.array(dtype=mat33), optional
-        Reference lattice per system. Given together with ``n_particles``, the
-        chart is captured here instead of in a separate call.
-    n_particles : wp.array(dtype=int32), optional
-        Atom count per system, used for ``kappa``.
+    atom_ptr : wp.array(dtype=int32), shape (num_systems + 1,)
+        CSR-style atom pointer for the batch, the same array the rest of the
+        package takes. Read on the host once, which is what makes the derived
+        topology and the per-system counts available.
+    cell : wp.array(dtype=mat33), shape (num_systems,)
+        Reference lattice per system, lattice vectors in columns, aligned.
     cell_force_scale : float, optional
-        Multiplier on the atom count in ``kappa``; only read when
-        ``n_particles`` is given.
+        Multiplier on the atom count in ``kappa``.
     dtype : optional
         Coordinate precision, ``wp.vec3f`` or ``wp.vec3d``.
     device : optional
-        Warp device.
+        Warp device. Defaults to the device ``atom_ptr`` is on.
 
     Returns
     -------
     LBFGSCellState
+        Complete: every field is either filled or zeroed scratch.
+
+    Raises
+    ------
+    ValueError
+        If ``dtype`` is not a supported vector type, if ``atom_ptr`` is not a
+        valid pointer, if any cell is unaligned, or if any system has no atoms.
     """
     if dtype not in _VEC_TYPES:
         raise ValueError(f"dtype must be wp.vec3f or wp.vec3d; got {dtype}")
+    if device is None:
+        device = atom_ptr.device
+
+    # One host read, at preparation. It gives the sizes to allocate and the
+    # per-system counts kappa needs, so a caller never assembles either.
+    ptr = atom_ptr.numpy().tolist()
+    if len(ptr) < 2:
+        raise ValueError(
+            f"atom_ptr must have num_systems + 1 >= 2 entries; got {len(ptr)}"
+        )
+    num_systems = len(ptr) - 1
+    num_atoms = int(ptr[-1])
+    counts = [int(ptr[s + 1]) - int(ptr[s]) for s in range(num_systems)]
+    if any(c < 0 for c in counts):
+        raise ValueError(f"atom_ptr must be non-decreasing; got {ptr}")
+
     mat = _MAT_TYPES[dtype]
     scalar = wp.float32 if dtype == wp.vec3f else wp.float64
     num_packed = num_atoms + 2 * num_systems
@@ -1781,6 +1814,13 @@ def lbfgs_prepare_cell_state(
 
     def vec(n):
         return wp.zeros(n, dtype=dtype, device=device)
+
+    # Derived, not carried: both are a function of the topology alone, so they
+    # are rebuilt here rather than treated as state to concatenate.
+    ext_atom_ptr = wp.zeros(num_systems + 1, dtype=wp.int32, device=device)
+    extend_atom_ptr(atom_ptr, ext_atom_ptr, device=device)
+    ext_batch_idx = wp.zeros(num_packed, dtype=wp.int32, device=device)
+    atom_ptr_to_batch_idx(ext_atom_ptr, ext_batch_idx)
 
     state = LBFGSCellState(
         ref_cell=mats(num_systems),
@@ -1800,14 +1840,11 @@ def lbfgs_prepare_cell_state(
     )
     state.validate(num_atoms=num_atoms)
     # Values, not just shapes: affordable here because preparation runs once.
-    check_packed_topology(
-        ext_atom_ptr, ext_batch_idx, num_systems, num_atoms + 2 * num_systems
-    )
-    if (cell is None) != (n_particles is None):
-        raise ValueError("cell and n_particles must be given together")
-    if cell is not None:
-        lbfgs_set_reference_cell(cell, state.ref_cell, state.ref_cell_inv)
-        lbfgs_cell_kappa(n_particles, state.kappa, cell_force_scale=cell_force_scale)
+    check_packed_topology(ext_atom_ptr, ext_batch_idx, num_systems, num_packed)
+
+    n_particles = wp.array(counts, dtype=wp.int32, device=device)
+    lbfgs_set_reference_cell(cell, state.ref_cell, state.ref_cell_inv)
+    lbfgs_cell_kappa(n_particles, state.kappa, cell_force_scale=cell_force_scale)
     return state
 
 
@@ -1918,7 +1955,7 @@ def _lbfgs_update_impl(
         Last accepted point, its forces, and the current search direction.
     batch_idx : wp.array(dtype=int32), shape (num_dofs,)
         Sorted system index for each degree of freedom. Required.
-    s_history, y_history : wp.array, shape (history_size, num_dofs,)
+    s_history, y_history : wp.array, shape (num_dofs, history_size)
         Ring buffers of position and gradient differences.
     maxstep : float, optional
         Largest Cartesian displacement any atom may take in one step. Set to
@@ -1969,19 +2006,19 @@ def _lbfgs_update_impl(
         raise ValueError(
             f"batch_idx length {batch_idx.shape[0]} != positions length {n_dofs}"
         )
-    if s_history.shape[1] != n_dofs or y_history.shape[1] != n_dofs:
+    if s_history.shape[0] != n_dofs or y_history.shape[0] != n_dofs:
         raise ValueError(
-            f"history buffers must have shape (m, {n_dofs}); got "
+            f"history buffers must have shape ({n_dofs}, history_size); got "
             f"{tuple(s_history.shape)} and {tuple(y_history.shape)}"
         )
-    if s_history.shape[0] != y_history.shape[0]:
+    if s_history.shape[1] != y_history.shape[1]:
         raise ValueError("s_history and y_history must share a history size")
 
     if n_dofs == 0:
         gg.zero_()
         return
 
-    m = s_history.shape[0]
+    m = s_history.shape[1]
     if m < 1:
         raise ValueError(f"history size must be >= 1; got {m}")
 

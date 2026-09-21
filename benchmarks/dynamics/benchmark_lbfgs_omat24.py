@@ -205,6 +205,11 @@ def best_fire2(atoms, calculator, device, torch_dtype, grid=FIRE2_DT_GRID, **kwa
     ``eval_cap`` model evaluations reproducing a number already in hand --
     which with MACE is the most expensive thing this benchmark could do.
     """
+    if not grid:
+        raise ValueError(
+            "the FIRE2 timestep grid is empty; FIRE2 is the baseline, so "
+            "there would be nothing to compare L-BFGS against"
+        )
     best = None
     first_capped = None
     for dt_start in grid:

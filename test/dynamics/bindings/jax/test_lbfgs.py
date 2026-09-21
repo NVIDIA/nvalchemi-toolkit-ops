@@ -79,43 +79,17 @@ def make_jax_cell_state(num_atoms, num_systems, dtype=jnp.float64, counts=None):
     The extended topology comes from the generic batch utilities, which is what
     makes a ragged batch expressible; ``counts`` defaults to an even split.
     """
-    import warp as wp
-
-    from nvalchemiops.batch_utils import atom_ptr_to_batch_idx
-    from nvalchemiops.dynamics.utils.cell_filter import extend_atom_ptr
-    from nvalchemiops.jax.lbfgs import lbfgs_cell_kappa
-
-    num_ext = num_atoms + 2 * num_systems
     if counts is None:
         counts = [num_atoms // num_systems] * num_systems
     counts_np = np.asarray(counts, np.int32)
     assert int(counts_np.sum()) == num_atoms
 
-    atom_ptr = wp.array(
-        np.concatenate([[0], np.cumsum(counts_np)]).astype(np.int32),
-        dtype=wp.int32,
-        device="cuda:0",
-    )
-    ext_atom_ptr = wp.zeros(num_systems + 1, dtype=wp.int32, device="cuda:0")
-    extend_atom_ptr(atom_ptr, ext_atom_ptr, device="cuda:0")
-    ext_batch_idx = wp.zeros(num_ext, dtype=wp.int32, device="cuda:0")
-    atom_ptr_to_batch_idx(ext_atom_ptr, ext_batch_idx)
-
-    state = lbfgs_prepare_cell_state(
-        num_atoms,
-        num_systems,
-        jnp.asarray(ext_batch_idx.numpy()),
-        jnp.asarray(ext_atom_ptr.numpy()),
-        dtype=dtype,
-    )
-    return dataclasses.replace(
-        state,
-        kappa=lbfgs_cell_kappa(
-            jnp.asarray(counts_np),
-            cell_force_scale=1.0 / float(counts_np.max()),
-            dtype=dtype,
-        ),
-    )
+    atom_ptr = jnp.asarray(np.concatenate([[0], np.cumsum(counts_np)]).astype(np.int32))
+    cell = jnp.asarray(np.tile(np.eye(3), (num_systems, 1, 1)), dtype)
+    return lbfgs_prepare_cell_state(
+        atom_ptr, cell,
+        cell_force_scale=1.0 / float(counts_np.max()), dtype=dtype,
+    )  # fmt: skip
 
 
 def _cluster(num_atoms, seed=42, scale=2.0):

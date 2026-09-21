@@ -160,9 +160,6 @@ batches as well as uniform ones.
    :members:
 .. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_prepare_cell_state
 .. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_step_coord_cell
-.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_set_reference_cell
-.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_cell_kappa
-.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.check_cell_is_aligned
 
 FIRE2
 ~~~~~

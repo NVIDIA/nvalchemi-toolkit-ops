@@ -137,9 +137,6 @@ __all__ = [
     "lbfgs_step",
     "lbfgs_step_coord_cell",
     # L-BFGS variable-cell setup
-    "lbfgs_set_reference_cell",
-    "lbfgs_cell_kappa",
-    "check_cell_is_aligned",
     # Low-level kernels
     "_fire_step_no_downhill_ptr_kernel",
     "_fire_step_downhill_ptr_kernel",

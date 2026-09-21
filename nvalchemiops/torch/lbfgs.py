@@ -81,6 +81,7 @@ import inspect
 import torch
 import warp as wp
 
+from nvalchemiops.batch_utils import atom_ptr_to_batch_idx as _wp_atom_ptr_to_batch_idx
 from nvalchemiops.dynamics.optimizers.lbfgs import (
     _CELL_BUFFERS,
     _CELL_SCRATCH,
@@ -94,9 +95,15 @@ from nvalchemiops.dynamics.optimizers.lbfgs import (
     _lbfgs_step_coord_cell_impl as _wp_step_cell,
 )
 from nvalchemiops.dynamics.optimizers.lbfgs import _lbfgs_step_impl as _wp_step
+from nvalchemiops.dynamics.optimizers.lbfgs import (
+    check_packed_topology as _wp_check_packed_topology,
+)
 from nvalchemiops.dynamics.optimizers.lbfgs import lbfgs_cell_kappa as _wp_cell_kappa
 from nvalchemiops.dynamics.optimizers.lbfgs import (
     lbfgs_set_reference_cell as _wp_set_reference_cell,
+)
+from nvalchemiops.dynamics.utils.cell_filter import (
+    extend_atom_ptr as _wp_extend_atom_ptr,
 )
 from nvalchemiops.torch._warp_op_helpers import (
     register_noop_fake,
@@ -107,10 +114,8 @@ from nvalchemiops.torch._warp_op_helpers import (
 __all__ = [
     "LBFGSCellState",
     "LBFGSState",
-    "lbfgs_cell_kappa",
     "lbfgs_prepare_cell_state",
     "lbfgs_prepare_state",
-    "lbfgs_set_reference_cell",
     "lbfgs_step_coord",
     "lbfgs_step_coord_cell",
     "lbfgs_step_extended",
@@ -273,12 +278,12 @@ def lbfgs_prepare_state(
         x_base=torch.zeros(p_, 3, **kw),
         force_base=torch.zeros(p_, 3, **kw),
         direction=torch.zeros(p_, 3, **kw),
-        s_history=torch.zeros(m, p_, 3, **kw),
-        y_history=torch.zeros(m, p_, 3, **kw),
-        ys=torch.zeros(m, n, **sc),
-        yy=torch.zeros(m, n, **sc),
-        alpha_hist=torch.zeros(m, n, **sc),
-        beta_hist=torch.zeros(m, n, **sc),
+        s_history=torch.zeros(p_, m, 3, **kw),
+        y_history=torch.zeros(p_, m, 3, **kw),
+        ys=torch.zeros(n, m, **sc),
+        yy=torch.zeros(n, m, **sc),
+        alpha_hist=torch.zeros(n, m, **sc),
+        beta_hist=torch.zeros(n, m, **sc),
         ss=torch.zeros(n, **sc),
         gg=torch.zeros(n, **sc),
         d0=torch.zeros(n, **sc),
@@ -295,35 +300,77 @@ def lbfgs_prepare_state(
 
 
 def lbfgs_prepare_cell_state(
-    num_atoms: int,
-    num_systems: int,
-    ext_batch_idx: torch.Tensor,
-    ext_atom_ptr: torch.Tensor,
+    atom_ptr: torch.Tensor,
+    cell: torch.Tensor,
     *,
-    cell: torch.Tensor | None = None,
-    n_particles: torch.Tensor | None = None,
     cell_force_scale: float = 1.0,
     dtype: torch.dtype = torch.float64,
     device=None,
 ) -> LBFGSCellState:
-    """Allocate and validate the variable-cell chart and its scratch space.
+    """Build a complete, ready-to-step variable-cell chart from atom topology.
 
-    The packed topology is yours: build ``ext_batch_idx`` and ``ext_atom_ptr``
-    with the generic batch utilities so ragged batches are expressible.
-    Pass ``cell`` and ``n_particles`` to get a state that is ready to step:
-    the chart fields ``ref_cell``, ``ref_cell_inv`` and ``kappa`` are filled
-    for you. Omit them and those three are left zeroed, which a step cannot
-    use, so fill them with :func:`lbfgs_set_reference_cell` and
-    :func:`lbfgs_cell_kappa` first.
+    One call: give it the ordinary ``atom_ptr`` and the aligned cells, and it
+    derives the packed topology, captures the reference chart and computes
+    ``kappa``. Nothing needs repairing before the first step.
+
+    Ragged batches are unaffected -- ``atom_ptr`` already carries each
+    system's atom count, so nothing here assumes an even split.
+
+    Parameters
+    ----------
+    atom_ptr : torch.Tensor, shape (num_systems + 1,), int32
+        CSR-style atom pointer for the batch.
+    cell : torch.Tensor, shape (num_systems, 3, 3)
+        Reference lattice per system, aligned.
+    cell_force_scale : float, optional
+        Multiplier on the atom count in ``kappa``.
+    dtype : torch.dtype, optional
+        Coordinate precision.
+    device : optional
+        Defaults to ``atom_ptr.device``.
 
     Returns
     -------
     LBFGSCellState
+
+    See Also
+    --------
+    nvalchemiops.dynamics.optimizers.lbfgs : the variable-cell contract,
+        including the requirement that the cells be aligned first.
     """
     if dtype not in _TORCH_TO_WP_VEC:
         raise ValueError(f"dtype must be float32 or float64; got {dtype}")
+    if device is None:
+        device = atom_ptr.device
+
+    ptr = atom_ptr.detach().cpu().tolist()
+    if len(ptr) < 2:
+        raise ValueError(
+            f"atom_ptr must have num_systems + 1 >= 2 entries; got {len(ptr)}"
+        )
+    num_systems = len(ptr) - 1
+    num_atoms = int(ptr[-1])
+    counts = [int(ptr[s + 1]) - int(ptr[s]) for s in range(num_systems)]
+    if any(c < 0 for c in counts):
+        raise ValueError(f"atom_ptr must be non-decreasing; got {ptr}")
+
     kw = {"dtype": dtype, "device": device}
+    i32 = {"dtype": torch.int32, "device": device}
     n, packed = num_systems, num_atoms + 2 * num_systems
+
+    # Derived, not carried: a function of the topology alone.
+    ext_atom_ptr = torch.zeros(n + 1, **i32)
+    ext_batch_idx = torch.zeros(packed, **i32)
+    with scoped_warp_stream(device):
+        _wp_extend_atom_ptr(
+            wp.from_torch(atom_ptr.to(torch.int32).contiguous(), dtype=wp.int32),
+            wp.from_torch(ext_atom_ptr, dtype=wp.int32),
+        )
+        _wp_atom_ptr_to_batch_idx(
+            wp.from_torch(ext_atom_ptr, dtype=wp.int32),
+            wp.from_torch(ext_batch_idx, dtype=wp.int32),
+        )
+
     state = LBFGSCellState(
         ref_cell=torch.zeros(n, 3, 3, **kw),
         ref_cell_inv=torch.zeros(n, 3, 3, **kw),
@@ -341,11 +388,15 @@ def lbfgs_prepare_cell_state(
         ext_forces=torch.zeros(packed, 3, **kw),
     )
     state.validate(num_atoms=num_atoms)
-    if (cell is None) != (n_particles is None):
-        raise ValueError("cell and n_particles must be given together")
-    if cell is not None:
-        lbfgs_set_reference_cell(cell, state.ref_cell, state.ref_cell_inv)
-        lbfgs_cell_kappa(n_particles, state.kappa, cell_force_scale=cell_force_scale)
+    _wp_check_packed_topology(
+        wp.from_torch(ext_atom_ptr, dtype=wp.int32),
+        wp.from_torch(ext_batch_idx, dtype=wp.int32),
+        n,
+        packed,
+    )
+    n_particles = torch.tensor(counts, **i32)
+    lbfgs_set_reference_cell(cell, state.ref_cell, state.ref_cell_inv)
+    lbfgs_cell_kappa(n_particles, state.kappa, cell_force_scale=cell_force_scale)
     return state
 
 

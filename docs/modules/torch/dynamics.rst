@@ -67,6 +67,4 @@ vector, so the two-loop recursion couples them automatically. Build
 batches as well as uniform ones.
 
 .. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_prepare_cell_state
-.. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_set_reference_cell
-.. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_cell_kappa
 .. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_step_coord_cell

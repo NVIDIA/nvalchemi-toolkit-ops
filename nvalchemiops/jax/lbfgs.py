@@ -115,10 +115,8 @@ from nvalchemiops.dynamics.optimizers.lbfgs import _lbfgs_step_impl as _warp_ste
 __all__ = [
     "LBFGSCellState",
     "LBFGSState",
-    "lbfgs_cell_kappa",
     "lbfgs_prepare_cell_state",
     "lbfgs_prepare_state",
-    "lbfgs_set_reference_cell",
     "lbfgs_step_coord",
     "lbfgs_step_coord_cell",
 ]
@@ -363,9 +361,9 @@ def lbfgs_prepare_state(
         x_base=jnp.zeros((num_dofs, 3), dtype),
         force_base=jnp.zeros((num_dofs, 3), dtype),
         direction=jnp.zeros((num_dofs, 3), dtype),
-        s_history=jnp.zeros((m, num_dofs, 3), dtype),
-        y_history=jnp.zeros((m, num_dofs, 3), dtype),
-        ys=z64(m, n), yy=z64(m, n), alpha_hist=z64(m, n), beta_hist=z64(m, n),
+        s_history=jnp.zeros((num_dofs, m, 3), dtype),
+        y_history=jnp.zeros((num_dofs, m, 3), dtype),
+        ys=z64(n, m), yy=z64(n, m), alpha_hist=z64(n, m), beta_hist=z64(n, m),
         ss=z64(n), gg=z64(n),
         d0=z64(n), dmax=z64(n), dquad=z64(n),
         # The only three fields whose initial value is not zero.
@@ -797,60 +795,73 @@ def lbfgs_cell_kappa(
 
 
 def lbfgs_prepare_cell_state(
-    num_atoms: int,
-    num_systems: int,
-    ext_batch_idx: jax.Array,
-    ext_atom_ptr: jax.Array,
+    atom_ptr: jax.Array,
+    cell: jax.Array,
     *,
-    cell: jax.Array | None = None,
-    n_particles: jax.Array | None = None,
     cell_force_scale: float = 1.0,
     dtype=jnp.float64,
 ) -> LBFGSCellState:
-    """Allocate and validate the variable-cell chart and its scratch space.
+    """Build a complete, ready-to-step variable-cell chart from atom topology.
 
-    The packed topology is *yours*: build ``ext_batch_idx`` and
-    ``ext_atom_ptr`` with the generic batch utilities so ragged batches are
-    expressible.
+    One call: give it the ordinary ``atom_ptr`` and the aligned cells, and it
+    derives the packed topology, captures the reference chart and computes
+    ``kappa``. Nothing needs repairing before the first step.
 
-    Pass ``cell`` and ``n_particles`` to get a state that is ready to step:
-    the chart fields ``ref_cell``, ``ref_cell_inv`` and ``kappa`` are filled
-    for you. Omit them and those three are left zeroed, which a step cannot
-    use, so fill them from :func:`lbfgs_set_reference_cell` and
-    :func:`lbfgs_cell_kappa` first.
+    Ragged batches are unaffected -- ``atom_ptr`` already carries each
+    system's atom count, so nothing here assumes an even split.
 
     Parameters
     ----------
-    num_atoms : int
-        Total atoms across the batch. The packed arrays are sized
-        ``num_atoms + 2 * num_systems``.
-    num_systems : int
-        Independent systems in the batch.
-    ext_batch_idx : jax.Array, shape (num_atoms + 2 * num_systems,), dtype int32
-        System index of every packed degree of freedom.
-    ext_atom_ptr : jax.Array, shape (num_systems + 1,), dtype int32
-        Atom offsets per system, before cell rows are appended.
-    cell : jax.Array, shape (num_systems, 3, 3), optional
-        Reference lattice per system. Given together with ``n_particles``, the
-        chart is captured here instead of in separate calls.
-    n_particles : jax.Array, shape (num_systems,), dtype int32, optional
-        Atom count per system, used for ``kappa``.
+    atom_ptr : jax.Array, shape (num_systems + 1,), dtype int32
+        CSR-style atom pointer for the batch.
+    cell : jax.Array, shape (num_systems, 3, 3)
+        Reference lattice per system, aligned.
     cell_force_scale : float, optional
-        Multiplier on the atom count in ``kappa``; only read when
-        ``n_particles`` is given.
+        Multiplier on the atom count in ``kappa``.
     dtype : optional
         Coordinate precision; must match the coordinates and the state.
 
     Returns
     -------
     LBFGSCellState
+
+    See Also
+    --------
+    nvalchemiops.dynamics.optimizers.lbfgs : the variable-cell contract,
+        including the requirement that the cells be aligned first.
     """
     if jnp.dtype(dtype).type not in _CELL_BODIES:
         raise ValueError(f"dtype must be float32 or float64; got {jnp.dtype(dtype)}")
-    n, packed = num_systems, num_atoms + 2 * num_systems
+
+    ptr = [int(v) for v in np.asarray(atom_ptr)]
+    if len(ptr) < 2:
+        raise ValueError(
+            f"atom_ptr must have num_systems + 1 >= 2 entries; got {len(ptr)}"
+        )
+    n = len(ptr) - 1
+    num_atoms = ptr[-1]
+    counts = [ptr[s + 1] - ptr[s] for s in range(n)]
+    if any(c < 0 for c in counts):
+        raise ValueError(f"atom_ptr must be non-decreasing; got {ptr}")
+    packed = num_atoms + 2 * n
+
+    # Derived, not carried: a function of the topology alone. Built with jnp
+    # rather than through Warp, as the rest of this binding's helpers are.
+    ext_atom_ptr = jnp.asarray([ptr[s] + 2 * s for s in range(n + 1)], jnp.int32)
+    ext_batch_idx = jnp.repeat(
+        jnp.arange(n, dtype=jnp.int32),
+        jnp.asarray(counts, jnp.int32) + 2,
+        total_repeat_length=packed,
+    )
+
     mat = lambda: jnp.zeros((n, 3, 3), dtype)  # noqa: E731
+    ref_cell, ref_cell_inv = lbfgs_set_reference_cell(cell)
     state = LBFGSCellState(
-        ref_cell=mat(), ref_cell_inv=mat(), kappa=jnp.zeros(n, dtype),
+        ref_cell=ref_cell, ref_cell_inv=ref_cell_inv,
+        kappa=lbfgs_cell_kappa(
+            jnp.asarray(counts, jnp.int32), dtype=dtype,
+            cell_force_scale=cell_force_scale,
+        ),
         ext_batch_idx=ext_batch_idx, ext_atom_ptr=ext_atom_ptr,
         phi=mat(), phi_inv=mat(), d_phi=mat(),
         cell_dof_a=jnp.zeros((n, 3), dtype), cell_dof_b=jnp.zeros((n, 3), dtype),
@@ -860,18 +871,6 @@ def lbfgs_prepare_cell_state(
         ext_forces=jnp.zeros((packed, 3), dtype),
     )  # fmt: skip
     state.validate(num_atoms=num_atoms)
-    if (cell is None) != (n_particles is None):
-        raise ValueError("cell and n_particles must be given together")
-    if cell is not None:
-        ref_cell, ref_cell_inv = lbfgs_set_reference_cell(cell)
-        state = dataclasses.replace(
-            state,
-            ref_cell=ref_cell,
-            ref_cell_inv=ref_cell_inv,
-            kappa=lbfgs_cell_kappa(
-                n_particles, dtype=dtype, cell_force_scale=cell_force_scale
-            ),
-        )
     return state
 
 

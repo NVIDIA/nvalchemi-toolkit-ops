@@ -125,25 +125,25 @@ def make_lbfgs_state(num_dofs, num_systems, history_size, vec_dtype, device):
     )  # fmt: skip
 
 
-def make_lbfgs_cell_state(num_atoms, num_systems, vec_dtype, device, counts=None):
-    """Return an :class:`LBFGSCellState` with its topology and ``kappa`` filled.
+def make_lbfgs_cell_state(
+    num_atoms, num_systems, vec_dtype, device, counts=None, cell=None
+):
+    """Return a complete :class:`LBFGSCellState`, chart and all.
 
-    The reference cell still has to be captured with
-    ``lbfgs_set_reference_cell``; tests that need a ragged batch pass
-    ``counts``, which is the reason this does not just call the allocator with
-    an even split.
+    Preparation takes ordinary ``atom_ptr`` and derives the packed topology
+    itself, so this only has to turn per-system ``counts`` into that pointer.
+    Ragged batches are expressed by passing ``counts``.
 
     Parameters
     ----------
     counts : sequence of int, optional
         Atom count per system. Defaults to an even split, which requires
         ``num_atoms`` to divide evenly.
+    cell : wp.array, optional
+        Reference lattice per system. Defaults to identity cells, which are
+        aligned and therefore accepted; pass real cells when the test cares
+        about the chart rather than the topology.
     """
-    from nvalchemiops.batch_utils import atom_ptr_to_batch_idx
-    from nvalchemiops.dynamics.optimizers.lbfgs import lbfgs_cell_kappa
-    from nvalchemiops.dynamics.utils.cell_filter import extend_atom_ptr
-
-    num_ext = num_atoms + 2 * num_systems
     if counts is None:
         if num_atoms % num_systems:
             raise ValueError(
@@ -155,28 +155,21 @@ def make_lbfgs_cell_state(num_atoms, num_systems, vec_dtype, device, counts=None
     if int(counts.sum()) != num_atoms:
         raise ValueError(f"counts sum to {counts.sum()}, not num_atoms {num_atoms}")
 
-    # Build the extended topology with the generic batch utilities rather than
-    # by hand, which is what makes ragged batches expressible at all.
     atom_ptr = wp.array(
         np.concatenate([[0], np.cumsum(counts)]).astype(np.int32),
         dtype=wp.int32,
         device=device,
     )
-    ext_atom_ptr = wp.zeros(num_systems + 1, dtype=wp.int32, device=device)
-    extend_atom_ptr(atom_ptr, ext_atom_ptr, device=device)
-    ext_batch_idx = wp.zeros(num_ext, dtype=wp.int32, device=device)
-    atom_ptr_to_batch_idx(ext_atom_ptr, ext_batch_idx)
-
-    state = lbfgs_prepare_cell_state(
-        num_atoms, num_systems, ext_batch_idx, ext_atom_ptr,
+    if cell is None:
+        mat = wp.mat33f if vec_dtype == wp.vec3f else wp.mat33d
+        cell = wp.array(
+            np.tile(np.eye(3), (num_systems, 1, 1)), dtype=mat, device=device
+        )
+    return lbfgs_prepare_cell_state(
+        atom_ptr, cell,
+        cell_force_scale=1.0 / float(counts.max()),
         dtype=vec_dtype, device=device,
     )  # fmt: skip
-    lbfgs_cell_kappa(
-        wp.array(counts, dtype=wp.int32, device=device),
-        state.kappa,
-        cell_force_scale=1.0 / float(counts.max()),
-    )
-    return state
 
 
 def numpy_two_loop(s_vecs, y_vecs, ys, yy, q, gamma=None):

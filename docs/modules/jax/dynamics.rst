@@ -31,6 +31,4 @@ two-loop recursion couples them automatically. Build ``ext_atom_ptr`` and
 batches as well as uniform ones.
 
 .. autofunction:: nvalchemiops.jax.lbfgs.lbfgs_prepare_cell_state
-.. autofunction:: nvalchemiops.jax.lbfgs.lbfgs_set_reference_cell
-.. autofunction:: nvalchemiops.jax.lbfgs.lbfgs_cell_kappa
 .. autofunction:: nvalchemiops.jax.lbfgs.lbfgs_step_coord_cell

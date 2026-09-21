@@ -50,6 +50,7 @@ import warp as wp
 from nvalchemiops.dynamics.optimizers.lbfgs import (
     _resolve_curvature_eps,
     check_cell_is_aligned,
+    check_packed_topology,
     lbfgs_apply_step,
     lbfgs_cell_kappa,
     lbfgs_cell_trust_region,
@@ -206,8 +207,8 @@ class Driver:
         )
         mask = self.system_mask(s)
         return (
-            [st.s_history.numpy()[j][mask] for j in slots],
-            [st.y_history.numpy()[j][mask] for j in slots],
+            [st.s_history.numpy()[:, j][mask] for j in slots],
+            [st.y_history.numpy()[:, j][mask] for j in slots],
         )
 
 
@@ -257,10 +258,10 @@ class TestLBFGSTwoLoop:
                 slots = history_slots(end[s], hist_count[s], d.history_size)
                 mask = d.system_mask(s)
                 ref = numpy_two_loop(
-                    [s_hist[j][mask] for j in slots],
-                    [y_hist[j][mask] for j in slots],
-                    [ys[j][s] for j in slots],
-                    [yy[j][s] for j in slots],
+                    [s_hist[:, j][mask] for j in slots],
+                    [y_hist[:, j][mask] for j in slots],
+                    [ys[s][j] for j in slots],
+                    [yy[s][j] for j in slots],
                     force_base[mask],
                 )
                 scale = max(np.abs(ref).max(), 1e-30)
@@ -339,19 +340,19 @@ class TestLBFGSTwoLoop:
         n, b = 12, 4
 
         d = Driver(_cluster(1, n), 1, wp.vec3d, np.float64, device)
-        s_hist = np.zeros((d.history_size, n, 3))
-        y_hist = np.zeros((d.history_size, n, 3))
-        ys = np.zeros((d.history_size, 1))
-        yy = np.zeros((d.history_size, 1))
+        s_hist = np.zeros((n, d.history_size, 3))
+        y_hist = np.zeros((n, d.history_size, 3))
+        ys = np.zeros((1, d.history_size))
+        yy = np.zeros((1, d.history_size))
         for j in range(b):
             sv = rng.normal(size=(n, 3))
             yv = rng.normal(size=(n, 3))
             if (sv * yv).sum() < 0:
                 yv = -yv
             yv *= (sv * yv).sum() / (yv * yv).sum()  # ys == yy, hence gamma == 1
-            s_hist[j], y_hist[j] = sv, yv
-            ys[j, 0], yy[j, 0] = (sv * yv).sum(), (yv * yv).sum()
-        np.testing.assert_allclose(ys[:b], yy[:b], rtol=1e-12)
+            s_hist[:, j], y_hist[:, j] = sv, yv
+            ys[0, j], yy[0, j] = (sv * yv).sum(), (yv * yv).sum()
+        np.testing.assert_allclose(ys[:, :b], yy[:, :b], rtol=1e-12)
 
         st = d.state
         st.s_history.assign(s_hist)
@@ -368,8 +369,8 @@ class TestLBFGSTwoLoop:
 
         # scipy stores pairs oldest-first, which is slots 0..b-1 here.
         prod = scipy_opt.LbfgsInvHessProduct(
-            np.array([s_hist[j].ravel() for j in range(b)]),
-            np.array([y_hist[j].ravel() for j in range(b)]),
+            np.array([s_hist[:, j].ravel() for j in range(b)]),
+            np.array([y_hist[:, j].ravel() for j in range(b)]),
         )
         np.testing.assert_allclose(
             got, prod.matvec(q.ravel()).reshape(n, 3), rtol=1e-10
@@ -437,10 +438,10 @@ class TestLBFGSTwoLoop:
             slots = history_slots(st.end.numpy()[0], count, d.history_size)
             mask = d.system_mask(0)
             ref = numpy_two_loop(
-                [st.s_history.numpy()[j][mask] for j in slots],
-                [st.y_history.numpy()[j][mask] for j in slots],
-                [st.ys.numpy()[j][0] for j in slots],
-                [st.yy.numpy()[j][0] for j in slots],
+                [st.s_history.numpy()[:, j][mask] for j in slots],
+                [st.y_history.numpy()[:, j][mask] for j in slots],
+                [st.ys.numpy()[0][j] for j in slots],
+                [st.yy.numpy()[0][j] for j in slots],
                 st.force_base.numpy()[mask],
             )
             np.testing.assert_allclose(
@@ -804,7 +805,7 @@ class TestLBFGSSignConvention:
         slots = history_slots(d.state.end.numpy()[0], count, d.history_size)
         ys = d.state.ys.numpy()
         for j in slots:
-            assert ys[j][0] > 0.0, f"slot {j} has non-positive curvature"
+            assert ys[0][j] > 0.0, f"slot {j} has non-positive curvature"
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_direction_points_along_the_force(self, device):
@@ -906,7 +907,7 @@ class TestLBFGSStepErrors:
     def test_history_buffer_shape(self, device):
         d = Driver(_cluster(1, 3), 1, wp.vec3d, np.float64, device)
         d.evaluate()
-        d.state.s_history = wp.zeros((HISTORY_SIZE, 2), dtype=wp.vec3d, device=device)
+        d.state.s_history = wp.zeros((2, HISTORY_SIZE), dtype=wp.vec3d, device=device)
         with pytest.raises(ValueError, match="s_history starts with dimensions"):
             lbfgs_step(
                 positions=d.positions,
@@ -966,9 +967,6 @@ class TestLBFGSPublicSurface:
             "lbfgs_prepare_cell_state",
             "lbfgs_step",
             "lbfgs_step_coord_cell",
-            "lbfgs_set_reference_cell",
-            "lbfgs_cell_kappa",
-            "check_cell_is_aligned",
         }
     )
 
@@ -1165,7 +1163,7 @@ class TestLBFGSStateValidation:
     def test_scalar_group_must_share_a_dtype(self, device):
         """One odd array out is the realistic way to get this wrong."""
         st = make_lbfgs_state(3, 1, HISTORY_SIZE, wp.vec3d, device)
-        st.ys = wp.zeros((HISTORY_SIZE, 1), dtype=wp.float32, device=device)
+        st.ys = wp.zeros((1, HISTORY_SIZE), dtype=wp.float32, device=device)
         with pytest.raises(ValueError, match="must share one dtype"):
             st.validate()
 
@@ -1582,22 +1580,6 @@ class TestLBFGSCellKappa:
         np.testing.assert_allclose(kappa.numpy(), 0.25 * np.array([4, 2, 3]))
 
     @pytest.mark.parametrize("device", DEVICES)
-    def test_an_atomless_system_is_rejected_by_the_topology_too(self, device):
-        """Rejected even when ``kappa`` is filled separately.
-
-        A system spanning exactly two packed entries has its two cell rows and
-        no atoms, so preparation rejects it from the topology alone.
-        """
-        n, m = 4, 2
-        # System 0 gets all four atoms; system 1 gets none.
-        ptr = wp.array(np.array([0, 6, 8], np.int32), dtype=wp.int32, device=device)
-        idx = wp.array(
-            np.array([0, 0, 0, 0, 0, 0, 1, 1], np.int32), dtype=wp.int32, device=device
-        )
-        with pytest.raises(ValueError, match="contain no atoms"):
-            lbfgs_prepare_cell_state(n, m, idx, ptr, device=device)
-
-    @pytest.mark.parametrize("device", DEVICES)
     def test_coordinate_only_empty_input_is_still_supported(self, device):
         """The separate, explicitly documented case: a no-op, not an error.
 
@@ -1713,51 +1695,91 @@ class TestLBFGSInputsAgainstState:
 
 
 class TestLBFGSPackedTopology:
-    """``ext_atom_ptr`` and ``ext_batch_idx`` values, checked at preparation.
+    """The packed topology, now that preparation derives it.
 
-    ``validate`` stops at shapes because it runs every step and reading these
-    means a host sync. Preparation runs once, so it can afford the values --
-    and every kernel on the cell path indexes the packed array through them.
+    ``ext_atom_ptr`` and ``ext_batch_idx`` are a function of ``atom_ptr``
+    alone, so a caller can no longer supply an inconsistent pair -- which is a
+    stronger guarantee than validating one. What is left to check is that the
+    derivation is right for ragged input, that a malformed ``atom_ptr`` is
+    refused, and that the underlying guard still bites when called directly.
     """
 
     @staticmethod
-    def _topology(counts, device):
-        from nvalchemiops.batch_utils import atom_ptr_to_batch_idx
-        from nvalchemiops.dynamics.utils.cell_filter import extend_atom_ptr
-
+    def _atom_ptr(counts, device):
         counts = np.asarray(counts, np.int32)
-        n, m = int(counts.sum()), len(counts)
-        atom_ptr = wp.array(
+        return wp.array(
             np.concatenate([[0], np.cumsum(counts)]).astype(np.int32),
             dtype=wp.int32, device=device,
         )  # fmt: skip
-        ext_ptr = wp.zeros(m + 1, dtype=wp.int32, device=device)
-        extend_atom_ptr(atom_ptr, ext_ptr, device=device)
-        ext_idx = wp.zeros(n + 2 * m, dtype=wp.int32, device=device)
-        atom_ptr_to_batch_idx(ext_ptr, ext_idx)
-        return n, m, ext_ptr, ext_idx
+
+    @staticmethod
+    def _cell(num_systems, device):
+        return wp.array(
+            np.tile(np.eye(3) * 6.0, (num_systems, 1, 1)),
+            dtype=wp.mat33d, device=device,
+        )  # fmt: skip
 
     @pytest.mark.parametrize("device", DEVICES)
-    def test_a_ragged_topology_from_the_utilities_is_accepted(self, device):
-        """Built the documented way, including unequal atom counts."""
-        n, m, ptr, idx = self._topology([4, 7], device)
-        lbfgs_prepare_cell_state(n, m, idx, ptr, device=device)
+    def test_a_ragged_batch_derives_the_documented_topology(self, device):
+        """Unequal atom counts, derived rather than hand-built by the caller."""
+        counts = [4, 7]
+        cs = lbfgs_prepare_cell_state(
+            self._atom_ptr(counts, device), self._cell(2, device), device=device
+        )
+        # ext_atom_ptr[s] = atom_ptr[s] + 2s, the documented relation.
+        np.testing.assert_array_equal(cs.ext_atom_ptr.numpy(), [0, 6, 15])
+        np.testing.assert_array_equal(cs.ext_batch_idx.numpy(), [0] * 6 + [1] * 9)
+        np.testing.assert_allclose(cs.kappa.numpy(), [4.0, 7.0])
 
     @pytest.mark.parametrize("device", DEVICES)
-    def test_a_batch_index_disagreeing_with_the_pointers_is_rejected(self, device):
-        n, m, ptr, idx = self._topology([4, 7], device)
-        reversed_idx = wp.array(idx.numpy()[::-1].copy(), dtype=wp.int32, device=device)
+    def test_an_atomless_system_is_rejected(self, device):
+        """A system with no atoms has no scale ``kappa`` could take.
+
+        Caught by the topology check, which runs first now that preparation
+        derives the packed pointers -- so the message is the topology one.
+        """
+        with pytest.raises(ValueError, match=r"system\(s\) \[1\] contain no atoms"):
+            lbfgs_prepare_cell_state(
+                self._atom_ptr([4, 0, 3], device), self._cell(3, device), device=device
+            )
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_a_non_monotonic_atom_ptr_is_rejected(self, device):
+        ptr = wp.array(np.array([0, 7, 4], np.int32), dtype=wp.int32, device=device)
+        with pytest.raises(ValueError, match="non-decreasing"):
+            lbfgs_prepare_cell_state(ptr, self._cell(2, device), device=device)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_a_degenerate_atom_ptr_is_rejected(self, device):
+        ptr = wp.array(np.array([0], np.int32), dtype=wp.int32, device=device)
+        with pytest.raises(ValueError, match="num_systems . 1 >= 2"):
+            lbfgs_prepare_cell_state(ptr, self._cell(1, device), device=device)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_the_underlying_guard_still_bites_when_called_directly(self, device):
+        """The public path cannot violate it; the guard is tested on its own.
+
+        ``check_packed_topology`` is no longer reachable with bad input
+        through :func:`lbfgs_prepare_cell_state`, so without this the checks it
+        performs would go uncovered and could rot silently.
+        """
+        ptr = wp.array(np.array([0, 6, 15], np.int32), dtype=wp.int32, device=device)
+        good = wp.array(
+            np.array([0] * 6 + [1] * 9, np.int32), dtype=wp.int32, device=device
+        )
+        check_packed_topology(ptr, good, 2, 15)  # positive control
+
+        reversed_idx = wp.array(
+            good.numpy()[::-1].copy(), dtype=wp.int32, device=device
+        )
         with pytest.raises(ValueError, match="ext_batch_idx disagrees"):
-            lbfgs_prepare_cell_state(n, m, reversed_idx, ptr, device=device)
+            check_packed_topology(ptr, reversed_idx, 2, 15)
 
-    @pytest.mark.parametrize("device", DEVICES)
-    def test_a_system_without_room_for_its_cell_rows_is_rejected(self, device):
-        """Every system owns two packed entries however few atoms it has."""
-        n, m, _, idx = self._topology([4, 7], device)
-        bad = wp.array(np.array([0, 1, n + 2 * m], np.int32),
-                       dtype=wp.int32, device=device)  # fmt: skip
+        cramped = wp.array(
+            np.array([0, 1, 15], np.int32), dtype=wp.int32, device=device
+        )
         with pytest.raises(ValueError, match="fewer than 2 packed entries"):
-            lbfgs_prepare_cell_state(n, m, idx, bad, device=device)
+            check_packed_topology(cramped, good, 2, 15)
 
 
 class TestLBFGSCellStepErrors:
@@ -1774,16 +1796,9 @@ class TestLBFGSCellStepErrors:
     @staticmethod
     def _inputs(device, n=4, m=1):
         cell = wp.array((np.eye(3) * 6.0)[None], dtype=wp.mat33d, device=device)
-        npart = wp.array(np.array([n], np.int32), dtype=wp.int32, device=device)
-        # The *extended* pointer spans the cell rows too, so it ends at
-        # n + 2 * m rather than n. Passing the atom pointer here is a real
-        # mistake that went unnoticed until the values were validated.
-        ep = wp.array(np.array([0, n + 2 * m], np.int32), dtype=wp.int32, device=device)
-        eb = wp.zeros(n + 2 * m, dtype=wp.int32, device=device)
+        atom_ptr = wp.array(np.array([0, n], np.int32), dtype=wp.int32, device=device)
         st = lbfgs_prepare_state(n + 2 * m, m, device=device)
-        cs = lbfgs_prepare_cell_state(
-            n, m, eb, ep, cell=cell, n_particles=npart, device=device
-        )
+        cs = lbfgs_prepare_cell_state(atom_ptr, cell, device=device)
         return dict(
             positions=wp.zeros(n, dtype=wp.vec3d, device=device),
             forces=wp.zeros(n, dtype=wp.vec3d, device=device),
@@ -1824,7 +1839,7 @@ class TestLBFGSCellStepErrors:
     @pytest.mark.parametrize("device", DEVICES)
     def test_a_reassigned_history_buffer_is_rejected(self, device):
         kw = self._inputs(device)
-        kw["state"].s_history = wp.zeros((6, 2), dtype=wp.vec3d, device=device)
+        kw["state"].s_history = wp.zeros((2, 6), dtype=wp.vec3d, device=device)
         with pytest.raises(ValueError, match="s_history starts with dimensions"):
             self._step(kw)
 
