@@ -201,6 +201,10 @@ def benchmark_fourier_d3(data, num_runs, warmup_runs, reuse_setup=False):
     )
     pbc = data["pbc"]
     mesh = _mesh_for_cell(cell)
+    # A batched run concatenates several systems, so the list has to be built per system.
+    # Leaving ``method`` unset lets the dispatcher pick the batch builder when batch_idx is
+    # present; pinning "cell_list" would link replicas across systems.
+    batch_idx = data.get("batch_idx") if int(data.get("batch_size", 1)) > 1 else None
 
     def build_list():
         return neighbor_list(
@@ -208,8 +212,8 @@ def benchmark_fourier_d3(data, num_runs, warmup_runs, reuse_setup=False):
             cutoff=CN_CUTOFF,
             cell=cell,
             pbc=pbc,
+            batch_idx=batch_idx,
             return_neighbor_list=True,
-            method="cell_list",
         )
 
     neighbors, pointer, shifts = build_list()
@@ -230,7 +234,7 @@ def benchmark_fourier_d3(data, num_runs, warmup_runs, reuse_setup=False):
             neighbor_list=neighbors,
             neighbor_ptr=pointer,
             unit_shifts=shifts,
-            batch_idx=data.get("batch_idx"),
+            batch_idx=batch_idx,
             setup=setup,
             **DAMPING,
         )
@@ -279,13 +283,16 @@ def benchmark_real_space_d3(data, cutoff_angstrom, num_runs, warmup_runs):
         cutoff, atomic_density=density * DEFAULT_NL_SAFETY_FACTOR
     )
 
+    # As above: the dispatcher picks the batch builder when batch_idx is present.
+    batch_idx = data.get("batch_idx") if int(data.get("batch_size", 1)) > 1 else None
+
     def build_list():
         return neighbor_list(
             positions,
             cutoff=cutoff,
             cell=cell,
             pbc=pbc,
-            method="cell_list",
+            batch_idx=batch_idx,
             max_neighbors=max_neighbors,
         )
 
@@ -298,6 +305,7 @@ def benchmark_real_space_d3(data, cutoff_angstrom, num_runs, warmup_runs):
             cell=cell.float(),
             neighbor_matrix=matrix,
             neighbor_matrix_shifts=matrix_shifts,
+            batch_idx=batch_idx,
             d3_params=parameters,
             a1=DAMPING["a1"],
             a2=DAMPING["a2"],

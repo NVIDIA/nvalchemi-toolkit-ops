@@ -241,6 +241,27 @@ class TestSharedBenchmarkContract:
             assert "time_neighbor_seconds" in row
 
     @pytest.mark.gpu
+    def test_batched_runs_keep_systems_apart(self, tmp_path):
+        """A batch is several independent cells, so no neighbour may cross between them.
+
+        Pinning a single-system list builder here would either link replicas or, as the
+        shared builders are shaped, fail outright; both make the batch rows meaningless.
+        """
+        config = copy.deepcopy(CONFIG)
+        config["scaling"] = {
+            "system_size": {"enabled": False},
+            "constant_workload": {"enabled": False},
+            "batch_scaling": {"enabled": True, "max_total_atoms": 2000},
+        }
+        config["systems"]["cscl"]["constant_atoms_sizes"] = [250]
+        rows = benchmark_module.run_from_config(config, tmp_path, backend="torch")
+        batched = [r for r in rows if r["batch_size"] > 1]
+        assert batched, "batch scaling produced no multi-system rows"
+        assert all(r["success"] for r in batched), [
+            r["error"] for r in batched if not r["success"]
+        ]
+
+    @pytest.mark.gpu
     def test_the_mesh_follows_the_cell(self, tmp_path):
         """A fixed spacing means the mesh grows with the cell, not with a size threshold."""
         small = copy.deepcopy(CONFIG)
