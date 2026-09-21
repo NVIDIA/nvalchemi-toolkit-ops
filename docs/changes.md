@@ -2,6 +2,63 @@
 
 # Change Log
 
+## Unreleased
+
+### Added
+
+- New L-BFGS geometry optimizer, with a Warp core plus PyTorch and JAX
+  bindings. L-BFGS is a quasi-Newton method: it builds an approximation to the
+  inverse Hessian from recent position and gradient differences and picks a
+  step length bounded by a trust region. On Lennard-Jones clusters it
+  reaches a given force tolerance in roughly an eighth of the force evaluations
+  FIRE2 needs, measured against a per-case tuned FIRE2 baseline, which is the
+  cost that dominates relaxation with a machine-learned potential.
+- The optimizer is caller-driven, and matches FIRE2's division of labour: each
+  step consumes exactly one force evaluation, updates the curvature history,
+  restarts the direction if it stops descending, and takes one bounded step.
+  It owns no force or stress tolerance and has no terminal status -- testing
+  convergence and ending the loop are the caller's, so the stopping rule stays
+  where the physics is. A whole batch relaxes in one stream of kernel launches
+  with no per-system host control flow.
+- **No energy is required.** The step length comes from a `maxstep` trust
+  region rather than from a line search, so models whose forces are not the
+  gradient of their reported energy -- direct force heads, and anything with a
+  rough energy surface -- relax as well as conservative ones.
+- Every array in the state follows the coordinate dtype, so float32
+  coordinates give an fp32 optimizer end to end and float64 an fp64 one, with
+  no mixed configuration. In JAX this means an fp32 relaxation needs no
+  `JAX_ENABLE_X64`. The curvature threshold `curvature_eps` follows the same
+  rule and now defaults per precision -- `1e-6` for float32, `1e-10` for
+  float64 -- because `ys` is accumulated in the coordinate precision and one
+  value cannot sit above both noise floors.
+- State is grouped into two transparent dataclasses, `LBFGSState` and
+  `LBFGSCellState`, with every array indexed by its owning entity first: a
+  per-degree-of-freedom buffer leads with `num_packed`, a per-system one with
+  `num_systems`, and the history depth is the trailing axis. A batched driver
+  can therefore select systems, or concatenate two states, by gathering along
+  dimension zero. `lbfgs_prepare_state` and `lbfgs_prepare_cell_state`
+  allocate, initialize and validate a complete state in one call -- shapes,
+  dtypes, devices, history depth and the packed cell relationship -- and
+  calling them again is how you restart. Every field stays reachable by name,
+  so you can equally build a state from arrays you already own and check it
+  with `validate()`, which compares shapes, dtypes and device without touching
+  the GPU; each step then only verifies that its own inputs are compatible. A step still allocates nothing, so it stays capturable in a CUDA
+  graph. In JAX both classes are registered pytrees and the step returns a new
+  state functionally, so one `donate_argnums` entry donates every field.
+- Both coordinate-only and variable-cell relaxation are supported.
+  `lbfgs_prepare_cell_state` takes the ordinary `atom_ptr` and the aligned
+  cells and derives the packed topology, captures the reference chart and
+  computes `kappa` itself, so nothing needs repairing before the first step;
+  ragged batches are unaffected, since `atom_ptr` already carries each
+  system's atom count. The
+  variable-cell path maps positions and cell into a single packed coordinate
+  vector following ASE's `UnitCellFilter` convention, so the two-loop recursion
+  couples them without special handling, and convergence is always evaluated on
+  the Cartesian forces and the stress so tolerances keep their physical meaning
+  as the cell deforms. Because the extended topology is built with the generic
+  batch utilities rather than by a dedicated allocator, ragged batches whose
+  systems have different atom counts work the same way uniform ones do.
+
 ## v0.4.1 - 2026-08-03
 
 ### Added

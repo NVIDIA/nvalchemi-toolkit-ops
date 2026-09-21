@@ -120,6 +120,47 @@ Fast Inertial Relaxation Engine for geometry optimization.
 .. autofunction:: nvalchemiops.dynamics.optimizers.fire.fire_step
 .. autofunction:: nvalchemiops.dynamics.optimizers.fire.fire_update
 
+L-BFGS
+~~~~~~
+
+Limited-memory quasi-Newton optimizer with a ``maxstep`` trust region. Each
+:func:`~nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_step` call consumes
+exactly one force evaluation: it updates the curvature history, restarts if
+the direction stops descending, and takes one bounded step. A whole batch
+relaxes in one stream of kernel launches.
+
+Like FIRE2, it owns no tolerance and has no terminal status -- testing
+convergence and ending the loop are the caller's. It reads no energy either,
+so a model whose forces are not the gradient of its energy relaxes just as
+well.
+
+The public surface is the two states, the preparation helpers, one step per
+call, and the variable-cell setup below.
+
+.. autoclass:: nvalchemiops.dynamics.optimizers.lbfgs.LBFGSState
+   :members:
+.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_prepare_state
+.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_step
+
+.. note::
+   :func:`~nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_prepare_state`
+   allocates, initializes and validates the whole state in one call; calling
+   it again is how you reset. The arrays remain yours -- :class:`LBFGSState`
+   is a plain dataclass, so you can build one from buffers you already own and
+   check it with :meth:`LBFGSState.validate`.
+
+Variable-cell relaxation maps positions and cell into a single packed
+coordinate vector, so the two-loop recursion couples them automatically. Build
+``ext_atom_ptr`` and ``ext_batch_idx`` with
+:func:`~nvalchemiops.dynamics.utils.cell_filter.extend_atom_ptr` and
+:func:`~nvalchemiops.batch_utils.atom_ptr_to_batch_idx`, which handle ragged
+batches as well as uniform ones.
+
+.. autoclass:: nvalchemiops.dynamics.optimizers.lbfgs.LBFGSCellState
+   :members:
+.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_prepare_cell_state
+.. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_step_coord_cell
+
 FIRE2
 ~~~~~
 
