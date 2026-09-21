@@ -982,6 +982,40 @@ class TestNeighborListAutoSelection:
 class TestNeighborListExplicitMethod:
     """Test explicit method selection."""
 
+    def test_cluster_tile_exact_coo_returns_geometry(self):
+        """The public dispatcher preserves exact cluster-tile COO geometry."""
+        if not torch.cuda.is_available():
+            pytest.skip("cluster_tile requires CUDA")
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [3.0, 0.0, 0.0]],
+            dtype=torch.float32,
+            device="cuda",
+        )
+        cell = torch.eye(3, dtype=torch.float32, device="cuda") * 8.0
+        pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+
+        pairs, pointer, shifts, distances, vectors = neighbor_list(
+            positions,
+            cutoff=1.0,
+            cell=cell,
+            pbc=pbc,
+            method="cluster_tile",
+            return_neighbor_list=True,
+            return_distances=True,
+            return_vectors=True,
+            max_pairs=8,
+            max_tiles_per_group=1,
+        )
+
+        expected_vectors = (
+            positions[pairs[1].long()]
+            - positions[pairs[0].long()]
+            + shifts.to(positions.dtype) @ cell
+        )
+        assert pointer[-1].item() == pairs.shape[1]
+        torch.testing.assert_close(vectors, expected_vectors)
+        torch.testing.assert_close(distances, expected_vectors.norm(dim=-1))
+
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
     @pytest.mark.parametrize("device", ["cpu", "cuda"])
     def test_explicit_naive(self, dtype, device):

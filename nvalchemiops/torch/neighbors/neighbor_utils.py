@@ -20,6 +20,8 @@ This module contains PyTorch-specific helper functions for neighbor list operati
 
 from __future__ import annotations
 
+from typing import Literal
+
 import torch
 import warp as wp
 
@@ -56,6 +58,275 @@ def _raise_if_compiling_host_only(name: str, replacement: str) -> None:
         )
 
 
+def _check_tile_buffer_capacity(
+    counts: torch.Tensor,
+    capacities: int | torch.Tensor,
+    *,
+    segmented: bool = False,
+) -> int:
+    """Validate cluster-tile buffer capacity without breaking compilation.
+
+    Returns the observed compact count in eager execution, the static compact
+    capacity during compilation, and zero for segmented state.
+    """
+    if torch.compiler.is_compiling():
+        torch._assert_async(
+            torch.all(counts <= capacities),
+            "cluster-tile buffer capacity exceeded",
+        )
+        return 0 if segmented or not isinstance(capacities, int) else capacities
+
+    if segmented:
+        overflow = counts > capacities
+        if bool(overflow.any().item()):
+            system_index = int(overflow.nonzero(as_tuple=False)[0, 0].item())
+            max_tiles = int(capacities[system_index].item())
+            num_tiles = int(counts[system_index].item())
+            raise TileBufferOverflow(
+                max_tiles,
+                num_tiles,
+                system_index=system_index,
+            )
+        return 0
+
+    num_tiles = int(counts.max().item()) if counts.numel() > 0 else 0
+    max_tiles = (
+        int(capacities.item()) if isinstance(capacities, torch.Tensor) else capacities
+    )
+    if num_tiles > max_tiles:
+        raise TileBufferOverflow(max_tiles, num_tiles)
+    return num_tiles
+
+
+def _check_neighbor_capacity(
+    counts: torch.Tensor,
+    capacities: int | torch.Tensor,
+    *,
+    segmented: bool = False,
+    kind: Literal["matrix", "coo"] = "matrix",
+) -> int:
+    """Validate matrix or COO capacity without breaking compilation.
+
+    Returns the maximum observed count for a nonsegmented eager call. The
+    return value is zero for segmented state and is not meaningful while
+    compiling.
+    """
+    if kind == "matrix":
+        compiled_message = "cluster-tile neighbor matrix capacity exceeded"
+    elif kind == "coo":
+        compiled_message = "cluster-tile COO pair capacity exceeded"
+    else:
+        raise ValueError("kind must be 'matrix' or 'coo'")
+
+    if torch.compiler.is_compiling():
+        torch._assert_async(
+            torch.all(counts <= capacities),
+            compiled_message,
+        )
+        return 0
+
+    if segmented:
+        overflow = counts > capacities
+        if bool(overflow.any().item()):
+            system_index = int(overflow.nonzero(as_tuple=False)[0, 0].item())
+            max_neighbors = int(capacities[system_index].item())
+            num_neighbors = int(counts[system_index].item())
+            raise NeighborOverflowError(
+                max_neighbors,
+                num_neighbors,
+                system_index=system_index,
+            )
+        return 0
+
+    num_neighbors = int(counts.max().item()) if counts.numel() > 0 else 0
+    max_neighbors = (
+        int(capacities.item()) if isinstance(capacities, torch.Tensor) else capacities
+    )
+    if num_neighbors > max_neighbors:
+        raise NeighborOverflowError(max_neighbors, num_neighbors)
+    return num_neighbors
+
+
+def _prepare_compact_coo_geometry_buffers(
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+    capacity: int,
+    return_vectors: bool,
+    return_distances: bool,
+    neighbor_vectors: torch.Tensor | None,
+    neighbor_distances: torch.Tensor | None,
+    allocate_missing: bool,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Allocate or validate compact-COO geometry buffers and sentinels."""
+    if return_vectors:
+        if neighbor_vectors is None:
+            vector_capacity = capacity if allocate_missing else 1
+            neighbor_vectors = torch.empty(
+                (vector_capacity, 3), dtype=dtype, device=device
+            )
+        elif (
+            neighbor_vectors.device != device
+            or neighbor_vectors.dtype != dtype
+            or neighbor_vectors.ndim != 2
+            or neighbor_vectors.shape[1] != 3
+            or neighbor_vectors.shape[0] < capacity
+        ):
+            raise ValueError(
+                "neighbor_vectors must have shape (capacity, 3), matching "
+                "positions dtype and device, with capacity at least max_pairs"
+            )
+        if neighbor_vectors.requires_grad:
+            raise ValueError(
+                "neighbor_vectors must not require gradients; differentiate the "
+                "returned geometry instead"
+            )
+    else:
+        neighbor_vectors = torch.empty((1, 3), dtype=dtype, device=device)
+
+    if return_distances:
+        if neighbor_distances is None:
+            distance_capacity = capacity if allocate_missing else 1
+            neighbor_distances = torch.empty(
+                distance_capacity, dtype=dtype, device=device
+            )
+        elif (
+            neighbor_distances.device != device
+            or neighbor_distances.dtype != dtype
+            or neighbor_distances.ndim != 1
+            or neighbor_distances.shape[0] < capacity
+        ):
+            raise ValueError(
+                "neighbor_distances must have shape (capacity,), matching "
+                "positions dtype and device, with capacity at least max_pairs"
+            )
+        if neighbor_distances.requires_grad:
+            raise ValueError(
+                "neighbor_distances must not require gradients; differentiate the "
+                "returned geometry instead"
+            )
+    else:
+        neighbor_distances = torch.empty(1, dtype=dtype, device=device)
+
+    return neighbor_vectors, neighbor_distances
+
+
+def _validate_compact_coo_outputs(
+    *,
+    device: torch.device,
+    capacity: int,
+    neighbor_list: torch.Tensor | None,
+    neighbor_list_shifts: torch.Tensor | None,
+    pair_counter: torch.Tensor | None,
+) -> None:
+    """Validate caller-owned compact-COO outputs before mutation."""
+    if neighbor_list is not None and (
+        neighbor_list.device != device
+        or neighbor_list.dtype != torch.int32
+        or neighbor_list.ndim != 2
+        or neighbor_list.shape[0] != 2
+        or neighbor_list.shape[1] < capacity
+    ):
+        raise ValueError(
+            "neighbor_list must have shape (2, capacity), dtype int32, "
+            "match positions.device, and have capacity at least max_pairs"
+        )
+    if neighbor_list_shifts is not None and (
+        neighbor_list_shifts.device != device
+        or neighbor_list_shifts.dtype != torch.int32
+        or neighbor_list_shifts.ndim != 2
+        or neighbor_list_shifts.shape[1] != 3
+        or neighbor_list_shifts.shape[0] < capacity
+    ):
+        raise ValueError(
+            "neighbor_list_shifts must have shape (capacity, 3), dtype int32, "
+            "match positions.device, and have capacity at least max_pairs"
+        )
+    if pair_counter is not None and (
+        pair_counter.device != device
+        or pair_counter.dtype != torch.int32
+        or pair_counter.shape != (1,)
+    ):
+        raise ValueError(
+            "pair_counter must have shape (1,), dtype int32, and match positions.device"
+        )
+
+
+@torch.library.custom_op("nvalchemiops::_compact_coo_prefix", mutates_args=())
+def _compact_coo_prefix(
+    pair_count: torch.Tensor,
+    coo_list: torch.Tensor,
+    coo_shifts: torch.Tensor,
+    neighbor_vectors: torch.Tensor,
+    neighbor_distances: torch.Tensor,
+    capacity: int,
+    resolved_count: int,
+    copy_vectors: bool,
+    copy_distances: bool,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Copy the active compact-COO prefix into exact, non-aliasing outputs."""
+    num_pairs = (
+        int(resolved_count)
+        if resolved_count >= 0
+        else int(pair_count.reshape(-1)[0].item())
+    )
+    copy_length = max(0, min(num_pairs, int(capacity)))
+    storage_length = max(copy_length, 1)
+
+    pairs = coo_list.new_empty((2, storage_length))[:, :copy_length]
+    shifts = coo_shifts.new_empty((storage_length, 3))[:copy_length]
+    if copy_length:
+        pairs.copy_(coo_list[:copy_length].transpose(0, 1))
+        shifts.copy_(coo_shifts[:copy_length])
+
+    vector_length = storage_length if copy_vectors else 1
+    vectors = neighbor_vectors.new_empty((vector_length, 3))[
+        : copy_length if copy_vectors else 0
+    ]
+    if copy_vectors and copy_length:
+        vectors.copy_(neighbor_vectors[:copy_length])
+
+    distance_length = storage_length if copy_distances else 1
+    distances = neighbor_distances.new_empty(distance_length)[
+        : copy_length if copy_distances else 0
+    ]
+    if copy_distances and copy_length:
+        distances.copy_(neighbor_distances[:copy_length])
+    return pairs, shifts, vectors, distances
+
+
+@_compact_coo_prefix.register_fake
+def _(
+    pair_count: torch.Tensor,
+    coo_list: torch.Tensor,
+    coo_shifts: torch.Tensor,
+    neighbor_vectors: torch.Tensor,
+    neighbor_distances: torch.Tensor,
+    capacity: int,
+    resolved_count: int,
+    copy_vectors: bool,
+    copy_distances: bool,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    if resolved_count >= 0:
+        num_pairs = min(int(resolved_count), int(capacity))
+    else:
+        ctx = torch.library.get_ctx()
+        num_pairs = ctx.new_dynamic_size(min=0, max=int(capacity))
+    pairs = coo_list.new_empty((2, num_pairs))
+    shifts = coo_shifts.new_empty((num_pairs, 3))
+    vectors = (
+        neighbor_vectors.new_empty((num_pairs, 3))
+        if copy_vectors
+        else neighbor_vectors.new_empty((0, 3))
+    )
+    distances = (
+        neighbor_distances.new_empty((num_pairs,))
+        if copy_distances
+        else neighbor_distances.new_empty((0,))
+    )
+    return pairs, shifts, vectors, distances
+
+
 def _validate_pair_params_present(
     pair_fn: object,
     pair_params: torch.Tensor | None,
@@ -63,6 +334,101 @@ def _validate_pair_params_present(
     """Validate the torch pair-function parameter contract."""
     if pair_fn is not None and pair_params is None:
         raise ValueError("pair_params is required when pair_fn is provided")
+
+
+def _validate_cluster_tile_matrix_outputs(
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+    natom: int,
+    max_neighbors: int,
+    cutoff2: float | None,
+    neighbor_matrix2: torch.Tensor | None,
+    num_neighbors2: torch.Tensor | None,
+    neighbor_matrix_shifts2: torch.Tensor | None,
+    return_vectors: bool,
+    return_distances: bool,
+    neighbor_vectors: torch.Tensor | None,
+    neighbor_distances: torch.Tensor | None,
+    allocate_missing: bool,
+) -> None:
+    """Validate optional cluster-tile matrix outputs before mutation."""
+
+    def validate(
+        name: str,
+        tensor: torch.Tensor,
+        expected_shape: tuple[int, ...],
+        expected_dtype: torch.dtype,
+    ) -> None:
+        if tensor.device != device:
+            raise ValueError(f"{name} must be on the query device")
+        if tensor.dtype != expected_dtype or tuple(tensor.shape) != expected_shape:
+            raise ValueError(
+                f"{name} must have shape {expected_shape} and dtype "
+                f"{expected_dtype}; got shape {tuple(tensor.shape)} and "
+                f"dtype {tensor.dtype}."
+            )
+
+    secondary = (neighbor_matrix2, num_neighbors2, neighbor_matrix_shifts2)
+    num_secondary = sum(value is not None for value in secondary)
+    if 0 < num_secondary < len(secondary):
+        raise ValueError(
+            "neighbor_matrix2, num_neighbors2, and neighbor_matrix_shifts2 "
+            "must be supplied together"
+        )
+    if cutoff2 is None:
+        if num_secondary:
+            raise ValueError("secondary matrix outputs require cutoff2")
+    elif num_secondary == 0:
+        if not allocate_missing:
+            raise ValueError(
+                "cutoff2 requires neighbor_matrix2, num_neighbors2, and "
+                "neighbor_matrix_shifts2"
+            )
+    else:
+        validate(
+            "neighbor_matrix2",
+            neighbor_matrix2,
+            (natom, max_neighbors),
+            torch.int32,
+        )
+        validate("num_neighbors2", num_neighbors2, (natom,), torch.int32)
+        validate(
+            "neighbor_matrix_shifts2",
+            neighbor_matrix_shifts2,
+            (natom, max_neighbors, 3),
+            torch.int32,
+        )
+
+    geometry = (
+        (
+            "neighbor_vectors",
+            return_vectors,
+            neighbor_vectors,
+            (natom, max_neighbors, 3),
+        ),
+        (
+            "neighbor_distances",
+            return_distances,
+            neighbor_distances,
+            (natom, max_neighbors),
+        ),
+    )
+    for name, enabled, tensor, expected_shape in geometry:
+        if not enabled:
+            if tensor is not None:
+                raise ValueError(f"{name} is only valid when its output is enabled")
+            continue
+        if tensor is None:
+            if allocate_missing:
+                continue
+            raise ValueError(f"{name} is required when its output is enabled")
+        validate(name, tensor, expected_shape, dtype)
+        if tensor.requires_grad:
+            raise ValueError(
+                f"{name} must not require gradients; differentiate the returned "
+                "geometry instead"
+            )
 
 
 def _validate_segmented_coo_structure(
@@ -255,20 +621,32 @@ def _normalize_compiled_single_segment_coo_count(
     *,
     pair_offsets: torch.Tensor,
     pair_counts: torch.Tensor,
+    rebuild_flags: torch.Tensor,
     physical_capacity: int,
 ) -> None:
     """Fail closed for malformed compiled single-segment COO metadata.
 
-    This compiled-path helper uses only device-side int32 operations. A false
-    rebuild flag returns before the Warp query validates metadata, while an
-    overflowed attempted count is not final until every query block completes.
-    It therefore validates the exact fixed interval and clamps the final count
-    here. This is deliberately not a generic batched normalizer.
+    This compiled-path helper uses only device-side int32 operations. A true
+    rebuild asserts when the resulting count exceeds the fixed segment. A
+    skipped rebuild preserves a valid saved count, while malformed offsets or
+    an invalid saved count are normalized to zero. This is deliberately not a
+    generic batched normalizer.
     """
     offsets_valid = (pair_offsets[0] == 0) & (pair_offsets[1] == physical_capacity)
+    rebuilt_count = torch.where(
+        offsets_valid & rebuild_flags.flatten()[0],
+        pair_counts,
+        torch.zeros_like(pair_counts),
+    )
+    _check_neighbor_capacity(
+        rebuilt_count,
+        physical_capacity,
+        kind="coo",
+    )
     clamped_count = torch.clamp(pair_counts, min=0, max=physical_capacity)
+    saved_count_valid = (pair_counts >= 0) & (pair_counts <= physical_capacity)
     normalized_counts = torch.where(
-        offsets_valid,
+        offsets_valid & (rebuild_flags.flatten()[0] | saved_count_valid),
         clamped_count,
         torch.zeros_like(pair_counts),
     )
