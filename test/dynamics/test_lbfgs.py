@@ -1755,6 +1755,34 @@ class TestLBFGSPackedTopology:
         with pytest.raises(ValueError, match="num_systems . 1 >= 2"):
             lbfgs_prepare_cell_state(ptr, self._cell(1, device), device=device)
 
+    @pytest.mark.parametrize("name", ["atom_ptr", "cell"])
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_an_input_on_another_device_is_rejected(self, device, name):
+        """Preparation allocates on ``device``; its inputs must already be there.
+
+        Measured before this check: a host ``atom_ptr`` or ``cell`` with
+        ``device="cuda:0"`` **segfaulted** the process rather than raising --
+        the same failure mode D-39 fixed for step inputs, reachable here
+        because preparation takes an explicit device argument.
+        """
+        ptr = self._atom_ptr([4, 7], "cpu" if name == "atom_ptr" else device)
+        cell = self._cell(2, "cpu" if name == "cell" else device)
+        with pytest.raises(ValueError, match=f"{name} is on cpu"):
+            lbfgs_prepare_cell_state(ptr, cell, device=device)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_an_index_less_device_spelling_is_accepted(self, device):
+        """``"cuda"`` names the same device as ``"cuda:0"``.
+
+        The check resolves the device rather than comparing strings, so this
+        spelling must not be refused.
+        """
+        bare = device.split(":")[0]
+        cs = lbfgs_prepare_cell_state(
+            self._atom_ptr([4, 7], device), self._cell(2, device), device=bare
+        )
+        np.testing.assert_array_equal(cs.ext_atom_ptr.numpy(), [0, 6, 15])
+
     @pytest.mark.parametrize("device", DEVICES)
     def test_the_underlying_guard_still_bites_when_called_directly(self, device):
         """The public path cannot violate it; the guard is tested on its own.

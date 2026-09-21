@@ -1791,6 +1791,18 @@ def lbfgs_prepare_cell_state(
         raise ValueError(f"dtype must be wp.vec3f or wp.vec3d; got {dtype}")
     if device is None:
         device = atom_ptr.device
+    # A host array handed to a device kernel is a segmentation fault, not an
+    # error -- the same failure D-39 fixed for step inputs, reachable here
+    # simply by passing a ``device`` that differs from the inputs. Refuse it
+    # rather than move the arrays: preparation allocating on one device from
+    # inputs on another is far more likely a mistake than an intent.
+    resolved = wp.get_device(device)
+    for name, array in (("atom_ptr", atom_ptr), ("cell", cell)):
+        if str(array.device) != str(resolved):
+            raise ValueError(
+                f"{name} is on {array.device}, but the state is being built on "
+                f"{resolved}; preparation does not move inputs between devices"
+            )
 
     # One host read, at preparation. It gives the sizes to allocate and the
     # per-system counts kappa needs, so a caller never assembles either.

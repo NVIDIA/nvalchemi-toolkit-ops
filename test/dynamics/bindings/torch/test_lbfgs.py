@@ -807,6 +807,25 @@ class TestLBFGSTorchCoordCell:
             assert_state_matches(state, wp_state, STATE_FIELDS, "optimizer ")
             assert_state_matches(cell_state, wp_cell_state, CELL_FIELDS, "cell ")
 
+    @pytest.mark.parametrize("name", ["atom_ptr", "cell"])
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_a_preparation_input_on_another_device_is_rejected(self, device, name):
+        """The binding is a separate entry point, so it is checked separately.
+
+        Measured before this check: a host tensor with ``device="cuda:0"``
+        **segfaulted** rather than raising.
+        """
+        from nvalchemiops.torch.lbfgs import lbfgs_prepare_cell_state
+
+        ptr_dev = "cpu" if name == "atom_ptr" else device
+        cell_dev = "cpu" if name == "cell" else device
+        ptr = torch.tensor([0, 4, 9], dtype=torch.int32, device=ptr_dev)
+        cell = torch.tensor(
+            np.tile(np.eye(3) * 6.0, (2, 1, 1)), dtype=torch.float64, device=cell_dev
+        )
+        with pytest.raises(ValueError, match=f"{name} is on cpu"):
+            lbfgs_prepare_cell_state(ptr, cell, device=device)
+
     @pytest.mark.parametrize("device", DEVICES)
     def test_state_sized_for_the_wrong_dof_count_is_rejected(self, device):
         """The cell adds two degrees of freedom per system; coordinate-sized

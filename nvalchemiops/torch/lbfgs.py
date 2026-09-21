@@ -342,6 +342,17 @@ def lbfgs_prepare_cell_state(
         raise ValueError(f"dtype must be float32 or float64; got {dtype}")
     if device is None:
         device = atom_ptr.device
+    # A host tensor handed to a device kernel is a segmentation fault, not an
+    # error. ``torch.empty(0, ...)`` resolves an index-less ``"cuda"`` to the
+    # current device so that spelling is not wrongly refused.
+    resolved = torch.empty(0, device=device).device
+    for name, tensor in (("atom_ptr", atom_ptr), ("cell", cell)):
+        if tensor.device != resolved:
+            raise ValueError(
+                f"{name} is on {tensor.device}, but the state is being built "
+                f"on {resolved}; preparation does not move inputs between "
+                "devices"
+            )
 
     ptr = atom_ptr.detach().cpu().tolist()
     if len(ptr) < 2:
