@@ -380,11 +380,11 @@ class TestNeighbourFormats:
             fill_value=system["positions"].shape[0],
             compute_virial=True,
         )
-        # Energy and forces are bit-identical; the virial accumulates in a different order
-        # between the two formats, which costs about one ulp.
-        torch.testing.assert_close(csr[0], dense[0], rtol=0, atol=0)
-        torch.testing.assert_close(csr[1], dense[1], rtol=0, atol=0)
-        torch.testing.assert_close(csr[2], dense[2], rtol=1e-14, atol=0)
+        # Not bit-exact: the two formats accumulate in a different order, and the order a
+        # parallel reduction settles on varies with the GPU, so this costs an ulp or so.
+        # The bound is still ~1e2 ulp, far tighter than any real disagreement of model.
+        for name, a, b in zip(("energy", "forces", "virial"), csr, dense, strict=True):
+            torch.testing.assert_close(a, b, rtol=1e-14, atol=0, msg=f"{name} differs")
 
     def test_rejects_both_formats(self):
         """Supplying both neighbour formats is an error."""
@@ -787,8 +787,9 @@ class TestPrecomputedSetup:
         for _ in range(3):  # capture happens on a later replay, not the first call
             out = compiled(system["positions"])
         torch.cuda.synchronize()
-        torch.testing.assert_close(out[0], eager[0], rtol=0, atol=0)
-        torch.testing.assert_close(out[1], eager[1], rtol=0, atol=0)
+        # Not bit-exact: inductor may reassociate a reduction, which moves the last ulp.
+        torch.testing.assert_close(out[0], eager[0], rtol=1e-14, atol=0)
+        torch.testing.assert_close(out[1], eager[1], rtol=1e-14, atol=0)
 
     def test_records_what_it_was_built_for(self):
         """The setup carries its mesh and spline order, and is used when the call omits them."""
