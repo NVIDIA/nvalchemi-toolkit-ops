@@ -147,7 +147,9 @@ ARGS_dynamics_min := test/dynamics/test_constraints.py \
 	test/dynamics/test_velocity_rescaling.py
 
 ARGS_dispersion_min := test/interactions/dispersion/bindings/jax/test_dftd3.py \
-	test/interactions/dispersion/bindings/torch/test_dftd3.py
+	test/interactions/dispersion/bindings/torch/test_dftd3.py \
+	test/interactions/dispersion/bindings/jax/test_fourier_dftd3.py \
+	test/interactions/dispersion/bindings/torch/test_fourier_dftd3.py
 
 ARGS_electrostatics_min := test/interactions/electrostatics/test_deriv_check_selftest.py \
 	test/interactions/electrostatics/test_jax_autograd.py \

@@ -49,9 +49,11 @@ import warp as wp
 
 from nvalchemiops.math.spline import (
     batch_spline_gather,
+    batch_spline_gather_channels,
     batch_spline_gather_gradient,
     batch_spline_gather_vec3,
     batch_spline_spread,
+    batch_spline_spread_channels,
     bspline_derivative,
     bspline_second_derivative,
     bspline_weight,
@@ -1234,3 +1236,187 @@ class TestBSplineWeightHessian3D:
             np.array(diag_wp.numpy().tolist())[0], np.zeros(3)
         )
         np.testing.assert_array_equal(np.array(off_wp.numpy().tolist())[0], np.zeros(3))
+
+
+class TestBatchSplineChannels:
+    """Grouped multi-channel spread and gather.
+
+    These launchers key both the cell lookup and the mesh slab off one per-atom integer, so a
+    caller that needs to partition atoms by something other than the system alone -- species,
+    for instance -- can pass a composite index and have each atom touch only its own slab.
+    """
+
+    @staticmethod
+    def _grouped_system(
+        device, wp_dtype, num_species=3, rank=4, num_systems=2, n_atoms=40
+    ):
+        """Positions, values and a composite (system, species) group index."""
+        rng = np.random.default_rng(0)
+        vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
+        mat_dtype = wp.mat33d if wp_dtype == wp.float64 else wp.mat33f
+        np_dtype = np.float64 if wp_dtype == wp.float64 else np.float32
+
+        cells = np.stack([np.eye(3) * 10.0, np.eye(3) * 12.0])[:num_systems]
+        species = rng.integers(0, num_species, n_atoms)
+        systems = np.repeat(np.arange(num_systems), n_atoms // num_systems)
+        group = systems * num_species + species
+        positions = rng.uniform(0.0, 8.0, (n_atoms, 3))
+        values = rng.normal(size=(n_atoms, rank))
+
+        cell_inv_t = np.stack([np.linalg.inv(c).T for c in cells])
+        grouped = np.repeat(cell_inv_t, num_species, axis=0)
+        return {
+            "positions": wp.array(
+                positions.astype(np_dtype), dtype=vec_dtype, device=device
+            ),
+            "values": wp.array(values.astype(np_dtype), dtype=wp_dtype, device=device),
+            "group": wp.array(group.astype(np.int32), dtype=wp.int32, device=device),
+            "cell_inv_t": wp.array(
+                grouped.astype(np_dtype), dtype=mat_dtype, device=device
+            ),
+            "np": (positions, values, group, species, systems),
+            "shape": (num_systems, num_species, rank),
+        }
+
+    def test_each_atom_writes_only_to_its_own_slab(self, device):
+        """An atom deposits into the slab its group index selects, and no other.
+
+        This is what keeps the cost proportional to the channel count rather than to the
+        total number of slabs.
+        """
+        wp_dtype, order, mesh_dims = wp.float64, 4, (16, 16, 16)
+        system = self._grouped_system(device, wp_dtype)
+        num_systems, num_species, rank = system["shape"]
+        _, values, group, species, systems = system["np"]
+
+        mesh = wp.zeros(
+            (num_systems * num_species * rank, *mesh_dims),
+            dtype=wp_dtype,
+            device=device,
+        )
+        batch_spline_spread_channels(
+            system["positions"],
+            system["values"],
+            system["group"],
+            system["cell_inv_t"],
+            order,
+            rank,
+            mesh,
+            wp_dtype,
+            device,
+        )
+        grid = mesh.numpy()
+
+        for sys_idx in range(num_systems):
+            for species_idx in range(num_species):
+                selected = (systems == sys_idx) & (species == species_idx)
+                slab = (sys_idx * num_species + species_idx) * rank
+                for channel in range(rank):
+                    # B-splines are a partition of unity, so the slab total is the sum of the
+                    # values that were spread into it. The kernel skips stencil points with
+                    # weight below 1e-8, which sets the tolerance.
+                    np.testing.assert_allclose(
+                        grid[slab + channel].sum(),
+                        values[selected, channel].sum(),
+                        rtol=1e-6,
+                        atol=1e-9,
+                    )
+
+    def test_empty_groups_stay_zero(self, device):
+        """A group with no atoms receives nothing."""
+        wp_dtype, order, mesh_dims = wp.float64, 4, (12, 12, 12)
+        rng = np.random.default_rng(1)
+        n_atoms, num_species, rank = 12, 3, 2
+        # Every atom in species 0, leaving species 1 and 2 empty.
+        group = np.zeros(n_atoms, dtype=np.int32)
+        positions = rng.uniform(0.0, 8.0, (n_atoms, 3))
+        cell_inv_t = np.repeat(
+            (np.linalg.inv(np.eye(3) * 10.0).T)[None], num_species, axis=0
+        )
+
+        mesh = wp.zeros((num_species * rank, *mesh_dims), dtype=wp_dtype, device=device)
+        batch_spline_spread_channels(
+            wp.array(positions, dtype=wp.vec3d, device=device),
+            wp.array(rng.normal(size=(n_atoms, rank)), dtype=wp_dtype, device=device),
+            wp.array(group, dtype=wp.int32, device=device),
+            wp.array(cell_inv_t, dtype=wp.mat33d, device=device),
+            order,
+            rank,
+            mesh,
+            wp_dtype,
+            device,
+        )
+        grid = mesh.numpy()
+        assert np.any(grid[:rank] != 0.0)
+        np.testing.assert_array_equal(grid[rank:], 0.0)
+
+    def test_gather_is_the_transpose_of_spread(self, device):
+        """``<spread(v), M> == <v, gather(M)>`` for arbitrary values and mesh.
+
+        The two launchers form an adjoint pair, which is what lets a gradient computed on the
+        mesh be carried back to the atoms.
+        """
+        wp_dtype, order, mesh_dims = wp.float64, 4, (16, 16, 16)
+        system = self._grouped_system(device, wp_dtype)
+        num_systems, num_species, rank = system["shape"]
+        positions_np, values_np, *_ = system["np"]
+        n_slabs = num_systems * num_species * rank
+
+        mesh = wp.zeros((n_slabs, *mesh_dims), dtype=wp_dtype, device=device)
+        batch_spline_spread_channels(
+            system["positions"],
+            system["values"],
+            system["group"],
+            system["cell_inv_t"],
+            order,
+            rank,
+            mesh,
+            wp_dtype,
+            device,
+        )
+
+        rng = np.random.default_rng(2)
+        probe = rng.normal(size=(n_slabs, *mesh_dims))
+        gathered = wp.zeros(
+            (positions_np.shape[0], rank), dtype=wp_dtype, device=device
+        )
+        batch_spline_gather_channels(
+            system["positions"],
+            system["group"],
+            system["cell_inv_t"],
+            order,
+            rank,
+            wp.array(probe, dtype=wp_dtype, device=device),
+            gathered,
+            wp_dtype,
+            device,
+        )
+
+        spread_side = float((mesh.numpy() * probe).sum())
+        gather_side = float((values_np * gathered.numpy()).sum())
+        np.testing.assert_allclose(spread_side, gather_side, rtol=1e-12)
+
+    @pytest.mark.parametrize("wp_dtype", [wp.float32, wp.float64])
+    def test_supports_both_precisions(self, device, wp_dtype):
+        """Both scalar precisions are dispatched."""
+        order, mesh_dims, rank = 4, (12, 12, 12), 2
+        system = self._grouped_system(device, wp_dtype, num_species=2, rank=rank)
+        num_systems, num_species, _ = system["shape"]
+        mesh = wp.zeros(
+            (num_systems * num_species * rank, *mesh_dims),
+            dtype=wp_dtype,
+            device=device,
+        )
+        batch_spline_spread_channels(
+            system["positions"],
+            system["values"],
+            system["group"],
+            system["cell_inv_t"],
+            order,
+            rank,
+            mesh,
+            wp_dtype,
+            device,
+        )
+        assert np.isfinite(mesh.numpy()).all()
+        assert np.any(mesh.numpy() != 0.0)

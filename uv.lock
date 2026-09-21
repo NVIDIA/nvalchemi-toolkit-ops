@@ -1725,7 +1725,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'torch'", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cu130", conflict = { package = "nvalchemi-toolkit-ops", extra = "torch" } },
     { name = "torch", marker = "extra == 'torch-cu12'", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cu126", conflict = { package = "nvalchemi-toolkit-ops", extra = "torch-cu12" } },
     { name = "torch", marker = "extra == 'torch-cu13'", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cu130", conflict = { package = "nvalchemi-toolkit-ops", extra = "torch-cu13" } },
-    { name = "warp-lang", specifier = ">=1.15.0" },
+    { name = "warp-lang", specifier = ">=1.16.0" },
 ]
 provides-extras = ["jax", "jax-cu12", "jax-cu13", "torch", "torch-cu12", "torch-cu13"]
 

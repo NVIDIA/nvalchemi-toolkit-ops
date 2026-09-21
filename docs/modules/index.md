@@ -22,6 +22,7 @@ torch/autograd.rst
 ```{toctree}
 :maxdepth: 2
 
+jax/dynamics.rst
 jax/neighbors.rst
 jax/segment_ops.rst
 jax/dispersion.rst

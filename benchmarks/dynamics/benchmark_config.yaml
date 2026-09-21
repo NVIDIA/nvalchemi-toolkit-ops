@@ -282,6 +282,84 @@ fire_compare:
     maxstep: 0.25
     cell_force_scale: 1.0
 
+# L-BFGS vs FIRE2 Evaluation-Count Benchmark
+# ------------------------------------------
+# Counts energy/force evaluations to convergence, which is the metric that
+# decides a relaxation driven by a machine-learned potential: the model call
+# dominates the optimizer's own kernel time by orders of magnitude.
+#
+# FIRE2 is swept over the grid below and its *best* converged result is what
+# L-BFGS is compared against, so the baseline is not handicapped by a poor
+# timestep. The system is a Lennard-Jones cluster in reduced units, cheap to
+# evaluate on the host and anharmonic enough to be a fair test.
+lbfgs:
+  enabled: true
+
+  # Cluster sizes (atoms). These are the Mackay icosahedral magic numbers, so
+  # each has a well-defined global minimum to fall into.
+  system_sizes: [13, 32, 55]
+
+  # Coordinate precisions. Every optimizer array follows the coordinate dtype,
+  # so this one key fixes the whole state, the neighbor list and the LJ
+  # evaluation. float32 first because it is what a machine-learned potential
+  # emits; float64 is kept, but as a deliberate second configuration rather
+  # than the only one the runner can express.
+  dtypes: ["float32", "float64"]
+
+  # Independent starting geometries per size
+  seeds: 5
+
+  # Convergence criterion, on the largest per-atom force
+  force_tolerance: 1.0e-4
+
+  # Give up after this many evaluations. A capped FIRE2 run makes its ratio an
+  # upper bound on L-BFGS's advantage rather than a measurement, and the
+  # benchmark says so in its summary.
+  eval_cap: 20000
+
+  # Stored curvature pairs. The two history buffers dominate memory.
+  history_size: 6
+
+  # Largest distance an atom may move in one step
+  maxstep: 0.2
+
+  # FIRE2 hyperparameter grid, in the real units the shared `potential` block
+  # implies (fs, angstrom). Every combination is run; the fewest-evaluation
+  # converged result wins, so the baseline is not handicapped.
+  #
+  # `tmax` is swept as a multiple of `dt_start`, because FIRE2 clamps its
+  # timestep to `tmax` and a large starting step under a small cap is not a
+  # distinct configuration. `maxstep` is not swept: measured on this workload
+  # FIRE2 never reaches the cap, so it changes nothing and only costs runtime.
+  #
+  # The grid runs to 3.0 fs because FIRE2 keeps improving well past the value
+  # the MD blocks use, and non-monotonically: it diverges at 1.0 fs for 32 and
+  # 55 atoms yet converges again at 1.5. Stopping earlier would have reported
+  # a handicapped baseline.
+  fire2_sweep:
+    dt_start: [0.15, 0.25, 0.4, 0.6, 1.0, 1.5, 2.0, 3.0]
+    tmax_factor: [2.0]
+
+  # Per-step cost gates (`--gates`): optimizer-only time against FIRE2 at
+  # scale, what CUDA-graph replay recovers, and the model cost above which
+  # L-BFGS wins end to end.
+  gates:
+    enabled: true
+    system_sizes: [10000, 100000, 1000000]
+
+    # CUDA-event timing
+    warmup: 10
+    runs: 50
+
+    # Measured L-BFGS/FIRE2 evaluation ratio from a default run of the sweep
+    # above, used only for the break-even model cost. Re-measure and update it
+    # if the sizes or the tolerance change.
+    #
+    # This is the geometric mean over cases where *both* optimizers converged.
+    # Cases where FIRE2 hit the cap are excluded: its count is then only a
+    # lower bound, so the ratio bounds rather than measures.
+    eval_ratio: 0.59
+
 # System Configuration (shared across all benchmarks)
 # ---------------------------------------------------
 system:
@@ -333,8 +411,12 @@ hardware:
 # Output Configuration
 # --------------------
 output:
-  # Output directory for CSV results
-  results_dir: "../docs/benchmarks/benchmark_results"
+  # Output directory for CSV results, relative to this file -- the same rule
+  # the neighborlist and interactions configs use for their `base_dir`.
+  # As written this was one level short and resolved to a non-existent
+  # benchmarks/docs/..., so nothing could have been written there.
+  results_dir: "../../docs/benchmarks/benchmark_results"
 
-  # Whether to save detailed timing data
+  # Whether to save detailed timing data. An explicit --output-dir still
+  # writes, since asking for a directory on the command line is unambiguous.
   save_timing: true

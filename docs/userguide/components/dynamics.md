@@ -446,6 +446,107 @@ fire2_step_coord_cell(
 - Improved convergence compared to original FIRE
 - PyTorch adapters handle tensor conversion automatically
 
+### L-BFGS (Limited-memory Quasi-Newton)
+
+L-BFGS approximates the inverse Hessian from the last few position and force
+differences to pick a search direction, then steps along it as far as a
+`maxstep` trust region allows. It usually reaches a given force tolerance in
+far fewer force evaluations than FIRE or FIRE2 — the cost that dominates
+relaxation with a machine-learned potential.
+
+**Choosing between FIRE2 and L-BFGS.** Both cost one force evaluation per
+step. FIRE2 carries almost no state, which suits very large systems or
+geometries far from any minimum. L-BFGS spends `2 * history_size` history
+vectors and
+converges in far fewer evaluations. If your force evaluation costs more than a
+few microseconds, prefer L-BFGS.
+
+**Prepare the state once.** `lbfgs_prepare_state` allocates, initializes and
+validates every array and returns an `LBFGSState`; calling it again is how you
+restart. A step allocates nothing, so it stays capturable in a CUDA graph. The
+arrays stay yours — `LBFGSState` is a plain dataclass with a `validate()`
+method, so you can build one from buffers you already have. See the
+`nvalchemiops.dynamics.optimizers.lbfgs` module documentation for shapes and
+the required initial contents.
+
+Every array follows the coordinate dtype: an fp32 state is fp32 throughout, an
+fp64 state fp64 throughout, and a mixed one is rejected rather than silently
+half-converted. `curvature_eps` follows from that, defaulting to `1e-6` for
+float32 and `1e-10` for float64 — a pair resolvable in fp64 is noise in fp32,
+so one value cannot serve both.
+
+**You own the loop and the stopping rule.** Each `lbfgs_step` consumes exactly
+one force evaluation: it updates the history, restarts a direction that stops
+descending, and takes one bounded step. No tolerance, no terminal status —
+exactly as with FIRE2.
+
+```python
+import numpy as np
+import warp as wp
+from nvalchemiops.dynamics.optimizers import lbfgs_prepare_state, lbfgs_step
+
+state = lbfgs_prepare_state(num_atoms, num_systems, device=device)
+
+for _ in range(max_steps):
+    forces = model(positions)
+
+    # Test *before* stepping: these forces describe the positions you have,
+    # and after a step they describe the previous point.
+    if np.linalg.norm(forces.numpy(), axis=1).max() < force_tol:
+        break
+
+    lbfgs_step(
+        positions=positions,
+        forces=forces,
+        state=state,
+        batch_idx=batch_idx,
+        maxstep=0.2,      # A, largest displacement in one step
+    )
+```
+
+The PyTorch binding mutates the same state in place; the JAX binding *returns*
+a new one, since JAX arrays are immutable, and both state classes are
+registered pytrees there.
+
+Two consequences of testing before stepping. A restart direction is the force
+*normalized*, so the trust region caps it at exactly `maxstep` however small
+the force — stepping a geometry that has already arrived kicks it. And nothing
+can stall: a short enough step along a descent direction always makes
+progress, and an uphill direction is replaced by steepest descent.
+
+**No energy is read.** The step length comes from the trust region, not from
+an Armijo test comparing energies — which would compare *total energies*
+against a direction built from *forces*, and reject good steps for any model
+whose forces are not the gradient of its reported energy. The cost is that the
+energy may rise on a step; the force still converges.
+
+**Batching.** Systems are identified by a sorted `batch_idx` and relax
+independently, each with its own history and trust-region step. Every system
+steps on every call, so a batch is done when its slowest member is; compact
+the batch on the host to retire finished systems earlier.
+
+**Variable cell.** The packed layout interleaves each system's atoms with its
+two cell entries, so the `LBFGSState` must be sized for
+`num_atoms + 2 * num_systems` degrees of freedom, and a second
+`LBFGSCellState` carries the chart. Align the cell first with
+`nvalchemiops.dynamics.utils.cell_filter.align_cell` — the same requirement,
+helper and six-component convention `fire2_step_coord_cell` has; preparation
+checks it. The one L-BFGS-specific rule is that the reference cell is **fixed**
+for the whole relaxation, because stored pairs compare cell coordinates across
+steps; reset the state if you must re-reference. Apply your thresholds to the
+**Cartesian** forces and the stress, never to the packed norms. Systems with
+no atoms are rejected on this path (there is no scale `kappa` could take),
+though empty input on the coordinate-only path remains a no-op.
+
+The full contract — alignment, the six-component convention, the fixed
+reference, topology, and ragged and empty-system behaviour — is stated once in
+the `nvalchemiops.dynamics.optimizers.lbfgs` module documentation. This page
+and both bindings defer to it.
+
+**Memory.** The history dominates: `2 * history_size` vectors of `num_dofs`
+each, roughly 180 bytes per degree of freedom at `history_size = 6` with
+float32 coordinates. A `history_size` between 3 and 7 is typical.
+
 ## Temperature Control Utilities
 
 ### Computing Temperature

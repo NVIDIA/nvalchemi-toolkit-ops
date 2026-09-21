@@ -16,6 +16,11 @@
 
 This module provides JAX-compatible wrappers for GPU-accelerated atomistic
 simulation primitives implemented in NVIDIA Warp.
+
+Submodules are imported by path rather than re-exported here; see
+``nvalchemiops.jax.lbfgs`` for the L-BFGS geometry optimizer,
+``nvalchemiops.jax.neighbors`` for neighbor lists, and
+``nvalchemiops.jax.interactions`` for interatomic interactions.
 """
 
 import importlib

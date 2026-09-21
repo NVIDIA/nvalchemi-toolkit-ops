@@ -27,6 +27,13 @@ FIRE (Fast Inertial Relaxation Engine)
 FIRE2 (Fast Inertial Relaxation Engine v2)
     Improved FIRE with adaptive damping and velocity mixing.
 
+L-BFGS (Limited-memory Broyden-Fletcher-Goldfarb-Shanno)
+    Quasi-Newton optimization with a ``maxstep`` trust region. Usually reaches
+    a given force tolerance in far fewer force evaluations than the FIRE
+    optimizers, which is the cost that dominates relaxation with a
+    machine-learned potential. It reads no energy, so a model whose forces are
+    not the gradient of its reported energy relaxes just as well.
+
 Main API Functions
 ------------------
 fire_step
@@ -45,6 +52,30 @@ fire2_update
     FIRE2 reduction, adaptive parameter update, and velocity mixing WITHOUT
     position/cell application. Use for custom final apply phases such as
     coupled variable-cell optimization.
+
+lbfgs_prepare_state, lbfgs_prepare_cell_state
+    Allocate, initialize and validate an ``LBFGSState`` -- and, for
+    variable-cell relaxation, an ``LBFGSCellState``. Call once; calling again
+    is how you reset.
+
+lbfgs_step
+    One batched L-BFGS step on coordinates. Consumes exactly one force
+    evaluation: it updates the curvature history, restarts the direction if it
+    stops descending, and takes one ``maxstep``-bounded step. No energy is
+    read, and no tolerance is owned -- deciding when to stop is yours, as it is
+    for FIRE2.
+
+lbfgs_step_coord_cell
+    The same, relaxing coordinates and cell together. Positions and cell are
+    mapped into a single packed coordinate vector so the two-loop recursion
+    couples them automatically, then mapped back after the step.
+
+    The phases each step is built from -- the reductions, the history update,
+    the two-loop recursion, the trust region, the packing -- are internal
+    decomposition points rather than separate operations, so they are not
+    exported here. They remain importable from
+    :mod:`nvalchemiops.dynamics.optimizers.lbfgs` for anyone who genuinely
+    needs to interpose logic between them.
 
 Kernel Selection
 ----------------
@@ -71,6 +102,14 @@ from nvalchemiops.dynamics.optimizers.fire2 import (
     fire2_step,
     fire2_update,
 )
+from nvalchemiops.dynamics.optimizers.lbfgs import (
+    LBFGSCellState,
+    LBFGSState,
+    lbfgs_prepare_cell_state,
+    lbfgs_prepare_state,
+    lbfgs_step,
+    lbfgs_step_coord_cell,
+)
 
 __all__ = [
     # Unified API
@@ -81,6 +120,16 @@ __all__ = [
     "fire2_update",
     "fire2_apply_step",
     "fire2_reduce",
+    # L-BFGS: state, preparation, and one step per call. The phase functions
+    # the step is built from are decomposition points, not operations, so they
+    # stay in the module rather than on the public surface.
+    "LBFGSState",
+    "LBFGSCellState",
+    "lbfgs_prepare_state",
+    "lbfgs_prepare_cell_state",
+    "lbfgs_step",
+    "lbfgs_step_coord_cell",
+    # L-BFGS variable-cell setup
     # Low-level kernels
     "_fire_step_no_downhill_ptr_kernel",
     "_fire_step_downhill_ptr_kernel",

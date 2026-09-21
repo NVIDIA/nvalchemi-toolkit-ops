@@ -38,6 +38,30 @@ def wp_exp_kernel(x: wp.float64, factor: wp.float64) -> wp.float64:
 
 
 @wp.func
+def wp_logistic(x: Any) -> Any:
+    """Logistic function, evaluated so the exponent is never positive.
+
+    The naive ``1 / (1 + exp(-x))`` overflows for large negative ``x``. Harmless in float64,
+    a real failure in float32, so each branch exponentiates ``-|x|`` instead.
+
+    Parameters
+    ----------
+    x : Any
+        Input value
+
+    Returns
+    -------
+    Any
+        ``1 / (1 + exp(-x))``
+    """
+    one = type(x)(1.0)
+    decay = wp.exp(-wp.abs(x))
+    if x >= type(x)(0.0):
+        return one / (one + decay)
+    return decay / (one + decay)
+
+
+@wp.func
 def wpdivmod(a: int, b: int):  # type: ignore
     """Integer quotient and remainder.
 
