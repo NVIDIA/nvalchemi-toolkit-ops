@@ -1,27 +1,56 @@
 # Configuration for the FourierD3 benchmarks.
 #
-# The comparison is against real-space dftd3 at several interaction cutoffs. Only the
-# converged cutoffs are a like-for-like comparison: a 6 Angstrom dispersion sum is a
-# different, unconverged calculation, and is included to make that visible rather than to
-# be beaten.
+# Same matrix as the DFT-D3 benchmark: two systems x three scaling modes, one standardized
+# CSV per pair. Rows are fixed-configuration throughput; the mesh follows a fixed spacing
+# and the dftd3 rows use fixed cutoffs, with no accuracy relationship established between
+# them for these systems.
 
 parameters:
-  # Systems are CsCl (B2) supercells from the shared benchmark builders, so the density is
-  # the lattice's own (about 0.029 atoms per cubic Angstrom) rather than a chosen number.
-  # It is reported with the results, because the comparison depends on it: the real-space
-  # neighbour count grows as density times cutoff cubed, while the mesh cost does not
-  # depend on density at all.
-  #
-  # Counts are rounded up to whole unit cells, so a request of 500 builds 686 atoms.
-  atom_counts: [500, 2000, 8000, 20000]
-
   # 6.0 is the common MLFF cutoff and is NOT converged for dispersion. 15.0 and 20.0 are
   # the range where the real-space sum approaches convergence for a condensed phase.
   real_space_cutoffs: [6.0, 15.0, 20.0]
 
   timing_runs: 10
   warmup_runs: 3
-  device: cuda
+  max_total_atoms: 131072
 
+runtime:
+  backend: torch
+
+# -----------------------------------------------------------------------------
+# Systems
+# -----------------------------------------------------------------------------
+# FourierD3 is periodic only, so both systems are used with their cells.
+systems:
+  cscl:
+    enabled: true
+    atom_counts: [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768]
+    constant_atoms_sizes: [250, 8192]   # CsCl valid: 2*5^3=250, 2*16^3=8192
+
+  nh3:
+    enabled: true
+    pdb_dir: ../../nh3
+    atom_counts: [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768]
+    constant_atoms_sizes: [256, 8192]
+
+# -----------------------------------------------------------------------------
+# Scaling Modes
+# -----------------------------------------------------------------------------
+scaling:
+  system_size:
+    enabled: true
+    batch_size: 1
+
+  constant_workload:
+    enabled: true
+    target_atoms: 32768
+
+  batch_scaling:
+    enabled: true
+    max_total_atoms: 32768
+
+# -----------------------------------------------------------------------------
+# Output
+# -----------------------------------------------------------------------------
 output:
   base_dir: benchmarks/results

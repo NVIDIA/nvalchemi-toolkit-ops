@@ -17,20 +17,22 @@
 FourierD3 benchmarks
 ====================
 
-Measures the particle-mesh dispersion correction against the real-space ``dftd3``.
+Fixed-configuration throughput for the particle-mesh dispersion correction, alongside the
+real-space ``dftd3`` at several cutoffs.
 
-The comparison that matters is **at matched accuracy**. A ``1/r^6`` interaction summed over
-three dimensions leaves a truncation error decaying as ``1/r^3``, so a real-space cutoff of
-6 Angstrom is not a converged calculation; converging it takes 15 Angstrom or more. Timing
-FourierD3 against a 6 Angstrom ``dftd3`` compares two different calculations and flatters
-the truncated one. Both are reported here so the distinction stays visible.
+.. warning::
+    This is **not a matched-accuracy comparison**. The mesh schedule follows the paper's
+    atom-count table and the ``dftd3`` rows use fixed cutoffs; no accuracy relationship
+    between the two has been established for this system, so the rows are not directly
+    comparable as "same answer, different cost". Read each as the cost of one stated
+    configuration.
 
 Systems are CsCl (B2) supercells from the shared benchmark builders, so the geometry and the
-density are a real crystal's rather than a chosen number.
+density are a real crystal's rather than a chosen number. Positions, cells and cutoffs are
+converted to Bohr, matching the published D3 tables and the existing ``dftd3`` benchmark.
 
-Timings include the neighbour-list build, because that is what a caller pays. FourierD3 needs
-only the short coordination-number list, which an MLFF already builds, so a second set of
-columns reports the evaluation alone -- the marginal cost when the list comes for free.
+``time_eval_seconds`` is the canonical metric, consistent with the other kernel benchmarks.
+``time_neighbor_seconds`` and ``time_total_seconds`` are reported alongside it.
 
 Usage
 -----
@@ -44,25 +46,32 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
 from pathlib import Path
-
-import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+import torch  # noqa: E402
+
 from benchmarks.config import load_yaml_config  # noqa: E402
+from benchmarks.constants import ANGSTROM_TO_BOHR  # noqa: E402
 from benchmarks.suite_systems import (  # noqa: E402
     compute_atomic_density,
+    configs_for_mode,
     create_system,
-    cscl_actual_atoms,
+    filter_configs_by_total_atoms,
+    planned_atom_counts,
+    resolve_nh3_dir,
 )
 from benchmarks.suite_utils import (  # noqa: E402
     build_failure_result,
     build_result,
+    build_skipped_result,
+    clean_gpu,
+    configure_input_provenance,
     create_run_directory,
     cuda_timed_runs,
     failure_error_type,
+    make_csv_name,
     make_row_meta,
     measure_memory_torch,
     save_results,
@@ -80,87 +89,73 @@ __all__ = [
 ]
 
 # Mesh size against system size, from the FourierD3 paper's Table I.
-MESH_SCHEDULE = ((200, 16), (2000, 32), (20000, 64), (None, 128))
+# Mesh spacing in Bohr, applied uniformly at every system size, so mesh resolution stays
+# constant as the cell grows. Replaces the paper's atom-count schedule, which tied the mesh
+# to a number of atoms without establishing what accuracy it buys for this system.
+MESH_SPACING_BOHR = 0.55
 
 # Coordination-number cutoff. Six Angstrom is the cutoff of foundation MLFFs such as
 # MACE-MP, which is the list FourierD3 is designed to reuse.
-CN_CUTOFF = 6.0
+CN_CUTOFF_ANGSTROM = 6.0
+
+# Positions, cells and cutoffs go to the kernels in Bohr, because the published D3 tables
+# and the damping parameters are atomic units. The shared CsCl builder returns Angstrom.
+CN_CUTOFF = CN_CUTOFF_ANGSTROM * ANGSTROM_TO_BOHR
+
+# Same cache the other dispersion benchmarks read.
+D3_PARAMS_PATH = "~/.cache/nvalchemiops/dftd3_parameters.pt"
 
 # PBE-D3(BJ).
 DAMPING = dict(a1=0.4289, a2=4.4407, s8=0.7875, s6=1.0)
 
 
-def mesh_for(num_atoms: int) -> int:
-    """Mesh edge length for a system size, following the paper's schedule."""
-    for threshold, mesh in MESH_SCHEDULE:
-        if threshold is None or num_atoms <= threshold:
-            return mesh
-    return MESH_SCHEDULE[-1][1]
+def _published_tables(device: str, dtype):
+    """Grimme's published D3 tables, from the cache the other dispersion benchmarks use.
 
-
-def _synthetic_tables(species: Sequence[int]):
-    """Reference tables shaped like the DFT-D3 parametrisation, for the given species.
-
-    The geometry is a real crystal, but the parameters are generated: the benchmark measures
-    cost, not chemistry, and fetching Grimme's tables would put a network download in the
-    path of a timing run. What has to be right for timing is the shape -- the number of
-    reference slots per species, and so the decomposition rank and the mesh channel count --
-    and that follows the real tables closely enough.
-    """
-    rng = np.random.default_rng(0)
-    species = sorted({int(z) for z in species})
-    max_z = max(species) + 1
-    n_ref = 5
-    # Uneven reference counts, as the real tables have, so the padding path is exercised.
-    used = {z: 2 + (i % (n_ref - 1)) for i, z in enumerate(species)}
-    c6ab = np.zeros((max_z, max_z, n_ref, n_ref))
-    cn_ref = np.zeros_like(c6ab)
-    factors = {z: rng.normal(size=(n, 3)) for z, n in used.items()}
-    for z_i, n_i in used.items():
-        for z_j, n_j in used.items():
-            c6ab[z_i, z_j, :n_i, :n_j] = factors[z_i] @ factors[z_j].T + 20.0
-            for p in range(n_i):
-                cn_ref[z_i, z_j, p, :n_j] = np.linspace(0.0, 3.5, n_i)[p]
-    rcov = np.zeros(max_z)
-    r4r2 = np.zeros(max_z)
-    for i, z in enumerate(species):
-        rcov[z] = 0.6 + 0.3 * i
-        r4r2[z] = 1.0 + 0.4 * i
-    return rcov, r4r2, c6ab, cn_ref
-
-
-def _make_system(num_atoms: int, device: str, dtype=None):
-    """A CsCl supercell of approximately ``num_atoms`` atoms.
-
-    The shared builder the rest of the suite uses, rather than a uniform random cell. A
-    random cell at a chosen density puts atoms at arbitrary separations, including overlaps,
-    and its coordination numbers sit far above anything the reference tables cover; a B2
-    lattice has the near-neighbour structure and the density of a real solid, which is what
-    the neighbour list and the coordination-number pass actually cost.
-
-    The atom count is rounded up to whole unit cells, so the caller must read the count back
-    from the returned positions rather than assume it got what it asked for.
-
-    The precision is single by default, matching how MLFF inference runs and keeping every
-    method in the sweep on the same footing. Double precision is a large penalty on hardware
-    with a reduced FP64 rate, so mixing the two across methods would not be a comparison.
+    Atomic units, so positions, cells and cutoffs must be in Bohr to match.
     """
     import torch
 
-    dtype = dtype or torch.float32
-    system = create_system("cscl", num_atoms=num_atoms, device=device, dtype=dtype)
-    cell = system["cell"].reshape(-1, 3, 3)[0]
-    return (
-        system["positions"],
-        system["atomic_numbers"].to(torch.int32),
-        cell,
-        compute_atomic_density(system),
+    from benchmarks.interactions.dispersion.benchmark_dftd3 import (
+        _ensure_d3_parameter_file,
+        _resolve_d3_params_path,
+    )
+
+    path = _resolve_d3_params_path(D3_PARAMS_PATH)
+    _ensure_d3_parameter_file(path)
+    tables = torch.load(path, map_location="cpu", weights_only=True)
+    return tuple(
+        tables[name].to(device=device, dtype=dtype)
+        for name in ("rcov", "r4r2", "c6ab", "cn_ref")
     )
 
 
-def benchmark_fourier_d3(
-    num_atoms, device, num_runs, warmup_runs, reuse_setup=False, dtype=None
-):
+def _to_bohr(data):
+    """Positions, cell and density from a shared system dict, converted to atomic units.
+
+    The builders work in Angstrom; the published D3 tables are atomic units.
+    """
+    return (
+        data["positions"] * ANGSTROM_TO_BOHR,
+        data["atomic_numbers"].to(torch.int32),
+        data["cell"] * ANGSTROM_TO_BOHR,
+        compute_atomic_density(data) / ANGSTROM_TO_BOHR**3,
+    )
+
+
+def _mesh_for_cell(cell_bohr):
+    """Mesh dimensions from a fixed spacing, rounded up to an FFT-friendly size.
+
+    A fixed spacing keeps the mesh resolution constant as the cell grows. It is a stated
+    configuration, not a setting calibrated against any ``dftd3`` cutoff.
+    """
+    from nvalchemiops.interactions.dispersion._fourier_dftd3 import _resolve_mesh
+
+    lengths = cell_bohr.reshape(-1, 3, 3).norm(dim=-1).max(dim=0).values.tolist()
+    return _resolve_mesh(None, MESH_SPACING_BOHR, lengths, 4)
+
+
+def benchmark_fourier_d3(data, num_runs, warmup_runs, reuse_setup=False):
     """Time one FourierD3 evaluation, and the neighbour-list build separately.
 
     Parameters
@@ -180,8 +175,6 @@ def benchmark_fourier_d3(
         what a converged dispersion correction costs, and for real-space D3 it grows with the
         cutoff, so the total is worth seeing even though it is not the headline.
     """
-    import torch
-
     from nvalchemiops.torch.interactions.dispersion import (
         FourierD3Parameters,
         fourier_dftd3,
@@ -189,31 +182,25 @@ def benchmark_fourier_d3(
     from nvalchemiops.torch.interactions.dispersion._fourier_dftd3 import FourierD3Setup
     from nvalchemiops.torch.neighbors import neighbor_list
 
-    dtype = dtype or torch.float32
-    positions, numbers, cell, density = _make_system(num_atoms, device, dtype)
-    species = sorted(set(numbers.tolist()))
-    rcov, r4r2, c6ab, cn_ref = _synthetic_tables(species)
-
-    def tensor(array):
-        return torch.tensor(array, dtype=dtype, device=device)
+    positions, numbers, cell, density = _to_bohr(data)
+    device, dtype = str(positions.device), positions.dtype
+    species = sorted({int(z) for z in numbers.unique().tolist()})
+    rcov, r4r2, c6ab, cn_ref = _published_tables(device, dtype)
 
     # Matching dtype matters here: ``fourier_dftd3`` coerces the bundle to the positions'
     # dtype on every call, so float64 parameters would put five tensor conversions inside
     # the timed region that the real-space comparison does not pay.
     parameters = FourierD3Parameters.from_tables(
-        tensor(rcov),
-        tensor(r4r2),
-        tensor(c6ab),
-        tensor(cn_ref),
+        rcov,
+        r4r2,
+        c6ab,
+        cn_ref,
         species=species,
         device=device,
         dtype=dtype,
     )
-    pbc = torch.tensor([True, True, True], device=device)
-    # From the realised count, not the request: the builder rounds up to whole unit
-    # cells, and a request landing on a schedule threshold would otherwise be timed on
-    # the mesh below the one its actual size calls for.
-    mesh = mesh_for(int(positions.shape[0]))
+    pbc = data["pbc"]
+    mesh = _mesh_for_cell(cell)
 
     def build_list():
         return neighbor_list(
@@ -227,7 +214,7 @@ def benchmark_fourier_d3(
 
     neighbors, pointer, shifts = build_list()
     setup = (
-        FourierD3Setup.build(cell, parameters.n_species, (mesh, mesh, mesh))
+        FourierD3Setup.build(cell.reshape(-1, 3, 3), parameters.n_species, mesh)
         if reuse_setup
         else None
     )
@@ -239,10 +226,11 @@ def benchmark_fourier_d3(
             fourier_d3_params=parameters,
             cell=cell,
             cutoff=CN_CUTOFF,
-            mesh_dimensions=(mesh, mesh, mesh),
+            mesh_dimensions=mesh,
             neighbor_list=neighbors,
             neighbor_ptr=pointer,
             unit_shifts=shifts,
+            batch_idx=data.get("batch_idx"),
             setup=setup,
             **DAMPING,
         )
@@ -256,16 +244,19 @@ def benchmark_fourier_d3(
         "time_neighbor_seconds": time_list,
         "atoms": int(positions.shape[0]),
         "density": density,
-        "mesh": mesh,
+        "mesh": mesh[0],
         "edges": int(neighbors.shape[1]),
         "mem_info": mem_info,
     }
 
 
-def benchmark_real_space_d3(
-    num_atoms, cutoff, device, num_runs, warmup_runs, dtype=None
-):
-    """Time one real-space ``dftd3`` evaluation at a given interaction cutoff."""
+def benchmark_real_space_d3(data, cutoff_angstrom, num_runs, warmup_runs):
+    """Time one real-space ``dftd3`` evaluation at a given interaction cutoff.
+
+    ``cutoff_angstrom`` is in Angstrom, as the label on the row says; it is converted to
+    Bohr here because the tables and damping parameters are atomic units.
+    """
+    cutoff = cutoff_angstrom * ANGSTROM_TO_BOHR
     import torch
 
     from benchmarks.constants import DEFAULT_NL_SAFETY_FACTOR
@@ -273,17 +264,11 @@ def benchmark_real_space_d3(
     from nvalchemiops.torch.interactions.dispersion import D3Parameters, dftd3
     from nvalchemiops.torch.neighbors import neighbor_list
 
-    dtype = dtype or torch.float32
-    positions, numbers, cell, density = _make_system(num_atoms, device, dtype)
-    species = sorted(set(numbers.tolist()))
-    rcov, r4r2, c6ab, cn_ref = _synthetic_tables(species)
+    positions, numbers, cell, density = _to_bohr(data)
+    device, dtype = str(positions.device), positions.dtype
+    rcov, r4r2, c6ab, cn_ref = _published_tables(device, dtype)
 
-    def tensor(array):
-        return torch.tensor(array, dtype=dtype, device=device)
-
-    parameters = D3Parameters(
-        rcov=tensor(rcov), r4r2=tensor(r4r2), c6ab=tensor(c6ab), cn_ref=tensor(cn_ref)
-    )
+    parameters = D3Parameters(rcov=rcov, r4r2=r4r2, c6ab=c6ab, cn_ref=cn_ref)
     pbc = torch.tensor([True, True, True], device=device)
 
     # Sized from the cutoff and the density rather than pinned. The dense kernel scans every
@@ -350,117 +335,214 @@ def _resolve_backend(config: dict, backend: str | None) -> str:
     return backend
 
 
+def _fourier_rows(data, config, num_runs, warmup_runs, row_meta, backend):
+    """One row per FourierD3 variant and per real-space cutoff, for one configuration."""
+    cutoffs = config.get("parameters", {}).get("real_space_cutoffs", [6.0, 15.0, 20.0])
+    rows = []
+
+    def record(method, measured, cutoff):
+        rows.append(
+            build_result(
+                method=method,
+                time_seconds=measured["time_eval_seconds"],
+                mem_info=measured["mem_info"],
+                timing_runs=num_runs,
+                warmup_runs=warmup_runs,
+                cutoff=cutoff,
+                mesh=measured.get("mesh"),
+                density=measured["density"],
+                time_total_seconds=measured["time_total_seconds"],
+                time_eval_seconds=measured["time_eval_seconds"],
+                time_neighbor_seconds=measured["time_neighbor_seconds"],
+                **row_meta,
+            )
+        )
+
+    def fail(method, error, cutoff):
+        rows.append(
+            build_failure_result(
+                method=method,
+                error=str(error),
+                error_type=failure_error_type(error),
+                cutoff=cutoff,
+                timing_runs=num_runs,
+                warmup_runs=warmup_runs,
+                **row_meta,
+            )
+        )
+
+    for method, reuse in (("fourier_dftd3", False), ("fourier_dftd3_setup", True)):
+        try:
+            record(
+                method,
+                benchmark_fourier_d3(data, num_runs, warmup_runs, reuse_setup=reuse),
+                CN_CUTOFF_ANGSTROM,
+            )
+        except Exception as error:  # noqa: BLE001 - one failure must not stop the sweep
+            fail(method, error, CN_CUTOFF_ANGSTROM)
+
+    for cutoff_angstrom in cutoffs:
+        method = f"dftd3_cutoff_{cutoff_angstrom:g}"
+        try:
+            record(
+                method,
+                benchmark_real_space_d3(data, cutoff_angstrom, num_runs, warmup_runs),
+                cutoff_angstrom,
+            )
+        except Exception as error:  # noqa: BLE001
+            fail(method, error, cutoff_angstrom)
+    return rows
+
+
 def run_from_config(config: dict, output_dir, backend: str | None = None) -> list[dict]:
-    """Sweep system size for FourierD3 and for ``dftd3`` at several cutoffs."""
+    """Run the FourierD3 sweep over the shared systems and scaling modes.
+
+    Same matrix and result contract as the DFT-D3 runner: every enabled system crossed with
+    every enabled scaling mode, one standardized CSV per pair.
+    """
     backend = _resolve_backend(config, backend)
+    if config.get("runtime", {}).get("dry_run", False):
+        return dry_run_from_config(config, backend=backend)
+
     parameters = config.get("parameters", {})
-    atom_counts = parameters.get("atom_counts", [500, 2000, 8000, 20000])
-    cutoffs = parameters.get("real_space_cutoffs", [6.0, 15.0, 20.0])
     num_runs = parameters.get("timing_runs", 10)
     warmup_runs = parameters.get("warmup_runs", 3)
-    device = parameters.get("device", "cuda")
-    results: list[dict] = []
-
-    for num_atoms in atom_counts:
-        # A CsCl supercell fills whole unit cells, so the realised count is rounded up from
-        # the request. Every row reports what was actually built.
-        actual = cscl_actual_atoms(num_atoms)
-        row_meta = make_row_meta("cscl", "system_size", backend, actual, 1, actual)
-        for method, reuse in (("fourier_dftd3", False), ("fourier_dftd3_setup", True)):
-            try:
-                measured = benchmark_fourier_d3(
-                    num_atoms, device, num_runs, warmup_runs, reuse_setup=reuse
-                )
-                results.append(
-                    build_result(
-                        method=method,
-                        time_seconds=measured["time_eval_seconds"],
-                        mem_info=measured["mem_info"],
-                        timing_runs=num_runs,
-                        warmup_runs=warmup_runs,
-                        cutoff=CN_CUTOFF,
-                        mesh=measured["mesh"],
-                        density=measured["density"],
-                        time_total_seconds=measured["time_total_seconds"],
-                        time_eval_seconds=measured["time_eval_seconds"],
-                        time_neighbor_seconds=measured["time_neighbor_seconds"],
-                        **row_meta,
-                    )
-                )
-            except Exception as error:  # noqa: BLE001 - one failure must not stop the sweep
-                results.append(
-                    build_failure_result(
-                        method=method,
-                        error=str(error),
-                        error_type=failure_error_type(error),
-                        timing_runs=num_runs,
-                        warmup_runs=warmup_runs,
-                        **row_meta,
-                    )
-                )
-
-        for cutoff in cutoffs:
-            try:
-                measured = benchmark_real_space_d3(
-                    num_atoms, cutoff, device, num_runs, warmup_runs
-                )
-                results.append(
-                    build_result(
-                        method=f"dftd3_cutoff_{cutoff:g}",
-                        time_seconds=measured["time_eval_seconds"],
-                        mem_info=measured["mem_info"],
-                        timing_runs=num_runs,
-                        warmup_runs=warmup_runs,
-                        cutoff=cutoff,
-                        density=measured["density"],
-                        time_total_seconds=measured["time_total_seconds"],
-                        time_eval_seconds=measured["time_eval_seconds"],
-                        time_neighbor_seconds=measured["time_neighbor_seconds"],
-                        **row_meta,
-                    )
-                )
-            except Exception as error:  # noqa: BLE001
-                results.append(
-                    build_failure_result(
-                        method=f"dftd3_cutoff_{cutoff:g}",
-                        error=str(error),
-                        error_type=failure_error_type(error),
-                        timing_runs=num_runs,
-                        warmup_runs=warmup_runs,
-                        **row_meta,
-                    )
-                )
+    max_total_atoms = parameters.get("max_total_atoms")
 
     if output_dir is None:
-        # No --output-dir, so use the directory the config names, as the other runners do.
-        base_dir = config.get("output", {}).get("base_dir")
-        if base_dir is not None:
-            output_dir = create_run_directory(base_dir, prefix="fd3")
-    if output_dir is not None:
-        save_results(
-            results,
-            Path(output_dir) / "fd3-cscl-system-size-scaling.csv",
-            replace_backend=backend,
-        )
-    return results
+        output_dir = create_run_directory(config["output"]["base_dir"], prefix="fd3")
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    from benchmarks.interactions.dispersion.benchmark_dftd3 import (
+        _resolve_d3_params_path,
+    )
+
+    params_path = _resolve_d3_params_path(D3_PARAMS_PATH)
+    configure_input_provenance(
+        {"d3_parameters": params_path}, metadata_values={"benchmark": "fd3"}
+    )
+
+    all_results: list[dict] = []
+    for sys_name, sys_config in config["systems"].items():
+        if not sys_config.get("enabled", True):
+            continue
+        nh3_dir = resolve_nh3_dir(sys_config)
+        for mode_name, mode_config in config["scaling"].items():
+            if not isinstance(mode_config, dict) or not mode_config.get(
+                "enabled", True
+            ):
+                continue
+            print(
+                f"\n{'=' * 70}\nFourierD3: {sys_name.upper()} / {mode_name}\n{'=' * 70}"
+            )
+            configs = configs_for_mode(
+                mode_name, mode_config, sys_name, sys_config, nh3_dir
+            )
+            configs, skipped = filter_configs_by_total_atoms(
+                configs, sys_name, max_total_atoms
+            )
+            results: list[dict] = []
+            for cfg, skipped_total in skipped:
+                n, bs, total = planned_atom_counts(sys_name, cfg)
+                results.append(
+                    build_skipped_result(
+                        method="fourier_dftd3",
+                        reason=f">{max_total_atoms} max_total_atoms",
+                        timing_runs=num_runs,
+                        warmup_runs=warmup_runs,
+                        **make_row_meta(sys_name, mode_name, backend, n, bs, total),
+                    )
+                )
+            for cfg in configs:
+                try:
+                    data = create_system(
+                        sys_name,
+                        num_atoms=cfg["num_atoms"],
+                        pdb_path=cfg.get("pdb_path"),
+                        batch_size=cfg["batch_size"],
+                        backend=backend,
+                    )
+                except Exception as error:  # noqa: BLE001
+                    n, bs, total = planned_atom_counts(sys_name, cfg)
+                    results.append(
+                        build_failure_result(
+                            method="fourier_dftd3",
+                            error=str(error),
+                            error_type=failure_error_type(error),
+                            failure_stage="system_setup",
+                            timing_runs=num_runs,
+                            warmup_runs=warmup_runs,
+                            **make_row_meta(sys_name, mode_name, backend, n, bs, total),
+                        )
+                    )
+                    continue
+                try:
+                    actual_n = data["atoms_per_system"]
+                    actual_total = data.get("total_atoms", actual_n)
+                    print(f"\n  {actual_n} atoms x {cfg['batch_size']} batch")
+                    row_meta = make_row_meta(
+                        sys_name,
+                        mode_name,
+                        backend,
+                        actual_n,
+                        data.get("batch_size", 1),
+                        actual_total,
+                    )
+                    results.extend(
+                        _fourier_rows(
+                            data, config, num_runs, warmup_runs, row_meta, backend
+                        )
+                    )
+                finally:
+                    del data
+                    clean_gpu()
+            if results:
+                save_results(
+                    results,
+                    output_dir / make_csv_name("fd3", sys_name, mode_name),
+                    replace_backend=backend,
+                )
+                all_results.extend(results)
+
+    print(f"\nCOMPLETE: {len(all_results)} results in {output_dir}")
+    return all_results
 
 
 def dry_run_from_config(config: dict, backend: str | None = None) -> list[dict]:
     """Expand the case matrix without allocating or timing anything."""
     backend = _resolve_backend(config, backend)
-    parameters = config.get("parameters", {})
-    atom_counts = parameters.get("atom_counts", [500, 2000, 8000, 20000])
-    cutoffs = parameters.get("real_space_cutoffs", [6.0, 15.0, 20.0])
-    return [
-        {
-            "method": method,
-            "atoms_per_system": cscl_actual_atoms(num_atoms),
-            "backend": backend,
-        }
-        for num_atoms in atom_counts
-        for method in ["fourier_dftd3", "fourier_dftd3_setup"]
-        + [f"dftd3_cutoff_{c:g}" for c in cutoffs]
+    cutoffs = config.get("parameters", {}).get("real_space_cutoffs", [6.0, 15.0, 20.0])
+    methods = ["fourier_dftd3", "fourier_dftd3_setup"] + [
+        f"dftd3_cutoff_{c:g}" for c in cutoffs
     ]
+    rows = []
+    for sys_name, sys_config in config["systems"].items():
+        if not sys_config.get("enabled", True):
+            continue
+        nh3_dir = resolve_nh3_dir(sys_config)
+        for mode_name, mode_config in config["scaling"].items():
+            if not isinstance(mode_config, dict) or not mode_config.get(
+                "enabled", True
+            ):
+                continue
+            for cfg in configs_for_mode(
+                mode_name, mode_config, sys_name, sys_config, nh3_dir, plan_only=True
+            ):
+                n, bs, total = planned_atom_counts(sys_name, cfg)
+                rows.extend(
+                    {
+                        "method": method,
+                        "system": sys_name,
+                        "mode": mode_name,
+                        "atoms_per_system": n,
+                        "batch_size": bs,
+                        "total_atoms": total,
+                        "backend": backend,
+                    }
+                    for method in methods
+                )
+    return rows
 
 
 def parse_args():

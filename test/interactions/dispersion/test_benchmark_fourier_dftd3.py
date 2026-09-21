@@ -23,6 +23,7 @@ come after it, so the failure path needs coverage of its own.
 from __future__ import annotations
 
 import argparse
+import copy
 import sys
 from pathlib import Path
 
@@ -37,14 +38,25 @@ benchmark_module = pytest.importorskip(
     reason="benchmark dependencies are not installed",
 )
 
+# The same shape as the shipped config: systems x scaling modes, trimmed to one cell.
 CONFIG = {
     "parameters": {
-        "atom_counts": [64],
         "real_space_cutoffs": [6.0],
         "timing_runs": 1,
         "warmup_runs": 0,
-        "device": "cuda",
-    }
+        "max_total_atoms": 131072,
+    },
+    "runtime": {"backend": "torch"},
+    "systems": {
+        "cscl": {"enabled": True, "atom_counts": [250]},
+        "nh3": {"enabled": False},
+    },
+    "scaling": {
+        "system_size": {"enabled": True, "batch_size": 1},
+        "constant_workload": {"enabled": False},
+        "batch_scaling": {"enabled": False},
+    },
+    "output": {"base_dir": "benchmarks/results"},
 }
 
 
@@ -104,15 +116,17 @@ class TestConfiguration:
         """A missing key here would fall back to a default and hide the config."""
         config = benchmark_module.load_yaml_config(benchmark_module.DEFAULT_CONFIG)
         parameters = config["parameters"]
-        for key in (
-            "atom_counts",
-            "real_space_cutoffs",
-            "timing_runs",
-            "warmup_runs",
-        ):
+        for key in ("real_space_cutoffs", "timing_runs", "warmup_runs"):
             assert key in parameters, key
         assert config["output"]["base_dir"]
-        # Density comes from the CsCl lattice now, so configuring it would be misleading.
+        # Same schema as the DFT-D3 config: systems and scaling modes, not a flat sweep.
+        assert set(config["systems"]) == {"cscl", "nh3"}
+        assert set(config["scaling"]) == {
+            "system_size",
+            "constant_workload",
+            "batch_scaling",
+        }
+        # Density comes from the lattice now, so configuring it would be misleading.
         assert "density" not in parameters
 
     def test_cli_flags_override_the_config_only_when_given(self):
@@ -178,26 +192,64 @@ class TestBackendGuard:
 
 
 @pytest.mark.gpu
-class TestSystemSizeIsTheRealisedOne:
-    """The CsCl builder rounds up to whole unit cells, so the request is not the size."""
+class TestSharedBenchmarkContract:
+    """The runner follows the same matrix and result contract as the DFT-D3 benchmark."""
 
-    def test_the_mesh_follows_the_realised_count(self):
-        """A request on a schedule boundary must not be timed on the mesh below it.
+    def test_the_matrix_covers_systems_and_scaling_modes(self):
+        """Every enabled system crossed with every enabled scaling mode."""
+        config = copy.deepcopy(CONFIG)
+        config["systems"]["nh3"]["enabled"] = True
+        config["systems"]["nh3"]["pdb_dir"] = "../../nh3"
+        config["systems"]["nh3"]["atom_counts"] = [256]
+        for mode in ("constant_workload", "batch_scaling"):
+            config["scaling"][mode] = {"enabled": True, "target_atoms": 8192}
+        config["scaling"]["batch_scaling"]["max_total_atoms"] = 8192
 
-        20000 realises as 21296, which crosses the 20000 threshold, so selecting from the
-        request gives a 64-cubed mesh where the built system calls for 128-cubed. Checked
-        through the returned row rather than the source, so it holds however it is wired.
-        """
-        measured = benchmark_module.benchmark_fourier_d3(
-            20000, "cuda", num_runs=1, warmup_runs=0
-        )
-        assert measured["atoms"] > 20000
-        assert measured["mesh"] == benchmark_module.mesh_for(measured["atoms"])
+        rows = benchmark_module.dry_run_from_config(config, backend="torch")
+        assert {(r["system"], r["mode"]) for r in rows} == {
+            (system, mode)
+            for system in ("cscl", "nh3")
+            for mode in ("system_size", "constant_workload", "batch_scaling")
+        }
+
+    def test_every_method_appears_in_the_plan(self):
+        """Both FourierD3 variants and one row per real-space cutoff."""
+        rows = benchmark_module.dry_run_from_config(CONFIG, backend="torch")
+        assert {r["method"] for r in rows} == {
+            "fourier_dftd3",
+            "fourier_dftd3_setup",
+            "dftd3_cutoff_6",
+        }
 
     def test_the_dry_run_reports_what_would_be_built(self):
         """A dry run's atom counts must match the rows a real sweep would emit."""
-        from suite_systems import cscl_actual_atoms
-
         rows = benchmark_module.dry_run_from_config(CONFIG, backend="torch")
-        expected = cscl_actual_atoms(CONFIG["parameters"]["atom_counts"][0])
-        assert {row["atoms_per_system"] for row in rows} == {expected}
+        assert {row["atoms_per_system"] for row in rows} == {250}
+
+    @pytest.mark.gpu
+    def test_a_sweep_writes_one_standardized_csv_per_pair(self, tmp_path):
+        """File naming and the canonical metric follow the shared contract."""
+        rows = benchmark_module.run_from_config(
+            copy.deepcopy(CONFIG), tmp_path, backend="torch"
+        )
+        assert rows
+        written = [path.name for path in tmp_path.glob("*.csv")]
+        assert written == ["fd3-cscl-system-size-scaling.csv"]
+        for row in rows:
+            # Evaluation time is canonical; the other two are supplementary.
+            assert row["time_eval_seconds"] <= row["time_total_seconds"]
+            assert "time_neighbor_seconds" in row
+
+    @pytest.mark.gpu
+    def test_the_mesh_follows_the_cell(self, tmp_path):
+        """A fixed spacing means the mesh grows with the cell, not with a size threshold."""
+        small = copy.deepcopy(CONFIG)
+        large = copy.deepcopy(CONFIG)
+        large["systems"]["cscl"]["atom_counts"] = [2000]
+        meshes = []
+        for config in (small, large):
+            rows = benchmark_module.run_from_config(config, tmp_path, backend="torch")
+            meshes.append(
+                next(r["mesh"] for r in rows if r["method"] == "fourier_dftd3")
+            )
+        assert meshes[1] > meshes[0], meshes
