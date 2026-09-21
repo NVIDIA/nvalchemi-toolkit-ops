@@ -526,6 +526,81 @@ class TestBatchNaiveNeighborList:
         )
 
     @pytest.mark.gpu
+    def test_target_indices_tile_matches_scalar_with_heterogeneous_metadata(self):
+        """Compact rows select PBC metadata through their target atoms."""
+        device = jax.devices("gpu")[0]
+        positions = jax.device_put(
+            jnp.array(
+                [
+                    [4.75, 0.0, 0.0],
+                    [0.25, 0.0, 0.0],
+                    [2.0, 0.0, 0.0],
+                    [0.0, 8.75, 0.0],
+                    [0.0, 0.25, 0.0],
+                    [0.0, 4.0, 0.0],
+                    [1.5, 4.0, 0.0],
+                ],
+                dtype=jnp.float32,
+            ),
+            device,
+        )
+        batch_idx = jax.device_put(
+            jnp.array([0, 0, 0, 1, 1, 1, 1], dtype=jnp.int32),
+            device,
+        )
+        batch_ptr = jax.device_put(jnp.array([0, 3, 7], dtype=jnp.int32), device)
+        cell = jax.device_put(
+            jnp.array(
+                [
+                    [[4.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 6.0]],
+                    [[6.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 10.0]],
+                ],
+                dtype=jnp.float32,
+            ),
+            device,
+        )
+        pbc = jax.device_put(
+            jnp.array([[True, False, False], [False, True, False]]),
+            device,
+        )
+        target_indices = jax.device_put(jnp.array([3, 0], dtype=jnp.int32), device)
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+            cell,
+            0.8,
+            pbc,
+        )
+        kwargs = {
+            "batch_idx": batch_idx,
+            "batch_ptr": batch_ptr,
+            "cell": cell,
+            "pbc": pbc,
+            "max_neighbors": 8,
+            "max_atoms_per_system": 4,
+            "wrap_positions": True,
+            "shift_range_per_dimension": shift_range,
+            "num_shifts_per_system": num_shifts,
+            "max_shifts_per_system": int(max_shifts),
+            "target_indices": target_indices,
+        }
+
+        scalar = batch_naive_neighbor_list(
+            positions,
+            0.8,
+            strategy="scalar",
+            **kwargs,
+        )
+        tiled = batch_naive_neighbor_list(
+            positions,
+            0.8,
+            strategy="tile",
+            **kwargs,
+        )
+
+        np.testing.assert_array_equal(np.asarray(scalar[1]), [1, 1])
+        np.testing.assert_array_equal(np.asarray(tiled[1]), np.asarray(scalar[1]))
+        assert _sorted_row_multisets(*scalar) == _sorted_row_multisets(*tiled)
+
+    @pytest.mark.gpu
     def test_target_indices_tile_batch_contracts(self):
         """Batched tile preserves COO, fill, empty, and overflow contracts."""
         device = jax.devices("gpu")[0]

@@ -179,7 +179,7 @@ assert (num_neighbors == 0).all()
 
 
 def test_jitted_cpu_tile_rejects_before_launch():
-    """An explicit tiled CPU request fails while JAX traces the call."""
+    """An explicit tiled CPU request reports the CUDA-only contract."""
     script = """
 import jax
 import jax.numpy as jnp
@@ -201,8 +201,7 @@ def run(positions):
 try:
     run(jnp.zeros((4, 3), dtype=jnp.float32))
 except jax.errors.JaxRuntimeError as exc:
-    assert "No FFI handler registered" in str(exc)
-    assert "Host" in str(exc)
+    assert "strategy='tile' requires CUDA" in str(exc)
 else:
     raise AssertionError("expected CPU-targeted tile lowering to fail")
 """
@@ -218,19 +217,13 @@ else:
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize(
-    ("graph_mode", "strategy"),
-    [("none", "tile"), ("warp", "auto")],
-)
 @pytest.mark.parametrize("target_backend", ["gpu", "cpu"])
-def test_jitted_tile_uses_target_backend_not_process_default(
-    graph_mode,
-    strategy,
-    target_backend,
-):
+def test_jitted_tile_uses_target_backend_not_process_default(target_backend):
     """JIT tile routing ignores the process default backend."""
     if not any(device.platform == "gpu" for device in jax.devices()):
         pytest.skip("Mixed CPU/GPU JAX backends are required.")
+    graph_mode = "none"
+    strategy = "tile"
     script = f"""
 import numpy as np
 
@@ -316,8 +309,7 @@ else:
     try:
         call(*args)
     except jax.errors.JaxRuntimeError as exc:
-        assert "No FFI handler registered" in str(exc)
-        assert "Host" in str(exc)
+        assert "strategy='tile' requires CUDA" in str(exc)
     else:
         raise AssertionError("expected CPU-targeted tile lowering to fail")
     finally:

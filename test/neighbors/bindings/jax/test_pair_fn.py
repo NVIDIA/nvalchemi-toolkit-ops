@@ -777,6 +777,99 @@ def test_batch_naive_pair_fn_matrix(dtype):
     _check_pair_matrix(nm, nn, nv, nd, pe, pf, pp)
 
 
+def test_batch_naive_target_indices_pair_outputs_heterogeneous():
+    """Compact batched pair outputs use each target atom's system metadata."""
+    from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
+
+    positions = jnp.array(
+        [
+            [4.75, 0.0, 0.0],
+            [0.25, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [0.0, 8.75, 0.0],
+            [0.0, 0.25, 0.0],
+            [0.0, 4.0, 0.0],
+            [1.5, 4.0, 0.0],
+        ],
+        dtype=jnp.float32,
+    )
+    batch_idx = jnp.array([0, 0, 0, 1, 1, 1, 1], dtype=jnp.int32)
+    batch_ptr = jnp.array([0, 3, 7], dtype=jnp.int32)
+    cell = jnp.array(
+        [
+            [[4.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 6.0]],
+            [[6.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 10.0]],
+        ],
+        dtype=jnp.float32,
+    )
+    pbc = jnp.array([[True, False, False], [False, True, False]])
+    target_indices = jnp.array([3, 0], dtype=jnp.int32)
+    pair_params = _pair_params(positions.shape[0], jnp.float32)
+    common_kwargs = {
+        "batch_idx": batch_idx,
+        "batch_ptr": batch_ptr,
+        "cell": cell,
+        "pbc": pbc,
+        "max_neighbors": 8,
+        "wrap_positions": True,
+        "return_distances": True,
+        "return_vectors": True,
+        "pair_fn": _sum_pair_fn_f32,
+        "pair_params": pair_params,
+        "strategy": "scalar",
+    }
+
+    full = batch_naive_neighbor_list(
+        positions,
+        0.8,
+        max_atoms_per_system=4,
+        **common_kwargs,
+    )
+    partial = batch_naive_neighbor_list(
+        positions,
+        0.8,
+        target_indices=target_indices,
+        **common_kwargs,
+    )
+
+    for row, atom in enumerate(np.asarray(target_indices)):
+        count = int(partial[1][row])
+        assert count == int(full[1][atom]) == 1
+        assert int(partial[0][row, 0]) == int(full[0][atom, 0])
+        for partial_output, full_output in zip(partial[2:], full[2:], strict=True):
+            np.testing.assert_allclose(
+                np.asarray(partial_output[row, :count]),
+                np.asarray(full_output[atom, :count]),
+                rtol=1e-6,
+                atol=1e-6,
+            )
+
+    def partial_loss(pos):
+        outputs = batch_naive_neighbor_list(
+            pos,
+            0.8,
+            target_indices=target_indices,
+            **common_kwargs,
+        )
+        return jnp.sum(outputs[3] ** 2) + 0.125 * jnp.sum(outputs[4] ** 2)
+
+    def selected_full_loss(pos):
+        outputs = batch_naive_neighbor_list(
+            pos,
+            0.8,
+            max_atoms_per_system=4,
+            **common_kwargs,
+        )
+        return jnp.sum(outputs[3][target_indices] ** 2) + 0.125 * jnp.sum(
+            outputs[4][target_indices] ** 2
+        )
+
+    partial_grad = jax.grad(partial_loss)(positions)
+    full_grad = jax.grad(selected_full_loss)(positions)
+    assert float(jnp.max(jnp.abs(partial_grad))) > 0.0
+    np.testing.assert_allclose(partial_grad, full_grad, rtol=1e-6, atol=1e-6)
+
+
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["f32", "f64"])
 def test_batch_naive_pair_fn_coo(dtype):
     """JAX batch_naive ``pair_fn`` COO outputs are aligned with the neighbor list."""
