@@ -2,7 +2,7 @@
 
 # Change Log
 
-## Unreleased
+## 0.5.0
 
 ### Added
 
@@ -82,7 +82,6 @@
   list cutoff, so its coordination numbers do not depend on the list used to build them.
   Results therefore differ slightly from `dftd3`. `rcov` follows the same convention as
   `dftd3`; pass both the same table.
-
 
 ## v0.4.1 - 2026-08-03
 
