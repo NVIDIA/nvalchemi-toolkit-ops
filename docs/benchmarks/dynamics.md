@@ -196,49 +196,19 @@ indistinguishable counts. Counts vary by roughly 20% run to run, since
 neighbor-list rebuild ordering perturbs the forces in their last bits, so read
 the aggregate rather than a single cell.
 
-**Scope.** The above is the *reproducible* benchmark — everything it needs is
-in this repository and it runs in minutes on one GPU. It is not the setting
-L-BFGS is meant for: a smooth pair potential on a 55-atom cluster exercises
-neither stiff crystalline curvature nor a force field that is not the gradient
-of its own energy. That setting is measured separately below.
+**Scope.** This is the *reproducible* benchmark — everything it needs is in
+this repository and it runs in minutes on one GPU. Read it as that, and not as
+a proxy for the setting L-BFGS is meant for: a smooth pair potential on a
+55-atom cluster exercises neither the stiff, anisotropic curvature of a
+relaxing crystal nor a force field that is not the gradient of its own energy.
+Expect a larger advantage there than the ratio below suggests, and measure it
+on your own workload rather than inferring it from this one.
 
 These numbers are much less favourable than the `0.129` this table carried
 previously, which came from a NumPy all-pairs potential in reduced units with
 a FIRE2 grid tuned for those units. Both are fixed: forces now come from the
 package kernels, and the grid runs to 3.0 fs because FIRE2 keeps improving
 past the value the MD blocks use.
-
-#### OMat24 structures under a machine-learned potential
-
-The realistic comparison, and the one that matters for the intended use.
-120 periodic inorganic structures from OMat24 (3 to 88 atoms, 57 elements),
-relaxed at fixed cell with **MACE-MPA-0** to `fmax <= 0.05 eV/Å`, float64.
-Each structure is relaxed independently, FIRE2's timestep swept per structure
-over 0.5–4.0 fs with its best converged run as the baseline, both optimizers
-sharing the same `maxstep = 0.2 Å`. Evaluations are counted at the potential
-itself, so neither loop can undercount. Reproduce with
-`benchmark_lbfgs_omat24.py`; the per-structure record is
-`lbfgs_vs_fire2_omat24.csv`.
-
-| Metric | L-BFGS / FIRE2 |
-| --- | --- |
-| Geometric mean | **0.34** |
-| Median | **0.32** |
-| 90th percentile | 0.55 |
-| Worst individual case | 1.50 |
-| Structures where L-BFGS used fewer evaluations | **118 / 120** |
-| Cases where both converged | 120 / 120 |
-
-**L-BFGS needs about 2.9x fewer force evaluations — 3,259 against 9,005 in
-total, a 64% saving.** This is a much stronger result than the Lennard-Jones
-clusters give, and the gap is the point: the LJ workload understates L-BFGS
-because a smooth pair potential is close to the regime where FIRE2's inertial
-dynamics already work well. On stiff, anisotropic crystalline curvature the
-quasi-Newton direction earns its history. The advantage is stable across size
-— geometric means of 0.42, 0.29 and 0.36 for 3–9, 10–24 and 25–88 atoms.
-
-It is still not uniform: two structures out of 120 cost more, the worst at
-1.50. Read the aggregate.
 
 **Per-step optimizer cost.** Optimizer time only, single system, harmonic
 potential, `--gates`. The table is a transcription of the
@@ -249,30 +219,41 @@ digit.
 
 | Atoms | Precision | Eager (ms) | CUDA graph (ms) | FIRE2 (ms) | vs FIRE2 |
 | --- | --- | --- | --- | --- | --- |
-| 10,000 | float32 | 0.47 | 0.14 | 0.057 | 8.2x |
-| 10,000 | float64 | 0.44 | 0.16 | 0.053 | 8.3x |
-| 100,000 | float32 | 0.98 | 0.98 | 0.132 | 7.4x |
-| 100,000 | float64 | 1.02 | 1.02 | 0.119 | 8.6x |
-| 1,000,000 | float64 | 3.12 | 3.11 | 0.319 | 9.8x |
+| 10,000 | float32 | 0.46 | 0.15 | 0.052 | 8.8x |
+| 10,000 | float64 | 0.44 | 0.18 | 0.056 | 7.9x |
+| 100,000 | float32 | 1.06 | 1.06 | 0.130 | 8.2x |
+| 100,000 | float64 | 1.10 | 1.11 | 0.119 | 9.3x |
+| 1,000,000 | float32 | 3.52 | 3.53 | 0.289 | 12.2x |
+| 1,000,000 | float64 | 5.00 | 5.00 | 0.353 | 14.2x |
 
-The million-atom row predates the precision split and is float64 only; re-run
-`--gates` without `--gate-sizes` to refresh it. Precision moves per-step cost
-less than the halved byte count suggests, because FIRE2 halves too — 1.02 ms
-to 0.98 ms at a hundred thousand atoms, and the ratio difference between the
-two rows is inside the run-to-run spread.
+**A single L-BFGS step costs roughly eight to fourteen times a FIRE2 step**,
+rising with system size. It runs `2 * history_size + O(1)` passes over the
+degrees of freedom against FIRE2's handful. At ten thousand atoms the step is
+launch-bound and CUDA-graph replay recovers about 2.4-3x; from a hundred
+thousand upwards device work dominates and replay recovers nothing.
 
-**A single L-BFGS step is roughly ten times more expensive than a FIRE2 step.**
-It runs `2m + O(1)` passes over the degrees of freedom against FIRE2's
-handful. At ten thousand atoms the step is launch-bound and CUDA-graph replay
-recovers about 2.9x; from a hundred thousand upwards device work dominates and
-replay recovers nothing.
+**Precision matters at a million atoms and not below it.** At ten and a
+hundred thousand the two precisions are within the run-to-run spread, because
+the history buffers still fit in cache; at a million they are 3.5 ms against
+5.0 ms. The two history buffers are the whole reason — at `history_size = 6`
+they are 144 MB in fp32 and 288 MB in fp64 at that size, against 50 MB of L2
+on an H100.
 
-**Break-even.** The model must cost more than roughly 0.5, 1.1 and 3.7 ms per
-evaluation at these three sizes for L-BFGS to win end to end, given the LJ
-evaluation ratio of `0.59`. At the OMat24 ratio of `0.34` the bar is far
-lower, and MACE-MPA-0 on these structures already clears it. Prefer FIRE2 when
-the force evaluation is cheap, when the system is large enough that the step
-itself dominates, or when worst-case behaviour matters more than the average.
+That threshold is also where the entity-first state layout costs something.
+Indexing the history by degree of freedom first is what lets a batched driver
+retire converged systems and admit replacements by gathering along dimension
+zero; the price is that a kernel touching one history slot reads with a stride
+instead of contiguously. Below a million atoms the cache absorbs it entirely.
+At a million it does not, and the per-step ratio is roughly 2x what a
+history-major layout would give.
+
+**Break-even.** The model must cost more than roughly 0.5, 1.2 and 4.4 ms per
+evaluation in fp32 (0.5, 1.3 and 6.3 in fp64) at these three sizes for L-BFGS
+to win end to end, given the evaluation ratio of `0.59` above. A workload
+where L-BFGS saves more evaluations lowers that bar proportionately. Prefer
+FIRE2 when the force evaluation is cheap, when the
+system is large enough that the step itself dominates, or when worst-case
+behaviour matters more than the average.
 
 **Memory.** With `P` degrees of freedom, `M` systems and history size `m`:
 

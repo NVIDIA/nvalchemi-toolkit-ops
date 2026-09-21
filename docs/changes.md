@@ -32,7 +32,11 @@
   float64 -- because `ys` is accumulated in the coordinate precision and one
   value cannot sit above both noise floors.
 - State is grouped into two transparent dataclasses, `LBFGSState` and
-  `LBFGSCellState`. `lbfgs_prepare_state` and `lbfgs_prepare_cell_state`
+  `LBFGSCellState`, with every array indexed by its owning entity first: a
+  per-degree-of-freedom buffer leads with `num_packed`, a per-system one with
+  `num_systems`, and the history depth is the trailing axis. A batched driver
+  can therefore select systems, or concatenate two states, by gathering along
+  dimension zero. `lbfgs_prepare_state` and `lbfgs_prepare_cell_state`
   allocate, initialize and validate a complete state in one call -- shapes,
   dtypes, devices, history depth and the packed cell relationship -- and
   calling them again is how you restart. Every field stays reachable by name,
@@ -41,7 +45,12 @@
   the GPU; each step then only verifies that its own inputs are compatible. A step still allocates nothing, so it stays capturable in a CUDA
   graph. In JAX both classes are registered pytrees and the step returns a new
   state functionally, so one `donate_argnums` entry donates every field.
-- Both coordinate-only and variable-cell relaxation are supported. The
+- Both coordinate-only and variable-cell relaxation are supported.
+  `lbfgs_prepare_cell_state` takes the ordinary `atom_ptr` and the aligned
+  cells and derives the packed topology, captures the reference chart and
+  computes `kappa` itself, so nothing needs repairing before the first step;
+  ragged batches are unaffected, since `atom_ptr` already carries each
+  system's atom count. The
   variable-cell path maps positions and cell into a single packed coordinate
   vector following ASE's `UnitCellFilter` convention, so the two-loop recursion
   couples them without special handling, and convergence is always evaluated on

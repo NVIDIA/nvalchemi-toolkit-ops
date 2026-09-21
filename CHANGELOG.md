@@ -59,9 +59,22 @@
 - Batched L-BFGS geometry optimization, with PyTorch and JAX bindings, for both
   fixed-cell and variable-cell relaxation. State is prepared once into an
   `LBFGSState` and each call takes one force evaluation; as with FIRE2, testing
-  convergence and ending the loop are the caller's. See the dynamics user
-  guide for the interface and behaviour, `docs/benchmarks/dynamics.md` for
-  performance, and `examples/dynamics/12_lbfgs_optimization.py` and
+  convergence and ending the loop are the caller's.
+
+  Every state array is indexed by its owning entity first -- a
+  per-degree-of-freedom buffer leads with `num_packed`, a per-system one with
+  `num_systems`, and the history depth is always the trailing axis. That is
+  what lets a batched driver select a subset of systems, or concatenate two
+  states, by gathering along dimension zero, which is how converged systems are
+  retired and replacements admitted mid-run. Variable-cell preparation takes
+  the ordinary `atom_ptr` and derives the packed topology, the reference chart
+  and `kappa` itself, so there is no half-built state to repair before the
+  first step. The public surface of each layer is six names: the two states,
+  the two preparation helpers, and one step per call for each path.
+
+  See the dynamics user guide for the interface and behaviour,
+  `docs/benchmarks/dynamics.md` for performance, and
+  `examples/dynamics/12_lbfgs_optimization.py` and
   `13_lbfgs_variable_cell.py` for worked examples.
 
 ### Fixed
