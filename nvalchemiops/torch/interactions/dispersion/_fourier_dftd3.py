@@ -744,16 +744,14 @@ class FourierD3Setup:
         )
 
     def validate_for(self, cells, n_species, mesh_dimensions, mesh_spacing=None):
-        """Refuse to be used with inputs it was not built for.
+        """Check the metadata this setup was built for: batch, species, dtype, device, mesh.
 
-        The derived quantities here stand in for the cell everywhere except the Cartesian
-        image shifts, which are still taken from the cell passed to the call. A setup that
-        does not match therefore does not produce a stale answer so much as an incoherent
-        one, mixing two cells in a single evaluation.
-
-        Metadata only -- batch size, species count, dtype, device and mesh. Cell *values* are
-        not compared: that would read device memory, which graph capture forbids, and keeping
-        the setup consistent with the cell is the caller's contract.
+        **Not a full check.** Cell *values* are never compared -- that reads device memory,
+        which graph capture forbids -- so a setup built for a different cell passes here. The
+        derived quantities stand in for the cell everywhere except the Cartesian image
+        shifts, which come from the call's cell, so a stale setup mixes two cells in one
+        evaluation and returns a finite, incoherent answer. Rebuild it whenever the cell
+        changes; the same contract as the PME and multipole caches.
         """
         if self.volumes.shape[0] != cells.shape[0]:
             raise ValueError(
