@@ -120,6 +120,8 @@
   precomputed from a reference cell or passed through
   `jax.lax.stop_gradient(k_vectors)`. Full
   `ewald_summation(k_vectors=...)` semantics are unchanged.
+- `neighbor_list` (Torch and JAX) now annotates `**kwargs` as `Any` instead of
+  `dict`, so type checkers no longer reject valid keyword options.
 
 ## 0.4.1 - 2026-08-03
 
