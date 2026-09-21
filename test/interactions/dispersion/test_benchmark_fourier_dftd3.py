@@ -256,6 +256,21 @@ class TestSharedBenchmarkContract:
             assert "time_neighbor_seconds" in row
 
     @pytest.mark.gpu
+    def test_reported_density_is_in_the_unit_it_claims(self, tmp_path):
+        """Rows report atoms/A^3, while the neighbour-capacity maths works in Bohr.
+
+        The two differ by 6.75x, so mixing them up is invisible in isolation but makes the
+        density column meaningless.
+        """
+        rows = benchmark_module.run_from_config(
+            copy.deepcopy(CONFIG), tmp_path, backend="torch"
+        )
+        densities = {r["density"] for r in rows if r["success"]}
+        assert densities, "no successful rows"
+        # CsCl at a = 4.119 A holds two atoms per cell: 2 / 4.119^3 = 0.0286 atoms/A^3.
+        assert all(abs(d - 0.0286) < 0.002 for d in densities), densities
+
+    @pytest.mark.gpu
     def test_batched_runs_keep_systems_apart(self, tmp_path):
         """A batch is several independent cells, so no neighbour may cross between them.
 

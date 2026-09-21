@@ -131,15 +131,21 @@ def _published_tables(device: str, dtype):
 
 
 def _to_bohr(data):
-    """Positions, cell and density from a shared system dict, converted to atomic units.
+    """Positions and cell from a shared system dict, converted to atomic units.
 
     The builders work in Angstrom; the published D3 tables are atomic units.
+
+    Returns both densities because they are consumed differently: the Bohr one pairs with a
+    Bohr cutoff in :func:`estimate_max_neighbors`, while the Angstrom one is what the result
+    rows report, matching the rest of the suite.
     """
+    density_angstrom = compute_atomic_density(data)
     return (
         data["positions"] * ANGSTROM_TO_BOHR,
         data["atomic_numbers"].to(torch.int32),
         data["cell"] * ANGSTROM_TO_BOHR,
-        compute_atomic_density(data) / ANGSTROM_TO_BOHR**3,
+        density_angstrom,
+        density_angstrom / ANGSTROM_TO_BOHR**3,
     )
 
 
@@ -182,7 +188,7 @@ def benchmark_fourier_d3(data, num_runs, warmup_runs, reuse_setup=False):
     from nvalchemiops.torch.interactions.dispersion._fourier_dftd3 import FourierD3Setup
     from nvalchemiops.torch.neighbors import neighbor_list
 
-    positions, numbers, cell, density = _to_bohr(data)
+    positions, numbers, cell, density, _ = _to_bohr(data)
     device, dtype = str(positions.device), positions.dtype
     species = sorted({int(z) for z in numbers.unique().tolist()})
     rcov, r4r2, c6ab, cn_ref = _published_tables(device, dtype)
@@ -268,7 +274,7 @@ def benchmark_real_space_d3(data, cutoff_angstrom, num_runs, warmup_runs):
     from nvalchemiops.torch.interactions.dispersion import D3Parameters, dftd3
     from nvalchemiops.torch.neighbors import neighbor_list
 
-    positions, numbers, cell, density = _to_bohr(data)
+    positions, numbers, cell, density, density_bohr = _to_bohr(data)
     device, dtype = str(positions.device), positions.dtype
     rcov, r4r2, c6ab, cn_ref = _published_tables(device, dtype)
 
@@ -279,8 +285,10 @@ def benchmark_real_space_d3(data, cutoff_angstrom, num_runs, warmup_runs):
     # slot in a row, so a fixed width is paid for directly: at 6 A there are about ninety
     # neighbours, and a width of 8192 made the real-space method look an order of magnitude
     # slower than it is.
+    # Bohr cutoff with Bohr^-3 density: the product is dimensionless either way, but the
+    # two must agree.
     max_neighbors = estimate_max_neighbors(
-        cutoff, atomic_density=density * DEFAULT_NL_SAFETY_FACTOR
+        cutoff, atomic_density=density_bohr * DEFAULT_NL_SAFETY_FACTOR
     )
 
     # As above: the dispatcher picks the batch builder when batch_idx is present.
@@ -608,7 +616,7 @@ def main():
         (row["density"] for row in results if row.get("success", True)), float("nan")
     )
     print(
-        f"\nCsCl supercells at {density:.4f} atoms/A^3;  times in ms. 'eval' is the "
+        f"\nDensity {density:.4f} atoms/A^3;  times in ms. 'eval' is the "
         f"reported metric: "
         f"the kernel style\nguide keeps neighbour-list construction out of kernel timing. "
         f"'nlist' and 'total' are shown\nbecause the list a method needs is part of what a "
