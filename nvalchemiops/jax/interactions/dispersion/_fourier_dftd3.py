@@ -448,9 +448,11 @@ def fourier_dftd3(
 
     Notes
     -----
-    ``fourier_d3_params`` must cover every element present. Eagerly this raises and names the
-    missing elements; under ``jax.jit`` the mask cannot be read back, so the energy, forces
-    and virial come back NaN rather than silently omitting those atoms.
+    ``fourier_d3_params`` must cover every element present. This is a **caller
+    precondition**, not a checked one, as in :func:`~nvalchemiops.jax.interactions.dispersion.dftd3`:
+    verifying it would read device memory on every call. An uncovered element is grouped with
+    the padding and dropped from the dispersion sum, so the result is finite and wrong rather
+    than an error. Build the decomposition from the species actually present.
 
     The returned ``energy`` is **not differentiable**. The kernels are launched with
     ``enable_backward=False`` and no VJP or JVP rule is registered on top of them, so

@@ -1196,15 +1196,18 @@ evaluation only --- the neighbour list is built outside the timed region, per th
 [kernel style guide](../about/kernel-style-guide.md).
 
 ```{warning}
-`fourier_d3_params` must cover every element in the system. `species_map` marks both padding
-(atomic number 0) and uncovered elements with `-1`, and the mesh grouping treats `-1` as
-padding, so an uncovered element would otherwise be dropped from the sum and the energy would
-come back plausible but wrong.
+`fourier_d3_params` must cover every element in the system. This is a **caller
+precondition**, checked by neither binding in any execution mode --- the same contract as
+`dftd3`, and for the same reason: verifying it means reading device memory on every step.
 
-Eagerly, both bindings raise and name the missing elements. Under `jax.jit` the mask is a
-tracer and cannot be read back to raise, so the JAX binding returns **NaN** energy, forces and
-virial instead. A NaN result from `fourier_dftd3` almost always means the parameters do not
-cover the system; rebuild the decomposition with every species present.
+`species_map` marks both padding (atomic number 0) and uncovered elements with `-1`, and the
+mesh grouping treats `-1` as padding. An uncovered atom is therefore dropped from the
+dispersion sum and contributes no coefficients, self-energy or force, while still shifting
+its covered neighbours' coordination numbers. Nothing is raised and no NaN appears: **the
+energy comes back finite and wrong.**
+
+Build `FourierD3Parameters` from the species actually present --- `sorted(set(numbers))` is
+enough --- and rebuild it whenever the composition changes.
 ```
 
 ```{important}

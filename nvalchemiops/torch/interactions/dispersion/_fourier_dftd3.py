@@ -849,7 +849,8 @@ def fourier_dftd3(
     a1, a2, s8 : float
         Becke-Johnson damping parameters for the exchange-correlation functional in use.
     fourier_d3_params : FourierD3Parameters
-        Separable coefficients covering every species present.
+        Separable coefficients covering every species present. Coverage is a caller
+        precondition and is not checked; an uncovered element is dropped from the sum.
     cell : torch.Tensor, shape (3, 3), (1, 3, 3) or (B, 3, 3)
         Lattice vectors as rows. Required: FourierD3 is periodic.
     cutoff : float
