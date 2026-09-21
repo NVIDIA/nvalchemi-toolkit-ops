@@ -45,6 +45,7 @@ import torch
 import warp as wp
 from torch._subclasses.fake_tensor import is_fake
 
+from nvalchemiops.torch._warp_op_helpers import scoped_warp_stream
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_vec_dtype
 
 # =============================================================================
@@ -257,7 +258,7 @@ def _normalize_outputs(result: Any) -> tuple[torch.Tensor, ...]:
 
 
 @contextmanager
-def warp_stream_from_torch(*values: Any, sync_enter: bool = True):
+def warp_stream_from_torch(*values: Any):
     """Bind Warp launches to PyTorch's current CUDA stream when tensors are CUDA.
 
     Finds the first CUDA tensor in ``values`` and switches Warp to its stream
@@ -269,12 +270,6 @@ def warp_stream_from_torch(*values: Any, sync_enter: bool = True):
     *values : Any
         Arbitrary arguments; only ``torch.Tensor`` instances on CUDA are
         inspected for stream information.
-    sync_enter : bool, default=True
-        Whether to synchronise the previous Warp stream into this one on entry.
-        Required when Warp may have outstanding work on another stream, which is
-        why it is the default. Pass ``False`` under ``torch.cuda.graph`` capture,
-        where an entry synchronisation is illegal and invalidates the capture;
-        ordering is then guaranteed by both sides already using the same stream.
 
     Yields
     ------
@@ -295,15 +290,10 @@ def warp_stream_from_torch(*values: Any, sync_enter: bool = True):
         return
 
     torch_stream = torch.cuda.current_stream(stream_tensor.device)
-    device = wp.device_from_torch(stream_tensor.device)
-    if wp.get_stream(device).cuda_stream == torch_stream.cuda_stream:
-        # Already the same underlying stream, so wrapping it again would only allocate a
-        # second Warp handle for it. Entering is then a no-op in both directions: a sync
-        # would order the stream against itself. Measured at ~2.4 us per entry, which is
-        # worth skipping for ops called several times per step.
-        yield torch_stream
-        return
-    with wp.ScopedStream(wp.stream_from_torch(torch_stream), sync_enter=sync_enter):
+    with scoped_warp_stream(
+        stream_tensor.device,
+        torch_stream=torch_stream,
+    ):
         yield torch_stream
 
 

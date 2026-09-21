@@ -77,6 +77,7 @@ from nvalchemiops.interactions.electrostatics.dsf import (
     dsf_matrix as wp_dsf_matrix,
 )
 from nvalchemiops.torch._warnings import _warn_compile_missing_argument_inference
+from nvalchemiops.torch._warp_op_helpers import scoped_torch_warp_stream
 from nvalchemiops.torch.interactions.electrostatics._util import _InjectChargeGrad
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
@@ -94,6 +95,7 @@ __all__ = [
     "nvalchemiops::dsf_csr_op",
     mutates_args=("energy", "forces", "virial", "charge_grad"),
 )
+@scoped_torch_warp_stream
 def _dsf_csr_op(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -226,6 +228,7 @@ def _dsf_csr_op_fake(
     "nvalchemiops::dsf_matrix_op",
     mutates_args=("energy", "forces", "virial", "charge_grad"),
 )
+@scoped_torch_warp_stream
 def _dsf_matrix_op(
     positions: torch.Tensor,
     charges: torch.Tensor,

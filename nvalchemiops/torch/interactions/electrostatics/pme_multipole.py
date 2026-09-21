@@ -33,7 +33,6 @@ Design:
 from __future__ import annotations
 
 import math
-from contextlib import nullcontext
 
 import torch
 import warp as wp
@@ -94,6 +93,10 @@ from nvalchemiops.math.spline import (
 from nvalchemiops.torch._warnings import _warn_compile_missing_argument_inference
 from nvalchemiops.torch._warp_op_helpers import (
     register_warp_op_chain,
+    scoped_torch_warp_stream,
+)
+from nvalchemiops.torch._warp_op_helpers import (
+    scoped_warp_stream as _scoped_warp_stream,
 )
 from nvalchemiops.torch.interactions.electrostatics._multipole_moments import (
     infer_l_max,
@@ -101,19 +104,6 @@ from nvalchemiops.torch.interactions.electrostatics._multipole_moments import (
 )
 from nvalchemiops.torch.math import FIELD_CONSTANT
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
-
-
-def _scoped_warp_stream(device: torch.device):
-    """Bind Warp's current stream to PyTorch's current CUDA stream.
-
-    Required for ``torch.cuda.graph`` capture so Warp kernel launches end
-    up on the stream being captured rather than Warp's default stream.
-    Same as the monopole branch's ``_pme_scoped_warp_stream``.
-    """
-    if device.type != "cuda":
-        return nullcontext()
-    torch_stream = torch.cuda.current_stream(device)
-    return wp.ScopedStream(wp.stream_from_torch(torch_stream))
 
 
 def _wp_from_torch(tensor: torch.Tensor, dtype):
@@ -133,6 +123,7 @@ def _wp_from_torch(tensor: torch.Tensor, dtype):
     "nvalchemiops::multipole_pme_bspline_moduli_1d",
     mutates_args=(),
 )
+@scoped_torch_warp_stream
 def _bspline_moduli_1d_op(miller: torch.Tensor, n: int, order: int) -> torch.Tensor:
     r"""``b[i] = sinc(miller[i] / n)^order`` via the Warp ``bspline_moduli_1d`` kernel.
 
@@ -2507,6 +2498,7 @@ def _gather_potential_forward_fake(mesh, positions, *_args):  # pragma: no cover
     )
 
 
+@scoped_torch_warp_stream
 def _gather_grad_field(  # pragma: no cover
     positions: torch.Tensor,
     weight: torch.Tensor,
@@ -2557,6 +2549,7 @@ def _gather_grad_field(  # pragma: no cover
     return -force_buf
 
 
+@scoped_torch_warp_stream
 def _hessian_contract(  # pragma: no cover
     positions: torch.Tensor,
     direction: torch.Tensor,
@@ -2801,6 +2794,7 @@ def _batch_multipole_pme_gather_potential_backward(  # pragma: no cover
     return grad_mesh, -force_as_neg_grad_pos
 
 
+@scoped_torch_warp_stream
 def _batch_gather_grad_field(  # pragma: no cover
     positions: torch.Tensor,
     weight: torch.Tensor,
@@ -2848,6 +2842,7 @@ def _batch_gather_grad_field(  # pragma: no cover
     return -force_buf
 
 
+@scoped_torch_warp_stream
 def _batch_hessian_contract(  # pragma: no cover
     positions: torch.Tensor,
     direction: torch.Tensor,
@@ -3185,6 +3180,7 @@ def _gather_field_forward_fake(mesh, positions, *_args):  # pragma: no cover
     )
 
 
+@scoped_torch_warp_stream
 def _quad_gradpos(  # pragma: no cover
     positions: torch.Tensor,
     quadrupoles: torch.Tensor,
@@ -3238,6 +3234,7 @@ def _quad_gradpos(  # pragma: no cover
     return grad_positions
 
 
+@scoped_torch_warp_stream
 def _quad_spread(  # pragma: no cover
     positions: torch.Tensor,
     quadrupoles: torch.Tensor,
@@ -3463,6 +3460,7 @@ def _batch_multipole_pme_gather_field_backward(  # pragma: no cover
     return grad_mesh, grad_positions
 
 
+@scoped_torch_warp_stream
 def _batch_quad_gradpos(  # pragma: no cover
     positions: torch.Tensor,
     quadrupoles: torch.Tensor,
@@ -3511,6 +3509,7 @@ def _batch_quad_gradpos(  # pragma: no cover
     return grad_positions
 
 
+@scoped_torch_warp_stream
 def _batch_quad_spread(  # pragma: no cover
     positions: torch.Tensor,
     quadrupoles: torch.Tensor,

@@ -348,14 +348,13 @@ def _on_torch_stream(function):
 
     Warp otherwise launches on a stream of its own, which prevents ``torch.cuda.graph``
     capture -- what ``torch.compile(mode="reduce-overhead")`` uses -- and forces a
-    cross-stream dependency on every call. ``sync_enter=False`` because an entry
-    synchronisation is illegal mid-capture, and ordering is already guaranteed by both
-    sides using the same stream.
+    cross-stream dependency on every call. The shared helper reuses an already-matching
+    stream rather than re-wrapping it, which is what keeps capture valid.
     """
 
     @wraps(function)
     def wrapper(*args, **kwargs):
-        with warp_stream_from_torch(*args, sync_enter=False):
+        with warp_stream_from_torch(*args):
             return function(*args, **kwargs)
 
     return wrapper

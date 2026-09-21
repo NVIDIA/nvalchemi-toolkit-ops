@@ -4,6 +4,18 @@
 
 ### Changed
 
+- Added fixed-capacity ``jax.jit`` support to the method-specific JAX neighbor
+  APIs. Naive and cell-list methods, including batched variants, accept
+  ``coo_capacity`` for padded COO output with clipped pointers, raw required row
+  counts, and a scalar launch-metadata validity flag. Batched pair-centric
+  cell-list calls additionally need static launch metadata under ``jax.jit``.
+  Invalid static launch relationships raise before the CUDA query, while runtime
+  metadata mismatches invalidate the returned counts.
+  ``neighbor_list`` performs eager orchestration, and compact COO output uses
+  eager shape compaction.
+- JAX dual-cutoff neighbor APIs now reject reversed cutoffs. Naive methods
+  require ``cutoff2 >= cutoff1`` and cluster-tile methods require
+  ``cutoff2 >= cutoff``; equal cutoffs remain valid.
 - JAX DFT-D3 now accepts `D3Parameters` directly as a runtime argument to
   `jax.jit`, without unpacking and reconstructing its parameter arrays.
 - Raised the minimum supported Warp version to 1.15 and migrated JAX bindings
@@ -11,9 +23,12 @@
   compatibility with `warp>=1.15`.
 - Warp initialization now retains warning-level diagnostics instead of
   suppressing all Warp log output.
+- CUDA tiled direct-Warp multipole launchers now require caller-owned,
+  operation-specific scratch bundles. PyTorch bindings allocate and retain this
+  scratch internally, so their public APIs are unchanged; CPU direct-Warp paths
+  do not require scratch.
 - Raised the minimum `warp-lang` requirement to 1.16.0. FourierD3's JAX bindings pass
   `block_dim` to `jax_kernel`, which Warp added in 1.16.0.
-
 - PyTorch segmented operations now accept int64 segment indices whose values
   fit in int32; these inputs are converted to int32 internally.
 
@@ -23,19 +38,14 @@
   optional virial for batched CSR or dense neighbor lists in float32 and float64. `cell`
   is required, and `cutoff` has no default and must equal the radius the neighbor list was
   built with.
-- Added `FourierD3Parameters` for reusable C6 decomposition and Torch `FourierD3Setup` for
-  reusable cell and mesh preprocessing. A setup is required for
-  `torch.compile(mode="reduce-overhead")`.
+- Added `FourierD3Parameters` for reusable C6 decomposition, with
+  `FourierD3Parameters.uncovered_species` to check the coverage precondition, and Torch
+  `FourierD3Setup` as an optional cache of cell and mesh preprocessing. The setup is a
+  performance cache, not a requirement for any execution mode; keeping it consistent with
+  the cell is the caller's responsibility, as with the PME and multipole caches.
 - Added `rank_chunk_size` to bound reciprocal-mesh workspace at the cost of additional FFT
   passes.
 - Added multi-channel B-spline Warp launchers used by FourierD3.
-
-### Notes
-
-- FourierD3 uses a modified coordination-number function that reaches zero at the neighbour
-  list cutoff, so its coordination numbers do not depend on the list used to build them.
-  Results therefore differ slightly from `dftd3`. `rcov` follows the same convention as
-  `dftd3`; pass both the same table.
 - Torch and JAX Ewald now expose caller-retained reciprocal Miller topology via
   `generate_ewald_miller_indices(...)` and
   `k_vectors_from_miller_indices(...)`. Full `ewald_summation(...)` accepts
@@ -44,14 +54,40 @@
   `ewald_reciprocal_space_from_miller_indices(...)` for the reciprocal
   component. This avoids rebuilding the integer index grid while preserving
   the reciprocal vectors' dependence on the current cell.
+- `TileBufferOverflow` reports how many cluster-tile pairs were required, how
+  many the buffer could hold, and which system overflowed a segmented batch.
+  Torch `cluster_tile_neighbor_list` and JAX `build_cluster_tile_list`,
+  `batch_build_cluster_tile_list`, `cluster_tile_neighbor_list`, and
+  `batch_cluster_tile_neighbor_list` now accept `max_tiles_per_group`.
+
+### Changed
+
+- Eager Torch and JAX cluster-tile neighbor-list calls now raise
+  `TileBufferOverflow` when tile-pair construction exceeds the allocated
+  capacity. For cluster-tile calls, `NeighborOverflowError` identifies an
+  undersized final matrix or COO buffer.
+- Compiled JAX cluster-tile calls that allocate tile-index storage now require
+  `max_tiles_per_group` to be a positive static Python integer. Complete
+  caller-supplied tile-index storage determines capacity without that factor.
+  Compiled calls do not raise `TileBufferOverflow`.
+
+### Changed
+
+- Torch matrix-to-COO conversion now supports `torch.compile(fullgraph=True)`
+  when the output edge count changes. Torch extras now require PyTorch >=2.10.
 
 ### Fixed
 
+- Torch bindings now launch Warp work on the current PyTorch CUDA stream across
+  neighbors, dynamics, dispersion, electrostatics, spline, and math operations.
+  This prevents Warp from observing unfinished Torch inputs, Torch from
+  consuming incomplete Warp outputs, and Torch temporary storage from being
+  reused while Warp still references it. JAX bindings continue to use
+  XLA-provided streams through Warp's JAX adapters.
 - Corrected the multipole Ewald/PME uniform-background coefficient for
   non-neutral cells. Split Ewald, PME, and cached Ewald now use the same
   zero-mode convention as the direct reciprocal calculation, including charge
   and cell derivatives.
-
 - Segmented sums no longer retain CUDA graph-pool allocations through cached Warp
   launches when used from compiled PyTorch custom operators.
 - Fixed JAX autodiff through `ewald_reciprocal_space(...)` when `k_vectors`
@@ -63,6 +99,15 @@
   precomputed from a reference cell or passed through
   `jax.lax.stop_gradient(k_vectors)`. Full
   `ewald_summation(k_vectors=...)` semantics are unchanged.
+- `neighbor_list` (Torch and JAX) now annotates `**kwargs` as `Any` instead of
+  `dict`, so type checkers no longer reject valid keyword options.
+
+### Notes
+
+- FourierD3 uses a modified coordination-number function that reaches zero at the neighbour
+  list cutoff, so its coordination numbers do not depend on the list used to build them.
+  Results therefore differ slightly from `dftd3`. `rcov` follows the same convention as
+  `dftd3`; pass both the same table.
 
 ## 0.4.1 - 2026-08-03
 

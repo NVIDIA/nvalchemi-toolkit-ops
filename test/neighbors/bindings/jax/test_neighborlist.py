@@ -1437,3 +1437,13 @@ class TestNeighborListEdgeCases:
         batch_ptr = jnp.array([0], dtype=jnp.int32)
         with pytest.raises(ValueError, match="batch_ptr.*length at least 2"):
             neighbor_list(positions, 3.0, batch_ptr=batch_ptr)
+
+    def test_neighbor_list_rejects_reversed_dual_cutoffs(self):
+        """The high-level entry point rejects reversed cutoff ordering."""
+        positions = jnp.zeros((0, 3), dtype=jnp.float32)
+
+        with pytest.raises(
+            ValueError,
+            match="^cutoff2 must be greater than or equal to cutoff$",
+        ):
+            neighbor_list(positions, 1.0, cutoff2=0.5)

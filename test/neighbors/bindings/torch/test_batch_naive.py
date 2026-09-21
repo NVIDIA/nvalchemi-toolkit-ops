@@ -27,6 +27,7 @@ from nvalchemiops.torch.neighbors.batch_naive import (
 from nvalchemiops.torch.neighbors.neighbor_utils import compute_naive_num_shifts
 
 from ...test_utils import (
+    assert_neighbor_lists_equal,
     create_batch_systems,
 )
 
@@ -129,6 +130,44 @@ def _bruteforce_pbc_distances(
     if selected.numel() == 0:
         return torch.empty(0, dtype=positions_cpu.dtype)
     return torch.sort(selected).values
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="CUDA is required for stream safety coverage"
+)
+def test_batch_naive_uses_current_torch_stream(torch_stream_runner):
+    """Batch-naive outputs remain usable immediately on a non-default stream."""
+    device = torch.device("cuda")
+    source_positions = torch.tensor(
+        [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [2.0, 0.0, 0.0], [2.5, 0.0, 0.0]],
+        dtype=torch.float32,
+        device=device,
+    )
+    positions = torch.empty_like(source_positions)
+    batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+    batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device=device)
+    neighbor_matrix = torch.full((4, 2), 4, dtype=torch.int32, device=device)
+    num_neighbors = torch.zeros(4, dtype=torch.int32, device=device)
+    rebuild_flags = torch.ones(2, dtype=torch.bool, device=device)
+    kwargs = dict(
+        batch_idx=batch_idx,
+        batch_ptr=batch_ptr,
+        neighbor_matrix=neighbor_matrix,
+        num_neighbors=num_neighbors,
+        rebuild_flags=rebuild_flags,
+    )
+    actual, snapshot, expected = torch_stream_runner(
+        source_positions,
+        positions,
+        lambda value: batch_naive_neighbor_list(value, 0.75, **kwargs),
+        lambda: (neighbor_matrix.fill_(4), num_neighbors.zero_()),
+    )
+    assert all(
+        result is buffer
+        for result, buffer in zip(actual, (neighbor_matrix, num_neighbors), strict=True)
+    )
+    for result, reference in zip(snapshot, expected, strict=True):
+        torch.testing.assert_close(result, reference)
 
 
 class TestBatchNaiveCorrectness:
@@ -1040,6 +1079,49 @@ class TestBatchNaiveOutputFormats:
         assert neighbor_list.dtype == torch.int32
         assert neighbor_ptr.dtype == torch.int32
         assert neighbor_shifts.dtype == torch.int32
+
+        matrix, counts, matrix_shifts = batch_naive_neighbor_list(
+            positions=positions_batch,
+            cutoff=cutoff,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=max_neighbors,
+            pbc=pbc_batch,
+            cell=cell_batch,
+            half_fill=half_fill,
+            return_neighbor_list=False,
+        )
+        expected_pairs = []
+        expected_shifts = []
+        expected_ptr = [0]
+        for row, row_count in enumerate(counts.detach().cpu().tolist()):
+            for slot in range(row_count):
+                expected_pairs.append(
+                    (row, int(matrix[row, slot].detach().cpu().item()))
+                )
+                expected_shifts.append(matrix_shifts[row, slot])
+            expected_ptr.append(expected_ptr[-1] + row_count)
+
+        if expected_pairs:
+            expected_list = torch.tensor(
+                expected_pairs,
+                dtype=neighbor_list.dtype,
+                device=device,
+            ).T.contiguous()
+            expected_shifts = torch.stack(expected_shifts, dim=0)
+        else:
+            expected_list = torch.empty(
+                (2, 0), dtype=neighbor_list.dtype, device=device
+            )
+            expected_shifts = torch.empty(
+                (0, 3), dtype=matrix_shifts.dtype, device=device
+            )
+        expected_ptr = torch.tensor(expected_ptr, dtype=torch.int32, device=device)
+        assert torch.equal(neighbor_ptr, expected_ptr)
+        assert_neighbor_lists_equal(
+            (neighbor_list[0], neighbor_list[1], neighbor_shifts),
+            (expected_list[0], expected_list[1], expected_shifts),
+        )
 
     def test_matrix_format_default(self, device, dtype, half_fill):
         """Test default return format is matrix.

@@ -83,6 +83,7 @@ from nvalchemiops.interactions.electrostatics.multipole_ewald_kernels import (
 )
 from nvalchemiops.torch._warp_op_helpers import (
     register_warp_op_chain,
+    scoped_torch_warp_stream,
 )
 from nvalchemiops.torch.interactions.electrostatics._multipole_moments import (
     split_multipole_moments,
@@ -115,6 +116,7 @@ class MultipoleRealSpaceMonopoleBackwardFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         grad_energies: torch.Tensor,
@@ -201,6 +203,7 @@ class MultipoleRealSpaceMonopoleBackwardFunction(torch.autograd.Function):
         return grad_positions, grad_charges
 
     @staticmethod
+    @scoped_torch_warp_stream
     def backward(
         ctx, gg_positions: torch.Tensor, gg_charges: torch.Tensor
     ):  # pragma: no cover
@@ -303,6 +306,7 @@ class MultipoleRealSpaceMonopoleFusedScalarFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         positions: torch.Tensor,
@@ -534,6 +538,7 @@ class MultipoleRealSpaceMonopoleFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         positions: torch.Tensor,
@@ -655,6 +660,7 @@ class MultipoleRealSpaceBackwardFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         grad_energies: torch.Tensor,
@@ -752,6 +758,7 @@ class MultipoleRealSpaceBackwardFunction(torch.autograd.Function):
         return grad_positions, grad_charges, grad_dipoles
 
     @staticmethod
+    @scoped_torch_warp_stream
     def backward(  # pragma: no cover
         ctx,
         gg_positions: torch.Tensor,
@@ -870,6 +877,7 @@ class MultipoleRealSpaceDipoleFusedScalarFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         positions: torch.Tensor,
@@ -1114,6 +1122,7 @@ class MultipoleRealSpaceFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         positions: torch.Tensor,
@@ -1240,6 +1249,7 @@ class MultipoleRealSpaceFunction(torch.autograd.Function):
 # ---------------------------------------------------------------------------
 
 
+@scoped_torch_warp_stream
 def _real_space_dipole_forward(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -1291,6 +1301,7 @@ def _real_space_dipole_forward_fake(  # pragma: no cover
     return positions.new_empty((positions.shape[0],), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _real_space_dipole_backward(  # pragma: no cover
     grad_energies: torch.Tensor,
     positions: torch.Tensor,
@@ -1334,6 +1345,7 @@ def _real_space_dipole_backward(  # pragma: no cover
     return grad_positions, grad_charges, grad_dipoles
 
 
+@scoped_torch_warp_stream
 def _real_space_dipole_double_backward(  # pragma: no cover
     gg_positions: torch.Tensor,
     gg_charges: torch.Tensor,
@@ -1407,6 +1419,7 @@ register_warp_op_chain(
 # compile-friendliness rationale; routed from ``multipole_real_space_energy``.
 
 
+@scoped_torch_warp_stream
 def _real_space_monopole_forward(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -1455,6 +1468,7 @@ def _real_space_monopole_forward_fake(  # pragma: no cover
     return positions.new_empty((positions.shape[0],), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _real_space_monopole_backward(  # pragma: no cover
     grad_energies: torch.Tensor,
     positions: torch.Tensor,
@@ -1494,6 +1508,7 @@ def _real_space_monopole_backward(  # pragma: no cover
     return grad_positions, grad_charges
 
 
+@scoped_torch_warp_stream
 def _real_space_monopole_double_backward(  # pragma: no cover
     gg_positions: torch.Tensor,
     gg_charges: torch.Tensor,
@@ -1560,6 +1575,7 @@ register_warp_op_chain(
 @torch.library.custom_op(
     "nvalchemiops::multipole_real_space_dipole_cell_grad", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _rs_dipole_cell_grad_op(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -1628,6 +1644,7 @@ def _rs_dipole_cell_grad_setup(ctx, inputs, output):  # pragma: no cover
     ctx.half_neighbor_list = half_neighbor_list
 
 
+@scoped_torch_warp_stream
 def _rs_dipole_cell_grad_backward(ctx, g_cell):  # pragma: no cover
     r"""Gradient :math:`\partial/\partial\{\text{positions, charges, dipoles, cell}\}` of :math:`\langle g\_\text{cell},\, dE/d\text{cell}\rangle` (l=1)."""
     (
@@ -1700,6 +1717,7 @@ torch.library.register_autograd(
 @torch.library.custom_op(
     "nvalchemiops::multipole_real_space_dipole_fused", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _rs_dipole_fused_op(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -2161,6 +2179,7 @@ def multipole_real_space_energy_with_stress(
 @torch.library.custom_op(
     "nvalchemiops::multipole_real_space_monopole_cell_grad", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _rs_monopole_cell_grad_op(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -2218,6 +2237,7 @@ def _rs_monopole_cell_grad_setup(ctx, inputs, output):  # pragma: no cover
     ctx.half_neighbor_list = half_neighbor_list
 
 
+@scoped_torch_warp_stream
 def _rs_monopole_cell_grad_backward(ctx, g_cell):  # pragma: no cover
     r"""Gradient :math:`\partial/\partial\{\text{positions, charges, cell}\}` of :math:`\langle g\_\text{cell},\, dE/d\text{cell}\rangle` (stress-loss).
 
@@ -2289,6 +2309,7 @@ torch.library.register_autograd(
 @torch.library.custom_op(
     "nvalchemiops::multipole_real_space_monopole_fused", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _rs_monopole_fused_op(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -2599,6 +2620,7 @@ class BatchMultipoleRealSpaceMonopoleBackwardFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         grad_energies: torch.Tensor,
@@ -2690,6 +2712,7 @@ class BatchMultipoleRealSpaceMonopoleBackwardFunction(torch.autograd.Function):
         return grad_positions, grad_charges
 
     @staticmethod
+    @scoped_torch_warp_stream
     def backward(
         ctx, gg_positions: torch.Tensor, gg_charges: torch.Tensor
     ):  # pragma: no cover
@@ -2791,6 +2814,7 @@ class BatchMultipoleRealSpaceMonopoleFusedScalarFunction(torch.autograd.Function
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         positions: torch.Tensor,
@@ -3027,6 +3051,7 @@ class BatchMultipoleRealSpaceMonopoleFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         positions: torch.Tensor,
@@ -3153,6 +3178,7 @@ class BatchMultipoleRealSpaceMonopoleFunction(torch.autograd.Function):
 # ---------------------------------------------------------------------------
 
 
+@scoped_torch_warp_stream
 def _batch_real_space_monopole_forward(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -3194,6 +3220,7 @@ def _batch_real_space_forward_fake(positions, *args):  # pragma: no cover
     return positions.new_empty((positions.shape[0],), dtype=torch.float64)
 
 
+@scoped_torch_warp_stream
 def _batch_real_space_monopole_backward(  # pragma: no cover
     grad_energies: torch.Tensor,
     positions: torch.Tensor,
@@ -3235,6 +3262,7 @@ def _batch_real_space_monopole_backward(  # pragma: no cover
     return grad_positions, grad_charges
 
 
+@scoped_torch_warp_stream
 def _batch_real_space_monopole_double_backward(  # pragma: no cover
     gg_positions: torch.Tensor,
     gg_charges: torch.Tensor,
@@ -3296,6 +3324,7 @@ register_warp_op_chain(
 )
 
 
+@scoped_torch_warp_stream
 def _batch_real_space_dipole_forward(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -3334,6 +3363,7 @@ def _batch_real_space_dipole_forward(
     return energies
 
 
+@scoped_torch_warp_stream
 def _batch_real_space_dipole_backward(  # pragma: no cover
     grad_energies: torch.Tensor,
     positions: torch.Tensor,
@@ -3379,6 +3409,7 @@ def _batch_real_space_dipole_backward(  # pragma: no cover
     return grad_positions, grad_charges, grad_dipoles
 
 
+@scoped_torch_warp_stream
 def _batch_real_space_dipole_double_backward(  # pragma: no cover
     gg_positions: torch.Tensor,
     gg_charges: torch.Tensor,
@@ -3456,6 +3487,7 @@ register_warp_op_chain(
 @torch.library.custom_op(
     "nvalchemiops::batch_multipole_real_space_dipole_cell_grad", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _batch_rs_dipole_cell_grad_op(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -3540,6 +3572,7 @@ def _batch_rs_dipole_cell_grad_setup(ctx, inputs, output):  # pragma: no cover
     ctx.half_neighbor_list = half_neighbor_list
 
 
+@scoped_torch_warp_stream
 def _batch_rs_dipole_cell_grad_backward(ctx, g_cell):  # pragma: no cover
     r"""Batched gradient :math:`\partial/\partial\{\text{positions, charges, dipoles, cells}\}` of :math:`\langle g\_\text{cell},\, dE/d\text{cell}\rangle`."""
     (
@@ -3616,6 +3649,7 @@ torch.library.register_autograd(
 @torch.library.custom_op(
     "nvalchemiops::batch_multipole_real_space_dipole_fused", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _batch_rs_dipole_fused_op(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -3804,6 +3838,7 @@ torch.library.register_autograd(
 @torch.library.custom_op(
     "nvalchemiops::batch_multipole_real_space_monopole_cell_grad", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _batch_rs_monopole_cell_grad_op(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -3872,6 +3907,7 @@ def _batch_rs_monopole_cell_grad_setup(ctx, inputs, output):  # pragma: no cover
     ctx.half_neighbor_list = half_neighbor_list
 
 
+@scoped_torch_warp_stream
 def _batch_rs_monopole_cell_grad_backward(ctx, g_cell):  # pragma: no cover
     r"""Batched gradient :math:`\partial/\partial\{\text{positions, charges, cells}\}` of :math:`\langle g\_\text{cell},\, dE/d\text{cell}\rangle`."""
     (
@@ -3942,6 +3978,7 @@ torch.library.register_autograd(
 @torch.library.custom_op(
     "nvalchemiops::batch_multipole_real_space_monopole_fused", mutates_args=()
 )
+@scoped_torch_warp_stream
 def _batch_rs_monopole_fused_op(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -4244,6 +4281,7 @@ class BatchMultipoleRealSpaceBackwardFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         grad_energies: torch.Tensor,
@@ -4346,6 +4384,7 @@ class BatchMultipoleRealSpaceBackwardFunction(torch.autograd.Function):
         return grad_positions, grad_charges, grad_dipoles
 
     @staticmethod
+    @scoped_torch_warp_stream
     def backward(  # pragma: no cover
         ctx,
         gg_positions: torch.Tensor,
@@ -4447,6 +4486,7 @@ class BatchMultipoleRealSpaceDipoleFusedScalarFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         positions: torch.Tensor,
@@ -4710,6 +4750,7 @@ class BatchMultipoleRealSpaceFunction(torch.autograd.Function):
     """
 
     @staticmethod
+    @scoped_torch_warp_stream
     def forward(
         ctx,
         positions: torch.Tensor,

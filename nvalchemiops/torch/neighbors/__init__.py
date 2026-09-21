@@ -20,6 +20,8 @@ This module provides the main entry point for PyTorch users of the neighbor list
 
 from __future__ import annotations
 
+from typing import Any
+
 import torch
 
 from nvalchemiops.neighbors.base_dispatch import (
@@ -83,6 +85,8 @@ from nvalchemiops.torch.neighbors.naive_dual_cutoff import (
 
 # Utility functions
 from nvalchemiops.torch.neighbors.neighbor_utils import (
+    NeighborOverflowError,
+    TileBufferOverflow,
     prepare_batch_idx_ptr,
     synthesize_cell_for_batch,
     synthesize_cell_for_ss,
@@ -102,7 +106,7 @@ def neighbor_list(
     return_neighbor_list: bool = False,
     method: str | None = None,
     wrap_positions: bool = True,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
     """Compute neighbor list using the appropriate method based on the provided parameters.
 
@@ -171,7 +175,7 @@ def neighbor_list(
         wrapped (e.g. by a preceding integration step) to save two
         GPU kernel launches per call. Only applies to naive methods; cell list
         methods handle wrapping internally.
-    **kwargs : dict, optional
+    **kwargs : Any, optional
         Additional keyword arguments to pass to the method.
 
         max_neighbors : int, optional
@@ -180,6 +184,13 @@ def neighbor_list(
         max_neighbors2 : int, optional
             Maximum number of neighbors per atom within cutoff2.
             Can be provided to aid in allocation for naive dual cutoff method.
+        max_tiles_per_group : int, optional
+            Capacity factor for the intermediate tile-pair buffer used by
+            cluster-tile methods. For ``g`` row groups, the buffer holds
+            ``g * min(g, max_tiles_per_group)`` tile pairs. Increasing the value
+            up to ``g`` uses more memory and accommodates more candidate tile
+            pairs. Eager calls estimate the value when it is ``None``. See
+            :ref:`cluster-tile-buffer-capacity` for sizing details.
         neighbor_matrix : torch.Tensor, optional
             Pre-allocated tensor of shape (num_rows, max_neighbors) for neighbor indices,
             where ``num_rows`` is ``total_atoms`` normally and
@@ -604,6 +615,8 @@ __all__ = [
     "suggest_neighbor_list_method",
     "CompiledPairFn",
     "compile_pair_fn",
+    "NeighborOverflowError",
+    "TileBufferOverflow",
     # Unbatched algorithms
     "cell_list",
     "naive_neighbor_list",

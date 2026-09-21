@@ -21,6 +21,8 @@ for both single and batched systems.
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -92,9 +94,12 @@ from nvalchemiops.jax.neighbors.naive_dual_cutoff import (
 # Utility functions
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     NeighborOverflowError,
+    TileBufferOverflow,
+    _validate_dual_cutoff_order,
     allocate_cell_list,
     compute_naive_num_shifts,
     estimate_max_neighbors,
+    get_fixed_capacity_neighbor_list_from_neighbor_matrix,
     get_neighbor_list_from_neighbor_matrix,
     prepare_batch_idx_ptr,
 )
@@ -114,6 +119,7 @@ from nvalchemiops.neighbors.base_dispatch import (
     NEIGHBOR_LIST_STRATEGIES,
     neighbor_list_strategy_run_args,
 )
+from nvalchemiops.neighbors.cell_list import compute_batch_pair_centric_n_outer
 
 
 def neighbor_list(
@@ -129,13 +135,15 @@ def neighbor_list(
     return_neighbor_list: bool = False,
     method: str | None = None,
     wrap_positions: bool = True,
-    **kwargs: dict,
+    **kwargs: Any,
 ):
-    """Compute neighbor list using the appropriate method based on the provided parameters.
+    """Compute an eager neighbor list using the appropriate method.
 
-    This is the main entry point for JAX users of the neighbor list API. It automatically
-    selects the most appropriate algorithm (naive :math:`O(N^2)` or cell list :math:`O(N)`) based on system
-    size and parameters.
+    This convenience entry point may select an algorithm, inspect host values,
+    and allocate buffers. It is therefore intentionally an eager API, not a
+    supported ``jax.jit`` boundary. For compiled execution, select a method
+    outside ``jax.jit`` and call its method-specific public function with fixed
+    capacities and, where useful, reusable buffers.
 
     Parameters
     ----------
@@ -157,7 +165,8 @@ def neighbor_list(
         Cumulative atom counts defining system boundaries.
     cutoff2 : float, optional
         Second cutoff distance for neighbor detection in Cartesian units.
-        Must be positive. Atoms within this distance are considered neighbors.
+        Must be positive and greater than or equal to ``cutoff``. Atoms within
+        this distance are considered neighbors.
     half_fill : bool, optional
         If True, only store half of the neighbor relationships to avoid double counting.
         Another half could be reconstructed by swapping source and target indices and inverting unit shifts.
@@ -194,7 +203,7 @@ def neighbor_list(
         wrapped (e.g. by a preceding integration step) to save two
         GPU kernel launches per call. Only applies to naive methods; cell list
         methods handle wrapping internally.
-    **kwargs : dict, optional
+    **kwargs : Any, optional
         Additional keyword arguments to pass to the method.
 
         max_neighbors : int, optional
@@ -203,6 +212,14 @@ def neighbor_list(
         max_neighbors2 : int, optional
             Maximum number of neighbors per atom within cutoff2.
             Can be provided to aid in allocation for naive dual cutoff method.
+        max_tiles_per_group : int, optional
+            Capacity factor for the intermediate tile-pair buffer used by
+            cluster-tile methods. For ``g`` row groups, the buffer holds
+            ``g * min(g, max_tiles_per_group)`` tile pairs. Increasing the value
+            up to ``g`` uses more memory and accommodates more candidate tile
+            pairs. Eager calls estimate the value when it is ``None``.
+            Transformed or compiled calls require a positive static Python
+            integer. See :ref:`cluster-tile-buffer-capacity` for sizing details.
         neighbor_matrix : jax.Array, optional
             Pre-shaped array of shape (num_rows, max_neighbors) for neighbor indices,
             where ``num_rows`` is ``total_atoms`` normally and
@@ -264,13 +281,27 @@ def neighbor_list(
             Boolean flags selecting which systems to re-enumerate; systems whose
             flag is ``False`` keep their previous output.
 
-    Note
-    ----
+    Notes
+    -----
+    Cost estimation, automatic dispatch, host-side inspection of capacity
+    diagnostics, and capacity growth belong outside ``jax.jit``. The direct
+    compiled boundaries are
+    :func:`naive_neighbor_list`, :func:`batch_naive_neighbor_list`,
+    their dual-cutoff variants,
+    :func:`cell_list`, :func:`batch_cell_list`,
+    :func:`cluster_tile_neighbor_list`, and
+    :func:`batch_cluster_tile_neighbor_list`. Their allocation-driving values
+    must be static, and matrix/segmented outputs require fixed capacity.
+    Naive scalar and tile strategies support this boundary. Cell-list compiled
+    calls support atom-centric queries directly. Pair-centric queries require
+    static launch metadata computed from concrete cell-list sizing outside
+    ``jax.jit``.
+
     ``pair_fn`` is supported by the JAX bindings for single-cutoff neighbor
     lists. The naive and atom-centric cell-list paths use JAX kernel wrappers,
     while tiled paths use ``jax_callable``. Cluster-tile pair outputs are
-    limited to CUDA float32 eligible systems; COO pair outputs on that path are
-    eager-only. ``target_indices`` is supported by naive and cell-list paths,
+    limited to CUDA float32 eligible systems; compact COO pair outputs on that
+    path use eager shape compaction. ``target_indices`` is supported by naive and cell-list paths,
     including batched naive/cell-list and low-level cell-list query wrappers,
     with compact target rows. The ``pair_centric`` strategy and cluster-tile
     methods reject ``target_indices``; use ``atom_centric`` for equivalent
@@ -287,11 +318,22 @@ def neighbor_list(
           - With PBC, matrix format: ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``
           - With PBC, list format: ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)``
 
+          For naive and cell-list methods, supplying ``coo_capacity`` makes the
+          list format fixed-capacity and appends
+          ``(num_neighbors, metadata_valid)`` after the topology arrays.
+          ``neighbor_ptr`` describes the stored prefix; ``num_neighbors``
+          contains the required count for every row when ``metadata_valid`` is
+          true, and contains ``-1`` otherwise.
+
         **Dual cutoff:**
           - No PBC, matrix format: ``(neighbor_matrix1, num_neighbors1, neighbor_matrix2, num_neighbors2)``
           - No PBC, list format: ``(neighbor_list1, neighbor_ptr1, neighbor_list2, neighbor_ptr2)``
           - With PBC, matrix format: ``(neighbor_matrix1, num_neighbors1, neighbor_matrix_shifts1, neighbor_matrix2, num_neighbors2, neighbor_matrix_shifts2)``
           - With PBC, list format: ``(neighbor_list1, neighbor_ptr1, neighbor_list_shifts1, neighbor_list2, neighbor_ptr2, neighbor_list_shifts2)``
+
+          For naive dual-cutoff methods with ``coo_capacity``, each cutoff group
+          appends its own ``(num_neighbors, metadata_valid)`` pair. ``cutoff2``
+          must be greater than or equal to ``cutoff``.
 
         **Components returned:**
 
@@ -353,6 +395,8 @@ def neighbor_list(
     """
     if batch_ptr is not None and batch_ptr.shape[0] < 2:
         raise ValueError("batch_ptr must have length at least 2")
+    if cutoff2 is not None:
+        _validate_dual_cutoff_order(cutoff, cutoff2, cutoff1_name="cutoff")
 
     use_pair_fn_option = bool(kwargs.pop("use_pair_fn", False))
     selected_atom_centric_path = str(kwargs.pop("atom_centric_path", "auto"))
@@ -644,9 +688,12 @@ __all__ = [
     "check_neighbor_list_rebuild_needed",
     # Utilities
     "compute_naive_num_shifts",
+    "get_fixed_capacity_neighbor_list_from_neighbor_matrix",
     "get_neighbor_list_from_neighbor_matrix",
     "prepare_batch_idx_ptr",
     "allocate_cell_list",
     "estimate_max_neighbors",
+    "compute_batch_pair_centric_n_outer",
     "NeighborOverflowError",
+    "TileBufferOverflow",
 ]

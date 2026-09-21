@@ -39,15 +39,15 @@ dynamic = ["version"]
 [project.optional-dependencies]
 
 torch = [
-    "torch>=2.8.0",
+    "torch>=2.10.0",
 ]
 
 torch-cu12 = [
-    "torch>=2.8.0",
+    "torch>=2.10.0",
 ]
 
 torch-cu13 = [
-    "torch>=2.8.0",
+    "torch>=2.10.0",
 ]
 
 jax = [
