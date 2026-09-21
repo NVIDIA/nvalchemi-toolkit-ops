@@ -278,3 +278,65 @@ To add new benchmarks:
 - See documentation: `../../docs/benchmarks/`
 - Check configuration: `benchmark_config.yaml`
 - Review shared utilities: `shared_utils.py`
+
+## `benchmark_lbfgs.py`
+
+Compares L-BFGS with FIRE2 by **force evaluations to convergence**, the cost
+that dominates relaxation driven by a machine-learned potential. The system is
+an argon cluster relaxed through the package's own LJ kernels and neighbor
+list, with parameters from the shared `potential` config block. FIRE2's
+timestep is swept per case and its best converged configuration reported, so
+the comparison is not skewed by an untuned baseline.
+
+```bash
+python -m benchmarks.dynamics.benchmark_lbfgs --output-dir ./benchmark_results
+```
+
+Defaults come from the `lbfgs` section of `benchmark_config.yaml`; any flag
+overrides the file:
+
+```bash
+python -m benchmarks.dynamics.benchmark_lbfgs \
+    --sizes 13 32 55 --seeds 5 --force-tol 1e-4 --dtype float32 \
+    --output-dir ./benchmark_results
+```
+
+`--dtype` picks the coordinate precisions, and both arms run at whichever is
+selected — comparing an fp32 L-BFGS against an fp64 FIRE2 would measure
+precision rather than optimizer. Every optimizer array follows it, as do the
+neighbor list and the LJ evaluation, so an fp32 run is fp32 end to end. It
+defaults to `lbfgs.dtypes`, which is `float32` then `float64`. Results are
+aggregated per precision, never pooled.
+
+`--device` selects the GPU and defaults to `cuda:0`, matching
+`benchmark_fire2.py` — point both at the same device when comparing numbers.
+It is made the current CUDA device at entry, not just passed to allocations,
+since CUDA events, streams and graphs take the current device.
+
+Writes `lbfgs_vs_fire2_evaluations.csv`. Runs that hit the evaluation cap are
+flagged; their ratios are upper bounds on L-BFGS's advantage. Evaluation
+counts vary by roughly 20% run to run — neighbor-list rebuild ordering
+perturbs the forces in their last bits — so read the aggregate, not a row.
+
+With no `--output-dir`, results go to `output.results_dir` from the config,
+resolved relative to the config file. Set `output.save_timing: false` to write
+nothing; an explicit `--output-dir` still writes.
+
+### Per-step cost gates
+
+```bash
+python -m benchmarks.dynamics.benchmark_lbfgs --gates
+```
+
+Reports optimizer-only step time against FIRE2 at scale, what CUDA-graph
+replay recovers, and the break-even model cost. The step issues far more
+kernels than FIRE2, so at small sizes it is Python-launch-bound; capture it in
+a CUDA graph if that matters.
+
+The break-even figure needs the measured evaluation ratio, read from
+`lbfgs.gates.eval_ratio`. Re-run the benchmark above and update it if you
+change the sizes or tolerance, or pass `--eval-ratio`.
+
+Writes `lbfgs_gate_timings.csv` through the same output path — one row per
+size *and precision*. That file is the record behind the per-step table in
+`docs/benchmarks/dynamics.md`, so regenerate it when you update those numbers.
