@@ -130,8 +130,8 @@ def estimate_batch_max_tiles_per_group(
     """Estimate ``max_tiles_per_group`` for a compact batched tile buffer.
 
     The function estimates each system from its atom density and returns the
-    largest result. For ``g`` row groups in the batch, the returned value ``m``
-    gives the shared buffer ``g * min(g, m)`` tile-pair entries.
+    largest result. The returned value is a shared per-system sizing factor;
+    each framework allocator determines the resulting compact buffer layout.
 
     Parameters
     ----------

@@ -106,6 +106,14 @@ Batched Dual Cutoff Algorithm
 
 .. autofunction:: nvalchemiops.torch.neighbors.batch_naive_neighbor_list_dual_cutoff
 
+Prepared Cluster Tile Execution
+-------------------------------
+
+.. autoclass:: nvalchemiops.torch.neighbors.ClusterTileState
+   :members: neighbor_vectors, neighbor_distances
+
+.. autofunction:: nvalchemiops.torch.neighbors.prepare_cluster_tile
+
 Rebuild Detection
 -----------------
 

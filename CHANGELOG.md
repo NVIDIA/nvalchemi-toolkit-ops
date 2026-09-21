@@ -59,9 +59,44 @@
   Torch `cluster_tile_neighbor_list` and JAX `build_cluster_tile_list`,
   `batch_build_cluster_tile_list`, `cluster_tile_neighbor_list`, and
   `batch_cluster_tile_neighbor_list` now accept `max_tiles_per_group`.
+- PyTorch cluster-tile neighbor lists now support
+  `torch.compile(fullgraph=True)` for tile, matrix, dual-cutoff matrix, and
+  exact COO output, including differentiable pair geometry. Exact COO is
+  written directly in source-grouped CSR order. Prepare reusable fixed-layout
+  storage with `prepare_cluster_tile(...)`, then execute it with
+  `cluster_tile_neighbor_list(..., state=state)` or
+  `batch_cluster_tile_neighbor_list(..., state=state)`, with optional selective
+  matrix rebuilds for single systems and batches. Eager all-false selective
+  calls return immediately. Ordinary compiled calls keep rebuild flags on the
+  device and use a fixed inverse, sort, build, query, and tail sequence while
+  false flags preserve existing topology.
+- Warmed, compiled prepared matrix-topology calls can be captured with
+  `torch.cuda.CUDAGraph` and replayed after copying new positions, cells, or
+  selective rebuild flags into the original input tensors. Replay retains the
+  fixed captured inverse, sort, build, query, and tail sequence even when every
+  selective flag is false. Capture covers forward matrix topology, not geometry
+  or backward execution.
 
 ### Changed
 
+- Differentiable Torch cluster-tile matrix geometry is returned independently
+  from reusable output buffers. Supplied buffers receive detached value
+  snapshots and remain non-differentiable storage. Prepared state exposes these
+  buffers as borrowed snapshots that later executions may overwrite.
+- Prepared Torch cluster-tile state now rejects dual-cutoff vectors or
+  distances during preparation instead of failing later during execution.
+- Prepared batched Torch cluster-tile state now reuses fixed partition and
+  padded-layout metadata while recomputing geometry-dependent data for rebuilt
+  executions or systems.
+- Torch cluster-tile compact COO outputs are now trimmed to the actual pair
+  count. Requested distances and vectors are returned with the topology, so
+  callers no longer need to provide geometry buffers. If reusable buffers are
+  supplied, their active portions receive detached value snapshots, while the
+  returned tensors use separate storage, with differentiable geometry when
+  reconstruction is required.
+- Compact batched Torch cluster-tile scratch now sums the capacity required by
+  each system instead of sizing every group against the total batch group count.
+  The resulting tile storage remains pooled across the batch.
 - Eager Torch and JAX cluster-tile neighbor-list calls now raise
   `TileBufferOverflow` when tile-pair construction exceeds the allocated
   capacity. For cluster-tile calls, `NeighborOverflowError` identifies an
