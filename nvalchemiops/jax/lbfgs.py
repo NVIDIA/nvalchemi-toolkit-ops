@@ -104,8 +104,8 @@ from nvalchemiops.dynamics.optimizers.lbfgs import (
     _OPTIMIZER_BUFFERS,
     LBFGSCellState,
     LBFGSState,
+    _check_against_state,
     _resolve_curvature_eps,
-    check_against_state,
 )
 from nvalchemiops.dynamics.optimizers.lbfgs import (
     _lbfgs_step_coord_cell_impl as _warp_step_cell,
@@ -446,7 +446,7 @@ def _validate(positions, forces, batch_idx, state) -> None:
     the arrays that arrive fresh each call are re-checked here.
     """
     state.validate()
-    check_against_state(
+    _check_against_state(
         state,
         coordinates=(("positions", positions), ("forces", forces)),
         indices=(("batch_idx", batch_idx),),
@@ -706,7 +706,7 @@ def _get_cell_callable(dtype, graph_mode: str):
     return _CELL_CALLABLES[key]
 
 
-def lbfgs_set_reference_cell(cell: jax.Array) -> tuple[jax.Array, jax.Array]:
+def _lbfgs_set_reference_cell(cell: jax.Array) -> tuple[jax.Array, jax.Array]:
     """Capture the reference cell that defines the variable-cell chart.
 
     Coordinates are measured relative to a cell held fixed for the whole
@@ -733,7 +733,7 @@ def lbfgs_set_reference_cell(cell: jax.Array) -> tuple[jax.Array, jax.Array]:
     return jnp.array(cell, copy=True), jnp.linalg.inv(cell)
 
 
-def lbfgs_cell_kappa(
+def _lbfgs_cell_kappa(
     n_particles: jax.Array,
     *,
     dtype,
@@ -855,10 +855,10 @@ def lbfgs_prepare_cell_state(
     )
 
     mat = lambda: jnp.zeros((n, 3, 3), dtype)  # noqa: E731
-    ref_cell, ref_cell_inv = lbfgs_set_reference_cell(cell)
+    ref_cell, ref_cell_inv = _lbfgs_set_reference_cell(cell)
     state = LBFGSCellState(
         ref_cell=ref_cell, ref_cell_inv=ref_cell_inv,
-        kappa=lbfgs_cell_kappa(
+        kappa=_lbfgs_cell_kappa(
             jnp.asarray(counts, jnp.int32), dtype=dtype,
             cell_force_scale=cell_force_scale,
         ),
@@ -894,8 +894,8 @@ def lbfgs_step_coord_cell(
 
     ``state`` must be sized for ``num_atoms + 2 * num_systems`` degrees of
     freedom, since the cell contributes two entries per system. Fill
-    ``cell_state`` from :func:`lbfgs_set_reference_cell` and
-    :func:`lbfgs_cell_kappa` once before the first step.
+    ``cell_state`` from :func:`_lbfgs_set_reference_cell` and
+    :func:`_lbfgs_cell_kappa` once before the first step.
 
     Parameters
     ----------
@@ -919,8 +919,8 @@ def lbfgs_step_coord_cell(
 
     See Also
     --------
-    lbfgs_set_reference_cell : must be called first.
-    lbfgs_cell_kappa : must be called first.
+    _lbfgs_set_reference_cell : must be called first.
+    _lbfgs_cell_kappa : must be called first.
     lbfgs_step_coord : the coordinate-only equivalent.
     """
     _validate_cell(positions, forces, cell, stress, batch_idx, state, cell_state)
@@ -954,7 +954,7 @@ def _validate_cell(
     """
     state.validate()
     cell_state.validate(num_atoms=positions.shape[0])
-    check_against_state(
+    _check_against_state(
         state,
         coordinates=(
             ("positions", positions),

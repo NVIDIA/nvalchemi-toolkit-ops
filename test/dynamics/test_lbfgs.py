@@ -48,21 +48,21 @@ import pytest
 import warp as wp
 
 from nvalchemiops.dynamics.optimizers.lbfgs import (
+    _check_cell_is_aligned,
+    _check_packed_topology,
+    _lbfgs_apply_step,
+    _lbfgs_cell_kappa,
+    _lbfgs_cell_trust_region,
+    _lbfgs_pack_cell,
+    _lbfgs_prepare_step,
+    _lbfgs_set_reference_cell,
+    _lbfgs_unpack_cell,
+    _lbfgs_update,
     _resolve_curvature_eps,
-    check_cell_is_aligned,
-    check_packed_topology,
-    lbfgs_apply_step,
-    lbfgs_cell_kappa,
-    lbfgs_cell_trust_region,
-    lbfgs_pack_cell,
     lbfgs_prepare_cell_state,
     lbfgs_prepare_state,
-    lbfgs_prepare_step,
-    lbfgs_set_reference_cell,
     lbfgs_step,
     lbfgs_step_coord_cell,
-    lbfgs_unpack_cell,
-    lbfgs_update,
 )
 
 from .conftest import (
@@ -552,7 +552,7 @@ class TestLBFGSTrustRegion:
         st.dmax.assign(np.array([0.0]))  # no linear displacement
         st.dquad.assign(np.array([b_quad]))
 
-        lbfgs_prepare_step(st, maxstep=maxstep)
+        _lbfgs_prepare_step(st, maxstep=maxstep)
         wp.synchronize()
 
         alpha = float(st.alpha_step.numpy()[0])
@@ -570,7 +570,7 @@ class TestLBFGSTrustRegion:
         st.dmax.assign(np.array([0.0]))
         st.dquad.assign(np.array([0.0]))
 
-        lbfgs_prepare_step(st, maxstep=0.2)
+        _lbfgs_prepare_step(st, maxstep=0.2)
         wp.synchronize()
         # alpha stays at the full quasi-Newton step rather than being shrunk.
         np.testing.assert_allclose(st.alpha_step.numpy()[0], 1.0)
@@ -585,7 +585,7 @@ class TestLBFGSTrustRegion:
         -- otherwise the bookkeeping says "restarted" while the apply kernel
         still walks the atoms along the rejected direction, uphill.
 
-        Mirrors the tail of :func:`lbfgs_update` (restart check, seed, trust
+        Mirrors the tail of :func:`_lbfgs_update` (restart check, seed, trust
         region) so the ordering itself is pinned; a regression here moves atoms
         the wrong way while every scalar still looks right.
         """
@@ -626,8 +626,8 @@ class TestLBFGSTrustRegion:
                     st.direction, batch_idx, st.n_loop, st.gg],
             device=device,
         )  # fmt: skip
-        lbfgs_prepare_step(st, maxstep=0.2)
-        lbfgs_apply_step(positions, forces, st, batch_idx)
+        _lbfgs_prepare_step(st, maxstep=0.2)
+        _lbfgs_apply_step(positions, forces, st, batch_idx)
         wp.synchronize()
 
         assert int(st.n_loop.numpy()[0]) == -1, "did not restart"
@@ -938,7 +938,7 @@ def _commit_one_pair(cos_target, vec, np_dtype, device, eps=None, n=64):
     st = make_lbfgs_state(n, 1, HISTORY_SIZE, vec, device)
     st.iteration.assign(np.array([0], np.int32))
     # x_base and force_base start at zero, so s = positions and y = -forces.
-    lbfgs_update(
+    _lbfgs_update(
         wp.array(s.astype(np_dtype), dtype=vec, device=device),
         wp.array((-y).astype(np_dtype), dtype=vec, device=device),
         st,
@@ -958,7 +958,8 @@ class TestLBFGSPublicSurface:
     the variable-cell entry point could not be reached from the package at all.
     """
 
-    #: State, preparation, one step per call, and the variable-cell setup.
+    #: The whole contract: two states, two preparation helpers, one step per
+    #: call for each path.
     CONTRACT = frozenset(
         {
             "LBFGSState",
@@ -970,15 +971,16 @@ class TestLBFGSPublicSurface:
         }
     )
 
-    #: Decomposition points a step is built from. Importable, not advertised.
+    #: Internals a step is built from. Importable by name, never advertised,
+    #: and now named with a leading underscore to say so.
     PHASES = (
-        "lbfgs_reduce",
-        "lbfgs_update",
-        "lbfgs_prepare_step",
-        "lbfgs_apply_step",
-        "lbfgs_pack_cell",
-        "lbfgs_unpack_cell",
-        "lbfgs_cell_trust_region",
+        "_lbfgs_reduce",
+        "_lbfgs_update",
+        "_lbfgs_prepare_step",
+        "_lbfgs_apply_step",
+        "_lbfgs_pack_cell",
+        "_lbfgs_unpack_cell",
+        "_lbfgs_cell_trust_region",
     )
 
     def test_package_exports_exactly_the_contract(self):
@@ -990,14 +992,46 @@ class TestLBFGSPublicSurface:
         """
         import nvalchemiops.dynamics.optimizers as package
 
-        exported = {
-            n
-            for n in package.__all__
-            if "lbfgs" in n.lower() or n == "check_cell_is_aligned"
-        }
+        exported = {n for n in package.__all__ if "lbfgs" in n.lower()}
         assert exported == set(self.CONTRACT)
         missing = [n for n in self.CONTRACT if not hasattr(package, n)]
         assert not missing, f"exported but absent: {missing}"
+
+    def test_no_surface_advertises_a_private_name(self):
+        """``__all__`` and a leading underscore must not disagree.
+
+        Everything a step is assembled from is now underscore-named, so this
+        is the cheap invariant that keeps the surface from drifting back: a
+        private name reaching ``__all__`` is a contradiction whichever of the
+        two was intended.
+        """
+        import nvalchemiops.dynamics.optimizers as package
+        import nvalchemiops.dynamics.optimizers.lbfgs as warp_module
+        import nvalchemiops.torch.lbfgs as torch_module
+
+        surfaces = {
+            "optimizers package": package,
+            "warp module": warp_module,
+            "torch binding": torch_module,
+        }
+        try:
+            import nvalchemiops.jax.lbfgs as jax_module
+
+            surfaces["jax binding"] = jax_module
+        except ImportError:  # pragma: no cover - jax is an optional extra
+            pass
+
+        leaked = {}
+        for label, module in surfaces.items():
+            names = [n for n in module.__all__ if n.startswith("_")]
+            if label == "optimizers package":
+                # Shared with FIRE, which advertises four private kernels of
+                # its own. That is a real defect but a different optimizer's,
+                # so this is scoped to the names under review here.
+                names = [n for n in names if "lbfgs" in n.lower()]
+            if names:
+                leaked[label] = names
+        assert not leaked, f"private names advertised in __all__: {leaked}"
 
     def test_phases_are_importable_but_not_advertised(self):
         """Un-advertised is not removed: the composed path still works.
@@ -1253,7 +1287,7 @@ class CellDriver:
         )
 
         self.cell_state = make_lbfgs_cell_state(self.num_atoms, 1, v, device)
-        lbfgs_set_reference_cell(
+        _lbfgs_set_reference_cell(
             self.cell,
             self.cell_state.ref_cell,
             self.cell_state.ref_cell_inv,
@@ -1272,7 +1306,7 @@ class CellDriver:
 
     def pack(self):
         cs = self.cell_state
-        lbfgs_pack_cell(
+        _lbfgs_pack_cell(
             self.positions,
             self.forces,
             self.cell,
@@ -1293,7 +1327,7 @@ class CellDriver:
 
     def unpack(self):
         cs = self.cell_state
-        lbfgs_unpack_cell(
+        _lbfgs_unpack_cell(
             cs.ext_positions,
             cs.ref_cell,
             cs.kappa,
@@ -1326,7 +1360,7 @@ class CellDriver:
         """
         cs, st = self.cell_state, self.state
         self.pack()
-        lbfgs_update(
+        _lbfgs_update(
             positions=cs.ext_positions,
             forces=cs.ext_forces,
             state=st,
@@ -1334,7 +1368,7 @@ class CellDriver:
             measure_trust_region=False,
             **kwargs,
         )
-        lbfgs_cell_trust_region(
+        _lbfgs_cell_trust_region(
             cs.ext_positions,
             st.direction,
             cs.phi,
@@ -1345,8 +1379,8 @@ class CellDriver:
             st.dmax,
             st.dquad,
         )
-        lbfgs_prepare_step(st, maxstep=kwargs.get("maxstep", 0.2))
-        lbfgs_apply_step(
+        _lbfgs_prepare_step(st, maxstep=kwargs.get("maxstep", 0.2))
+        _lbfgs_apply_step(
             positions=cs.ext_positions,
             forces=cs.ext_forces,
             state=st,
@@ -1393,7 +1427,7 @@ class TestLBFGSVariableCell:
         positions = rng.normal(size=(5, 3)) * 2.0
         d = CellDriver(positions, cell, CellPotential(np.zeros(3)), device)
         # Re-reference so the chart is not the identity.
-        lbfgs_set_reference_cell(
+        _lbfgs_set_reference_cell(
             wp.array(ref[None], dtype=wp.mat33d, device=device),
             d.cell_state.ref_cell,
             d.cell_state.ref_cell_inv,
@@ -1420,7 +1454,7 @@ class TestLBFGSVariableCell:
         potential = CellPotential(np.zeros(3))
 
         d = CellDriver(positions, cell, potential, device)
-        lbfgs_set_reference_cell(
+        _lbfgs_set_reference_cell(
             wp.array(ref[None], dtype=wp.mat33d, device=device),
             d.cell_state.ref_cell,
             d.cell_state.ref_cell_inv,
@@ -1568,14 +1602,14 @@ class TestLBFGSCellKappa:
         counts = wp.array(np.array([4, 0, 3], np.int32), dtype=wp.int32, device=device)
         kappa = wp.zeros(3, dtype=wp.float64, device=device)
         with pytest.raises(ValueError, match=r"system\(s\) \[1\] have no atoms"):
-            lbfgs_cell_kappa(counts, kappa, cell_force_scale=0.25)
+            _lbfgs_cell_kappa(counts, kappa, cell_force_scale=0.25)
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_populated_systems_keep_the_documented_scale(self, device):
         """Rejecting the empty case must not disturb the ordinary one."""
         counts = wp.array(np.array([4, 2, 3], np.int32), dtype=wp.int32, device=device)
         kappa = wp.zeros(3, dtype=wp.float64, device=device)
-        lbfgs_cell_kappa(counts, kappa, cell_force_scale=0.25)
+        _lbfgs_cell_kappa(counts, kappa, cell_force_scale=0.25)
         wp.synchronize()
         np.testing.assert_allclose(kappa.numpy(), 0.25 * np.array([4, 2, 3]))
 
@@ -1633,7 +1667,7 @@ class TestLBFGSCellPrecision:
         stress = wp.array(stress_np, dtype=mat, device=device)
         batch_idx = wp.zeros(n, dtype=wp.int32, device=device)
 
-        lbfgs_set_reference_cell(cell, cs.ref_cell, cs.ref_cell_inv)
+        _lbfgs_set_reference_cell(cell, cs.ref_cell, cs.ref_cell_inv)
         lbfgs_step_coord_cell(
             positions, forces, cell, stress, st, cs, batch_idx, maxstep=0.2,
         )  # fmt: skip
@@ -1787,7 +1821,7 @@ class TestLBFGSPackedTopology:
     def test_the_underlying_guard_still_bites_when_called_directly(self, device):
         """The public path cannot violate it; the guard is tested on its own.
 
-        ``check_packed_topology`` is no longer reachable with bad input
+        ``_check_packed_topology`` is no longer reachable with bad input
         through :func:`lbfgs_prepare_cell_state`, so without this the checks it
         performs would go uncovered and could rot silently.
         """
@@ -1795,19 +1829,19 @@ class TestLBFGSPackedTopology:
         good = wp.array(
             np.array([0] * 6 + [1] * 9, np.int32), dtype=wp.int32, device=device
         )
-        check_packed_topology(ptr, good, 2, 15)  # positive control
+        _check_packed_topology(ptr, good, 2, 15)  # positive control
 
         reversed_idx = wp.array(
             good.numpy()[::-1].copy(), dtype=wp.int32, device=device
         )
         with pytest.raises(ValueError, match="ext_batch_idx disagrees"):
-            check_packed_topology(ptr, reversed_idx, 2, 15)
+            _check_packed_topology(ptr, reversed_idx, 2, 15)
 
         cramped = wp.array(
             np.array([0, 1, 15], np.int32), dtype=wp.int32, device=device
         )
         with pytest.raises(ValueError, match="fewer than 2 packed entries"):
-            check_packed_topology(cramped, good, 2, 15)
+            _check_packed_topology(cramped, good, 2, 15)
 
 
 class TestLBFGSCellStepErrors:
@@ -1940,7 +1974,7 @@ class TestLBFGSCellConvention:
         cs.ref_cell.assign(np.eye(3)[None])
         cs.ref_cell_inv.assign(np.eye(3)[None])
         cs.kappa.assign(np.ones(m))
-        lbfgs_pack_cell(
+        _lbfgs_pack_cell(
             positions,
             wp.zeros(n, dtype=wp.vec3d, device=device),
             cell,
@@ -1973,11 +2007,11 @@ class TestLBFGSCellConvention:
         """
         unaligned = np.array([[5.0, 1.0, 2.0], [0.0, 6.0, 1.0], [0.0, 0.0, 7.0]])
         with pytest.raises(ValueError, match="not aligned"):
-            check_cell_is_aligned(
+            _check_cell_is_aligned(
                 wp.array(unaligned[None], dtype=wp.mat33d, device=device)
             )
         aligned = np.tril(np.array([[5.0, 0.0, 0.0], [1.0, 6.0, 0.0], [2.0, 1.0, 7.0]]))
-        check_cell_is_aligned(wp.array(aligned[None], dtype=wp.mat33d, device=device))
+        _check_cell_is_aligned(wp.array(aligned[None], dtype=wp.mat33d, device=device))
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_align_cell_output_is_accepted(self, device):
@@ -1993,7 +2027,7 @@ class TestLBFGSCellConvention:
         cell = wp.array(h[None], dtype=wp.mat33d, device=device)
         align_cell(cell=cell, positions=positions,
                    transform=wp.zeros(1, dtype=wp.mat33d, device=device))  # fmt: skip
-        check_cell_is_aligned(cell)
+        _check_cell_is_aligned(cell)
 
 
 class TestLBFGSRaggedVariableCell:
@@ -2038,7 +2072,7 @@ class TestLBFGSRaggedVariableCell:
         cell_state = make_lbfgs_cell_state(
             num_atoms, num_systems, v, device, counts=counts
         )
-        lbfgs_set_reference_cell(cell, cell_state.ref_cell, cell_state.ref_cell_inv)
+        _lbfgs_set_reference_cell(cell, cell_state.ref_cell, cell_state.ref_cell_inv)
         state = make_lbfgs_state(num_ext, num_systems, HISTORY_SIZE, v, device)
 
         # The packed layout interleaves each system's atoms with its two cell

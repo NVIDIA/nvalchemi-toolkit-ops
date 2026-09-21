@@ -70,10 +70,6 @@ lbfgs_step_coord_cell
     mapped into a single packed coordinate vector so the two-loop recursion
     couples them automatically, then mapped back after the step.
 
-lbfgs_set_reference_cell, lbfgs_cell_kappa, check_cell_is_aligned
-    Variable-cell setup, for callers who fill the chart themselves rather than
-    passing ``cell`` and ``n_particles`` to ``lbfgs_prepare_cell_state``.
-
     The phases each step is built from -- the reductions, the history update,
     the two-loop recursion, the trust region, the packing -- are internal
     decomposition points rather than separate operations, so they are not
@@ -109,11 +105,8 @@ from nvalchemiops.dynamics.optimizers.fire2 import (
 from nvalchemiops.dynamics.optimizers.lbfgs import (
     LBFGSCellState,
     LBFGSState,
-    check_cell_is_aligned,
-    lbfgs_cell_kappa,
     lbfgs_prepare_cell_state,
     lbfgs_prepare_state,
-    lbfgs_set_reference_cell,
     lbfgs_step,
     lbfgs_step_coord_cell,
 )

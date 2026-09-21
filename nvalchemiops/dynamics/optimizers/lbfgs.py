@@ -70,10 +70,10 @@ the atoms move.
 ========================  ==========================  ========================
 Phase                     FIRE2                       L-BFGS
 ========================  ==========================  ========================
-per-system reductions     ``fire2_reduce``            :func:`lbfgs_reduce`
-state update, no motion   ``fire2_update``            :func:`lbfgs_update`
-step-length finalization  --                          :func:`lbfgs_prepare_step`
-move the atoms            ``fire2_apply_step``        :func:`lbfgs_apply_step`
+per-system reductions     ``fire2_reduce``            :func:`_lbfgs_reduce`
+state update, no motion   ``fire2_update``            :func:`_lbfgs_update`
+step-length finalization  --                          :func:`_lbfgs_prepare_step`
+move the atoms            ``fire2_apply_step``        :func:`_lbfgs_apply_step`
 all of the above          ``fire2_step``              :func:`lbfgs_step`
 ========================  ==========================  ========================
 
@@ -246,23 +246,15 @@ from nvalchemiops.dynamics.utils.cell_filter import extend_atom_ptr
 from nvalchemiops.dynamics.utils.cell_utils import compute_cell_inverse
 from nvalchemiops.segment_ops import compute_ept
 
-#: The public contract: the two states, the preparation helpers, and one step
-#: per call. ``lbfgs_set_reference_cell``, ``lbfgs_cell_kappa`` and
-#: ``check_cell_is_aligned`` are no longer here either: preparation builds the
-#: whole chart, so they are steps within it rather than caller
-#: responsibilities. All of these stay importable by name. ``lbfgs_reduce``, ``lbfgs_update``,
-#: ``lbfgs_prepare_step``, ``lbfgs_apply_step``, ``lbfgs_pack_cell``,
-#: ``lbfgs_unpack_cell`` and ``lbfgs_cell_trust_region`` are the decomposition
-#: a step is built from rather than operations in their own right, so they are
-#: deliberately absent -- as ``fire2_apply_step`` and ``fire2_reduce`` are from
-#: ``fire2.__all__``. They remain importable by name for anyone who needs to
-#: interpose logic between phases.
+#: The public contract, and nothing else: the two states, the two preparation
+#: helpers, and one step per call for each path. Everything a step is built
+#: from -- the reductions, the history update, the two-loop recursion, the
+#: trust region, the packing, the chart setup and the validators -- is an
+#: internal decomposition point rather than an operation in its own right, and
+#: is named with a leading underscore accordingly.
 __all__ = [
     "LBFGSCellState",
     "LBFGSState",
-    "check_against_state",
-    "check_packed_topology",
-    "check_no_empty_cell_systems",
     "lbfgs_prepare_cell_state",
     "lbfgs_prepare_state",
     "lbfgs_step",
@@ -422,9 +414,9 @@ class LBFGSCellState:
     ----------
     ref_cell, ref_cell_inv : array, shape (num_systems,), mat33
         Reference cell ``H0`` and its inverse, from
-        :func:`lbfgs_set_reference_cell`.
+        :func:`_lbfgs_set_reference_cell`.
     kappa : array, shape (num_systems,)
-        Cell coordinate scaling, from :func:`lbfgs_cell_kappa`. Matches the
+        Cell coordinate scaling, from :func:`_lbfgs_cell_kappa`. Matches the
         *coordinate* precision, not float64, because it scales matrices.
     ext_batch_idx : array, shape (num_packed,), int32
     ext_atom_ptr : array, shape (num_systems + 1,), int32
@@ -1852,11 +1844,11 @@ def lbfgs_prepare_cell_state(
     )
     state.validate(num_atoms=num_atoms)
     # Values, not just shapes: affordable here because preparation runs once.
-    check_packed_topology(ext_atom_ptr, ext_batch_idx, num_systems, num_packed)
+    _check_packed_topology(ext_atom_ptr, ext_batch_idx, num_systems, num_packed)
 
     n_particles = wp.array(counts, dtype=wp.int32, device=device)
-    lbfgs_set_reference_cell(cell, state.ref_cell, state.ref_cell_inv)
-    lbfgs_cell_kappa(n_particles, state.kappa, cell_force_scale=cell_force_scale)
+    _lbfgs_set_reference_cell(cell, state.ref_cell, state.ref_cell_inv)
+    _lbfgs_cell_kappa(n_particles, state.kappa, cell_force_scale=cell_force_scale)
     return state
 
 
@@ -1876,7 +1868,7 @@ def _lbfgs_reduce_impl(
     Nothing Cartesian is reduced here. Convergence is the caller's, so the
     quantities a tolerance would be applied to are the caller's to compute.
 
-    Normally called for you by :func:`lbfgs_update`. Call it directly only if
+    Normally called for you by :func:`_lbfgs_update`. Call it directly only if
     you want to supply the reduction yourself, via ``compute_reductions=False``.
 
     Parameters
@@ -1954,7 +1946,7 @@ def _lbfgs_update_impl(
     machine, the history update and its curvature test, and the two-loop
     recursion. There is no line search and nothing decides you have finished --
     convergence is the caller's. Use it together with
-    :func:`lbfgs_prepare_step` and :func:`lbfgs_apply_step` when you need to
+    :func:`_lbfgs_prepare_step` and :func:`_lbfgs_apply_step` when you need to
     interpose your own logic before the atoms move; :func:`lbfgs_step` chains
     all three.
 
@@ -1962,7 +1954,7 @@ def _lbfgs_update_impl(
     ----------
     positions, forces : wp.array, shape (num_dofs,)
         Current geometry and the forces there. ``positions`` are read, not
-        moved; ``lbfgs_apply_step`` does the moving.
+        moved; ``_lbfgs_apply_step`` does the moving.
     x_base, force_base, direction : wp.array, shape (num_dofs,)
         Last accepted point, its forces, and the current search direction.
     batch_idx : wp.array(dtype=int32), shape (num_dofs,)
@@ -1983,7 +1975,7 @@ def _lbfgs_update_impl(
         When ``False``, ``dmax`` and ``dquad`` are taken as given. Set this if
         the displacement a direction produces is not simply its magnitude, as
         on a variable-cell path, and supply your own measure before calling
-        :func:`lbfgs_prepare_step`.
+        :func:`_lbfgs_prepare_step`.
 
     Raises
     ------
@@ -1992,7 +1984,7 @@ def _lbfgs_update_impl(
 
     See Also
     --------
-    lbfgs_prepare_step : runs next.
+    _lbfgs_prepare_step : runs next.
     lbfgs_step : chains all three phases.
     """
     n_dofs = positions.shape[0]
@@ -2013,7 +2005,7 @@ def _lbfgs_update_impl(
             f"direction length {direction.shape[0]} != positions length {n_dofs}"
         )
     if batch_idx is None:
-        raise ValueError("batch_idx is required for lbfgs_update")
+        raise ValueError("batch_idx is required for _lbfgs_update")
     if batch_idx.shape[0] != n_dofs:
         raise ValueError(
             f"batch_idx length {batch_idx.shape[0]} != positions length {n_dofs}"
@@ -2256,8 +2248,8 @@ def _lbfgs_prepare_step_impl(
 
     See Also
     --------
-    lbfgs_update : runs before this.
-    lbfgs_apply_step : runs after this.
+    _lbfgs_update : runs before this.
+    _lbfgs_apply_step : runs after this.
     """
     wp.launch(
         _prepare_step_overloads[gg.dtype],
@@ -2295,7 +2287,7 @@ def _lbfgs_apply_step_impl(
 
     See Also
     --------
-    lbfgs_prepare_step : runs before this.
+    _lbfgs_prepare_step : runs before this.
     """
     n_dofs = positions.shape[0]
     if n_dofs == 0:
@@ -2353,12 +2345,12 @@ def _lbfgs_step_impl(
     state and every system takes a step on every call, so testing convergence
     and stopping the loop are yours, exactly as they are for FIRE2.
 
-    Equivalent to :func:`lbfgs_update`, :func:`lbfgs_prepare_step` and
-    :func:`lbfgs_apply_step` in sequence.
+    Equivalent to :func:`_lbfgs_update`, :func:`_lbfgs_prepare_step` and
+    :func:`_lbfgs_apply_step` in sequence.
 
     Parameters
     ----------
-    See :func:`lbfgs_update`; the arguments are identical.
+    See :func:`_lbfgs_update`; the arguments are identical.
 
     Examples
     --------
@@ -2466,7 +2458,7 @@ def _lbfgs_cell_kappa_kernel(
     slot = kappa[tid]
     # No clamp: a system with no atoms has no cell scale, and inventing one
     # would make an unsupported configuration look valid. Empty systems are
-    # rejected by :func:`lbfgs_cell_kappa` before this ever runs.
+    # rejected by :func:`_lbfgs_cell_kappa` before this ever runs.
     count = n_atoms_per_system[tid]
     kappa[tid] = type(slot)(cell_force_scale) * type(slot)(count)
 
@@ -2819,7 +2811,7 @@ for _v, _mt in _MAT_TYPES.items():
     )
 
 
-def check_cell_is_aligned(cell, atol: float = 1e-10) -> None:
+def _check_cell_is_aligned(cell, atol: float = 1e-10) -> None:
     """Confirm the cell is in the aligned form the packing assumes.
 
     The six-component cell parameterization represents only the entries that
@@ -2831,7 +2823,7 @@ def check_cell_is_aligned(cell, atol: float = 1e-10) -> None:
 
     This reads the cell back to the host, so it is a setup-time check. It is
     called for you by :func:`lbfgs_prepare_cell_state` and by
-    :func:`lbfgs_set_reference_cell`, both of which run once.
+    :func:`_lbfgs_set_reference_cell`, both of which run once.
 
     Parameters
     ----------
@@ -2865,7 +2857,7 @@ def check_cell_is_aligned(cell, atol: float = 1e-10) -> None:
         )
 
 
-def lbfgs_set_reference_cell(
+def _lbfgs_set_reference_cell(
     cell: wp.array,
     ref_cell: wp.array,
     ref_cell_inv: wp.array,
@@ -2897,12 +2889,12 @@ def lbfgs_set_reference_cell(
     :ref:`The variable-cell contract <lbfgs-cell-contract>` : why the reference
         is fixed, and what calling this a second time costs.
     """
-    check_cell_is_aligned(cell)
+    _check_cell_is_aligned(cell)
     wp.copy(ref_cell, cell)
     compute_cell_inverse(cell, ref_cell_inv, device=str(cell.device))
 
 
-def lbfgs_cell_kappa(
+def _lbfgs_cell_kappa(
     n_atoms_per_system: wp.array,
     kappa: wp.array,
     *,
@@ -2930,13 +2922,13 @@ def lbfgs_cell_kappa(
     -----
     ``kappa`` is divided into the cell force, so it must never be zero. A
     batch containing a system with no atoms is rejected rather than given an
-    invented scale; see :func:`check_no_empty_cell_systems`. If you fill
+    invented scale; see :func:`_check_no_empty_cell_systems`. If you fill
     ``kappa`` yourself rather than calling this, keep every entry strictly
     positive.
     """
     if cell_force_scale <= 0.0:
         raise ValueError(f"cell_force_scale must be positive; got {cell_force_scale}")
-    check_no_empty_cell_systems(n_atoms_per_system)
+    _check_no_empty_cell_systems(n_atoms_per_system)
     vec = wp.vec3f if kappa.dtype == wp.float32 else wp.vec3d
     wp.launch(
         _cell_kappa_overloads[vec],
@@ -2946,7 +2938,7 @@ def lbfgs_cell_kappa(
     )
 
 
-def lbfgs_pack_cell(
+def _lbfgs_pack_cell(
     positions: wp.array,
     forces: wp.array,
     cell: wp.array,
@@ -2976,15 +2968,15 @@ def lbfgs_pack_cell(
         Cauchy stress per system. Without it the cell degrees of freedom get
         zero force and the cell will not move.
     ref_cell_inv : wp.array(dtype=mat33), shape (num_systems,)
-        Inverse of the reference cell, from :func:`lbfgs_set_reference_cell`.
+        Inverse of the reference cell, from :func:`_lbfgs_set_reference_cell`.
     ext_positions, ext_forces : wp.array, shape (num_atoms + 2 * num_systems,)
         OUTPUT. The packed arrays the optimizer works on.
     kappa : wp.array, shape (num_systems,)
-        Cell coordinate scaling, from :func:`lbfgs_cell_kappa`.
+        Cell coordinate scaling, from :func:`_lbfgs_cell_kappa`.
 
     See Also
     --------
-    lbfgs_unpack_cell : the inverse mapping.
+    _lbfgs_unpack_cell : the inverse mapping.
     """
     device = positions.device
     vec_dtype = positions.dtype
@@ -3031,7 +3023,7 @@ def lbfgs_pack_cell(
     )
 
 
-def lbfgs_unpack_cell(
+def _lbfgs_unpack_cell(
     ext_positions: wp.array,
     ref_cell: wp.array,
     kappa: wp.array,
@@ -3048,13 +3040,13 @@ def lbfgs_unpack_cell(
     ext_positions : wp.array, shape (num_atoms + 2 * num_systems,)
         Packed coordinates, as advanced by :func:`lbfgs_step`.
     ref_cell : wp.array(dtype=mat33), shape (num_systems,)
-        The reference cell, from :func:`lbfgs_set_reference_cell`.
+        The reference cell, from :func:`_lbfgs_set_reference_cell`.
     positions, cell : wp.array
         OUTPUT. Cartesian positions and the updated cell.
 
     See Also
     --------
-    lbfgs_pack_cell : the forward mapping.
+    _lbfgs_pack_cell : the forward mapping.
     """
     device = ext_positions.device
     vec_dtype = ext_positions.dtype
@@ -3079,7 +3071,7 @@ def lbfgs_unpack_cell(
     )
 
 
-def lbfgs_cell_trust_region(
+def _lbfgs_cell_trust_region(
     ext_positions: wp.array,
     direction: wp.array,
     phi: wp.array,
@@ -3092,8 +3084,8 @@ def lbfgs_cell_trust_region(
 ) -> None:
     """Measure the Cartesian displacement a variable-cell direction produces.
 
-    Call this between :func:`lbfgs_update` (with ``measure_trust_region=False``)
-    and :func:`lbfgs_prepare_step`. The displacement is quadratic in the step
+    Call this between :func:`_lbfgs_update` (with ``measure_trust_region=False``)
+    and :func:`_lbfgs_prepare_step`. The displacement is quadratic in the step
     length because the cell and the coordinates both move, so both the linear
     and quadratic terms are measured and the cap is solved in closed form.
 
@@ -3209,13 +3201,13 @@ def _lbfgs_step_coord_cell_impl(
         Sorted system index per atom.
     x_base, ..., history_count
         The optimizer buffers, sized for ``num_atoms + 2 * num_systems``
-        degrees of freedom rather than ``num_atoms``. See :func:`lbfgs_update`
+        degrees of freedom rather than ``num_atoms``. See :func:`_lbfgs_update`
         for shapes and required initial contents.
     ref_cell, ref_cell_inv : wp.array(dtype=mat33), shape (num_systems,)
         The reference cell and its inverse, from
-        :func:`lbfgs_set_reference_cell`. Read only.
+        :func:`_lbfgs_set_reference_cell`. Read only.
     kappa : wp.array, shape (num_systems,)
-        Cell coordinate scaling, from :func:`lbfgs_cell_kappa`. Read only, and
+        Cell coordinate scaling, from :func:`_lbfgs_cell_kappa`. Read only, and
         at the coordinate precision rather than float64.
     ext_batch_idx : wp.array(dtype=int32), shape (num_atoms + 2 * num_systems,)
         Sorted system index for each packed degree of freedom. Read only.
@@ -3235,11 +3227,11 @@ def _lbfgs_step_coord_cell_impl(
 
     See Also
     --------
-    lbfgs_set_reference_cell : must be called first.
-    lbfgs_cell_kappa : must be called first.
+    _lbfgs_set_reference_cell : must be called first.
+    _lbfgs_cell_kappa : must be called first.
     lbfgs_step : the coordinate-only equivalent.
     """
-    lbfgs_pack_cell(
+    _lbfgs_pack_cell(
         positions,
         forces,
         cell,
@@ -3286,7 +3278,7 @@ def _lbfgs_step_coord_cell_impl(
     )
     # The displacement a direction produces is not its magnitude here, so the
     # trust region gets its own measure before the step length is finalized.
-    lbfgs_cell_trust_region(
+    _lbfgs_cell_trust_region(
         ext_positions,
         direction,
         phi,
@@ -3319,7 +3311,7 @@ def _lbfgs_step_coord_cell_impl(
         gg=gg,
         alpha_step=alpha_step,
     )
-    lbfgs_unpack_cell(
+    _lbfgs_unpack_cell(
         ext_positions,
         ref_cell,
         kappa,
@@ -3346,7 +3338,7 @@ def _arrays(state) -> dict:
     return {f.name: getattr(state, f.name) for f in dataclasses.fields(state)}
 
 
-def check_no_empty_cell_systems(n_atoms_per_system) -> None:
+def _check_no_empty_cell_systems(n_atoms_per_system) -> None:
     """Reject variable-cell systems that contain no atoms.
 
     ``kappa`` scales the cell coordinate against the atomic ones and is divided
@@ -3359,7 +3351,7 @@ def check_no_empty_cell_systems(n_atoms_per_system) -> None:
     :ref:`the variable-cell contract <lbfgs-cell-contract>`.
 
     Reads the counts back to the host, so this is a setup-time check. It runs
-    from :func:`lbfgs_cell_kappa`, which is called once.
+    from :func:`_lbfgs_cell_kappa`, which is called once.
 
     Raises
     ------
@@ -3380,7 +3372,9 @@ def check_no_empty_cell_systems(n_atoms_per_system) -> None:
         )
 
 
-def check_packed_topology(ext_atom_ptr, ext_batch_idx, num_systems, num_packed) -> None:
+def _check_packed_topology(
+    ext_atom_ptr, ext_batch_idx, num_systems, num_packed
+) -> None:
     """Confirm the packed topology's *values*, not just its shapes.
 
     :meth:`LBFGSCellState.validate` deliberately stops at shapes, because it
@@ -3436,7 +3430,7 @@ def check_packed_topology(ext_atom_ptr, ext_batch_idx, num_systems, num_packed) 
         )
 
 
-def check_against_state(state, coordinates=(), indices=(), extra_states=()) -> None:
+def _check_against_state(state, coordinates=(), indices=(), extra_states=()) -> None:
     """Confirm this call's arrays agree with the prepared state.
 
     Agreeing with each other is not enough. An array whose precision matches
@@ -3514,7 +3508,7 @@ def _check_inputs(positions, forces, batch_idx, state: LBFGSState) -> None:
     matches would read out of bounds inside a kernel rather than raise.
     """
     state.validate()
-    check_against_state(
+    _check_against_state(
         state,
         coordinates=(("positions", positions), ("forces", forces)),
         indices=(("batch_idx", batch_idx),),
@@ -3550,7 +3544,7 @@ def _check_cell_inputs(positions, forces, cell, stress, batch_idx, state, cell_s
     """
     state.validate()
     cell_state.validate(num_atoms=positions.shape[0])
-    check_against_state(
+    _check_against_state(
         state,
         coordinates=(
             ("positions", positions),
@@ -3602,17 +3596,17 @@ def _check_cell_inputs(positions, forces, cell, stress, batch_idx, state, cell_s
         raise ValueError(f"inputs are spread across devices {sorted(devices)}")
 
 
-def lbfgs_reduce(forces, state: LBFGSState, batch_idx) -> None:
+def _lbfgs_reduce(forces, state: LBFGSState, batch_idx) -> None:
     """Compute the per-system reduction for one call. See :func:`lbfgs_step`."""
     _lbfgs_reduce_impl(forces, state.direction, batch_idx, state.gg)
 
 
-def lbfgs_update(positions, forces, state: LBFGSState, batch_idx,
+def _lbfgs_update(positions, forces, state: LBFGSState, batch_idx,
                  **kwargs) -> None:  # fmt: skip
     """Advance the state machine and produce a search direction.
 
-    Everything except the position update. Use with :func:`lbfgs_prepare_step`
-    and :func:`lbfgs_apply_step` when you need to interpose your own logic
+    Everything except the position update. Use with :func:`_lbfgs_prepare_step`
+    and :func:`_lbfgs_apply_step` when you need to interpose your own logic
     before the atoms move; :func:`lbfgs_step` chains all three.
     """
     _check_inputs(positions, forces, batch_idx, state)
@@ -3622,7 +3616,7 @@ def lbfgs_update(positions, forces, state: LBFGSState, batch_idx,
     )  # fmt: skip
 
 
-def lbfgs_prepare_step(state: LBFGSState, **kwargs) -> None:
+def _lbfgs_prepare_step(state: LBFGSState, **kwargs) -> None:
     """Repair a bad direction and apply the trust region."""
     _lbfgs_prepare_step_impl(
         state.gg, state.d0, state.dmax, state.dquad, state.alpha_step,
@@ -3630,7 +3624,7 @@ def lbfgs_prepare_step(state: LBFGSState, **kwargs) -> None:
     )  # fmt: skip
 
 
-def lbfgs_apply_step(positions, forces, state: LBFGSState, batch_idx) -> None:
+def _lbfgs_apply_step(positions, forces, state: LBFGSState, batch_idx) -> None:
     """Move the positions to the next point."""
     _lbfgs_apply_step_impl(
         positions, forces, state.x_base, state.force_base, state.direction,
@@ -3671,7 +3665,7 @@ def lbfgs_step_coord_cell(positions, forces, cell, stress, state: LBFGSState,
 
     ``state`` must be sized for ``num_atoms + 2 * num_systems`` degrees of
     freedom; ``cell_state`` carries the chart. Call
-    :func:`lbfgs_set_reference_cell` and :func:`lbfgs_cell_kappa` once before
+    :func:`_lbfgs_set_reference_cell` and :func:`_lbfgs_cell_kappa` once before
     the first step.
     """
     _check_cell_inputs(positions, forces, cell, stress, batch_idx, state, cell_state)

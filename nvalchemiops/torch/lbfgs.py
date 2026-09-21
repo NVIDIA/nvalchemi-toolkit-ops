@@ -88,20 +88,20 @@ from nvalchemiops.dynamics.optimizers.lbfgs import (
     _OPTIMIZER_BUFFERS,
     LBFGSCellState,
     LBFGSState,
+    _check_against_state,
     _resolve_curvature_eps,
-    check_against_state,
+)
+from nvalchemiops.dynamics.optimizers.lbfgs import (
+    _check_packed_topology as _wp_check_packed_topology,
+)
+from nvalchemiops.dynamics.optimizers.lbfgs import _lbfgs_cell_kappa as _wp_cell_kappa
+from nvalchemiops.dynamics.optimizers.lbfgs import (
+    _lbfgs_set_reference_cell as _wp_set_reference_cell,
 )
 from nvalchemiops.dynamics.optimizers.lbfgs import (
     _lbfgs_step_coord_cell_impl as _wp_step_cell,
 )
 from nvalchemiops.dynamics.optimizers.lbfgs import _lbfgs_step_impl as _wp_step
-from nvalchemiops.dynamics.optimizers.lbfgs import (
-    check_packed_topology as _wp_check_packed_topology,
-)
-from nvalchemiops.dynamics.optimizers.lbfgs import lbfgs_cell_kappa as _wp_cell_kappa
-from nvalchemiops.dynamics.optimizers.lbfgs import (
-    lbfgs_set_reference_cell as _wp_set_reference_cell,
-)
 from nvalchemiops.dynamics.utils.cell_filter import (
     extend_atom_ptr as _wp_extend_atom_ptr,
 )
@@ -118,7 +118,6 @@ __all__ = [
     "lbfgs_prepare_state",
     "lbfgs_step_coord",
     "lbfgs_step_coord_cell",
-    "lbfgs_step_extended",
 ]
 
 _TORCH_TO_WP_VEC = {torch.float32: wp.vec3f, torch.float64: wp.vec3d}
@@ -406,8 +405,8 @@ def lbfgs_prepare_cell_state(
         packed,
     )
     n_particles = torch.tensor(counts, **i32)
-    lbfgs_set_reference_cell(cell, state.ref_cell, state.ref_cell_inv)
-    lbfgs_cell_kappa(n_particles, state.kappa, cell_force_scale=cell_force_scale)
+    _lbfgs_set_reference_cell(cell, state.ref_cell, state.ref_cell_inv)
+    _lbfgs_cell_kappa(n_particles, state.kappa, cell_force_scale=cell_force_scale)
     return state
 
 
@@ -463,23 +462,6 @@ def lbfgs_step_coord(
     )  # fmt: skip
 
 
-def lbfgs_step_extended(
-    ext_positions: torch.Tensor,
-    ext_forces: torch.Tensor,
-    state: LBFGSState,
-    ext_batch_idx: torch.Tensor,
-    **kwargs,
-) -> None:
-    """Advance one step on caller-packed degrees of freedom.
-
-    Identical to :func:`lbfgs_step_coord` and backed by the same operator;
-    only the meaning of the arrays differs. ``maxstep`` bounds the packed
-    displacement, so if these are not Cartesian atom positions it is not a
-    distance in angstroms.
-    """
-    lbfgs_step_coord(ext_positions, ext_forces, state, ext_batch_idx, **kwargs)
-
-
 def lbfgs_step_coord_cell(
     positions: torch.Tensor,
     cell: torch.Tensor,
@@ -511,8 +493,8 @@ def lbfgs_step_coord_cell(
 
     See Also
     --------
-    lbfgs_set_reference_cell : must be called first.
-    lbfgs_cell_kappa : must be called first.
+    _lbfgs_set_reference_cell : must be called first.
+    _lbfgs_cell_kappa : must be called first.
     """
     _validate_cell(positions, forces, cell, stress, batch_idx, state, cell_state)
     _lbfgs_step_coord_cell_op(
@@ -530,7 +512,7 @@ def _validate(positions, forces, batch_idx, state):
     fields can be reassigned between steps.
     """
     state.validate()
-    check_against_state(
+    _check_against_state(
         state,
         coordinates=(("positions", positions), ("forces", forces)),
         indices=(("batch_idx", batch_idx),),
@@ -659,7 +641,7 @@ if _cell_params[5 + _n_opt : 5 + _n_opt + len(_CELL_BUFFERS)] != _CELL_BUFFERS:
     raise RuntimeError("_CELL_BUFFERS and the cell operator have diverged")
 
 
-def lbfgs_set_reference_cell(
+def _lbfgs_set_reference_cell(
     cell: torch.Tensor, ref_cell: torch.Tensor, ref_cell_inv: torch.Tensor
 ) -> None:
     """Capture the reference cell that defines the variable-cell chart.
@@ -690,7 +672,7 @@ def lbfgs_set_reference_cell(
         )
 
 
-def lbfgs_cell_kappa(
+def _lbfgs_cell_kappa(
     n_particles: torch.Tensor,
     kappa: torch.Tensor,
     *,
@@ -728,7 +710,7 @@ def _validate_cell(positions, forces, cell, stress, batch_idx, state, cell_state
     """Confirm this call's inputs match both prepared states."""
     state.validate()
     cell_state.validate(num_atoms=positions.shape[0])
-    check_against_state(
+    _check_against_state(
         state,
         coordinates=(
             ("positions", positions),

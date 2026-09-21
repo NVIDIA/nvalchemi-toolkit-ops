@@ -57,7 +57,6 @@ comes from the trust region.
 
 .. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_prepare_state
 .. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_step_coord
-.. autofunction:: nvalchemiops.torch.lbfgs.lbfgs_step_extended
 
 Variable-cell relaxation maps coordinates and cell into one packed coordinate
 vector, so the two-loop recursion couples them automatically. Build

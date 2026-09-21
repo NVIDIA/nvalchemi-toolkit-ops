@@ -670,7 +670,7 @@ class TestLBFGSTorchCoordCell:
     @staticmethod
     def _setup(device, num_atoms=6, seed=11):
         """A compressed cell with perturbed fractional coordinates."""
-        from nvalchemiops.torch.lbfgs import lbfgs_set_reference_cell
+        from nvalchemiops.torch.lbfgs import _lbfgs_set_reference_cell
 
         from ...conftest import CellPotential
 
@@ -684,7 +684,7 @@ class TestLBFGSTorchCoordCell:
         positions = torch.tensor(positions_np, dtype=torch.float64, device=device)
         cell = torch.tensor(cell_np[None], dtype=torch.float64, device=device)
         cell_state = make_torch_cell_state(num_atoms, 1, torch.float64, device)
-        lbfgs_set_reference_cell(cell, cell_state.ref_cell, cell_state.ref_cell_inv)
+        _lbfgs_set_reference_cell(cell, cell_state.ref_cell, cell_state.ref_cell_inv)
         # The cell contributes two packed entries per system.
         state = make_torch_state(num_atoms + 2, 1, torch.float64, device)
         return positions, cell, state, cell_state, potential
@@ -726,14 +726,14 @@ class TestLBFGSTorchCoordCell:
         cell = torch.eye(3, dtype=torch.float64, device=device).expand(2, 3, 3)
         cell = cell.contiguous()
         ref_cell, ref_cell_inv = torch.zeros_like(cell), torch.zeros_like(cell)
-        module.lbfgs_set_reference_cell(cell, ref_cell, ref_cell_inv)
-        assert entered, "lbfgs_set_reference_cell launched Warp unscoped"
+        module._lbfgs_set_reference_cell(cell, ref_cell, ref_cell_inv)
+        assert entered, "_lbfgs_set_reference_cell launched Warp unscoped"
 
         entered.clear()
         counts = torch.full((2,), 8, dtype=torch.int32, device=device)
         kappa = torch.zeros(2, dtype=torch.float64, device=device)
-        module.lbfgs_cell_kappa(counts, kappa, cell_force_scale=0.5)
-        assert entered, "lbfgs_cell_kappa launched Warp unscoped"
+        module._lbfgs_cell_kappa(counts, kappa, cell_force_scale=0.5)
+        assert entered, "_lbfgs_cell_kappa launched Warp unscoped"
 
         # ...and the results are still right when driven from a side stream.
         torch.cuda.synchronize()
@@ -750,7 +750,7 @@ class TestLBFGSTorchCoordCell:
         import warp as wp
 
         from nvalchemiops.dynamics.optimizers.lbfgs import (
-            lbfgs_set_reference_cell as warp_set_ref,
+            _lbfgs_set_reference_cell as warp_set_ref,
         )
         from nvalchemiops.dynamics.optimizers.lbfgs import (
             lbfgs_step_coord_cell as warp_step_cell,

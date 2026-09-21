@@ -389,7 +389,7 @@ class TestLBFGSJaxCoordCell:
 
     @staticmethod
     def _setup(num_atoms=6, seed=11):
-        from nvalchemiops.jax.lbfgs import lbfgs_set_reference_cell
+        from nvalchemiops.jax.lbfgs import _lbfgs_set_reference_cell
 
         from ...conftest import CellPotential
 
@@ -402,7 +402,7 @@ class TestLBFGSJaxCoordCell:
         cell = jnp.asarray(cell_np[None])
 
         cell_state = make_jax_cell_state(num_atoms, 1)
-        ref_cell, ref_cell_inv = lbfgs_set_reference_cell(cell)
+        ref_cell, ref_cell_inv = _lbfgs_set_reference_cell(cell)
         cell_state = dataclasses.replace(
             cell_state, ref_cell=ref_cell, ref_cell_inv=ref_cell_inv
         )
@@ -415,7 +415,7 @@ class TestLBFGSJaxCoordCell:
         import warp as wp
 
         from nvalchemiops.dynamics.optimizers.lbfgs import (
-            lbfgs_set_reference_cell as warp_set_ref,
+            _lbfgs_set_reference_cell as warp_set_ref,
         )
         from nvalchemiops.dynamics.optimizers.lbfgs import (
             lbfgs_step_coord_cell as warp_step_cell,
@@ -551,13 +551,13 @@ class TestLBFGSJaxCoordCell:
         float64 default silently handed fp32 callers a buffer the cell step
         rejects, so the argument is required.
         """
-        from nvalchemiops.jax.lbfgs import lbfgs_cell_kappa
+        from nvalchemiops.jax.lbfgs import _lbfgs_cell_kappa
 
         counts = jnp.asarray([4, 3], jnp.int32)
-        assert lbfgs_cell_kappa(counts, dtype=jnp.float32).dtype == jnp.float32
-        assert lbfgs_cell_kappa(counts, dtype=jnp.float64).dtype == jnp.float64
+        assert _lbfgs_cell_kappa(counts, dtype=jnp.float32).dtype == jnp.float32
+        assert _lbfgs_cell_kappa(counts, dtype=jnp.float64).dtype == jnp.float64
         with pytest.raises(TypeError, match="dtype"):
-            lbfgs_cell_kappa(counts)
+            _lbfgs_cell_kappa(counts)
 
     def test_fp32_variable_cell_step_runs(self, _gpu):
         """The fp32 cell path works end to end, kappa included.
@@ -566,8 +566,8 @@ class TestLBFGSJaxCoordCell:
         kappa mismatch went unnoticed.
         """
         from nvalchemiops.jax.lbfgs import (
-            lbfgs_cell_kappa,
-            lbfgs_set_reference_cell,
+            _lbfgs_cell_kappa,
+            _lbfgs_set_reference_cell,
             lbfgs_step_coord_cell,
         )
 
@@ -575,12 +575,12 @@ class TestLBFGSJaxCoordCell:
         cell = jnp.asarray(np.diag([6.0, 6.5, 7.0])[None], f32)
         state = make_jax_state(n + 2 * m_sys, m_sys, dtype=f32)
         cell_state = make_jax_cell_state(n, m_sys, dtype=f32)
-        ref_cell, ref_cell_inv = lbfgs_set_reference_cell(cell)
+        ref_cell, ref_cell_inv = _lbfgs_set_reference_cell(cell)
         cell_state = dataclasses.replace(
             cell_state,
             ref_cell=ref_cell,
             ref_cell_inv=ref_cell_inv,
-            kappa=lbfgs_cell_kappa(jnp.asarray([n], jnp.int32), dtype=f32),
+            kappa=_lbfgs_cell_kappa(jnp.asarray([n], jnp.int32), dtype=f32),
         )
 
         out_p, _, _, _ = lbfgs_step_coord_cell(
@@ -602,10 +602,10 @@ class TestLBFGSJaxCoordCell:
         All three layers reject rather than inventing a scale; asserted per
         layer because Torch and JAX are independent extras.
         """
-        from nvalchemiops.jax.lbfgs import lbfgs_cell_kappa
+        from nvalchemiops.jax.lbfgs import _lbfgs_cell_kappa
 
         with pytest.raises(ValueError, match=r"system\(s\) \[1\] have no atoms"):
-            lbfgs_cell_kappa(
+            _lbfgs_cell_kappa(
                 jnp.asarray([4, 0, 3], jnp.int32),
                 dtype=jnp.float64,
                 cell_force_scale=0.25,
@@ -613,7 +613,7 @@ class TestLBFGSJaxCoordCell:
 
         # Positive control, so the rejection cannot pass by rejecting
         # everything. The scale itself is Core's to certify.
-        kappa = lbfgs_cell_kappa(
+        kappa = _lbfgs_cell_kappa(
             jnp.asarray([4, 2, 3], jnp.int32),
             dtype=jnp.float64,
             cell_force_scale=0.25,
@@ -625,10 +625,10 @@ class TestLBFGSJaxCoordCell:
 
         If it did, donating both to one jitted step would fail outright.
         """
-        from nvalchemiops.jax.lbfgs import lbfgs_set_reference_cell
+        from nvalchemiops.jax.lbfgs import _lbfgs_set_reference_cell
 
         cell = jnp.asarray(np.diag([6.0, 6.5, 7.0])[None])
-        ref_cell, ref_cell_inv = lbfgs_set_reference_cell(cell)
+        ref_cell, ref_cell_inv = _lbfgs_set_reference_cell(cell)
         np.testing.assert_array_equal(np.asarray(ref_cell), np.asarray(cell))
         np.testing.assert_allclose(
             np.asarray(ref_cell_inv), np.linalg.inv(np.asarray(cell)), rtol=1e-14
