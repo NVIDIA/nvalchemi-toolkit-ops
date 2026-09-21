@@ -185,10 +185,18 @@ class FourierD3Parameters:
             "eigs": self.eigs,
         }
         for name, array in fields.items():
+            if not hasattr(array, "shape") or not hasattr(array, "dtype"):
+                raise TypeError(f"{name} must be a jax.Array, got {type(array)}.")
             if array.dtype not in (jnp.float32, jnp.float64):
                 raise TypeError(
                     f"{name} must be float32 or float64, got {array.dtype}."
                 )
+        if not hasattr(self.species_map, "shape") or not hasattr(
+            self.species_map, "dtype"
+        ):
+            raise TypeError(
+                f"species_map must be a jax.Array, got {type(self.species_map)}."
+            )
         if self.species_map.dtype not in (jnp.int32, jnp.int64):
             raise TypeError(
                 f"species_map must be int32 or int64, got {self.species_map.dtype}."
@@ -217,6 +225,12 @@ class FourierD3Parameters:
         if self.eigs.shape[0] != self.v_q.shape[2]:
             raise ValueError(
                 f"eigs has rank {self.eigs.shape[0]} but v_q has rank {self.v_q.shape[2]}."
+            )
+        if self.rcov.shape != self.species_map.shape:
+            raise ValueError(
+                f"rcov and species_map are both indexed by atomic number, so they must "
+                f"have the same length, got {self.rcov.shape[0]} and "
+                f"{self.species_map.shape[0]}."
             )
         if self.sqrt_q.shape[0] != self.cn_ref.shape[0]:
             raise ValueError(
@@ -325,41 +339,6 @@ def _reject_out_of_range_batch(batch_idx, num_systems):
             f"[0, {num_systems}) for {num_systems} system(s)."
         )
     return 1.0, batch_idx
-
-
-def _reject_uncovered_species(species_index, numbers):
-    """Reject atoms whose element the decomposition does not cover.
-
-    ``species_map`` marks both padding and uncovered elements with ``-1``, and the mesh
-    grouping below treats every ``-1`` as padding. A real element missing from
-    ``fourier_d3_params`` would therefore be dropped from the sum with no error at all, which is
-    the worst kind of wrong: a plausible energy that is quietly missing atoms.
-
-    Atomic number zero is padding and is skipped by design; only a real element that the
-    decomposition misses is an error.
-
-    Returns a multiplier for the results: ``1.0`` normally, NaN when tracing found an
-    uncovered element. Eagerly the mask can be read, so this raises instead and names the
-    elements. Under ``jax.jit`` it cannot, and merely skipping would leave the documented
-    execution path returning a finite, plausible energy quietly missing atoms. Poisoning the
-    result keeps that visible without the host synchronisation tracing forbids. This is the
-    one check here that cannot simply be skipped, because its failure is silent corruption
-    rather than an exception.
-    """
-    uncovered = (species_index < 0) & (numbers != 0)
-    try:
-        missing = np.unique(np.asarray(numbers)[np.asarray(uncovered)]).tolist()
-    except (
-        jax.errors.ConcretizationTypeError,
-        jax.errors.TracerArrayConversionError,
-    ):
-        return jnp.where(jnp.any(uncovered), jnp.nan, 1.0)
-    if missing:
-        raise ValueError(
-            f"Atomic numbers {missing} are not covered by fourier_d3_params. Rebuild the "
-            f"decomposition with every species present in the system."
-        )
-    return 1.0
 
 
 def fourier_dftd3(
@@ -524,9 +503,9 @@ def fourier_dftd3(
     v_q = jnp.asarray(params.v_q, dtype=dtype)
     eigs = jnp.asarray(params.eigs, dtype=dtype)
     sqrt_q = jnp.asarray(params.sqrt_q, dtype=dtype)
+    # Species coverage is a caller precondition, as in ``dftd3``: every element present must
+    # be in the decomposition. Checking it here would force a device read under trace.
     species_index = params.species_map[numbers].astype(jnp.int32)
-
-    covered = _reject_uncovered_species(species_index, numbers)
 
     # Reading the lengths is framework-specific, and impossible while tracing, so it is
     # done here and only on the route that needs them.
@@ -821,11 +800,8 @@ def fourier_dftd3(
 
     forces_total, virial_total = _blocked(_chain, FD3_CN_BLOCK_SIZE, positions)
 
-    # 1.0 unless tracing found an element the decomposition misses; see
-    # :func:`_reject_uncovered_species`.
-    covered = covered * batch_guard
-    energy_total = energy_total * covered
-    forces_total = forces_total * covered
+    energy_total = energy_total * batch_guard
+    forces_total = forces_total * batch_guard
     if compute_virial:
-        return energy_total, forces_total, virial_total * covered
+        return energy_total, forces_total, virial_total * batch_guard
     return energy_total, forces_total

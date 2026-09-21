@@ -29,10 +29,8 @@ transform is closed-form: no Ewald splitting parameter and no real-space dispers
 the mesh Nyquist frequency the only truncation.
 
 Warp has no full-mesh FFT, so the two transforms belong to the calling framework and this
-module supplies the surrounding kernels. Bindings drive nine passes: coordination numbers,
-low-rank coefficients, B-spline spread, forward FFT, reciprocal contraction, inverse FFT,
-gather, self-energy, and the coordination chain rule. The spread and gather live in
-:mod:`nvalchemiops.math.spline`; the rest are here, one launcher each.
+module supplies the surrounding launchers. Spread and gather live in
+:mod:`nvalchemiops.math.spline`.
 
 Self-energy must precede the chain rule: it is quadratic in the coefficients, which depend on
 coordination number, so applying it afterwards as a scalar would drop its force and virial

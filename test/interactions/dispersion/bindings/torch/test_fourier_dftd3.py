@@ -362,6 +362,30 @@ class TestEmptySystem:
 class TestNeighbourFormats:
     """Both neighbour representations, and the validation around them."""
 
+    def test_dense_and_csr_agree(self):
+        """The two public neighbour formats describe the same list, so they must agree.
+
+        Only a positive call exercises the dense argument plumbing; the rejection tests
+        below never reach the kernels.
+        """
+        system = _system("cuda:0")
+        csr = _evaluate(system, compute_virial=True)
+        dense = _evaluate(
+            system,
+            neighbor_list=None,
+            neighbor_ptr=None,
+            unit_shifts=None,
+            neighbor_matrix=system["neighbor_matrix"],
+            neighbor_matrix_shifts=system["neighbor_matrix_shifts"],
+            fill_value=system["positions"].shape[0],
+            compute_virial=True,
+        )
+        # Energy and forces are bit-identical; the virial accumulates in a different order
+        # between the two formats, which costs about one ulp.
+        torch.testing.assert_close(csr[0], dense[0], rtol=0, atol=0)
+        torch.testing.assert_close(csr[1], dense[1], rtol=0, atol=0)
+        torch.testing.assert_close(csr[2], dense[2], rtol=1e-14, atol=0)
+
     def test_rejects_both_formats(self):
         """Supplying both neighbour formats is an error."""
         system = _system("cuda:0")
@@ -532,15 +556,6 @@ class TestMeshAndUnits:
             )[0]
         )
         assert abs(actual - expected) < 1e-9 * abs(expected)
-
-    def test_rejects_uncovered_species(self):
-        """An atom the decomposition does not cover is reported, not silently zeroed."""
-        system = _system("cuda:0")
-        numbers = system["numbers"].clone()
-        numbers[0] = 7
-        system["numbers"] = numbers
-        with pytest.raises(ValueError, match="not covered by fourier_d3_params"):
-            _evaluate(system)
 
 
 @pytest.mark.gpu
@@ -734,39 +749,22 @@ class TestPrecomputedSetup:
             atol=1e-12 * float(inline[1].abs().max()),
         )
 
-    def test_enables_cuda_graph_capture(self):
-        """A CUDA graph can be captured only when the setup is precomputed.
+    def test_compilation_does_not_need_one(self):
+        """The setup is a performance cache, not a requirement for any execution mode.
 
-        ``torch.linalg.inv`` cannot be recorded into a graph, so deriving the cell inverse
-        inside the call makes ``torch.compile(mode="reduce-overhead")`` fail. This is the
-        test that pins that down; without it the failure would only appear to a user trying
-        to speed up an MD loop.
+        ``reduce-overhead`` records a CUDA graph, which is the mode that used to need a
+        precomputed setup because ``torch.linalg.inv`` could not be captured. ``inv_ex``
+        can, so the plain call has to compile and agree with eager.
         """
         system = _system("cuda:0")
-        setup = FourierD3Setup.build(system["cell"], system["params"].n_species, MESH)
-
-        def evaluate(positions):
-            return fourier_dftd3(
-                positions,
-                system["numbers"],
-                fourier_d3_params=system["params"],
-                cell=system["cell"],
-                cutoff=R_CUT,
-                mesh_dimensions=MESH,
-                neighbor_list=system["neighbor_list"],
-                neighbor_ptr=system["neighbor_ptr"],
-                unit_shifts=system["unit_shifts"],
-                setup=setup,
-                **DAMPING,
-            )
-
-        expected = evaluate(system["positions"])
+        evaluate = TestTorchCompile._callable(system)
+        eager = evaluate(system["positions"])
         compiled = torch.compile(evaluate, mode="reduce-overhead")
-        for _ in range(3):
-            actual = compiled(system["positions"])
-        np.testing.assert_allclose(
-            actual[0].cpu().numpy(), expected[0].cpu().numpy(), rtol=1e-10
-        )
+        for _ in range(3):  # capture happens on a later replay, not the first call
+            out = compiled(system["positions"])
+        torch.cuda.synchronize()
+        torch.testing.assert_close(out[0], eager[0], rtol=0, atol=0)
+        torch.testing.assert_close(out[1], eager[1], rtol=0, atol=0)
 
     def test_records_what_it_was_built_for(self):
         """The setup carries its mesh and spline order, and is used when the call omits them."""
@@ -817,7 +815,7 @@ class TestPrecomputedSetup:
         system = _system("cuda:0")
         cell = system["cell"].clone().requires_grad_(True)
         setup = FourierD3Setup.build(cell, system["params"].n_species, MESH)
-        for field in ("cell_inv_grouped", "volumes", "k_matrix", "cell"):
+        for field in ("cell_inv_grouped", "volumes", "k_matrix"):
             tensor = getattr(setup, field)
             assert not tensor.requires_grad, f"{field} retains the graph"
             assert tensor.grad_fn is None, f"{field} retains the graph"
@@ -862,36 +860,6 @@ class TestPrecomputedSetup:
         np.testing.assert_allclose(
             with_setup[0].cpu().numpy(), explicit[0].cpu().numpy(), rtol=1e-12
         )
-
-    def test_a_setup_from_another_cell_is_refused(self):
-        """The mesh transforms would come from one cell and the image shifts from another.
-
-        That is not a stale answer but an incoherent one, so it cannot be allowed to pass
-        quietly.
-        """
-        system = _system("cuda:0")
-        other = FourierD3Setup.build(
-            system["cell"] * 1.05, system["params"].n_species, MESH
-        )
-        with pytest.raises(ValueError, match="different cell"):
-            _evaluate(system, setup=other, mesh_dimensions=None)
-
-    def test_an_in_place_cell_change_is_caught(self):
-        """The recorded cell must be a snapshot, not a view of the caller's tensor.
-
-        Variable-cell dynamics updates the cell in place. If the setup merely referenced it,
-        the record would move with the mutation while the inverse cell, volumes, wave vectors
-        and moduli stayed behind, and the comparison would be a tensor against itself. The
-        stale setup then passes and the evaluation is badly wrong, not subtly so.
-        """
-        system = _system("cuda:0")
-        cell = system["cell"]
-        setup = FourierD3Setup.build(cell, system["params"].n_species, MESH)
-        assert setup.cell.data_ptr() != cell.data_ptr()
-
-        cell.mul_(1.10)
-        with pytest.raises(ValueError, match="different cell"):
-            _evaluate(system, setup=setup, mesh_dimensions=None)
 
     def test_a_setup_for_a_different_batch_is_refused(self):
         """Shape mismatches are caught without reading any device memory."""

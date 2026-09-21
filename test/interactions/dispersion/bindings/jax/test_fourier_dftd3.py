@@ -602,97 +602,26 @@ class TestNeighbourArgumentValidation:
         with pytest.raises(ValueError, match="unit_shifts is required"):
             self._call(parts, neighbor_list=targets, neighbor_ptr=pointer)
 
-    def test_a_complete_dense_call_still_works(self):
-        """The checks must not reject a valid call."""
+    def test_dense_and_csr_agree(self):
+        """The two public formats describe the same list, so they must agree.
+
+        Doubles as the positive dense call: the rejection tests above never reach the
+        kernels, so only this exercises the dense argument plumbing end to end.
+        """
         parts = _single(5.0, 0)
-        energy = self._call(
+        targets, pointer, images = self._csr(parts)
+        dense = self._call(
             parts,
             neighbor_matrix=jnp.asarray(parts["matrix"], dtype=jnp.int32),
             neighbor_matrix_shifts=jnp.asarray(parts["matrix_shifts"], dtype=jnp.int32),
-        )[0]
-        assert np.isfinite(np.asarray(energy)).all()
-
-
-@pytest.mark.gpu
-class TestUncoveredSpecies:
-    """An element missing from ``fourier_d3_params`` must not be dropped in silence.
-
-    ``species_map`` marks padding and uncovered elements alike with ``-1``, and the mesh
-    grouping treats every ``-1`` as padding, so without a check a real atom simply vanishes
-    from the sum and the energy comes back plausible but wrong.
-    """
-
-    @staticmethod
-    def _call(parts, params, numbers):
-        return fourier_dftd3(
-            jnp.asarray(parts["positions"]),
-            numbers,
-            **DAMPING,
-            fourier_d3_params=params,
-            cell=jnp.asarray(parts["cell"]),
-            cutoff=R_CUT,
-            mesh_dimensions=MESH,
-            neighbor_matrix=jnp.asarray(parts["matrix"], dtype=jnp.int32),
-            neighbor_matrix_shifts=jnp.asarray(parts["matrix_shifts"], dtype=jnp.int32),
         )
-
-    @staticmethod
-    def _partial_params():
-        """Parameters built without the last species the system actually contains."""
-        c6ab, cn_ref, species = _reference_tables()
-        max_z = c6ab.shape[0]
-        rcov = np.zeros(max_z)
-        rcov[[1, 6, 8]] = [0.6, 1.2, 1.1]
-        r4r2 = np.zeros(max_z)
-        r4r2[[1, 6, 8]] = [1.0, 1.4, 1.2]
-        return FourierD3Parameters.from_tables(
-            rcov, r4r2, c6ab, cn_ref, list(species[:-1])
-        ), int(species[-1])
-
-    def test_eager_rejects_an_uncovered_element(self):
-        """The message has to name the element so the fix is obvious."""
-        parts = _single(5.0, 0)
-        params, missing = self._partial_params()
-        numbers = np.asarray(parts["numbers"]).copy()
-        numbers[0] = missing
-        with pytest.raises(ValueError, match="not covered by fourier_d3_params"):
-            self._call(parts, params, jnp.asarray(numbers, dtype=jnp.int32))
-
-    def test_padding_is_not_mistaken_for_an_uncovered_element(self):
-        """Atomic number zero is padding by design and must still be accepted."""
-        parts = _single(5.0, 0)
-        numbers = np.asarray(parts["numbers"]).copy()
-        numbers[:2] = 0
-        energy = self._call(
-            parts, parts["params"], jnp.asarray(numbers, dtype=jnp.int32)
-        )[0]
-        assert np.isfinite(np.asarray(energy)).all()
-
-    def test_under_jit_the_result_is_poisoned_rather_than_wrong(self):
-        """``numbers`` is a tracer, so the mask cannot be read back to raise.
-
-        Returning a finite energy here would be the damaging outcome, because ``jax.jit`` is
-        the documented execution path: the caller would get a plausible number quietly
-        missing an atom. NaN is unmissable and needs no host synchronisation.
-        """
-        parts = _single(5.0, 0)
-        params, missing = self._partial_params()
-        numbers = np.asarray(parts["numbers"]).copy()
-        numbers[0] = missing
-
-        traced = jax.jit(lambda n: self._call(parts, params, n))
-        energy, forces = traced(jnp.asarray(numbers, dtype=jnp.int32))[:2]
-        assert np.isnan(np.asarray(energy)).all()
-        assert np.isnan(np.asarray(forces)).all()
-
-    def test_a_covered_system_is_untouched_under_jit(self):
-        """The guard must cost nothing when every element is present."""
-        parts = _single(5.0, 0)
-        numbers = jnp.asarray(parts["numbers"], dtype=jnp.int32)
-        traced = jax.jit(lambda n: self._call(parts, parts["params"], n))
-        energy = traced(numbers)[0]
-        eager = self._call(parts, parts["params"], numbers)[0]
-        np.testing.assert_allclose(np.asarray(energy), np.asarray(eager), rtol=1e-12)
+        csr = self._call(
+            parts, neighbor_list=targets, neighbor_ptr=pointer, unit_shifts=images
+        )
+        for name, a, b in zip(("energy", "forces"), dense, csr, strict=True):
+            np.testing.assert_allclose(
+                np.asarray(a), np.asarray(b), rtol=1e-14, err_msg=f"{name} differs"
+            )
 
 
 @pytest.mark.gpu

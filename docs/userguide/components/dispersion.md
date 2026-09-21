@@ -1170,9 +1170,16 @@ for step in trajectory:                      # constant-volume dynamics
 The saving is largest on small systems, where the per-call setup is a bigger share of the
 total, and shrinks as the mesh and spread work start to dominate.
 
-It is also **required for `torch.compile(mode="reduce-overhead")`**: that mode records a CUDA
-graph, and `torch.linalg.inv` cannot be recorded into one. Without a precomputed setup the
-compilation fails rather than falling back.
+The setup is a cache, not a requirement: every execution mode, including
+`torch.compile(mode="reduce-overhead")`, works without one.
+
+```{important}
+Keeping the setup consistent with the cell is **yours to do**, as with the PME and multipole
+caches. `validate_for` checks batch size, species count, precision, device and mesh --- all
+metadata, so it works under compilation --- but it does not compare cell values, because that
+would read device memory and graph capture forbids it. A setup built for a different cell
+mixes two cells in one evaluation with nothing raised. Rebuild it whenever the cell changes.
+```
 
 **`torch.compile` adds a little more.** It traces without graph breaks, but the runtime is
 dominated by Warp kernels and FFTs, which compilation cannot fuse into, so the remaining

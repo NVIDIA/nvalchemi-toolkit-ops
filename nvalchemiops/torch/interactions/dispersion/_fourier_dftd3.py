@@ -164,6 +164,12 @@ class FourierD3Parameters:
             raise ValueError(
                 f"eigs has rank {self.eigs.shape[0]} but v_q has rank {self.v_q.shape[2]}."
             )
+        if self.rcov.shape != self.species_map.shape:
+            raise ValueError(
+                f"rcov and species_map are both indexed by atomic number, so they must "
+                f"have the same length, got {self.rcov.shape[0]} and "
+                f"{self.species_map.shape[0]}."
+            )
         if self.sqrt_q.shape[0] != self.cn_ref.shape[0]:
             raise ValueError(
                 f"sqrt_q covers {self.sqrt_q.shape[0]} species but cn_ref covers "
@@ -637,15 +643,17 @@ def _fd3_finalise_op(
 class FourierD3Setup:
     """Cell- and mesh-derived quantities that do not change from step to step.
 
-    The cell inverse cannot be recorded into a CUDA graph, so precomputing it is what makes
-    ``torch.compile(mode="reduce-overhead")`` usable, not only an optimisation.
+    An optional performance cache: it saves a matrix inversion and the spline moduli per call.
+    ``fourier_dftd3`` works without it, including under ``torch.compile`` and CUDA graph
+    capture.
 
-    Reuse is valid only while the cell and the mesh are unchanged: a whole trajectory under
-    constant volume, one step under variable cell. :meth:`validate_for` enforces this, but
-    under ``torch.compile`` or graph capture it cannot compare cell *values* -- reading a
-    tensor back would synchronise, which capture forbids. **There the contract is the
-    caller's:** a mismatch then yields an answer mixing two cells with nothing raised.
-    Shape, dtype and device checks still run, being metadata only.
+    **Keeping it consistent with the cell is the caller's responsibility**, as with the PME
+    and multipole caches. The derived quantities stand in for the cell everywhere except the
+    Cartesian image shifts, which still come from the cell passed to the call, so a stale
+    setup mixes two cells in one evaluation with nothing raised. Rebuild it whenever the cell
+    changes. :meth:`validate_for` checks only metadata -- batch size, species count, dtype,
+    device and mesh -- which is cheap and works under compilation; it does not compare cell
+    values.
 
     Attributes
     ----------
@@ -671,7 +679,6 @@ class FourierD3Setup:
     moduli_z: torch.Tensor
     mesh_dimensions: tuple[int, int, int]
     spline_order: int
-    cell: torch.Tensor
 
     @classmethod
     def build(
@@ -734,10 +741,6 @@ class FourierD3Setup:
             moduli_z=moduli[2],
             mesh_dimensions=(mesh_nx, mesh_ny, mesh_nz),
             spline_order=spline_order,
-            # An independent snapshot, not a view: ``contiguous()`` returns the input
-            # unchanged when it already is, so the record would alias the caller's tensor and
-            # ``validate_for`` would compare it against itself.
-            cell=cells.clone(),
         )
 
     def validate_for(self, cells, n_species, mesh_dimensions, mesh_spacing=None):
@@ -748,10 +751,9 @@ class FourierD3Setup:
         does not match therefore does not produce a stale answer so much as an incoherent
         one, mixing two cells in a single evaluation.
 
-        Shapes and types are checked always: they are metadata, so reading them neither
-        synchronises nor breaks a compiled graph. Comparing the cell itself has to read
-        device memory, so it is skipped while compiling and during graph capture -- there
-        the contract is the caller's to keep, and it is stated in the class docstring.
+        Metadata only -- batch size, species count, dtype, device and mesh. Cell *values* are
+        not compared: that would read device memory, which graph capture forbids, and keeping
+        the setup consistent with the cell is the caller's contract.
         """
         if self.volumes.shape[0] != cells.shape[0]:
             raise ValueError(
@@ -765,9 +767,9 @@ class FourierD3Setup:
                 f"call needs {expected} ({cells.shape[0]} system(s) x {n_species} "
                 f"species). Rebuild it for these parameters."
             )
-        if self.cell.dtype != cells.dtype or self.cell.device != cells.device:
+        if self.volumes.dtype != cells.dtype or self.volumes.device != cells.device:
             raise ValueError(
-                f"setup is {self.cell.dtype} on {self.cell.device} but the call is "
+                f"setup is {self.volumes.dtype} on {self.volumes.device} but the call is "
                 f"{cells.dtype} on {cells.device}. Rebuild it for this precision "
                 f"and device."
             )
@@ -788,16 +790,6 @@ class FourierD3Setup:
                 "dimensions yourself -- ceil(length / spacing) per axis, rounded up to a "
                 "size whose only prime factors are 2, 3, 5 and 7 -- and pass those to "
                 "FourierD3Setup.build, which takes mesh_dimensions only."
-            )
-        if (
-            not torch.compiler.is_compiling()
-            and not _capturing()
-            and not torch.equal(self.cell, cells)
-        ):
-            raise ValueError(
-                "setup was built for a different cell. Its inverse cell, volumes, wave "
-                "vectors and spline moduli would be combined with image shifts taken from "
-                "the cell given here. Rebuild it whenever the cell changes."
             )
 
 
@@ -903,10 +895,11 @@ def fourier_dftd3(
         System index per atom. Atoms must be grouped by system.
     setup : FourierD3Setup, optional
         Cell- and mesh-derived quantities from :meth:`FourierD3Setup.build`, reused across
-        steps. Saves a matrix inversion and a set of spline moduli per call, and is required
-        for ``torch.compile(mode="reduce-overhead")`` because the cell inverse cannot be
-        recorded into a CUDA graph. It must have been built for this cell, batch size,
-        species count, precision and device; a mismatch raises. It also supplies the mesh
+        steps. A performance cache only: it saves a matrix inversion and a set of spline
+        moduli per call, and the call works without it under eager, ``torch.compile`` and
+        CUDA graph capture alike. Batch size, species count, precision, device and mesh are
+        checked; **keeping it consistent with the cell is yours to do**, since comparing cell
+        values would read device memory. It also supplies the mesh
         and the spline order, so ``mesh_dimensions`` and ``mesh_spacing`` may be omitted and
         the usual "exactly one of them" rule does not apply. A ``mesh_dimensions`` that
         disagrees with the setup raises, and so does any ``mesh_spacing``, rather than either
@@ -1027,17 +1020,9 @@ def fourier_dftd3(
             batch_idx = batch_idx.clamp(0, num_systems - 1)
 
     params = fourier_d3_params.to(device=positions.device, dtype=positions.dtype)
+    # Species coverage is a caller precondition, as in ``dftd3``: every element present must
+    # be in the decomposition. Checking it here would read device memory on every step.
     species_index = params.species_map[numbers.long()].to(torch.int32)
-    # Reading the answer back synchronises, which breaks a compile graph and is illegal
-    # under capture, so this is skipped in both. Z=0 is padding; only a real uncovered
-    # element is an error.
-    uncovered = (species_index < 0) & (numbers != 0)
-    if not torch.compiler.is_compiling() and not _capturing() and bool(uncovered.any()):
-        missing = torch.unique(numbers[uncovered]).tolist()
-        raise ValueError(
-            f"Atomic numbers {missing} are not covered by fourier_d3_params. Rebuild the "
-            f"decomposition with every species present in the system."
-        )
 
     if setup is not None:
         setup.validate_for(cells, params.n_species, mesh_dimensions, mesh_spacing)

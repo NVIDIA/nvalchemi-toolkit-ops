@@ -61,11 +61,11 @@ required by the kernels.
     :members:
     :undoc-members:
 
-:class:`FourierD3Setup` is a different kind of object: a cache of cell- and mesh-derived
-quantities, optional for correctness but required for
-``torch.compile(mode="reduce-overhead")``, since ``torch.linalg.inv`` cannot be recorded into
-a CUDA graph. It is tied to the cell, batch size, species count, precision and device it was
-built for, and refuses any call that does not match.
+:class:`FourierD3Setup` is a different kind of object: an optional cache of cell- and
+mesh-derived quantities, saving a matrix inversion and the spline moduli per call. It is not
+required for any execution mode. Batch size, species count, precision, device and mesh are
+checked on every call; keeping it consistent with the cell is the caller's responsibility, as
+with the PME and multipole caches.
 
 .. autoclass:: nvalchemiops.torch.interactions.dispersion.FourierD3Setup
     :members:

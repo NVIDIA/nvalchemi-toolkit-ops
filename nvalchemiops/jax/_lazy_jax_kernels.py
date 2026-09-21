@@ -106,20 +106,7 @@ def make_jax_kernel_factory(
 ) -> _LazyJaxKernels:
     """Return a lazy mapping for kernels built on demand by ``wp_kernel_factory``.
 
-    Parameters
-    ----------
-    wp_kernel_factory : Callable
-        Takes a Warp scalar dtype, returns one specialized :class:`warp.Kernel`.
-    num_outputs : int
-        Number of output arrays the kernel returns.
-    in_out_argnames : sequence of str, optional
-        Names of in-place output arguments.
-    block_dim : int, optional
-        Threads per block.
-
-    Returns
-    -------
-    _LazyJaxKernels
-        Subscript with ``jnp.float32`` / ``jnp.float64``.
+    As :func:`make_jax_kernels`, but ``wp_kernel_factory`` takes a Warp scalar dtype and
+    returns the specialized :class:`warp.Kernel` for it.
     """
     return _LazyJaxKernels(wp_kernel_factory, num_outputs, in_out_argnames, block_dim)
