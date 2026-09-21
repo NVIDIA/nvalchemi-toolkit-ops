@@ -610,8 +610,8 @@ def test_torch_cluster_tile_neighbor_list_coo_pair_outputs_smoke():
     assert torch.all(distances[:npairs] > 0)
 
 
-def test_torch_cluster_tile_neighbor_list_coo_pair_outputs_require_buffers():
-    """COO pair outputs require caller-owned flat output buffers."""
+def test_torch_cluster_tile_neighbor_list_coo_pair_outputs_allocate_buffers():
+    """COO geometry is returned exactly when output buffers are omitted."""
     if not torch.cuda.is_available():
         pytest.skip(
             "torch cluster_tile COO buffer-validation test constructs CUDA inputs"
@@ -623,19 +623,26 @@ def test_torch_cluster_tile_neighbor_list_coo_pair_outputs_require_buffers():
     positions = torch.rand(natom, 3, dtype=torch.float32, device=device)
     cell = torch.eye(3, dtype=torch.float32, device=device) * 10.0
 
-    with pytest.raises(ValueError, match="neighbor_vectors is required"):
-        cluster_tile_neighbor_list(
-            positions,
-            cutoff=10.0,
-            cell=cell,
-            max_neighbors=natom,
-            format="coo",
-            return_vectors=True,
-        )
+    neighbor_list, _neighbor_ptr, shifts, vectors = cluster_tile_neighbor_list(
+        positions,
+        cutoff=10.0,
+        cell=cell,
+        max_neighbors=natom,
+        format="coo",
+        return_vectors=True,
+    )
+
+    expected_vectors = (
+        positions[neighbor_list[1].long()]
+        - positions[neighbor_list[0].long()]
+        + shifts.to(positions.dtype) @ cell
+    )
+    assert vectors.shape == (neighbor_list.shape[1], 3)
+    torch.testing.assert_close(vectors, expected_vectors)
 
 
 def test_torch_batch_cluster_tile_neighbor_list_coo_pair_outputs_smoke():
-    """Batched Torch ``format='coo'`` fills flat pair-output buffers."""
+    """Batched COO returns exact geometry and fills supplied capacity buffers."""
     if not torch.cuda.is_available():
         pytest.skip(
             "torch batch_cluster_tile COO pair-output smoke requires CUDA tensors"
@@ -669,7 +676,13 @@ def test_torch_batch_cluster_tile_neighbor_list_coo_pair_outputs_smoke():
     vectors = torch.zeros((max_pairs, 3), dtype=torch.float32, device=device)
     distances = torch.zeros(max_pairs, dtype=torch.float32, device=device)
 
-    neighbor_list, _neighbor_ptr, _shifts = batch_cluster_tile_neighbor_list(
+    (
+        neighbor_list,
+        _neighbor_ptr,
+        _shifts,
+        exact_distances,
+        exact_vectors,
+    ) = batch_cluster_tile_neighbor_list(
         positions,
         cutoff=3.5,
         cell_batch=cell_batch,
@@ -685,9 +698,15 @@ def test_torch_batch_cluster_tile_neighbor_list_coo_pair_outputs_smoke():
 
     npairs = int(neighbor_list.shape[1])
     assert npairs > 0
-    assert torch.isfinite(vectors[:npairs]).all()
-    assert torch.isfinite(distances[:npairs]).all()
-    assert torch.all(distances[:npairs] > 0)
+    assert exact_vectors.shape == (npairs, 3)
+    assert exact_distances.shape == (npairs,)
+    torch.testing.assert_close(exact_vectors, vectors[:npairs])
+    torch.testing.assert_close(exact_distances, distances[:npairs])
+    assert exact_vectors.data_ptr() != vectors.data_ptr()
+    assert exact_distances.data_ptr() != distances.data_ptr()
+    assert torch.isfinite(exact_vectors).all()
+    assert torch.isfinite(exact_distances).all()
+    assert torch.all(exact_distances > 0)
 
 
 @wp.func
