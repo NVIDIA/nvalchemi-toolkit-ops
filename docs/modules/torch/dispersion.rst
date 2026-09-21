@@ -30,6 +30,22 @@ automatically dispatches to the appropriate kernels based on which format is pro
 
 .. autofunction:: nvalchemiops.torch.interactions.dispersion.dftd3
 
+FourierD3: Particle-Mesh DFT-D3
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Evaluates a periodic particle-mesh variant of DFT-D3(BJ) in :math:`O(N \log N)`, using the
+same damped dispersion lattice sum with a modified coordination-number model, and with no
+pair cutoff on the dispersion sum. Both neighbour formats are supported, as above.
+
+Two differences from :func:`dftd3` are worth noting before use:
+
+- ``cell`` is **required**. FourierD3 evaluates a periodic sum; there is no open-boundary
+  path. Molecules in vacuum should continue to use :func:`dftd3`.
+- ``cutoff`` has **no default**, and must equal the radius the neighbour list was built
+  with. The coordination-number function is constructed to reach zero exactly there.
+
+.. autofunction:: nvalchemiops.torch.interactions.dispersion.fourier_dftd3
+
 Data Structures
 ---------------
 
@@ -38,6 +54,20 @@ for convenience---the ``dataclass`` will validate shapes and keys for parameters
 required by the kernels.
 
 .. autoclass:: nvalchemiops.torch.interactions.dispersion.D3Parameters
+    :members:
+    :undoc-members:
+
+.. autoclass:: nvalchemiops.torch.interactions.dispersion.FourierD3Parameters
+    :members:
+    :undoc-members:
+
+:class:`FourierD3Setup` is a different kind of object: an optional cache of cell- and
+mesh-derived quantities, saving a matrix inversion and the spline moduli per call. It is not
+required for any execution mode. Batch size, species count, precision, device and mesh are
+checked on every call; keeping it consistent with the cell is the caller's responsibility, as
+with the PME and multipole caches.
+
+.. autoclass:: nvalchemiops.torch.interactions.dispersion.FourierD3Setup
     :members:
     :undoc-members:
 
@@ -59,3 +89,12 @@ Periodic Boundary Conditions (PBC)
 
 .. autofunction:: nvalchemiops.torch.interactions.dispersion._dftd3._dftd3_matrix_pbc_op
 .. autofunction:: nvalchemiops.torch.interactions.dispersion._dftd3._dftd3_pbc_op
+
+FourierD3 Operators
+^^^^^^^^^^^^^^^^^^^
+
+.. autofunction:: nvalchemiops.torch.interactions.dispersion._fourier_dftd3._fd3_prologue_op
+.. autofunction:: nvalchemiops.torch.interactions.dispersion._fourier_dftd3._fd3_spread_op
+.. autofunction:: nvalchemiops.torch.interactions.dispersion._fourier_dftd3._fd3_kspace_op
+.. autofunction:: nvalchemiops.torch.interactions.dispersion._fourier_dftd3._fd3_gather_op
+.. autofunction:: nvalchemiops.torch.interactions.dispersion._fourier_dftd3._fd3_finalise_op

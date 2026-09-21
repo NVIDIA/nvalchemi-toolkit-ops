@@ -23,26 +23,6 @@ import jax
 import jax.numpy as jnp
 
 
-def _normalize_dtype(dtype):
-    """Normalize dtype for kernel dictionary lookup.
-
-    Parameters
-    ----------
-    dtype : dtype-like
-        Input dtype from a JAX array.
-
-    Returns
-    -------
-    jnp.float32 or jnp.float64
-        Normalized JAX dtype for kernel lookup.
-    """
-    if dtype == jnp.float32 or str(dtype) == "float32":
-        return jnp.float32
-    if dtype == jnp.float64 or str(dtype) == "float64":
-        return jnp.float64
-    raise ValueError(f"Unsupported dtype: {dtype}")
-
-
 def _prepare_cell(cell: jax.Array) -> tuple[jax.Array, int]:
     """Normalize a cell array to shape ``(B, 3, 3)``."""
     if cell.ndim == 2:

@@ -42,7 +42,8 @@
   calling them again is how you restart. Every field stays reachable by name,
   so you can equally build a state from arrays you already own and check it
   with `validate()`, which compares shapes, dtypes and device without touching
-  the GPU; each step then only verifies that its own inputs are compatible. A step still allocates nothing, so it stays capturable in a CUDA
+  the GPU; each step then only verifies that its own inputs are compatible.
+  A step still allocates nothing, so it stays capturable in a CUDA
   graph. In JAX both classes are registered pytrees and the step returns a new
   state functionally, so one `donate_argnums` entry donates every field.
 - Both coordinate-only and variable-cell relaxation are supported.
@@ -58,6 +59,30 @@
   as the cell deforms. Because the extended topology is built with the generic
   batch utilities rather than by a dedicated allocator, ragged batches whose
   systems have different atom counts work the same way uniform ones do.
+- Added periodic `fourier_dftd3` APIs for Torch and JAX, returning energy, forces and optional
+  virial for batched CSR or dense neighbor lists in float32 and float64. `cell` is required,
+  and `cutoff` has no default and must equal the radius the neighbor list was built with.
+- Added `FourierD3Parameters` for reusable C6 decomposition, with
+  `FourierD3Parameters.uncovered_species` to check the coverage precondition, and Torch
+  `FourierD3Setup` as an optional cache of cell and mesh preprocessing. The setup is a
+  performance cache, not a requirement for any execution mode; keeping it consistent with
+  the cell is the caller's responsibility, as with the PME and multipole caches.
+- Added `rank_chunk_size` to bound reciprocal-mesh workspace at the cost of additional FFT
+  passes.
+- Added multi-channel B-spline Warp launchers used by FourierD3.
+
+### Changed
+
+- Raised the minimum `warp-lang` requirement to 1.16.0. FourierD3's JAX bindings pass
+  `block_dim` to `jax_kernel`, which Warp added in 1.16.0.
+
+### Notes
+
+- FourierD3 uses a modified coordination-number function that reaches zero at the neighbour
+  list cutoff, so its coordination numbers do not depend on the list used to build them.
+  Results therefore differ slightly from `dftd3`. `rcov` follows the same convention as
+  `dftd3`; pass both the same table.
+
 
 ## v0.4.1 - 2026-08-03
 

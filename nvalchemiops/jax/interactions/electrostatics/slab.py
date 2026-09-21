@@ -41,111 +41,109 @@ from nvalchemiops.interactions.electrostatics.slab_kernels import (
     _slab_precompute_geometry_kernel_overload,
     _slab_reduce_moments_kernel_overload,
 )
-from nvalchemiops.jax.interactions.electrostatics._lazy_jax_kernels import (
-    _make_jax_kernels,
-)
+from nvalchemiops.jax._lazy_jax_kernels import make_jax_kernels
 from nvalchemiops.jax.interactions.electrostatics._utils import (
     _apply_energy_reduction,
     _build_electrostatic_result,
-    _normalize_dtype,
     _prepare_cell,
     _validate_energy_reduction,
 )
+from nvalchemiops.jax.types import normalize_float_dtype
 
 __all__ = ["compute_slab_correction"]
 
 
-_jax_slab_reduce_moments = _make_jax_kernels(
+_jax_slab_reduce_moments = make_jax_kernels(
     _slab_reduce_moments_kernel_overload,
     3,
     ["mz", "mz2", "qtotal"],
 )
 
-_jax_slab_precompute_geometry = _make_jax_kernels(
+_jax_slab_precompute_geometry = make_jax_kernels(
     _slab_precompute_geometry_kernel_overload,
     4,
     ["slab_axis", "slab_normal", "slab_volume", "slab_height_sq"],
 )
 
-_jax_slab_correction_energy = _make_jax_kernels(
+_jax_slab_correction_energy = make_jax_kernels(
     _slab_correction_energy_kernel_overload,
     1,
     ["energy_out"],
 )
 
-_jax_slab_correction_energy_forces = _make_jax_kernels(
+_jax_slab_correction_energy_forces = make_jax_kernels(
     _slab_correction_energy_forces_kernel_overload,
     2,
     ["energy_out", "forces"],
 )
 
-_jax_slab_correction_energy_forces_virial = _make_jax_kernels(
+_jax_slab_correction_energy_forces_virial = make_jax_kernels(
     _slab_correction_energy_forces_virial_kernel_overload,
     3,
     ["energy_out", "forces", "virial"],
 )
 
-_jax_slab_correction_energy_forces_charge_grad = _make_jax_kernels(
+_jax_slab_correction_energy_forces_charge_grad = make_jax_kernels(
     _slab_correction_energy_forces_charge_grad_kernel_overload,
     3,
     ["energy_out", "forces", "charge_grads"],
 )
 
-_jax_slab_correction_energy_forces_charge_grad_virial = _make_jax_kernels(
+_jax_slab_correction_energy_forces_charge_grad_virial = make_jax_kernels(
     _slab_correction_energy_forces_charge_grad_virial_kernel_overload,
     4,
     ["energy_out", "forces", "charge_grads", "virial"],
 )
 
-_jax_slab_correction_energy_charge_grad = _make_jax_kernels(
+_jax_slab_correction_energy_charge_grad = make_jax_kernels(
     _slab_correction_energy_charge_grad_kernel_overload,
     2,
     ["energy_out", "charge_grads"],
 )
 
-_jax_slab_correction_energy_charge_grad_virial = _make_jax_kernels(
+_jax_slab_correction_energy_charge_grad_virial = make_jax_kernels(
     _slab_correction_energy_charge_grad_virial_kernel_overload,
     3,
     ["energy_out", "charge_grads", "virial"],
 )
 
-_jax_slab_correction_energy_virial = _make_jax_kernels(
+_jax_slab_correction_energy_virial = make_jax_kernels(
     _slab_correction_energy_virial_kernel_overload,
     2,
     ["energy_out", "virial"],
 )
 
-_jax_slab_correction_backward_atoms = _make_jax_kernels(
+_jax_slab_correction_backward_atoms = make_jax_kernels(
     _slab_correction_backward_atoms_kernel_overload,
     3,
     ["grad_positions", "grad_charges", "grad_normal"],
 )
 
-_jax_slab_correction_backward_cell = _make_jax_kernels(
+_jax_slab_correction_backward_cell = make_jax_kernels(
     _slab_correction_backward_cell_kernel_overload,
     1,
     ["grad_cell"],
 )
 
-_jax_slab_directional_geometry = _make_jax_kernels(
+_jax_slab_directional_geometry = make_jax_kernels(
     _slab_directional_geometry_kernel_overload,
     3,
     ["dnormal", "dvolume", "dheight_sq"],
 )
 
-_jax_slab_directional_moments = _make_jax_kernels(
+_jax_slab_directional_moments = make_jax_kernels(
     _slab_directional_moments_kernel_overload,
     3,
     ["dmz", "dmz2", "dqtotal"],
 )
 
-_jax_slab_correction_double_backward_atoms = _make_jax_kernels(
+_jax_slab_correction_double_backward_atoms = make_jax_kernels(
     _slab_correction_double_backward_atoms_kernel_overload,
     4,
     ["grad_positions", "grad_charges", "grad_normal", "h_grad_normal"],
 )
 
-_jax_slab_correction_double_backward_cell = _make_jax_kernels(
+_jax_slab_correction_double_backward_cell = make_jax_kernels(
     _slab_correction_double_backward_cell_kernel_overload,
     1,
     ["grad_cell"],
@@ -194,7 +192,7 @@ def _slab_correction_energy_reference(
     batch_idx: jax.Array | None = None,
 ) -> jax.Array:
     """Compute slab energies with JAX ops for reference checks."""
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     positions_cast = positions.astype(dtype)
     charges_cast = charges.astype(dtype)
     cell_cast, num_systems = _prepare_cell(cell.astype(dtype))
@@ -299,7 +297,7 @@ def _slab_correction_energy_kernel_value(
     batch_idx: jax.Array | None = None,
 ) -> jax.Array:
     """Compute slab energies with the shared Warp FFI kernel."""
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     positions_cast = positions.astype(dtype)
     charges_cast = charges.astype(dtype)
     cell_cast, num_systems = _prepare_cell(cell.astype(dtype))
@@ -361,7 +359,7 @@ def _slab_energy_derivative_values(
     batch_idx: jax.Array | None = None,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Compute literal slab ``(dE/dR, dE/dq, dE/dcell)`` with Warp FFI kernels."""
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     positions_cast = positions.astype(dtype)
     charges_cast = charges.astype(dtype)
     cell_cast, num_systems = _prepare_cell(cell.astype(dtype))
@@ -463,7 +461,7 @@ def _slab_energy_derivatives_jvp(
     t_positions, t_charges, t_cell, _t_pbc, _t_batch_idx = tangents
 
     primal_out = _slab_energy_derivatives(positions, charges, cell, pbc, batch_idx)
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     tpos = _tangent_or_zeros(t_positions, positions, dtype=dtype)
     tq = _tangent_or_zeros(t_charges, charges, dtype=charges.dtype)
     tcell = _tangent_or_zeros(t_cell, cell, dtype=cell.dtype)
@@ -496,7 +494,7 @@ def _slab_energy_hvp_raw(
     batch_idx: jax.Array | None,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Evaluate slab Hessian-vector products from analytic Warp kernels."""
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     positions_cast = positions.astype(dtype)
     charges_cast = charges.astype(dtype)
     cell_cast, num_systems = _prepare_cell(cell.astype(dtype))
@@ -687,7 +685,7 @@ def _slab_correction_energy_jvp_rule(
     t_positions, t_charges, t_cell, _t_pbc, _t_batch_idx = tangents
 
     primal_out = _slab_correction_energy_jvp(positions, charges, cell, pbc, batch_idx)
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     tpos = _tangent_or_zeros(t_positions, positions, dtype=dtype)
     tq = _tangent_or_zeros(t_charges, charges, dtype=charges.dtype)
     tcell = _tangent_or_zeros(t_cell, cell, dtype=cell.dtype)
@@ -731,7 +729,7 @@ def _compute_slab_correction_impl(
     Implementation for :func:`compute_slab_correction`. The public wrapper
     applies the ``energy_reduction`` layout after this function returns.
     """
-    dtype = _normalize_dtype(positions.dtype)
+    dtype = normalize_float_dtype(positions.dtype)
     positions_cast = positions.astype(dtype)
     charges_cast = charges.astype(dtype)
     cell_cast, num_systems = _prepare_cell(cell.astype(dtype))

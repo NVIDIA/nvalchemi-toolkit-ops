@@ -77,6 +77,37 @@ def get_warp_device_from_array(arr: jax.Array) -> str:
     return "cuda"
 
 
+def normalize_float_dtype(dtype, origin: str = "input"):
+    """Resolve a floating dtype to the canonical key used for kernel dispatch.
+
+    Kernel overloads are held in dicts keyed by ``jnp.float32`` / ``jnp.float64``. A dtype
+    arriving as a NumPy dtype, a string or a JAX dtype has to reduce to one of those two
+    before it can be looked up.
+
+    Parameters
+    ----------
+    dtype : Any
+        Dtype to resolve.
+    origin : str, default='input'
+        What the dtype came from, used in the error message.
+
+    Returns
+    -------
+    type
+        ``jnp.float32`` or ``jnp.float64``.
+
+    Raises
+    ------
+    ValueError
+        If the dtype is not one of the two supported floating types.
+    """
+    if dtype == jnp.float32 or str(dtype) == "float32":
+        return jnp.float32
+    if dtype == jnp.float64 or str(dtype) == "float64":
+        return jnp.float64
+    raise ValueError(f"Unsupported dtype for {origin}: {dtype}")
+
+
 def get_wp_dtype(dtype: jnp.dtype):
     """Get the warp dtype for a given JAX dtype.
 

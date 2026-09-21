@@ -27,11 +27,33 @@
   operation-specific scratch bundles. PyTorch bindings allocate and retain this
   scratch internally, so their public APIs are unchanged; CPU direct-Warp paths
   do not require scratch.
+- Raised the minimum `warp-lang` requirement to 1.16.0. FourierD3's JAX bindings pass
+  `block_dim` to `jax_kernel`, which Warp added in 1.16.0.
 - PyTorch segmented operations now accept int64 segment indices whose values
   fit in int32; these inputs are converted to int32 internally.
 
 ### Added
 
+- Added periodic `fourier_dftd3` APIs for Torch and JAX, returning energy, forces and
+  optional virial for batched CSR or dense neighbor lists in float32 and float64. `cell`
+  is required, and `cutoff` has no default and must equal the radius the neighbor list was
+  built with.
+- Added `FourierD3Parameters` for reusable C6 decomposition, with
+  `FourierD3Parameters.uncovered_species` to check the coverage precondition, and Torch
+  `FourierD3Setup` as an optional cache of cell and mesh preprocessing. The setup is a
+  performance cache, not a requirement for any execution mode; keeping it consistent with
+  the cell is the caller's responsibility, as with the PME and multipole caches.
+- Added `rank_chunk_size` to bound reciprocal-mesh workspace at the cost of additional FFT
+  passes.
+- Added multi-channel B-spline Warp launchers used by FourierD3.
+- Torch and JAX Ewald now expose caller-retained reciprocal Miller topology via
+  `generate_ewald_miller_indices(...)` and
+  `k_vectors_from_miller_indices(...)`. Full `ewald_summation(...)` accepts
+  keyword-only `miller_indices=` and materializes Cartesian reciprocal vectors
+  from the current cell. Both backends provide
+  `ewald_reciprocal_space_from_miller_indices(...)` for the reciprocal
+  component. This avoids rebuilding the integer index grid while preserving
+  the reciprocal vectors' dependence on the current cell.
 - `TileBufferOverflow` reports how many cluster-tile pairs were required, how
   many the buffer could hold, and which system overflowed a segmented batch.
   Torch `cluster_tile_neighbor_list` and JAX `build_cluster_tile_list`,
@@ -142,6 +164,13 @@
   `ewald_summation(k_vectors=...)` semantics are unchanged.
 - `neighbor_list` (Torch and JAX) now annotates `**kwargs` as `Any` instead of
   `dict`, so type checkers no longer reject valid keyword options.
+
+### Notes
+
+- FourierD3 uses a modified coordination-number function that reaches zero at the neighbour
+  list cutoff, so its coordination numbers do not depend on the list used to build them.
+  Results therefore differ slightly from `dftd3`. `rcov` follows the same convention as
+  `dftd3`; pass both the same table.
 
 ## 0.4.1 - 2026-08-03
 
