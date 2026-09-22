@@ -1631,9 +1631,22 @@ def naive_neighbor_list(
     max_shifts_per_system : int, optional
         Maximum per-system shift count.
         Pass in a pre-computed value to avoid recomputation for PBC systems.
+    rebuild_flags : jax.Array, shape () or (1,), dtype=bool, optional
+        Device-side selective-rebuild flag. When false, supplied topology
+        buffers are preserved. Not supported with compact partial rows,
+        pair outputs, or ``strategy="tile"``.
     return_neighbor_list : bool, optional - default = False
         If True, convert the neighbor matrix to a neighbor list (idx_i, idx_j) format by
         creating a mask over the fill_value, which can incur a performance penalty.
+    coo_capacity : int, optional
+        Static COO capacity. With ``return_neighbor_list=True``, returns padded
+        fixed-size COO arrays plus raw required row counts and a scalar
+        metadata-validity flag. If omitted, returns compact data-dependent COO.
+    return_distances : bool, default=False
+        Append differentiable per-pair distances. Uses the scalar path.
+    return_vectors : bool, default=False
+        Append differentiable per-pair displacement vectors. Uses the scalar
+        path.
     neighbor_distances : jax.Array, shape (num_rows, max_neighbors), optional
         Pre-shaped distance output for ``return_distances=True`` or ``pair_fn``.
     neighbor_vectors : jax.Array, shape (num_rows, max_neighbors, 3), optional
@@ -1643,6 +1656,16 @@ def naive_neighbor_list(
         maps to atom ``target_indices[r]``. In COO output, the first row holds
         compact row ids. User buffers must be compact-row shaped, not full
         atom-row shaped. Values must be in bounds; repeated rows are allowed.
+    pair_fn : wp.Function, optional
+        Module-scope Warp pair potential evaluated during the scalar neighbor
+        search. Requires ``pair_params`` and returns forward-only energy and
+        force outputs.
+    pair_params : jax.Array, shape (total_atoms, K), optional
+        Per-atom parameters forwarded to ``pair_fn``.
+    pair_energies : jax.Array, shape (num_rows, max_neighbors), optional
+        Pre-shaped energy output buffer for ``pair_fn``.
+    pair_forces : jax.Array, shape (num_rows, max_neighbors, 3), optional
+        Pre-shaped force output buffer for ``pair_fn``.
     wrap_positions : bool, default=True
         If True, wrap input positions into the primary cell before
         neighbor search. Set to False when positions are already
@@ -1666,29 +1689,14 @@ def naive_neighbor_list(
         support ``rebuild_flags``. When neither result overflows capacity, tile
         and scalar paths produce identical stored pair *multisets* (per-row
         ordering may differ).
-    inv_cell : jax.Array, shape (1, 3, 3), dtype matches positions, optional
-        Inverse cell matrix consumed by the wrap kernel. Only used when
-        ``pbc`` is provided and ``wrap_positions=True``. Pass in a
-        precomputed value to avoid a per-call ``jnp.linalg.inv`` and to
-        keep the input pointer stable for ``graph_mode="warp"`` graph
-        replay (omitting it forces cache-miss-per-call on the wrapped
-        path). If None, computed from ``cell`` each call. The shape must
-        be exactly ``(1, 3, 3)`` (matching the internally-normalized
-        ``cell``); a ``(3, 3)`` array would silently allocate a different
-        buffer per call and break ``graph_mode="warp"`` cache replay,
-        which is why a mismatched shape now raises ``ValueError``.
-    positions_wrapped : jax.Array, shape (total_atoms, 3), dtype matches positions, optional
-        Scratch buffer the wrap kernel writes into. Pass in a pre-shaped
-        array to keep the buffer pointer stable across ``graph_mode="warp"``
-        calls (required for graph-replay cache hits on the wrapped path).
-        If None, allocated fresh each call. A mismatched shape or dtype
-        raises ``ValueError`` to prevent silent graph-replay cache misses.
-    per_atom_cell_offsets : jax.Array, shape (total_atoms, 3), dtype=int32, optional
-        Scratch buffer the wrap kernel uses to record per-atom cell offsets.
-        Pass in a pre-shaped array to keep the buffer pointer stable for
-        ``graph_mode="warp"`` replay. If None, allocated fresh each call.
-        A mismatched shape or dtype raises ``ValueError`` to prevent
-        silent graph-replay cache misses.
+    inv_cell_buffer : jax.Array, shape (1, 3, 3), optional
+        Precomputed inverse-cell buffer used by wrapped PBC calls.
+    positions_wrapped_buffer : jax.Array, shape (total_atoms, 3), optional
+        Scratch buffer written by the position-wrapping kernel.
+    per_atom_cell_offsets_buffer : jax.Array, shape (total_atoms, 3), dtype=int32, optional
+        Scratch buffer for per-atom wrapping offsets.
+    inv_cell, positions_wrapped, per_atom_cell_offsets : jax.Array, optional
+        Deprecated aliases for the corresponding ``*_buffer`` arguments.
     graph_mode : {"none", "warp"}, default="none"
         Execution mode for the underlying Warp launches. ``"none"``
         preserves the existing per-kernel ``jax_kernel`` dispatch path.
@@ -1706,6 +1714,10 @@ def naive_neighbor_list(
         - No PBC, list format: ``(neighbor_list, neighbor_ptr)``
         - With PBC, matrix format: ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``
         - With PBC, list format: ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)``
+
+        With ``coo_capacity``, raw ``num_neighbors`` and scalar
+        ``metadata_valid`` follow the topology tuple. Requested distances,
+        vectors, energies, and forces follow in that order when enabled.
 
         **Components returned:**
 
@@ -1809,16 +1821,17 @@ def naive_neighbor_list(
     For lower host-side launch overhead on supported GPUs, setting
     ``XLA_FLAGS=--xla_gpu_enable_command_buffer=CUSTOM_CALL`` before
     importing JAX can improve the steady-state ``graph_mode="none"`` and
-    ``graph_mode="warp"`` paths. Advanced users can bound Warp's graph
-    cache via ``warp.jax_experimental.set_jax_callable_default_graph_cache_max(...)``;
-    set that default before importing this module because its callables are
-    registered at import time.
+    ``graph_mode="warp"`` paths. Advanced users can bound each callable's
+    graph cache with the ``graph_cache_max`` argument to
+    ``warp.jax_callable(...)``.
 
     ``graph_mode="warp"`` replay requires stable input and output buffers.
     Donate the returned output buffers through the enclosing ``jax.jit`` so
     they round-trip between calls. Wrapped PBC also requires stable
-    ``inv_cell``, ``positions_wrapped``, and ``per_atom_cell_offsets`` buffers.
-    Cutoff, ``half_fill``, and PBC shift metadata are statically specialized.
+    ``inv_cell_buffer``, ``positions_wrapped_buffer``, and
+    ``per_atom_cell_offsets_buffer`` arrays. For every ``jax.jit`` PBC call,
+    precompute the shift metadata outside the compiled boundary. Cutoff,
+    ``half_fill``, and PBC shift metadata are statically specialized.
     """
     graph_mode = _validate_graph_mode(graph_mode)
     coo_capacity = _validate_coo_capacity(coo_capacity, return_neighbor_list)
@@ -2004,50 +2017,56 @@ def naive_neighbor_list(
                     (num_rows, max_neighbors, 3),
                     dtype=positions.dtype,
                 )
-
-            tail: list[jax.Array] = []
-            if return_distances:
-                tail.append(
-                    jnp.zeros((0,), dtype=positions.dtype)
-                    if return_neighbor_list
-                    else distances_out
-                )
-            if return_vectors:
-                tail.append(
-                    jnp.zeros((0, 3), dtype=positions.dtype)
-                    if return_neighbor_list
-                    else vectors_out
-                )
-            if pair_fn is not None:
-                if return_neighbor_list:
-                    tail.extend(
-                        (
-                            jnp.zeros((0,), dtype=positions.dtype),
-                            jnp.zeros((0, 3), dtype=positions.dtype),
-                        ),
-                    )
-                else:
-                    tail.extend((energies_out, forces_out))
+            shifts_out = None
             if pbc is not None:
                 shifts_out = (
                     jnp.zeros((num_rows, max_neighbors, 3), dtype=jnp.int32)
                     if neighbor_matrix_shifts is None
                     else neighbor_matrix_shifts.at[:].set(jnp.int32(0))
                 )
-                if return_neighbor_list:
-                    return (
+
+            if return_neighbor_list:
+                if coo_capacity is None:
+                    base = (
                         jnp.zeros((2, 0), dtype=jnp.int32),
                         jnp.zeros((num_rows + 1,), dtype=jnp.int32),
-                        jnp.zeros((0, 3), dtype=jnp.int32),
-                        *tail,
                     )
+                    if shifts_out is not None:
+                        base = (*base, jnp.zeros((0, 3), dtype=jnp.int32))
+                    output_pairs = 0
+                else:
+                    base, _ = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                        matrix_out,
+                        counts_out,
+                        capacity=coo_capacity,
+                        neighbor_shift_matrix=shifts_out,
+                        fill_value=int(fill_value),
+                        metadata_valid=jnp.ones((), dtype=jnp.bool_),
+                    )
+                    output_pairs = int(coo_capacity)
+                tail: list[jax.Array] = []
+                if return_distances:
+                    tail.append(jnp.zeros((output_pairs,), dtype=positions.dtype))
+                if return_vectors:
+                    tail.append(jnp.zeros((output_pairs, 3), dtype=positions.dtype))
+                if pair_fn is not None:
+                    tail.extend(
+                        (
+                            jnp.zeros((output_pairs,), dtype=positions.dtype),
+                            jnp.zeros((output_pairs, 3), dtype=positions.dtype),
+                        ),
+                    )
+                return (*base, *tail)
+
+            tail = []
+            if return_distances:
+                tail.append(distances_out)
+            if return_vectors:
+                tail.append(vectors_out)
+            if pair_fn is not None:
+                tail.extend((energies_out, forces_out))
+            if shifts_out is not None:
                 return matrix_out, counts_out, shifts_out, *tail
-            if return_neighbor_list:
-                return (
-                    jnp.zeros((2, 0), dtype=jnp.int32),
-                    jnp.zeros((num_rows + 1,), dtype=jnp.int32),
-                    *tail,
-                )
             return matrix_out, counts_out, *tail
         if cell is not None and cell.ndim == 2:
             cell_norm = cell[jnp.newaxis, :, :]

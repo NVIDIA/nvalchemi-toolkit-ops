@@ -2212,6 +2212,14 @@ class TestNeighborListFineGrainedMethodEquivalence:
         )
         assert matrix.shape == (2, 4)
         assert counts.shape == (2,)
+        torch.testing.assert_close(
+            counts,
+            torch.tensor([1, 1], dtype=torch.int32, device=device),
+        )
+        torch.testing.assert_close(
+            matrix[:, 0],
+            torch.tensor([3, 1], dtype=torch.int32, device=device),
+        )
 
         batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
         batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device=device)
@@ -2226,6 +2234,14 @@ class TestNeighborListFineGrainedMethodEquivalence:
         )
         assert batch_matrix.shape == (2, 4)
         assert batch_counts.shape == (2,)
+        torch.testing.assert_close(
+            batch_counts,
+            torch.tensor([1, 1], dtype=torch.int32, device=device),
+        )
+        torch.testing.assert_close(
+            batch_matrix[:, 0],
+            torch.tensor([3, 1], dtype=torch.int32, device=device),
+        )
 
     @pytest.mark.parametrize(
         "device",

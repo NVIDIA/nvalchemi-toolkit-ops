@@ -77,6 +77,28 @@ def test_zero_cutoff_fixed_coo_returns_fresh_recovery_metadata():
     assert bool(metadata_valid)
 
 
+def test_empty_partial_fixed_coo_preserves_static_contract():
+    """Empty batched compact rows retain fixed COO shapes and diagnostics."""
+    positions = jnp.zeros((2, 3), dtype=jnp.float32)
+    neighbor_list, neighbor_ptr, counts, metadata_valid = batch_naive_neighbor_list(
+        positions,
+        1.0,
+        batch_ptr=jnp.array([0, 2], dtype=jnp.int32),
+        max_neighbors=4,
+        target_indices=jnp.empty((0,), dtype=jnp.int32),
+        strategy="scalar",
+        return_neighbor_list=True,
+        coo_capacity=3,
+    )
+
+    assert neighbor_list.shape == (2, 3)
+    assert neighbor_ptr.shape == (1,)
+    assert counts.shape == (0,)
+    np.testing.assert_array_equal(neighbor_list, 2)
+    np.testing.assert_array_equal(neighbor_ptr, 0)
+    assert bool(metadata_valid)
+
+
 def _distances_from_neighbor_list(
     positions: jax.Array,
     cell: jax.Array,

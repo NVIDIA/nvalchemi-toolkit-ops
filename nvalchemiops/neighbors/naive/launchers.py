@@ -17,7 +17,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, NamedTuple
+from typing import NamedTuple
 
 import warp as wp
 
@@ -88,152 +88,6 @@ class _ScalarSentinels(NamedTuple):
     pair_energies: wp.array
     pair_forces: wp.array
     rebuild_flags: wp.array
-
-
-def _launch_partial_tile_no_pbc(
-    positions: wp.array,
-    cutoff: float,
-    target_indices: wp.array,
-    neighbor_matrix: wp.array,
-    num_neighbors: wp.array,
-    wp_dtype: type,
-    device: str,
-    *,
-    half_fill: bool,
-    reset_outputs: bool = False,
-    fill_value: int | None = None,
-) -> None:
-    """Launch a single-system partial topology tile kernel without PBC."""
-    _require_cuda_tile_device(device)
-    if reset_outputs:
-        if fill_value is None:
-            raise ValueError("fill_value is required when resetting outputs")
-        neighbor_matrix.fill_(fill_value)
-        num_neighbors.zero_()
-    (
-        empty_offsets,
-        empty_cell,
-        empty_shift_range,
-        empty_num_shifts,
-        empty_batch_idx,
-        empty_batch_ptr,
-        _empty_target_indices,
-        empty_matrix,
-        empty_shifts,
-        _empty_num_neighbors,
-        _empty_vectors,
-        _empty_distances,
-        _empty_pair_params,
-        _empty_energies,
-        _empty_forces,
-        empty_rebuild_flags,
-    ) = _scalar_sentinels(wp_dtype, device)
-    wp.launch_tiled(
-        kernel=get_naive_neighbor_matrix_kernel(
-            wp_dtype,
-            pbc_mode="none",
-            batched=False,
-            half_fill=half_fill,
-            selective=False,
-            partial=True,
-            strategy="tile",
-        ),
-        dim=[1, target_indices.shape[0]],
-        inputs=[
-            positions,
-            empty_offsets,
-            wp_dtype(cutoff * cutoff),
-            empty_cell,
-            empty_shift_range,
-            empty_num_shifts,
-            empty_batch_idx,
-            empty_batch_ptr,
-            target_indices,
-            neighbor_matrix,
-            empty_shifts,
-            num_neighbors,
-            empty_rebuild_flags,
-        ],
-        block_dim=BLOCK_DIM,
-        device=device,
-    )
-
-
-def _launch_partial_tile_pbc_prepared(
-    positions_work: wp.array,
-    per_atom_cell_offsets: wp.array,
-    cutoff: float,
-    cell: wp.array,
-    shift_range: wp.array,
-    target_indices: wp.array,
-    neighbor_matrix: wp.array,
-    neighbor_matrix_shifts: wp.array,
-    num_neighbors: wp.array,
-    wp_dtype: type,
-    device: str,
-    *,
-    num_shifts: int,
-    half_fill: bool,
-    pbc_mode: Literal["prewrapped", "wrap_on_entry"],
-    reset_outputs: bool = False,
-    fill_value: int | None = None,
-) -> None:
-    """Launch a prepared single-system partial topology tile PBC kernel."""
-    _require_cuda_tile_device(device)
-    if reset_outputs:
-        if fill_value is None:
-            raise ValueError("fill_value is required when resetting outputs")
-        neighbor_matrix.fill_(fill_value)
-        neighbor_matrix_shifts.zero_()
-        num_neighbors.zero_()
-    (
-        empty_offsets,
-        _empty_cell,
-        _empty_shift_range,
-        empty_num_shifts,
-        empty_batch_idx,
-        empty_batch_ptr,
-        _empty_target_indices,
-        empty_matrix,
-        empty_shifts,
-        _empty_num_neighbors,
-        _empty_vectors,
-        _empty_distances,
-        _empty_pair_params,
-        _empty_energies,
-        _empty_forces,
-        empty_rebuild_flags,
-    ) = _scalar_sentinels(wp_dtype, device)
-    active_shifts = num_shifts if half_fill else 2 * num_shifts - 1
-    wp.launch_tiled(
-        kernel=get_naive_neighbor_matrix_kernel(
-            wp_dtype,
-            pbc_mode=pbc_mode,
-            batched=False,
-            half_fill=half_fill,
-            selective=False,
-            partial=True,
-            strategy="tile",
-        ),
-        dim=[active_shifts, target_indices.shape[0]],
-        inputs=[
-            positions_work,
-            per_atom_cell_offsets,
-            wp_dtype(cutoff * cutoff),
-            cell,
-            shift_range,
-            empty_num_shifts,
-            empty_batch_idx,
-            empty_batch_ptr,
-            target_indices,
-            neighbor_matrix,
-            neighbor_matrix_shifts,
-            num_neighbors,
-            empty_rebuild_flags,
-        ],
-        block_dim=BLOCK_DIM,
-        device=device,
-    )
 
 
 def _reject_pair_fn_for_dual_cutoff(
@@ -468,18 +322,6 @@ def _launch_naive_neighbor_matrix_no_pbc(
     cutoff_sq = wp_dtype(cutoff * cutoff)
 
     if strategy == "tile":
-        if partial and not batched:
-            _launch_partial_tile_no_pbc(
-                positions,
-                cutoff,
-                target_indices,
-                neighbor_matrix,
-                num_neighbors,
-                wp_dtype,
-                device,
-                half_fill=half_fill,
-            )
-            return
         _require_cuda_tile_device(device)
         wp.launch_tiled(
             kernel=get_naive_neighbor_matrix_kernel(
@@ -749,24 +591,6 @@ def _launch_naive_neighbor_matrix_pbc(
         ]
 
     if strategy == "tile":
-        if partial and not batched:
-            _launch_partial_tile_pbc_prepared(
-                positions_work,
-                per_atom_cell_offsets,
-                cutoff,
-                cell,
-                shift_range,
-                target_indices,
-                neighbor_matrix,
-                neighbor_matrix_shifts,
-                num_neighbors,
-                wp_dtype,
-                device,
-                num_shifts=int(num_shifts),
-                half_fill=half_fill,
-                pbc_mode=pbc_mode.value,
-            )
-            return
         _require_cuda_tile_device(device)
         wp.launch_tiled(
             kernel=get_naive_neighbor_matrix_kernel(
@@ -1118,10 +942,11 @@ def naive_neighbor_matrix(
     cutoff : float
         Cutoff distance for neighbor detection in Cartesian units.
         Must be positive. Atoms within this distance are considered neighbors.
-    neighbor_matrix : wp.array, shape (total_atoms, max_neighbors), dtype=wp.int32
+    neighbor_matrix : wp.array, shape (rows, max_neighbors), dtype=wp.int32
         OUTPUT: Neighbor matrix to be filled with neighbor atom indices.
-        Must be pre-allocated. Entries are filled with atom indices.
-    num_neighbors : wp.array, shape (total_atoms,), dtype=wp.int32
+        ``rows`` is ``total_atoms`` normally and ``M`` for compact partial
+        calls. Must be pre-allocated. Entries are filled with atom indices.
+    num_neighbors : wp.array, shape (rows,), dtype=wp.int32
         OUTPUT: Number of neighbors found for each atom.
         Must be pre-allocated. Updated in-place with actual neighbor counts.
     wp_dtype : type
@@ -1135,9 +960,9 @@ def naive_neighbor_matrix(
         When provided, the kernel checks this flag on the GPU and skips work
         when False (no CPU-GPU sync).
     target_indices : wp.array, shape (M,), dtype=wp.int32, optional
-        Unique, in-bounds global indices of the central atoms. Output row
-        ``r`` corresponds to ``target_indices[r]``. When omitted, every atom
-        has an output row.
+        In-bounds global indices of the central atoms. Output row ``r``
+        corresponds to ``target_indices[r]``. Repeated indices are supported.
+        When omitted, every atom has an output row.
     return_vectors : bool, default=False
         If True, write per-pair displacement vectors into ``neighbor_vectors``.
         Requires ``neighbor_vectors`` to be supplied.
@@ -1170,6 +995,11 @@ def naive_neighbor_matrix(
     pair_forces : wp.array, shape (rows, max_neighbors), dtype=wp.vec3*, optional
         OUTPUT: Required if ``pair_fn`` is provided.  Stores the per-pair
         force returned by ``pair_fn``.
+    strategy : {"auto", "scalar", "tile"}, default="auto"
+        Kernel dispatch selector. Compact topology-only rows support explicit
+        CUDA tile and dtype-specific automatic selection. Geometry and pair
+        outputs use scalar, and explicit tile rejects them. Full-row topology
+        ignores this argument and retains its internal automatic selection.
 
     Notes
     -----
@@ -1275,9 +1105,10 @@ def batch_naive_neighbor_matrix(
         System index for each atom.
     batch_ptr : wp.array, shape (num_systems + 1,), dtype=wp.int32
         Cumulative atom counts defining system boundaries.
-    neighbor_matrix : wp.array, shape (total_atoms, max_neighbors), dtype=wp.int32
+    neighbor_matrix : wp.array, shape (rows, max_neighbors), dtype=wp.int32
         OUTPUT: Neighbor matrix to be filled with neighbor atom indices.
-    num_neighbors : wp.array, shape (total_atoms,), dtype=wp.int32
+        ``rows`` is ``total_atoms`` normally and ``M`` for compact partial calls.
+    num_neighbors : wp.array, shape (rows,), dtype=wp.int32
         OUTPUT: Number of neighbors found for each atom.
     wp_dtype : type
         Warp dtype (wp.float32, wp.float64, or wp.float16).
@@ -1291,9 +1122,10 @@ def batch_naive_neighbor_matrix(
         GPU without CPU sync.  Per-system counters are reset via
         :func:`selective_zero_num_neighbors` internally.
     target_indices : wp.array, shape (M,), dtype=wp.int32, optional
-        Unique, in-bounds global indices of the central atoms. In batched mode
+        In-bounds global indices of the central atoms. In batched mode
         each central atom searches only atoms in its own system (resolved via
-        ``batch_idx``). Output row ``r`` corresponds to ``target_indices[r]``.
+        ``batch_idx``). Output row ``r`` corresponds to ``target_indices[r]``;
+        repeated indices are supported.
     return_vectors : bool, default=False
         If True, write per-pair displacement vectors into ``neighbor_vectors``.
     return_distances : bool, default=False
@@ -1318,6 +1150,11 @@ def batch_naive_neighbor_matrix(
         OUTPUT: Required if ``pair_fn`` is provided.
     pair_forces : wp.array, shape (rows, max_neighbors), dtype=wp.vec3*, optional
         OUTPUT: Required if ``pair_fn`` is provided.
+    strategy : {"auto", "scalar", "tile"}, default="auto"
+        Kernel dispatch selector. Batched compact topology-only ``auto`` uses
+        scalar, while explicit CUDA tile is supported. Geometry and pair
+        outputs use scalar, and explicit tile rejects them. Full-row topology
+        ignores this argument and retains its internal automatic selection.
 
     Notes
     -----
@@ -1458,11 +1295,12 @@ def naive_neighbor_matrix_pbc(
         Shift range per dimension for the single system.
     num_shifts : int
         Number of periodic shifts for the single system.
-    neighbor_matrix : wp.array, shape (total_atoms, max_neighbors), dtype=wp.int32
+    neighbor_matrix : wp.array, shape (rows, max_neighbors), dtype=wp.int32
         OUTPUT: Neighbor matrix to be filled with neighbor atom indices.
-    neighbor_matrix_shifts : wp.array, shape (total_atoms, max_neighbors, 3), dtype=wp.vec3i
+        ``rows`` is ``total_atoms`` normally and ``M`` for compact partial calls.
+    neighbor_matrix_shifts : wp.array, shape (rows, max_neighbors, 3), dtype=wp.vec3i
         OUTPUT: Matrix storing shift vectors for each neighbor relationship.
-    num_neighbors : wp.array, shape (total_atoms,), dtype=wp.int32
+    num_neighbors : wp.array, shape (rows,), dtype=wp.int32
         OUTPUT: Number of neighbors found for each atom.
     wp_dtype : type
         Warp dtype (wp.float32, wp.float64, or wp.float16).
@@ -1478,8 +1316,8 @@ def naive_neighbor_matrix_pbc(
         neighbor search.  When False the positions are assumed to be already
         wrapped (e.g. by a preceding integration step).
     target_indices : wp.array, shape (M,), dtype=wp.int32, optional
-        Unique, in-bounds global indices of the central atoms. Output row
-        ``r`` corresponds to ``target_indices[r]``.
+        In-bounds global indices of the central atoms. Output row ``r``
+        corresponds to ``target_indices[r]``; repeated indices are supported.
     return_vectors : bool, default=False
         If True, write per-pair displacement vectors (including the periodic
         shift contribution) into ``neighbor_vectors``.
@@ -1515,6 +1353,11 @@ def naive_neighbor_matrix_pbc(
     inv_cell_buffer : wp.array, shape (num_systems,), dtype=wp.mat33*, optional
         Caller-supplied scratch buffer for inverse cell matrices
         (only used when ``wrap_positions=True``).
+    strategy : {"auto", "scalar", "tile"}, default="auto"
+        Kernel dispatch selector. Compact topology-only rows support explicit
+        CUDA tile and dtype-specific automatic selection. Geometry and pair
+        outputs use scalar, and explicit tile rejects them. Full-row topology
+        ignores this argument and retains its internal automatic selection.
     pbc : wp.array, shape (1, 3), dtype=wp.bool, optional
         Per-axis periodic boundary flags.  When supplied, axes marked False
         are left unwrapped during position wrapping.  When omitted, wrapping
@@ -1690,11 +1533,12 @@ def batch_naive_neighbor_matrix_pbc(
         Number of shifts per system.
     max_shifts_per_system : int
         Maximum per-system shift count (launch dimension).
-    neighbor_matrix : wp.array, shape (total_atoms, max_neighbors), dtype=wp.int32
+    neighbor_matrix : wp.array, shape (rows, max_neighbors), dtype=wp.int32
         OUTPUT: Neighbor matrix.
-    neighbor_matrix_shifts : wp.array, shape (total_atoms, max_neighbors, 3), dtype=wp.vec3i
+        ``rows`` is ``total_atoms`` normally and ``M`` for compact partial calls.
+    neighbor_matrix_shifts : wp.array, shape (rows, max_neighbors, 3), dtype=wp.vec3i
         OUTPUT: Shift vectors for each neighbor.
-    num_neighbors : wp.array, shape (total_atoms,), dtype=wp.int32
+    num_neighbors : wp.array, shape (rows,), dtype=wp.int32
         OUTPUT: Number of neighbors per atom.
     wp_dtype : type
         Warp dtype (wp.float32, wp.float64, or wp.float16).
@@ -1710,9 +1554,10 @@ def batch_naive_neighbor_matrix_pbc(
     wrap_positions : bool, default=True
         If True, wrap input positions into the primary cell.
     target_indices : wp.array, shape (M,), dtype=wp.int32, optional
-        Unique, in-bounds global indices of the central atoms. In batched mode
+        In-bounds global indices of the central atoms. In batched mode
         each central atom searches only atoms in its own system (resolved via
-        ``batch_idx``). Output row ``r`` corresponds to ``target_indices[r]``.
+        ``batch_idx``). Output row ``r`` corresponds to ``target_indices[r]``;
+        repeated indices are supported.
     return_vectors : bool, default=False
         If True, write per-pair displacement vectors (including the periodic
         shift contribution) into ``neighbor_vectors``.
@@ -1745,6 +1590,11 @@ def batch_naive_neighbor_matrix_pbc(
         Caller-supplied scratch for per-atom cell offsets.
     inv_cell_buffer : wp.array, shape (num_systems,), dtype=wp.mat33*, optional
         Caller-supplied scratch for inverse cell matrices.
+    strategy : {"auto", "scalar", "tile"}, default="auto"
+        Kernel dispatch selector. Batched compact topology-only ``auto`` uses
+        scalar, while explicit CUDA tile is supported. Geometry and pair
+        outputs use scalar, and explicit tile rejects them. Full-row topology
+        ignores this argument and retains its internal automatic selection.
     pbc : wp.array, shape (num_systems, 3), dtype=wp.bool, optional
         Per-system, per-axis periodic boundary flags.  When supplied, axes
         marked False are left unwrapped during position wrapping.  When

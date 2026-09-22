@@ -34,6 +34,20 @@
 
 ### Added
 
+- JAX and Torch naive neighbor APIs support CUDA-only tiled topology-only
+  `target_indices` rows. Matrix and COO central rows are compact: row `r`
+  corresponds to `target_indices[r]`. For concrete-placement single-system
+  CUDA calls, `auto` selects tile at float64 `N >= 256` and float16/float32
+  `N >= 1024`; under `jax.jit`, tracer placement may be unavailable during
+  Python tracing, so `auto` may conservatively remain scalar above those
+  thresholds. Pass `strategy="tile"` for deterministic tiled execution.
+  CPU auto and batched partial auto remain scalar. Explicit tile supports single
+  and batched partial topology-only calls, but rejects CPU and geometry,
+  distance, vector, and pair-function outputs. Scalar and tiled stored
+  `(neighbor, shift)` multisets agree when neither overflows capacity, although
+  their ordering can differ.
+  Eager calls reject out-of-bounds targets; compiled JAX and Torch calls require
+  prevalidated indices and safely leave invalid rows empty.
 - Added periodic `fourier_dftd3` APIs for Torch and JAX, returning energy, forces and
   optional virial for batched CSR or dense neighbor lists in float32 and float64. `cell`
   is required, and `cutoff` has no default and must equal the radius the neighbor list was
@@ -176,20 +190,6 @@
 
 ### Added
 
-- JAX and Torch naive neighbor APIs support CUDA-only tiled topology-only
-  `target_indices` rows. Matrix and COO central rows are compact: row `r`
-  corresponds to `target_indices[r]`. For concrete-placement single-system
-  CUDA calls, `auto` selects tile at float64 `N >= 256` and float16/float32
-  `N >= 1024`; under `jax.jit`, tracer placement may be unavailable during
-  Python tracing, so `auto` may conservatively remain scalar above those
-  thresholds. Pass `strategy="tile"` for deterministic tiled execution.
-  CPU auto and batched partial auto remain scalar. Explicit tile supports single
-  and batched partial topology-only calls, but rejects CPU and geometry,
-  distance, vector, and pair-function outputs. Scalar and tiled stored
-  `(neighbor, shift)` multisets agree when neither overflows capacity, although
-  their ordering can differ.
-  Eager calls reject out-of-bounds targets; compiled JAX and Torch calls require
-  prevalidated indices and safely leave invalid rows empty.
 - Monopole Torch and JAX Ewald, PME, and slab entry points accept keyword-only
   `energy_reduction="atom" | "system"` (default `"atom"`). `"atom"` returns
   per-atom energies `(N,)`; `"system"` returns per-system totals `(B,)`.

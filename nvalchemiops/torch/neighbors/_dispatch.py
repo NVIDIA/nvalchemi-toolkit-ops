@@ -33,6 +33,7 @@ from nvalchemiops.neighbors.base_dispatch import (
 from nvalchemiops.neighbors.base_dispatch import (
     estimate_neighbor_list_costs as _estimate_neighbor_list_costs_wp,
 )
+from nvalchemiops.torch._warp_op_helpers import scoped_torch_warp_stream
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     _raise_if_compiling_host_only,
     synthesize_cell_for_batch,
@@ -155,6 +156,7 @@ def _normalize_selector_cell_pbc(
     return cell.detach().contiguous(), pbc.detach().to(dtype=torch.bool).contiguous()
 
 
+@scoped_torch_warp_stream
 def estimate_neighbor_list_costs(
     batch_ptr: torch.Tensor,
     cell: torch.Tensor,
@@ -186,15 +188,51 @@ def estimate_neighbor_list_costs(
     pbc : torch.Tensor, shape (3,) or (num_systems, 3), dtype=bool
         Shared or per-system PBC flags.
     cutoff : float
-        Neighbor cutoff.
+        Neighbor cutoff. For dual-cutoff routing, pass the larger cutoff.
+    batch_idx : torch.Tensor, optional
+        Dense per-atom system ids, shape ``(total_atoms,)``, dtype=int32.
+        When provided, the selector validates that the labels match the
+        contiguous ranges implied by ``batch_ptr`` before allowing auto
+        cluster-tile.
     max_nbins : int, optional
         Per-system cell-list cell cap. Defaults to the same cap used by the
         active single-system or batched frontend.
     optional_outputs : iterable of str, optional
-        Public neighbor-list option names to include in feasibility checks.
+        Public-style neighbor-list option names, encoded with
+        :func:`nvalchemiops.neighbors.base_dispatch.optional_outputs_mask`.
+        Supported names include ``"cutoff2"``, ``"half_fill"``,
+        ``"return_neighbor_list"``, ``"target_indices"``, ``"return_vectors"``,
+        ``"return_distances"``, ``"use_pair_fn"``, and ``"rebuild_flags"``.
+        Aliases matching common public buffers such as ``"neighbor_vectors"``
+        and ``"pair_fn"`` are accepted.
+    cutoff2 : float, optional
+        Secondary cutoff distance. When set, marks dual-cutoff output as
+        active for cluster-tile feasibility scoring.
+    half_fill : bool, default=False
+        When ``True``, marks half-fill output as active for feasibility
+        scoring (disqualifies cluster-tile and pair-centric cell-list).
+    return_neighbor_list : bool, default=False
+        When ``True``, marks COO/list conversion as active for feasibility
+        scoring.
     target_indices : torch.Tensor, optional
-        Public central-atom indices for compact partial rows. Its length is used to score
-        targeted naive/cell-list work.
+        Central-atom indices for compact partial rows, shape
+        ``(num_targets,)``, dtype=int32. Its length is used to score targeted
+        naive/cell-list work.
+    return_vectors : bool, default=False
+        When ``True``, marks per-pair displacement output as active for
+        feasibility scoring.
+    return_distances : bool, default=False
+        When ``True``, marks per-pair distance output as active for feasibility
+        scoring.
+    use_pair_fn : bool, default=False
+        When ``True``, marks inline ``pair_fn`` evaluation as active for
+        feasibility scoring.
+    rebuild_flags : torch.Tensor, optional
+        Per-system rebuild flags. When provided, marks selective rebuild as
+        active for feasibility scoring (disqualifies cluster-tile).
+    wrap_positions : bool, default=True
+        When ``False``, marks unwrapped batched PBC positions as active for
+        feasibility scoring (disqualifies naive tile on batched PBC).
     positions_dtype : torch.dtype, optional
         Position dtype used for feature feasibility.  Standalone calls default
         to ``cell.dtype``.
@@ -202,9 +240,17 @@ def estimate_neighbor_list_costs(
     Returns
     -------
     list of (str, float)
-        Feasible strategies and their relative estimated cost (lower is
-        faster), sorted cheapest-first.  Host-only: call outside
-        ``torch.compile`` and pass the chosen name as an explicit ``method=``.
+        Feasible strategies (from
+        :data:`nvalchemiops.neighbors.base_dispatch.NEIGHBOR_LIST_STRATEGIES`)
+        and their relative estimated cost (lower is faster), sorted
+        cheapest-first. Batched inputs return ``batch_`` prefixed names.
+
+    Notes
+    -----
+    Costs are relative, hardware-independent estimates; only their ordering is
+    meaningful. This host-only function synchronizes a small selector result.
+    Call it outside ``torch.compile`` and pass the chosen name as an explicit
+    ``method=`` argument.
     """
     _raise_if_compiling_host_only(
         "estimate_neighbor_list_costs",
@@ -269,20 +315,30 @@ def estimate_neighbor_list_costs(
 def suggest_neighbor_list_method(*args, **kwargs) -> str:
     """Return the cheapest feasible Torch neighbor-list strategy name.
 
-    Thin wrapper over :func:`nvalchemiops.torch.neighbors._dispatch.estimate_neighbor_list_costs`
-    that returns only the top-ranked strategy name.  Accepts identical
-    positional and keyword arguments.  Subject to the same host-only sync
-    caveat: do not call inside ``torch.compile``.
+    Thin wrapper over
+    :func:`nvalchemiops.torch.neighbors._dispatch.estimate_neighbor_list_costs`
+    returning only the top-ranked strategy name. Accepts the same arguments
+    and carries the same host-only sync caveat: call outside ``torch.compile``
+    and pass the result as an explicit ``method=`` argument.
+
+    Parameters
+    ----------
+    *args
+        Positional arguments forwarded to
+        :func:`nvalchemiops.torch.neighbors._dispatch.estimate_neighbor_list_costs`.
+    **kwargs
+        Keyword arguments forwarded to
+        :func:`nvalchemiops.torch.neighbors._dispatch.estimate_neighbor_list_costs`.
 
     Returns
     -------
     str
-        Name of the lowest-cost feasible strategy, e.g. ``"cell_list_atom_centric"``
-        or ``"batch_cluster_tile"``.
+        Name of the cheapest feasible strategy, e.g.
+        ``"cell_list_atom_centric"`` or ``"batch_naive_tile"``.
 
     See Also
     --------
-    :func:`nvalchemiops.torch.neighbors._dispatch.estimate_neighbor_list_costs` : Returns full ranked list of strategies.
+    :func:`nvalchemiops.torch.neighbors._dispatch.estimate_neighbor_list_costs` : Full ranked list of feasible strategies with costs.
     """
     return estimate_neighbor_list_costs(*args, **kwargs)[0][0]
 
@@ -382,6 +438,13 @@ def _reject_unsupported_cluster_tile_combo(
     half_fill: bool,
 ) -> None:
     """Raise ``NotImplementedError`` for unsupported explicit cluster-tile combos."""
+    if torch.compiler.is_compiling():
+        raise NotImplementedError(
+            "compiled unified cluster-tile dispatch cannot validate tensor-valued "
+            "pbc without synchronization; validate fully periodic pbc eagerly and "
+            "compile the direct single-system cluster_tile_neighbor_list path; "
+            "batched fullgraph is unsupported"
+        )
     if pbc is None:
         raise NotImplementedError(
             "method='cluster_tile' / 'batch_cluster_tile' is "
@@ -389,10 +452,7 @@ def _reject_unsupported_cluster_tile_combo(
             "are not supported.  Use method='naive' or 'cell_list', "
             "or pass a cell with fully periodic pbc."
         )
-    try:
-        all_periodic = bool(pbc.all().item())
-    except RuntimeError:
-        all_periodic = True
+    all_periodic = bool(pbc.all().item())
     if not all_periodic:
         raise NotImplementedError(
             "method='cluster_tile' / 'batch_cluster_tile' is "

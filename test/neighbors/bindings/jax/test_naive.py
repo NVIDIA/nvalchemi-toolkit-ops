@@ -51,6 +51,59 @@ def test_zero_cutoff_fixed_coo_returns_fresh_recovery_metadata():
     assert bool(metadata_valid)
 
 
+def test_empty_partial_fixed_coo_preserves_static_contract():
+    """Empty compact rows retain fixed COO shapes and diagnostics."""
+    positions = jnp.zeros((2, 3), dtype=jnp.float32)
+    neighbor_list, neighbor_ptr, counts, metadata_valid = naive_neighbor_list(
+        positions,
+        1.0,
+        max_neighbors=4,
+        target_indices=jnp.empty((0,), dtype=jnp.int32),
+        strategy="scalar",
+        return_neighbor_list=True,
+        coo_capacity=3,
+    )
+
+    assert neighbor_list.shape == (2, 3)
+    assert neighbor_ptr.shape == (1,)
+    assert counts.shape == (0,)
+    np.testing.assert_array_equal(neighbor_list, 2)
+    np.testing.assert_array_equal(neighbor_ptr, 0)
+    assert bool(metadata_valid)
+
+
+def test_zero_cutoff_partial_pbc_fixed_coo_preserves_geometry_contract():
+    """Zero-cutoff compact PBC output retains padded shifts and distances."""
+    positions = jnp.zeros((2, 3), dtype=jnp.float32)
+    cell = jnp.eye(3, dtype=jnp.float32)[None, :, :] * 10.0
+    pbc = jnp.ones((1, 3), dtype=jnp.bool_)
+    outputs = naive_neighbor_list(
+        positions,
+        0.0,
+        cell=cell,
+        pbc=pbc,
+        max_neighbors=4,
+        target_indices=jnp.array([0], dtype=jnp.int32),
+        strategy="scalar",
+        return_neighbor_list=True,
+        coo_capacity=3,
+        return_distances=True,
+    )
+    neighbor_list, neighbor_ptr, shifts, counts, metadata_valid, distances = outputs
+
+    assert neighbor_list.shape == (2, 3)
+    assert neighbor_ptr.shape == (2,)
+    assert shifts.shape == (3, 3)
+    assert counts.shape == (1,)
+    assert distances.shape == (3,)
+    np.testing.assert_array_equal(neighbor_list, 2)
+    np.testing.assert_array_equal(neighbor_ptr, 0)
+    np.testing.assert_array_equal(shifts, 0)
+    np.testing.assert_array_equal(counts, 0)
+    np.testing.assert_array_equal(distances, 0.0)
+    assert bool(metadata_valid)
+
+
 def test_fixed_coo_retained_selective_rows_keep_aligned_raw_counts():
     """A skipped selective query reports the counts that match retained rows."""
     positions = jnp.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=jnp.float32)

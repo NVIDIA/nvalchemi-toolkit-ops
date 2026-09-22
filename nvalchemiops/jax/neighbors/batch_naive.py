@@ -807,6 +807,11 @@ def batch_naive_neighbor_list(
         If True, only store relationships where i < j. Default is False.
     fill_value : int, optional
         Value to fill the neighbor matrix with. Default is total_atoms.
+    return_neighbor_list : bool, default=False
+        Convert matrix output to COO topology and row pointers.
+    coo_capacity : int, optional
+        Static padded COO capacity. When supplied, raw row counts and scalar
+        metadata validity follow the topology tuple.
     neighbor_matrix : jax.Array, shape (num_rows, max_neighbors), optional
         Pre-shaped neighbor matrix. ``num_rows`` is ``total_atoms`` normally and
         ``len(target_indices)`` for partial rows.
@@ -821,12 +826,22 @@ def batch_naive_neighbor_list(
     max_shifts_per_system : int, optional
         Maximum per-system shift count (launch dimension).
     max_atoms_per_system : int, optional
-        Maximum atoms in any system.
+        Maximum atoms in any system for full-row PBC launch sizing. Compact
+        partial paths do not require it.
+    rebuild_flags : jax.Array, shape (num_systems,), dtype=bool, optional
+        Select systems to rebuild while preserving supplied rows for other
+        systems. Not supported with partial rows, pair outputs, or tile.
     wrap_positions : bool, default=True
         If True, wrap input positions into the primary cell before
         neighbor search. Set to False when positions are already
         wrapped (e.g. by a preceding integration step) to save two
         GPU kernel launches per call.
+    positions_wrapped_buffer : jax.Array, shape (total_atoms, 3), optional
+        Scratch buffer written by batched position wrapping.
+    per_atom_cell_offsets_buffer : jax.Array, shape (total_atoms, 3), dtype=int32, optional
+        Scratch buffer for per-atom wrapping offsets.
+    inv_cell_buffer : jax.Array, shape (num_systems, 3, 3), optional
+        Precomputed inverse-cell buffer for wrapped PBC calls.
     strategy : {"auto", "scalar", "tile"}, default="auto"
         Selects the underlying Warp kernel variant. ``"scalar"`` uses the
         per-atom scalar kernel. ``"tile"`` uses the tile-cooperative
@@ -839,6 +854,11 @@ def batch_naive_neighbor_list(
         neither result overflows capacity, the tile and scalar paths may order
         entries differently but have the same stored
         ``(neighbor, periodic_shift)`` multisets.
+    return_distances : bool, default=False
+        Append differentiable per-pair distances. Uses the scalar path.
+    return_vectors : bool, default=False
+        Append differentiable per-pair displacement vectors. Uses the scalar
+        path.
     neighbor_distances : jax.Array, shape (num_rows, max_neighbors), optional
         Pre-shaped distance output for ``return_distances=True`` or ``pair_fn``.
     neighbor_vectors : jax.Array, shape (num_rows, max_neighbors, 3), optional
@@ -849,6 +869,16 @@ def batch_naive_neighbor_list(
         compact row ids. User buffers must be compact-row shaped, not full
         atom-row shaped. Repeated rows are allowed. Eager calls reject
         out-of-bounds values; under ``jax.jit`` callers must prevalidate them.
+    pair_fn : wp.Function, optional
+        Module-scope Warp pair potential evaluated during the scalar search.
+        Requires ``pair_params`` and produces forward-only energy and force
+        outputs.
+    pair_params : jax.Array, shape (total_atoms, K), optional
+        Per-atom parameters forwarded to ``pair_fn``.
+    pair_energies : jax.Array, shape (num_rows, max_neighbors), optional
+        Pre-shaped energy output buffer for ``pair_fn``.
+    pair_forces : jax.Array, shape (num_rows, max_neighbors, 3), optional
+        Pre-shaped force output buffer for ``pair_fn``.
 
     Returns
     -------
@@ -857,7 +887,14 @@ def batch_naive_neighbor_list(
         ``num_rows`` rows, where ``num_rows`` is ``total_atoms`` normally and
         ``len(target_indices)`` for partial lists. COO pointer arrays have
         shape ``(num_rows + 1,)`` and source ids are compact rows when
-        ``target_indices`` is provided.
+        ``target_indices`` is provided. The topology tuple follows the same
+        matrix/list and PBC layouts as :func:`naive_neighbor_list`. Requested
+        distances, vectors, energies, and forces follow in that order.
+
+    Notes
+    -----
+    For ``jax.jit`` PBC calls, pass concrete launch bounds and precompute shift
+    metadata outside the compiled boundary. Eager calls may infer them.
 
     Examples
     --------
@@ -1062,50 +1099,56 @@ def batch_naive_neighbor_list(
                     (num_rows, max_neighbors, 3),
                     dtype=positions.dtype,
                 )
-
-            tail: list[jax.Array] = []
-            if return_distances:
-                tail.append(
-                    jnp.zeros((0,), dtype=positions.dtype)
-                    if return_neighbor_list
-                    else distances_out
-                )
-            if return_vectors:
-                tail.append(
-                    jnp.zeros((0, 3), dtype=positions.dtype)
-                    if return_neighbor_list
-                    else vectors_out
-                )
-            if pair_fn is not None:
-                if return_neighbor_list:
-                    tail.extend(
-                        (
-                            jnp.zeros((0,), dtype=positions.dtype),
-                            jnp.zeros((0, 3), dtype=positions.dtype),
-                        ),
-                    )
-                else:
-                    tail.extend((energies_out, forces_out))
+            shifts_out = None
             if pbc is not None:
                 shifts_out = (
                     jnp.zeros((num_rows, max_neighbors, 3), dtype=jnp.int32)
                     if neighbor_matrix_shifts is None
                     else neighbor_matrix_shifts.at[:].set(jnp.int32(0))
                 )
-                if return_neighbor_list:
-                    return (
+
+            if return_neighbor_list:
+                if coo_capacity is None:
+                    base = (
                         jnp.zeros((2, 0), dtype=jnp.int32),
                         jnp.zeros((num_rows + 1,), dtype=jnp.int32),
-                        jnp.zeros((0, 3), dtype=jnp.int32),
-                        *tail,
                     )
+                    if shifts_out is not None:
+                        base = (*base, jnp.zeros((0, 3), dtype=jnp.int32))
+                    output_pairs = 0
+                else:
+                    base, _ = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                        matrix_out,
+                        counts_out,
+                        capacity=coo_capacity,
+                        neighbor_shift_matrix=shifts_out,
+                        fill_value=int(fill_value),
+                        metadata_valid=jnp.ones((), dtype=jnp.bool_),
+                    )
+                    output_pairs = int(coo_capacity)
+                tail: list[jax.Array] = []
+                if return_distances:
+                    tail.append(jnp.zeros((output_pairs,), dtype=positions.dtype))
+                if return_vectors:
+                    tail.append(jnp.zeros((output_pairs, 3), dtype=positions.dtype))
+                if pair_fn is not None:
+                    tail.extend(
+                        (
+                            jnp.zeros((output_pairs,), dtype=positions.dtype),
+                            jnp.zeros((output_pairs, 3), dtype=positions.dtype),
+                        ),
+                    )
+                return (*base, *tail)
+
+            tail = []
+            if return_distances:
+                tail.append(distances_out)
+            if return_vectors:
+                tail.append(vectors_out)
+            if pair_fn is not None:
+                tail.extend((energies_out, forces_out))
+            if shifts_out is not None:
                 return matrix_out, counts_out, shifts_out, *tail
-            if return_neighbor_list:
-                return (
-                    jnp.zeros((2, 0), dtype=jnp.int32),
-                    jnp.zeros((num_rows + 1,), dtype=jnp.int32),
-                    *tail,
-                )
             return matrix_out, counts_out, *tail
         cell_norm = cell
         if cell_norm is not None:

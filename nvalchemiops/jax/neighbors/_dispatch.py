@@ -147,6 +147,20 @@ def _jax_selector_cpu_fallback(
     )
 
 
+def _filter_unsupported_partial_strategies(
+    strategies: list[tuple[str, float]],
+    target_indices: jax.Array | None,
+) -> list[tuple[str, float]]:
+    """Remove JAX strategies that cannot execute compact target rows."""
+    if target_indices is None:
+        return strategies
+    return [
+        (name, cost)
+        for name, cost in strategies
+        if name.removeprefix("batch_") != "cell_list_pair_centric"
+    ]
+
+
 def _selector_batch_ptr_from_geometry(
     positions: jax.Array,
     batch_idx: jax.Array | None,
@@ -339,18 +353,71 @@ def estimate_neighbor_list_costs(
     pbc : jax.Array, shape (3,) or (num_systems, 3), dtype=bool
         Shared or per-system PBC flags.
     cutoff : float
-        Neighbor cutoff.
+        Neighbor cutoff. For dual-cutoff routing, pass the larger cutoff.
+    batch_idx : jax.Array, optional
+        Dense per-atom system ids, shape ``(total_atoms,)``, dtype=jnp.int32.
+        When provided, the selector validates that the labels match the
+        contiguous ranges implied by ``batch_ptr`` before allowing auto
+        cluster-tile.
     max_nbins : int, optional
         Per-system cell-list cell cap. Defaults to the same cap used by the
         active single-system or batched frontend.
+    optional_outputs : iterable of str, optional
+        Public-style neighbor-list option names, encoded with
+        :func:`nvalchemiops.neighbors.base_dispatch.optional_outputs_mask`.
+        Supported names include ``"cutoff2"``, ``"half_fill"``,
+        ``"return_neighbor_list"``, ``"target_indices"``, ``"return_vectors"``,
+        ``"return_distances"``, ``"use_pair_fn"``, and ``"rebuild_flags"``.
+        Aliases matching common public buffers such as ``"neighbor_vectors"``
+        and ``"pair_fn"`` are accepted.
+    cutoff2 : float, optional
+        Secondary cutoff distance. When set, marks dual-cutoff output as
+        active for cluster-tile feasibility scoring.
+    half_fill : bool, default=False
+        When ``True``, marks half-fill output as active for feasibility
+        scoring (disqualifies cluster-tile and pair-centric cell-list).
+    return_neighbor_list : bool, default=False
+        When ``True``, marks COO/list conversion as active for feasibility
+        scoring.
+    target_indices : jax.Array, optional
+        Central-atom indices for compact partial rows, shape
+        ``(num_targets,)``, dtype=jnp.int32. Their length is used to score
+        targeted work. Unsupported pair-centric cell-list candidates are
+        omitted from the returned JAX report.
+    return_vectors : bool, default=False
+        When ``True``, marks per-pair displacement output as active for
+        feasibility scoring.
+    return_distances : bool, default=False
+        When ``True``, marks per-pair distance output as active for feasibility
+        scoring.
+    use_pair_fn : bool, default=False
+        When ``True``, marks inline ``pair_fn`` evaluation as active for
+        feasibility scoring.
+    rebuild_flags : jax.Array, optional
+        Per-system rebuild flags. When provided, marks selective rebuild as
+        active for feasibility scoring (disqualifies cluster-tile).
+    wrap_positions : bool, default=True
+        When ``False``, marks unwrapped batched PBC positions as active for
+        feasibility scoring (disqualifies naive tile on batched PBC).
+    positions_dtype : dtype, optional
+        Position dtype used for feature feasibility. Standalone calls default
+        to ``cell.dtype``.
 
     Returns
     -------
     list of (str, float)
-        Feasible strategies and their relative estimated cost (lower is
-        faster), sorted cheapest-first.  Host-only: this syncs a tiny selector
-        result, so call it outside ``jax.jit`` and pass the chosen name as an
-        explicit ``method=``.
+        Feasible strategies (from
+        :data:`nvalchemiops.neighbors.base_dispatch.NEIGHBOR_LIST_STRATEGIES`)
+        and their relative estimated cost (lower is faster), sorted
+        cheapest-first. Batched inputs return ``batch_`` prefixed names.
+
+    Notes
+    -----
+    Costs are relative, hardware-independent estimates; only their ordering is
+    meaningful. This host-only function synchronizes a small selector result.
+    Call it outside ``jax.jit``, then select the corresponding method-specific
+    function and compile that fixed-capacity call. ``neighbor_list(method=...)``
+    is available for eager execution.
     """
     if batch_ptr.ndim != 1:
         raise ValueError("batch_ptr must be a 1-D array")
@@ -414,16 +481,19 @@ def estimate_neighbor_list_costs(
         )
 
     if _is_jax_cpu_array(cell):
-        return _jax_selector_cpu_fallback(
-            batch_ptr,
-            batch_idx,
-            cell,
-            pbc,
-            cutoff,
-            max_nbins=max_nbins,
-            option_mask=options,
-            feature_mask=feature_mask,
-            target_count=target_count_arg,
+        return _filter_unsupported_partial_strategies(
+            _jax_selector_cpu_fallback(
+                batch_ptr,
+                batch_idx,
+                cell,
+                pbc,
+                cutoff,
+                max_nbins=max_nbins,
+                option_mask=options,
+                feature_mask=feature_mask,
+                target_count=target_count_arg,
+            ),
+            target_indices,
         )
 
     if cell.dtype == jnp.float64:
@@ -460,7 +530,7 @@ def estimate_neighbor_list_costs(
     )
     if num_systems > 1:
         strategies = [("batch_" + name, cost) for name, cost in strategies]
-    return strategies
+    return _filter_unsupported_partial_strategies(strategies, target_indices)
 
 
 def suggest_neighbor_list_method(*args, **kwargs) -> str:
