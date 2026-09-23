@@ -7370,6 +7370,70 @@ class TestEwaldVirialTorchPMEParity:
 class TestEwaldTorchCompile:
     """Verify that ewald_summation under torch.compile matches eager mode."""
 
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+    @pytest.mark.parametrize(
+        ("batched", "num_atoms", "num_k", "need_cell"),
+        [
+            pytest.param(False, 2, 2, True, id="single-cell-gradient"),
+            pytest.param(True, 4, 2, True, id="batch-cell-gradient"),
+            pytest.param(False, 2, 2, False, id="single-no-cell-gradient"),
+            pytest.param(True, 4, 2, False, id="batch-no-cell-gradient"),
+            pytest.param(False, 2, 0, True, id="single-empty-k-vectors"),
+            pytest.param(True, 4, 0, True, id="batch-empty-k-vectors"),
+            pytest.param(False, 0, 2, True, id="single-empty-positions"),
+            pytest.param(True, 0, 2, True, id="batch-empty-positions"),
+        ],
+    )
+    def test_reciprocal_fake_metadata_matches_runtime(
+        self,
+        batched,
+        num_atoms,
+        num_k,
+        need_cell,
+    ):
+        """Reciprocal fake outputs match runtime for cell and empty paths."""
+        _ewald_recip_chain.register_ewald_recip_ops()
+        num_systems = 2 if batched else 1
+        device = torch.device("cuda")
+        positions = torch.zeros((num_atoms, 3), device=device, dtype=torch.float64)
+        charges = torch.ones(num_atoms, device=device, dtype=torch.float64)
+        cell = (
+            torch.eye(3, device=device, dtype=torch.float64)
+            .expand(num_systems, 3, 3)
+            .clone()
+            * 10.0
+        )
+        k_vectors = torch.ones(
+            (num_systems, num_k, 3), device=device, dtype=torch.float64
+        )
+        volume = torch.linalg.det(cell).abs()
+        alpha = torch.full((num_systems,), 0.3, device=device, dtype=torch.float64)
+
+        args = (positions, charges, cell, k_vectors, volume, alpha)
+        if batched:
+            args += (
+                torch.arange(num_atoms, device=device, dtype=torch.int32) // 2,
+                torch.tensor(
+                    [0, 2] if num_atoms else [0, 0],
+                    device=device,
+                    dtype=torch.int32,
+                ),
+                torch.tensor(
+                    [2, 4] if num_atoms else [0, 0],
+                    device=device,
+                    dtype=torch.int32,
+                ),
+            )
+        args += (False, False, need_cell)
+        if batched:
+            args += (2 if num_atoms else 0,)
+            op = torch.ops.nvalchemiops.ewald_recip_energy_batch.default
+        else:
+            op = torch.ops.nvalchemiops.ewald_recip_energy_single.default
+
+        result = torch.library.opcheck(op, args, test_utils=("test_faketensor",))
+        assert result["test_faketensor"] == "SUCCESS"
+
     @pytest.mark.slow
     @pytest.mark.parametrize("device", ["cpu", "cuda"])
     @pytest.mark.parametrize("part", ["real", "recip", "summation"])
