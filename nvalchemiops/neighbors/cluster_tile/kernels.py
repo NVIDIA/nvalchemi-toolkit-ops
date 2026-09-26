@@ -204,12 +204,13 @@ def _triclinic_qr_height_is_certified(
 ) -> wp.bool:
     """Certify that the Babai candidate is the only possible in-cutoff image.
 
-    For a displacement shorter than ``outer_cutoff``, the q2 projection can
-    identify at most one integer c when the cutoff is below half ``r22``.
-    With c fixed, the same argument identifies b below half ``r11``; nearest
-    plane then chooses the minimizing a. The relative margin protects the
-    float32 comparisons. Axis-aligned cells use their direct componentwise
-    path and do not have QR heights populated.
+    For a displacement shorter than ``outer_cutoff``, two integer c choices
+    have q2 projections separated by at least ``r22``. With c fixed, two b
+    choices have q1 projections separated by at least ``r11``. A cutoff below
+    half of both heights therefore leaves at most one c and b; nearest-plane
+    rounding then minimizes the remaining q0 component. The relative margin
+    protects the float32 comparisons. Axis-aligned cells use their direct
+    componentwise path and do not have QR heights populated.
     """
     if qr.axis_aligned:
         return wp.bool(False)
@@ -299,6 +300,9 @@ def _wrap_triclinic_prepared(
     )
     best_distance_sq = wp.dot(best_displacement, best_displacement)
 
+    # The Babai distance is an upper bound on the closest-image distance.
+    # Any improving image must fit inside that sphere's q2 projection, which
+    # yields a finite interval containing every possible c coordinate.
     center_c = -y2 / qr.r22
     range_slack = 1.0e-6 * wp.max(best_distance_sq, 1.0)
     radius_c = wp.sqrt(best_distance_sq + range_slack) / qr.r22
@@ -313,6 +317,8 @@ def _wrap_triclinic_prepared(
                 best_distance_sq + best_slack - partial_c_sq,
                 0.0,
             )
+            # With c fixed, the remaining radius bounds every b coordinate
+            # that could improve the current candidate.
             center_b = -(y1 + qr.r12 * wp.float32(n_c)) / qr.r11
             radius_b = wp.sqrt(remaining_b_sq) / qr.r11
             b_min = wp.int32(wp.floor(center_b - radius_b))
@@ -322,6 +328,8 @@ def _wrap_triclinic_prepared(
                 partial_b_sq = partial_c_sq + residual_b * residual_b
                 best_slack = 1.0e-6 * wp.max(best_distance_sq, 1.0)
                 if partial_b_sq <= best_distance_sq + best_slack:
+                    # For fixed b and c, the q0 residual is minimized by the
+                    # nearest integer a, so no other a needs to be searched.
                     center_a = (
                         -(y0 + qr.r01 * wp.float32(n_b) + qr.r02 * wp.float32(n_c))
                         / qr.r00
@@ -374,6 +382,9 @@ def _wrap_triclinic_pair(
     qr_height_certified: wp.bool,
 ) -> tuple[wp.vec3f, wp.vec3i]:
     """Use the strongest available pair certificate before complete search."""
+    # The reciprocal bound makes fractional rounding unique within cutoff;
+    # the height bound isolates c and b, leaving Babai's minimizing a. Only
+    # uncertified queries need the complete QR sphere search.
     if fractional_rounding_certified:
         return _wrap_triclinic_fractional(d, cell, inv_cell)
     if qr_height_certified:
@@ -827,11 +838,14 @@ def _bbox_valid(
     ):
         return 0
 
+    # In a skew cell, the nearest center image need not minimize the boxes'
+    # AABB gap. Another periodic image can still bring them within cutoff.
     # If any translated pair of group boxes is within cutoff, each Cartesian
     # component of the translated center delta is bounded by the summed box
-    # half-extents plus cutoff. Applying each reciprocal row gives a finite,
-    # complete integer-shift interval. The nearest-center image above is a
-    # cheap common-case check; this enumeration covers all other images too.
+    # half-extents plus cutoff. Applying the reciprocal vectors gives a
+    # necessary interval for each image coordinate. In exact arithmetic, the
+    # inclusive integer bounds are ceil(lower) through floor(upper). The
+    # nearest-center image above is a cheap common-case check.
     cutoff = wp.sqrt(cutoff_sq)
     box_extent = rg_ext + cg_ext
     fractional = d_ctr * inv_cell
@@ -856,12 +870,22 @@ def _bbox_valid(
         + wp.abs(reciprocal_c[2]) * box_extent[2]
         + cutoff * wp.length(reciprocal_c)
     )
-    a_min = wp.int32(wp.floor(-fractional[0] - bound_a))
-    a_max = wp.int32(wp.ceil(-fractional[0] + bound_a))
-    b_min = wp.int32(wp.floor(-fractional[1] - bound_b))
-    b_max = wp.int32(wp.ceil(-fractional[1] + bound_b))
-    c_min = wp.int32(wp.floor(-fractional[2] - bound_c))
-    c_max = wp.int32(wp.ceil(-fractional[2] + bound_c))
+    # A scale-aware float32 margin keeps near-integer endpoints from rounding
+    # inward and excluding a possible image. Float32 inverse/fractional error
+    # is amplified by the cell condition number without bound, so a fixed
+    # relative margin cannot certify near-singular cells.
+    padding_a = 1.0e-4 * wp.max(1.0, wp.abs(fractional[0]) + bound_a)
+    padding_b = 1.0e-4 * wp.max(1.0, wp.abs(fractional[1]) + bound_b)
+    padding_c = 1.0e-4 * wp.max(1.0, wp.abs(fractional[2]) + bound_c)
+    a_min = wp.int32(wp.ceil(-fractional[0] - bound_a - padding_a))
+    a_max = wp.int32(wp.floor(-fractional[0] + bound_a + padding_a))
+    b_min = wp.int32(wp.ceil(-fractional[1] - bound_b - padding_b))
+    b_max = wp.int32(wp.floor(-fractional[1] + bound_b + padding_b))
+    c_min = wp.int32(wp.ceil(-fractional[2] - bound_c - padding_c))
+    c_max = wp.int32(wp.floor(-fractional[2] + bound_c + padding_c))
+    # If any coordinate interval has no integer shift, no image can survive.
+    if a_min > a_max or b_min > b_max or c_min > c_max:
+        return 0
     cell_T = wp.transpose(cell)
     for shift_a in range(a_min, a_max + 1):
         for shift_b in range(b_min, b_max + 1):

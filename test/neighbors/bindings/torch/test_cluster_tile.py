@@ -521,6 +521,144 @@ class TestTileNeighborListCorrectness:
             tile_pairs
         )
 
+    def test_cross_group_aabb_integer_boundary_keeps_near_cutoff_pair(
+        self, device, dtype
+    ):
+        """A translated box pair near an integer bound keeps only valid pairs."""
+        cell = torch.tensor(
+            [[[10.0, 0.0, 0.0], [4.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=dtype,
+            device=device,
+        )
+        lattice_translation = cell[0].T @ torch.tensor(
+            [100.0, -100.0, 0.0], dtype=dtype, device=device
+        )
+        site_positions = torch.tensor(
+            [
+                [8.3, 0.0, 4.9],
+                [8.3, 8.0, 4.9],
+                [4.838, 1.9999, 4.9],
+                [4.835, 1.9999, 4.9],
+            ],
+            dtype=dtype,
+            device=device,
+        )
+        site_positions[2:] += lattice_translation
+        positions = site_positions.repeat_interleave(16, dim=0)
+        cutoff = 3.9999
+        expected = _lattice_neighbor_rows_reference(positions, cell[0], cutoff)
+        assert (32, -100, 100, 0) in expected[0]
+        assert not any(pair[0] == 48 for pair in expected[0])
+
+        matrix, counts, shifts, distances, vectors = cluster_tile_neighbor_list(
+            positions,
+            cutoff,
+            cell,
+            max_neighbors=64,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert _per_atom_neighbor_sets(matrix, counts, shifts, 64) == expected
+        pair_slot = torch.nonzero(matrix[0, : counts[0]] == 32).flatten()
+        assert pair_slot.numel() == 1
+        pair_slot = int(pair_slot[0].item())
+        assert shifts[0, pair_slot].cpu().tolist() == [-100, 100, 0]
+
+        positions_cpu = positions.detach().cpu().double().numpy()
+        cell_cpu = cell[0].detach().cpu().double().numpy()
+        outside_shift, outside_distance_sq = _minimum_image_reference(
+            positions_cpu[48] - positions_cpu[0], cell_cpu
+        )
+        outside_distance = np.sqrt(outside_distance_sq)
+        assert outside_shift.tolist() == [-100, 100, 0]
+        assert cutoff < outside_distance < cutoff + 0.002
+        expected_vector = (
+            positions_cpu[32] - positions_cpu[0]
+        ) + cell_cpu.T @ np.array([-100.0, 100.0, 0.0])
+        expected_distance = float(np.linalg.norm(expected_vector))
+        assert expected_distance < cutoff
+        assert cutoff - expected_distance < 0.002
+        torch.testing.assert_close(
+            vectors[0, pair_slot],
+            torch.as_tensor(expected_vector, dtype=dtype, device=device),
+            atol=2.0e-4,
+            rtol=0.0,
+        )
+        torch.testing.assert_close(
+            distances[0, pair_slot],
+            torch.tensor(expected_distance, dtype=dtype, device=device),
+            atol=2.0e-4,
+            rtol=0.0,
+        )
+
+        tile = cluster_tile_neighbor_list(positions, cutoff, cell, format="tile")
+        num_tiles, tile_rows, tile_cols, sorted_atoms, sorted_x, sorted_y, sorted_z = (
+            tile
+        )
+        tile_count = int(num_tiles[0].item())
+        tile_pairs = set(
+            zip(
+                tile_rows[:tile_count].cpu().tolist(),
+                tile_cols[:tile_count].cpu().tolist(),
+                strict=True,
+            )
+        )
+        sorted_atoms = sorted_atoms.cpu().tolist()
+        sorted_positions = torch.stack((sorted_x, sorted_y, sorted_z), dim=-1)
+        sorted_positions = sorted_positions.detach().cpu().double().numpy()
+        atom_group = [-1] * positions.shape[0]
+        group_bounds = {}
+        for slot, atom in enumerate(sorted_atoms):
+            if 0 <= atom < positions.shape[0]:
+                atom_group[atom] = slot // TILE_GROUP_SIZE
+        for group in {atom_group[0], atom_group[32]}:
+            group_slots = [
+                slot
+                for slot, atom in enumerate(sorted_atoms)
+                if 0 <= atom < positions.shape[0] and atom_group[atom] == group
+            ]
+            group_coords = sorted_positions[group_slots]
+            lower = group_coords.min(axis=0)
+            upper = group_coords.max(axis=0)
+            group_bounds[group] = (0.5 * (lower + upper), 0.5 * (upper - lower))
+
+        source_group, target_group = atom_group[0], atom_group[32]
+        assert source_group != target_group
+        required_edge = (
+            min(source_group, target_group),
+            max(source_group, target_group),
+        )
+        assert required_edge in tile_pairs
+        for source, row in enumerate(expected):
+            for target, *_shift in row:
+                edge = (
+                    min(atom_group[source], atom_group[target]),
+                    max(atom_group[source], atom_group[target]),
+                )
+                assert edge in tile_pairs
+
+        row_group, col_group = (
+            max(source_group, target_group),
+            min(source_group, target_group),
+        )
+        row_center, row_extent = group_bounds[row_group]
+        col_center, col_extent = group_bounds[col_group]
+        center_delta = row_center - col_center
+        inverse_cell = np.linalg.inv(cell_cpu)
+        fractional = center_delta @ inverse_cell
+        box_extent = row_extent + col_extent
+        reciprocal = inverse_cell
+        bound = np.array(
+            [
+                np.abs(reciprocal[:, axis]) @ box_extent
+                + cutoff * np.linalg.norm(reciprocal[:, axis])
+                for axis in range(3)
+            ]
+        )
+        lower_bound = -fractional - bound
+        assert int(np.rint(lower_bound[1])) == -101
+        assert abs(lower_bound[1] + 101.0) < 1.0e-4
+
     def test_dual_cutoff_certificate_uses_outer_triclinic_radius(self, device, dtype):
         """An uncertified outer radius uses closest-image search for cutoff2."""
         positions = torch.tensor(
