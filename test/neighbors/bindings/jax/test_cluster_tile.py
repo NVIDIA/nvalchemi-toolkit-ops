@@ -1012,6 +1012,216 @@ class TestJaxClusterTileBruteForce:
         ref = _brute_force_pairs_full(positions_np, cell_np, cutoff, pbc=True)
         assert got == ref
 
+    def test_skewed_cell_exact_image_all_formats(self):
+        """JAX matrix, COO, and tile calls use the true skew-cell image."""
+        positions_np = np.array([[4.0, 5.0, 0.0], [8.3, 3.0, 0.0]], dtype=np.float32)
+        cell_np = np.array(
+            [[10.0, 0.0, 0.0], [4.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+            dtype=np.float32,
+        )
+        positions = jnp.asarray(positions_np)
+        cell = jnp.asarray(cell_np)
+        cutoff = 4.8
+        expected = {
+            (0, 1, 0, 0, 0),
+            (1, 0, 0, 0, 0),
+        }
+
+        nm, nn, shifts, distances, vectors = cluster_tile_neighbor_list(
+            positions,
+            cutoff,
+            cell,
+            max_neighbors=4,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert _matrix_to_pair_set_full(nm, nn, shifts, 2) == expected
+        np.testing.assert_allclose(
+            np.asarray(vectors)[:, 0], [[4.3, -2.0, 0.0], [-4.3, 2.0, 0.0]]
+        )
+        np.testing.assert_allclose(
+            np.asarray(distances)[:, 0], [np.hypot(4.3, 2.0)] * 2
+        )
+
+        pairs, pointer, coo_shifts, coo_distances, coo_vectors = (
+            cluster_tile_neighbor_list(
+                positions,
+                cutoff,
+                cell,
+                format="coo",
+                max_pairs=4,
+                return_distances=True,
+                return_vectors=True,
+            )
+        )
+        pairs_np = np.asarray(pairs)
+        shifts_np = np.asarray(coo_shifts)
+        got_coo = {
+            (
+                int(pairs_np[0, slot]),
+                int(pairs_np[1, slot]),
+                *(int(value) for value in shifts_np[slot]),
+            )
+            for slot in range(pairs_np.shape[1])
+        }
+        assert got_coo == expected
+        np.testing.assert_allclose(
+            np.linalg.norm(np.asarray(coo_vectors), axis=1),
+            np.asarray(coo_distances),
+        )
+        np.testing.assert_array_equal(np.asarray(pointer), [0, 1, 2])
+
+        tile = cluster_tile_neighbor_list(positions, cutoff, cell, format="tile")
+        num_tiles, tile_rows, tile_cols = tile[:3]
+        assert int(np.asarray(num_tiles)[0]) == 1
+        np.testing.assert_array_equal(np.asarray(tile_rows)[:1], [0])
+        np.testing.assert_array_equal(np.asarray(tile_cols)[:1], [0])
+
+    def test_qr_height_uncertified_near_cutoff_fallback(self):
+        """JAX retains exact search when Babai misses an in-cutoff image."""
+        positions_np = np.array([[0.0, 0.0, 0.0], [4.0, 4.9, 0.0]], dtype=np.float32)
+        cell_np = np.array(
+            [[10.0, 0.0, 0.0], [4.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+            dtype=np.float32,
+        )
+        cutoff = 5.11
+        expected = _brute_force_pairs_full(positions_np, cell_np, cutoff)
+        assert expected == {(0, 1, 0, -1, 0), (1, 0, 0, 1, 0)}
+
+        matrix, counts, shifts, distances, vectors = cluster_tile_neighbor_list(
+            jnp.asarray(positions_np),
+            cutoff,
+            jnp.asarray(cell_np),
+            max_neighbors=4,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert _matrix_to_pair_set_full(matrix, counts, shifts, 2) == expected
+        np.testing.assert_array_equal(np.asarray(shifts)[:, 0], [[0, -1, 0], [0, 1, 0]])
+        np.testing.assert_allclose(
+            np.asarray(vectors)[:, 0], [[0.0, -5.1, 0.0], [0.0, 5.1, 0.0]], atol=2e-5
+        )
+        np.testing.assert_allclose(np.asarray(distances)[:, 0], [5.1, 5.1], atol=2e-5)
+
+        pairs, pointer, coo_shifts, coo_distances, coo_vectors = (
+            cluster_tile_neighbor_list(
+                jnp.asarray(positions_np),
+                cutoff,
+                jnp.asarray(cell_np),
+                format="coo",
+                max_pairs=4,
+                return_distances=True,
+                return_vectors=True,
+            )
+        )
+        pairs_np = np.asarray(pairs)
+        shifts_np = np.asarray(coo_shifts)
+        got_coo = {
+            (
+                int(pairs_np[0, slot]),
+                int(pairs_np[1, slot]),
+                *(int(value) for value in shifts_np[slot]),
+            )
+            for slot in range(pairs_np.shape[1])
+        }
+        assert got_coo == expected
+        np.testing.assert_array_equal(np.asarray(pointer), [0, 1, 2])
+        np.testing.assert_allclose(
+            np.asarray(coo_vectors), [[0.0, -5.1, 0.0], [0.0, 5.1, 0.0]], atol=2e-5
+        )
+        np.testing.assert_allclose(np.asarray(coo_distances), [5.1, 5.1], atol=2e-5)
+
+    def test_dual_cutoff_uses_qr_height_certificate_for_outer_matrix(self):
+        """The larger skew-cell cutoff determines the pair-image certificate."""
+        positions_np = np.array([[4.0, 5.0, 0.0], [8.3, 3.0, 0.0]], dtype=np.float32)
+        cell_np = np.array(
+            [[10.0, 0.0, 0.0], [4.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+            dtype=np.float32,
+        )
+        inner_cutoff, outer_cutoff = 2.0, 4.8
+        positions = jnp.asarray(positions_np)
+        cell = jnp.asarray(cell_np)
+        primary = _brute_force_pairs_full(positions_np, cell_np, inner_cutoff)
+        secondary = _brute_force_pairs_full(positions_np, cell_np, outer_cutoff)
+        assert primary == set()
+        assert secondary == {(0, 1, 0, 0, 0), (1, 0, 0, 0, 0)}
+
+        dual = cluster_tile_neighbor_list(
+            positions,
+            inner_cutoff,
+            cell,
+            max_neighbors=4,
+            cutoff2=outer_cutoff,
+        )
+        assert _matrix_to_pair_set_full(*dual[:3], 2) == primary
+        assert _matrix_to_pair_set_full(*dual[3:], 2) == secondary
+        np.testing.assert_array_equal(np.asarray(dual[1]), [0, 0])
+        np.testing.assert_array_equal(np.asarray(dual[4]), [1, 1])
+
+    def test_certified_skew_rounding_preserves_translated_pair_geometry(self):
+        """Certified skew wrapping returns the shift for translated input atoms."""
+        cell_np = np.array(
+            [[20.0, 0.0, 0.0], [8.0, 20.0, 0.0], [2.0, 4.0, 20.0]],
+            dtype=np.float32,
+        )
+        p0 = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        translated_delta = (
+            cell_np[0] - cell_np[1] + np.array([4.5, 0.0, 0.0], dtype=np.float32)
+        )
+        positions_np = np.stack((p0, p0 + translated_delta))
+        positions = jnp.asarray(positions_np)
+        cell = jnp.asarray(cell_np)
+        expected = _brute_force_pairs_full(positions_np, cell_np, 4.8, pbc=True)
+        assert expected == {
+            (0, 1, -1, 1, 0),
+            (1, 0, 1, -1, 0),
+        }
+
+        matrix, counts, shifts, distances, vectors = cluster_tile_neighbor_list(
+            positions,
+            4.8,
+            cell,
+            max_neighbors=4,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert _matrix_to_pair_set_full(matrix, counts, shifts, 2) == expected
+        np.testing.assert_array_equal(
+            np.asarray(shifts)[:, 0], [[-1, 1, 0], [1, -1, 0]]
+        )
+        np.testing.assert_allclose(
+            np.asarray(vectors)[:, 0], [[4.5, 0.0, 0.0], [-4.5, 0.0, 0.0]]
+        )
+        np.testing.assert_allclose(np.asarray(distances)[:, 0], [4.5, 4.5])
+
+        pairs, pointer, coo_shifts, coo_distances, coo_vectors = (
+            cluster_tile_neighbor_list(
+                positions,
+                4.8,
+                cell,
+                format="coo",
+                max_pairs=4,
+                return_distances=True,
+                return_vectors=True,
+            )
+        )
+        pairs_np = np.asarray(pairs)
+        shifts_np = np.asarray(coo_shifts)
+        got_coo = {
+            (
+                int(pairs_np[0, slot]),
+                int(pairs_np[1, slot]),
+                *(int(value) for value in shifts_np[slot]),
+            )
+            for slot in range(pairs_np.shape[1])
+        }
+        assert got_coo == expected
+        np.testing.assert_array_equal(np.asarray(pointer), [0, 1, 2])
+        np.testing.assert_allclose(
+            np.linalg.norm(np.asarray(coo_vectors), axis=1),
+            np.asarray(coo_distances),
+        )
+
 
 class TestJaxClusterTileCutoff2Selective:
     """Matrix-only cutoff2 and selective rebuild coverage."""

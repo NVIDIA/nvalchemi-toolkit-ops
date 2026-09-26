@@ -20,7 +20,9 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+from itertools import product
 
+import numpy as np
 import pytest
 import torch
 
@@ -99,6 +101,69 @@ def _compact_coo_pair_sets(
         )
     assert len(rows) == natom
     return rows
+
+
+def _minimum_image_reference(
+    displacement: np.ndarray,
+    cell: np.ndarray,
+) -> tuple[np.ndarray, float]:
+    """Find a pair's closest lattice image by independent bounded enumeration."""
+    lattice = np.asarray(cell, dtype=np.float64).T
+    reciprocal = np.linalg.inv(lattice)
+    displacement = np.asarray(displacement, dtype=np.float64)
+    fractional = reciprocal @ displacement
+    best_shift = -np.floor(fractional + 0.5).astype(np.int64)
+    best_displacement = displacement + lattice @ best_shift
+    best_distance_sq = float(best_displacement @ best_displacement)
+
+    # Any improving image v satisfies |(lattice^-1 v)_k| <= ||row_k|| |v|.
+    # floor/ceil make these inclusive integer bounds slightly conservative.
+    bounds = np.linalg.norm(reciprocal, axis=1) * np.sqrt(best_distance_sq)
+    lower = np.floor(-fractional - bounds).astype(np.int64)
+    upper = np.ceil(-fractional + bounds).astype(np.int64)
+    for candidate in product(
+        range(int(lower[0]), int(upper[0]) + 1),
+        range(int(lower[1]), int(upper[1]) + 1),
+        range(int(lower[2]), int(upper[2]) + 1),
+    ):
+        shift = np.asarray(candidate, dtype=np.int64)
+        image = displacement + lattice @ shift
+        distance_sq = float(image @ image)
+        if distance_sq < best_distance_sq:
+            best_shift = shift
+            best_distance_sq = distance_sq
+    return best_shift, best_distance_sq
+
+
+def _lattice_neighbor_rows_reference(
+    positions: torch.Tensor,
+    cell: torch.Tensor,
+    cutoff: float,
+) -> list[frozenset[tuple[int, int, int, int]]]:
+    """Return full directed rows using an independent CPU lattice search."""
+    positions_cpu = positions.detach().cpu().double().numpy()
+    cell_cpu = cell.detach().cpu().double().numpy()
+    rows: list[set[tuple[int, int, int, int]]] = [
+        set() for _ in range(positions_cpu.shape[0])
+    ]
+    cutoff_sq = cutoff * cutoff
+    for source in range(positions_cpu.shape[0]):
+        for target in range(positions_cpu.shape[0]):
+            if source == target:
+                continue
+            shift, distance_sq = _minimum_image_reference(
+                positions_cpu[target] - positions_cpu[source], cell_cpu
+            )
+            if distance_sq < cutoff_sq:
+                rows[source].add(
+                    (
+                        target,
+                        int(shift[0]),
+                        int(shift[1]),
+                        int(shift[2]),
+                    )
+                )
+    return [frozenset(row) for row in rows]
 
 
 def _run_isolated_fullgraph_overflow(kind: str) -> subprocess.CompletedProcess[str]:
@@ -320,6 +385,760 @@ class TestTileNeighborListCorrectness:
         assert nn.cpu().tolist() == [1, 1]
         assert int(nm[0, 0].item()) == 1
         assert int(nm[1, 0].item()) == 0
+
+    def test_skewed_cell_exact_minimum_image_regression(self, device, dtype):
+        """The closest image is selected even when fractional rounding fails."""
+        positions = torch.tensor(
+            [[4.0, 5.0, 0.0], [8.3, 3.0, 0.0]],
+            dtype=dtype,
+            device=device,
+        )
+        cell = torch.tensor(
+            [[[10.0, 0.0, 0.0], [4.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=dtype,
+            device=device,
+        )
+        cutoff = 4.8
+        expected = _lattice_neighbor_rows_reference(positions, cell[0], cutoff)
+
+        matrix, counts, shifts, distances, vectors = cluster_tile_neighbor_list(
+            positions,
+            cutoff,
+            cell,
+            max_neighbors=8,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert _per_atom_neighbor_sets(matrix, counts, shifts, 2) == expected
+        assert counts.cpu().tolist() == [1, 1]
+        for source in range(2):
+            target = int(matrix[source, 0].item())
+            displacement = (
+                positions[target]
+                - positions[source]
+                + cell[0].T @ shifts[source, 0].to(dtype)
+            )
+            torch.testing.assert_close(vectors[source, 0], displacement)
+            torch.testing.assert_close(
+                distances[source, 0], torch.linalg.vector_norm(displacement)
+            )
+
+        pairs, pointer, coo_shifts, coo_distances, coo_vectors = (
+            cluster_tile_neighbor_list(
+                positions,
+                cutoff,
+                cell,
+                format="coo",
+                max_pairs=8,
+                return_distances=True,
+                return_vectors=True,
+            )
+        )
+        assert _compact_coo_pair_sets(pairs, pointer, coo_shifts) == expected
+        for slot in range(pairs.shape[1]):
+            source = int(pairs[0, slot].item())
+            target = int(pairs[1, slot].item())
+            displacement = (
+                positions[target]
+                - positions[source]
+                + cell[0].T @ coo_shifts[slot].to(dtype)
+            )
+            torch.testing.assert_close(coo_vectors[slot], displacement)
+            torch.testing.assert_close(
+                coo_distances[slot], torch.linalg.vector_norm(displacement)
+            )
+
+        tile = cluster_tile_neighbor_list(positions, cutoff, cell, format="tile")
+        num_tiles, tile_rows, tile_cols = tile[:3]
+        assert int(num_tiles[0].item()) == 1
+        assert tile_rows[:1].cpu().tolist() == [0]
+        assert tile_cols[:1].cpu().tolist() == [0]
+
+    def test_cross_group_aabb_image_rescues_skewed_pair(self, device, dtype):
+        """A non-nearest center image keeps a valid cross-group tile."""
+        site_positions = torch.tensor(
+            [
+                [8.3, 0.0, 4.9],
+                [8.3, 8.0, 4.9],
+                [4.0, 2.0, 5.1],
+                [4.0, 9.98, 5.1],
+            ],
+            dtype=dtype,
+            device=device,
+        )
+        positions = site_positions.repeat_interleave(16, dim=0)
+        cell = torch.tensor(
+            [[[10.0, 0.0, 0.0], [4.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=dtype,
+            device=device,
+        )
+        cutoff = 4.2
+        expected = _lattice_neighbor_rows_reference(positions, cell[0], cutoff)
+        assert (32, 0, 1, 0) in expected[16]
+
+        matrix, counts, shifts, distances, vectors = cluster_tile_neighbor_list(
+            positions,
+            cutoff,
+            cell,
+            max_neighbors=64,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert _per_atom_neighbor_sets(matrix, counts, shifts, 64) == expected
+        pair_slots = torch.nonzero(matrix[16, : counts[16]] == 32).flatten()
+        assert pair_slots.numel() == 1
+        pair_slot = int(pair_slots[0].item())
+        assert shifts[16, pair_slot].cpu().tolist() == [0, 1, 0]
+        expected_vector = torch.tensor([-0.3, 4.0, 0.2], dtype=dtype, device=device)
+        torch.testing.assert_close(
+            vectors[16, pair_slot], expected_vector, atol=2.0e-5, rtol=0.0
+        )
+        torch.testing.assert_close(
+            distances[16, pair_slot],
+            torch.linalg.vector_norm(expected_vector),
+            atol=2.0e-5,
+            rtol=0.0,
+        )
+
+        num_tiles, tile_rows, tile_cols, sorted_atom_index = cluster_tile_neighbor_list(
+            positions, cutoff, cell, format="tile"
+        )[:4]
+        tile_count = int(num_tiles[0].item())
+        tile_pairs = set(
+            zip(
+                tile_rows[:tile_count].cpu().tolist(),
+                tile_cols[:tile_count].cpu().tolist(),
+                strict=True,
+            )
+        )
+        atom_group = [-1] * positions.shape[0]
+        for sorted_slot, atom in enumerate(sorted_atom_index.cpu().tolist()):
+            if 0 <= atom < positions.shape[0]:
+                atom_group[atom] = sorted_slot // TILE_GROUP_SIZE
+        source_group, target_group = atom_group[16], atom_group[32]
+        assert source_group != target_group
+        assert (min(source_group, target_group), max(source_group, target_group)) in (
+            tile_pairs
+        )
+
+    def test_cross_group_aabb_integer_boundary_keeps_near_cutoff_pair(
+        self, device, dtype
+    ):
+        """A translated box pair near an integer bound keeps only valid pairs."""
+        cell = torch.tensor(
+            [[[10.0, 0.0, 0.0], [4.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=dtype,
+            device=device,
+        )
+        lattice_translation = cell[0].T @ torch.tensor(
+            [100.0, -100.0, 0.0], dtype=dtype, device=device
+        )
+        site_positions = torch.tensor(
+            [
+                [8.3, 0.0, 4.9],
+                [8.3, 8.0, 4.9],
+                [4.838, 1.9999, 4.9],
+                [4.835, 1.9999, 4.9],
+            ],
+            dtype=dtype,
+            device=device,
+        )
+        site_positions[2:] += lattice_translation
+        positions = site_positions.repeat_interleave(16, dim=0)
+        cutoff = 3.9999
+        expected = _lattice_neighbor_rows_reference(positions, cell[0], cutoff)
+        assert (32, -100, 100, 0) in expected[0]
+        assert not any(pair[0] == 48 for pair in expected[0])
+
+        matrix, counts, shifts, distances, vectors = cluster_tile_neighbor_list(
+            positions,
+            cutoff,
+            cell,
+            max_neighbors=64,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert _per_atom_neighbor_sets(matrix, counts, shifts, 64) == expected
+        pair_slot = torch.nonzero(matrix[0, : counts[0]] == 32).flatten()
+        assert pair_slot.numel() == 1
+        pair_slot = int(pair_slot[0].item())
+        assert shifts[0, pair_slot].cpu().tolist() == [-100, 100, 0]
+
+        positions_cpu = positions.detach().cpu().double().numpy()
+        cell_cpu = cell[0].detach().cpu().double().numpy()
+        outside_shift, outside_distance_sq = _minimum_image_reference(
+            positions_cpu[48] - positions_cpu[0], cell_cpu
+        )
+        outside_distance = np.sqrt(outside_distance_sq)
+        assert outside_shift.tolist() == [-100, 100, 0]
+        assert cutoff < outside_distance < cutoff + 0.002
+        expected_vector = (
+            positions_cpu[32] - positions_cpu[0]
+        ) + cell_cpu.T @ np.array([-100.0, 100.0, 0.0])
+        expected_distance = float(np.linalg.norm(expected_vector))
+        assert expected_distance < cutoff
+        assert cutoff - expected_distance < 0.002
+        torch.testing.assert_close(
+            vectors[0, pair_slot],
+            torch.as_tensor(expected_vector, dtype=dtype, device=device),
+            atol=2.0e-4,
+            rtol=0.0,
+        )
+        torch.testing.assert_close(
+            distances[0, pair_slot],
+            torch.tensor(expected_distance, dtype=dtype, device=device),
+            atol=2.0e-4,
+            rtol=0.0,
+        )
+
+        tile = cluster_tile_neighbor_list(positions, cutoff, cell, format="tile")
+        num_tiles, tile_rows, tile_cols, sorted_atoms, sorted_x, sorted_y, sorted_z = (
+            tile
+        )
+        tile_count = int(num_tiles[0].item())
+        tile_pairs = set(
+            zip(
+                tile_rows[:tile_count].cpu().tolist(),
+                tile_cols[:tile_count].cpu().tolist(),
+                strict=True,
+            )
+        )
+        sorted_atoms = sorted_atoms.cpu().tolist()
+        sorted_positions = torch.stack((sorted_x, sorted_y, sorted_z), dim=-1)
+        sorted_positions = sorted_positions.detach().cpu().double().numpy()
+        atom_group = [-1] * positions.shape[0]
+        group_bounds = {}
+        for slot, atom in enumerate(sorted_atoms):
+            if 0 <= atom < positions.shape[0]:
+                atom_group[atom] = slot // TILE_GROUP_SIZE
+        for group in {atom_group[0], atom_group[32]}:
+            group_slots = [
+                slot
+                for slot, atom in enumerate(sorted_atoms)
+                if 0 <= atom < positions.shape[0] and atom_group[atom] == group
+            ]
+            group_coords = sorted_positions[group_slots]
+            lower = group_coords.min(axis=0)
+            upper = group_coords.max(axis=0)
+            group_bounds[group] = (0.5 * (lower + upper), 0.5 * (upper - lower))
+
+        source_group, target_group = atom_group[0], atom_group[32]
+        assert source_group != target_group
+        required_edge = (
+            min(source_group, target_group),
+            max(source_group, target_group),
+        )
+        assert required_edge in tile_pairs
+        for source, row in enumerate(expected):
+            for target, *_shift in row:
+                edge = (
+                    min(atom_group[source], atom_group[target]),
+                    max(atom_group[source], atom_group[target]),
+                )
+                assert edge in tile_pairs
+
+        row_group, col_group = (
+            max(source_group, target_group),
+            min(source_group, target_group),
+        )
+        row_center, row_extent = group_bounds[row_group]
+        col_center, col_extent = group_bounds[col_group]
+        center_delta = row_center - col_center
+        inverse_cell = np.linalg.inv(cell_cpu)
+        fractional = center_delta @ inverse_cell
+        box_extent = row_extent + col_extent
+        reciprocal = inverse_cell
+        bound = np.array(
+            [
+                np.abs(reciprocal[:, axis]) @ box_extent
+                + cutoff * np.linalg.norm(reciprocal[:, axis])
+                for axis in range(3)
+            ]
+        )
+        lower_bound = -fractional - bound
+        assert int(np.rint(lower_bound[1])) == -101
+        assert abs(lower_bound[1] + 101.0) < 1.0e-4
+
+    def test_large_translation_aabb_pruning_uses_relative_shifts(self, device, dtype):
+        """Large lattice translations still retain a nearby cross-group pair."""
+        cell = torch.tensor(
+            [[[10.0, 0.0, 0.0], [4.1, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=dtype,
+            device=device,
+        )
+        lattice_index = -(2**20)
+        displacement = lattice_index * cell[0, 1] + torch.tensor(
+            [2.0, -9.0, 0.0], dtype=dtype, device=device
+        )
+        half_separation = torch.tensor([0.0, 8.0, 0.0], dtype=dtype, device=device)
+        positions = torch.cat(
+            (
+                torch.zeros((32, 3), dtype=dtype, device=device),
+                (displacement - half_separation).expand(16, 3),
+                (displacement + half_separation).expand(16, 3),
+            )
+        )
+        cutoff = 2.25
+        expected = _lattice_neighbor_rows_reference(positions, cell[0], cutoff)
+        expected_pair = (48, 0, 2**20, 0)
+        assert expected_pair in expected[0]
+
+        matrix, counts, shifts, distances, vectors = cluster_tile_neighbor_list(
+            positions,
+            cutoff,
+            cell,
+            max_neighbors=64,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert _per_atom_neighbor_sets(matrix, counts, shifts, 64) == expected
+        pair_slots = torch.nonzero(matrix[0, : counts[0]] == 48).flatten()
+        assert pair_slots.numel() == 1
+        pair_slot = int(pair_slots[0].item())
+        assert shifts[0, pair_slot].cpu().tolist() == [0, 2**20, 0]
+
+        positions_cpu = positions.detach().cpu().double().numpy()
+        cell_cpu = cell[0].detach().cpu().double().numpy()
+        expected_vector = (
+            positions_cpu[48] - positions_cpu[0]
+        ) + cell_cpu.T @ np.array([0.0, 2**20, 0.0])
+        expected_distance = float(np.linalg.norm(expected_vector))
+        assert np.allclose(expected_vector, [2.0, -1.0, 0.0], atol=1.0e-6)
+        assert expected_distance < cutoff
+        assert cutoff - expected_distance > 0.01
+        torch.testing.assert_close(
+            vectors[0, pair_slot],
+            torch.as_tensor(expected_vector, dtype=dtype, device=device),
+            atol=1.0e-5,
+            rtol=0.0,
+        )
+        torch.testing.assert_close(
+            distances[0, pair_slot],
+            torch.tensor(expected_distance, dtype=dtype, device=device),
+            atol=1.0e-5,
+            rtol=0.0,
+        )
+
+        tile = cluster_tile_neighbor_list(positions, cutoff, cell, format="tile")
+        num_tiles, tile_rows, tile_cols, sorted_atoms = tile[:4]
+        tile_count = int(num_tiles[0].item())
+        tile_pairs = set(
+            zip(
+                tile_rows[:tile_count].cpu().tolist(),
+                tile_cols[:tile_count].cpu().tolist(),
+                strict=True,
+            )
+        )
+        atom_group = [-1] * positions.shape[0]
+        for slot, atom in enumerate(sorted_atoms.cpu().tolist()):
+            if 0 <= atom < positions.shape[0]:
+                atom_group[atom] = slot // TILE_GROUP_SIZE
+        source_group, target_group = atom_group[0], atom_group[48]
+        assert source_group != target_group
+        assert (
+            min(source_group, target_group),
+            max(source_group, target_group),
+        ) in tile_pairs
+        for source, row in enumerate(expected):
+            for target, *_shift in row:
+                edge = (
+                    min(atom_group[source], atom_group[target]),
+                    max(atom_group[source], atom_group[target]),
+                )
+                assert edge in tile_pairs
+
+    def test_dual_cutoff_certificate_uses_outer_triclinic_radius(self, device, dtype):
+        """An uncertified outer radius uses closest-image search for cutoff2."""
+        positions = torch.tensor(
+            [[4.0, 5.0, 0.0], [8.3, 3.0, 0.0]],
+            dtype=dtype,
+            device=device,
+        )
+        cell = torch.tensor(
+            [[[10.0, 0.0, 0.0], [4.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=dtype,
+            device=device,
+        )
+        inner_cutoff, outer_cutoff = 2.0, 4.8
+        expected_inner = _lattice_neighbor_rows_reference(
+            positions, cell[0], inner_cutoff
+        )
+        expected_outer = _lattice_neighbor_rows_reference(
+            positions, cell[0], outer_cutoff
+        )
+        assert expected_inner == [frozenset(), frozenset()]
+        assert (1, 0, 0, 0) in expected_outer[0]
+        assert (0, 0, 0, 0) in expected_outer[1]
+
+        dual = cluster_tile_neighbor_list(
+            positions,
+            inner_cutoff,
+            cell,
+            max_neighbors=8,
+            cutoff2=outer_cutoff,
+        )
+        assert _per_atom_neighbor_sets(*dual[:3], 2) == expected_inner
+        assert _per_atom_neighbor_sets(*dual[3:], 2) == expected_outer
+        assert dual[1].cpu().tolist() == [0, 0]
+        assert dual[4].cpu().tolist() == [1, 1]
+        assert dual[5][0, 0].cpu().tolist() == [0, 0, 0]
+
+    @pytest.mark.parametrize("rotated", [False, True], ids=["skewed", "rotated"])
+    def test_qr_height_certificate_sheared_translated_pair(
+        self, device, dtype, rotated
+    ):
+        """QR heights certify a strongly sheared cell after fractional failure."""
+        base_cell = torch.tensor(
+            [[10.0, 0.0, 0.0], [19.5, 10.0, 0.0], [6.5, 13.0, 10.0]],
+            dtype=dtype,
+            device=device,
+        )
+        rotation = torch.tensor(
+            [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            dtype=dtype,
+            device=device,
+        )
+        lattice_shift = torch.tensor([0, 1, 0], dtype=torch.int32, device=device)
+        atom_translation = torch.tensor([1, -1, 0], dtype=torch.int32, device=device)
+        expected_shift = lattice_shift - atom_translation
+        expected_vector = torch.tensor([1.6, 0.2, -0.1], dtype=dtype, device=device)
+        p0 = torch.tensor([1.0, -2.0, 3.0], dtype=dtype, device=device)
+        p1 = (
+            p0
+            + expected_vector
+            - base_cell.T @ lattice_shift.to(dtype)
+            + base_cell.T @ atom_translation.to(dtype)
+        )
+        cell_mat = base_cell
+        positions = torch.stack((p0, p1))
+        if rotated:
+            cell_mat = base_cell @ rotation
+            positions = positions @ rotation
+            expected_vector = expected_vector @ rotation
+        positions = positions + torch.tensor(
+            [31.0, -12.0, 7.0], dtype=dtype, device=device
+        )
+        cell = cell_mat.unsqueeze(0).contiguous()
+        cutoff = 2.0
+
+        cell_cpu = cell_mat.detach().cpu().double()
+        reciprocal_bound = cutoff * torch.linalg.vector_norm(
+            torch.linalg.inv(cell_cpu), dim=0
+        )
+        qr_heights = torch.linalg.qr(cell_cpu.T).R.diagonal()
+        assert reciprocal_bound.max().item() > 0.5
+        assert cutoff < (0.5 - 1.0e-4) * qr_heights[1:].min().item()
+
+        expected = _lattice_neighbor_rows_reference(positions, cell[0], cutoff)
+        assert expected == [
+            frozenset(((1, *expected_shift.cpu().tolist()),)),
+            frozenset(((0, *(-expected_shift).cpu().tolist()),)),
+        ]
+
+        matrix, counts, shifts, distances, vectors = cluster_tile_neighbor_list(
+            positions,
+            cutoff,
+            cell,
+            max_neighbors=4,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert _per_atom_neighbor_sets(matrix, counts, shifts, 2) == expected
+        torch.testing.assert_close(
+            shifts[:, 0], torch.stack((expected_shift, -expected_shift))
+        )
+        torch.testing.assert_close(
+            vectors[:, 0],
+            torch.stack((expected_vector, -expected_vector)),
+            atol=2.0e-5,
+            rtol=0.0,
+        )
+        torch.testing.assert_close(
+            distances[:, 0],
+            torch.linalg.vector_norm(expected_vector).expand(2),
+            atol=2.0e-5,
+            rtol=0.0,
+        )
+
+        pairs, pointer, coo_shifts, coo_distances, coo_vectors = (
+            cluster_tile_neighbor_list(
+                positions,
+                cutoff,
+                cell,
+                format="coo",
+                max_pairs=4,
+                return_distances=True,
+                return_vectors=True,
+            )
+        )
+        assert _compact_coo_pair_sets(pairs, pointer, coo_shifts) == expected
+        np.testing.assert_allclose(
+            coo_vectors.cpu().numpy(),
+            np.stack((expected_vector.cpu().numpy(), -expected_vector.cpu().numpy())),
+            atol=2.0e-5,
+            rtol=0.0,
+        )
+        torch.testing.assert_close(
+            coo_distances,
+            torch.linalg.vector_norm(expected_vector).expand(2),
+            atol=2.0e-5,
+            rtol=0.0,
+        )
+
+        tile = cluster_tile_neighbor_list(positions, cutoff, cell, format="tile")
+        assert int(tile[0][0].item()) == 1
+        assert tile[1][:1].cpu().tolist() == [0]
+        assert tile[2][:1].cpu().tolist() == [0]
+
+    def test_qr_height_uncertified_pair_near_cutoff_matches_reference(
+        self, device, dtype
+    ):
+        """A radius just above half-height retains the complete image search."""
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [4.0, 4.9, 0.0]], dtype=dtype, device=device
+        )
+        cell = torch.tensor(
+            [[[10.0, 0.0, 0.0], [4.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=dtype,
+            device=device,
+        )
+        cutoff = 5.11
+        expected = _lattice_neighbor_rows_reference(positions, cell[0], cutoff)
+        assert expected == [frozenset(((1, 0, -1, 0),)), frozenset(((0, 0, 1, 0),))]
+
+        matrix, counts, shifts, distances, vectors = cluster_tile_neighbor_list(
+            positions,
+            cutoff,
+            cell,
+            max_neighbors=4,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert _per_atom_neighbor_sets(matrix, counts, shifts, 2) == expected
+        torch.testing.assert_close(
+            shifts[:, 0],
+            torch.tensor([[0, -1, 0], [0, 1, 0]], dtype=torch.int32, device=device),
+        )
+        torch.testing.assert_close(
+            vectors[:, 0],
+            torch.tensor([[0.0, -5.1, 0.0], [0.0, 5.1, 0.0]], device=device),
+            atol=2.0e-5,
+            rtol=0.0,
+        )
+        torch.testing.assert_close(
+            distances[:, 0],
+            torch.tensor([5.1, 5.1], device=device),
+            atol=2.0e-5,
+            rtol=0.0,
+        )
+
+    def test_certified_rounding_translations_cutoff_boundary_and_dual_cutoff(
+        self, device, dtype
+    ):
+        """Certified wrapping keeps translated shifts and strict cutoff behavior."""
+        positions = torch.tensor(
+            [[1.0, 2.0, 3.0], [23.5, -18.0, 3.0], [24.0, 2.0, 3.0]],
+            dtype=dtype,
+            device=device,
+        )
+        cell = _orthorhombic_cell(20.0, device, dtype)
+        cutoff = 3.0
+        expected = _lattice_neighbor_rows_reference(positions, cell[0], cutoff)
+        matrix, counts, shifts, distances, vectors = cluster_tile_neighbor_list(
+            positions,
+            cutoff,
+            cell,
+            max_neighbors=8,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert _per_atom_neighbor_sets(matrix, counts, shifts, 3) == expected
+        assert not any(target == 2 for target, *_ in expected[0])
+        assert shifts[0, 0].cpu().tolist() == [-1, 1, 0]
+        torch.testing.assert_close(
+            vectors[0, 0], torch.tensor([2.5, 0.0, 0.0], device=device)
+        )
+        torch.testing.assert_close(distances[0, 0], torch.tensor(2.5, device=device))
+        for source in range(positions.shape[0]):
+            for slot in range(int(counts[source].item())):
+                target = int(matrix[source, slot].item())
+                displacement = (
+                    positions[target]
+                    - positions[source]
+                    + cell[0].T @ shifts[source, slot].to(dtype)
+                )
+                torch.testing.assert_close(vectors[source, slot], displacement)
+                torch.testing.assert_close(
+                    distances[source, slot], torch.linalg.vector_norm(displacement)
+                )
+
+        coo_pairs, pointer, coo_shifts, coo_distances, coo_vectors = (
+            cluster_tile_neighbor_list(
+                positions,
+                cutoff,
+                cell,
+                format="coo",
+                max_pairs=16,
+                return_distances=True,
+                return_vectors=True,
+            )
+        )
+        assert _compact_coo_pair_sets(coo_pairs, pointer, coo_shifts) == expected
+        for slot in range(coo_pairs.shape[1]):
+            source = int(coo_pairs[0, slot].item())
+            target = int(coo_pairs[1, slot].item())
+            displacement = (
+                positions[target]
+                - positions[source]
+                + cell[0].T @ coo_shifts[slot].to(dtype)
+            )
+            torch.testing.assert_close(coo_vectors[slot], displacement)
+            torch.testing.assert_close(
+                coo_distances[slot], torch.linalg.vector_norm(displacement)
+            )
+
+        dual = cluster_tile_neighbor_list(
+            positions, 2.0, cell, max_neighbors=8, cutoff2=cutoff
+        )
+        expected_primary = _lattice_neighbor_rows_reference(positions, cell[0], 2.0)
+        expected_secondary = _lattice_neighbor_rows_reference(
+            positions, cell[0], cutoff
+        )
+        assert _per_atom_neighbor_sets(*dual[:3], 3) == expected_primary
+        assert _per_atom_neighbor_sets(*dual[3:], 3) == expected_secondary
+
+    @pytest.mark.parametrize(
+        "cell_values",
+        [
+            [[10.0, 0.0, 0.0], [0.0, 11.0, 0.0], [0.0, 0.0, 12.0]],
+            [
+                [9.32327, -3.61615, 0.0],
+                [3.97777, 10.25560, 0.0],
+                [0.0, 0.0, 12.0],
+            ],
+            [[10.0, 0.0, 0.0], [2.3, 9.7, 0.0], [1.1, -0.7, 10.2]],
+            [[10.0, 0.0, 0.0], [22.0, 10.0, 0.0], [2.0, 1.0, 10.0]],
+        ],
+        ids=["orthogonal", "rotated", "mild-skew", "strong-skew"],
+    )
+    def test_output_formats_match_independent_lattice_reference(
+        self, device, dtype, cell_values
+    ):
+        """Matrix, COO, and half-filled tiles preserve exact lattice neighbors."""
+        natom = 65
+        cutoff = 2.8
+        cell = torch.tensor([cell_values], dtype=dtype, device=device)
+        cell_cpu = cell.cpu().double()[0]
+        generator = torch.Generator().manual_seed(207)
+        fractional = torch.rand((natom, 3), generator=generator, dtype=torch.float64)
+        fractional[0] = torch.tensor([0.3, 0.3, 0.3], dtype=torch.float64)
+        inside_delta = torch.tensor([cutoff - 0.05, 0.0, 0.0], dtype=torch.float64)
+        outside_delta = torch.tensor([cutoff + 0.05, 0.0, 0.0], dtype=torch.float64)
+        fractional[1] = torch.remainder(
+            fractional[0] + torch.linalg.solve(cell_cpu.T, inside_delta), 1.0
+        )
+        fractional[2] = torch.remainder(
+            fractional[0] + torch.linalg.solve(cell_cpu.T, outside_delta), 1.0
+        )
+        positions = (fractional @ cell_cpu).to(device=device, dtype=dtype).contiguous()
+        expected = _lattice_neighbor_rows_reference(positions, cell[0], cutoff)
+        assert any(expected)
+        assert not any(target == 2 for target, *_ in expected[0])
+        assert not any(target == 0 for target, *_ in expected[2])
+
+        matrix, counts, shifts, distances, vectors = cluster_tile_neighbor_list(
+            positions,
+            cutoff,
+            cell,
+            max_neighbors=natom,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert _per_atom_neighbor_sets(matrix, counts, shifts, natom) == expected
+        positions_ref = positions.cpu().double().numpy()
+        cell_ref = cell.cpu().double().numpy()[0]
+        for source, row in enumerate(expected):
+            for slot in range(int(counts[source].item())):
+                target = int(matrix[source, slot].item())
+                shift = shifts[source, slot].cpu().numpy()
+                expected_vector = (
+                    positions_ref[target] - positions_ref[source] + cell_ref.T @ shift
+                )
+                expected_vector_t = torch.tensor(
+                    expected_vector, dtype=dtype, device=device
+                )
+                torch.testing.assert_close(
+                    vectors[source, slot],
+                    expected_vector_t,
+                    atol=2.0e-4,
+                    rtol=2.0e-4,
+                )
+                torch.testing.assert_close(
+                    distances[source, slot],
+                    torch.linalg.vector_norm(expected_vector_t),
+                    atol=2.0e-4,
+                    rtol=2.0e-4,
+                )
+
+        pairs, pointer, coo_shifts, coo_distances, coo_vectors = (
+            cluster_tile_neighbor_list(
+                positions,
+                cutoff,
+                cell,
+                max_neighbors=natom,
+                max_pairs=natom * (natom - 1),
+                format="coo",
+                return_distances=True,
+                return_vectors=True,
+            )
+        )
+        assert _compact_coo_pair_sets(pairs, pointer, coo_shifts) == expected
+        for slot in range(pairs.shape[1]):
+            source = int(pairs[0, slot].item())
+            target = int(pairs[1, slot].item())
+            shift = coo_shifts[slot].cpu().numpy()
+            expected_vector = (
+                positions_ref[target] - positions_ref[source] + cell_ref.T @ shift
+            )
+            expected_vector_t = torch.tensor(
+                expected_vector, dtype=dtype, device=device
+            )
+            torch.testing.assert_close(
+                coo_vectors[slot],
+                expected_vector_t,
+                atol=2.0e-4,
+                rtol=2.0e-4,
+            )
+            torch.testing.assert_close(
+                coo_distances[slot],
+                torch.linalg.vector_norm(expected_vector_t),
+                atol=2.0e-4,
+                rtol=2.0e-4,
+            )
+
+        tile = cluster_tile_neighbor_list(positions, cutoff, cell, format="tile")
+        num_tiles, tile_rows, tile_cols, sorted_atom_index = tile[:4]
+        tile_count = int(num_tiles[0].item())
+        tile_pairs = set(
+            zip(
+                tile_rows[:tile_count].cpu().tolist(),
+                tile_cols[:tile_count].cpu().tolist(),
+                strict=True,
+            )
+        )
+        assert all(row <= col for row, col in tile_pairs)
+        atom_group = [-1] * natom
+        for sorted_slot, atom in enumerate(sorted_atom_index.cpu().tolist()):
+            if 0 <= atom < natom:
+                atom_group[atom] = sorted_slot // TILE_GROUP_SIZE
+        required_tiles = set()
+        for source, row in enumerate(expected):
+            for target, *_shift in row:
+                if source < target:
+                    group_a = atom_group[source]
+                    group_b = atom_group[target]
+                    required_tiles.add((min(group_a, group_b), max(group_a, group_b)))
+        assert required_tiles <= tile_pairs
 
     @requires_vesin
     def test_cubic_system(self, device, dtype):
