@@ -147,9 +147,9 @@ def _prepare_triclinic_qr(cell: wp.mat33f) -> _TriclinicQR:
     if qr.axis_aligned:
         return qr
 
-    b0 = wp.vec3f(1.0, 0.0, 0.0) * cell
-    b1 = wp.vec3f(0.0, 1.0, 0.0) * cell
-    b2 = wp.vec3f(0.0, 0.0, 1.0) * cell
+    b0 = wp.vec3f(cell[0, 0], cell[0, 1], cell[0, 2])
+    b1 = wp.vec3f(cell[1, 0], cell[1, 1], cell[1, 2])
+    b2 = wp.vec3f(cell[2, 0], cell[2, 1], cell[2, 2])
     qr.r00 = wp.sqrt(wp.dot(b0, b0))
     qr.q0 = b0 / qr.r00
     qr.r01 = wp.dot(qr.q0, b1)
@@ -176,9 +176,9 @@ def _triclinic_cutoff_is_certified(
     half certifies that rounding selects that image and that no second image
     can also be in range. The small margin is conservative for float32 input.
     """
-    reciprocal_a = inv_cell * wp.vec3f(1.0, 0.0, 0.0)
-    reciprocal_b = inv_cell * wp.vec3f(0.0, 1.0, 0.0)
-    reciprocal_c = inv_cell * wp.vec3f(0.0, 0.0, 1.0)
+    reciprocal_a = wp.vec3f(inv_cell[0, 0], inv_cell[1, 0], inv_cell[2, 0])
+    reciprocal_b = wp.vec3f(inv_cell[0, 1], inv_cell[1, 1], inv_cell[2, 1])
+    reciprocal_c = wp.vec3f(inv_cell[0, 2], inv_cell[1, 2], inv_cell[2, 2])
     certified_limit = 0.5 - 1.0e-4
     return (
         outer_cutoff * wp.length(reciprocal_a) < certified_limit
@@ -821,7 +821,7 @@ def _bbox_valid(
         rg_ctr[1] - cg_ctr[1],
         rg_ctr[2] - cg_ctr[2],
     )
-    d_wrapped, _s = _wrap_triclinic_prepared(d_ctr, cell, inv_cell, qr)
+    d_wrapped, _ = _wrap_triclinic_prepared(d_ctr, cell, inv_cell, qr)
     if _bbox_distance_sq(d_wrapped, rg_ext, cg_ext) < cutoff_sq:
         return 1
 
@@ -848,10 +848,12 @@ def _bbox_valid(
     # nearest-center image above is a cheap common-case check.
     cutoff = wp.sqrt(cutoff_sq)
     box_extent = rg_ext + cg_ext
-    fractional = d_ctr * inv_cell
-    reciprocal_a = inv_cell * wp.vec3f(1.0, 0.0, 0.0)
-    reciprocal_b = inv_cell * wp.vec3f(0.0, 1.0, 0.0)
-    reciprocal_c = inv_cell * wp.vec3f(0.0, 0.0, 1.0)
+    # Bounds are relative to the nearest-center image tested above, so the
+    # integer coordinates below are corrections to d_wrapped.
+    fractional = d_wrapped * inv_cell
+    reciprocal_a = wp.vec3f(inv_cell[0, 0], inv_cell[1, 0], inv_cell[2, 0])
+    reciprocal_b = wp.vec3f(inv_cell[0, 1], inv_cell[1, 1], inv_cell[2, 1])
+    reciprocal_c = wp.vec3f(inv_cell[0, 2], inv_cell[1, 2], inv_cell[2, 2])
     bound_a = (
         wp.abs(reciprocal_a[0]) * box_extent[0]
         + wp.abs(reciprocal_a[1]) * box_extent[1]
@@ -887,14 +889,14 @@ def _bbox_valid(
     if a_min > a_max or b_min > b_max or c_min > c_max:
         return 0
     cell_T = wp.transpose(cell)
-    for shift_a in range(a_min, a_max + 1):
-        for shift_b in range(b_min, b_max + 1):
-            for shift_c in range(c_min, c_max + 1):
-                if shift_a != _s[0] or shift_b != _s[1] or shift_c != _s[2]:
+    for correction_a in range(a_min, a_max + 1):
+        for correction_b in range(b_min, b_max + 1):
+            for correction_c in range(c_min, c_max + 1):
+                if correction_a != 0 or correction_b != 0 or correction_c != 0:
                     d_image = d_wrapped + cell_T * wp.vec3f(
-                        wp.float32(shift_a - _s[0]),
-                        wp.float32(shift_b - _s[1]),
-                        wp.float32(shift_c - _s[2]),
+                        wp.float32(correction_a),
+                        wp.float32(correction_b),
+                        wp.float32(correction_c),
                     )
                     if _bbox_distance_sq(d_image, rg_ext, cg_ext) < cutoff_sq:
                         return 1

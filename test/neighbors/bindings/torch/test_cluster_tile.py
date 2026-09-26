@@ -659,6 +659,94 @@ class TestTileNeighborListCorrectness:
         assert int(np.rint(lower_bound[1])) == -101
         assert abs(lower_bound[1] + 101.0) < 1.0e-4
 
+    def test_large_translation_aabb_pruning_uses_relative_shifts(self, device, dtype):
+        """Large lattice translations still retain a nearby cross-group pair."""
+        cell = torch.tensor(
+            [[[10.0, 0.0, 0.0], [4.1, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=dtype,
+            device=device,
+        )
+        lattice_index = -(2**20)
+        displacement = lattice_index * cell[0, 1] + torch.tensor(
+            [2.0, -9.0, 0.0], dtype=dtype, device=device
+        )
+        half_separation = torch.tensor([0.0, 8.0, 0.0], dtype=dtype, device=device)
+        positions = torch.cat(
+            (
+                torch.zeros((32, 3), dtype=dtype, device=device),
+                (displacement - half_separation).expand(16, 3),
+                (displacement + half_separation).expand(16, 3),
+            )
+        )
+        cutoff = 2.25
+        expected = _lattice_neighbor_rows_reference(positions, cell[0], cutoff)
+        expected_pair = (48, 0, 2**20, 0)
+        assert expected_pair in expected[0]
+
+        matrix, counts, shifts, distances, vectors = cluster_tile_neighbor_list(
+            positions,
+            cutoff,
+            cell,
+            max_neighbors=64,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert _per_atom_neighbor_sets(matrix, counts, shifts, 64) == expected
+        pair_slots = torch.nonzero(matrix[0, : counts[0]] == 48).flatten()
+        assert pair_slots.numel() == 1
+        pair_slot = int(pair_slots[0].item())
+        assert shifts[0, pair_slot].cpu().tolist() == [0, 2**20, 0]
+
+        positions_cpu = positions.detach().cpu().double().numpy()
+        cell_cpu = cell[0].detach().cpu().double().numpy()
+        expected_vector = (
+            positions_cpu[48] - positions_cpu[0]
+        ) + cell_cpu.T @ np.array([0.0, 2**20, 0.0])
+        expected_distance = float(np.linalg.norm(expected_vector))
+        assert np.allclose(expected_vector, [2.0, -1.0, 0.0], atol=1.0e-6)
+        assert expected_distance < cutoff
+        assert cutoff - expected_distance > 0.01
+        torch.testing.assert_close(
+            vectors[0, pair_slot],
+            torch.as_tensor(expected_vector, dtype=dtype, device=device),
+            atol=1.0e-5,
+            rtol=0.0,
+        )
+        torch.testing.assert_close(
+            distances[0, pair_slot],
+            torch.tensor(expected_distance, dtype=dtype, device=device),
+            atol=1.0e-5,
+            rtol=0.0,
+        )
+
+        tile = cluster_tile_neighbor_list(positions, cutoff, cell, format="tile")
+        num_tiles, tile_rows, tile_cols, sorted_atoms = tile[:4]
+        tile_count = int(num_tiles[0].item())
+        tile_pairs = set(
+            zip(
+                tile_rows[:tile_count].cpu().tolist(),
+                tile_cols[:tile_count].cpu().tolist(),
+                strict=True,
+            )
+        )
+        atom_group = [-1] * positions.shape[0]
+        for slot, atom in enumerate(sorted_atoms.cpu().tolist()):
+            if 0 <= atom < positions.shape[0]:
+                atom_group[atom] = slot // TILE_GROUP_SIZE
+        source_group, target_group = atom_group[0], atom_group[48]
+        assert source_group != target_group
+        assert (
+            min(source_group, target_group),
+            max(source_group, target_group),
+        ) in tile_pairs
+        for source, row in enumerate(expected):
+            for target, *_shift in row:
+                edge = (
+                    min(atom_group[source], atom_group[target]),
+                    max(atom_group[source], atom_group[target]),
+                )
+                assert edge in tile_pairs
+
     def test_dual_cutoff_certificate_uses_outer_triclinic_radius(self, device, dtype):
         """An uncertified outer radius uses closest-image search for cutoff2."""
         positions = torch.tensor(
