@@ -1225,6 +1225,87 @@ class TestJaxBatchClusterTileBruteForce:
     output against a per-system numpy brute-force reference.
     """
 
+    def test_skewed_cell_exact_image_all_formats(self):
+        """Batched JAX matrix, COO, and tile paths use exact cell images."""
+        positions = jnp.array(
+            [[4.0, 5.0, 0.0], [8.3, 3.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        cell_batch = jnp.array(
+            [
+                [[10.0, 0.0, 0.0], [4.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+                [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+            ],
+            dtype=jnp.float32,
+        )
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+        cutoff = 4.8
+        expected = {
+            (0, 1, 0, 0, 0),
+            (1, 0, 0, 0, 0),
+            (2, 3, 0, 0, 0),
+            (3, 2, 0, 0, 0),
+        }
+
+        matrix, counts, shifts, distances, vectors = batch_cluster_tile_neighbor_list(
+            positions,
+            cutoff,
+            cell_batch,
+            batch_ptr,
+            max_neighbors=8,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert _matrix_to_pair_set_full(matrix, counts, shifts, 4) == expected
+        np.testing.assert_allclose(
+            np.asarray(vectors)[:, 0],
+            [[4.3, -2.0, 0.0], [-4.3, 2.0, 0.0], [1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]],
+        )
+        np.testing.assert_allclose(
+            np.asarray(distances)[:, 0], [np.hypot(4.3, 2.0)] * 2 + [1.0] * 2
+        )
+
+        pairs, pointer, coo_shifts, coo_distances, coo_vectors = (
+            batch_cluster_tile_neighbor_list(
+                positions,
+                cutoff,
+                cell_batch,
+                batch_ptr,
+                max_neighbors=8,
+                format="coo",
+                max_pairs=8,
+                return_distances=True,
+                return_vectors=True,
+            )
+        )
+        pair_array = np.asarray(pairs)
+        shift_array = np.asarray(coo_shifts)
+        got_coo = {
+            (
+                int(pair_array[0, slot]),
+                int(pair_array[1, slot]),
+                *(int(value) for value in shift_array[slot]),
+            )
+            for slot in range(pair_array.shape[1])
+        }
+        assert got_coo == expected
+        np.testing.assert_array_equal(np.asarray(pointer), [0, 1, 2, 3, 4])
+        np.testing.assert_allclose(
+            np.linalg.norm(np.asarray(coo_vectors), axis=1),
+            np.asarray(coo_distances),
+        )
+
+        tile = batch_cluster_tile_neighbor_list(
+            positions, cutoff, cell_batch, batch_ptr, format="tile"
+        )
+        num_tiles, tile_rows, tile_cols, tile_system = tile[:4]
+        tile_count = int(np.asarray(num_tiles)[0])
+        assert tile_count == 2
+        assert set(np.asarray(tile_system)[:tile_count].tolist()) == {0, 1}
+        assert np.all(
+            np.asarray(tile_rows)[:tile_count] <= np.asarray(tile_cols)[:tile_count]
+        )
+
     def test_two_systems_random_pbc_matches_brute_force(self):
         sys_sizes = [10, 12]
         cell_sizes = [4.0, 3.5]
