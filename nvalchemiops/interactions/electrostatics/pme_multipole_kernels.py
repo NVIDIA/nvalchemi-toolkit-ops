@@ -1478,12 +1478,12 @@ def _batch_pme_k_squared_backward_kernel(
     ``grad_cell_inv_T``
         Accumulates the cell-inverse gradient for the thread's system.
     """
-    b, i, j, k = wp.tid()
+    system_idx, miller_x_idx, miller_y_idx, miller_z_idx = wp.tid()
 
-    mx = miller_x[i]
-    my = miller_y[j]
-    mz = miller_z[k]
-    M = cell_inv_T[b]
+    mx = miller_x[miller_x_idx]
+    my = miller_y[miller_y_idx]
+    mz = miller_z[miller_z_idx]
+    M = cell_inv_T[system_idx]
 
     kx = M[0, 0] * mx + M[0, 1] * my + M[0, 2] * mz
     ky = M[1, 0] * mx + M[1, 1] * my + M[1, 2] * mz
@@ -1491,17 +1491,20 @@ def _batch_pme_k_squared_backward_kernel(
 
     twopi = type(mx)(_TWOPI)
     eightpi_sq = type(mx)(2.0) * twopi * twopi
-    g = grad_k_squared[b, i, j, k] * eightpi_sq
+    g = (
+        grad_k_squared[system_idx, miller_x_idx, miller_y_idx, miller_z_idx]
+        * eightpi_sq
+    )
 
-    wp.atomic_add(grad_cell_inv_T, b, 0, 0, g * kx * mx)
-    wp.atomic_add(grad_cell_inv_T, b, 0, 1, g * kx * my)
-    wp.atomic_add(grad_cell_inv_T, b, 0, 2, g * kx * mz)
-    wp.atomic_add(grad_cell_inv_T, b, 1, 0, g * ky * mx)
-    wp.atomic_add(grad_cell_inv_T, b, 1, 1, g * ky * my)
-    wp.atomic_add(grad_cell_inv_T, b, 1, 2, g * ky * mz)
-    wp.atomic_add(grad_cell_inv_T, b, 2, 0, g * kz * mx)
-    wp.atomic_add(grad_cell_inv_T, b, 2, 1, g * kz * my)
-    wp.atomic_add(grad_cell_inv_T, b, 2, 2, g * kz * mz)
+    wp.atomic_add(grad_cell_inv_T, system_idx, 0, 0, g * kx * mx)
+    wp.atomic_add(grad_cell_inv_T, system_idx, 0, 1, g * kx * my)
+    wp.atomic_add(grad_cell_inv_T, system_idx, 0, 2, g * kx * mz)
+    wp.atomic_add(grad_cell_inv_T, system_idx, 1, 0, g * ky * mx)
+    wp.atomic_add(grad_cell_inv_T, system_idx, 1, 1, g * ky * my)
+    wp.atomic_add(grad_cell_inv_T, system_idx, 1, 2, g * ky * mz)
+    wp.atomic_add(grad_cell_inv_T, system_idx, 2, 0, g * kz * mx)
+    wp.atomic_add(grad_cell_inv_T, system_idx, 2, 1, g * kz * my)
+    wp.atomic_add(grad_cell_inv_T, system_idx, 2, 2, g * kz * mz)
 
 
 def _batch_pme_k_squared_backward_sig(v, t):
