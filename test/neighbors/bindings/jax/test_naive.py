@@ -1660,13 +1660,10 @@ class TestNaiveGraphMode:
     def test_wrapped_warp_replay_stable_pointers(self):
         """Donation contract from the docstring example should produce stable results.
 
-        Functional smoke test: jit-compile the wrapped warp step exactly like the
-        docstring example (donating the returned buffers, capturing ``inv_cell`` /
-        ``positions_wrapped`` / ``per_atom_cell_offsets`` in the closure so their
-        buffer pointers stay stable across calls), run it 5 times, and assert each
-        call's outputs match a fresh ``graph_mode="none"`` reference. This guards
-        the contract that lets Warp's graph cache hit on the wrapped path; we
-        deliberately avoid timing assertions because perf tests are flaky.
+        JIT-compile the wrapped step like the example: donate returned buffers
+        and capture the canonical scratch buffers in the closure for stable
+        pointers. Compare each of five calls with fresh ``graph_mode="none"``
+        output. Avoid timing assertions because performance tests are flaky.
         """
         dtype = jnp.float32
         positions, cutoff, cell, pbc, max_neighbors = _make_naive_inputs(
@@ -1676,9 +1673,9 @@ class TestNaiveGraphMode:
         )
         n_atoms = positions.shape[0]
         fill_value = n_atoms
-        inv_cell = jnp.linalg.inv(cell)
-        positions_wrapped = jnp.zeros((n_atoms, 3), dtype=dtype)
-        per_atom_cell_offsets = jnp.zeros((n_atoms, 3), dtype=jnp.int32)
+        inv_cell_buffer = jnp.linalg.inv(cell)
+        positions_wrapped_buffer = jnp.zeros((n_atoms, 3), dtype=dtype)
+        per_atom_cell_offsets_buffer = jnp.zeros((n_atoms, 3), dtype=jnp.int32)
         shift_range, num_shifts_per_system, max_shifts_per_system = (
             compute_naive_num_shifts(cell, cutoff, pbc)
         )
@@ -1693,9 +1690,9 @@ class TestNaiveGraphMode:
                 neighbor_matrix=neighbor_matrix,
                 num_neighbors=num_neighbors,
                 neighbor_matrix_shifts=shifts,
-                inv_cell=inv_cell,
-                positions_wrapped=positions_wrapped,
-                per_atom_cell_offsets=per_atom_cell_offsets,
+                inv_cell_buffer=inv_cell_buffer,
+                positions_wrapped_buffer=positions_wrapped_buffer,
+                per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
                 shift_range_per_dimension=shift_range,
                 num_shifts_per_system=num_shifts_per_system,
                 max_shifts_per_system=max_shifts_per_system,

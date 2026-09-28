@@ -1780,14 +1780,14 @@ def naive_neighbor_list(
 
     >>> import functools
     >>> import jax
-    >>> # Pre-allocate the wrap kernel's scratch buffers and inv_cell once.
+    >>> # Pre-allocate the wrap kernel's scratch buffers and inverse cell once.
     >>> # Capturing them in the closure (rather than donating) keeps their
     >>> # buffer pointers stable across calls, which is what Warp's graph
     >>> # cache keys on. Only the buffers naive_neighbor_list returns are
     >>> # donated, so the in/out arity of the jit'ed step matches.
-    >>> inv_cell = jnp.linalg.inv(cell)
-    >>> positions_wrapped = jnp.zeros_like(positions)
-    >>> per_atom_cell_offsets = jnp.zeros((positions.shape[0], 3), dtype=jnp.int32)
+    >>> inv_cell_buffer = jnp.linalg.inv(cell)
+    >>> positions_wrapped_buffer = jnp.zeros_like(positions)
+    >>> per_atom_cell_offsets_buffer = jnp.zeros((positions.shape[0], 3), dtype=jnp.int32)
     >>> shift_range, num_shifts_per_system, max_shifts_per_system = (
     ...     compute_naive_num_shifts(cell, cutoff, pbc)
     ... )
@@ -1801,9 +1801,9 @@ def naive_neighbor_list(
     ...         neighbor_matrix=neighbor_matrix,
     ...         num_neighbors=num_neighbors,
     ...         neighbor_matrix_shifts=shifts,
-    ...         inv_cell=inv_cell,
-    ...         positions_wrapped=positions_wrapped,
-    ...         per_atom_cell_offsets=per_atom_cell_offsets,
+    ...         inv_cell_buffer=inv_cell_buffer,
+    ...         positions_wrapped_buffer=positions_wrapped_buffer,
+    ...         per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
     ...         shift_range_per_dimension=shift_range,
     ...         num_shifts_per_system=num_shifts_per_system,
     ...         max_shifts_per_system=max_shifts_per_system,
@@ -2251,37 +2251,37 @@ def naive_neighbor_list(
     if inv_cell is not None:
         if inv_cell.shape != (1, 3, 3):
             raise ValueError(
-                f"inv_cell must have shape (1, 3, 3) to match the internal "
+                f"inv_cell_buffer must have shape (1, 3, 3) to match the internal "
                 f"cell layout; got {inv_cell.shape}. A mismatched shape "
                 f"silently breaks graph_mode='warp' cache replay."
             )
         if inv_cell.dtype != positions.dtype:
             raise ValueError(
-                f"inv_cell dtype must match positions dtype "
+                f"inv_cell_buffer dtype must match positions dtype "
                 f"({positions.dtype}); got {inv_cell.dtype}."
             )
     if positions_wrapped is not None:
         expected_pw_shape = (positions.shape[0], 3)
         if positions_wrapped.shape != expected_pw_shape:
             raise ValueError(
-                f"positions_wrapped must have shape {expected_pw_shape}; "
+                f"positions_wrapped_buffer must have shape {expected_pw_shape}; "
                 f"got {positions_wrapped.shape}."
             )
         if positions_wrapped.dtype != positions.dtype:
             raise ValueError(
-                f"positions_wrapped dtype must match positions dtype "
+                f"positions_wrapped_buffer dtype must match positions dtype "
                 f"({positions.dtype}); got {positions_wrapped.dtype}."
             )
     if per_atom_cell_offsets is not None:
         expected_off_shape = (positions.shape[0], 3)
         if per_atom_cell_offsets.shape != expected_off_shape:
             raise ValueError(
-                f"per_atom_cell_offsets must have shape {expected_off_shape}; "
+                f"per_atom_cell_offsets_buffer must have shape {expected_off_shape}; "
                 f"got {per_atom_cell_offsets.shape}."
             )
         if per_atom_cell_offsets.dtype != jnp.int32:
             raise ValueError(
-                f"per_atom_cell_offsets dtype must be int32; "
+                f"per_atom_cell_offsets_buffer dtype must be int32; "
                 f"got {per_atom_cell_offsets.dtype}."
             )
 
