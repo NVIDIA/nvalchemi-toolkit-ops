@@ -898,6 +898,88 @@ def _reference_pairs_per_system(
 # Correctness
 # =============================================================================
 class TestBatchTileNeighborListCorrectness:
+    def test_skewed_cell_exact_minimum_image_all_formats(self, device, dtype):
+        """Batched matrix, COO, and tile paths share exact triclinic images."""
+        positions = torch.tensor(
+            [[4.0, 5.0, 0.0], [8.3, 3.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+            dtype=dtype,
+            device=device,
+        )
+        cell_batch = torch.tensor(
+            [
+                [[10.0, 0.0, 0.0], [4.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+                [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+            ],
+            dtype=dtype,
+            device=device,
+        )
+        batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device=device)
+        cutoff = 4.8
+
+        matrix, counts, shifts, distances, vectors = batch_cluster_tile_neighbor_list(
+            positions,
+            cutoff,
+            cell_batch,
+            batch_ptr,
+            max_neighbors=8,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert counts.cpu().tolist() == [1, 1, 1, 1]
+        assert matrix[:, 0].cpu().tolist() == [1, 0, 3, 2]
+        assert torch.equal(shifts[:, 0], torch.zeros_like(shifts[:, 0]))
+        torch.testing.assert_close(
+            vectors[0, 0], torch.tensor([4.3, -2.0, 0.0], device=device)
+        )
+        torch.testing.assert_close(
+            vectors[2, 0], torch.tensor([1.0, 0.0, 0.0], device=device)
+        )
+        expected_distances = torch.tensor(
+            [4.3**2 + 2.0**2, 4.3**2 + 2.0**2, 1.0, 1.0], device=device
+        ).sqrt()
+        torch.testing.assert_close(distances[:, 0], expected_distances)
+
+        pairs, pointer, coo_shifts, coo_distances, coo_vectors = (
+            batch_cluster_tile_neighbor_list(
+                positions,
+                cutoff,
+                cell_batch,
+                batch_ptr,
+                format="coo",
+                max_pairs=8,
+                return_distances=True,
+                return_vectors=True,
+            )
+        )
+        assert pointer.cpu().tolist() == [0, 1, 2, 3, 4]
+        assert {tuple(pair) for pair in pairs.T.cpu().tolist()} == {
+            (0, 1),
+            (1, 0),
+            (2, 3),
+            (3, 2),
+        }
+        assert torch.equal(coo_shifts, torch.zeros_like(coo_shifts))
+        torch.testing.assert_close(
+            torch.linalg.vector_norm(coo_vectors, dim=1), coo_distances
+        )
+
+        tile = batch_cluster_tile_neighbor_list(
+            positions, cutoff, cell_batch, batch_ptr, format="tile"
+        )
+        num_tiles, tile_rows, tile_cols, tile_system = tile[:4]
+        tile_count = int(num_tiles[0].item())
+        active_systems = tile_system[:tile_count].cpu().tolist()
+        assert len(active_systems) == 2
+        assert set(active_systems) == {0, 1}
+        assert all(
+            row <= col
+            for row, col in zip(
+                tile_rows[:tile_count].cpu().tolist(),
+                tile_cols[:tile_count].cpu().tolist(),
+                strict=True,
+            )
+        )
+
     def test_current_stream_consumes_event_gated_geometry_input(
         self, device, dtype, torch_stream_runner
     ):
