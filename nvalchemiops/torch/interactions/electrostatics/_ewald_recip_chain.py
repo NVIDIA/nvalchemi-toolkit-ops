@@ -1205,14 +1205,23 @@ def _recip_double_backward_batch(
 def _recip_forward_fake(positions, *args):
     """Forward fake: ``(energy, dE/dR cache, dE/dq cache, cellgrad cache)``.
 
-    Cache shapes gated by the ``need_pos`` / ``need_charge`` booleans.
+    Cache shapes follow the ``need_*`` flags and the runtime empty-input path.
     """
-    need_pos, need_charge, _need_cell = _fake_need_flags(args)
+    need_pos, need_charge, need_cell = _fake_need_flags(args)
     n = positions.shape[0]
+    k_vectors = args[2]
+    num_k = k_vectors.shape[-2]
+    batched = len(args) == 12
     energy = positions.new_empty(n, dtype=torch.float64)
     dEdR = positions.new_empty(n if need_pos else 0, 3, dtype=positions.dtype)
     dEdq = positions.new_empty(n if need_charge else 0, dtype=torch.float64)
-    cellgrad_cache = positions.new_empty(0, 8, dtype=torch.float64)
+    if need_cell:
+        # Runtime skips the cellgrad fill for empty positions; encode that in the shape.
+        cache_rows = args[3].shape[0] * num_k if batched else num_k
+        cache_rows *= torch.sym_min(n, 1)
+    else:
+        cache_rows = 0
+    cellgrad_cache = positions.new_empty(cache_rows, 8, dtype=torch.float64)
     return energy, dEdR, dEdq, cellgrad_cache
 
 
