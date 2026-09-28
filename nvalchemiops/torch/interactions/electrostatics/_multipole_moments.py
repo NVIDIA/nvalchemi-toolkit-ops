@@ -93,21 +93,23 @@ _B_E3NN_TO_CART = (
 # Symmetric (3, 3) <-> q6 gather index: mat[i, j] = q6[_Q6_OF_MAT[i, j]].
 _Q6_OF_MAT = ((0, 3, 4), (3, 1, 5), (4, 5, 2))
 
-# Per-(dtype, device-string) cached constant tensors (built once).
-_CACHE: dict = {}
+# T = pinv(B), written analytically. The columns of B are orthogonal, so the
+# inverse rows are B's columns divided by their squared norms.
+_T_CART_TO_E3NN = (
+    (0.0, 0.0, 0.0, 0.0, 2.0 / _S15, 0.0),  # c_-2 from Qxz
+    (0.0, 0.0, 0.0, 2.0 / _S15, 0.0, 0.0),  # c_-1 from Qxy
+    (-_S5 / 15.0, 2.0 * _S5 / 15.0, -_S5 / 15.0, 0.0, 0.0, 0.0),  # c_0
+    (0.0, 0.0, 0.0, 0.0, 0.0, 2.0 / _S15),  # c_+1 from Qyz
+    (-1.0 / _S15, 0.0, 1.0 / _S15, 0.0, 0.0, 0.0),  # c_+2
+)
 
 
 def _consts(dtype: torch.dtype, device: torch.device):
     """Return ``(B, T, q6_idx)`` constant tensors for ``(dtype, device)``."""
-    key = (dtype, str(device))
-    cached = _CACHE.get(key)
-    if cached is None:
-        B = torch.tensor(_B_E3NN_TO_CART, dtype=dtype, device=device)  # (6, 5)
-        T = torch.linalg.pinv(B.to(torch.float64)).to(dtype)  # (5, 6)
-        idx = torch.tensor(_Q6_OF_MAT, dtype=torch.long, device=device)  # (3, 3)
-        cached = (B, T, idx)
-        _CACHE[key] = cached
-    return cached
+    B = torch.tensor(_B_E3NN_TO_CART, dtype=dtype, device=device)  # (6, 5)
+    T = torch.tensor(_T_CART_TO_E3NN, dtype=dtype, device=device)  # (5, 6)
+    idx = torch.tensor(_Q6_OF_MAT, dtype=torch.long, device=device)  # (3, 3)
+    return B, T, idx
 
 
 def infer_l_max(multipole_moments: torch.Tensor) -> int:
@@ -127,13 +129,18 @@ def infer_l_max(multipole_moments: torch.Tensor) -> int:
             f"{tuple(multipole_moments.shape)}."
         )
     last = multipole_moments.shape[-1]
-    sizes = {1: 0, 4: 1, 9: 2}
-    if last not in sizes:
-        raise ValueError(
-            "multipole_moments last-dim must be 1 (l_max=0), 4 (l_max=1), or "
-            f"9 (l_max=2); got {last}."
-        )
-    return sizes[last]
+    # Avoid dictionary lookup: a symbolic shape is a SymInt, whose hashing is
+    # unsupported by make_fx even when the example dimension is 1, 4, or 9.
+    if last == 1:
+        return 0
+    if last == 4:
+        return 1
+    if last == 9:
+        return 2
+    raise ValueError(
+        "multipole_moments last-dim must be 1 (l_max=0), 4 (l_max=1), or "
+        f"9 (l_max=2); got {last}."
+    )
 
 
 def dipole_spherical_to_cartesian(dipole_sph: torch.Tensor) -> torch.Tensor:

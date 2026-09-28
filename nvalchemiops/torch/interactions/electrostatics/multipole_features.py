@@ -26,6 +26,8 @@ receiver basis. Bit-for-bit parity with the customer reference
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch
 
 from nvalchemiops.torch.interactions.electrostatics._multipole_moments import (
@@ -36,6 +38,11 @@ from nvalchemiops.torch.interactions.electrostatics.multipole_electrostatics imp
     _resolve_norm_mode,
 )
 from nvalchemiops.torch.math.gto import NormMode
+
+if TYPE_CHECKING:
+    from nvalchemiops.torch.interactions.electrostatics.multipole_scf_cache import (
+        MultipoleSCFCache,
+    )
 
 
 def _build_out_col_lut(
@@ -92,6 +99,7 @@ def multipole_electrostatic_features(
     density_normalize: NormMode | int | str = NormMode.MULTIPOLES,
     feature_normalize: NormMode | int | str = NormMode.RECEIVER,
     include_self_interaction: bool = False,
+    cache: MultipoleSCFCache | None = None,
 ) -> torch.Tensor:
     r"""Atom-centered electrostatic features via direct k-space projection.
 
@@ -156,6 +164,12 @@ def multipole_electrostatic_features(
     feature_normalize : NormMode | int | str
         Receiver-basis normalization. Defaults to ``RECEIVER``, matching
         ``GTOElectrostaticFeatures``'s ``integral_normalization`` default.
+    cache : MultipoleSCFCache, optional
+        Reuse a prepared single or batched cache. When supplied, the cache
+        provides the geometry, k-grid, receiver widths, and normalization
+        state; prepare it before tracing. The newly passed ``cell`` does not
+        rebuild the cached state. Gradients flow through stored tensors only
+        when they retain an autograd connection to their preparation inputs.
     include_self_interaction : bool
         If ``False`` (default), subtract the self-interaction term using
         :func:`compute_overlap_constants`.
@@ -193,20 +207,11 @@ def multipole_electrostatic_features(
         )
     if sigma <= 0.0:
         raise ValueError(f"sigma must be positive, got {sigma}")
-    if k_vectors is None and (k_cutoff is None or k_cutoff <= 0.0):
+    if cache is None and k_vectors is None and (k_cutoff is None or k_cutoff <= 0.0):
         raise ValueError(
             "Either k_vectors must be supplied, or k_cutoff must be a "
             f"positive float (got k_cutoff={k_cutoff})."
         )
-
-    if isinstance(receiver_sigmas, torch.Tensor):
-        sigmas_list = receiver_sigmas.detach().cpu().to(torch.float64).tolist()
-    else:
-        sigmas_list = [float(s) for s in receiver_sigmas]
-    if len(sigmas_list) == 0:
-        raise ValueError("receiver_sigmas must be non-empty")
-    if any(s <= 0.0 for s in sigmas_list):
-        raise ValueError(f"receiver_sigmas must all be positive, got {sigmas_list}")
 
     if feature_max_l not in (0, 1, 2):
         raise ValueError(f"feature_max_l must be 0, 1, or 2, got {feature_max_l}")
@@ -221,18 +226,65 @@ def multipole_electrostatic_features(
         multipole_scf_step_features,
     )
 
-    cache = prepare_multipole_scf_cache(
-        cell,
-        sigma=sigma,
-        receiver_sigmas=sigmas_list,
-        k_cutoff=k_cutoff,
-        k_vectors=None if is_batch else k_vectors,
-        l_max=l_max,
-        feature_max_l=feature_max_l,
-        density_normalize=density_mode,
-        feature_normalize=feature_mode,
-        device=positions.device,
-    )
+    if cache is None:
+        if isinstance(receiver_sigmas, torch.Tensor):
+            sigmas_list = receiver_sigmas.detach().cpu().to(torch.float64).tolist()
+        else:
+            sigmas_list = [float(s) for s in receiver_sigmas]
+        if len(sigmas_list) == 0:
+            raise ValueError("receiver_sigmas must be non-empty")
+        if any(s <= 0.0 for s in sigmas_list):
+            raise ValueError(f"receiver_sigmas must all be positive, got {sigmas_list}")
+
+        cache = prepare_multipole_scf_cache(
+            cell,
+            sigma=sigma,
+            receiver_sigmas=sigmas_list,
+            k_cutoff=k_cutoff,
+            k_vectors=None if is_batch else k_vectors,
+            l_max=l_max,
+            feature_max_l=feature_max_l,
+            density_normalize=density_mode,
+            feature_normalize=feature_mode,
+            device=positions.device,
+        )
+    else:
+        if cache.alpha is not None:
+            raise ValueError(
+                "cache.alpha must be None for direct electrostatic features; "
+                f"got Ewald alpha={cache.alpha}"
+            )
+        if cache.device != positions.device:
+            raise ValueError(
+                f"cache must live on positions.device={positions.device}, "
+                f"got {cache.device}"
+            )
+        if cache.sigma != sigma:
+            raise ValueError(
+                f"cache sigma={cache.sigma} does not match requested sigma={sigma}"
+            )
+        if cache.is_batched != is_batch:
+            raise ValueError(
+                "cache batch layout must match batch_idx and cell; "
+                f"cache.is_batched={cache.is_batched}, batch_idx is "
+                f"{'provided' if is_batch else 'None'}"
+            )
+        if cache.cell.shape != cell.shape:
+            raise ValueError(
+                f"cache cell shape {tuple(cache.cell.shape)} does not match "
+                f"requested cell shape {tuple(cell.shape)}"
+            )
+        if cache.l_max != l_max or cache.feature_max_l != feature_max_l:
+            raise ValueError(
+                "cache source/feature angular caps do not match moments and "
+                f"feature_max_l ({cache.l_max}, {cache.feature_max_l}) != "
+                f"({l_max}, {feature_max_l})"
+            )
+        if (
+            cache.density_normalize != density_mode
+            or cache.feature_normalize != feature_mode
+        ):
+            raise ValueError("cache normalization modes do not match requested modes")
     source_feats_l1, quadrupoles_cart, _ = split_packed_for_kernels(multipole_moments)
     return multipole_scf_step_features(
         cache,
