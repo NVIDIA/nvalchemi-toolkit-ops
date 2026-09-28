@@ -13,9 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Boilerplate-reducing helpers for warp-backed ``torch.library.custom_op``s.
+"""Helpers for warp-backed ``torch.library.custom_op``s and CUDA capture.
 
-Three helper groups:
+Helper groups:
 
   * ``register_warp_op_chain(...)`` — the do-everything factory. One call
     per op chain. Builds the forward custom_op + register_fake, the
@@ -38,7 +38,10 @@ Three helper groups:
     grads to match input tensor shapes (collapse 0-d via ``.sum()``,
     reshape otherwise).
 
-Both helpers assume the codebase-wide convention "backward op takes
+  * ``_capture_safe_inverse(...)`` — avoid synchronization while checking
+    cell-matrix inverses during compilation and CUDA graph capture.
+
+The autograd registration helpers assume the codebase-wide convention "backward op takes
 ``(*cotangents, *forward_inputs)``" — unless ``backward_arg_order`` is
 overridden for ops that break that convention.
 """
@@ -62,6 +65,17 @@ __all__ = [
     "scoped_warp_stream",
     "torch_custom_op",
 ]
+
+
+def _capture_safe_inverse(matrix: torch.Tensor) -> torch.Tensor:
+    """Invert matrices without synchronizing during compilation or CUDA capture."""
+    if torch.compiler.is_compiling() or (
+        matrix.is_cuda and torch.cuda.is_current_stream_capturing()
+    ):
+        inverse, info = torch.linalg.inv_ex(matrix, check_errors=False)
+        torch._assert_async(torch.all(info == 0), "cell matrix must be non-singular")
+        return inverse.contiguous()
+    return torch.linalg.inv(matrix)
 
 
 def scoped_warp_stream(

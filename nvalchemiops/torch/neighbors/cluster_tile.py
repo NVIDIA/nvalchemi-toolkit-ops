@@ -61,7 +61,10 @@ from nvalchemiops.neighbors.output_args import (
     _has_partial_or_pair_outputs,
     _prepare_coo_pair_output_args,
 )
-from nvalchemiops.torch._warp_op_helpers import scoped_torch_warp_stream
+from nvalchemiops.torch._warp_op_helpers import (
+    _capture_safe_inverse,
+    scoped_torch_warp_stream,
+)
 from nvalchemiops.torch.neighbors._autograd import (
     _reconstruct_coo_geometry,
     _reconstruct_matrix_geometry,
@@ -630,9 +633,9 @@ def _cell_from_cell(cell: torch.Tensor) -> torch.Tensor:
 def _cell_invcell_from_cell(
     cell: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Normalize a cell and compute its inverse for eager execution."""
+    """Normalize a cell and compute its inverse with capture-safe checking."""
     cell_mat = _cell_from_cell(cell)
-    inv_cell_mat = torch.linalg.inv(cell_mat).contiguous()
+    inv_cell_mat = _capture_safe_inverse(cell_mat).contiguous()
     return cell_mat, inv_cell_mat
 
 
