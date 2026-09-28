@@ -1309,18 +1309,35 @@ class TestSymbolicExplicitKEnergy:
             device=td,
         )
 
-        def feature_fn(pos, mm):
+        def feature_with_sigmas(pos, mm, receiver_sigmas):
             return multipole_electrostatic_features(
                 pos,
                 mm,
                 sys["cell"],
                 sigma=1.0,
-                receiver_sigmas=[0.8, 1.0],
+                receiver_sigmas=receiver_sigmas,
                 feature_max_l=1,
                 cache=direct_cache,
             )
 
+        def feature_fn(pos, mm):
+            return feature_with_sigmas(pos, mm, (0.8, 1.0))
+
         feature_eager = feature_fn(positions, moments)
+        tensor_sigmas_feature = feature_with_sigmas(
+            positions,
+            moments,
+            torch.tensor([0.8, 1.0], dtype=torch.float64, device=td),
+        )
+        torch.testing.assert_close(
+            tensor_sigmas_feature, feature_eager, rtol=1e-12, atol=1e-12
+        )
+        with pytest.raises(ValueError, match="receiver_sigmas must be non-empty"):
+            feature_with_sigmas(positions, moments, [])
+        with pytest.raises(ValueError, match="receiver_sigmas must all be positive"):
+            feature_with_sigmas(positions, moments, [0.8, -1.0])
+        with pytest.raises(ValueError, match="do not match the prepared cache"):
+            feature_with_sigmas(positions, moments, [0.8])
         feature_graph = make_fx(
             feature_fn,
             tracing_mode="symbolic",

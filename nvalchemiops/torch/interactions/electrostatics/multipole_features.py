@@ -85,6 +85,31 @@ def _build_out_col_lut(
     return lut
 
 
+def _normalize_receiver_sigmas(
+    receiver_sigmas: list[float] | tuple[float, ...] | torch.Tensor,
+) -> tuple[float, ...]:
+    """Normalize receiver widths as static metadata and validate their values."""
+    if isinstance(receiver_sigmas, torch.Tensor):
+        if torch.compiler.is_compiling():
+            raise ValueError(
+                "receiver_sigmas must be a static list or tuple while tracing; "
+                "tensor receiver widths require host-side value validation."
+            )
+        if receiver_sigmas.ndim != 1:
+            raise ValueError(
+                "receiver_sigmas tensor must be one-dimensional, got shape "
+                f"{tuple(receiver_sigmas.shape)}"
+            )
+        sigmas = receiver_sigmas.detach().cpu().to(torch.float64).tolist()
+    else:
+        sigmas = [float(sigma) for sigma in receiver_sigmas]
+    if len(sigmas) == 0:
+        raise ValueError("receiver_sigmas must be non-empty")
+    if any(sigma <= 0.0 for sigma in sigmas):
+        raise ValueError(f"receiver_sigmas must all be positive, got {sigmas}")
+    return tuple(sigmas)
+
+
 def multipole_electrostatic_features(
     positions: torch.Tensor,
     multipole_moments: torch.Tensor,
@@ -147,7 +172,8 @@ def multipole_electrostatic_features(
     sigma : float
         Density-side Gaussian width.
     receiver_sigmas : list of floats, tuple, or 1-D tensor
-        Multi-:math:`\sigma` receiver basis widths. Must be non-empty.
+        Multi-:math:`\sigma` receiver basis widths. Must be non-empty and
+        positive. A tensor is read on the host as static metadata.
     k_cutoff, k_vectors
         Same semantics as :func:`multipole_electrostatic_energy`. Pass
         ``k_vectors`` to amortize setup across calls for fixed geometry
@@ -170,6 +196,8 @@ def multipole_electrostatic_features(
         state; prepare it before tracing. The newly passed ``cell`` does not
         rebuild the cached state. Gradients flow through stored tensors only
         when they retain an autograd connection to their preparation inputs.
+        ``receiver_sigmas`` must equal the cache's stored widths. Use a static
+        list or tuple while tracing; tensor widths require host-side checking.
     include_self_interaction : bool
         If ``False`` (default), subtract the self-interaction term using
         :func:`compute_overlap_constants`.
@@ -227,14 +255,7 @@ def multipole_electrostatic_features(
     )
 
     if cache is None:
-        if isinstance(receiver_sigmas, torch.Tensor):
-            sigmas_list = receiver_sigmas.detach().cpu().to(torch.float64).tolist()
-        else:
-            sigmas_list = [float(s) for s in receiver_sigmas]
-        if len(sigmas_list) == 0:
-            raise ValueError("receiver_sigmas must be non-empty")
-        if any(s <= 0.0 for s in sigmas_list):
-            raise ValueError(f"receiver_sigmas must all be positive, got {sigmas_list}")
+        sigmas_list = _normalize_receiver_sigmas(receiver_sigmas)
 
         cache = prepare_multipole_scf_cache(
             cell,
@@ -253,6 +274,12 @@ def multipole_electrostatic_features(
             raise ValueError(
                 "cache.alpha must be None for direct electrostatic features; "
                 f"got Ewald alpha={cache.alpha}"
+            )
+        sigmas_list = _normalize_receiver_sigmas(receiver_sigmas)
+        if sigmas_list != cache.receiver_sigmas:
+            raise ValueError(
+                f"receiver_sigmas={sigmas_list} do not match the prepared cache "
+                f"receiver_sigmas={cache.receiver_sigmas}"
             )
         if cache.device != positions.device:
             raise ValueError(
