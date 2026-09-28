@@ -1682,6 +1682,13 @@ def naive_neighbor_list(
                         neighbor_shift_matrix=neighbor_matrix_shifts,
                         fill_value=fill_value,
                     )
+                active = neighbor_matrix != fill_value
+                neighbor_distances, neighbor_vectors = coo_pack_pair_geometry(
+                    active, neighbor_distances, neighbor_vectors
+                )
+                pair_energies, pair_forces = coo_pack_pair_geometry(
+                    active, pair_energies, pair_forces
+                )
             elif pbc is None:
                 base = (neighbor_matrix, num_neighbors)
             else:
