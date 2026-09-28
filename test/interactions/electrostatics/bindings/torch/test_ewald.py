@@ -7906,6 +7906,66 @@ class TestEwaldTorchCompile:
         torch.testing.assert_close(compiled_grad[0], eager_grad[0])
         torch.testing.assert_close(compiled_grad[1], eager_grad[1])
 
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_compiled_reciprocal_atom_weighted_backward_dynamic_batch(self):
+        """Compiled weighted reciprocal gradients match eager across batch sizes."""
+        device = torch.device("cuda")
+        dtype = torch.float64
+
+        def reciprocal_energy(pos, q, cell, alpha, batch_idx, k_vectors):
+            return ewald_reciprocal_space(
+                positions=pos,
+                charges=q,
+                cell=cell,
+                alpha=alpha,
+                k_vectors=k_vectors,
+                batch_idx=batch_idx,
+                max_atoms_per_system=2,
+            )
+
+        compiled = torch.compile(reciprocal_energy, dynamic=True)
+        for num_systems in (2, 5):
+            num_atoms = 2 * num_systems
+            positions = (
+                torch.arange(num_atoms * 3, device=device, dtype=dtype)
+                .reshape(num_atoms, 3)
+                .div(7)
+                .requires_grad_(True)
+            )
+            charges = torch.tensor(
+                [0.7, -0.7] * num_systems, device=device, dtype=dtype
+            ).requires_grad_(True)
+            cell = torch.eye(3, device=device, dtype=dtype).repeat(num_systems, 1, 1)
+            cell = cell * 8.0
+            alpha = torch.linspace(0.3, 0.35, num_systems, device=device, dtype=dtype)
+            batch_idx = torch.arange(num_systems, device=device).repeat_interleave(2)
+            k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=4.0)
+            # Different weights within each system select the weighted VJP fallback.
+            weights = torch.tensor(
+                [1.7, -0.4] * num_systems, device=device, dtype=dtype
+            )
+
+            eager_energy = reciprocal_energy(
+                positions, charges, cell, alpha, batch_idx, k_vectors
+            )
+            eager_grad = torch.autograd.grad(
+                eager_energy, (positions, charges), grad_outputs=weights
+            )
+            compiled_pos = positions.detach().clone().requires_grad_(True)
+            compiled_q = charges.detach().clone().requires_grad_(True)
+            compiled_energy = compiled(
+                compiled_pos, compiled_q, cell, alpha, batch_idx, k_vectors
+            )
+            compiled_grad = torch.autograd.grad(
+                compiled_energy, (compiled_pos, compiled_q), grad_outputs=weights
+            )
+
+            torch.testing.assert_close(compiled_energy, eager_energy)
+            torch.testing.assert_close(compiled_grad[0], eager_grad[0])
+            torch.testing.assert_close(compiled_grad[1], eager_grad[1])
+
 
 ###########################################################################################
 ########################### Hybrid Forces Tests ###########################################

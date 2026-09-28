@@ -24,6 +24,7 @@ import numpy as np
 import pytest
 import torch
 import warp as wp
+from torch.fx.experimental.proxy_tensor import make_fx
 
 from nvalchemiops.math.spline import (
     bspline_grid_offset,
@@ -50,6 +51,8 @@ from nvalchemiops.torch.interactions.electrostatics.pme import (
     pme_green_structure_factor,
 )
 from nvalchemiops.torch.interactions.electrostatics.pme_multipole import (  # noqa: E402
+    _build_batch_pme_k_grids,
+    _build_pme_k_grids,
     multipole_particle_mesh_ewald,
     multipole_pme_energy_corrections,
     multipole_pme_energy_corrections_per_atom,
@@ -3323,3 +3326,131 @@ class TestPMEStressLoss:
         ana = (gp * v).sum().item()
         rel = abs(ana - fd) / (abs(fd) + 1e-12)
         assert rel < 1e-5, f"lmax={lmax}: batched stress-loss FD rel={rel:.2e}"
+
+
+class TestMultipolePMESymbolicBatch:
+    """Symbolic tracing coverage for batched multipole reciprocal PME."""
+
+    @staticmethod
+    def _inputs(batch_size: int, lmax: int = 0, precomputed: bool = False):
+        device = torch.device("cuda:0")
+        dtype = torch.float64
+        mesh = (4, 5, 6)
+        n_atoms = batch_size * 2
+        positions = torch.arange(n_atoms * 3, dtype=dtype, device=device).reshape(
+            n_atoms, 3
+        )
+        positions = positions.mul(0.01).add(0.1)
+        n_moments = 1 if lmax == 0 else 9
+        moments = torch.arange(n_atoms * n_moments, dtype=dtype, device=device)
+        moments = moments.reshape(n_atoms, n_moments).mul(0.01)
+        cell = torch.eye(3, dtype=dtype, device=device).expand(batch_size, -1, -1)
+        cell = cell.clone().mul_(5.0)
+        batch_idx = torch.arange(batch_size, dtype=torch.int32, device=device)
+        batch_idx = batch_idx.repeat_interleave(2)
+        k_squared = None
+        if precomputed:
+            k_squared = torch.ones(
+                (batch_size, mesh[0], mesh[1], mesh[2] // 2 + 1),
+                dtype=dtype,
+                device=device,
+            )
+        return positions, moments, cell, batch_idx, k_squared, mesh
+
+    @staticmethod
+    def _trace(positions, moments, cell, batch_idx, mesh, k_squared=None):
+        def reciprocal(pos, mm, cells, bidx, *k_squared_arg):
+            precomputed_k_squared = k_squared_arg[0] if k_squared_arg else None
+            return multipole_pme_reciprocal_space(
+                pos,
+                mm,
+                cells,
+                sigma=0.7,
+                alpha=0.4,
+                mesh_dimensions=mesh,
+                batch_idx=bidx,
+                k_squared=precomputed_k_squared,
+            )
+
+        args = (positions, moments, cell, batch_idx)
+        if k_squared is not None:
+            args += (k_squared,)
+        return make_fx(reciprocal, tracing_mode="symbolic")(*args)
+
+    def test_generated_k_squared_graph_is_batch_size_independent(self):
+        """The generated-grid graph contains no concrete batch-size literal."""
+        if not torch.cuda.is_available():
+            pytest.skip("multipole PME symbolic tracing uses CUDA tensors")
+        inputs2 = self._inputs(2)
+        inputs5 = self._inputs(5)
+        graph2 = self._trace(*inputs2[:4], inputs2[5])
+        graph5 = self._trace(*inputs5[:4], inputs5[5])
+        assert graph2.code == graph5.code
+
+        replay5 = graph2(*inputs5[:4])
+        eager5 = multipole_pme_reciprocal_space(
+            *inputs5[:3],
+            sigma=0.7,
+            alpha=0.4,
+            mesh_dimensions=inputs5[5],
+            batch_idx=inputs5[3],
+        )
+        torch.testing.assert_close(replay5, eager5)
+
+    def test_precomputed_k_squared_lmax2_graph_traces(self):
+        """The cached grid and quadrupole route remain traceable together."""
+        if not torch.cuda.is_available():
+            pytest.skip("multipole PME symbolic tracing uses CUDA tensors")
+        positions, moments, cell, batch_idx, k_squared, mesh = self._inputs(
+            2, lmax=2, precomputed=True
+        )
+        graph = self._trace(positions, moments, cell, batch_idx, mesh, k_squared)
+        assert "multipole_pme_k_squared_batch" not in graph.code
+
+    def test_batched_k_squared_cell_gradient_and_hvp_match_single_system(self):
+        """Batched grid values, cell gradients, and HVPs match single-system ops."""
+        if not torch.cuda.is_available():
+            pytest.skip("multipole PME k-grid kernels require CUDA")
+        device = torch.device("cuda:0")
+        dtype = torch.float64
+        mesh = (4, 5, 6)
+        cells0 = torch.tensor(
+            [
+                [[3.1, 0.2, 0.0], [0.1, 2.8, 0.3], [0.0, 0.1, 3.4]],
+                [[2.7, 0.1, 0.2], [0.2, 3.3, 0.1], [0.1, 0.0, 2.9]],
+            ],
+            dtype=dtype,
+            device=device,
+        )
+        weights = torch.linspace(
+            -0.7,
+            0.9,
+            2 * mesh[0] * mesh[1] * (mesh[2] // 2 + 1),
+            dtype=dtype,
+            device=device,
+        ).reshape(2, mesh[0], mesh[1], mesh[2] // 2 + 1)
+        direction = torch.linspace(
+            -0.4, 0.6, cells0.numel(), dtype=dtype, device=device
+        ).reshape_as(cells0)
+
+        cells = cells0.clone().requires_grad_(True)
+        grid = _build_batch_pme_k_grids(cells, mesh, dtype)
+        value = (grid * weights).sum()
+        gradient = torch.autograd.grad(value, cells, create_graph=True)[0]
+        hvp = torch.autograd.grad((gradient * direction).sum(), cells)[0]
+
+        reference_cells = cells0.clone().requires_grad_(True)
+        reference_grid = torch.stack(
+            [_build_pme_k_grids(cell, mesh, dtype) for cell in reference_cells]
+        )
+        reference_value = (reference_grid * weights).sum()
+        reference_gradient = torch.autograd.grad(
+            reference_value, reference_cells, create_graph=True
+        )[0]
+        reference_hvp = torch.autograd.grad(
+            (reference_gradient * direction).sum(), reference_cells
+        )[0]
+
+        torch.testing.assert_close(value, reference_value, rtol=1e-13, atol=1e-13)
+        torch.testing.assert_close(gradient, reference_gradient, rtol=1e-11, atol=1e-11)
+        torch.testing.assert_close(hvp, reference_hvp, rtol=1e-10, atol=1e-10)

@@ -33,6 +33,8 @@ from nvalchemiops.torch.interactions.electrostatics import (
     prepare_multipole_scf_cache,
 )
 from nvalchemiops.torch.interactions.electrostatics._multipole_moments import (
+    cartesian_quadrupole_to_e3nn,
+    e3nn_to_cartesian_quadrupole,
     infer_l_max,
     pack_charges_dipoles,
     split_multipole_moments,
@@ -1045,6 +1047,347 @@ class TestTorchCompile:
             f_compiled.detach().cpu().numpy(),
             rtol=1e-12,
             atol=1e-14,
+        )
+
+
+class TestSymbolicExplicitKEnergy:
+    def test_quadrupole_conversions_fullgraph_dynamic(self, device):
+        """Both quadrupole conversion directions compile as full dynamic graphs."""
+        td = _es_torch_device(device)
+        feats = torch.randn((3, 5), dtype=torch.float64, device=td)
+        q_raw = torch.randn((3, 3, 3), dtype=torch.float64, device=td)
+        quadrupoles = 0.5 * (q_raw + q_raw.transpose(-1, -2))
+
+        e3nn_to_cartesian_compiled = torch.compile(
+            e3nn_to_cartesian_quadrupole,
+            backend="eager",
+            fullgraph=True,
+            dynamic=True,
+        )
+        cartesian_to_e3nn_compiled = torch.compile(
+            cartesian_quadrupole_to_e3nn,
+            backend="eager",
+            fullgraph=True,
+            dynamic=True,
+        )
+
+        torch.testing.assert_close(
+            e3nn_to_cartesian_compiled(feats), e3nn_to_cartesian_quadrupole(feats)
+        )
+        torch.testing.assert_close(
+            cartesian_to_e3nn_compiled(quadrupoles),
+            cartesian_quadrupole_to_e3nn(quadrupoles),
+        )
+
+    @pytest.mark.parametrize("l_max", [0, 1, 2])
+    def test_single_explicit_k_symbolic_and_gradient_parity(self, device, l_max):
+        """Trace explicit source-only inputs and match prepared-cache values/grads."""
+        from torch.fx.experimental.proxy_tensor import make_fx
+
+        td = _es_torch_device(device)
+        sys = _random_system(seed=179 + l_max, n_atoms=3, box_len=5.0, device=td)
+        positions = sys["positions"].detach().requires_grad_()
+        cell = sys["cell"].detach().requires_grad_()
+        charges = sys["charges"]
+        dipoles = sys["dipoles"]
+        quadrupoles = None
+        if l_max == 0:
+            moments = charges[:, None]
+        elif l_max == 1:
+            moments = pack_multipole_moments(charges, dipoles)
+        else:
+            q = torch.randn((3, 3, 3), dtype=torch.float64, device=td)
+            quadrupoles = 0.5 * (q + q.transpose(-1, -2))
+            quadrupoles = (
+                quadrupoles
+                - torch.eye(3, dtype=torch.float64, device=td)
+                * (quadrupoles.diagonal(dim1=-2, dim2=-1).sum(-1) / 3)[:, None, None]
+            )
+            moments = pack_multipole_moments(charges, dipoles, quadrupoles)
+        moments = moments.detach().requires_grad_()
+        k_half = generate_k_vectors_ewald_summation(cell.detach(), 3.0)
+        k_vectors = torch.cat(
+            [torch.zeros((1, 3), dtype=torch.float64, device=td), k_half], dim=0
+        ).requires_grad_()
+        sigma = 1.0
+        prepared = prepare_multipole_scf_cache(
+            cell,
+            sigma=sigma,
+            receiver_sigmas=[sigma],
+            k_vectors=k_vectors,
+            l_max=l_max,
+            device=positions.device,
+        )
+
+        def fn(pos, mm, c, kv, overlap):
+            return multipole_electrostatic_energy(
+                pos,
+                mm,
+                c,
+                sigma=sigma,
+                k_vectors=kv,
+                source_overlap_constants=overlap,
+            ).sum()
+
+        actual = fn(
+            positions,
+            moments,
+            cell,
+            k_vectors,
+            prepared.source_overlap_constants,
+        )
+        expected = multipole_scf_step_energy(prepared, positions, moments).sum()
+        torch.testing.assert_close(actual, expected, rtol=1e-12, atol=1e-12)
+        actual_grads = torch.autograd.grad(
+            actual, (positions, moments, cell, k_vectors), retain_graph=True
+        )
+        expected_grads = torch.autograd.grad(
+            expected, (positions, moments, cell, k_vectors)
+        )
+        for actual_grad, expected_grad in zip(
+            actual_grads, expected_grads, strict=True
+        ):
+            torch.testing.assert_close(
+                actual_grad, expected_grad, rtol=1e-11, atol=1e-12
+            )
+
+        traced = make_fx(fn, tracing_mode="symbolic")(
+            positions,
+            moments,
+            cell,
+            k_vectors,
+            prepared.source_overlap_constants,
+        )
+        torch.testing.assert_close(
+            traced(
+                positions,
+                moments,
+                cell,
+                k_vectors,
+                prepared.source_overlap_constants,
+            ),
+            actual,
+            rtol=1e-12,
+            atol=1e-12,
+        )
+
+    def test_batched_padded_explicit_k_symbolic(self, device):
+        """Trace one padded batch and match independent valid-grid systems."""
+        from torch.fx.experimental.proxy_tensor import make_fx
+
+        td = _es_torch_device(device)
+        positions = torch.tensor(
+            [[0.2, 0.4, 0.5], [1.1, 0.7, 0.8], [0.3, 0.9, 0.4], [1.2, 0.5, 1.0]],
+            dtype=torch.float64,
+            device=td,
+            requires_grad=True,
+        )
+        charges = torch.tensor([0.4, -0.4, 0.2, -0.2], dtype=torch.float64, device=td)
+        dipoles = torch.arange(12, dtype=torch.float64, device=td).reshape(4, 3) * 0.03
+        moments = pack_multipole_moments(charges, dipoles).requires_grad_()
+        cells = torch.stack(
+            [torch.eye(3, dtype=torch.float64, device=td) * x for x in (5.0, 5.5)]
+        ).requires_grad_()
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=td)
+        k_vectors = torch.tensor(
+            [
+                [[0.0, 0.0, 0.0], [0.8, 0.0, 0.0], [0.0, 0.8, 0.0], [5.0, 5.0, 5.0]],
+                [[0.0, 0.0, 0.0], [0.8, 0.0, 0.0], [0.0, 0.8, 0.0], [0.0, 0.0, 0.8]],
+            ],
+            dtype=torch.float64,
+            device=td,
+            requires_grad=True,
+        )
+        valid_counts = torch.tensor([3, 4], dtype=torch.int32, device=td)
+        reference = prepare_multipole_scf_cache(
+            cells[0],
+            sigma=1.0,
+            receiver_sigmas=[1.0],
+            k_vectors=k_vectors[0, :3],
+            l_max=1,
+            device=positions.device,
+        )
+
+        def fn(pos, mm, c, kv, counts, overlap, bi):
+            return multipole_electrostatic_energy(
+                pos,
+                mm,
+                c,
+                batch_idx=bi,
+                sigma=1.0,
+                k_vectors=kv,
+                valid_k_counts=counts,
+                source_overlap_constants=overlap,
+            )
+
+        actual = fn(
+            positions,
+            moments,
+            cells,
+            k_vectors,
+            valid_counts,
+            reference.source_overlap_constants,
+            batch_idx,
+        )
+        expected_parts = []
+        for b, valid_count in enumerate((3, 4)):
+            atom_slice = slice(2 * b, 2 * b + 2)
+            prepared = prepare_multipole_scf_cache(
+                cells[b],
+                sigma=1.0,
+                receiver_sigmas=[1.0],
+                k_vectors=k_vectors[b, :valid_count],
+                l_max=1,
+                device=positions.device,
+            )
+            expected_parts.append(
+                multipole_scf_step_energy(
+                    prepared,
+                    positions[atom_slice],
+                    moments[atom_slice],
+                )
+            )
+        expected = torch.cat(expected_parts)
+        torch.testing.assert_close(actual, expected, rtol=1e-12, atol=1e-12)
+        actual_grads = torch.autograd.grad(
+            actual.sum(),
+            (positions, moments, cells, k_vectors),
+            retain_graph=True,
+        )
+        expected_grads = torch.autograd.grad(
+            expected.sum(), (positions, moments, cells, k_vectors)
+        )
+        for actual_grad, expected_grad in zip(
+            actual_grads, expected_grads, strict=True
+        ):
+            torch.testing.assert_close(
+                actual_grad, expected_grad, rtol=1e-10, atol=1e-11
+            )
+
+        traced = make_fx(fn, tracing_mode="symbolic")(
+            positions,
+            moments,
+            cells,
+            k_vectors,
+            valid_counts,
+            reference.source_overlap_constants,
+            batch_idx,
+        )
+        torch.testing.assert_close(
+            traced(
+                positions,
+                moments,
+                cells,
+                k_vectors,
+                valid_counts,
+                reference.source_overlap_constants,
+                batch_idx,
+            ),
+            actual,
+            rtol=1e-12,
+            atol=1e-12,
+        )
+
+    def test_prepared_features_and_ewald_wrappers_trace(self, device):
+        """Prepared feature/Ewald wrappers reuse their cache during tracing."""
+        from torch.fx.experimental.proxy_tensor import make_fx
+
+        td = _es_torch_device(device)
+        sys = _random_system(seed=180, n_atoms=3, box_len=5.0, device=td)
+        positions = sys["positions"]
+        moments = pack_multipole_moments(sys["charges"], sys["dipoles"])
+        idx_j = torch.empty(0, dtype=torch.int32, device=td)
+        neighbor_ptr = torch.zeros(4, dtype=torch.int32, device=td)
+        unit_shifts = torch.empty((0, 3), dtype=torch.int32, device=td)
+
+        direct_cache = prepare_multipole_scf_cache(
+            sys["cell"],
+            sigma=1.0,
+            receiver_sigmas=[0.8, 1.0],
+            k_cutoff=3.0,
+            l_max=1,
+            device=td,
+        )
+
+        def feature_with_sigmas(pos, mm, receiver_sigmas):
+            return multipole_electrostatic_features(
+                pos,
+                mm,
+                sys["cell"],
+                sigma=1.0,
+                receiver_sigmas=receiver_sigmas,
+                feature_max_l=1,
+                cache=direct_cache,
+            )
+
+        def feature_fn(pos, mm):
+            return feature_with_sigmas(pos, mm, (0.8, 1.0))
+
+        feature_eager = feature_fn(positions, moments)
+        tensor_sigmas_feature = feature_with_sigmas(
+            positions,
+            moments,
+            torch.tensor([0.8, 1.0], dtype=torch.float64, device=td),
+        )
+        torch.testing.assert_close(
+            tensor_sigmas_feature, feature_eager, rtol=1e-12, atol=1e-12
+        )
+        with pytest.raises(ValueError, match="receiver_sigmas must be non-empty"):
+            feature_with_sigmas(positions, moments, [])
+        with pytest.raises(ValueError, match="receiver_sigmas must all be positive"):
+            feature_with_sigmas(positions, moments, [0.8, -1.0])
+        with pytest.raises(ValueError, match="do not match the prepared cache"):
+            feature_with_sigmas(positions, moments, [0.8])
+        feature_graph = make_fx(
+            feature_fn,
+            tracing_mode="symbolic",
+            _allow_non_fake_inputs=True,
+        )(positions, moments)
+        torch.testing.assert_close(
+            feature_graph(positions, moments), feature_eager, rtol=1e-12, atol=1e-12
+        )
+
+        ewald_cache = prepare_multipole_scf_cache(
+            sys["cell"],
+            sigma=1.0,
+            receiver_sigmas=[1.0],
+            k_cutoff=3.0,
+            l_max=1,
+            alpha=0.5,
+            device=td,
+        )
+
+        with pytest.raises(ValueError, match="cache.alpha must be None"):
+            multipole_electrostatic_features(
+                positions,
+                moments,
+                sys["cell"],
+                sigma=1.0,
+                receiver_sigmas=[1.0],
+                cache=ewald_cache,
+            )
+
+        def ewald_fn(pos, mm):
+            return multipole_ewald_summation(
+                pos,
+                mm,
+                sys["cell"],
+                idx_j,
+                neighbor_ptr,
+                unit_shifts,
+                sigma=1.0,
+                alpha=0.5,
+                cache=ewald_cache,
+            )
+
+        ewald_eager = ewald_fn(positions, moments)
+        ewald_graph = make_fx(
+            ewald_fn,
+            tracing_mode="symbolic",
+            _allow_non_fake_inputs=True,
+        )(positions, moments)
+        torch.testing.assert_close(
+            ewald_graph(positions, moments), ewald_eager, rtol=1e-11, atol=1e-12
         )
 
 

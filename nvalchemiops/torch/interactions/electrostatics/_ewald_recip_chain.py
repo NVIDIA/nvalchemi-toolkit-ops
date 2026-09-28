@@ -167,33 +167,50 @@ def _recip_ksum_energy_torch(
     pos = positions.to(torch.float64)
     q = charges.to(torch.float64)
     alpha_flat = alpha.reshape(-1).to(torch.float64)
-    energy = pos.new_zeros(pos.shape[0])
-    for s in range(num_systems):
-        a = alpha_flat[0] if alpha_flat.numel() == 1 else alpha_flat[s]
-        exp_factor = 0.25 / (a * a)
-        k = k_vectors_2d[s].to(torch.float64)
+    if batch_idx is not None:
+        k = k_vectors_2d.to(torch.float64)
         ksq = (k * k).sum(-1)
+        alpha_system = alpha_flat[0] if alpha_flat.numel() == 1 else alpha_flat
+        exp_factor = 0.25 / (alpha_system * alpha_system)
         green = (
-            (EIGHTPI / volume[s].to(torch.float64)) * torch.exp(-ksq * exp_factor) / ksq
+            (EIGHTPI / volume.to(torch.float64).unsqueeze(-1))
+            * torch.exp(-ksq * exp_factor.unsqueeze(-1))
+            / ksq
         )
         green = torch.where(ksq < 1e-10, torch.zeros_like(green), green)
-        if batch_idx is None:
-            p_s, q_s = pos, q
-        else:
-            sel = batch_idx == s
-            p_s, q_s = pos[sel], q[sel]
-        kr = p_s @ k.transpose(0, 1)
+        batch_long = batch_idx.to(device=pos.device, dtype=torch.long)
+        k_atom = k.index_select(0, batch_long)
+        kr = (pos.unsqueeze(1) * k_atom).sum(-1)
         cos_kr = torch.cos(kr)
         sin_kr = torch.sin(kr)
-        re_sf = (q_s.unsqueeze(1) * cos_kr).sum(0) * green
-        im_sf = (q_s.unsqueeze(1) * sin_kr).sum(0) * green
-        e_s = 0.5 * q_s * (cos_kr @ re_sf + sin_kr @ im_sf)
-        if batch_idx is None:
-            energy = e_s
-        else:
-            idx = sel.nonzero(as_tuple=True)[0]
-            energy = energy.index_copy(0, idx, e_s)
-    return energy
+        re_sf = (
+            q.new_zeros((num_systems, k.shape[1])).index_add(
+                0, batch_long, q.unsqueeze(1) * cos_kr
+            )
+            * green
+        )
+        im_sf = (
+            q.new_zeros((num_systems, k.shape[1])).index_add(
+                0, batch_long, q.unsqueeze(1) * sin_kr
+            )
+            * green
+        )
+        re_atom = re_sf.index_select(0, batch_long)
+        im_atom = im_sf.index_select(0, batch_long)
+        return 0.5 * q * (cos_kr * re_atom + sin_kr * im_atom).sum(-1)
+
+    a = alpha_flat[0]
+    exp_factor = 0.25 / (a * a)
+    k = k_vectors_2d[0].to(torch.float64)
+    ksq = (k * k).sum(-1)
+    green = (EIGHTPI / volume[0].to(torch.float64)) * torch.exp(-ksq * exp_factor) / ksq
+    green = torch.where(ksq < 1e-10, torch.zeros_like(green), green)
+    kr = pos @ k.transpose(0, 1)
+    cos_kr = torch.cos(kr)
+    sin_kr = torch.sin(kr)
+    re_sf = (q.unsqueeze(1) * cos_kr).sum(0) * green
+    im_sf = (q.unsqueeze(1) * sin_kr).sum(0) * green
+    return 0.5 * q * (cos_kr @ re_sf + sin_kr @ im_sf)
 
 
 def _resolve_max_atoms_per_system(
