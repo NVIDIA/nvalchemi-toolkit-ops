@@ -632,7 +632,7 @@ def test_naive_pair_fn_optional_buffers_and_returned(device):
 
 
 def test_naive_pair_fn_target_indices_compact_rows(device):
-    """Torch naive ``target_indices + pair_fn`` uses compact source rows."""
+    """Torch naive ``target_indices + pair_fn`` uses compact central rows."""
     positions = torch.tensor(
         [
             [0.0, 0.0, 0.0],
@@ -976,6 +976,63 @@ def test_compiled_pair_fn_batch_naive_pbc_fullgraph_matrix(device):
         positions, nm, nms, nn, nv, nd, pe, pf
     )
     _check_pair_outputs(nm_out, nn_out, nv_out, nd_out, pe_out, pf_out, pp)
+
+
+def test_compiled_pair_fn_batch_naive_pbc_target_indices_fullgraph_matrix(device):
+    """Compiled batch PBC pair functions accept compact targets without max atoms."""
+    _skip_without_cuda(device)
+    positions, cell, pbc = _single_system_pbc(device)
+    batch_idx = torch.zeros(positions.shape[0], dtype=torch.int32, device=device)
+    batch_ptr = torch.tensor([0, positions.shape[0]], dtype=torch.int32, device=device)
+    target_indices = torch.tensor([0, 2], dtype=torch.int32, device=device)
+    cutoff = 0.75
+    max_neighbors = 8
+    cpf = _compiled_pair_fn("batch_naive_pbc_target_fullgraph")
+    nm, nms, nn, nv, nd, pe, pf, pp = _alloc_target_pair_buffers(
+        positions.shape[0], target_indices.shape[0], max_neighbors, device
+    )
+    shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, cutoff, pbc)
+
+    @torch.compile(fullgraph=True)
+    def run(positions, nm, nms, nn, nv, nd, pe, pf):
+        return batch_naive_neighbor_list(
+            positions,
+            cutoff,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=max_neighbors,
+            neighbor_matrix=nm,
+            neighbor_matrix_shifts=nms,
+            num_neighbors=nn,
+            shift_range_per_dimension=shift_range,
+            num_shifts_per_system=num_shifts,
+            max_shifts_per_system=max_shifts,
+            target_indices=target_indices,
+            return_distances=True,
+            return_vectors=True,
+            neighbor_vectors=nv,
+            neighbor_distances=nd,
+            pair_fn=cpf,
+            pair_params=pp,
+            pair_energies=pe,
+            pair_forces=pf,
+        )
+
+    nm_out, nn_out, _shifts, nd_out, nv_out, pe_out, pf_out = run(
+        positions, nm, nms, nn, nv, nd, pe, pf
+    )
+    _check_target_pair_outputs(
+        nm_out,
+        nn_out,
+        nv_out,
+        nd_out,
+        pe_out,
+        pf_out,
+        pp,
+        target_indices,
+    )
 
 
 def test_compiled_pair_fn_cell_list_fullgraph_matrix(device):
@@ -1346,6 +1403,115 @@ def test_naive_pair_fn_coo_outputs_aligned(device):
     assert torch.allclose(pe_coo, expected_e, rtol=1e-5, atol=1e-5)
 
 
+def test_naive_zero_cutoff_coo_pair_outputs_are_empty(device):
+    """Zero cutoff returns empty COO-aligned pair outputs and resets buffers."""
+    dtype = torch.float32
+    positions = torch.tensor(
+        [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [1.0, 0.0, 0.0]],
+        dtype=dtype,
+        device=device,
+    )
+    cell = torch.eye(3, dtype=dtype, device=device).unsqueeze(0) * 4.0
+    pbc = torch.ones((1, 3), dtype=torch.bool, device=device)
+    max_neighbors = 2
+    nm = torch.full((3, max_neighbors), -1, dtype=torch.int32, device=device)
+    nms = torch.full((3, max_neighbors, 3), 7, dtype=torch.int32, device=device)
+    nn = torch.full((3,), 7, dtype=torch.int32, device=device)
+    nd = torch.ones((3, max_neighbors), dtype=dtype, device=device)
+    nv = torch.ones((3, max_neighbors, 3), dtype=dtype, device=device)
+    pe = torch.ones((3, max_neighbors), dtype=dtype, device=device)
+    pf = torch.ones((3, max_neighbors, 3), dtype=dtype, device=device)
+    pp = torch.ones((3, 1), dtype=dtype, device=device)
+
+    nl, ptr, shifts, distances, vectors, energies, forces = naive_neighbor_list(
+        positions,
+        0.0,
+        cell=cell,
+        pbc=pbc,
+        max_neighbors=max_neighbors,
+        return_neighbor_list=True,
+        neighbor_matrix=nm,
+        neighbor_matrix_shifts=nms,
+        num_neighbors=nn,
+        shift_range_per_dimension=torch.zeros((1, 3), dtype=torch.int32, device=device),
+        num_shifts_per_system=torch.ones((1,), dtype=torch.int32, device=device),
+        max_shifts_per_system=1,
+        return_distances=True,
+        return_vectors=True,
+        neighbor_distances=nd,
+        neighbor_vectors=nv,
+        pair_fn=_sum_pair_fn,
+        pair_params=pp,
+        pair_energies=pe,
+        pair_forces=pf,
+    )
+
+    assert nl.shape == (2, 0)
+    assert torch.equal(ptr, torch.zeros_like(ptr))
+    assert shifts.shape == (0, 3)
+    assert distances.shape == (0,)
+    assert vectors.shape == (0, 3)
+    assert energies.shape == (0,)
+    assert forces.shape == (0, 3)
+    assert torch.equal(nm, torch.full_like(nm, 3))
+    assert torch.equal(nn, torch.zeros_like(nn))
+    assert torch.equal(nms, torch.zeros_like(nms))
+    assert torch.equal(nd, torch.zeros_like(nd))
+    assert torch.equal(nv, torch.zeros_like(nv))
+    assert torch.equal(pe, torch.zeros_like(pe))
+    assert torch.equal(pf, torch.zeros_like(pf))
+
+
+def test_batch_naive_zero_cutoff_coo_pair_outputs_are_empty(device):
+    """Batched zero cutoff returns empty COO-aligned pair outputs."""
+    dtype = torch.float32
+    positions = torch.tensor(
+        [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [2.0, 0.0, 0.0], [2.5, 0.0, 0.0]],
+        dtype=dtype,
+        device=device,
+    )
+    batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device=device)
+    max_neighbors = 2
+    nm = torch.full((4, max_neighbors), -1, dtype=torch.int32, device=device)
+    nn = torch.full((4,), 7, dtype=torch.int32, device=device)
+    nd = torch.ones((4, max_neighbors), dtype=dtype, device=device)
+    nv = torch.ones((4, max_neighbors, 3), dtype=dtype, device=device)
+    pe = torch.ones((4, max_neighbors), dtype=dtype, device=device)
+    pf = torch.ones((4, max_neighbors, 3), dtype=dtype, device=device)
+    pp = torch.ones((4, 1), dtype=dtype, device=device)
+
+    nl, ptr, distances, vectors, energies, forces = batch_naive_neighbor_list(
+        positions,
+        0.0,
+        batch_ptr=batch_ptr,
+        max_neighbors=max_neighbors,
+        return_neighbor_list=True,
+        neighbor_matrix=nm,
+        num_neighbors=nn,
+        return_distances=True,
+        return_vectors=True,
+        neighbor_distances=nd,
+        neighbor_vectors=nv,
+        pair_fn=_sum_pair_fn,
+        pair_params=pp,
+        pair_energies=pe,
+        pair_forces=pf,
+    )
+
+    assert nl.shape == (2, 0)
+    assert torch.equal(ptr, torch.zeros_like(ptr))
+    assert distances.shape == (0,)
+    assert vectors.shape == (0, 3)
+    assert energies.shape == (0,)
+    assert forces.shape == (0, 3)
+    assert torch.equal(nm, torch.full_like(nm, 4))
+    assert torch.equal(nn, torch.zeros_like(nn))
+    assert torch.equal(nd, torch.zeros_like(nd))
+    assert torch.equal(nv, torch.zeros_like(nv))
+    assert torch.equal(pe, torch.zeros_like(pe))
+    assert torch.equal(pf, torch.zeros_like(pf))
+
+
 def test_batch_cell_list_pair_fn_runs_and_matches(device):
     """High-level batched ``batch_cell_list`` with ``pair_fn`` (regression).
 
@@ -1440,7 +1606,7 @@ def test_batch_naive_pair_fn_optional_buffers_and_returned(device):
 
 
 def test_batch_naive_pair_fn_target_indices_compact_rows(device):
-    """Torch batch_naive ``target_indices + pair_fn`` uses compact source rows."""
+    """Torch batch_naive ``target_indices + pair_fn`` uses compact central rows."""
     positions = torch.tensor(
         [
             [0.0, 0.0, 0.0],

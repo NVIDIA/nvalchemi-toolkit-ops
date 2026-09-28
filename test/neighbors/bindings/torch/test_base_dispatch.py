@@ -69,6 +69,25 @@ def _clean_env(monkeypatch):
 class TestReportNeighborListCosts:
     """Exercise Torch guarded naive/cell-list auto-dispatch via report/suggest."""
 
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+    def test_current_stream_consumes_event_gated_metadata(self, torch_stream_runner):
+        """Selector metadata produced on the current stream is observed."""
+        device = torch.device("cuda")
+        source = torch.tensor([0, 20], dtype=torch.int32, device=device)
+        target = torch.zeros_like(source)
+        cell = torch.eye(3, dtype=torch.float32, device=device).reshape(1, 3, 3)
+        cell = cell * 20.0
+        pbc = torch.zeros((1, 3), dtype=torch.bool, device=device)
+
+        def report_costs(batch_ptr):
+            report = report_torch(batch_ptr, cell, pbc, 5.0)
+            return torch.tensor(
+                [cost for _, cost in report], dtype=torch.float32, device=device
+            )
+
+        _, snapshot, expected = torch_stream_runner(source, target, report_costs)
+        torch.testing.assert_close(snapshot, expected)
+
     def test_one_entry_batch_ptr_is_rejected(self):
         """One-entry batch_ptr is invalid selector metadata."""
         with pytest.raises(ValueError, match="batch_ptr.*length at least 2"):
@@ -153,7 +172,7 @@ class TestReportNeighborListCosts:
                 target_indices=torch.arange(100, dtype=torch.int32),
             )
         )
-        # Fewer source rows -> cheaper naive estimate.
+        # Fewer central rows -> cheaper naive estimate.
         assert partial["naive_scalar"] < full["naive_scalar"]
         # target_indices is incompatible with cluster_tile auto.
         assert "cluster_tile" not in partial

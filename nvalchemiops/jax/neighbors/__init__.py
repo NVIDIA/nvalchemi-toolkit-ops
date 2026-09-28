@@ -265,8 +265,19 @@ def neighbor_list(
             cell list construction.
         max_atoms_per_system : int, optional
             Maximum number of atoms per system. Used in batch naive implementation
-            with PBC. If not provided, it will be computed automatically.
+            with PBC for full-row launch sizing. Every compact partial path,
+            including geometry and pair-output paths, ignores this bound.
             Can be provided to avoid CUDA synchronization.
+        target_indices : jax.Array, optional
+            Select central atoms for a compact partial neighbor list. Repeated
+            and empty valid targets are supported. Topology-only naive partial
+            calls may use CUDA ``strategy="tile"`` explicitly; single-system
+            CUDA ``strategy="auto"`` selects tile at float64 ``N >= 256`` and
+            float16/float32 ``N >= 1024``. CPU auto and batched partial auto
+            remain scalar, and explicit tile rejects CPU.
+            Distances, vectors, and pair-function outputs are scalar-only and
+            reject explicit tile. Eager calls reject out-of-bounds indices;
+            under ``jax.jit`` callers must prevalidate them.
         return_distances : bool, default=False
             Also return per-pair distances ``|r_ij|``, differentiable w.r.t.
             positions (and cell). Matrix layout is
@@ -345,8 +356,8 @@ def neighbor_list(
               for partial lists. Row ``r`` contains neighbors for atom ``r`` or
               ``target_indices[r]`` respectively.
             - If ``return_neighbor_list=True``: Returns ``neighbor_list`` with shape
-              (2, num_pairs), dtype int32, in COO format [source_rows, target_atoms].
-              With ``target_indices``, source rows are compact row ids.
+              (2, num_pairs), dtype int32, in COO format [central_rows, neighbor_atoms].
+              With ``target_indices``, central rows are compact row ids.
 
         - **num_neighbor_data** (array): Information about the number of neighbors for each atom,
           format depends on ``return_neighbor_list``:

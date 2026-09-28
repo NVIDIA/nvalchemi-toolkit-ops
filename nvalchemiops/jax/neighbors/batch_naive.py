@@ -21,6 +21,7 @@ import functools
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import warp as wp
 from warp import JaxCallableGraphMode, jax_callable, jax_kernel
 
@@ -29,7 +30,10 @@ from nvalchemiops.jax.neighbors._autograd import (
     _NeighborForwardOutput,
     _route_pair_outputs,
 )
-from nvalchemiops.jax.neighbors._dispatch import _is_jax_cpu_array
+from nvalchemiops.jax.neighbors._dispatch import (
+    _is_jax_cpu_array,
+    _jax_array_device_kind,
+)
 from nvalchemiops.jax.neighbors._registration import _lazy_naive_kernel
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     _pack_fixed_capacity_neighbor_list_from_neighbor_matrix,
@@ -39,6 +43,10 @@ from nvalchemiops.jax.neighbors.neighbor_utils import (
     get_fixed_capacity_neighbor_list_from_neighbor_matrix,
     get_neighbor_list_from_neighbor_matrix,
     prepare_batch_idx_ptr,
+)
+from nvalchemiops.neighbors.naive.dispatch import (
+    _NaiveWorkload,
+    _resolve_naive_strategy,
 )
 from nvalchemiops.neighbors.naive.launchers import (
     _launch_naive_neighbor_matrix_no_pbc,
@@ -188,15 +196,13 @@ def _jax_scalar_sentinels(dtype):
 #     ``batch_idx`` to pick per-atom cells.  No JAX-side pre-wrap is done on the
 #     tile path (that would double-wrap).
 #
-# Batched PREWRAPPED PBC has no tiled kernel (``_make_tile_kernel`` raises), so
-# only no-PBC and wrapped-PBC are wired here; the dispatch site rejects
-# ``strategy="tile"`` + ``wrap_positions=False`` for PBC.
-#
-# These run only on the eager path, where ``batch_naive_neighbor_list`` already
-# pre-fills ``neighbor_matrix=fill_value`` and zeroes ``num_neighbors`` /
-# shifts before dispatch, so the bodies perform no reset and take no
-# ``fill_value`` argument.  Tile supports ``half_fill`` but has no pair-output /
-# ``target_indices`` / selective (``rebuild_flags``) variant.  The static
+# The caller pre-fills ``neighbor_matrix=fill_value`` and zeroes
+# ``num_neighbors`` / shifts before dispatch, so the bodies perform no reset
+# and take no ``fill_value`` argument.  The same callable family supports eager
+# and ``jax.jit`` execution. The static ``partial`` flag is required because
+# the empty target sentinel used by full-row calls must not become a zero-row
+# partial launch. Tile supports ``half_fill`` but has no pair-output /
+# selective (``rebuild_flags``) variant.  The static
 # scalars (``cutoff``, ``half_fill``, ``max_shifts_per_system`` /
 # ``max_atoms_per_system`` for PBC) are concrete host ints computed outside jit.
 
@@ -205,10 +211,12 @@ def _batch_naive_tile_no_pbc_f32(
     positions: wp.array(dtype=wp.vec3f),
     batch_idx: wp.array(dtype=wp.int32),
     batch_ptr: wp.array(dtype=wp.int32),
+    target_indices: wp.array(dtype=wp.int32),
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
     num_neighbors: wp.array(dtype=wp.int32),
     cutoff: wp.float32,
     half_fill: wp.bool,
+    partial: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_no_pbc(
         positions,
@@ -220,6 +228,7 @@ def _batch_naive_tile_no_pbc_f32(
         batched=True,
         batch_idx=batch_idx,
         batch_ptr=batch_ptr,
+        target_indices=target_indices if bool(partial) else None,
         half_fill=bool(half_fill),
         strategy="tile",
     )
@@ -229,10 +238,12 @@ def _batch_naive_tile_no_pbc_f64(
     positions: wp.array(dtype=wp.vec3d),
     batch_idx: wp.array(dtype=wp.int32),
     batch_ptr: wp.array(dtype=wp.int32),
+    target_indices: wp.array(dtype=wp.int32),
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
     num_neighbors: wp.array(dtype=wp.int32),
     cutoff: wp.float64,
     half_fill: wp.bool,
+    partial: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_no_pbc(
         positions,
@@ -244,6 +255,7 @@ def _batch_naive_tile_no_pbc_f64(
         batched=True,
         batch_idx=batch_idx,
         batch_ptr=batch_ptr,
+        target_indices=target_indices if bool(partial) else None,
         half_fill=bool(half_fill),
         strategy="tile",
     )
@@ -257,6 +269,7 @@ def _batch_naive_tile_pbc_wrapped_f32(
     num_shifts_arr: wp.array(dtype=wp.int32),
     batch_idx: wp.array(dtype=wp.int32),
     batch_ptr: wp.array(dtype=wp.int32),
+    target_indices: wp.array(dtype=wp.int32),
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
     neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2),
     num_neighbors: wp.array(dtype=wp.int32),
@@ -264,6 +277,7 @@ def _batch_naive_tile_pbc_wrapped_f32(
     max_shifts_per_system: wp.int32,
     max_atoms_per_system: wp.int32,
     half_fill: wp.bool,
+    partial: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_pbc(
         positions,
@@ -280,8 +294,9 @@ def _batch_naive_tile_pbc_wrapped_f32(
         batch_ptr=batch_ptr,
         batch_idx=batch_idx,
         num_shifts_arr=num_shifts_arr,
+        target_indices=target_indices if bool(partial) else None,
         max_shifts_per_system=int(max_shifts_per_system),
-        max_atoms_per_system=int(max_atoms_per_system),
+        max_atoms_per_system=None if bool(partial) else int(max_atoms_per_system),
         half_fill=bool(half_fill),
         wrap_positions=True,
         strategy="tile",
@@ -296,6 +311,7 @@ def _batch_naive_tile_pbc_wrapped_f64(
     num_shifts_arr: wp.array(dtype=wp.int32),
     batch_idx: wp.array(dtype=wp.int32),
     batch_ptr: wp.array(dtype=wp.int32),
+    target_indices: wp.array(dtype=wp.int32),
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
     neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2),
     num_neighbors: wp.array(dtype=wp.int32),
@@ -303,6 +319,7 @@ def _batch_naive_tile_pbc_wrapped_f64(
     max_shifts_per_system: wp.int32,
     max_atoms_per_system: wp.int32,
     half_fill: wp.bool,
+    partial: wp.bool,
 ) -> None:
     _launch_naive_neighbor_matrix_pbc(
         positions,
@@ -319,16 +336,98 @@ def _batch_naive_tile_pbc_wrapped_f64(
         batch_ptr=batch_ptr,
         batch_idx=batch_idx,
         num_shifts_arr=num_shifts_arr,
+        target_indices=target_indices if bool(partial) else None,
         max_shifts_per_system=int(max_shifts_per_system),
-        max_atoms_per_system=int(max_atoms_per_system),
+        max_atoms_per_system=None if bool(partial) else int(max_atoms_per_system),
         half_fill=bool(half_fill),
         wrap_positions=True,
         strategy="tile",
     )
 
 
-# Keyed by ``(has_pbc, wrap_positions)``.  Only no-PBC and wrapped-PBC are
-# present; batched prewrapped PBC has no tiled kernel.  Tile has no selective
+def _batch_naive_tile_pbc_prewrapped_f32(
+    positions: wp.array(dtype=wp.vec3f),
+    cell: wp.array(dtype=wp.mat33f),
+    shift_range: wp.array(dtype=wp.vec3i),
+    num_shifts_arr: wp.array(dtype=wp.int32),
+    batch_idx: wp.array(dtype=wp.int32),
+    batch_ptr: wp.array(dtype=wp.int32),
+    target_indices: wp.array(dtype=wp.int32),
+    neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
+    neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2),
+    num_neighbors: wp.array(dtype=wp.int32),
+    cutoff: wp.float32,
+    max_shifts_per_system: wp.int32,
+    max_atoms_per_system: wp.int32,
+    half_fill: wp.bool,
+    partial: wp.bool,
+) -> None:
+    _launch_naive_neighbor_matrix_pbc(
+        positions,
+        float(cutoff),
+        cell,
+        None,
+        shift_range,
+        neighbor_matrix,
+        neighbor_matrix_shifts,
+        num_neighbors,
+        wp.float32,
+        str(positions.device),
+        batched=True,
+        batch_ptr=batch_ptr,
+        batch_idx=batch_idx,
+        num_shifts_arr=num_shifts_arr,
+        target_indices=target_indices if bool(partial) else None,
+        max_shifts_per_system=int(max_shifts_per_system),
+        max_atoms_per_system=None if bool(partial) else int(max_atoms_per_system),
+        half_fill=bool(half_fill),
+        wrap_positions=False,
+        strategy="tile",
+    )
+
+
+def _batch_naive_tile_pbc_prewrapped_f64(
+    positions: wp.array(dtype=wp.vec3d),
+    cell: wp.array(dtype=wp.mat33d),
+    shift_range: wp.array(dtype=wp.vec3i),
+    num_shifts_arr: wp.array(dtype=wp.int32),
+    batch_idx: wp.array(dtype=wp.int32),
+    batch_ptr: wp.array(dtype=wp.int32),
+    target_indices: wp.array(dtype=wp.int32),
+    neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
+    neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2),
+    num_neighbors: wp.array(dtype=wp.int32),
+    cutoff: wp.float64,
+    max_shifts_per_system: wp.int32,
+    max_atoms_per_system: wp.int32,
+    half_fill: wp.bool,
+    partial: wp.bool,
+) -> None:
+    _launch_naive_neighbor_matrix_pbc(
+        positions,
+        float(cutoff),
+        cell,
+        None,
+        shift_range,
+        neighbor_matrix,
+        neighbor_matrix_shifts,
+        num_neighbors,
+        wp.float64,
+        str(positions.device),
+        batched=True,
+        batch_ptr=batch_ptr,
+        batch_idx=batch_idx,
+        num_shifts_arr=num_shifts_arr,
+        target_indices=target_indices if bool(partial) else None,
+        max_shifts_per_system=int(max_shifts_per_system),
+        max_atoms_per_system=None if bool(partial) else int(max_atoms_per_system),
+        half_fill=bool(half_fill),
+        wrap_positions=False,
+        strategy="tile",
+    )
+
+
+# Keyed by ``(has_pbc, wrap_positions)``. Tile has no selective
 # variant, so the selective axis is omitted; ``strategy="tile"`` rejects
 # ``rebuild_flags`` at the dispatch site.
 _BATCH_NAIVE_TILE_NO_PBC_IN_OUT_ARGS = ("neighbor_matrix", "num_neighbors")
@@ -349,6 +448,12 @@ _BATCH_NAIVE_TILE_SPECS = {
         "in_out_argnames": _BATCH_NAIVE_TILE_PBC_IN_OUT_ARGS,
         jnp.dtype(jnp.float32): _batch_naive_tile_pbc_wrapped_f32,
         jnp.dtype(jnp.float64): _batch_naive_tile_pbc_wrapped_f64,
+    },
+    (True, False): {
+        "num_outputs": 3,
+        "in_out_argnames": _BATCH_NAIVE_TILE_PBC_IN_OUT_ARGS,
+        jnp.dtype(jnp.float32): _batch_naive_tile_pbc_prewrapped_f32,
+        jnp.dtype(jnp.float64): _batch_naive_tile_pbc_prewrapped_f64,
     },
 }
 
@@ -401,6 +506,8 @@ def _batch_naive_pair_outputs_forward(
     pair_params: jax.Array | None = None,
     target_indices: jax.Array | None = None,
     half_fill: bool = False,
+    wrap_positions: bool = True,
+    topology_only_partial: bool = False,
 ) -> _NeighborForwardOutput:
     """Forward closure for the batch_naive autograd path.
 
@@ -517,13 +624,18 @@ def _batch_naive_pair_outputs_forward(
         else:
             nm, nn, nv, nd = outs
     else:
+        pbc_mode = (
+            "prewrapped"
+            if topology_only_partial and not wrap_positions
+            else "wrap_on_entry"
+        )
         if has_pair_fn:
             kernel = _get_jax_batch_naive_pair_fn_kernel(
-                pair_fn, wp_dtype, "wrap_on_entry", half_fill, is_partial
+                pair_fn, wp_dtype, pbc_mode, half_fill, is_partial
             )
         elif is_partial:
             kernel = _get_jax_batch_naive_pair_kernel(
-                wp_dtype, "wrap_on_entry", half_fill, is_partial
+                wp_dtype, pbc_mode, half_fill, is_partial
             )
         else:
             kernel = _DIRECT_BATCH_NAIVE_GEOMETRY_KERNELS[
@@ -533,25 +645,30 @@ def _batch_naive_pair_outputs_forward(
             shift_range_per_dimension, num_shifts_per_system, _ = (
                 compute_naive_num_shifts(cell, cutoff, pbc)
             )
-        inv_cell = jnp.linalg.inv(cell)
-        positions_wrapped = jnp.zeros_like(positions)
-        per_atom_cell_offsets = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
-        if f64:
-            _wrap_kernel = _jax_wrap_positions_batch_f64
+        if topology_only_partial and not wrap_positions:
+            positions_work = positions
+            per_atom_cell_offsets = empty_offsets
         else:
-            _wrap_kernel = _jax_wrap_positions_batch_f32
-        positions_wrapped, per_atom_cell_offsets = _wrap_kernel(
-            positions,
-            cell,
-            inv_cell,
-            pbc,
-            batch_idx_i32,
-            positions_wrapped,
-            per_atom_cell_offsets,
-            launch_dims=(total_atoms,),
-        )
+            inv_cell = jnp.linalg.inv(cell)
+            positions_wrapped = jnp.zeros_like(positions)
+            per_atom_cell_offsets = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
+            if f64:
+                _wrap_kernel = _jax_wrap_positions_batch_f64
+            else:
+                _wrap_kernel = _jax_wrap_positions_batch_f32
+            positions_wrapped, per_atom_cell_offsets = _wrap_kernel(
+                positions,
+                cell,
+                inv_cell,
+                pbc,
+                batch_idx_i32,
+                positions_wrapped,
+                per_atom_cell_offsets,
+                launch_dims=(total_atoms,),
+            )
+            positions_work = positions_wrapped
         outs = kernel(
-            positions_wrapped,
+            positions_work,
             per_atom_cell_offsets,
             cutoff_sq,
             0.0,
@@ -690,33 +807,11 @@ def batch_naive_neighbor_list(
         If True, only store relationships where i < j. Default is False.
     fill_value : int, optional
         Value to fill the neighbor matrix with. Default is total_atoms.
-    return_neighbor_list : bool, default False
-        If True, convert the neighbor matrix to COO ``(neighbor_list,
-        neighbor_ptr)`` format (and shift vectors when PBC is enabled).
-        Incurs a masking step; prefer the matrix format when possible.
+    return_neighbor_list : bool, default=False
+        Convert matrix output to COO topology and row pointers.
     coo_capacity : int, optional
-        Static COO capacity. With ``return_neighbor_list=True``, returns padded
-        fixed-size COO arrays plus raw required row counts and a scalar
-        metadata-validity flag, and is compatible with ``jax.jit``. If omitted,
-        returns compact data-dependent COO arrays.
-    rebuild_flags : jax.Array, shape (num_systems,), dtype=bool, optional
-        Per-system selective-rebuild flags. Atoms in system ``s`` are
-        refilled only when ``rebuild_flags[s]`` is True; their rows in
-        ``num_neighbors`` are zeroed before the selective kernel runs, while
-        rows for unflagged systems are preserved when the previous
-        ``neighbor_matrix``, ``num_neighbors``, and (for PBC)
-        ``neighbor_matrix_shifts`` buffers are passed back. Omitted buffers
-        are freshly allocated and cannot preserve prior rows. Not supported
-        with pair-output kwargs or ``strategy="tile"``.
-    positions_wrapped_buffer : jax.Array, shape (total_atoms, 3), dtype matches positions, optional
-        Scratch buffer for wrapped positions when ``wrap_positions=True``
-        and PBC is enabled. Allocated internally when None.
-    per_atom_cell_offsets_buffer : jax.Array, shape (total_atoms, 3), dtype=int32, optional
-        Scratch buffer for per-atom cell offsets from the batched wrap
-        kernel. Allocated internally when None.
-    inv_cell_buffer : jax.Array, shape (num_systems, 3, 3), dtype matches positions, optional
-        Precomputed inverse cell matrices for the batched wrap kernel. If
-        None, computed from ``cell`` each call.
+        Static padded COO capacity. When supplied, raw row counts and scalar
+        metadata validity follow the topology tuple.
     neighbor_matrix : jax.Array, shape (num_rows, max_neighbors), optional
         Pre-shaped neighbor matrix. ``num_rows`` is ``total_atoms`` normally and
         ``len(target_indices)`` for partial rows.
@@ -725,66 +820,65 @@ def batch_naive_neighbor_list(
     num_neighbors : jax.Array, shape (num_rows,), optional
         Pre-shaped neighbors count array.
     shift_range_per_dimension : jax.Array, optional
-        Pre-computed shift range for PBC systems. For every PBC call under
-        ``jax.jit``, precompute it via :func:`compute_naive_num_shifts` outside
-        the jit boundary. It must correspond to the call's ``cell``, ``pbc``,
-        and static cutoff. Eager PBC calls may omit it.
+        Pre-computed shift range for PBC systems.
     num_shifts_per_system : jax.Array, optional
-        Number of periodic shifts per system.  Same ``jax.jit``
-        precomputation requirement as ``shift_range_per_dimension``.
+        Number of periodic shifts per system.
     max_shifts_per_system : int, optional
-        Maximum per-system shift count (launch dimension).  Same ``jax.jit``
-        precomputation requirement as ``shift_range_per_dimension``.
+        Maximum per-system shift count (launch dimension).
     max_atoms_per_system : int, optional
-        Maximum atoms in any system. For every PBC call under ``jax.jit``,
-        pass a concrete value; eager calls may omit it and rely on inference.
+        Maximum atoms in any system for full-row PBC launch sizing. Compact
+        partial paths do not require it.
+    rebuild_flags : jax.Array, shape (num_systems,), dtype=bool, optional
+        Select systems to rebuild while preserving supplied rows for other
+        systems. Not supported with partial rows, pair outputs, or tile.
     wrap_positions : bool, default=True
         If True, wrap input positions into the primary cell before
         neighbor search. Set to False when positions are already
         wrapped (e.g. by a preceding integration step) to save two
         GPU kernel launches per call.
+    positions_wrapped_buffer : jax.Array, shape (total_atoms, 3), optional
+        Scratch buffer written by batched position wrapping.
+    per_atom_cell_offsets_buffer : jax.Array, shape (total_atoms, 3), dtype=int32, optional
+        Scratch buffer for per-atom wrapping offsets.
+    inv_cell_buffer : jax.Array, shape (num_systems, 3, 3), optional
+        Precomputed inverse-cell buffer for wrapped PBC calls.
     strategy : {"auto", "scalar", "tile"}, default="auto"
         Selects the underlying Warp kernel variant. ``"scalar"`` uses the
         per-atom scalar kernel. ``"tile"`` uses the tile-cooperative
         ``wp.launch_tiled`` kernel and is **CUDA-only**: requesting it on a
-        CPU device raises ``ValueError``. The tile path supports the no-PBC
-        and PBC-wrapped (``wrap_positions=True``) cases and ``half_fill``, but
-        has no pair-output (``return_distances`` / ``return_vectors``) or
-        selective (``rebuild_flags``) variant, and there is **no batched
-        prewrapped-PBC tiled kernel**: requesting ``strategy="tile"``
-        with PBC and ``wrap_positions=False`` raises ``NotImplementedError``
-        (use ``"scalar"`` for that combination). ``"auto"`` and ``"scalar"``
-        preserve the current scalar-dispatch behavior; ``"auto"`` never selects
-        tile in this binding (tile is opt-in). The tile and scalar paths
-        produce identical pair *sets* (per-row ordering may differ; under
-        ``half_fill`` the two pick opposite pair owners, yielding the same
-        undirected set with sign-flipped shifts).
-    return_distances : bool, default False
-        If True, append per-pair scalar distances to the return tuple. Enables
-        the autograd pair-geometry path; not supported with ``rebuild_flags``
-        or ``strategy="tile"``.
-    return_vectors : bool, default False
-        If True, append per-pair displacement vectors to the return tuple.
-        Same restrictions as ``return_distances``.
+        CPU device raises ``ValueError``. Topology-only compact
+        ``target_indices`` rows support no-PBC, wrapped PBC, and prewrapped
+        PBC. ``"auto"`` keeps batched partial rows on scalar; ``"scalar"`` is
+        a deterministic opt-out. Explicit tile rejects geometry and pair
+        outputs; partial neighbor lists do not support ``rebuild_flags``. When
+        neither result overflows capacity, the tile and scalar paths may order
+        entries differently but have the same stored
+        ``(neighbor, periodic_shift)`` multisets.
+    return_distances : bool, default=False
+        Append differentiable per-pair distances. Uses the scalar path.
+    return_vectors : bool, default=False
+        Append differentiable per-pair displacement vectors. Uses the scalar
+        path.
     neighbor_distances : jax.Array, shape (num_rows, max_neighbors), optional
         Pre-shaped distance output for ``return_distances=True`` or ``pair_fn``.
     neighbor_vectors : jax.Array, shape (num_rows, max_neighbors, 3), optional
         Pre-shaped vector output for ``return_vectors=True`` or ``pair_fn``.
-    pair_fn : wp.Function, optional
-        Module-scope Warp pair potential evaluated inline during the neighbor
-        search. Requires ``pair_params``; not supported with ``rebuild_flags``
-        or ``strategy="tile"``.
-    pair_params : jax.Array, shape (total_atoms, K), dtype matches positions, optional
-        Per-atom parameters forwarded to ``pair_fn``. Required when ``pair_fn``
-        is set.
-    pair_energies : jax.Array, shape (num_rows, max_neighbors), optional
-        Pre-shaped output buffer for per-pair energies from ``pair_fn``.
-    pair_forces : jax.Array, shape (num_rows, max_neighbors, 3), optional
-        Pre-shaped output buffer for per-pair forces from ``pair_fn``.
     target_indices : jax.Array, shape (num_targets,), dtype=int32, optional
-        Compact partial-list source rows. Output row ``r`` maps to atom
-        ``target_indices[r]``; COO source rows remain compact row ids. User
-        buffers must be compact-row shaped, not full atom-row shaped.
+        Indices of the central atoms for compact partial rows. Output row ``r``
+        maps to atom ``target_indices[r]``. In COO output, the first row holds
+        compact row ids. User buffers must be compact-row shaped, not full
+        atom-row shaped. Repeated rows are allowed. Eager calls reject
+        out-of-bounds values; under ``jax.jit`` callers must prevalidate them.
+    pair_fn : wp.Function, optional
+        Module-scope Warp pair potential evaluated during the scalar search.
+        Requires ``pair_params`` and produces forward-only energy and force
+        outputs.
+    pair_params : jax.Array, shape (total_atoms, K), optional
+        Per-atom parameters forwarded to ``pair_fn``.
+    pair_energies : jax.Array, shape (num_rows, max_neighbors), optional
+        Pre-shaped energy output buffer for ``pair_fn``.
+    pair_forces : jax.Array, shape (num_rows, max_neighbors, 3), optional
+        Pre-shaped force output buffer for ``pair_fn``.
 
     Returns
     -------
@@ -793,21 +887,14 @@ def batch_naive_neighbor_list(
         ``num_rows`` rows, where ``num_rows`` is ``total_atoms`` normally and
         ``len(target_indices)`` for partial lists. COO pointer arrays have
         shape ``(num_rows + 1,)`` and source ids are compact rows when
-        ``target_indices`` is provided. The base topology tuple follows the
-        matrix/list and PBC layouts described by
-        :func:`naive_neighbor_list`. Requested pair outputs then follow in
-        this order: ``neighbor_distances`` when ``return_distances=True``,
-        ``neighbor_vectors`` when ``return_vectors=True``, and
-        ``(pair_energies, pair_forces)`` when ``pair_fn`` is set.
+        ``target_indices`` is provided. The topology tuple follows the same
+        matrix/list and PBC layouts as :func:`naive_neighbor_list`. Requested
+        distances, vectors, energies, and forces follow in that order.
 
     Notes
     -----
-    For ``jax.jit`` PBC calls, pass a concrete ``max_atoms_per_system`` outside
-    the jit boundary. For every PBC call under ``jax.jit``, also precompute
-    ``shift_range_per_dimension``,
-    ``num_shifts_per_system``, and ``max_shifts_per_system`` via
-    :func:`compute_naive_num_shifts`. Eager PBC calls may omit
-    these kwargs.
+    For ``jax.jit`` PBC calls, pass concrete launch bounds and precompute shift
+    metadata outside the compiled boundary. Eager calls may infer them.
 
     Examples
     --------
@@ -851,40 +938,68 @@ def batch_naive_neighbor_list(
     if pbc is not None and cell is None:
         raise ValueError("If pbc is provided, cell must also be provided")
 
+    geometry_or_pair_active = (
+        bool(return_distances)
+        or bool(return_vectors)
+        or neighbor_vectors is not None
+        or neighbor_distances is not None
+        or pair_fn is not None
+        or pair_energies is not None
+        or pair_forces is not None
+    )
+    topology_only_partial = target_indices is not None and not geometry_or_pair_active
+    if target_indices is not None and (
+        target_indices.ndim != 1 or target_indices.dtype != jnp.int32
+    ):
+        raise ValueError("target_indices must be a rank-one int32 array.")
+    if target_indices is not None and not isinstance(target_indices, jax.core.Tracer):
+        concrete_target_indices = np.asarray(target_indices)
+        if np.any(concrete_target_indices < 0) or np.any(
+            concrete_target_indices >= positions.shape[0]
+        ):
+            raise ValueError("target_indices must contain in-bounds atom indices.")
+    if target_indices is not None and rebuild_flags is not None:
+        raise NotImplementedError(
+            "Partial neighbor lists do not support rebuild_flags",
+        )
+    if target_indices is not None and strategy == "auto":
+        strategy = _resolve_naive_strategy(
+            strategy,
+            _NaiveWorkload(
+                device_kind=_jax_array_device_kind(positions),
+                wp_dtype=(wp.float64 if positions.dtype == jnp.float64 else wp.float32),
+                num_atoms=int(positions.shape[0]),
+                num_systems=1,
+                partial=True,
+                batched=True,
+                pbc=pbc is not None,
+                wrap_positions=wrap_positions,
+                geometry_outputs=geometry_or_pair_active,
+            ),
+        )
+
     if strategy == "tile":
         # The tile-cooperative kernel is CUDA-only and has no pair-output or
-        # selective (rebuild_flags) variant, and no batched prewrapped-PBC
-        # tiled kernel.  Gate here, before any launch, mirroring the warp
-        # launcher CPU guard and the single-system tile guards.
+        # selective (rebuild_flags) variant. Gate here, before any launch,
+        # mirroring the warp launcher CPU guard and the single-system tile
+        # guards.
         if _is_jax_cpu_array(positions):
             raise ValueError(
                 "strategy='tile' requires CUDA; the tile-cooperative "
                 "naive kernel cannot run on a CPU device (Warp forces "
                 "block_dim=1). Use strategy='scalar' or 'auto' on CPU.",
             )
-        if bool(return_distances) or bool(return_vectors) or pair_fn is not None:
+        if geometry_or_pair_active:
             raise NotImplementedError(
                 "strategy='tile' has no pair-output (return_distances / "
-                "return_vectors / pair_fn) variant; use strategy='scalar'.",
-            )
-        if target_indices is not None:
-            raise NotImplementedError(
-                "strategy='tile' has no target_indices (partial "
-                "neighbor-list) variant; use strategy='scalar'.",
+                "return_vectors / supplied geometry / pair_fn) variant; "
+                "use strategy='scalar'.",
             )
         if rebuild_flags is not None:
             raise NotImplementedError(
                 "strategy='tile' has no selective (rebuild_flags) "
                 "variant; use strategy='scalar'.",
             )
-        if pbc is not None and not wrap_positions:
-            raise NotImplementedError(
-                "strategy='tile' has no batched prewrapped-PBC tiled "
-                "kernel (wrap_positions=False with PBC). Use "
-                "strategy='scalar', or wrap_positions=True for the "
-                "tile path.",
-            )
-
     # Prepare batch indices and pointers
     batch_idx, batch_ptr = prepare_batch_idx_ptr(
         batch_idx, batch_ptr, positions.shape[0]
@@ -902,13 +1017,10 @@ def batch_naive_neighbor_list(
             raise ValueError("pair_energies requires pair_fn.")
         if pair_forces is not None:
             raise ValueError("pair_forces requires pair_fn.")
-    has_pair_outputs = (
-        bool(return_distances)
-        or bool(return_vectors)
-        or pair_fn is not None
-        or target_indices is not None
+    uses_compact_pair_kernel = geometry_or_pair_active or (
+        target_indices is not None and strategy != "tile"
     )
-    if has_pair_outputs:
+    if uses_compact_pair_kernel:
         if rebuild_flags is not None:
             raise NotImplementedError(
                 "Pair outputs are not supported with rebuild_flags.",
@@ -955,6 +1067,89 @@ def batch_naive_neighbor_list(
             (num_rows, int(max_neighbors), 3),
             positions.dtype,
         )
+        if target_indices is not None and (cutoff <= 0 or num_rows == 0):
+            matrix_out = (
+                jnp.full((num_rows, max_neighbors), fill_value, dtype=jnp.int32)
+                if neighbor_matrix is None
+                else neighbor_matrix.at[:].set(jnp.int32(fill_value))
+            )
+            counts_out = (
+                jnp.zeros(num_rows, dtype=jnp.int32)
+                if num_neighbors is None
+                else num_neighbors.at[:].set(jnp.int32(0))
+            )
+            distances_out = (
+                jnp.zeros((num_rows, max_neighbors), dtype=positions.dtype)
+                if neighbor_distances is None
+                else neighbor_distances.at[:].set(
+                    jnp.asarray(0.0, dtype=positions.dtype)
+                )
+            )
+            vectors_out = (
+                jnp.zeros((num_rows, max_neighbors, 3), dtype=positions.dtype)
+                if neighbor_vectors is None
+                else neighbor_vectors.at[:].set(jnp.asarray(0.0, dtype=positions.dtype))
+            )
+            if pair_fn is not None:
+                energies_out = jnp.zeros(
+                    (num_rows, max_neighbors),
+                    dtype=positions.dtype,
+                )
+                forces_out = jnp.zeros(
+                    (num_rows, max_neighbors, 3),
+                    dtype=positions.dtype,
+                )
+            shifts_out = None
+            if pbc is not None:
+                shifts_out = (
+                    jnp.zeros((num_rows, max_neighbors, 3), dtype=jnp.int32)
+                    if neighbor_matrix_shifts is None
+                    else neighbor_matrix_shifts.at[:].set(jnp.int32(0))
+                )
+
+            if return_neighbor_list:
+                if coo_capacity is None:
+                    base = (
+                        jnp.zeros((2, 0), dtype=jnp.int32),
+                        jnp.zeros((num_rows + 1,), dtype=jnp.int32),
+                    )
+                    if shifts_out is not None:
+                        base = (*base, jnp.zeros((0, 3), dtype=jnp.int32))
+                    output_pairs = 0
+                else:
+                    base, _ = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                        matrix_out,
+                        counts_out,
+                        capacity=coo_capacity,
+                        neighbor_shift_matrix=shifts_out,
+                        fill_value=int(fill_value),
+                        metadata_valid=jnp.ones((), dtype=jnp.bool_),
+                    )
+                    output_pairs = int(coo_capacity)
+                tail: list[jax.Array] = []
+                if return_distances:
+                    tail.append(jnp.zeros((output_pairs,), dtype=positions.dtype))
+                if return_vectors:
+                    tail.append(jnp.zeros((output_pairs, 3), dtype=positions.dtype))
+                if pair_fn is not None:
+                    tail.extend(
+                        (
+                            jnp.zeros((output_pairs,), dtype=positions.dtype),
+                            jnp.zeros((output_pairs, 3), dtype=positions.dtype),
+                        ),
+                    )
+                return (*base, *tail)
+
+            tail = []
+            if return_distances:
+                tail.append(distances_out)
+            if return_vectors:
+                tail.append(vectors_out)
+            if pair_fn is not None:
+                tail.extend((energies_out, forces_out))
+            if shifts_out is not None:
+                return matrix_out, counts_out, shifts_out, *tail
+            return matrix_out, counts_out, *tail
         cell_norm = cell
         if cell_norm is not None:
             cell_norm = (
@@ -993,7 +1188,7 @@ def batch_naive_neighbor_list(
                     "calling batch_naive_neighbor_list under jax.jit with PBC "
                     "and target_indices / pair outputs.",
                 ) from exc
-            if max_atoms_per_system is None:
+            if max_atoms_per_system is None and target_indices is None:
                 try:
                     max_atoms_per_system = int(jnp.max(batch_ptr[1:] - batch_ptr[:-1]))
                 except (
@@ -1019,7 +1214,11 @@ def batch_naive_neighbor_list(
             "max_neighbors": int(max_neighbors),
             "fill_value": int(fill_value),
             "max_shifts_per_system": int(max_shifts_per_system),
-            "max_atoms_per_system": int(max_atoms_per_system),
+            "max_atoms_per_system": (
+                0
+                if target_indices is not None and max_atoms_per_system is None
+                else int(max_atoms_per_system)
+            ),
             "num_systems": int(num_systems),
             "neighbor_matrix": neighbor_matrix,
             "neighbor_matrix_shifts": neighbor_matrix_shifts,
@@ -1032,6 +1231,8 @@ def batch_naive_neighbor_list(
             "pair_params": pair_params,
             "target_indices": target_indices,
             "half_fill": bool(half_fill),
+            "wrap_positions": bool(wrap_positions),
+            "topology_only_partial": topology_only_partial,
         }
         route_out = _route_pair_outputs(
             positions,
@@ -1054,25 +1255,7 @@ def batch_naive_neighbor_list(
             pe_out = pf_out = None
         if return_neighbor_list:
             active = nm_out != int(fill_value)
-            if coo_capacity is not None and pbc is not None:
-                base, plan = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
-                    nm_out,
-                    nn_out,
-                    capacity=coo_capacity,
-                    neighbor_shift_matrix=shifts_out,
-                    fill_value=int(fill_value),
-                    metadata_valid=jnp.ones((), dtype=jnp.bool_),
-                )
-            elif coo_capacity is not None:
-                base, plan = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
-                    nm_out,
-                    nn_out,
-                    capacity=coo_capacity,
-                    fill_value=int(fill_value),
-                    metadata_valid=jnp.ones((), dtype=jnp.bool_),
-                )
-            elif pbc is not None:
-                plan = None
+            if coo_capacity is None and pbc is not None:
                 nl, nptr, nl_shifts = get_neighbor_list_from_neighbor_matrix(
                     nm_out,
                     num_neighbors=nn_out,
@@ -1080,18 +1263,32 @@ def batch_naive_neighbor_list(
                     fill_value=int(fill_value),
                 )
                 base = (nl, nptr, nl_shifts)
-            else:
                 plan = None
+            elif coo_capacity is None:
                 nl, nptr = get_neighbor_list_from_neighbor_matrix(
                     nm_out,
                     num_neighbors=nn_out,
                     fill_value=int(fill_value),
                 )
                 base = (nl, nptr)
+                plan = None
+            else:
+                base, plan = _pack_fixed_capacity_neighbor_list_from_neighbor_matrix(
+                    nm_out,
+                    nn_out,
+                    capacity=coo_capacity,
+                    neighbor_shift_matrix=shifts_out if pbc is not None else None,
+                    fill_value=int(fill_value),
+                    metadata_valid=jnp.ones((), dtype=jnp.bool_),
+                )
             # Repack per-pair geometry (and pair_fn outputs) into the same COO order
             # as ``nl``.  Eager-only, like the index conversion.
             distances_out, vectors_out = coo_pack_pair_geometry(
-                active, distances_out, vectors_out, capacity=coo_capacity, plan=plan
+                active,
+                distances_out,
+                vectors_out,
+                capacity=coo_capacity,
+                plan=plan,
             )
             if pair_fn is not None:
                 pe_out, pf_out = coo_pack_pair_geometry(
@@ -1120,15 +1317,40 @@ def batch_naive_neighbor_list(
     if pbc is not None:
         pbc = pbc if pbc.ndim == 2 else pbc[jnp.newaxis, :]
 
+    partial = target_indices is not None
+    num_rows = int(target_indices.shape[0]) if partial else positions.shape[0]
+
+    if max_neighbors is None and neighbor_matrix is not None:
+        max_neighbors = int(neighbor_matrix.shape[1])
     if max_neighbors is None:
         max_neighbors = estimate_max_neighbors(cutoff)
 
     if fill_value is None:
         fill_value = jnp.int32(positions.shape[0])
 
+    _validate_pair_output_buffer(
+        "neighbor_matrix",
+        neighbor_matrix,
+        (num_rows, int(max_neighbors)),
+        jnp.int32,
+    )
+    _validate_pair_output_buffer(
+        "num_neighbors",
+        num_neighbors,
+        (num_rows,),
+        jnp.int32,
+    )
+    if pbc is not None:
+        _validate_pair_output_buffer(
+            "neighbor_matrix_shifts",
+            neighbor_matrix_shifts,
+            (num_rows, int(max_neighbors), 3),
+            jnp.int32,
+        )
+
     if neighbor_matrix is None:
         neighbor_matrix = jnp.full(
-            (positions.shape[0], max_neighbors),
+            (num_rows, max_neighbors),
             fill_value,
             dtype=jnp.int32,
         )
@@ -1136,14 +1358,14 @@ def batch_naive_neighbor_list(
         neighbor_matrix = neighbor_matrix.at[:].set(fill_value)
 
     if num_neighbors is None:
-        num_neighbors = jnp.zeros(positions.shape[0], dtype=jnp.int32)
+        num_neighbors = jnp.zeros(num_rows, dtype=jnp.int32)
     elif rebuild_flags is None:
         num_neighbors = num_neighbors.at[:].set(jnp.int32(0))
 
     if pbc is not None:
         if neighbor_matrix_shifts is None:
             neighbor_matrix_shifts = jnp.zeros(
-                (positions.shape[0], max_neighbors, 3),
+                (num_rows, max_neighbors, 3),
                 dtype=jnp.int32,
             )
         elif rebuild_flags is None:
@@ -1157,21 +1379,21 @@ def batch_naive_neighbor_list(
                 compute_naive_num_shifts(cell, cutoff, pbc)
             )
 
-    if cutoff <= 0:
+    if cutoff <= 0 or (partial and num_rows == 0):
         if return_neighbor_list:
             output_pairs = 0 if coo_capacity is None else int(coo_capacity)
-            recovery_counts = jnp.zeros(positions.shape[0], dtype=jnp.int32)
+            recovery_counts = jnp.zeros(num_rows, dtype=jnp.int32)
             metadata_valid = jnp.ones((), dtype=jnp.bool_)
             if pbc is not None:
                 base = (
                     jnp.full((2, output_pairs), fill_value, dtype=jnp.int32),
-                    jnp.zeros((positions.shape[0] + 1,), dtype=jnp.int32),
+                    jnp.zeros((num_rows + 1,), dtype=jnp.int32),
                     jnp.zeros((output_pairs, 3), dtype=jnp.int32),
                 )
             else:
                 base = (
                     jnp.full((2, output_pairs), fill_value, dtype=jnp.int32),
-                    jnp.zeros((positions.shape[0] + 1,), dtype=jnp.int32),
+                    jnp.zeros((num_rows + 1,), dtype=jnp.int32),
                 )
             return (
                 (*base, recovery_counts, metadata_valid)
@@ -1227,30 +1449,33 @@ def batch_naive_neighbor_list(
     ) = _jax_scalar_sentinels(positions.dtype)
 
     if strategy == "tile":
-        # CUDA-only tile-cooperative path (eager only). Output buffers were
-        # already pre-filled above; the callable bodies wrap the batched inner
-        # warp launchers with strategy="tile". The launchers square the
+        # CUDA-only tile-cooperative path. Output buffers were already
+        # pre-filled above; the callable bodies wrap the batched inner warp
+        # launchers with strategy="tile" for eager and jax.jit execution. The
+        # launchers square the
         # cutoff internally, so the RAW cutoff is threaded as a static scalar
         # (NOT cutoff*cutoff, unlike the scalar arms below).
         cutoff_static = float(cutoff)
+        tile_target_indices = target_indices if partial else empty_target_indices
         if pbc is None:
             tile_callable = _BATCH_NAIVE_TILE_CALLABLES[(False, False, positions.dtype)]
             neighbor_matrix, num_neighbors = tile_callable(
                 positions,
                 batch_idx_i32,
                 batch_ptr_i32,
+                tile_target_indices,
                 neighbor_matrix,
                 num_neighbors,
                 cutoff_static,
                 half_fill,
+                partial,
             )
         else:
-            # Wrapped-PBC tile (prewrapped already rejected at the guard). The
-            # launcher wraps RAW positions internally using batch_idx, so no
-            # JAX-side pre-wrap is done here (that would double-wrap).
+            # The PBC tile specializations either wrap raw positions in the
+            # launcher or consume the caller's already-wrapped positions.
             if cell.dtype != positions.dtype:
                 cell = cell.astype(positions.dtype)
-            if max_atoms_per_system is None:
+            if max_atoms_per_system is None and not partial:
                 try:
                     max_atoms_per_system = int(jnp.max(batch_ptr[1:] - batch_ptr[:-1]))
                 except (
@@ -1262,23 +1487,53 @@ def batch_naive_neighbor_list(
                         "Please provide max_atoms_per_system explicitly when "
                         "using jax.jit with strategy='tile'."
                     ) from None
-            tile_callable = _BATCH_NAIVE_TILE_CALLABLES[(True, True, positions.dtype)]
-            neighbor_matrix, neighbor_matrix_shifts, num_neighbors = tile_callable(
-                positions,
-                cell,
-                pbc,
-                shift_range_per_dimension,
-                num_shifts_per_system,
-                batch_idx_i32,
-                batch_ptr_i32,
-                neighbor_matrix,
-                neighbor_matrix_shifts,
-                num_neighbors,
-                cutoff_static,
-                int(max_shifts_per_system),
-                int(max_atoms_per_system),
-                half_fill,
-            )
+            if wrap_positions:
+                tile_callable = _BATCH_NAIVE_TILE_CALLABLES[
+                    (True, True, positions.dtype)
+                ]
+                neighbor_matrix, neighbor_matrix_shifts, num_neighbors = tile_callable(
+                    positions,
+                    cell,
+                    pbc,
+                    shift_range_per_dimension,
+                    num_shifts_per_system,
+                    batch_idx_i32,
+                    batch_ptr_i32,
+                    tile_target_indices,
+                    neighbor_matrix,
+                    neighbor_matrix_shifts,
+                    num_neighbors,
+                    cutoff_static,
+                    int(max_shifts_per_system),
+                    0
+                    if partial and max_atoms_per_system is None
+                    else int(max_atoms_per_system),
+                    half_fill,
+                    partial,
+                )
+            else:
+                tile_callable = _BATCH_NAIVE_TILE_CALLABLES[
+                    (True, False, positions.dtype)
+                ]
+                neighbor_matrix, neighbor_matrix_shifts, num_neighbors = tile_callable(
+                    positions,
+                    cell,
+                    shift_range_per_dimension,
+                    num_shifts_per_system,
+                    batch_idx_i32,
+                    batch_ptr_i32,
+                    tile_target_indices,
+                    neighbor_matrix,
+                    neighbor_matrix_shifts,
+                    num_neighbors,
+                    cutoff_static,
+                    int(max_shifts_per_system),
+                    0
+                    if partial and max_atoms_per_system is None
+                    else int(max_atoms_per_system),
+                    half_fill,
+                    partial,
+                )
     elif pbc is None:
         # No PBC case
         if rebuild_flags is not None:
@@ -1299,7 +1554,7 @@ def batch_naive_neighbor_list(
                 empty_num_shifts,
                 batch_idx_i32,
                 batch_ptr_i32,
-                empty_target_indices,
+                target_indices if partial else empty_target_indices,
                 neighbor_matrix,
                 empty_shifts,
                 num_neighbors,
@@ -1312,7 +1567,7 @@ def batch_naive_neighbor_list(
                 empty_energies,
                 empty_forces,
                 rf,
-                launch_dims=(1, 1, total_atoms),
+                launch_dims=(1, 1, num_rows if partial else total_atoms),
             )
         else:
             neighbor_matrix, num_neighbors = _DIRECT_BATCH_NAIVE_KERNELS[
@@ -1327,7 +1582,7 @@ def batch_naive_neighbor_list(
                 empty_num_shifts,
                 batch_idx_i32,
                 batch_ptr_i32,
-                empty_target_indices,
+                target_indices if partial else empty_target_indices,
                 neighbor_matrix,
                 empty_shifts,
                 num_neighbors,
@@ -1340,13 +1595,13 @@ def batch_naive_neighbor_list(
                 empty_energies,
                 empty_forces,
                 empty_rebuild_flags,
-                launch_dims=(1, 1, total_atoms),
+                launch_dims=(1, 1, num_rows if partial else total_atoms),
             )
     else:
         if cell.dtype != positions.dtype:
             cell = cell.astype(positions.dtype)
 
-        if max_atoms_per_system is None:
+        if max_atoms_per_system is None and not partial:
             try:
                 max_atoms_per_system = int(jnp.max(batch_ptr[1:] - batch_ptr[:-1]))
             except (
@@ -1402,7 +1657,7 @@ def batch_naive_neighbor_list(
                         num_shifts_per_system,
                         batch_idx_i32,
                         batch_ptr_i32,
-                        empty_target_indices,
+                        target_indices if partial else empty_target_indices,
                         neighbor_matrix,
                         neighbor_matrix_shifts,
                         num_neighbors,
@@ -1416,9 +1671,9 @@ def batch_naive_neighbor_list(
                         empty_forces,
                         rf,
                         launch_dims=(
-                            num_systems,
+                            1 if partial else num_systems,
                             max_shifts_per_system,
-                            max_atoms_per_system,
+                            num_rows if partial else max_atoms_per_system,
                         ),
                     )
                 )
@@ -1436,7 +1691,7 @@ def batch_naive_neighbor_list(
                         num_shifts_per_system,
                         batch_idx_i32,
                         batch_ptr_i32,
-                        empty_target_indices,
+                        target_indices if partial else empty_target_indices,
                         neighbor_matrix,
                         neighbor_matrix_shifts,
                         num_neighbors,
@@ -1450,9 +1705,9 @@ def batch_naive_neighbor_list(
                         empty_forces,
                         empty_rebuild_flags,
                         launch_dims=(
-                            num_systems,
+                            1 if partial else num_systems,
                             max_shifts_per_system,
-                            max_atoms_per_system,
+                            num_rows if partial else max_atoms_per_system,
                         ),
                     )
                 )
@@ -1476,7 +1731,7 @@ def batch_naive_neighbor_list(
                         num_shifts_per_system,
                         batch_idx_i32,
                         batch_ptr_i32,
-                        empty_target_indices,
+                        target_indices if partial else empty_target_indices,
                         neighbor_matrix,
                         neighbor_matrix_shifts,
                         num_neighbors,
@@ -1490,9 +1745,9 @@ def batch_naive_neighbor_list(
                         empty_forces,
                         rf,
                         launch_dims=(
-                            num_systems,
+                            1 if partial else num_systems,
                             max_shifts_per_system,
-                            max_atoms_per_system,
+                            num_rows if partial else max_atoms_per_system,
                         ),
                     )
                 )
@@ -1510,7 +1765,7 @@ def batch_naive_neighbor_list(
                         num_shifts_per_system,
                         batch_idx_i32,
                         batch_ptr_i32,
-                        empty_target_indices,
+                        target_indices if partial else empty_target_indices,
                         neighbor_matrix,
                         neighbor_matrix_shifts,
                         num_neighbors,
@@ -1524,9 +1779,9 @@ def batch_naive_neighbor_list(
                         empty_forces,
                         empty_rebuild_flags,
                         launch_dims=(
-                            num_systems,
+                            1 if partial else num_systems,
                             max_shifts_per_system,
-                            max_atoms_per_system,
+                            num_rows if partial else max_atoms_per_system,
                         ),
                     )
                 )

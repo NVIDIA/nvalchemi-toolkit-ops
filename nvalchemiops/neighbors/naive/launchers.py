@@ -24,7 +24,10 @@ import warp as wp
 from nvalchemiops.neighbors.naive.dispatch import (
     _has_naive_pair_outputs,
     _is_cpu_device,
+    _NaiveWorkload,
     _pbc_mode_from_wrap,
+    _require_cuda_tile_device,
+    _resolve_naive_strategy,
 )
 from nvalchemiops.neighbors.naive.kernels import (
     BLOCK_DIM,
@@ -95,6 +98,17 @@ def _reject_pair_fn_for_dual_cutoff(
         raise ValueError("pair_fn is not supported with dual_cutoff=True")
     if pair_params is not None and not _is_empty_pair_params(pair_params):
         raise ValueError("pair_params is only valid when pair_fn is provided")
+
+
+def _reject_partial_rebuild(
+    target_indices: wp.array | None,
+    rebuild_flags: wp.array | None,
+) -> None:
+    """Reject unsupported compact selective rebuilds before mutation."""
+    if target_indices is not None and rebuild_flags is not None:
+        raise NotImplementedError(
+            "Partial neighbor lists do not support rebuild_flags",
+        )
 
 
 def _wrap_pbc_positions(
@@ -236,10 +250,11 @@ def _launch_naive_neighbor_matrix_no_pbc(
     strategy: str = "auto",
 ) -> None:
     """Launch the single-cutoff no-PBC naive neighbor-matrix path."""
+    _reject_partial_rebuild(target_indices, rebuild_flags)
     if batched and (batch_idx is None or batch_ptr is None):
         raise ValueError("batch_idx and batch_ptr are required for batched launch")
 
-    has_pair_outputs = _has_naive_pair_outputs(
+    uses_compact_pair_kernel = _has_naive_pair_outputs(
         target_indices,
         return_vectors,
         return_distances,
@@ -250,41 +265,33 @@ def _launch_naive_neighbor_matrix_no_pbc(
         pair_energies,
         pair_forces,
     )
+    has_geometry_or_pair_outputs = _has_naive_pair_outputs(
+        None,
+        return_vectors,
+        return_distances,
+        pair_fn,
+        pair_params,
+        neighbor_vectors,
+        neighbor_distances,
+        pair_energies,
+        pair_forces,
+    )
     partial = target_indices is not None
-    # Dispatch scalar vs tile-cooperative.  Pair-output and partial
-    # (target_indices) paths have only a scalar specialization; CPU always
-    # uses scalar (Warp forces block_dim=1).  The single-system path tiles on
-    # CUDA unconditionally, while the batched path applies the adaptive
-    # ``use_tiled`` heuristic: the tile-cooperative kernel wins for
-    # few-large-systems but the scalar thread-local-counter kernel wins for
-    # many-small-systems, so dispatch on the atoms-per-system density.
-    if strategy not in {"auto", "scalar", "tile"}:
-        raise ValueError(
-            f"strategy must be 'auto' | 'scalar' | 'tile', got {strategy!r}",
-        )
-    if strategy == "scalar":
-        strategy = "scalar"
-    elif strategy == "tile":
-        if has_pair_outputs or _is_cpu_device(device):
-            raise ValueError(
-                "strategy='tile' requires CUDA and no pair-output or "
-                "target_indices path",
-            )
-        strategy = "tile"
-    elif has_pair_outputs or _is_cpu_device(device):
-        strategy = "scalar"
-    elif batched:
-        total_atoms = positions.shape[0]
-        if total_atoms < 2048:
-            use_tiled = False
-        else:
-            num_systems = batch_ptr.shape[0] - 1
-            use_tiled = total_atoms >= 256 * num_systems
-            if use_tiled and total_atoms > 12288:
-                use_tiled = total_atoms >= 512 * num_systems
-        strategy = "tile" if use_tiled else "scalar"
-    else:
-        strategy = "tile"
+    num_systems = int(batch_ptr.shape[0] - 1) if batched else 1
+    strategy = _resolve_naive_strategy(
+        strategy,
+        _NaiveWorkload(
+            device_kind="cpu" if _is_cpu_device(device) else "cuda",
+            wp_dtype=wp_dtype,
+            num_atoms=int(positions.shape[0]),
+            num_systems=num_systems,
+            partial=partial,
+            batched=batched,
+            pbc=False,
+            wrap_positions=True,
+            geometry_outputs=has_geometry_or_pair_outputs,
+        ),
+    )
 
     (
         empty_offsets,
@@ -315,6 +322,7 @@ def _launch_naive_neighbor_matrix_no_pbc(
     cutoff_sq = wp_dtype(cutoff * cutoff)
 
     if strategy == "tile":
+        _require_cuda_tile_device(device)
         wp.launch_tiled(
             kernel=get_naive_neighbor_matrix_kernel(
                 wp_dtype,
@@ -322,9 +330,10 @@ def _launch_naive_neighbor_matrix_no_pbc(
                 batched=batched,
                 half_fill=half_fill,
                 selective=rebuild_flags is not None,
+                partial=partial,
                 strategy="tile",
             ),
-            dim=[1, positions.shape[0]],
+            dim=[1, target_indices.shape[0] if partial else positions.shape[0]],
             inputs=[
                 positions,
                 empty_offsets,
@@ -334,6 +343,7 @@ def _launch_naive_neighbor_matrix_no_pbc(
                 empty_num_shifts,
                 batch_idx_arg,
                 batch_ptr_arg,
+                target_indices_arg,
                 neighbor_matrix,
                 empty_shifts,
                 num_neighbors,
@@ -344,7 +354,7 @@ def _launch_naive_neighbor_matrix_no_pbc(
         )
         return
 
-    if has_pair_outputs:
+    if uses_compact_pair_kernel:
         (
             neighbor_vectors_arg,
             neighbor_distances_arg,
@@ -454,19 +464,24 @@ def _launch_naive_neighbor_matrix_pbc(
     strategy: str = "auto",
 ) -> None:
     """Launch the single-cutoff PBC naive neighbor-matrix path."""
+    _reject_partial_rebuild(target_indices, rebuild_flags)
+    partial = target_indices is not None
     if batched:
         if batch_ptr is None or batch_idx is None or num_shifts_arr is None:
             raise ValueError(
                 "batch_ptr, batch_idx, and num_shifts_arr are required for batched PBC"
             )
-        if max_shifts_per_system is None or max_atoms_per_system is None:
+        if max_shifts_per_system is None or (
+            not partial and max_atoms_per_system is None
+        ):
             raise ValueError(
-                "max_shifts_per_system and max_atoms_per_system are required for batched PBC"
+                "max_shifts_per_system is required for batched PBC; "
+                "max_atoms_per_system is also required for full-row launches",
             )
     elif num_shifts is None:
         raise ValueError("num_shifts is required for single-system PBC")
 
-    has_pair_outputs = _has_naive_pair_outputs(
+    uses_compact_pair_kernel = _has_naive_pair_outputs(
         target_indices,
         return_vectors,
         return_distances,
@@ -477,30 +492,37 @@ def _launch_naive_neighbor_matrix_pbc(
         pair_energies,
         pair_forces,
     )
-    partial = target_indices is not None
+    has_geometry_or_pair_outputs = _has_naive_pair_outputs(
+        None,
+        return_vectors,
+        return_distances,
+        pair_fn,
+        pair_params,
+        neighbor_vectors,
+        neighbor_distances,
+        pair_energies,
+        pair_forces,
+    )
     pbc_mode = _pbc_mode_from_wrap(wrap_positions)
     if strategy not in {"auto", "scalar", "tile"}:
         raise ValueError(
             f"strategy must be 'auto' | 'scalar' | 'tile', got {strategy!r}",
         )
-    can_tile = (
-        not has_pair_outputs
-        and not _is_cpu_device(device)
-        and (not batched or wrap_positions)
+    num_systems = int(batch_ptr.shape[0] - 1) if batched else 1
+    strategy = _resolve_naive_strategy(
+        strategy,
+        _NaiveWorkload(
+            device_kind="cpu" if _is_cpu_device(device) else "cuda",
+            wp_dtype=wp_dtype,
+            num_atoms=int(positions.shape[0]),
+            num_systems=num_systems,
+            partial=partial,
+            batched=batched,
+            pbc=True,
+            wrap_positions=wrap_positions,
+            geometry_outputs=has_geometry_or_pair_outputs,
+        ),
     )
-    if strategy == "tile":
-        if not can_tile:
-            raise ValueError(
-                "strategy='tile' requires CUDA, no pair-output or "
-                "target_indices path, and wrap_positions=True for batched PBC",
-            )
-        strategy = "tile"
-    elif strategy == "scalar":
-        strategy = "scalar"
-    elif can_tile:
-        strategy = "tile"
-    else:
-        strategy = "scalar"
 
     positions_work, per_atom_cell_offsets = _prepare_pbc_positions(
         positions,
@@ -547,16 +569,29 @@ def _launch_naive_neighbor_matrix_pbc(
         launch_dim = (
             cell.shape[0],
             int(max_shifts_per_system),
-            int(max_atoms_per_system),
+            target_indices.shape[0] if partial else int(max_atoms_per_system),
         )
         num_shifts_arg = num_shifts_arr
-        tile_dim = [int(max_shifts_per_system), positions.shape[0]]
+        tile_shift_dim = int(max_shifts_per_system)
+        if partial and not half_fill:
+            tile_shift_dim = 2 * tile_shift_dim - 1
+        tile_dim = [
+            tile_shift_dim,
+            target_indices.shape[0] if partial else positions.shape[0],
+        ]
     else:
         launch_dim = (1, int(num_shifts), positions.shape[0])
         num_shifts_arg = empty_num_shifts
-        tile_dim = [int(num_shifts), positions.shape[0]]
+        tile_shift_dim = int(num_shifts)
+        if partial and not half_fill:
+            tile_shift_dim = 2 * tile_shift_dim - 1
+        tile_dim = [
+            tile_shift_dim,
+            target_indices.shape[0] if partial else positions.shape[0],
+        ]
 
     if strategy == "tile":
+        _require_cuda_tile_device(device)
         wp.launch_tiled(
             kernel=get_naive_neighbor_matrix_kernel(
                 wp_dtype,
@@ -564,6 +599,7 @@ def _launch_naive_neighbor_matrix_pbc(
                 batched=batched,
                 half_fill=half_fill,
                 selective=rebuild_flags is not None,
+                partial=partial,
                 strategy="tile",
             ),
             dim=tile_dim,
@@ -576,6 +612,7 @@ def _launch_naive_neighbor_matrix_pbc(
                 num_shifts_arg,
                 batch_idx_arg,
                 batch_ptr_arg,
+                target_indices_arg,
                 neighbor_matrix,
                 neighbor_matrix_shifts,
                 num_neighbors,
@@ -586,7 +623,7 @@ def _launch_naive_neighbor_matrix_pbc(
         )
         return
 
-    if has_pair_outputs:
+    if uses_compact_pair_kernel:
         active_shift_dim = int(max_shifts_per_system) if batched else int(num_shifts)
         if partial and not half_fill:
             active_shift_dim = 2 * active_shift_dim - 1
@@ -905,10 +942,11 @@ def naive_neighbor_matrix(
     cutoff : float
         Cutoff distance for neighbor detection in Cartesian units.
         Must be positive. Atoms within this distance are considered neighbors.
-    neighbor_matrix : wp.array, shape (total_atoms, max_neighbors), dtype=wp.int32
+    neighbor_matrix : wp.array, shape (rows, max_neighbors), dtype=wp.int32
         OUTPUT: Neighbor matrix to be filled with neighbor atom indices.
-        Must be pre-allocated. Entries are filled with atom indices.
-    num_neighbors : wp.array, shape (total_atoms,), dtype=wp.int32
+        ``rows`` is ``total_atoms`` normally and ``M`` for compact partial
+        calls. Must be pre-allocated. Entries are filled with atom indices.
+    num_neighbors : wp.array, shape (rows,), dtype=wp.int32
         OUTPUT: Number of neighbors found for each atom.
         Must be pre-allocated. Updated in-place with actual neighbor counts.
     wp_dtype : type
@@ -922,9 +960,9 @@ def naive_neighbor_matrix(
         When provided, the kernel checks this flag on the GPU and skips work
         when False (no CPU-GPU sync).
     target_indices : wp.array, shape (M,), dtype=wp.int32, optional
-        Unique, in-bounds global atom indices restricting which atoms act as
-        sources (rows) in the output.  Output rows correspond to
-        ``target_indices`` in order.  When omitted, all atoms are sources.
+        In-bounds global indices of the central atoms. Output row ``r``
+        corresponds to ``target_indices[r]``. Repeated indices are supported.
+        When omitted, every atom has an output row.
     return_vectors : bool, default=False
         If True, write per-pair displacement vectors into ``neighbor_vectors``.
         Requires ``neighbor_vectors`` to be supplied.
@@ -957,18 +995,11 @@ def naive_neighbor_matrix(
     pair_forces : wp.array, shape (rows, max_neighbors), dtype=wp.vec3*, optional
         OUTPUT: Required if ``pair_fn`` is provided.  Stores the per-pair
         force returned by ``pair_fn``.
-    strategy : {"auto", "scalar", "tile"}, default "auto"
-        Kernel dispatch selector.  Topology-only calls do not forward
-        ``strategy`` to the internal helper, so the supplied value is ignored
-        and the helper applies its default ``"auto"`` dispatch.  Partial and
-        pair-output launches forward ``strategy`` to the helper except the
-        batched PBC partial/pair-output path, which also omits it (a deferred
-        implementation follow-up). Where forwarded, ``"auto"`` resolves to
-        the scalar kernel and ``"scalar"`` is supported; ``"tile"`` raises
-        ``ValueError`` because pair-output and ``target_indices`` paths have no
-        tile kernel. When the helper receives ``"auto"`` on topology-only
-        calls, it picks the scalar SIMT kernel on CPU and the tile-cooperative
-        kernel on CUDA.
+    strategy : {"auto", "scalar", "tile"}, default="auto"
+        Kernel dispatch selector. Compact topology-only rows support explicit
+        CUDA tile and dtype-specific automatic selection. Geometry and pair
+        outputs use scalar, and explicit tile rejects them. Full-row topology
+        ignores this argument and retains its internal automatic selection.
 
     Notes
     -----
@@ -977,12 +1008,11 @@ def naive_neighbor_matrix(
     - The CUDA path uses ``wp.launch_tiled(block_dim=BLOCK_DIM)``; Warp forces
       ``block_dim = 1`` on CPU which would silently break the lane-cooperative
       partitioning, so CPU callers take the scalar path.
-    - Topology-only calls ignore the supplied ``strategy`` (helper default
-      ``"auto"``).  Partial/pair-output calls forward ``strategy`` except
-      batched PBC partial/pair-output, which also omits it.
-    - When any of ``target_indices`` / ``return_vectors`` /
-      ``return_distances`` / ``pair_fn`` is supplied, the scalar factory
-      kernel is used regardless of device (no tile variant for these axes).
+    - Topology-only ``target_indices`` calls use the tile-cooperative path on
+      CUDA when explicitly requested, and under ``strategy="auto"`` for inputs
+      with at least ``4 * BLOCK_DIM`` atoms for float64 or ``16 * BLOCK_DIM``
+      atoms for float16/float32. Geometry and pair-function outputs use the
+      scalar factory kernel.
 
     See Also
     --------
@@ -990,6 +1020,7 @@ def naive_neighbor_matrix(
     batch_naive_neighbor_matrix : Batched (multi-system) variant
     get_naive_neighbor_matrix_kernel : Low-level single-cutoff kernel accessor
     """
+    _reject_partial_rebuild(target_indices, rebuild_flags)
     if not _has_naive_pair_outputs(
         target_indices,
         return_vectors,
@@ -1074,9 +1105,10 @@ def batch_naive_neighbor_matrix(
         System index for each atom.
     batch_ptr : wp.array, shape (num_systems + 1,), dtype=wp.int32
         Cumulative atom counts defining system boundaries.
-    neighbor_matrix : wp.array, shape (total_atoms, max_neighbors), dtype=wp.int32
+    neighbor_matrix : wp.array, shape (rows, max_neighbors), dtype=wp.int32
         OUTPUT: Neighbor matrix to be filled with neighbor atom indices.
-    num_neighbors : wp.array, shape (total_atoms,), dtype=wp.int32
+        ``rows`` is ``total_atoms`` normally and ``M`` for compact partial calls.
+    num_neighbors : wp.array, shape (rows,), dtype=wp.int32
         OUTPUT: Number of neighbors found for each atom.
     wp_dtype : type
         Warp dtype (wp.float32, wp.float64, or wp.float16).
@@ -1090,10 +1122,10 @@ def batch_naive_neighbor_matrix(
         GPU without CPU sync.  Per-system counters are reset via
         :func:`selective_zero_num_neighbors` internally.
     target_indices : wp.array, shape (M,), dtype=wp.int32, optional
-        Unique, in-bounds global atom indices restricting which atoms act as
-        sources.  In batched mode each target searches only atoms in its own
-        system (the system is resolved via ``batch_idx``).  Output rows follow
-        ``target_indices``.
+        In-bounds global indices of the central atoms. In batched mode
+        each central atom searches only atoms in its own system (resolved via
+        ``batch_idx``). Output row ``r`` corresponds to ``target_indices[r]``;
+        repeated indices are supported.
     return_vectors : bool, default=False
         If True, write per-pair displacement vectors into ``neighbor_vectors``.
     return_distances : bool, default=False
@@ -1118,30 +1150,17 @@ def batch_naive_neighbor_matrix(
         OUTPUT: Required if ``pair_fn`` is provided.
     pair_forces : wp.array, shape (rows, max_neighbors), dtype=wp.vec3*, optional
         OUTPUT: Required if ``pair_fn`` is provided.
-    strategy : {"auto", "scalar", "tile"}, default "auto"
-        Kernel dispatch selector.  Topology-only calls do not forward
-        ``strategy`` to the internal helper, so the supplied value is ignored
-        and the helper applies its default ``"auto"`` dispatch.  Partial and
-        pair-output launches forward ``strategy`` to the helper except the
-        batched PBC partial/pair-output path, which also omits it (a deferred
-        implementation follow-up). Where forwarded, ``"auto"`` resolves to
-        the scalar kernel and ``"scalar"`` is supported; ``"tile"`` raises
-        ``ValueError`` because pair-output and ``target_indices`` paths have no
-        tile kernel. When the helper receives ``"auto"`` on topology-only
-        calls, it picks the scalar SIMT kernel on CPU and applies the adaptive
-        ``use_tiled`` heuristic on CUDA
-        (``total_atoms >= 2048`` and ``total_atoms >= 256 * num_systems``,
-        with a tighter ``>= 512 * num_systems`` threshold above 12 288
-        atoms).
+    strategy : {"auto", "scalar", "tile"}, default="auto"
+        Kernel dispatch selector. Batched compact topology-only ``auto`` uses
+        scalar, while explicit CUDA tile is supported. Geometry and pair
+        outputs use scalar, and explicit tile rejects them. Full-row topology
+        ignores this argument and retains its internal automatic selection.
 
     Notes
     -----
     - This is a low-level warp interface. For framework bindings, use torch/jax wrappers.
     - Output arrays must be pre-allocated by caller.
-    - Topology-only calls ignore the supplied ``strategy`` (helper default
-      ``"auto"``).  Partial/pair-output calls forward ``strategy`` except
-      batched PBC partial/pair-output, which also omits it.
-    - Default topology-only calls dispatch internally:
+    - Default calls dispatch internally:
 
       * On CPU, always use the scalar kernel (Warp forces ``block_dim=1`` on CPU).
       * On CUDA, use the tile-cooperative kernel when the adaptive
@@ -1149,8 +1168,10 @@ def batch_naive_neighbor_matrix(
         ``total_atoms >= 256 * num_systems``, with a tighter
         ``>= 512 * num_systems`` threshold above 12 288 atoms); otherwise fall
         back to the scalar kernel.
-    - When any of the pair-output kwargs is supplied, the scalar factory
-      kernel is used (no tile variant for the pair-output kwargs).
+    - Topology-only ``target_indices`` calls can tile when explicitly requested.
+      Under ``strategy="auto"``, batched partial calls use the scalar factory
+      kernel. Geometry and pair-function output kwargs also use the scalar
+      factory kernel.
 
     See Also
     --------
@@ -1158,6 +1179,7 @@ def batch_naive_neighbor_matrix(
     naive_neighbor_matrix : Single-system variant
     get_naive_neighbor_matrix_kernel : Low-level single-cutoff kernel accessor
     """
+    _reject_partial_rebuild(target_indices, rebuild_flags)
     if not _has_naive_pair_outputs(
         target_indices,
         return_vectors,
@@ -1188,7 +1210,12 @@ def batch_naive_neighbor_matrix(
         )
         return
     if rebuild_flags is not None:
-        selective_zero_num_neighbors(num_neighbors, batch_idx, rebuild_flags, device)
+        selective_zero_num_neighbors(
+            num_neighbors,
+            batch_idx,
+            rebuild_flags,
+            device,
+        )
     _launch_naive_neighbor_matrix_no_pbc(
         positions,
         cutoff,
@@ -1268,11 +1295,12 @@ def naive_neighbor_matrix_pbc(
         Shift range per dimension for the single system.
     num_shifts : int
         Number of periodic shifts for the single system.
-    neighbor_matrix : wp.array, shape (total_atoms, max_neighbors), dtype=wp.int32
+    neighbor_matrix : wp.array, shape (rows, max_neighbors), dtype=wp.int32
         OUTPUT: Neighbor matrix to be filled with neighbor atom indices.
-    neighbor_matrix_shifts : wp.array, shape (total_atoms, max_neighbors, 3), dtype=wp.vec3i
+        ``rows`` is ``total_atoms`` normally and ``M`` for compact partial calls.
+    neighbor_matrix_shifts : wp.array, shape (rows, max_neighbors, 3), dtype=wp.vec3i
         OUTPUT: Matrix storing shift vectors for each neighbor relationship.
-    num_neighbors : wp.array, shape (total_atoms,), dtype=wp.int32
+    num_neighbors : wp.array, shape (rows,), dtype=wp.int32
         OUTPUT: Number of neighbors found for each atom.
     wp_dtype : type
         Warp dtype (wp.float32, wp.float64, or wp.float16).
@@ -1288,8 +1316,8 @@ def naive_neighbor_matrix_pbc(
         neighbor search.  When False the positions are assumed to be already
         wrapped (e.g. by a preceding integration step).
     target_indices : wp.array, shape (M,), dtype=wp.int32, optional
-        Unique, in-bounds global atom indices restricting which atoms act as
-        sources.  Output rows follow ``target_indices``.
+        In-bounds global indices of the central atoms. Output row ``r``
+        corresponds to ``target_indices[r]``; repeated indices are supported.
     return_vectors : bool, default=False
         If True, write per-pair displacement vectors (including the periodic
         shift contribution) into ``neighbor_vectors``.
@@ -1322,23 +1350,14 @@ def naive_neighbor_matrix_pbc(
     per_atom_cell_offsets_buffer : wp.array, shape (total_atoms,), dtype=wp.vec3i, optional
         Caller-supplied scratch buffer for per-atom cell offsets
         (only used when ``wrap_positions=True``).
-    inv_cell_buffer : wp.array, shape (1,), dtype=wp.mat33*, optional
+    inv_cell_buffer : wp.array, shape (num_systems,), dtype=wp.mat33*, optional
         Caller-supplied scratch buffer for inverse cell matrices
         (only used when ``wrap_positions=True``).
-    strategy : {"auto", "scalar", "tile"}, default "auto"
-        Kernel dispatch selector.  Topology-only calls do not forward
-        ``strategy`` to the internal helper, so the supplied value is ignored
-        and the helper applies its default ``"auto"`` dispatch.  Partial and
-        pair-output launches forward ``strategy`` to the helper except the
-        batched PBC partial/pair-output path, which also omits it (a deferred
-        implementation follow-up). Where forwarded, ``"auto"`` resolves to
-        the scalar kernel and ``"scalar"`` is supported; ``"tile"`` raises
-        ``ValueError`` because pair-output and ``target_indices`` paths have no
-        tile kernel. When the helper receives ``"auto"`` on topology-only
-        calls, it picks the tile-cooperative kernel on CUDA when
-        ``wrap_positions=True`` and no pair-output or
-        ``target_indices`` path is active; otherwise the scalar factory kernel
-        is used.
+    strategy : {"auto", "scalar", "tile"}, default="auto"
+        Kernel dispatch selector. Compact topology-only rows support explicit
+        CUDA tile and dtype-specific automatic selection. Geometry and pair
+        outputs use scalar, and explicit tile rejects them. Full-row topology
+        ignores this argument and retains its internal automatic selection.
     pbc : wp.array, shape (1, 3), dtype=wp.bool, optional
         Per-axis periodic boundary flags.  When supplied, axes marked False
         are left unwrapped during position wrapping.  When omitted, wrapping
@@ -1359,11 +1378,10 @@ def naive_neighbor_matrix_pbc(
       When omitted the launcher allocates a fresh buffer for the call.
     - The CUDA path uses ``wp.launch_tiled(block_dim=BLOCK_DIM)``; CPU is
       forced to ``block_dim = 1`` by Warp, so CPU callers take the scalar path.
-    - Topology-only calls ignore the supplied ``strategy`` (helper default
-      ``"auto"``).  Partial/pair-output calls forward ``strategy`` except
-      batched PBC partial/pair-output, which also omits it.
-    - When any of the pair-output kwargs is supplied, the scalar factory
-      kernel is used (no tile variant for the pair-output kwargs).
+    - Topology-only ``target_indices`` calls can tile. Under
+      ``strategy="auto"``, tiling starts at ``4 * BLOCK_DIM`` atoms for
+      float64 or ``16 * BLOCK_DIM`` atoms for float16/float32. Geometry and
+      pair-function output kwargs use the scalar factory kernel.
 
     See Also
     --------
@@ -1389,6 +1407,7 @@ def naive_neighbor_matrix_pbc(
         "inv_cell",
         inv_cell,
     )
+    _reject_partial_rebuild(target_indices, rebuild_flags)
     if not _has_naive_pair_outputs(
         target_indices,
         return_vectors,
@@ -1419,6 +1438,7 @@ def naive_neighbor_matrix_pbc(
             positions_wrapped_buffer=positions_wrapped_buffer,
             per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
             inv_cell_buffer=inv_cell_buffer,
+            strategy=strategy,
         )
         return
     _launch_naive_neighbor_matrix_pbc(
@@ -1467,7 +1487,7 @@ def batch_naive_neighbor_matrix_pbc(
     num_neighbors: wp.array,
     wp_dtype: type,
     device: str,
-    max_atoms_per_system: int,
+    max_atoms_per_system: int | None = None,
     half_fill: bool = False,
     rebuild_flags: wp.array | None = None,
     wrap_positions: bool = True,
@@ -1513,18 +1533,20 @@ def batch_naive_neighbor_matrix_pbc(
         Number of shifts per system.
     max_shifts_per_system : int
         Maximum per-system shift count (launch dimension).
-    neighbor_matrix : wp.array, shape (total_atoms, max_neighbors), dtype=wp.int32
+    neighbor_matrix : wp.array, shape (rows, max_neighbors), dtype=wp.int32
         OUTPUT: Neighbor matrix.
-    neighbor_matrix_shifts : wp.array, shape (total_atoms, max_neighbors, 3), dtype=wp.vec3i
+        ``rows`` is ``total_atoms`` normally and ``M`` for compact partial calls.
+    neighbor_matrix_shifts : wp.array, shape (rows, max_neighbors, 3), dtype=wp.vec3i
         OUTPUT: Shift vectors for each neighbor.
-    num_neighbors : wp.array, shape (total_atoms,), dtype=wp.int32
+    num_neighbors : wp.array, shape (rows,), dtype=wp.int32
         OUTPUT: Number of neighbors per atom.
     wp_dtype : type
         Warp dtype (wp.float32, wp.float64, or wp.float16).
     device : str
         Warp device string (e.g., 'cuda:0', 'cpu').
-    max_atoms_per_system : int
-        Maximum number of atoms in any single system.
+    max_atoms_per_system : int, optional
+        Maximum number of atoms in any single system. Required for full-row
+        batched launches and ignored for compact partial launches.
     half_fill : bool, default=False
         If True, only store half of the neighbor relationships.
     rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool, optional
@@ -1532,10 +1554,10 @@ def batch_naive_neighbor_matrix_pbc(
     wrap_positions : bool, default=True
         If True, wrap input positions into the primary cell.
     target_indices : wp.array, shape (M,), dtype=wp.int32, optional
-        Unique, in-bounds global atom indices restricting which atoms act as
-        sources.  In batched mode each target searches only atoms in its own
-        system (resolved via ``batch_idx``).  Output rows follow
-        ``target_indices``.
+        In-bounds global indices of the central atoms. In batched mode
+        each central atom searches only atoms in its own system (resolved via
+        ``batch_idx``). Output row ``r`` corresponds to ``target_indices[r]``;
+        repeated indices are supported.
     return_vectors : bool, default=False
         If True, write per-pair displacement vectors (including the periodic
         shift contribution) into ``neighbor_vectors``.
@@ -1568,20 +1590,11 @@ def batch_naive_neighbor_matrix_pbc(
         Caller-supplied scratch for per-atom cell offsets.
     inv_cell_buffer : wp.array, shape (num_systems,), dtype=wp.mat33*, optional
         Caller-supplied scratch for inverse cell matrices.
-    strategy : {"auto", "scalar", "tile"}, default "auto"
-        Kernel dispatch selector.  Topology-only calls do not forward
-        ``strategy`` to the internal helper, so the supplied value is ignored
-        and the helper applies its default ``"auto"`` dispatch.  Partial and
-        pair-output launches forward ``strategy`` to the helper except the
-        batched PBC partial/pair-output path, which also omits it (a deferred
-        implementation follow-up). Where forwarded, ``"auto"`` resolves to
-        the scalar kernel and ``"scalar"`` is supported; ``"tile"`` raises
-        ``ValueError`` because pair-output and ``target_indices`` paths have no
-        tile kernel. When the helper receives ``"auto"`` on topology-only
-        calls, it picks the tile-cooperative kernel on CUDA when
-        ``wrap_positions=True`` and no pair-output or
-        ``target_indices`` path is active; otherwise the scalar factory kernel
-        is used.
+    strategy : {"auto", "scalar", "tile"}, default="auto"
+        Kernel dispatch selector. Batched compact topology-only ``auto`` uses
+        scalar, while explicit CUDA tile is supported. Geometry and pair
+        outputs use scalar, and explicit tile rejects them. Full-row topology
+        ignores this argument and retains its internal automatic selection.
     pbc : wp.array, shape (num_systems, 3), dtype=wp.bool, optional
         Per-system, per-axis periodic boundary flags.  When supplied, axes
         marked False are left unwrapped during position wrapping.  When
@@ -1600,18 +1613,21 @@ def batch_naive_neighbor_matrix_pbc(
       ``inv_cell_buffer``) to eliminate per-call allocation; when omitted the
       launcher allocates fresh per call (batched callers do not share the
       single-system cache).
-    - Topology-only calls ignore the supplied ``strategy`` (helper default
-      ``"auto"``).  Partial/pair-output calls forward ``strategy`` except
-      batched PBC partial/pair-output, which also omits it.
-    - Default topology-only calls dispatch internally:
+    - Default calls dispatch internally:
 
       * On CPU, use the scalar 3D-launch kernels.
       * On CUDA with ``wrap_positions=True``, use the tile-cooperative kernel
-        when no pair-output or ``target_indices`` path is active.
-      * When ``wrap_positions=False`` the prewrapped scalar kernels are used
-        on both devices (no tiled prewrapped variant).
-    - When any of the pair-output kwargs is supplied, the scalar factory
-      kernel is used (no tile variant for the pair-output kwargs).
+        when the adaptive ``use_tiled`` heuristic favours it
+        (``256 <= avg_atoms_per_system < 6144`` and either
+        ``avg_atoms_per_system >= 2048`` or ``total_atoms <= 8192``);
+        otherwise fall back to the scalar 3D-launch kernel.
+      * When ``wrap_positions=False``, CUDA callers may explicitly request
+        ``strategy="tile"`` for topology-only output; ``strategy="auto"``
+        remains on the prewrapped scalar kernels.
+    - Topology-only tiled calls support both wrapped and prewrapped PBC when
+      explicitly requested on CUDA. Under ``strategy="auto"``, batched partial
+      and prewrapped calls use the scalar factory kernel. Geometry and
+      pair-function output kwargs also use the scalar factory kernel.
 
     See Also
     --------
@@ -1637,6 +1653,7 @@ def batch_naive_neighbor_matrix_pbc(
         "inv_cell",
         inv_cell,
     )
+    _reject_partial_rebuild(target_indices, rebuild_flags)
     if not _has_naive_pair_outputs(
         target_indices,
         return_vectors,
@@ -1678,7 +1695,12 @@ def batch_naive_neighbor_matrix_pbc(
         )
         return
     if rebuild_flags is not None:
-        selective_zero_num_neighbors(num_neighbors, batch_idx, rebuild_flags, device)
+        selective_zero_num_neighbors(
+            num_neighbors,
+            batch_idx,
+            rebuild_flags,
+            device,
+        )
     _launch_naive_neighbor_matrix_pbc(
         positions,
         cutoff,
@@ -1708,6 +1730,7 @@ def batch_naive_neighbor_matrix_pbc(
         pair_energies=pair_energies,
         pair_forces=pair_forces,
         batched=True,
+        strategy=strategy,
     )
 
 
@@ -2150,20 +2173,6 @@ def batch_naive_neighbor_matrix_pbc_dual_cutoff(
         Not supported in dual-cutoff mode; raises ``ValueError`` if provided.
     pair_params : wp.array, optional
         Not supported in dual-cutoff mode; raises ``ValueError`` if provided.
-    positions_wrapped_buffer : wp.array, shape (total_atoms,), dtype=wp.vec3*, optional
-        Caller-supplied scratch for wrapped positions (used when
-        ``wrap_positions=True``).  Optional — the launcher allocates when
-        omitted.
-    per_atom_cell_offsets_buffer : wp.array, shape (total_atoms,), dtype=wp.vec3i, optional
-        Caller-supplied scratch for per-atom cell offsets.
-    inv_cell_buffer : wp.array, shape (num_systems,), dtype=wp.mat33*, optional
-        Caller-supplied scratch for inverse cell matrices.
-    pbc : wp.array, shape (num_systems, 3), dtype=wp.bool, optional
-        Per-system, per-axis periodic boundary flags.  When supplied, axes
-        marked False are left unwrapped during position wrapping.  When
-        omitted, wrapping uses the existing all-axis behavior.
-    positions_wrapped, per_atom_cell_offsets, inv_cell : deprecated
-        Deprecated aliases of the ``*_buffer`` kwargs above.
 
     Notes
     -----
@@ -2171,11 +2180,6 @@ def batch_naive_neighbor_matrix_pbc_dual_cutoff(
     - Output arrays must be pre-allocated by caller.
     - When ``wrap_positions`` is True, positions are wrapped into the primary
       cell in a preprocessing step before the neighbor search kernel.
-    - The scratch buffers used for the wrap step
-      (``positions_wrapped_buffer``, ``per_atom_cell_offsets_buffer``,
-      ``inv_cell_buffer``) may be supplied by the caller to eliminate
-      per-call allocation; their contents are overwritten on every call.
-      When omitted the launcher allocates a fresh buffer for the call.
     - Dual-cutoff mode does not support pair outputs or
       target-row restriction; ``pair_fn`` / ``pair_params`` raise
       ``ValueError`` if provided.

@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -68,16 +69,34 @@ _jax_select_method_f64 = jax_kernel(
 )
 
 
-def _is_jax_cpu_array(array: jax.Array) -> bool:
-    """Return whether ``array`` is backed by a CPU device."""
+def _jax_array_device_kind(
+    array: jax.Array,
+) -> Literal["cpu", "cuda", "unknown"]:
+    """Return the concrete JAX placement kind, or unknown for tracers."""
     try:
-        return all(device.platform == "cpu" for device in array.devices())
-    except jax.errors.ConcretizationTypeError:
-        # A tracer does not expose the device selected for lowering, which may
-        # differ from the global default. Defer platform validation to lowering.
-        return False
-    except AttributeError:
-        return True
+        devices = tuple(array.devices())
+    except (
+        AttributeError,
+        jax.errors.ConcretizationTypeError,
+        jax.errors.TracerIntegerConversionError,
+    ):
+        return "unknown"
+    if not devices:
+        return "unknown"
+    platforms = {device.platform for device in devices}
+    if platforms == {"cpu"}:
+        return "cpu"
+    if platforms <= {"gpu", "cuda"}:
+        return "cuda"
+    raise ValueError(
+        "Unsupported JAX platform for Warp neighbor execution: "
+        f"{', '.join(sorted(platforms))}",
+    )
+
+
+def _is_jax_cpu_array(array: jax.Array) -> bool:
+    """Return whether ``array`` is concretely backed by a CPU device."""
+    return _jax_array_device_kind(array) == "cpu"
 
 
 def _jax_selector_cpu_fallback(
@@ -126,6 +145,20 @@ def _jax_selector_cpu_fallback(
         feature_mask=feature_mask,
         target_count=target_count,
     )
+
+
+def _filter_unsupported_partial_strategies(
+    strategies: list[tuple[str, float]],
+    target_indices: jax.Array | None,
+) -> list[tuple[str, float]]:
+    """Remove JAX strategies that cannot execute compact target rows."""
+    if target_indices is None:
+        return strategies
+    return [
+        (name, cost)
+        for name, cost in strategies
+        if name.removeprefix("batch_") != "cell_list_pair_centric"
+    ]
 
 
 def _selector_batch_ptr_from_geometry(
@@ -320,7 +353,7 @@ def estimate_neighbor_list_costs(
     pbc : jax.Array, shape (3,) or (num_systems, 3), dtype=bool
         Shared or per-system PBC flags.
     cutoff : float
-        Neighbor cutoff.  For dual-cutoff routing, pass the larger cutoff.
+        Neighbor cutoff. For dual-cutoff routing, pass the larger cutoff.
     batch_idx : jax.Array, optional
         Dense per-atom system ids, shape ``(total_atoms,)``, dtype=jnp.int32.
         When provided, the selector validates that the labels match the
@@ -338,7 +371,7 @@ def estimate_neighbor_list_costs(
         Aliases matching common public buffers such as ``"neighbor_vectors"``
         and ``"pair_fn"`` are accepted.
     cutoff2 : float, optional
-        Secondary cutoff distance.  When set, marks dual-cutoff output as
+        Secondary cutoff distance. When set, marks dual-cutoff output as
         active for cluster-tile feasibility scoring.
     half_fill : bool, default=False
         When ``True``, marks half-fill output as active for feasibility
@@ -347,26 +380,27 @@ def estimate_neighbor_list_costs(
         When ``True``, marks COO/list conversion as active for feasibility
         scoring.
     target_indices : jax.Array, optional
-        Public partial-row source indices, shape ``(num_targets,)``,
-        dtype=jnp.int32.  Its length is used to score targeted naive/cell-list
-        work.
+        Central-atom indices for compact partial rows, shape
+        ``(num_targets,)``, dtype=jnp.int32. Their length is used to score
+        targeted work. Unsupported pair-centric cell-list candidates are
+        omitted from the returned JAX report.
     return_vectors : bool, default=False
         When ``True``, marks per-pair displacement output as active for
         feasibility scoring.
     return_distances : bool, default=False
-        When ``True``, marks per-pair distance output as active for
-        feasibility scoring.
+        When ``True``, marks per-pair distance output as active for feasibility
+        scoring.
     use_pair_fn : bool, default=False
         When ``True``, marks inline ``pair_fn`` evaluation as active for
         feasibility scoring.
     rebuild_flags : jax.Array, optional
-        Per-system rebuild flags.  When provided, marks selective rebuild as
+        Per-system rebuild flags. When provided, marks selective rebuild as
         active for feasibility scoring (disqualifies cluster-tile).
     wrap_positions : bool, default=True
         When ``False``, marks unwrapped batched PBC positions as active for
         feasibility scoring (disqualifies naive tile on batched PBC).
     positions_dtype : dtype, optional
-        Position dtype used for feature feasibility.  Standalone calls default
+        Position dtype used for feature feasibility. Standalone calls default
         to ``cell.dtype``.
 
     Returns
@@ -375,24 +409,15 @@ def estimate_neighbor_list_costs(
         Feasible strategies (from
         :data:`nvalchemiops.neighbors.base_dispatch.NEIGHBOR_LIST_STRATEGIES`)
         and their relative estimated cost (lower is faster), sorted
-        cheapest-first.  Batched inputs (``num_systems > 1``) return
-        ``batch_`` prefixed names.
+        cheapest-first. Batched inputs return ``batch_`` prefixed names.
 
     Notes
     -----
-    The returned costs are *relative* (arbitrary units): only their ordering is
-    meaningful, so compare them to each other, not to a wall-clock time.  The
-    model approximates algorithmic work (candidate pairs, neighbors written,
-    launch overhead) and is **hardware-independent** -- the true crossover
-    between strategies shifts with the device, so when the top costs are within a
-    small factor the predicted best may be marginally slower than a close
-    runner-up; benchmark the top few on your hardware in that case.
-
-    This launches one Warp kernel over systems (and over atoms when validating
-    ``batch_idx`` contiguity) and reads back five costs plus nine flags, so it
-    is **host-only**. Call it outside ``jax.jit``, then select the matching
-    method-specific public function and compile that fixed-capacity call.
-    ``neighbor_list(method=...)`` is an eager convenience API.
+    Costs are relative, hardware-independent estimates; only their ordering is
+    meaningful. This host-only function synchronizes a small selector result.
+    Call it outside ``jax.jit``, then select the corresponding method-specific
+    function and compile that fixed-capacity call. ``neighbor_list(method=...)``
+    is available for eager execution.
     """
     if batch_ptr.ndim != 1:
         raise ValueError("batch_ptr must be a 1-D array")
@@ -456,16 +481,19 @@ def estimate_neighbor_list_costs(
         )
 
     if _is_jax_cpu_array(cell):
-        return _jax_selector_cpu_fallback(
-            batch_ptr,
-            batch_idx,
-            cell,
-            pbc,
-            cutoff,
-            max_nbins=max_nbins,
-            option_mask=options,
-            feature_mask=feature_mask,
-            target_count=target_count_arg,
+        return _filter_unsupported_partial_strategies(
+            _jax_selector_cpu_fallback(
+                batch_ptr,
+                batch_idx,
+                cell,
+                pbc,
+                cutoff,
+                max_nbins=max_nbins,
+                option_mask=options,
+                feature_mask=feature_mask,
+                target_count=target_count_arg,
+            ),
+            target_indices,
         )
 
     if cell.dtype == jnp.float64:
@@ -502,7 +530,7 @@ def estimate_neighbor_list_costs(
     )
     if num_systems > 1:
         strategies = [("batch_" + name, cost) for name, cost in strategies]
-    return strategies
+    return _filter_unsupported_partial_strategies(strategies, target_indices)
 
 
 def suggest_neighbor_list_method(*args, **kwargs) -> str:
@@ -512,8 +540,7 @@ def suggest_neighbor_list_method(*args, **kwargs) -> str:
     :func:`nvalchemiops.jax.neighbors._dispatch.estimate_neighbor_list_costs`
     returning only the top-ranked strategy name.  Accepts the same arguments
     and carries the same host-only sync caveat: call outside ``jax.jit`` and
-    use the result to select a method-specific compiled function.
-    ``neighbor_list(method=...)`` is available for eager execution.
+    pass the result as an explicit ``method=`` argument.
 
     Parameters
     ----------
