@@ -213,6 +213,175 @@ def _recip_ksum_energy_torch(
     return 0.5 * q * (cos_kr @ re_sf + sin_kr @ im_sf)
 
 
+@torch.no_grad()
+def _recip_ksum_weighted_vjp_batch(
+    positions,
+    charges,
+    k_vectors_2d,
+    volume,
+    alpha,
+    batch_idx,
+    grad_energy_atom,
+    need_pos,
+    need_charge,
+    need_cell,
+):
+    """Compute the batched weighted reciprocal VJP with scalar ``(N, K)`` work.
+
+    The atom-major phase and derivative arrays stay two-dimensional. K-vector
+    coordinates are gathered and reduced separately so this path never constructs
+    an ``(N, K, 3)`` tensor or retains an autograd graph.
+    """
+    pos = positions.to(torch.float64)
+    q = charges.to(torch.float64)
+    k = k_vectors_2d.to(torch.float64)
+    volume64 = volume.to(torch.float64)
+    alpha_flat = alpha.reshape(-1).to(torch.float64)
+    weights = grad_energy_atom.reshape(-1).to(torch.float64)
+    batch_long = batch_idx.to(device=pos.device, dtype=torch.long)
+    num_systems, num_k = k.shape[:2]
+
+    kx = k[:, :, 0]
+    ky = k[:, :, 1]
+    kz = k[:, :, 2]
+    phase = pos[:, 0:1] * kx.index_select(0, batch_long)
+    phase.addcmul_(pos[:, 1:2], ky.index_select(0, batch_long))
+    phase.addcmul_(pos[:, 2:3], kz.index_select(0, batch_long))
+    cos_phase = torch.cos(phase)
+    sin_phase = torch.sin(phase)
+    del phase
+
+    alpha_system = (
+        alpha_flat[0].expand(num_systems)
+        if alpha_flat.numel() == 1
+        else alpha_flat
+    )
+    k_squared = kx.square() + ky.square() + kz.square()
+    valid_k = k_squared >= 1e-10
+    safe_k_squared = torch.where(valid_k, k_squared, torch.ones_like(k_squared))
+    green = (
+        (EIGHTPI / volume64.unsqueeze(-1))
+        * torch.exp(-k_squared / (4.0 * alpha_system.square().unsqueeze(-1)))
+        / safe_k_squared
+    )
+    green = torch.where(valid_k, green, torch.zeros_like(green))
+
+    qcos = q.unsqueeze(-1) * cos_phase
+    qsin = q.unsqueeze(-1) * sin_phase
+    structure_cos = torch.zeros(
+        (num_systems, num_k), dtype=torch.float64, device=pos.device
+    ).index_add(0, batch_long, qcos)
+    structure_sin = torch.zeros_like(structure_cos).index_add(0, batch_long, qsin)
+    weighted_q = q * weights
+    weighted_structure_cos = torch.zeros_like(structure_cos).index_add(
+        0,
+        batch_long,
+        weighted_q.unsqueeze(-1) * cos_phase,
+    )
+    weighted_structure_sin = torch.zeros_like(structure_sin).index_add(
+        0,
+        batch_long,
+        weighted_q.unsqueeze(-1) * sin_phase,
+    )
+    del qcos, qsin, weighted_q
+
+    grad_positions = torch.zeros(
+        positions.shape, dtype=positions.dtype, device=positions.device
+    )
+    grad_charges = torch.zeros_like(charges, dtype=torch.float64)
+    grad_kvectors = torch.zeros_like(k_vectors_2d, dtype=positions.dtype)
+    grad_volume = torch.zeros_like(volume, dtype=torch.float64)
+
+    if need_charge:
+        cos_atom = structure_cos.index_select(0, batch_long)
+        sin_atom = structure_sin.index_select(0, batch_long)
+        grad_charge_per_k = cos_phase * cos_atom
+        grad_charge_per_k.addcmul_(sin_phase, sin_atom)
+        grad_charge_per_k.mul_(weights.unsqueeze(-1))
+        del cos_atom, sin_atom
+        weighted_cos_atom = weighted_structure_cos.index_select(0, batch_long)
+        grad_charge_per_k.addcmul_(cos_phase, weighted_cos_atom)
+        del weighted_cos_atom
+        weighted_sin_atom = weighted_structure_sin.index_select(0, batch_long)
+        grad_charge_per_k.addcmul_(sin_phase, weighted_sin_atom)
+        del weighted_sin_atom
+        green_atom = green.index_select(0, batch_long)
+        grad_charge_per_k.mul_(green_atom)
+        grad_charges = 0.5 * grad_charge_per_k.sum(-1)
+        del grad_charge_per_k, green_atom
+
+    if need_pos or need_cell:
+        cos_atom = structure_cos.index_select(0, batch_long)
+        sin_atom = structure_sin.index_select(0, batch_long)
+        grad_phase = -sin_phase * cos_atom
+        grad_phase.addcmul_(cos_phase, sin_atom)
+        grad_phase.mul_(weights.unsqueeze(-1))
+        del cos_atom, sin_atom
+        weighted_cos_atom = weighted_structure_cos.index_select(0, batch_long)
+        grad_phase.addcmul_(sin_phase, weighted_cos_atom, value=-1.0)
+        del weighted_cos_atom
+        weighted_sin_atom = weighted_structure_sin.index_select(0, batch_long)
+        grad_phase.addcmul_(cos_phase, weighted_sin_atom)
+        del weighted_sin_atom
+        green_atom = green.index_select(0, batch_long)
+        grad_phase.mul_(q.unsqueeze(-1))
+        grad_phase.mul_(green_atom)
+        grad_phase.mul_(0.5)
+        del green_atom
+
+        if need_pos:
+            grad_positions[:, 0] = (
+                grad_phase * kx.index_select(0, batch_long)
+            ).sum(-1).to(positions.dtype)
+            grad_positions[:, 1] = (
+                grad_phase * ky.index_select(0, batch_long)
+            ).sum(-1).to(positions.dtype)
+            grad_positions[:, 2] = (
+                grad_phase * kz.index_select(0, batch_long)
+            ).sum(-1).to(positions.dtype)
+
+        if need_cell:
+            grad_kx_atoms = torch.zeros(
+                (num_systems, num_k), dtype=torch.float64, device=pos.device
+            ).index_add(0, batch_long, grad_phase * pos[:, 0:1])
+            grad_ky_atoms = torch.zeros_like(grad_kx_atoms).index_add(
+                0, batch_long, grad_phase * pos[:, 1:2]
+            )
+            grad_kz_atoms = torch.zeros_like(grad_kx_atoms).index_add(
+                0, batch_long, grad_phase * pos[:, 2:3]
+            )
+
+            structure_product = (
+                structure_cos * weighted_structure_cos
+                + structure_sin * weighted_structure_sin
+            )
+            green_derivative_factor = (
+                -0.5 / alpha_system.square().unsqueeze(-1)
+                - 2.0 / safe_k_squared
+            )
+            green_derivative_factor = torch.where(
+                valid_k,
+                green_derivative_factor,
+                torch.zeros_like(green_derivative_factor),
+            )
+            grad_green_scale = 0.5 * green * green_derivative_factor * structure_product
+            grad_kvectors = torch.stack(
+                (
+                    grad_kx_atoms + grad_green_scale * kx,
+                    grad_ky_atoms + grad_green_scale * ky,
+                    grad_kz_atoms + grad_green_scale * kz,
+                ),
+                dim=-1,
+            ).to(positions.dtype)
+            grad_volume = (
+                -0.5
+                * (green * structure_product).sum(-1)
+                / volume64
+            )
+
+    return grad_positions, grad_charges, grad_kvectors, grad_volume
+
+
 def _resolve_max_atoms_per_system(
     max_atoms_per_system_bound: int,
     atom_start: torch.Tensor,
@@ -635,12 +804,27 @@ def _backward_impl(
 
     # Non-uniform per-atom cotangent: the cached dE_total/dinput (summed over atoms)
     # cannot be re-weighted post-hoc, so the per-system-mean scale path below is wrong.
-    # Recompute the exact weighted VJP from the differentiable Torch k-sum energy. The
-    # uniform path (the common training case, e.g. energy.sum()) keeps the fast scale.
+    # The batched case computes its exact weighted VJP directly from scalar (N, K)
+    # phase arrays, avoiding both the (N, K, 3) k-atom tensor and an autograd graph.
+    # Preserve the existing single-system recompute and uniform fast-scale paths.
     any_need = need_pos or need_charge or need_cell
     if any_need and not _cotangent_per_system_uniform(
         grad_energy_atom, batch_idx, num_systems
     ):
+        if batched:
+            return _recip_ksum_weighted_vjp_batch(
+                positions,
+                charges,
+                k_vectors_2d,
+                volume,
+                alpha,
+                batch_idx,
+                grad_energy_atom,
+                need_pos,
+                need_charge,
+                need_cell,
+            )
+
         # The custom-op backward runs in inference mode; build a fresh autograd graph
         # (inference_mode(False) + materialized leaves) for the weighted recompute.
         with torch.inference_mode(False), torch.enable_grad():

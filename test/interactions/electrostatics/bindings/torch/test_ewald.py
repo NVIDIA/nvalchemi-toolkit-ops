@@ -10524,11 +10524,16 @@ class TestEwaldDoubleBackward:
             device=device,
         )
 
+        empty_cell = torch.tensor(
+            [[[10.2, 0.1, 0.0], [0.0, 10.1, 0.2], [0.1, 0.0, 9.9]]],
+            dtype=dtype,
+            device=device,
+        )
         positions = torch.cat([pos0, pos1], dim=0).requires_grad_(True)
-        charges = torch.cat([q0, q1], dim=0)
-        cell = torch.cat([cell0, cell1], dim=0)
+        charges = torch.cat([q0, q1], dim=0).requires_grad_(True)
+        cell = torch.cat([cell0, cell1, empty_cell], dim=0).requires_grad_(True)
         batch_idx = torch.tensor([0, 0, 0, 1, 1, 1], dtype=torch.int32, device=device)
-        alpha = torch.tensor([0.25, 0.55], dtype=dtype, device=device)
+        alpha = torch.tensor([0.25, 0.55, 0.4], dtype=dtype, device=device)
         k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=2.0)
         weights = torch.tensor(
             [0.4, 1.2, -0.7, 0.9, -0.2, 1.5], dtype=dtype, device=device
@@ -10542,7 +10547,9 @@ class TestEwaldDoubleBackward:
             alpha,
             batch_idx=batch_idx,
         )
-        (grad_batch,) = torch.autograd.grad((weights * e_batch).sum(), positions)
+        grad_batch = torch.autograd.grad(
+            (weights * e_batch).sum(), (positions, charges, cell)
+        )
 
         single_grads = []
         offset = 0
@@ -10551,24 +10558,40 @@ class TestEwaldDoubleBackward:
             (pos1, q1, cell1, alpha[1:]),
         ):
             p_single = pos_s.clone().requires_grad_(True)
-            k_single = generate_k_vectors_ewald_summation(cell_s, k_cutoff=2.0)
+            q_single = q_s.clone().requires_grad_(True)
+            c_single = cell_s.clone().requires_grad_(True)
+            k_single = generate_k_vectors_ewald_summation(c_single, k_cutoff=2.0)
             e_single = ewald_reciprocal_space(
                 p_single,
-                q_s,
-                cell_s,
+                q_single,
+                c_single,
                 k_single,
                 alpha_s,
             )
             w_single = weights[offset : offset + pos_s.shape[0]]
-            (g_single,) = torch.autograd.grad((w_single * e_single).sum(), p_single)
+            g_single = torch.autograd.grad(
+                (w_single * e_single).sum(), (p_single, q_single, c_single)
+            )
             single_grads.append(g_single)
             offset += pos_s.shape[0]
 
         torch.testing.assert_close(
-            grad_batch,
-            torch.cat(single_grads, dim=0),
+            grad_batch[0],
+            torch.cat([g[0] for g in single_grads], dim=0),
             rtol=1e-5,
             atol=1e-7,
+        )
+        torch.testing.assert_close(
+            grad_batch[1],
+            torch.cat([g[1] for g in single_grads], dim=0),
+            rtol=1e-5,
+            atol=1e-7,
+        )
+        expected_cell_grad = torch.cat(
+            [g[2] for g in single_grads] + [torch.zeros_like(empty_cell)], dim=0
+        )
+        torch.testing.assert_close(
+            grad_batch[2], expected_cell_grad, rtol=1e-5, atol=1e-7
         )
 
     @pytest.mark.parametrize("device", ["cuda"])
