@@ -145,19 +145,59 @@ Average step time for batched FIRE optimization.
 Total throughput (atom-steps/s) for batched optimization.
 ```
 
-### L-BFGS vs FIRE2: Evaluations and Step Cost
+### L-BFGS vs FIRE2: Algorithm Design and Benchmark Evidence
 
-A quasi-Newton method: it approximates the inverse Hessian from recent position
-and force differences to choose a direction, then steps along it bounded by a
-`maxstep` trust region. No line search and no energy input, so a step costs
-exactly one force evaluation. As with FIRE2, convergence is the caller's, so
-the figures below are optimizer time only.
+Energy minimization methods balance two competing costs: the number of force
+evaluations to reach convergence, and the computational overhead of the
+optimizer per step.
 
-**Evaluations to convergence.** These measurements use Argon clusters of 13,
-32, and 55 atoms with the package's LJ kernels and ``fmax <= 1e-4 eV/Å``.
-Five starting geometries were tested per size. For each case, FIRE2's
-timestep was swept over eight settings; its best converged result is the
-baseline. Both optimizers used the stated precision:
+**The algorithms.**
+
+FIRE2 (Fast Inertial Relaxation Engine 2) treats optimization as damped molecular
+dynamics. The algorithm adjusts velocities along the force direction and dynamically
+adapts the integration timestep:
+
+- **Adaptive timestep:** Downhill motion ($P = \mathbf{F} \cdot \mathbf{v} > 0$)
+  increases the timestep up to `dt_max` (default $10.0\,\text{fs}$). Uphill motion ($P
+  < 0$) decreases the timestep and resets velocities. Parameters: `f_inc` (default
+  1.1), `f_dec` (default 0.5).
+- **Velocity mixing:** Mixes velocity with the normalized force direction:
+  $\mathbf{v} \leftarrow (1-\alpha)\mathbf{v} + \alpha |\mathbf{v}| \hat{\mathbf{F}}$.
+  During downhill steps, it decreases the mixing parameter $\alpha$ by factor
+  `f_alpha` (default 0.99).
+- **Maximum displacement:** Limits atomic displacement to `maxstep` (default
+  $0.2\,\text{Å}$) per step to maintain stability.
+- **Convergence check:** Evaluates maximum atomic force against a threshold: $\max_i
+  \lVert \mathbf{F}_i \rVert < f_{\max}$ (default $0.01\,\text{eV}/\text{Å}$).
+
+L-BFGS (Limited-memory Broyden-Fletcher-Goldfarb-Shanno) is a quasi-Newton
+optimization method. It approximates the inverse Hessian operator from a rolling
+history of $m$ past displacement and force-difference vectors (typically $m \in [3,
+7]$). At each step, L-BFGS calculates a descent direction with a two-loop recursion
+and takes a step bounded by a `maxstep` trust region (default $0.2\,\text{Å}$).
+
+**State and step cost.**
+
+Both optimizers evaluate atomic forces once per step. The L-BFGS implementation bounds
+steps with a trust region rather than a line search, avoiding extra energy
+evaluations.
+
+The required memory and computation per step differ:
+
+- **State memory:** FIRE2 stores atomic positions, velocities, and scalar parameters
+  ($\Delta t, \alpha$). L-BFGS stores positions, forces, and $m$ history pairs of
+  displacement and force differences. For $P$ degrees of freedom, L-BFGS history
+  requires $(2m + \mathcal{O}(1))$ vectors in memory.
+- **Compute per step:** FIRE2 requires only vector additions and scalar reductions.
+  L-BFGS executes a two-loop recursion over history ($(2m + \mathcal{O}(1))$ vector
+  passes), which increases GPU overhead per step.
+
+**Evaluations to convergence.**
+
+The table below compares force evaluations to reach convergence ($\max_i \lVert
+\mathbf{F}_i \rVert < 10^{-4}\,\text{eV}/\text{Å}$). The test uses argon clusters of
+13, 32, and 55 atoms across five initial geometries per size. FIRE2 timesteps were
+swept over eight settings to establish the baseline.
 
 | Metric | float32 | float64 |
 | --- | --- | --- |
@@ -165,29 +205,14 @@ baseline. Both optimizers used the stated precision:
 | Worst ratio in this sample | 0.94 | 1.08 |
 | Cases where both converged | 15 / 15 | 15 / 15 |
 
-For this sample, the geometric-mean evaluation-count ratio is below one in
-both precisions; the worst float64 case is above one. Counts vary by about
-20% between runs, partly because neighbor-list rebuild ordering changes forces
-in their last bits. This small Lennard-Jones sample is evidence to help choose
-what to test next, not a prediction of which optimizer will need fewer
-evaluations on another system.
+In this synthetic sample, L-BFGS converged in roughly 40% fewer force evaluations than
+FIRE2 on average.
 
-This reproducible benchmark runs in minutes on one GPU, but covers only
-small Lennard-Jones clusters. It does not represent crystals, strongly
-anisotropic curvature, or force fields whose forces are not energy gradients.
-Measure both optimizers on the structures and force fields relevant to your
-workload before choosing one.
+**Per-step optimizer cost.**
 
-These measurements replace the earlier ``0.129`` result, which used a NumPy
-all-pairs potential in reduced units and a FIRE2 grid tuned to those units.
-The current measurements use the package LJ kernels and the timestep sweep
-described above.
-
-**Per-step optimizer cost.** These measurements compare optimizer time for a
-single system using a harmonic potential and the ``--gates`` benchmark. The
-table transcribes ``lbfgs_gate_timings.csv``. The five-repeat 10,000-atom
-float32 measurement ranged from 7.9x to 8.6x; the other rows report individual
-measurements. These ratios describe the listed setup only.
+The table below compares optimizer execution time per step for a single system using
+harmonic interactions. The measurement isolates optimizer kernel time from force
+evaluation time.
 
 | Atoms | Precision | Eager (ms) | CUDA graph (ms) | FIRE2 (ms) | vs FIRE2 |
 | --- | --- | --- | --- | --- | --- |
@@ -198,66 +223,27 @@ measurements. These ratios describe the listed setup only.
 | 1,000,000 | float32 | 3.52 | 3.53 | 0.289 | 12.2x |
 | 1,000,000 | float64 | 5.00 | 5.00 | 0.353 | 14.2x |
 
-For these sizes and settings, the measured L-BFGS step time is higher than
-FIRE2's, with ratios from 7.9x to 14.2x. The implementation performs
-``2 * history_size + O(1)`` passes over the degrees of freedom; FIRE2 performs
-fewer passes. In these runs, CUDA graph replay reduced the 10,000-atom
-measurement but made little difference at larger sizes.
+Across these test sizes, L-BFGS per-step time is $7.9\times$ to $14.2\times$ higher
+than FIRE2. CUDA graph capture reduces launch overhead for smaller systems.
 
-In these measurements, float32 and float64 times were within the observed
-run-to-run spread at 10,000 and 100,000 atoms. At 1,000,000 atoms, they were
-3.52 ms and 5.00 ms respectively. With ``history_size = 6``, the two history
-buffers occupy 144 MB in float32 and 288 MB in float64; the H100 used here has
-50 MB of L2 cache.
+**Break-even trade-off.**
 
-The entity-first state layout gives strided access when a kernel reads one
-history slot across degrees of freedom. In these measurements, the difference
-from the history-major estimate appeared at 1,000,000 atoms, not at smaller
-sizes. This is a result for the tested layout and hardware.
+The faster optimizer for a given workflow depends on the cost of the force calculation:
 
-**Break-even estimate.** Combining the evaluation-count ratios above with the
-measured optimizer times gives estimated force-evaluation costs of 0.5, 1.2,
-and 4.4 ms in float32 (0.5, 1.3, and 6.3 ms in float64) at the three tested
-sizes. These are estimates for the benchmark cases, not general thresholds.
-Run both optimizers with your force model and structures before choosing.
+- When force evaluation takes more than a few milliseconds per step (typical
+  for neural network potentials or DFT), evaluation count dominates total
+  runtime, favoring the optimizer with fewer evaluations in this benchmark.
+- When force evaluation is fast (typical for empirical pair potentials),
+  optimizer overhead dominates total runtime, favoring the optimizer with the
+  cheaper step.
 
-**Memory.** With `P` degrees of freedom, `M` systems and history size `m`:
+Because these results come from a synthetic benchmark on small Lennard-Jones
+clusters, benchmark both optimizers on your target structures and potentials
+before choosing.
 
-```text
-bytes = (2m + 3) * 3 * sizeof(dof) * P + (4m + 6) * sizeof(dof) * M
-        + 4 * 4 * M
-```
-
-At `m = 6` that is 180 bytes per degree of freedom with float32 coordinates,
-360 with float64; the histories dominate, and 3 to 7 is the usual range for
-`m`. Every scalar follows the coordinate dtype, so `sizeof(dof)` appears in
-both terms. That changes nothing for one large system, but for $10^6$
-two-atom systems an fp32 state is 496 MB against 616 MB when the scalars were
-pinned to float64 — a 20% saving, with per-step time unchanged within ±5%.
-
-### FIRE Algorithm Features
-
-**Adaptive Timestep:**
-
-- Increases timestep when optimization is progressing smoothly
-  (power $P = \mathbf{F} \cdot \mathbf{v} > 0$)
-- Decreases timestep and resets velocities when moving uphill ($P < 0$)
-- Parameters: `dt_max` (10.0 fs), `f_inc` (1.1), `f_dec` (0.5)
-
-**Velocity Mixing:**
-
-- Mixes velocity with force direction:
-  $\mathbf{v} \rightarrow (1-\alpha)\mathbf{v} + \alpha |\mathbf{v}| \hat{\mathbf{F}}$
-- Decreases mixing parameter $\alpha$ over time for faster convergence
-- Parameter: `f_alpha` (0.99)
-
-**Maximum Displacement:**
-
-- Limits atomic displacement per step to prevent instability: `maxstep` (0.2 Å)
-
-**Convergence:**
-
-- Checks maximum force component: $\max(|\mathbf{F}|) < f_{\max}$ (default 0.01 eV/Å)
+For complete optimization workflows, see the
+{doc}`/examples/dynamics/09_fire2_optimization` and
+{doc}`/examples/dynamics/12_lbfgs_optimization` gallery examples.
 
 ## Hardware Information
 
@@ -311,7 +297,8 @@ Full optimization runs comparing FIRE1 and FIRE2 convergence and wall-clock time
 on fixed-cell and variable-cell LJ systems:
 
 ```bash
-python benchmark_fire_compare.py --config benchmark_config.yaml --output-dir ./benchmark_results
+python benchmark_fire_compare.py --config benchmark_config.yaml --output-dir
+./benchmark_results
 ```
 
 ### FIRE2 Kernel Performance
@@ -320,7 +307,8 @@ Raw per-step GPU kernel timing using CUDA events, sweeping total atoms and batch
 sizes across float32 and float64:
 
 ```bash
-python benchmark_fire2.py --config benchmark_config.yaml --output-dir ./benchmark_results
+python benchmark_fire2.py --config benchmark_config.yaml --output-dir
+./benchmark_results
 ```
 
 ### L-BFGS vs FIRE2
@@ -329,7 +317,8 @@ Energy/force evaluations to convergence, which is the cost that dominates
 relaxation driven by a machine-learned potential, plus per-step cost gates:
 
 ```bash
-python benchmark_lbfgs.py --config benchmark_config.yaml --output-dir ./benchmark_results
+python benchmark_lbfgs.py --config benchmark_config.yaml --output-dir
+./benchmark_results
 python benchmark_lbfgs.py --gates
 ```
 
