@@ -157,11 +157,11 @@ shape contract, and the variable-cell contract:
    check it with :meth:`LBFGSState.validate`.
 
 Variable-cell relaxation maps positions and cell into a single packed
-coordinate vector, so the two-loop recursion couples them automatically. Build
-``ext_atom_ptr`` and ``ext_batch_idx`` with
-:func:`~nvalchemiops.dynamics.utils.cell_filter.extend_atom_ptr` and
-:func:`~nvalchemiops.batch_utils.atom_ptr_to_batch_idx`, which handle ragged
-batches as well as uniform ones.
+coordinate vector, so the two-loop recursion couples them automatically.
+:func:`~nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_prepare_cell_state`
+derives the packed topology (``ext_atom_ptr`` and ``ext_batch_idx``) from the
+ordinary ``atom_ptr`` and the aligned cells; ragged batches work the same way
+uniform ones do.
 
 .. autoclass:: nvalchemiops.dynamics.optimizers.lbfgs.LBFGSCellState
    :members:

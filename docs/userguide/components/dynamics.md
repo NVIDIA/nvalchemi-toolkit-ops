@@ -188,9 +188,9 @@ timestep and mixing and applies one bounded step per call.
 
 ::::
 
-The optimization examples read the largest force component without
-converting the force array to NumPy. Define this reduction once; the max
-stays on the device and only the final scalar returns to Python:
+The optimization examples read the largest per-atom force magnitude
+without converting the force array to NumPy. Define this reduction once;
+the max stays on the device and only the final scalar returns to Python:
 
 ```python
 @wp.kernel
@@ -199,7 +199,7 @@ def max_force_component_kernel(
     max_force: wp.array(dtype=wp.float64),
 ):
     i = wp.tid()
-    wp.atomic_max(max_force, 0, wp.max(wp.abs(forces[i])))
+    wp.atomic_max(max_force, 0, wp.length(forces[i]))
 ```
 
 Allocate ``max_force`` once. Before each convergence check, zero it, launch
@@ -444,7 +444,7 @@ for step in range(max_steps):
         uphill_flag, vf, vv, ff
     )
 
-    # Check convergence: largest force component below the tolerance
+    # Check convergence: largest per-atom force magnitude below the tolerance
     max_force.zero_()
     wp.launch(
         max_force_component_kernel,

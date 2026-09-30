@@ -198,9 +198,15 @@ def plot_series(
     ax.yaxis.set_major_formatter(ticker.FuncFormatter(log_scale_formatter))
     ax.yaxis.set_minor_formatter(ticker.NullFormatter())
 
-    all_x = np.concatenate(
-        [np.asarray(xs) for xs, _ in series.values() if xs is not None and len(xs)]
-    )
+    x_values = [
+        np.asarray(xs) for xs, _ in series.values() if xs is not None and len(xs)
+    ]
+    if not x_values:
+        # No plottable points (e.g. every benchmark row failed): leave the
+        # default axes rather than aborting the whole plot generation.
+        all_x = np.array([1.0])
+    else:
+        all_x = np.concatenate(x_values)
     lo_exp = int(np.floor(np.log2(all_x.min())))
     hi_exp = int(np.ceil(np.log2(all_x.max())))
     x_ticks = [2**k for k in range(lo_exp, hi_exp + 1)]
