@@ -138,17 +138,17 @@ Variable-cell relaxation adds an :class:`LBFGSCellState` from
 :func:`lbfgs_prepare_cell_state`, for the packed path with
 ``num_packed = num_atoms + 2 * num_systems``:
 
-=====================================================  =====================  =============
-Buffer                                                 Shape                  dtype
-=====================================================  =====================  =============
-``ref_cell``, ``ref_cell_inv``, ``phi``, ``phi_inv``   ``(num_systems,)``     mat33f/mat33d
-``d_phi``                                              ``(num_systems,)``     mat33f/mat33d
-``kappa``                                              ``(num_systems,)``     float32/float64
-``cell_dof_a/b``, ``cell_force_a/b``                   ``(num_systems,)``     vec3f/vec3d
-``ext_positions``, ``ext_forces``                      ``(num_packed,)``      vec3f/vec3d
-``ext_batch_idx``                                      ``(num_packed,)``      int32
-``ext_atom_ptr``                                       ``(num_systems + 1,)`` int32
-=====================================================  =====================  =============
+=====================================================  ========================  =============
+Buffer                                                 Shape                     dtype
+=====================================================  ========================  =============
+``ref_cell``, ``ref_cell_inv``, ``phi``, ``phi_inv``   ``(num_systems,)``        mat33f/mat33d
+``d_phi``                                              ``(num_systems,)``        mat33f/mat33d
+``kappa``                                              ``(num_systems,)``        float32/float64
+``cell_dof_a/b``, ``cell_force_a/b``                   ``(num_systems,)``        vec3f/vec3d
+``ext_positions``, ``ext_forces``                      ``(num_packed,)``         vec3f/vec3d
+``ext_batch_idx``                                      ``(num_packed,)``         int32
+``ext_atom_ptr``                                       ``(num_systems + 1,)``    int32
+=====================================================  ========================  =============
 
 ``kappa`` follows the *coordinate* precision because it scales matrices.
 ``ref_cell``, ``ref_cell_inv`` and ``kappa`` are the chart; the rest is
@@ -292,24 +292,26 @@ class LBFGSState:
 
     Attributes
     ----------
-    x_base, force_base : array, shape (num_packed,)
+    x_base, force_base : wp.array, shape (num_packed,), dtype vec3f/vec3d
         Last accepted point and the FORCES there. The gradient is
         ``-force_base``; see the module docstring on the sign convention.
-    direction : array, shape (num_packed,)
+    direction : wp.array, shape (num_packed,), dtype vec3f/vec3d
         Search direction; a descent direction satisfies ``force_base . d > 0``.
-    s_history, y_history : array, shape (num_packed, history_size)
+    s_history, y_history : wp.array, shape (num_packed, history_size), dtype vec3f/vec3d
         Ring buffers of position and *gradient* differences. The degree of
         freedom leads; the history slot is the trailing axis.
-    ys, yy, alpha_hist, beta_hist : array, shape (num_systems, history_size)
+    ys, yy : wp.array, shape (num_systems, history_size), dtype float32/float64
+    alpha_hist : wp.array, shape (num_systems, history_size), dtype float32/float64
+    beta_hist : wp.array, shape (num_systems, history_size), dtype float32/float64
         Per-slot curvature products and two-loop coefficients.
-    ss, gg : array, shape (num_systems,)
+    ss, gg : wp.array, shape (num_systems,), dtype float32/float64
         Squared norms of the newest ``s`` and of the packed force.
-    d0, dmax, dquad : array, shape (num_systems,)
+    d0, dmax, dquad : wp.array, shape (num_systems,), dtype float32/float64
         Directional derivative and the trust region's linear and quadratic
         displacement coefficients.
-    alpha_step : array, shape (num_systems,)
+    alpha_step : wp.array, shape (num_systems,), dtype float32/float64
         Step length, recomputed from the trust region every call.
-    iteration, end, n_loop, history_count : array, shape (num_systems,), int32
+    iteration, end, n_loop, history_count : wp.array, shape (num_systems,), dtype int32
         Per-system control state. There is no ``status``: the optimizer has no
         terminal state, and deciding when to stop is the caller's, as it is
         for FIRE2.
@@ -368,9 +370,9 @@ class LBFGSState:
         one device.
 
         Sharing a dtype is checked rather than a named one, since the same
-        state is expressed in three frameworks' type vocabularies; that the
-        per-system scalars are specifically float64 is checked by each
-        binding.
+        state is expressed in three frameworks' type vocabularies. Per-system
+        scalars follow the coordinate precision: float32 for vec3f coordinates
+        and float64 for vec3d coordinates. Every field must live on one device.
 
         Raises
         ------
@@ -412,21 +414,22 @@ class LBFGSCellState:
 
     Attributes
     ----------
-    ref_cell, ref_cell_inv : array, shape (num_systems,), mat33
+    ref_cell, ref_cell_inv : wp.array, shape (num_systems,), dtype mat33f/mat33d
         Reference cell ``H0`` and its inverse, from
         :func:`_lbfgs_set_reference_cell`.
-    kappa : array, shape (num_systems,)
+    kappa : wp.array, shape (num_systems,), dtype float32/float64
         Cell coordinate scaling, from :func:`_lbfgs_cell_kappa`. Matches the
         *coordinate* precision, not float64, because it scales matrices.
-    ext_batch_idx : array, shape (num_packed,), int32
-    ext_atom_ptr : array, shape (num_systems + 1,), int32
+    ext_batch_idx : wp.array, shape (num_packed,), dtype int32
+    ext_atom_ptr : wp.array, shape (num_systems + 1,), dtype int32
         Packed topology. Build these with the generic batch utilities so ragged
         batches are expressible.
-    phi, phi_inv, d_phi : array, shape (num_systems,), mat33
+    phi, phi_inv, d_phi : wp.array, shape (num_systems,), dtype mat33f/mat33d
         Deformation gradient, its inverse, and its search direction.
-    cell_dof_a, cell_dof_b, cell_force_a, cell_force_b : array, shape (num_systems,)
+    cell_dof_a, cell_dof_b : wp.array, shape (num_systems,), dtype vec3f/vec3d
+    cell_force_a, cell_force_b : wp.array, shape (num_systems,), dtype vec3f/vec3d
         The cell's two packed degrees of freedom and their conjugate forces.
-    ext_positions, ext_forces : array, shape (num_packed,)
+    ext_positions, ext_forces : wp.array, shape (num_packed,), dtype vec3f/vec3d
         The packed coordinate vector and its forces.
     """
 
@@ -1669,7 +1672,7 @@ def lbfgs_prepare_state(
         is ``num_atoms + 2 * num_systems``, not the atom count.
     num_systems : int
         Independent systems in the batch.
-    dtype : optional
+    dtype : wp.vec3f or wp.vec3d, optional
         Coordinate precision, ``wp.vec3f`` or ``wp.vec3d``. Every per-system
         scalar follows it, so ``wp.vec3f`` gives an end-to-end fp32 state and
         ``wp.vec3d`` an end-to-end fp64 one.
@@ -1763,7 +1766,7 @@ def lbfgs_prepare_cell_state(
         Reference lattice per system, lattice vectors in columns, aligned.
     cell_force_scale : float, optional
         Multiplier on the atom count in ``kappa``.
-    dtype : optional
+    dtype : wp.vec3f or wp.vec3d, optional
         Coordinate precision, ``wp.vec3f`` or ``wp.vec3d``.
     device : optional
         Warp device. Defaults to the device ``atom_ptr`` is on.
@@ -1879,7 +1882,7 @@ def _lbfgs_reduce_impl(
         Current search direction.
     batch_idx : wp.array(dtype=int32), shape (num_dofs,)
         Sorted system index for each degree of freedom.
-    gg : wp.array(dtype=float64), shape (num_systems,)
+    gg : wp.array, shape (num_systems,), dtype float32/float64 matching forces
         OUTPUT. Zeroed internally before accumulation.
     """
     n_dofs = forces.shape[0]
@@ -3642,11 +3645,11 @@ def lbfgs_step(positions, forces, state: LBFGSState, batch_idx,
 
     Parameters
     ----------
-    positions, forces : array, shape (num_dofs,)
+    positions, forces : wp.array, shape (num_dofs,), dtype vec3f/vec3d
         Current geometry and the forces there. Mutated in place.
     state : LBFGSState
         From :func:`lbfgs_prepare_state`, or built from your own arrays.
-    batch_idx : array, shape (num_dofs,), dtype int32
+    batch_idx : wp.array, shape (num_dofs,), dtype int32
         Sorted system index per degree of freedom.
     **kwargs
         ``maxstep``, ``curvature_eps`` and ``compute_reductions``.
@@ -3667,6 +3670,24 @@ def lbfgs_step_coord_cell(positions, forces, cell, stress, state: LBFGSState,
     freedom; ``cell_state`` carries the chart. Call
     :func:`_lbfgs_set_reference_cell` and :func:`_lbfgs_cell_kappa` once before
     the first step.
+
+    Parameters
+    ----------
+    positions, forces : wp.array, shape (num_atoms,), dtype vec3f/vec3d
+        Cartesian geometry and the forces there, advanced in place. Forces,
+        not gradients.
+    cell, stress : wp.array, shape (num_systems,), dtype mat33f/mat33d
+        Cell with lattice vectors as columns, advanced in place, and the
+        Cauchy stress per system, which drives the cell degrees of freedom.
+    state : LBFGSState
+        From :func:`lbfgs_prepare_state`, sized for
+        ``num_atoms + 2 * num_systems`` degrees of freedom.
+    cell_state : LBFGSCellState
+        From :func:`lbfgs_prepare_cell_state`, or built from your own arrays.
+    batch_idx : wp.array, shape (num_atoms,), dtype int32
+        Sorted system index per atom.
+    **kwargs
+        ``maxstep`` and ``curvature_eps``.
     """
     _check_cell_inputs(positions, forces, cell, stress, batch_idx, state, cell_state)
     _lbfgs_step_coord_cell_impl(
