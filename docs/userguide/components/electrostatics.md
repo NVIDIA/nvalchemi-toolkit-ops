@@ -424,8 +424,11 @@ Removes the spurious self-interaction introduced by the Gaussian charge distribu
 **Background Correction** (for non-neutral systems):
 
 ```{math}
-E_{\text{background}} = \frac{\mathrm{FIELD\_CONSTANT}}{8\alpha^2 V} Q_{\text{total}}^2
+E_{\text{background}} = \frac{1}{8 \varepsilon_0 \, \alpha^2 V} Q_{\text{total}}^2
 ```
+
+where $1/\varepsilon_0 = 180.951$ eV·Å·e⁻² in the package's unit convention
+(the code constant `FIELD_CONSTANT`).
 
 ### Usage Examples
 

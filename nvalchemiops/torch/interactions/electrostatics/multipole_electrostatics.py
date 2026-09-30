@@ -329,6 +329,9 @@ def multipole_electrostatic_energy(
         \mathrm{oc}[1]\,|\boldsymbol{\mu}_i|^2` and ``oc`` comes from
         :func:`nvalchemiops.torch.math.compute_overlap_constants`.
 
+    Notes
+    -----
+
     **Cell gradients with explicit k-vectors**
 
     The cell-volume contribution is differentiated through ``cell``. The
