@@ -90,7 +90,9 @@ GPU-accelerated FIRE and FIRE2 (Fast Inertial Relaxation Engine) optimizers for
 efficient energy minimization. Both adapt timestep and velocity-force mixing for
 robust convergence on diverse energy landscapes. FIRE2 (Guénolé et al., 2020)
 introduces a deferred half-step and modified velocity mixing for improved
-convergence behavior.
+convergence behavior. A quasi-Newton L-BFGS optimizer is also available;
+the sections below compare it against FIRE2 on evaluation count and
+per-step cost.
 
 ### Single-System Optimization
 
@@ -143,6 +145,96 @@ Average step time for batched FIRE optimization.
 Total throughput (atom-steps/s) for batched optimization.
 ```
 
+### L-BFGS vs FIRE2: Evaluations and Step Cost
+
+A quasi-Newton method: it approximates the inverse Hessian from recent position
+and force differences to choose a direction, then steps along it bounded by a
+`maxstep` trust region. No line search and no energy input, so a step costs
+exactly one force evaluation. As with FIRE2, convergence is the caller's, so
+the figures below are optimizer time only.
+
+**Evaluations to convergence.** These measurements use Argon clusters of 13,
+32, and 55 atoms with the package's LJ kernels and ``fmax <= 1e-4 eV/Å``.
+Five starting geometries were tested per size. For each case, FIRE2's
+timestep was swept over eight settings; its best converged result is the
+baseline. Both optimizers used the stated precision:
+
+| Metric | float32 | float64 |
+| --- | --- | --- |
+| Geometric mean of L-BFGS/FIRE2 evaluation counts | 0.59 | 0.57 |
+| Worst ratio in this sample | 0.94 | 1.08 |
+| Cases where both converged | 15 / 15 | 15 / 15 |
+
+For this sample, the geometric-mean evaluation-count ratio is below one in
+both precisions; the worst float64 case is above one. Counts vary by about
+20% between runs, partly because neighbor-list rebuild ordering changes forces
+in their last bits. This small Lennard-Jones sample is evidence to help choose
+what to test next, not a prediction of which optimizer will need fewer
+evaluations on another system.
+
+This reproducible benchmark runs in minutes on one GPU, but covers only
+small Lennard-Jones clusters. It does not represent crystals, strongly
+anisotropic curvature, or force fields whose forces are not energy gradients.
+Measure both optimizers on the structures and force fields relevant to your
+workload before choosing one.
+
+These measurements replace the earlier ``0.129`` result, which used a NumPy
+all-pairs potential in reduced units and a FIRE2 grid tuned to those units.
+The current measurements use the package LJ kernels and the timestep sweep
+described above.
+
+**Per-step optimizer cost.** These measurements compare optimizer time for a
+single system using a harmonic potential and the ``--gates`` benchmark. The
+table transcribes ``lbfgs_gate_timings.csv``. The five-repeat 10,000-atom
+float32 measurement ranged from 7.9x to 8.6x; the other rows report individual
+measurements. These ratios describe the listed setup only.
+
+| Atoms | Precision | Eager (ms) | CUDA graph (ms) | FIRE2 (ms) | vs FIRE2 |
+| --- | --- | --- | --- | --- | --- |
+| 10,000 | float32 | 0.46 | 0.15 | 0.052 | 8.8x |
+| 10,000 | float64 | 0.44 | 0.18 | 0.056 | 7.9x |
+| 100,000 | float32 | 1.06 | 1.06 | 0.130 | 8.2x |
+| 100,000 | float64 | 1.10 | 1.11 | 0.119 | 9.3x |
+| 1,000,000 | float32 | 3.52 | 3.53 | 0.289 | 12.2x |
+| 1,000,000 | float64 | 5.00 | 5.00 | 0.353 | 14.2x |
+
+For these sizes and settings, the measured L-BFGS step time is higher than
+FIRE2's, with ratios from 7.9x to 14.2x. The implementation performs
+``2 * history_size + O(1)`` passes over the degrees of freedom; FIRE2 performs
+fewer passes. In these runs, CUDA graph replay reduced the 10,000-atom
+measurement but made little difference at larger sizes.
+
+In these measurements, float32 and float64 times were within the observed
+run-to-run spread at 10,000 and 100,000 atoms. At 1,000,000 atoms, they were
+3.52 ms and 5.00 ms respectively. With ``history_size = 6``, the two history
+buffers occupy 144 MB in float32 and 288 MB in float64; the H100 used here has
+50 MB of L2 cache.
+
+The entity-first state layout gives strided access when a kernel reads one
+history slot across degrees of freedom. In these measurements, the difference
+from the history-major estimate appeared at 1,000,000 atoms, not at smaller
+sizes. This is a result for the tested layout and hardware.
+
+**Break-even estimate.** Combining the evaluation-count ratios above with the
+measured optimizer times gives estimated force-evaluation costs of 0.5, 1.2,
+and 4.4 ms in float32 (0.5, 1.3, and 6.3 ms in float64) at the three tested
+sizes. These are estimates for the benchmark cases, not general thresholds.
+Run both optimizers with your force model and structures before choosing.
+
+**Memory.** With `P` degrees of freedom, `M` systems and history size `m`:
+
+```text
+bytes = (2m + 3) * 3 * sizeof(dof) * P + (4m + 6) * sizeof(dof) * M
+        + 4 * 4 * M
+```
+
+At `m = 6` that is 180 bytes per degree of freedom with float32 coordinates,
+360 with float64; the histories dominate, and 3 to 7 is the usual range for
+`m`. Every scalar follows the coordinate dtype, so `sizeof(dof)` appears in
+both terms. That changes nothing for one large system, but for $10^6$
+two-atom systems an fp32 state is 496 MB against 616 MB when the scalars were
+pinned to float64 — a 20% saving, with per-step time unchanged within ±5%.
+
 ### FIRE Algorithm Features
 
 **Adaptive Timestep:**
@@ -166,108 +258,6 @@ Total throughput (atom-steps/s) for batched optimization.
 **Convergence:**
 
 - Checks maximum force component: $\max(|\mathbf{F}|) < f_{\max}$ (default 0.01 eV/Å)
-
-### L-BFGS
-
-A quasi-Newton method: it approximates the inverse Hessian from recent position
-and force differences to choose a direction, then steps along it bounded by a
-`maxstep` trust region. No line search and no energy input, so a step costs
-exactly one force evaluation. As with FIRE2, convergence is the caller's, so
-the figures below are optimizer time only.
-
-**Evaluations to convergence** — the metric that matters when a machine-learned
-potential dominates kernel time. Argon clusters of 13, 32 and 55 atoms through
-the package's own LJ kernels, `fmax <= 1e-4 eV/Å`, five starting geometries per
-size, FIRE2's timestep swept over 8 settings per case with its *best* converged
-result as the baseline. Both arms run at the stated precision:
-
-| Metric | float32 | float64 |
-| --- | --- | --- |
-| Geometric mean | **0.59** | **0.57** |
-| Worst individual case | **0.94** | **1.08** |
-| Cases where both converged | 15 / 15 | 15 / 15 |
-
-**L-BFGS needs about 1.7x fewer force evaluations on average, and roughly
-breaks even in the worst case.** The worst ratio sits near 1.0 and has
-exceeded it in several runs (1.08, 1.17, 1.41 measured previously), so on this
-workload L-BFGS is better on average rather than uniformly. fp32 costs nothing
-in evaluation count: both precisions reach the same tolerance in
-indistinguishable counts. Counts vary by roughly 20% run to run, since
-neighbor-list rebuild ordering perturbs the forces in their last bits, so read
-the aggregate rather than a single cell.
-
-**Scope.** This is the *reproducible* benchmark — everything it needs is in
-this repository and it runs in minutes on one GPU. Read it as that, and not as
-a proxy for the setting L-BFGS is meant for: a smooth pair potential on a
-55-atom cluster exercises neither the stiff, anisotropic curvature of a
-relaxing crystal nor a force field that is not the gradient of its own energy.
-Expect a larger advantage there than the ratio below suggests, and measure it
-on your own workload rather than inferring it from this one.
-
-These numbers are much less favourable than the `0.129` this table carried
-previously, which came from a NumPy all-pairs potential in reduced units with
-a FIRE2 grid tuned for those units. Both are fixed: forces now come from the
-package kernels, and the grid runs to 3.0 fs because FIRE2 keeps improving
-past the value the MD blocks use.
-
-**Per-step optimizer cost.** Optimizer time only, single system, harmonic
-potential, `--gates`. The table is a transcription of the
-`lbfgs_gate_timings.csv` each run writes, so it has a regenerable record
-behind it. The ratio varies by about ±0.7 between runs (five repeats at ten
-thousand atoms in fp32 ranged 7.9x to 8.6x), so read the magnitude, not the
-digit.
-
-| Atoms | Precision | Eager (ms) | CUDA graph (ms) | FIRE2 (ms) | vs FIRE2 |
-| --- | --- | --- | --- | --- | --- |
-| 10,000 | float32 | 0.46 | 0.15 | 0.052 | 8.8x |
-| 10,000 | float64 | 0.44 | 0.18 | 0.056 | 7.9x |
-| 100,000 | float32 | 1.06 | 1.06 | 0.130 | 8.2x |
-| 100,000 | float64 | 1.10 | 1.11 | 0.119 | 9.3x |
-| 1,000,000 | float32 | 3.52 | 3.53 | 0.289 | 12.2x |
-| 1,000,000 | float64 | 5.00 | 5.00 | 0.353 | 14.2x |
-
-**A single L-BFGS step costs roughly eight to fourteen times a FIRE2 step**,
-rising with system size. It runs `2 * history_size + O(1)` passes over the
-degrees of freedom against FIRE2's handful. At ten thousand atoms the step is
-launch-bound and CUDA-graph replay recovers about 2.4-3x; from a hundred
-thousand upwards device work dominates and replay recovers nothing.
-
-**Precision matters at a million atoms and not below it.** At ten and a
-hundred thousand the two precisions are within the run-to-run spread, because
-the history buffers still fit in cache; at a million they are 3.5 ms against
-5.0 ms. The two history buffers are the whole reason — at `history_size = 6`
-they are 144 MB in fp32 and 288 MB in fp64 at that size, against 50 MB of L2
-on an H100.
-
-That threshold is also where the entity-first state layout costs something.
-Indexing the history by degree of freedom first is what lets a batched driver
-retire converged systems and admit replacements by gathering along dimension
-zero; the price is that a kernel touching one history slot reads with a stride
-instead of contiguously. Below a million atoms the cache absorbs it entirely.
-At a million it does not, and the per-step ratio is roughly 2x what a
-history-major layout would give.
-
-**Break-even.** The model must cost more than roughly 0.5, 1.2 and 4.4 ms per
-evaluation in fp32 (0.5, 1.3 and 6.3 in fp64) at these three sizes for L-BFGS
-to win end to end, given the evaluation ratio of `0.59` above. A workload
-where L-BFGS saves more evaluations lowers that bar proportionately. Prefer
-FIRE2 when the force evaluation is cheap, when the
-system is large enough that the step itself dominates, or when worst-case
-behaviour matters more than the average.
-
-**Memory.** With `P` degrees of freedom, `M` systems and history size `m`:
-
-```text
-bytes = (2m + 3) * 3 * sizeof(dof) * P + (4m + 6) * sizeof(dof) * M
-        + 4 * 4 * M
-```
-
-At `m = 6` that is 180 bytes per degree of freedom with float32 coordinates,
-360 with float64; the histories dominate, and 3 to 7 is the usual range for
-`m`. Every scalar follows the coordinate dtype, so `sizeof(dof)` appears in
-both terms. That changes nothing for one large system, but for 10<sup>6</sup>
-two-atom systems an fp32 state is 496 MB against 616 MB when the scalars were
-pinned to float64 — a 20% saving, with per-step time unchanged within ±5%.
 
 ## Hardware Information
 
