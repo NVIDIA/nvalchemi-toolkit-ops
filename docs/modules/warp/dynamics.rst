@@ -137,6 +137,13 @@ well.
 The public surface is the two states, the preparation helpers, one step per
 call, and the variable-cell setup below.
 
+The module documentation states the full calling convention, the dtype and
+shape contract, and the variable-cell contract:
+
+.. automodule:: nvalchemiops.dynamics.optimizers.lbfgs
+    :no-members:
+    :no-inherited-members:
+
 .. autoclass:: nvalchemiops.dynamics.optimizers.lbfgs.LBFGSState
    :members:
 .. autofunction:: nvalchemiops.dynamics.optimizers.lbfgs.lbfgs_prepare_state
@@ -166,8 +173,16 @@ FIRE2
 
 Improved FIRE optimizer with adaptive damping and velocity mixing.
 
+.. automodule:: nvalchemiops.dynamics.optimizers.fire2
+    :no-members:
+    :no-inherited-members:
+
 .. autofunction:: nvalchemiops.dynamics.optimizers.fire2.fire2_step
 .. autofunction:: nvalchemiops.dynamics.optimizers.fire2.fire2_update
+
+
+
+
 
 Thermostat Utilities
 --------------------
