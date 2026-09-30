@@ -86,7 +86,7 @@ the boundary used for every point.
 
 ## Running the full suite
 
-The three modules share a single entry point,
+The benchmark modules share a single entry point,
 ``benchmarks.benchmark_suite``, which loads each per-module
 ``benchmark_config.yaml`` and dispatches in-process. Use a fresh scratch
 directory for each reportable run, then promote a complete, reviewed CSV set
@@ -97,11 +97,11 @@ into the documentation only after validation.
 ```bash
 RESULT_DIR="$BENCHMARK_SCRATCH/results/reportable-run"
 
-# All three modules, Torch backend (default)
+# All modules, Torch backend (default)
 python -m benchmarks.benchmark_suite --benchmark all \
     --run-dir "$RESULT_DIR"
 
-# All three modules, JAX backend
+# All modules, JAX backend
 python -m benchmarks.benchmark_suite --benchmark all --backend jax \
     --run-dir "$RESULT_DIR"
 
