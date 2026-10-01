@@ -1075,7 +1075,7 @@ class TestSymbolicExplicitKEnergy:
 
     @pytest.mark.parametrize("l_max", [0, 1, 2])
     def test_single_explicit_k_symbolic_and_gradient_parity(self, device, l_max):
-        """Trace automatic and supplied overlap paths against prepared values/grads."""
+        """Trace overlap paths and replay automatic overlap graphs with new values."""
         from torch.fx.experimental.proxy_tensor import make_fx
 
         td = _es_torch_device(device)
@@ -1220,6 +1220,40 @@ class TestSymbolicExplicitKEnergy:
         ):
             torch.testing.assert_close(
                 traced_grad, expected_grad, rtol=1e-11, atol=1e-12
+            )
+
+        # Reuse the traced automatic-overlap graphs with fresh values and compare
+        # against eager energy and gradients at those values.
+        replay_positions = (positions.detach() * 1.07).requires_grad_()
+        replay_moments = (moments.detach() * 1.13).requires_grad_()
+        replay_cell = (cell.detach() * 1.08).requires_grad_()
+        replay_k_vectors = (k_vectors.detach() * 0.93).requires_grad_()
+        replay_energy = fn_auto(
+            replay_positions, replay_moments, replay_cell, replay_k_vectors
+        )
+        replay_grads = torch.autograd.grad(
+            replay_energy,
+            (replay_positions, replay_moments, replay_cell, replay_k_vectors),
+        )
+        torch.testing.assert_close(
+            traced_auto(
+                replay_positions, replay_moments, replay_cell, replay_k_vectors
+            ),
+            replay_energy,
+            rtol=1e-12,
+            atol=1e-12,
+        )
+        replay_outputs = traced_auto_with_grad(
+            replay_positions, replay_moments, replay_cell, replay_k_vectors
+        )
+        torch.testing.assert_close(
+            replay_outputs[0], replay_energy, rtol=1e-12, atol=1e-12
+        )
+        for replay_grad, expected_grad in zip(
+            replay_outputs[1:], replay_grads, strict=True
+        ):
+            torch.testing.assert_close(
+                replay_grad, expected_grad, rtol=1e-11, atol=1e-12
             )
 
         traced_supplied_with_grad = make_fx(
