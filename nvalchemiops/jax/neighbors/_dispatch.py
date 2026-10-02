@@ -36,6 +36,7 @@ from nvalchemiops.neighbors.base_dispatch import (
     FEATURE_POSITIONS_FLOAT32,
     auto_base_constants,
     finalize_neighbor_list_method,
+    fp64_naive_penalty,
     get_select_neighbor_list_method_cost_kernel,
     neighbor_list_strategy_run_args,
     optional_outputs_mask,
@@ -291,10 +292,11 @@ def _normalize_selector_cell_pbc(
 
 def estimate_neighbor_list_costs(
     batch_ptr: jax.Array,
-    cell: jax.Array,
-    pbc: jax.Array,
-    cutoff: float,
+    cell: jax.Array | None = None,
+    pbc: jax.Array | None = None,
+    cutoff: float = 0.0,
     *,
+    positions: jax.Array | None = None,
     batch_idx: jax.Array | None = None,
     max_nbins: int | None = None,
     optional_outputs: Iterable[str] | None = None,
@@ -383,10 +385,11 @@ def estimate_neighbor_list_costs(
     The returned costs are *relative* (arbitrary units): only their ordering is
     meaningful, so compare them to each other, not to a wall-clock time.  The
     model approximates algorithmic work (candidate pairs, neighbors written,
-    launch overhead) and is **hardware-independent** -- the true crossover
-    between strategies shifts with the device, so when the top costs are within a
-    small factor the predicted best may be marginally slower than a close
-    runner-up; benchmark the top few on your hardware in that case.
+    launch overhead). It is hardware-aware in one respect only: float64 naive
+    work is scaled by the device's FP64 rate. Everything else is
+    hardware-independent, so when the top costs are within a small factor the
+    predicted best may be marginally slower than a close runner-up; benchmark
+    the top few on your hardware in that case.
 
     This launches one Warp kernel over systems (and over atoms when validating
     ``batch_idx`` contiguity) and reads back five costs plus nine flags, so it
@@ -399,6 +402,20 @@ def estimate_neighbor_list_costs(
     if int(batch_ptr.shape[0]) < 2:
         raise ValueError("batch_ptr must have length at least 2")
     num_systems = int(batch_ptr.shape[0]) - 1
+    if (cell is None) != (pbc is None):
+        raise ValueError("cell and pbc must be provided together, or neither")
+    if cell is None:
+        # Cost a free boundary against the same padded bounding box the
+        # dispatcher synthesizes, with an all-False pbc.
+        if positions is None:
+            raise ValueError(
+                "estimate_neighbor_list_costs needs either cell and pbc, or "
+                "positions to synthesize a bounding box from for a "
+                "free-boundary system"
+            )
+        cell, pbc = _synthesize_cell_for_geometry(
+            positions, batch_idx, batch_ptr.astype(jnp.int32), cutoff
+        )
     cell, pbc = _normalize_selector_cell_pbc(cell, pbc, num_systems)
     batch_ptr = batch_ptr.astype(jnp.int32)
     batch_idx_is_provided = batch_idx is not None
@@ -468,6 +485,11 @@ def estimate_neighbor_list_costs(
             target_count=target_count_arg,
         )
 
+    # JAX arrays carry no Warp device, so resolve it from the one Warp uses.
+    fp64_scan_penalty = fp64_naive_penalty(
+        wp.get_device("cuda:0" if feature_mask & FEATURE_CUDA else "cpu")
+    )
+
     if cell.dtype == jnp.float64:
         kernel = _jax_select_method_f64
         cell = cell.astype(jnp.float64)
@@ -486,6 +508,7 @@ def estimate_neighbor_list_costs(
         float(cutoff),
         float(shell),
         float(setup),
+        float(fp64_scan_penalty),
         int(max_nbins),
         int(2**31 - 1),
         int(options),
