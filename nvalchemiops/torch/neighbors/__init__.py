@@ -40,6 +40,9 @@ from nvalchemiops.torch.neighbors._dispatch import (
     estimate_neighbor_list_costs,
     suggest_neighbor_list_method,
 )
+from nvalchemiops.torch.neighbors._prepare import (
+    prepare_neighbor_list_method,
+)
 
 # Batch cell list functions
 from nvalchemiops.torch.neighbors.batch_cell_list import (
@@ -619,6 +622,7 @@ __all__ = [
     "neighbor_list",
     "estimate_neighbor_list_costs",
     "suggest_neighbor_list_method",
+    "prepare_neighbor_list_method",
     "CompiledPairFn",
     "compile_pair_fn",
     "NeighborOverflowError",

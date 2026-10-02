@@ -1264,6 +1264,13 @@ def _batch_query_cell_list_with_diagnostics(
         ``len(target_indices)`` for partial rows.
     num_neighbors : jax.Array, shape (num_rows,), dtype=int32, optional
         Pre-shaped neighbors count array.
+    neighbor_matrix : jax.Array, shape (num_rows, max_neighbors), dtype=int32, optional
+        Preallocated neighbour matrix. Allocated internally when omitted. JAX
+        is functional, so this is donated for XLA to alias rather than written
+        in place: read the result from the return value, not from this array.
+    num_neighbors : jax.Array, shape (num_rows,), dtype=int32, optional
+        Preallocated per-row neighbour counts, with the same donation
+        semantics as ``neighbor_matrix``.
     neighbor_matrix_shifts : jax.Array, shape (num_rows, max_neighbors, 3), dtype=int32, optional
         Pre-allocated shift vectors array. Pass in a pre-shaped array to hint buffer
         reuse to XLA; note that JAX returns a new array rather than mutating the input.
@@ -2160,6 +2167,8 @@ def batch_cell_list(
     batch_ptr: jax.Array | None = None,
     max_neighbors: int | None = None,
     max_total_cells: int | None = None,
+    neighbor_matrix: jax.Array | None = None,
+    num_neighbors: jax.Array | None = None,
     neighbor_matrix_shifts: jax.Array | None = None,
     return_neighbor_list: bool = False,
     half_fill: bool = False,
@@ -2695,6 +2704,8 @@ def batch_cell_list(
         cell_atom_list=cell_atom_list,
         neighbor_search_radius=neighbor_search_radius,
         max_neighbors=max_neighbors,
+        neighbor_matrix=neighbor_matrix,
+        num_neighbors=num_neighbors,
         neighbor_matrix_shifts=neighbor_matrix_shifts,
         half_fill=half_fill,
         strategy=strategy,

@@ -123,6 +123,76 @@ def _matrix_to_pair_set_full(
     return pairs
 
 
+class TestClusterTileLegacyBufferNames:
+    """The pre-0.5 ``previous_*`` buffer names still work, with a warning."""
+
+    @staticmethod
+    def _system(num_atoms=256, size=8.0):
+        positions = (
+            jax.random.uniform(jax.random.PRNGKey(0), (num_atoms, 3), dtype=jnp.float32)
+            * size
+        )
+        cell = (jnp.eye(3, dtype=jnp.float32) * size).reshape(1, 3, 3)
+        return positions, cell
+
+    @staticmethod
+    def _buffers(num_atoms=256, max_neighbors=48):
+        return (
+            jnp.zeros((num_atoms, max_neighbors), dtype=jnp.int32),
+            jnp.zeros((num_atoms,), dtype=jnp.int32),
+            jnp.zeros((num_atoms, max_neighbors, 3), dtype=jnp.int32),
+        )
+
+    def test_legacy_names_warn_and_match_current_names(self):
+        """A legacy call produces the same result as the renamed one."""
+        positions, cell = self._system()
+        matrix, counts, shifts = self._buffers()
+        current = cluster_tile_neighbor_list(
+            positions,
+            2.5,
+            cell,
+            max_neighbors=48,
+            neighbor_matrix=matrix,
+            num_neighbors=counts,
+            neighbor_matrix_shifts=shifts,
+        )
+        # Match all three legacy names; pytest re-emits any it does not match.
+        with pytest.warns(DeprecationWarning, match="is deprecated"):
+            legacy = cluster_tile_neighbor_list(
+                positions,
+                2.5,
+                cell,
+                max_neighbors=48,
+                previous_neighbor_matrix=matrix,
+                previous_num_neighbors=counts,
+                previous_neighbor_matrix_shifts=shifts,
+            )
+        assert int(jnp.sum(legacy[1])) == int(jnp.sum(current[1]))
+
+    def test_both_spellings_together_is_rejected(self):
+        """Passing old and new names for one buffer is an error, not a guess."""
+        positions, cell = self._system()
+        matrix, _, _ = self._buffers()
+        with pytest.raises(TypeError, match="only 'neighbor_matrix'"):
+            cluster_tile_neighbor_list(
+                positions,
+                2.5,
+                cell,
+                max_neighbors=48,
+                neighbor_matrix=matrix,
+                previous_neighbor_matrix=matrix,
+            )
+
+    def test_unknown_keyword_still_raises(self):
+        """The shim must not swallow typos."""
+        positions, cell = self._system()
+        matrix, _, _ = self._buffers()
+        with pytest.raises(TypeError, match="unexpected keyword"):
+            cluster_tile_neighbor_list(
+                positions, 2.5, cell, max_neighbors=48, nieghbor_matrix=matrix
+            )
+
+
 class TestClusterTileDualCutoffValidation:
     """Exercise the public matrix dual-cutoff boundaries."""
 
@@ -1289,12 +1359,12 @@ class TestJaxClusterTileCutoff2Selective:
             cell,
             max_neighbors=64,
             rebuild_flags=jnp.array([False], dtype=jnp.bool_),
-            previous_num_tiles=num_tiles,
-            previous_tile_row_group=tile_row_group,
-            previous_tile_col_group=tile_col_group,
-            previous_neighbor_matrix=nm,
-            previous_num_neighbors=nn,
-            previous_neighbor_matrix_shifts=shifts,
+            num_tiles=num_tiles,
+            tile_row_group=tile_row_group,
+            tile_col_group=tile_col_group,
+            neighbor_matrix=nm,
+            num_neighbors=nn,
+            neighbor_matrix_shifts=shifts,
         )
         nm2, nn2, shifts2, num_tiles2, row2, col2 = out
         np.testing.assert_array_equal(np.asarray(nm2), np.asarray(nm))
@@ -1339,13 +1409,13 @@ class TestJaxClusterTileCutoff2Selective:
             max_neighbors=64,
             format="coo",
             rebuild_flags=jnp.array([False], dtype=jnp.bool_),
-            previous_num_tiles=num_tiles,
-            previous_tile_row_group=tile_row_group,
-            previous_tile_col_group=tile_col_group,
+            num_tiles=num_tiles,
+            tile_row_group=tile_row_group,
+            tile_col_group=tile_col_group,
             pair_offsets=pair_offsets,
-            previous_pair_counts=pair_counts,
-            previous_neighbor_list=neighbor_list,
-            previous_neighbor_list_shifts=neighbor_shifts,
+            pair_counts=pair_counts,
+            neighbor_list=neighbor_list,
+            neighbor_list_shifts=neighbor_shifts,
         )
         nl2, offsets2, counts2, shifts2, nt2, row2, col2 = out
         np.testing.assert_array_equal(np.asarray(nl2), np.asarray(neighbor_list))
@@ -1364,7 +1434,7 @@ class TestJaxClusterTileCutoff2Selective:
         tile_state = cluster_tile_neighbor_list(positions, cutoff, cell, format="tile")
         num_tiles, tile_row_group, tile_col_group, *_ = tile_state
         pair_offsets = jnp.array([0, 4096], dtype=jnp.int32)
-        previous_neighbor_list = jnp.zeros((2, 4096), dtype=jnp.int32)
+        neighbor_list = jnp.zeros((2, 4096), dtype=jnp.int32)
         previous_neighbor_shifts = jnp.zeros((4096, 3), dtype=jnp.int32)
 
         out = cluster_tile_neighbor_list(
@@ -1374,13 +1444,13 @@ class TestJaxClusterTileCutoff2Selective:
             max_neighbors=64,
             format="coo",
             rebuild_flags=jnp.array([True], dtype=jnp.bool_),
-            previous_num_tiles=num_tiles,
-            previous_tile_row_group=tile_row_group,
-            previous_tile_col_group=tile_col_group,
+            num_tiles=num_tiles,
+            tile_row_group=tile_row_group,
+            tile_col_group=tile_col_group,
             pair_offsets=pair_offsets,
-            previous_pair_counts=jnp.zeros(1, dtype=jnp.int32),
-            previous_neighbor_list=previous_neighbor_list,
-            previous_neighbor_list_shifts=previous_neighbor_shifts,
+            pair_counts=jnp.zeros(1, dtype=jnp.int32),
+            neighbor_list=neighbor_list,
+            neighbor_list_shifts=previous_neighbor_shifts,
         )
         _nl, _offsets, pair_counts, _shifts, nt2, _row2, _col2 = out
         assert int(pair_counts[0]) > 0
@@ -1405,13 +1475,13 @@ class TestJaxClusterTileCutoff2Selective:
             max_neighbors=64,
             format="coo",
             rebuild_flags=jnp.array([True], dtype=jnp.bool_),
-            previous_num_tiles=num_tiles,
-            previous_tile_row_group=tile_row_group,
-            previous_tile_col_group=tile_col_group,
+            num_tiles=num_tiles,
+            tile_row_group=tile_row_group,
+            tile_col_group=tile_col_group,
             pair_offsets=jnp.array([0, capacity], dtype=jnp.int32),
-            previous_pair_counts=jnp.zeros(1, dtype=jnp.int32),
-            previous_neighbor_list=jnp.full((2, capacity), -77, dtype=jnp.int32),
-            previous_neighbor_list_shifts=jnp.full(
+            pair_counts=jnp.zeros(1, dtype=jnp.int32),
+            neighbor_list=jnp.full((2, capacity), -77, dtype=jnp.int32),
+            neighbor_list_shifts=jnp.full(
                 (capacity, 3),
                 -77,
                 dtype=jnp.int32,
@@ -1442,9 +1512,9 @@ class TestJaxClusterTileCutoff2Selective:
                 max_neighbors=8,
                 format="coo",
                 rebuild_flags=jnp.array([False], dtype=jnp.bool_),
-                previous_num_tiles=num_tiles,
-                previous_tile_row_group=tile_row_group,
-                previous_tile_col_group=tile_col_group,
+                num_tiles=num_tiles,
+                tile_row_group=tile_row_group,
+                tile_col_group=tile_col_group,
             )
 
     def test_rebuild_flags_coo_requires_one_single_system_segment(self):
@@ -1467,13 +1537,13 @@ class TestJaxClusterTileCutoff2Selective:
                 max_tiles_per_group=1,
                 format="coo",
                 rebuild_flags=jnp.array([False], dtype=jnp.bool_),
-                previous_num_tiles=num_tiles,
-                previous_tile_row_group=tile_row_group,
-                previous_tile_col_group=tile_col_group,
+                num_tiles=num_tiles,
+                tile_row_group=tile_row_group,
+                tile_col_group=tile_col_group,
                 pair_offsets=jnp.array([0, 4, 8], dtype=jnp.int32),
-                previous_pair_counts=jnp.array([0, 0], dtype=jnp.int32),
-                previous_neighbor_list=jnp.full((2, 8), -77, dtype=jnp.int32),
-                previous_neighbor_list_shifts=jnp.full((8, 3), -77, dtype=jnp.int32),
+                pair_counts=jnp.array([0, 0], dtype=jnp.int32),
+                neighbor_list=jnp.full((2, 8), -77, dtype=jnp.int32),
+                neighbor_list_shifts=jnp.full((8, 3), -77, dtype=jnp.int32),
             )
 
     @pytest.mark.parametrize(
@@ -1522,13 +1592,13 @@ class TestJaxClusterTileCutoff2Selective:
                 max_neighbors=64,
                 format="coo",
                 rebuild_flags=runtime_rebuild_flags,
-                previous_num_tiles=num_tiles,
-                previous_tile_row_group=tile_row_group,
-                previous_tile_col_group=tile_col_group,
+                num_tiles=num_tiles,
+                tile_row_group=tile_row_group,
+                tile_col_group=tile_col_group,
                 pair_offsets=pair_offsets,
-                previous_pair_counts=pair_counts,
-                previous_neighbor_list=neighbor_list,
-                previous_neighbor_list_shifts=neighbor_list_shifts,
+                pair_counts=pair_counts,
+                neighbor_list=neighbor_list,
+                neighbor_list_shifts=neighbor_list_shifts,
             )
 
         out = run(
@@ -1590,18 +1660,18 @@ class TestJaxClusterTileEmptySelective:
     def _tile_state():
         """Return distinctive single-system tile state buffers."""
         return {
-            "previous_num_tiles": jnp.array([3], dtype=jnp.int32),
-            "previous_tile_row_group": jnp.arange(4, dtype=jnp.int32),
-            "previous_tile_col_group": jnp.arange(4, dtype=jnp.int32),
+            "num_tiles": jnp.array([3], dtype=jnp.int32),
+            "tile_row_group": jnp.arange(4, dtype=jnp.int32),
+            "tile_col_group": jnp.arange(4, dtype=jnp.int32),
         }
 
     @pytest.mark.parametrize("rebuild_flag", [False, True])
     def test_empty_selective_coo_returns_segmented_state(self, rebuild_flag):
         """Zero atoms retain the seven-array single-system COO contract."""
         pair_offsets = jnp.array([0, 5], dtype=jnp.int32)
-        previous_pair_counts = jnp.array([4], dtype=jnp.int32)
-        previous_neighbor_list = jnp.full((2, 5), 7, dtype=jnp.int32)
-        previous_neighbor_list_shifts = jnp.full((5, 3), 7, dtype=jnp.int32)
+        pair_counts = jnp.array([4], dtype=jnp.int32)
+        neighbor_list = jnp.full((2, 5), 7, dtype=jnp.int32)
+        neighbor_list_shifts = jnp.full((5, 3), 7, dtype=jnp.int32)
         tile_state = self._tile_state()
 
         out = cluster_tile_neighbor_list(
@@ -1612,9 +1682,9 @@ class TestJaxClusterTileEmptySelective:
             format="coo",
             rebuild_flags=jnp.array([rebuild_flag], dtype=jnp.bool_),
             pair_offsets=pair_offsets,
-            previous_pair_counts=previous_pair_counts,
-            previous_neighbor_list=previous_neighbor_list,
-            previous_neighbor_list_shifts=previous_neighbor_list_shifts,
+            pair_counts=pair_counts,
+            neighbor_list=neighbor_list,
+            neighbor_list_shifts=neighbor_list_shifts,
             **tile_state,
         )
 
@@ -1627,29 +1697,29 @@ class TestJaxClusterTileEmptySelective:
             np.array([0 if rebuild_flag else 4], dtype=np.int32),
         )
         np.testing.assert_array_equal(
-            np.asarray(neighbor_list), np.asarray(previous_neighbor_list)
+            np.asarray(neighbor_list), np.asarray(neighbor_list)
         )
         np.testing.assert_array_equal(
             np.asarray(shifts),
-            np.asarray(previous_neighbor_list_shifts),
+            np.asarray(neighbor_list_shifts),
         )
         np.testing.assert_array_equal(
             np.asarray(num_tiles),
             np.array([0 if rebuild_flag else 3], dtype=np.int32),
         )
         np.testing.assert_array_equal(
-            np.asarray(row), np.asarray(tile_state["previous_tile_row_group"])
+            np.asarray(row), np.asarray(tile_state["tile_row_group"])
         )
         np.testing.assert_array_equal(
-            np.asarray(col), np.asarray(tile_state["previous_tile_col_group"])
+            np.asarray(col), np.asarray(tile_state["tile_col_group"])
         )
 
     def test_empty_selective_coo_invalid_offsets_fail_closed(self):
         """Malformed metadata zeros an inactive empty-system count."""
         pair_offsets = jnp.array([0, 3], dtype=jnp.int32)
-        previous_pair_counts = jnp.array([4], dtype=jnp.int32)
-        previous_neighbor_list = jnp.full((2, 5), 7, dtype=jnp.int32)
-        previous_neighbor_list_shifts = jnp.full((5, 3), 7, dtype=jnp.int32)
+        pair_counts = jnp.array([4], dtype=jnp.int32)
+        neighbor_list = jnp.full((2, 5), 7, dtype=jnp.int32)
+        neighbor_list_shifts = jnp.full((5, 3), 7, dtype=jnp.int32)
 
         out = cluster_tile_neighbor_list(
             jnp.empty((0, 3), dtype=jnp.float32),
@@ -1659,19 +1729,17 @@ class TestJaxClusterTileEmptySelective:
             format="coo",
             rebuild_flags=jnp.array([False], dtype=jnp.bool_),
             pair_offsets=pair_offsets,
-            previous_pair_counts=previous_pair_counts,
-            previous_neighbor_list=previous_neighbor_list,
-            previous_neighbor_list_shifts=previous_neighbor_list_shifts,
+            pair_counts=pair_counts,
+            neighbor_list=neighbor_list,
+            neighbor_list_shifts=neighbor_list_shifts,
             **self._tile_state(),
         )
 
         np.testing.assert_array_equal(np.asarray(out[2]), np.zeros(1, dtype=np.int32))
-        np.testing.assert_array_equal(
-            np.asarray(out[0]), np.asarray(previous_neighbor_list)
-        )
+        np.testing.assert_array_equal(np.asarray(out[0]), np.asarray(neighbor_list))
         np.testing.assert_array_equal(
             np.asarray(out[3]),
-            np.asarray(previous_neighbor_list_shifts),
+            np.asarray(neighbor_list_shifts),
         )
 
     def test_empty_selective_coo_rejects_mismatched_fixed_buffer_shapes(self):
@@ -1685,9 +1753,9 @@ class TestJaxClusterTileEmptySelective:
                 format="coo",
                 rebuild_flags=jnp.array([False], dtype=jnp.bool_),
                 pair_offsets=jnp.array([0, 5], dtype=jnp.int32),
-                previous_pair_counts=jnp.array([4], dtype=jnp.int32),
-                previous_neighbor_list=jnp.full((2, 5), 7, dtype=jnp.int32),
-                previous_neighbor_list_shifts=jnp.full((4, 3), 7, dtype=jnp.int32),
+                pair_counts=jnp.array([4], dtype=jnp.int32),
+                neighbor_list=jnp.full((2, 5), 7, dtype=jnp.int32),
+                neighbor_list_shifts=jnp.full((4, 3), 7, dtype=jnp.int32),
                 **self._tile_state(),
             )
 
@@ -1701,9 +1769,9 @@ class TestJaxClusterTileEmptySelective:
             _orthorhombic_cell(4.0),
             max_neighbors=8,
             rebuild_flags=jnp.array([rebuild_flag], dtype=jnp.bool_),
-            previous_neighbor_matrix=jnp.empty((0, 8), dtype=jnp.int32),
-            previous_num_neighbors=jnp.empty(0, dtype=jnp.int32),
-            previous_neighbor_matrix_shifts=jnp.empty((0, 8, 3), dtype=jnp.int32),
+            neighbor_matrix=jnp.empty((0, 8), dtype=jnp.int32),
+            num_neighbors=jnp.empty(0, dtype=jnp.int32),
+            neighbor_matrix_shifts=jnp.empty((0, 8, 3), dtype=jnp.int32),
             **tile_state,
         )
 
@@ -1714,14 +1782,14 @@ class TestJaxClusterTileEmptySelective:
         for returned, name in zip(
             out[3:],
             (
-                "previous_num_tiles",
-                "previous_tile_row_group",
-                "previous_tile_col_group",
+                "num_tiles",
+                "tile_row_group",
+                "tile_col_group",
             ),
         ):
             expected = (
                 np.zeros(1, dtype=np.int32)
-                if rebuild_flag and name == "previous_num_tiles"
+                if rebuild_flag and name == "num_tiles"
                 else np.asarray(tile_state[name])
             )
             np.testing.assert_array_equal(
@@ -1743,12 +1811,12 @@ class TestJaxClusterTileEmptySelective:
             cutoff2=2.0,
             max_neighbors=8,
             rebuild_flags=jnp.array([True], dtype=jnp.bool_),
-            previous_neighbor_matrix=matrix,
-            previous_num_neighbors=counts,
-            previous_neighbor_matrix_shifts=shifts,
-            previous_neighbor_matrix2=matrix,
-            previous_num_neighbors2=counts,
-            previous_neighbor_matrix_shifts2=shifts,
+            neighbor_matrix=matrix,
+            num_neighbors=counts,
+            neighbor_matrix_shifts=shifts,
+            neighbor_matrix2=matrix,
+            num_neighbors2=counts,
+            neighbor_matrix_shifts2=shifts,
             **tile_state,
         )
 
@@ -1785,9 +1853,9 @@ class TestJaxClusterTileEmptySelective:
                 format="coo",
                 rebuild_flags=rebuild_flags,
                 pair_offsets=jnp.array([0, 5], dtype=jnp.int32),
-                previous_pair_counts=jnp.array([4], dtype=jnp.int32),
-                previous_neighbor_list=jnp.full((2, 5), 7, dtype=jnp.int32),
-                previous_neighbor_list_shifts=jnp.full((5, 3), 7, dtype=jnp.int32),
+                pair_counts=jnp.array([4], dtype=jnp.int32),
+                neighbor_list=jnp.full((2, 5), 7, dtype=jnp.int32),
+                neighbor_list_shifts=jnp.full((5, 3), 7, dtype=jnp.int32),
                 **tile_state,
             )
 

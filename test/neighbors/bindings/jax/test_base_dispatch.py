@@ -116,7 +116,10 @@ class TestReportNeighborListCosts:
 
     def test_shell_env_override_shifts_naive_cell_boundary(self, monkeypatch):
         """Increasing shell cost can flip a sparse system back to naive."""
-        args = ([5000], [5.0e6])
+        # Free-boundary float32 reports (``_report`` passes an all-False pbc
+        # and a float32 cell), sized so cell_list is genuinely the cheapest
+        # strategy and the env override has something to flip.
+        args = ([50000], [5.0e5])
         assert _base_method(_report(*args, cutoff=5.0)) == "cell_list"
         monkeypatch.setenv("NVALCHEMI_NEIGHLIST_CELL_SHELL", "100000.0")
         assert _base_method(_report(*args, cutoff=5.0)) == "naive"
