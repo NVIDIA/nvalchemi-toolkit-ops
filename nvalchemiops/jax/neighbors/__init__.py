@@ -33,9 +33,6 @@ from nvalchemiops.jax.neighbors._dispatch import (
     suggest_neighbor_list_method,
     synthesize_cell_for_cell_list,
 )
-from nvalchemiops.jax.neighbors._prepare import (
-    prepare_neighbor_list_method,
-)
 
 # Batch cell list functions
 from nvalchemiops.jax.neighbors.batch_cell_list import (
@@ -657,7 +654,6 @@ __all__ = [
     "neighbor_list",
     "estimate_neighbor_list_costs",
     "suggest_neighbor_list_method",
-    "prepare_neighbor_list_method",
     # Unbatched neighbor list
     "naive_neighbor_list",
     "naive_neighbor_list_dual_cutoff",

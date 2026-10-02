@@ -996,7 +996,6 @@ def estimate_max_neighbors(
     atomic_density: float = 0.2,
     safety_factor: float | None = None,
     max_neighbors_lower_bound: int = 16,
-    fluctuation_sigma: float = 0.0,
 ) -> int:
     r"""Estimate maximum neighbors per atom based on volume calculations.
 
@@ -1021,11 +1020,6 @@ def estimate_max_neighbors(
         Lower bound on the returned estimate. Default is 16. Raise it for dense
         or clustered systems where short cutoffs would otherwise underestimate
         the neighbor count.
-    fluctuation_sigma : float, optional
-        Allowance for how far the busiest row sits above the mean, in units of
-        ``sqrt(mean)``. Default is 0, which returns the mean estimate. Raise it
-        when the result sizes a buffer that cannot be grown, since local counts
-        fluctuate around the mean and the mean alone under-allocates.
 
     Returns
     -------
@@ -1063,8 +1057,6 @@ def estimate_max_neighbors(
     if cutoff <= 0:
         return 0
     cutoff_sphere_volume = atomic_density * (4.0 / 3.0) * math.pi * (cutoff**3)
-    if fluctuation_sigma:
-        cutoff_sphere_volume += fluctuation_sigma * math.sqrt(cutoff_sphere_volume)
 
     # Floor the estimate so short cutoffs keep a safety margin for dense systems.
     expected_neighbors = max(max_neighbors_lower_bound, cutoff_sphere_volume)

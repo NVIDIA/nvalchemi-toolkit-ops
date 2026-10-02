@@ -29,7 +29,6 @@ non-32-aligned ``N`` is padded internally).
 from __future__ import annotations
 
 import functools
-import warnings
 
 import jax
 import jax.numpy as jnp
@@ -1848,66 +1847,6 @@ def _cluster_tile_pair_outputs_forward(
     )
 
 
-# Buffer parameters carried a ``previous_`` prefix through v0.4.1. They now
-# match the Torch binding; the old spellings keep working for one release.
-_LEGACY_BUFFER_NAMES = (
-    "pair_counts",
-    "neighbor_list",
-    "neighbor_list_shifts",
-    "num_tiles",
-    "tile_row_group",
-    "tile_col_group",
-    "tile_counts",
-    "tile_system",
-    "neighbor_matrix",
-    "num_neighbors",
-    "neighbor_matrix_shifts",
-    "neighbor_matrix2",
-    "num_neighbors2",
-    "neighbor_matrix_shifts2",
-)
-
-
-def _accept_legacy_previous_names(func):
-    """Accept the pre-0.5 ``previous_*`` buffer names, with a warning.
-
-    Parameters
-    ----------
-    func : callable
-        Cluster-tile entry point to wrap.
-
-    Returns
-    -------
-    callable
-        Wrapper translating legacy keyword names before delegating. Unknown
-        keywords still raise ``TypeError`` from the wrapped function, so typos
-        are not silently swallowed.
-    """
-
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        for name in _LEGACY_BUFFER_NAMES:
-            legacy = f"previous_{name}"
-            if legacy not in kwargs:
-                continue
-            if name in kwargs:
-                raise TypeError(
-                    f"{func.__name__}() got both {legacy!r} and {name!r}; "
-                    f"pass only {name!r}"
-                )
-            warnings.warn(
-                f"{func.__name__}() parameter {legacy!r} is deprecated and will "
-                f"be removed in a future release; use {name!r} instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            kwargs[name] = kwargs.pop(legacy)
-        return func(*args, **kwargs)
-
-    return wrapper
-
-
-@_accept_legacy_previous_names
 def cluster_tile_neighbor_list(
     positions: jax.Array,
     cutoff: float,
@@ -1921,18 +1860,18 @@ def cluster_tile_neighbor_list(
     cutoff2: float | None = None,
     rebuild_flags: jax.Array | None = None,
     pair_offsets: jax.Array | None = None,
-    pair_counts: jax.Array | None = None,
-    neighbor_list: jax.Array | None = None,
-    neighbor_list_shifts: jax.Array | None = None,
-    num_tiles: jax.Array | None = None,
-    tile_row_group: jax.Array | None = None,
-    tile_col_group: jax.Array | None = None,
-    neighbor_matrix: jax.Array | None = None,
-    num_neighbors: jax.Array | None = None,
-    neighbor_matrix_shifts: jax.Array | None = None,
-    neighbor_matrix2: jax.Array | None = None,
-    num_neighbors2: jax.Array | None = None,
-    neighbor_matrix_shifts2: jax.Array | None = None,
+    previous_pair_counts: jax.Array | None = None,
+    previous_neighbor_list: jax.Array | None = None,
+    previous_neighbor_list_shifts: jax.Array | None = None,
+    previous_num_tiles: jax.Array | None = None,
+    previous_tile_row_group: jax.Array | None = None,
+    previous_tile_col_group: jax.Array | None = None,
+    previous_neighbor_matrix: jax.Array | None = None,
+    previous_num_neighbors: jax.Array | None = None,
+    previous_neighbor_matrix_shifts: jax.Array | None = None,
+    previous_neighbor_matrix2: jax.Array | None = None,
+    previous_num_neighbors2: jax.Array | None = None,
+    previous_neighbor_matrix_shifts2: jax.Array | None = None,
     return_vectors: bool = False,
     return_distances: bool = False,
     pair_fn: wp.Function | None = None,
@@ -1983,33 +1922,33 @@ def cluster_tile_neighbor_list(
         require a positive static Python integer. Complete caller-owned tile
         arrays determine capacity without this value. See
         :ref:`cluster-tile-buffer-capacity` for sizing details.
-    pair_offsets, pair_counts, neighbor_list, neighbor_list_shifts : jax.Array, optional
+    pair_offsets, previous_pair_counts, previous_neighbor_list, previous_neighbor_list_shifts : jax.Array, optional
         Single fixed segmented-COO state used with ``rebuild_flags`` and
         ``format="coo"``. ``pair_offsets`` must be
-        ``[0, neighbor_list.shape[1]]`` and
-        ``pair_counts`` must have shape ``(1,)``. The return tuple
+        ``[0, previous_neighbor_list.shape[1]]`` and
+        ``previous_pair_counts`` must have shape ``(1,)``. The return tuple
         preserves fixed buffer shapes and reports the updated count.
-    num_tiles : jax.Array, shape (1,), dtype=int32, optional
+    previous_num_tiles : jax.Array, shape (1,), dtype=int32, optional
         Tile-count state from an earlier build, or a zero-initialized buffer
         for the first selective call. Required whenever ``rebuild_flags`` is
         set (matrix or segmented COO) and passed through to
         :func:`build_cluster_tile_list`.
-    tile_row_group : jax.Array, shape (max_tiles,), dtype=int32, optional
+    previous_tile_row_group : jax.Array, shape (max_tiles,), dtype=int32, optional
         Previous tile row-group buffer for selective rebuild.
-    tile_col_group : jax.Array, shape (max_tiles,), dtype=int32, optional
+    previous_tile_col_group : jax.Array, shape (max_tiles,), dtype=int32, optional
         Previous tile column-group buffer for selective rebuild.
-    neighbor_matrix : jax.Array, shape (N, max_neighbors), dtype=int32, optional
+    previous_neighbor_matrix : jax.Array, shape (N, max_neighbors), dtype=int32, optional
         Previous neighbor-matrix buffer updated selectively when
         ``rebuild_flags`` is set.
-    num_neighbors : jax.Array, shape (N,), dtype=int32, optional
+    previous_num_neighbors : jax.Array, shape (N,), dtype=int32, optional
         Previous per-atom neighbor counts for selective matrix rebuild.
-    neighbor_matrix_shifts : jax.Array, shape (N, max_neighbors, 3), dtype=int32, optional
+    previous_neighbor_matrix_shifts : jax.Array, shape (N, max_neighbors, 3), dtype=int32, optional
         Previous shift buffer for selective matrix rebuild.
-    neighbor_matrix2 : jax.Array, shape (N, max_neighbors), dtype=int32, optional
+    previous_neighbor_matrix2 : jax.Array, shape (N, max_neighbors), dtype=int32, optional
         Second neighbor matrix for dual-cutoff selective rebuild.
-    num_neighbors2 : jax.Array, shape (N,), dtype=int32, optional
+    previous_num_neighbors2 : jax.Array, shape (N,), dtype=int32, optional
         Per-atom counts for the second dual-cutoff matrix.
-    neighbor_matrix_shifts2 : jax.Array, shape (N, max_neighbors, 3), dtype=int32, optional
+    previous_neighbor_matrix_shifts2 : jax.Array, shape (N, max_neighbors, 3), dtype=int32, optional
         Shift buffer for the second dual-cutoff matrix.
     return_vectors, return_distances : bool, default False
         If True, append per-pair displacement vectors / scalar distances
@@ -2131,33 +2070,33 @@ def cluster_tile_neighbor_list(
         )
     if selective:
         required = {
-            "num_tiles": num_tiles,
-            "tile_row_group": tile_row_group,
-            "tile_col_group": tile_col_group,
+            "previous_num_tiles": previous_num_tiles,
+            "previous_tile_row_group": previous_tile_row_group,
+            "previous_tile_col_group": previous_tile_col_group,
         }
         if format == "matrix":
             required.update(
                 {
-                    "neighbor_matrix": neighbor_matrix,
-                    "num_neighbors": num_neighbors,
-                    "neighbor_matrix_shifts": neighbor_matrix_shifts,
+                    "previous_neighbor_matrix": previous_neighbor_matrix,
+                    "previous_num_neighbors": previous_num_neighbors,
+                    "previous_neighbor_matrix_shifts": previous_neighbor_matrix_shifts,
                 }
             )
             if dual_cutoff:
                 required.update(
                     {
-                        "neighbor_matrix2": neighbor_matrix2,
-                        "num_neighbors2": num_neighbors2,
-                        "neighbor_matrix_shifts2": neighbor_matrix_shifts2,
+                        "previous_neighbor_matrix2": previous_neighbor_matrix2,
+                        "previous_num_neighbors2": previous_num_neighbors2,
+                        "previous_neighbor_matrix_shifts2": previous_neighbor_matrix_shifts2,
                     }
                 )
         elif format == "coo":
             required.update(
                 {
                     "pair_offsets": pair_offsets,
-                    "pair_counts": pair_counts,
-                    "neighbor_list": neighbor_list,
-                    "neighbor_list_shifts": neighbor_list_shifts,
+                    "previous_pair_counts": previous_pair_counts,
+                    "previous_neighbor_list": previous_neighbor_list,
+                    "previous_neighbor_list_shifts": previous_neighbor_list_shifts,
                 }
             )
         missing = [name for name, value in required.items() if value is None]
@@ -2175,10 +2114,10 @@ def cluster_tile_neighbor_list(
     if selective and format == "coo":
         single_segment_capacity = _validate_single_segment_coo_state(
             pair_offsets=pair_offsets,
-            pair_counts=pair_counts,
+            pair_counts=previous_pair_counts,
             rebuild_flags=rebuild_flags,
-            neighbor_list=neighbor_list,
-            neighbor_list_shifts=neighbor_list_shifts,
+            neighbor_list=previous_neighbor_list,
+            neighbor_list_shifts=previous_neighbor_list_shifts,
             max_pairs=max_pairs if max_pairs is not None else N * max_neighbors,
         )
 
@@ -2194,8 +2133,8 @@ def cluster_tile_neighbor_list(
             if selective:
                 empty_pair_counts = jnp.where(
                     rebuild_flags,
-                    jnp.zeros_like(pair_counts),
-                    pair_counts,
+                    jnp.zeros_like(previous_pair_counts),
+                    previous_pair_counts,
                 )
                 empty_pair_counts = _normalize_single_segment_coo_count(
                     pair_offsets=pair_offsets,
@@ -2204,17 +2143,17 @@ def cluster_tile_neighbor_list(
                 )
                 empty_num_tiles = jnp.where(
                     rebuild_flags,
-                    jnp.zeros_like(num_tiles),
-                    num_tiles,
+                    jnp.zeros_like(previous_num_tiles),
+                    previous_num_tiles,
                 )
                 return (
-                    neighbor_list,
+                    previous_neighbor_list,
                     pair_offsets,
                     empty_pair_counts,
-                    neighbor_list_shifts,
+                    previous_neighbor_list_shifts,
                     empty_num_tiles,
-                    tile_row_group,
-                    tile_col_group,
+                    previous_tile_row_group,
+                    previous_tile_col_group,
                 )
             coo_base = (
                 jnp.empty((2, 0), dtype=jnp.int32),
@@ -2279,11 +2218,11 @@ def cluster_tile_neighbor_list(
                 *matrix_out,
                 jnp.where(
                     rebuild_flags,
-                    jnp.zeros_like(num_tiles),
-                    num_tiles,
+                    jnp.zeros_like(previous_num_tiles),
+                    previous_num_tiles,
                 ),
-                tile_row_group,
-                tile_col_group,
+                previous_tile_row_group,
+                previous_tile_col_group,
             )
         return matrix_out
 
@@ -2375,9 +2314,9 @@ def cluster_tile_neighbor_list(
         cell_topology,
         max_tiles_per_group=max_tiles_per_group,
         rebuild_flags=rebuild_flags,
-        num_tiles=num_tiles,
-        tile_row_group=tile_row_group,
-        tile_col_group=tile_col_group,
+        num_tiles=previous_num_tiles,
+        tile_row_group=previous_tile_row_group,
+        tile_col_group=previous_tile_col_group,
     )
 
     if format == "tile":
@@ -2407,9 +2346,9 @@ def cluster_tile_neighbor_list(
                 single_segment_capacity,
                 rebuild_flags=rebuild_flags,
                 pair_offsets=pair_offsets,
-                pair_counts=pair_counts,
-                neighbor_list=neighbor_list,
-                neighbor_list_shifts=neighbor_list_shifts,
+                pair_counts=previous_pair_counts,
+                neighbor_list=previous_neighbor_list,
+                neighbor_list_shifts=previous_neighbor_list_shifts,
             )
             return (*coo_out, num_tiles, tile_row_group, tile_col_group)
         if max_pairs is None:
@@ -2444,12 +2383,12 @@ def cluster_tile_neighbor_list(
         fill_value=fill_value,
         cutoff2=cutoff2,
         rebuild_flags=rebuild_flags,
-        neighbor_matrix=neighbor_matrix,
-        num_neighbors=num_neighbors,
-        neighbor_matrix_shifts=neighbor_matrix_shifts,
-        neighbor_matrix2=neighbor_matrix2,
-        num_neighbors2=num_neighbors2,
-        neighbor_matrix_shifts2=neighbor_matrix_shifts2,
+        neighbor_matrix=previous_neighbor_matrix,
+        num_neighbors=previous_num_neighbors,
+        neighbor_matrix_shifts=previous_neighbor_matrix_shifts,
+        neighbor_matrix2=previous_neighbor_matrix2,
+        num_neighbors2=previous_num_neighbors2,
+        neighbor_matrix_shifts2=previous_neighbor_matrix_shifts2,
     )
     if selective:
         return (*matrix_out, num_tiles, tile_row_group, tile_col_group)
