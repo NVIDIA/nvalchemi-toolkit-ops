@@ -47,7 +47,9 @@ import pytest
 import torch
 import warp as wp
 
-from nvalchemiops.interactions.electrostatics._factory_common import _DerivState
+from nvalchemiops.interactions.electrostatics._factory_common import (
+    _DerivState,
+)
 from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     BATCH_BLOCK_SIZE,
     _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad,
@@ -62,6 +64,8 @@ from nvalchemiops.interactions.electrostatics.ewald_kernels import (
 )
 from nvalchemiops.interactions.electrostatics.ewald_recip_factory import (
     _make_backward_kspace_from_cache_kernel,
+    _run_ewald_recip_weighted_backward,
+    _run_ewald_recip_weighted_double_backward,
     alloc_ewald_recip_sentinels,
     get_ewald_recip_kernel,
 )
@@ -2294,3 +2298,373 @@ class TestCellSecondOrderDoubleBackward:
             np.testing.assert_allclose(gq_b[sl], gq_s, rtol=1e-9, atol=1e-9)
             np.testing.assert_allclose(gkv_b[sys_id], gkv_s[0], rtol=1e-9, atol=1e-9)
             np.testing.assert_allclose(gvol_b[sys_id], gvol_s[0], rtol=1e-9, atol=1e-9)
+
+
+def _weighted_reference_inputs(batched):
+    """Build a small asymmetric single or sorted two-system test fixture."""
+    positions = np.array(
+        [
+            [0.23, 0.61, 1.02],
+            [1.47, 0.38, 0.77],
+            [0.92, 1.63, 0.31],
+            [1.81, 1.12, 0.54],
+        ],
+        dtype=np.float64,
+    )
+    charges = np.array([0.73, -0.41, 0.28, -0.60], dtype=np.float64)
+    k_vectors = np.array(
+        [[0.61, 0.17, 0.29], [0.22, 0.71, 0.13], [0.37, -0.16, 0.58]],
+        dtype=np.float64,
+    )
+    weights = np.array([0.31, -0.82, 1.17, 0.46], dtype=np.float64)
+    v_positions = np.array(
+        [
+            [0.13, -0.24, 0.08],
+            [-0.31, 0.15, 0.22],
+            [0.19, 0.27, -0.17],
+            [-0.11, -0.18, 0.26],
+        ],
+        dtype=np.float64,
+    )
+    v_charges = np.array([0.21, -0.14, 0.09, 0.17], dtype=np.float64)
+    v_kvectors = np.array(
+        [[0.05, -0.03, 0.07], [-0.04, 0.08, 0.02], [0.06, 0.01, -0.05]],
+        dtype=np.float64,
+    )
+    if not batched:
+        return {
+            "positions": positions,
+            "charges": charges,
+            "k_vectors": k_vectors[None],
+            "weights": weights,
+            "v_positions": v_positions,
+            "v_charges": v_charges,
+            "v_kvectors": v_kvectors[None],
+            "v_volume": np.array([0.37]),
+            "alpha": np.array([0.39]),
+            "volume": np.array([131.0]),
+            "batch_idx": np.zeros(4, dtype=np.int32),
+            "atom_start": np.array([0], dtype=np.int32),
+            "atom_end": np.array([4], dtype=np.int32),
+        }
+    return {
+        "positions": np.concatenate((positions, positions + [0.29, 0.16, 0.34])),
+        "charges": np.concatenate((charges, -charges * 0.83)),
+        "k_vectors": np.stack((k_vectors, k_vectors * [0.93, 1.08, 0.89])),
+        "weights": np.concatenate((weights, weights[::-1] * 0.71)),
+        "v_positions": np.concatenate((v_positions, -v_positions * 0.67)),
+        "v_charges": np.concatenate((v_charges, -v_charges * 0.52)),
+        "v_kvectors": np.stack((v_kvectors, v_kvectors * [-0.73, 0.81, 1.12])),
+        "v_volume": np.array([0.37, -0.23]),
+        "alpha": np.array([0.39, 0.44]),
+        "volume": np.array([131.0, 149.0]),
+        "batch_idx": np.array([0] * 4 + [1] * 4, dtype=np.int32),
+        "atom_start": np.array([0, 4], dtype=np.int32),
+        "atom_end": np.array([4, 8], dtype=np.int32),
+    }
+
+
+def _weighted_energy_reference(
+    positions, charges, k_vectors, alpha, volume, starts, ends
+):
+    """Evaluate per-atom reciprocal energies with independent Torch tensor algebra."""
+    atom_energies = []
+    for isys, (start, end) in enumerate(zip(starts, ends, strict=True)):
+        system_positions = positions[start:end]
+        system_charges = charges[start:end]
+        k_squared = (k_vectors[isys] * k_vectors[isys]).sum(dim=-1)
+        # Match the existing reciprocal Green helper's safe-divide behavior: values
+        # below 1e-8 contribute zero after the explicit factory epsilon guard.
+        active = k_squared >= 1.0e-8
+        active_k = k_vectors[isys][active]
+        k_squared = k_squared[active]
+        phase = system_positions @ active_k.T
+        cos_phase = torch.cos(phase)
+        sin_phase = torch.sin(phase)
+        green = (
+            8.0
+            * torch.pi
+            / volume[isys]
+            * torch.exp(-k_squared / (4.0 * alpha[isys] * alpha[isys]))
+            / k_squared
+        )
+        a = (system_charges[:, None] * cos_phase).sum(dim=0)
+        b = (system_charges[:, None] * sin_phase).sum(dim=0)
+        atom_energy = (
+            0.5
+            * system_charges
+            * ((a[None, :] * cos_phase + b[None, :] * sin_phase) * green[None, :]).sum(
+                dim=-1
+            )
+        )
+        atom_energies.append(atom_energy)
+    return torch.cat(atom_energies)
+
+
+@pytest.mark.parametrize("batched", [False, True], ids=["single", "batch"])
+def test_weighted_recip_cell_only_backward_matches_reference(batched, device):
+    """Check cell-only gradients against independent Torch algebra and zero atom outputs."""
+    data = _weighted_reference_inputs(batched)
+    positions_t = torch.tensor(data["positions"], dtype=torch.float64)
+    charges_t = torch.tensor(data["charges"], dtype=torch.float64)
+    k_vectors_t = torch.tensor(
+        data["k_vectors"], dtype=torch.float64, requires_grad=True
+    )
+    alpha_t = torch.tensor(data["alpha"], dtype=torch.float64)
+    volume_t = torch.tensor(data["volume"], dtype=torch.float64, requires_grad=True)
+    weights_t = torch.tensor(data["weights"], dtype=torch.float64)
+    energies_t = _weighted_energy_reference(
+        positions_t,
+        charges_t,
+        k_vectors_t,
+        alpha_t,
+        volume_t,
+        data["atom_start"].tolist(),
+        data["atom_end"].tolist(),
+    )
+    reference_k, reference_volume = torch.autograd.grad(
+        (energies_t * weights_t).sum(), (k_vectors_t, volume_t)
+    )
+
+    n_atoms = data["positions"].shape[0]
+    n_systems, n_k = data["k_vectors"].shape[:2]
+    wp_positions = wp.from_numpy(data["positions"], dtype=wp.vec3d, device=device)
+    wp_charges = wp.from_numpy(data["charges"], dtype=wp.float64, device=device)
+    wp_kvectors = wp.from_numpy(data["k_vectors"], dtype=wp.vec3d, device=device)
+    wp_alpha = wp.from_numpy(data["alpha"], dtype=wp.float64, device=device)
+    wp_volume = wp.from_numpy(data["volume"], dtype=wp.float64, device=device)
+    wp_weights = wp.from_numpy(data["weights"], dtype=wp.float64, device=device)
+    if batched:
+        wp_batch_idx = wp.from_numpy(data["batch_idx"], dtype=wp.int32, device=device)
+        wp_atom_start = wp.from_numpy(data["atom_start"], dtype=wp.int32, device=device)
+        wp_atom_end = wp.from_numpy(data["atom_end"], dtype=wp.int32, device=device)
+    else:
+        wp_batch_idx = wp.empty((0,), dtype=wp.int32, device=device)
+        wp_atom_start = wp.empty((0,), dtype=wp.int32, device=device)
+        wp_atom_end = wp.empty((0,), dtype=wp.int32, device=device)
+    grad_positions = wp.zeros(n_atoms, dtype=wp.vec3d, device=device)
+    grad_charges = wp.zeros(n_atoms, dtype=wp.float64, device=device)
+    grad_kvectors = wp.zeros((n_systems, n_k), dtype=wp.vec3d, device=device)
+    grad_volume = wp.zeros(n_systems, dtype=wp.float64, device=device)
+
+    _run_ewald_recip_weighted_backward(
+        wp.float64,
+        batched=batched,
+        cell_grad=True,
+        atom_grad=False,
+        positions=wp_positions,
+        charges=wp_charges,
+        k_vectors=wp_kvectors,
+        alpha=wp_alpha,
+        volume=wp_volume,
+        batch_idx=wp_batch_idx,
+        atom_start=wp_atom_start,
+        atom_end=wp_atom_end,
+        atom_weights=wp_weights,
+        grad_positions=grad_positions,
+        grad_charges=grad_charges,
+        grad_kvectors=grad_kvectors,
+        grad_volume=grad_volume,
+    )
+    wp.synchronize()
+
+    np.testing.assert_array_equal(grad_positions.numpy(), np.zeros((n_atoms, 3)))
+    np.testing.assert_array_equal(grad_charges.numpy(), np.zeros(n_atoms))
+    np.testing.assert_allclose(
+        grad_kvectors.numpy(), reference_k.detach().numpy(), rtol=2e-10, atol=2e-11
+    )
+    np.testing.assert_allclose(
+        grad_volume.numpy(), reference_volume.detach().numpy(), rtol=2e-10, atol=2e-11
+    )
+
+
+@pytest.mark.parametrize("batched", [False, True], ids=["single", "batch"])
+@pytest.mark.parametrize("cell_grad", [False, True], ids=["no_cell", "cell"])
+@pytest.mark.parametrize("masked_k", [False, True], ids=["active_k", "masked_k"])
+def test_weighted_recip_backward_and_double_backward(
+    batched, cell_grad, masked_k, device
+):
+    """Check weighted gradients and HVPs against Torch autograd on CPU or CUDA."""
+    data = _weighted_reference_inputs(batched)
+    if masked_k:
+        threshold_k = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [5.0e-6, 0.0, 0.0],
+                [1.1e-5, 0.0, 0.0],
+                [1.1e-4, 0.0, 0.0],
+            ]
+        )
+        threshold_v = np.array(
+            [
+                [0.11, -0.03, 0.02],
+                [-0.07, 0.09, 0.04],
+                [0.03, 0.08, -0.06],
+                [-0.04, 0.02, 0.09],
+            ]
+        )
+        data["k_vectors"] = np.concatenate(
+            (
+                threshold_k[None].repeat(data["k_vectors"].shape[0], axis=0),
+                data["k_vectors"],
+            ),
+            axis=1,
+        )
+        data["v_kvectors"] = np.concatenate(
+            (
+                threshold_v[None].repeat(data["v_kvectors"].shape[0], axis=0),
+                data["v_kvectors"],
+            ),
+            axis=1,
+        )
+    n_atoms = data["positions"].shape[0]
+    n_systems, n_k = data["k_vectors"].shape[:2]
+    positions_t = torch.tensor(
+        data["positions"], dtype=torch.float64, requires_grad=True
+    )
+    charges_t = torch.tensor(data["charges"], dtype=torch.float64, requires_grad=True)
+    k_vectors_t = torch.tensor(
+        data["k_vectors"], dtype=torch.float64, requires_grad=True
+    )
+    alpha_t = torch.tensor(data["alpha"], dtype=torch.float64)
+    volume_t = torch.tensor(data["volume"], dtype=torch.float64, requires_grad=True)
+    weights_t = torch.tensor(data["weights"], dtype=torch.float64, requires_grad=True)
+    starts = data["atom_start"].tolist()
+    ends = data["atom_end"].tolist()
+    energies_t = _weighted_energy_reference(
+        positions_t, charges_t, k_vectors_t, alpha_t, volume_t, starts, ends
+    )
+    objective = (energies_t * weights_t).sum()
+    grad_p_t, grad_q_t, grad_k_t, grad_volume_t = torch.autograd.grad(
+        objective,
+        (positions_t, charges_t, k_vectors_t, volume_t),
+        create_graph=True,
+    )
+    v_positions_t = torch.tensor(data["v_positions"], dtype=torch.float64)
+    v_charges_t = torch.tensor(data["v_charges"], dtype=torch.float64)
+    v_kvectors_t = torch.tensor(data["v_kvectors"], dtype=torch.float64)
+    v_volume_t = torch.tensor(data["v_volume"], dtype=torch.float64)
+
+    wp_positions = wp.from_numpy(data["positions"], dtype=wp.vec3d, device=device)
+    wp_charges = wp.from_numpy(data["charges"], dtype=wp.float64, device=device)
+    wp_kvectors = wp.from_numpy(data["k_vectors"], dtype=wp.vec3d, device=device)
+    wp_alpha = wp.from_numpy(data["alpha"], dtype=wp.float64, device=device)
+    wp_volume = wp.from_numpy(data["volume"], dtype=wp.float64, device=device)
+    wp_weights = wp.from_numpy(data["weights"], dtype=wp.float64, device=device)
+    if batched:
+        wp_batch_idx = wp.from_numpy(data["batch_idx"], dtype=wp.int32, device=device)
+        wp_atom_start = wp.from_numpy(data["atom_start"], dtype=wp.int32, device=device)
+        wp_atom_end = wp.from_numpy(data["atom_end"], dtype=wp.int32, device=device)
+    else:
+        wp_batch_idx = wp.empty((0,), dtype=wp.int32, device=device)
+        wp_atom_start = wp.empty((0,), dtype=wp.int32, device=device)
+        wp_atom_end = wp.empty((0,), dtype=wp.int32, device=device)
+    wp_v_positions = wp.from_numpy(data["v_positions"], dtype=wp.vec3d, device=device)
+    wp_v_charges = wp.from_numpy(data["v_charges"], dtype=wp.float64, device=device)
+    wp_v_kvectors = wp.from_numpy(data["v_kvectors"], dtype=wp.vec3d, device=device)
+    wp_v_volume = wp.from_numpy(data["v_volume"], dtype=wp.float64, device=device)
+
+    grad_positions = wp.zeros(n_atoms, dtype=wp.vec3d, device=device)
+    grad_charges = wp.zeros(n_atoms, dtype=wp.float64, device=device)
+    grad_kvectors = wp.zeros((n_systems, n_k), dtype=wp.vec3d, device=device)
+    grad_volume = wp.zeros(n_systems, dtype=wp.float64, device=device)
+    _run_ewald_recip_weighted_backward(
+        wp.float64,
+        batched=batched,
+        cell_grad=cell_grad,
+        atom_grad=True,
+        positions=wp_positions,
+        charges=wp_charges,
+        k_vectors=wp_kvectors,
+        alpha=wp_alpha,
+        volume=wp_volume,
+        batch_idx=wp_batch_idx,
+        atom_start=wp_atom_start,
+        atom_end=wp_atom_end,
+        atom_weights=wp_weights,
+        grad_positions=grad_positions,
+        grad_charges=grad_charges,
+        grad_kvectors=grad_kvectors,
+        grad_volume=grad_volume,
+    )
+    wp.synchronize()
+    np.testing.assert_allclose(
+        grad_positions.numpy(), grad_p_t.detach().numpy(), rtol=2e-10, atol=2e-11
+    )
+    np.testing.assert_allclose(
+        grad_charges.numpy(), grad_q_t.detach().numpy(), rtol=2e-10, atol=2e-11
+    )
+    if cell_grad:
+        np.testing.assert_allclose(
+            grad_kvectors.numpy(), grad_k_t.detach().numpy(), rtol=2e-10, atol=2e-11
+        )
+        np.testing.assert_allclose(
+            grad_volume.numpy(), grad_volume_t.detach().numpy(), rtol=2e-10, atol=2e-11
+        )
+    else:
+        np.testing.assert_array_equal(
+            grad_kvectors.numpy(), np.zeros((n_systems, n_k, 3))
+        )
+        np.testing.assert_array_equal(grad_volume.numpy(), np.zeros(n_systems))
+
+    direction_dot = (grad_p_t * v_positions_t).sum() + (grad_q_t * v_charges_t).sum()
+    if cell_grad:
+        direction_dot = (
+            direction_dot
+            + (grad_k_t * v_kvectors_t).sum()
+            + (grad_volume_t * v_volume_t).sum()
+        )
+    hvp_p_t, hvp_q_t, hvp_k_t, hvp_volume_t, grad_weights_t = torch.autograd.grad(
+        direction_dot,
+        (positions_t, charges_t, k_vectors_t, volume_t, weights_t),
+    )
+    grad_grad_energy = wp.zeros(n_atoms, dtype=wp.float64, device=device)
+    hvp_positions = wp.zeros(n_atoms, dtype=wp.vec3d, device=device)
+    hvp_charges = wp.zeros(n_atoms, dtype=wp.float64, device=device)
+    hvp_kvectors = wp.zeros((n_systems, n_k), dtype=wp.vec3d, device=device)
+    hvp_volume = wp.zeros(n_systems, dtype=wp.float64, device=device)
+    _run_ewald_recip_weighted_double_backward(
+        wp.float64,
+        batched=batched,
+        cell_grad=cell_grad,
+        positions=wp_positions,
+        charges=wp_charges,
+        k_vectors=wp_kvectors,
+        alpha=wp_alpha,
+        volume=wp_volume,
+        batch_idx=wp_batch_idx,
+        atom_start=wp_atom_start,
+        atom_end=wp_atom_end,
+        atom_weights=wp_weights,
+        v_positions=wp_v_positions,
+        v_charges=wp_v_charges,
+        v_kvectors=wp_v_kvectors,
+        v_volume=wp_v_volume,
+        grad_grad_energy=grad_grad_energy,
+        grad_positions=hvp_positions,
+        grad_charges=hvp_charges,
+        grad_kvectors=hvp_kvectors,
+        grad_volume=hvp_volume,
+    )
+    wp.synchronize()
+    np.testing.assert_allclose(
+        hvp_positions.numpy(), hvp_p_t.detach().numpy(), rtol=3e-9, atol=2e-10
+    )
+    np.testing.assert_allclose(
+        hvp_charges.numpy(), hvp_q_t.detach().numpy(), rtol=3e-9, atol=2e-10
+    )
+    if cell_grad:
+        np.testing.assert_allclose(
+            hvp_kvectors.numpy(), hvp_k_t.detach().numpy(), rtol=3e-9, atol=2e-10
+        )
+        np.testing.assert_allclose(
+            hvp_volume.numpy(), hvp_volume_t.detach().numpy(), rtol=3e-9, atol=2e-10
+        )
+    else:
+        np.testing.assert_array_equal(
+            hvp_kvectors.numpy(), np.zeros((n_systems, n_k, 3))
+        )
+        np.testing.assert_array_equal(hvp_volume.numpy(), np.zeros(n_systems))
+    np.testing.assert_allclose(
+        grad_grad_energy.numpy(), grad_weights_t.detach().numpy(), rtol=3e-9, atol=2e-10
+    )

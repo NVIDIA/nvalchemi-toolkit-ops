@@ -6,7 +6,7 @@
 
 This guide lists user-visible migrations by release.
 
-## Unreleased
+## 0.5.0
 
 ### Upgrade PyTorch for compiled COO output
 

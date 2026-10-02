@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
 ### Changed
 
@@ -141,6 +141,13 @@
 
 ### Fixed
 
+- Torch multipole direct energy now supports symbolic tracing with explicit
+  reciprocal vectors, batched valid-k counts, and source overlap constants;
+  multipole features can reuse a prepared cache. The shared moment conversion
+  handles symbolic shapes at all supported multipole orders.
+- Batched multipole PME keeps the system count symbolic through its spread,
+  gather, and differentiable k-grid operations. The weighted Torch Ewald
+  reciprocal gradient fallback also avoids per-system graph unrolling.
 - Torch bindings now launch Warp work on the current PyTorch CUDA stream across
   neighbors, dynamics, dispersion, electrostatics, spline, and math operations.
   This prevents Warp from observing unfinished Torch inputs, Torch from
