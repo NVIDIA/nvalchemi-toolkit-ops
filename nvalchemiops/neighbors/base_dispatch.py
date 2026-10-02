@@ -128,9 +128,11 @@ _CLUSTER_TILE_WRITE = 0.2
 # Batched overheads are dominated by per-atom work: the wrap/fill launches
 # preceding the search run over atoms, so summed across systems they scale with
 # the total atom count however it is partitioned. Only naive and pair-centric
-# carry these; atom-centric launches once per batch.
+# carry these; atom-centric launches once per batch. The naive per-atom term is
+# position-dtype arithmetic, so it takes the same float64 penalty as the scan
+# and is stated on the same float32 basis.
 _BATCH_NAIVE_PER_SYSTEM = 0.0
-_BATCH_NAIVE_PER_ATOM = 150.0
+_BATCH_NAIVE_PER_ATOM = 20.0
 _BATCH_PAIR_PER_SYSTEM = 270.0
 _BATCH_PAIR_PER_ATOM = 10.0
 _SPHERE_VOLUME_FACTOR = 4.1887902047863905
@@ -745,7 +747,7 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
             naive_setup = (
                 naive_setup
                 + wp.float32(_BATCH_NAIVE_PER_SYSTEM)
-                + wp.float32(_BATCH_NAIVE_PER_ATOM) * n_float
+                + wp.float32(_BATCH_NAIVE_PER_ATOM) * precision_scale * n_float
             )
         # Naive cost = per-candidate scan + per-pair output write + setup.
         # Scan weight: scalar 0.35 (global loads) vs tile 0.010 (shared-memory
